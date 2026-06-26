@@ -11,6 +11,7 @@ import {
 } from "@/lib/admin-member-badges";
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import type { MemberDetail } from "../_types";
 
 interface MemberInfoCardProps {
@@ -23,6 +24,7 @@ export function MemberInfoCard({
   onEditFamilyGroup,
 }: MemberInfoCardProps) {
   const loginBadge = getLoginBadge(member.canLogin);
+  const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   return (
     <Card>
       <CardHeader>
@@ -32,18 +34,22 @@ export function MemberInfoCard({
       </CardHeader>
       <CardContent>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-          <div>
-            <dt className="text-slate-500">Title</dt>
-            <dd className="font-medium">
-              {formatTitleLabel(member.title) || "Not set"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Gender</dt>
-            <dd className="font-medium">
-              {formatGenderLabel(member.gender) || "Not set"}
-            </dd>
-          </div>
+          {showTitle && (
+            <div>
+              <dt className="text-slate-500">Title</dt>
+              <dd className="font-medium">
+                {formatTitleLabel(member.title) || "Not set"}
+              </dd>
+            </div>
+          )}
+          {showGender && (
+            <div>
+              <dt className="text-slate-500">Gender</dt>
+              <dd className="font-medium">
+                {formatGenderLabel(member.gender) || "Not set"}
+              </dd>
+            </div>
+          )}
           <div>
             <dt className="text-slate-500">Phone</dt>
             <dd className="font-medium">
@@ -77,16 +83,12 @@ export function MemberInfoCard({
                 : "Not set"}
             </dd>
           </div>
-          <div>
-            <dt className="text-slate-500">Committee Role</dt>
-            <dd className="font-medium">{member.committeeRole || "Not set"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Associate Member</dt>
-            <dd className="font-medium">
-              {member.associateMember ? "Yes" : "No"}
-            </dd>
-          </div>
+          {showOccupation && (
+            <div>
+              <dt className="text-slate-500">Occupation</dt>
+              <dd className="font-medium">{member.occupation || "Not set"}</dd>
+            </div>
+          )}
           <div className="sm:col-span-2">
             <dt className="text-slate-500">Comments</dt>
             <dd className="font-medium whitespace-pre-wrap">

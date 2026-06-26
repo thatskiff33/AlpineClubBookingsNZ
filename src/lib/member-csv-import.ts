@@ -7,6 +7,7 @@ import {
 
 export const MEMBER_IMPORT_MAX_ROWS = 500;
 export const MEMBER_IMPORT_COMMENTS_MAX_LENGTH = 4000;
+export const MEMBER_IMPORT_OCCUPATION_MAX_LENGTH = 100;
 
 /** Maximum lengths for the structured street address import fields. */
 export const MEMBER_IMPORT_ADDRESS_MAX_LENGTHS = {
@@ -65,6 +66,7 @@ export interface MemberImportRowPayload {
   firstName: string;
   lastName: string;
   gender?: string;
+  occupation?: string;
   email: string;
   phone?: string;
   phoneCountryCode?: string;
@@ -79,7 +81,6 @@ export interface MemberImportRowPayload {
   streetCountry?: string;
   streetPostalCode?: string;
   lifeMemberDate?: string;
-  associateMember?: string;
   comments?: string;
   role?: string;
   sourceLineNumber?: number;
@@ -116,6 +117,12 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     label: "Gender",
     required: false,
     aliases: ["gender", "sex"],
+  },
+  {
+    key: "occupation",
+    label: "Occupation",
+    required: false,
+    aliases: ["occupation", "job", "profession"],
   },
   {
     key: "email",
@@ -214,12 +221,6 @@ export const MEMBER_IMPORT_FIELD_DEFINITIONS = [
     label: "Life Member Date",
     required: false,
     aliases: ["lifememberdate", "lifemember", "lifememberon"],
-  },
-  {
-    key: "associateMember",
-    label: "Associate Member",
-    required: false,
-    aliases: ["associatemember", "associate"],
   },
   {
     key: "comments",
@@ -533,6 +534,7 @@ export function createEmptyMemberImportColumnMapping(): MemberImportColumnMappin
     firstName: null,
     lastName: null,
     gender: null,
+    occupation: null,
     email: null,
     phone: null,
     phoneCountryCode: null,
@@ -547,28 +549,9 @@ export function createEmptyMemberImportColumnMapping(): MemberImportColumnMappin
     streetCountry: null,
     streetPostalCode: null,
     lifeMemberDate: null,
-    associateMember: null,
     comments: null,
     role: null,
   };
-}
-
-const BOOLEAN_TRUE_VALUES = new Set(["true", "yes", "y", "1", "t"]);
-const BOOLEAN_FALSE_VALUES = new Set(["false", "no", "n", "0", "f"]);
-
-/**
- * Parse a CSV boolean value (Yes/No/True/False/1/0). Returns `false` for blank
- * input and `null` when a non-blank value is not a recognised boolean so the
- * caller can surface a validation error.
- */
-export function parseMemberImportBoolean(
-  value: string | null | undefined,
-): boolean | null {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (!normalized) return false;
-  if (BOOLEAN_TRUE_VALUES.has(normalized)) return true;
-  if (BOOLEAN_FALSE_VALUES.has(normalized)) return false;
-  return null;
 }
 
 export function createDefaultMemberImportDateFormatMapping(): MemberImportDateFormatMapping {
@@ -838,6 +821,7 @@ export function buildMemberImportPreview(
     };
     const title = getValue(record, "title");
     const gender = getValue(record, "gender");
+    const occupation = getValue(record, "occupation");
     const phone = getValue(record, "phone");
     const phoneCountryCode = getValue(record, "phoneCountryCode");
     const phoneAreaCode = getValue(record, "phoneAreaCode");
@@ -851,12 +835,12 @@ export function buildMemberImportPreview(
     const streetCountry = getValue(record, "streetCountry");
     const streetPostalCode = getValue(record, "streetPostalCode");
     const lifeMemberDate = getValue(record, "lifeMemberDate");
-    const associateMember = getValue(record, "associateMember");
     const comments = getValue(record, "comments");
 
     if (fullName) values.fullName = fullName;
     if (title) values.title = title;
     if (gender) values.gender = gender;
+    if (occupation) values.occupation = occupation;
     if (phone) values.phone = phone;
     if (phoneCountryCode) values.phoneCountryCode = phoneCountryCode;
     if (phoneAreaCode) values.phoneAreaCode = phoneAreaCode;
@@ -870,7 +854,6 @@ export function buildMemberImportPreview(
     if (streetCountry) values.streetCountry = streetCountry;
     if (streetPostalCode) values.streetPostalCode = streetPostalCode;
     if (lifeMemberDate) values.lifeMemberDate = lifeMemberDate;
-    if (associateMember) values.associateMember = associateMember;
     if (comments) values.comments = comments;
     values.role = role || "MEMBER";
 
@@ -899,9 +882,9 @@ export function buildMemberImportPreview(
         `Comments${getColumnContext(sourceColumnLabels, "comments")} must be ${MEMBER_IMPORT_COMMENTS_MAX_LENGTH} characters or fewer`,
       );
     }
-    if (associateMember && parseMemberImportBoolean(associateMember) === null) {
+    if (occupation.length > MEMBER_IMPORT_OCCUPATION_MAX_LENGTH) {
       errors.push(
-        `Associate Member${getColumnContext(sourceColumnLabels, "associateMember")} must be Yes or No`,
+        `Occupation${getColumnContext(sourceColumnLabels, "occupation")} must be ${MEMBER_IMPORT_OCCUPATION_MAX_LENGTH} characters or fewer`,
       );
     }
     if (title && parseTitleValue(title) === undefined) {

@@ -13,6 +13,7 @@ import {
 } from "@/lib/member-onboarding";
 import { buildParentLinks } from "@/lib/member-parent-links";
 import { getMissingMemberProfileFieldDetails } from "@/lib/member-profile-completeness";
+import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 
 function serializeStatus(member: MemberOnboardingProfile) {
   const status = getMemberOnboardingStatus(member);
@@ -82,6 +83,7 @@ export async function GET() {
     select: {
       ...MEMBER_ONBOARDING_PROFILE_SELECT,
       forcePasswordChange: true,
+      occupation: true,
       familyGroupMemberships: {
         select: {
           familyGroupId: true,
@@ -155,6 +157,7 @@ export async function GET() {
 
   const currentStatus = serializeStatus(currentMember);
   const shouldShow = shouldShowMemberOnboarding(currentMember);
+  const memberFieldsFlags = await loadMemberFieldsFlags();
 
   return NextResponse.json({
     shouldShow,
@@ -164,7 +167,12 @@ export async function GET() {
       canLogin: currentMember.canLogin,
       active: currentMember.active,
       role: currentMember.role,
-      profile: serializeMemberProfile(currentMember),
+      ageTier: currentMember.ageTier,
+      showOccupation: memberFieldsFlags.showOccupation,
+      profile: {
+        ...serializeMemberProfile(currentMember),
+        occupation: currentMember.occupation ?? "",
+      },
       status: currentStatus,
       needsOwnDetailsConfirmation:
         currentStatus.confirmationMode === "self" &&

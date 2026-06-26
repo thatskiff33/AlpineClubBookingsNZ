@@ -107,7 +107,7 @@ export interface MemberDetail {
   phoneAreaCode: string | null;
   phoneNumber: string | null;
   dateOfBirth: string | null;
-  role: "MEMBER" | "ADMIN";
+  role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;
@@ -115,8 +115,7 @@ export interface MemberDetail {
   xeroContactId: string | null;
   joinedDate: string | null;
   lifeMemberDate: string | null;
-  committeeRole: string | null;
-  associateMember: boolean;
+  occupation: string | null;
   createdAt: string;
   canLogin: boolean;
   requiresInduction: boolean;
@@ -202,10 +201,9 @@ export interface EditForm {
   dateOfBirth: string;
   joinedDate: string;
   lifeMemberDate: string;
-  committeeRole: string;
-  associateMember: boolean;
+  occupation: string;
   comments: string;
-  role: "MEMBER" | "ADMIN";
+  role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
   ageTier: string;
   financeAccessLevel: FinanceAccessLevel;
   active: boolean;

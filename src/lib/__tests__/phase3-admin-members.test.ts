@@ -634,9 +634,61 @@ describe("Phase 3: Admin Member Management", () => {
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
-      expect(lines[0]).toBe("Title,First Name,Last Name,Gender,Email,Phone Country Code,Phone Area Code,Phone Number,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Date of Birth,Life Member Date,Role,Age Tier,Associate Member,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Comments,Created At");
+      expect(lines[0]).toBe("Title,First Name,Last Name,Gender,Occupation,Email,Phone Country Code,Phone Area Code,Phone Number,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Date of Birth,Life Member Date,Role,Age Tier,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Comments,Created At");
       expect(lines[1]).toContain("Alice");
       expect(lines[1]).toContain("PAID");
+    });
+
+    it("exports the occupation column value", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+          occupation: "Mountain Guide",
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null, dateOfBirth: null,
+          role: "MEMBER", ageTier: "ADULT", active: true, xeroContactId: null,
+          createdAt: new Date("2025-01-01"), subscriptions: [],
+        },
+      ] as any);
+
+      const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
+      const csv = await res.text();
+      expect(csv).toContain("Mountain Guide");
+    });
+
+    it("neutralises spreadsheet formula injection in CSV values", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          firstName: "=cmd|'/c calc'!A1", lastName: "Smith", email: "x@test.com",
+          comments: "@SUM(1+1)", occupation: "+danger", phoneCountryCode: null,
+          phoneAreaCode: null, phoneNumber: null, dateOfBirth: null, role: "MEMBER",
+          ageTier: "ADULT", active: true, xeroContactId: null,
+          createdAt: new Date("2025-01-01"), subscriptions: [],
+        },
+      ] as any);
+
+      const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
+      const csv = await res.text();
+      // Leading =,+,@ are prefixed with a single quote (then RFC-4180 quoted).
+      expect(csv).toContain("'=cmd");
+      expect(csv).toContain("'@SUM(1+1)");
+      expect(csv).toContain("'+danger");
+      // No raw formula-leading cell survives at a field boundary.
+      expect(csv).not.toMatch(/(^|,)=cmd/);
+    });
+
+    it("writes an audit log when members are exported", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
+
+      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?role=ADMIN"));
+      expect(createAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "member.exported",
+          memberId: "admin1",
+        }),
+      );
     });
 
     it("escapes special characters in CSV values", async () => {

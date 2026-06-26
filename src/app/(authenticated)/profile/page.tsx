@@ -31,6 +31,7 @@ import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
+import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -124,6 +125,7 @@ export default async function ProfilePage({
       postalCountry: true,
       role: true,
       ageTier: true,
+      occupation: true,
       active: true,
       createdAt: true,
       passwordChangedAt: true,
@@ -157,6 +159,7 @@ export default async function ProfilePage({
   const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
+  const memberFieldsFlags = await loadMemberFieldsFlags();
   const profileFormMember = {
     id: member.id,
     firstName: member.firstName,
@@ -179,6 +182,7 @@ export default async function ProfilePage({
     postalRegion: member.postalRegion ?? "",
     postalPostalCode: member.postalPostalCode ?? "",
     postalCountry: member.postalCountry ?? "",
+    occupation: member.occupation ?? "",
   };
 
   return (
@@ -429,7 +433,12 @@ export default async function ProfilePage({
         </CardContent>
       </Card>
 
-      <ProfileDetailsCard member={profileFormMember} returnTo={returnTo} />
+      <ProfileDetailsCard
+        member={profileFormMember}
+        returnTo={returnTo}
+        ageTier={member.ageTier}
+        showOccupation={memberFieldsFlags.showOccupation}
+      />
 
       {/* Account Activity */}
       <ProfileSectionCard

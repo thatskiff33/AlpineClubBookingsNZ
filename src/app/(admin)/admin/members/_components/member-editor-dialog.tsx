@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCommitteeRoleOptions } from "@/lib/use-committee-role-options";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
 import { useXeroEntranceFeeDecision } from "@/lib/admin-xero-entrance-fee";
@@ -80,8 +80,7 @@ function memberToForm(member: Member | null): MemberForm {
     forcePasswordChange: member.forcePasswordChange,
     joinedDate: member.joinedDate || "",
     lifeMemberDate: member.lifeMemberDate || "",
-    committeeRole: member.committeeRole || "",
-    associateMember: member.associateMember,
+    occupation: member.occupation || "",
     comments: member.comments || "",
     canLogin: member.canLogin,
     streetAddressLine1: member.streetAddressLine1 || "",
@@ -122,7 +121,7 @@ export function MemberEditorDialog({
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false);
   const [selectedXeroContactId, setSelectedXeroContactId] = useState("");
   const entranceFeeDecision = useXeroEntranceFeeDecision();
-  const committeeRoleOptions = useCommitteeRoleOptions();
+  const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   const [pendingXeroCreateDecision, setPendingXeroCreateDecision] =
     useState<PendingXeroCreateDecision | null>(null);
   const [pendingXeroDecisionContactId, setPendingXeroDecisionContactId] =
@@ -431,8 +430,7 @@ export function MemberEditorDialog({
         canLogin: form.canLogin,
         joinedDate: form.joinedDate || null,
         lifeMemberDate: form.lifeMemberDate || null,
-        committeeRole: form.committeeRole || null,
-        associateMember: form.associateMember,
+        occupation: form.occupation || null,
         comments: form.comments || null,
         streetAddressLine1: form.streetAddressLine1 || null,
         streetAddressLine2: form.streetAddressLine2 || null,
@@ -588,62 +586,68 @@ export function MemberEditorDialog({
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="title">Title</Label>
-                <Select
-                  value={form.title || "__none__"}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      title:
-                        value === "__none__"
-                          ? ""
-                          : (value as MemberForm["title"]),
-                    }))
-                  }
-                >
-                  <SelectTrigger id="title">
-                    <SelectValue placeholder="Select title" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {TITLE_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {(showTitle || showGender) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {showTitle && (
+                  <div className="space-y-2">
+                    <Label htmlFor="title">Title</Label>
+                    <Select
+                      value={form.title || "__none__"}
+                      onValueChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          title:
+                            value === "__none__"
+                              ? ""
+                              : (value as MemberForm["title"]),
+                        }))
+                      }
+                    >
+                      <SelectTrigger id="title">
+                        <SelectValue placeholder="Select title" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">None</SelectItem>
+                        {TITLE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {showGender && (
+                  <div className="space-y-2">
+                    <Label htmlFor="gender">Gender</Label>
+                    <Select
+                      value={form.gender || "__none__"}
+                      onValueChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          gender:
+                            value === "__none__"
+                              ? ""
+                              : (value as MemberForm["gender"]),
+                        }))
+                      }
+                    >
+                      <SelectTrigger id="gender">
+                        <SelectValue placeholder="Select gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">None</SelectItem>
+                        {GENDER_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="gender">Gender</Label>
-                <Select
-                  value={form.gender || "__none__"}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      gender:
-                        value === "__none__"
-                          ? ""
-                          : (value as MemberForm["gender"]),
-                    }))
-                  }
-                >
-                  <SelectTrigger id="gender">
-                    <SelectValue placeholder="Select gender" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">None</SelectItem>
-                    {GENDER_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -775,36 +779,21 @@ export function MemberEditorDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {showOccupation && form.ageTier === "ADULT" && (
               <div className="space-y-2">
-                <Label htmlFor="committeeRole">Committee Role</Label>
-                <Select
-                  value={form.committeeRole || "__none__"}
-                  onValueChange={(value) =>
+                <Label htmlFor="occupation">Occupation</Label>
+                <Input
+                  id="occupation"
+                  value={form.occupation}
+                  onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      committeeRole: value === "__none__" ? "" : value,
+                      occupation: event.target.value,
                     }))
                   }
-                >
-                  <SelectTrigger id="committeeRole">
-                    <SelectValue placeholder="Select a committee position" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Not set</SelectItem>
-                    {(form.committeeRole &&
-                    !committeeRoleOptions.includes(form.committeeRole)
-                      ? [form.committeeRole, ...committeeRoleOptions]
-                      : committeeRoleOptions
-                    ).map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
@@ -814,7 +803,12 @@ export function MemberEditorDialog({
                   onValueChange={(value) =>
                     setForm((current) => ({
                       ...current,
-                      role: value as "MEMBER" | "ADMIN",
+                      role: value as
+                        | "MEMBER"
+                        | "ADMIN"
+                        | "LODGE"
+                        | "ASSOCIATE"
+                        | "LIFE",
                     }))
                   }
                 >
@@ -824,6 +818,9 @@ export function MemberEditorDialog({
                   <SelectContent>
                     <SelectItem value="MEMBER">Member</SelectItem>
                     <SelectItem value="ADMIN">Admin</SelectItem>
+                    <SelectItem value="LODGE">Lodge</SelectItem>
+                    <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
+                    <SelectItem value="LIFE">Life Member</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -913,36 +910,22 @@ export function MemberEditorDialog({
               }
             />
 
-            <div className="space-y-2">
-              <Label htmlFor="lifeMemberDate">Life Member</Label>
-              <Input
-                id="lifeMemberDate"
-                type="date"
-                value={form.lifeMemberDate}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    lifeMemberDate: event.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="associateMember"
-                checked={form.associateMember}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    associateMember: event.target.checked,
-                  }))
-                }
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              <Label htmlFor="associateMember">Associate Member</Label>
-            </div>
+            {form.role === "LIFE" && (
+              <div className="space-y-2">
+                <Label htmlFor="lifeMemberDate">Life member from</Label>
+                <Input
+                  id="lifeMemberDate"
+                  type="date"
+                  value={form.lifeMemberDate}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      lifeMemberDate: event.target.value,
+                    }))
+                  }
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="comments">Comments</Label>

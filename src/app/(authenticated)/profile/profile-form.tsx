@@ -35,6 +35,7 @@ interface ProfileFormProps {
     postalRegion: string;
     postalPostalCode: string;
     postalCountry: string;
+    occupation?: string;
   };
   editable?: boolean;
   formId?: string;
@@ -43,6 +44,8 @@ interface ProfileFormProps {
   returnTo?: string | null;
   showSubmitButton?: boolean;
   submitLabel?: string;
+  ageTier?: string;
+  showOccupation?: boolean;
 }
 
 export function ProfileForm({
@@ -54,9 +57,14 @@ export function ProfileForm({
   returnTo,
   showSubmitButton = true,
   submitLabel = "Save Changes",
+  ageTier,
+  showOccupation = false,
 }: ProfileFormProps) {
   const router = useRouter();
   const safeReturnTo = getSafeInternalReturnPath(returnTo);
+  // Occupation is collected for adults only, and only when the club has the
+  // showOccupation field enabled.
+  const showOccupationField = showOccupation && ageTier === "ADULT";
   const [form, setForm] = useState({
     firstName: member.firstName,
     lastName: member.lastName,
@@ -76,6 +84,7 @@ export function ProfileForm({
     postalRegion: member.postalRegion,
     postalPostalCode: member.postalPostalCode,
     postalCountry: withDefaultNzCountry(member.postalCountry),
+    occupation: member.occupation ?? "",
   });
   const [sameAsPhysical, setSameAsPhysical] = useState(
     postalMatchesPhysical({
@@ -249,6 +258,25 @@ export function ProfileForm({
           Used to determine your membership age tier (Adult / Youth / Child / Infant).
         </p>
       </div>
+
+      {showOccupationField ? (
+        <div className="space-y-2">
+          <Label htmlFor="occupation">Occupation</Label>
+          <Input
+            className={readOnlyInputClassName}
+            disabled={saving}
+            id="occupation"
+            name="occupation"
+            readOnly={readOnly}
+            value={form.occupation}
+            onChange={handleChange}
+            maxLength={100}
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional. Your occupation for club records.
+          </p>
+        </div>
+      ) : null}
 
       <MemberAddressFields
         collapsible

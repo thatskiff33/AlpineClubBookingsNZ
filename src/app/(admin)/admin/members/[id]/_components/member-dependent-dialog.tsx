@@ -24,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Search } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import {
   dedupeParentOptions,
   formatMemberDateNz,
@@ -100,6 +101,7 @@ export function MemberDependentDialog({
   onToggleLinkFamilyGroup,
   onSubmitLink,
 }: MemberDependentDialogProps) {
+  const { showTitle, showGender } = useMemberFieldsSettings();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -130,62 +132,68 @@ export function MemberDependentDialog({
                 notifications from the parent email.
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="dependent-title">Title</Label>
-                  <Select
-                    value={createForm.title || "__none__"}
-                    onValueChange={(value) =>
-                      onChangeCreateForm((f) => ({
-                        ...f,
-                        title:
-                          value === "__none__"
-                            ? ""
-                            : (value as DependentForm["title"]),
-                      }))
-                    }
-                  >
-                    <SelectTrigger id="dependent-title">
-                      <SelectValue placeholder="Select title" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {TITLE_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {(showTitle || showGender) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {showTitle && (
+                    <div className="space-y-2">
+                      <Label htmlFor="dependent-title">Title</Label>
+                      <Select
+                        value={createForm.title || "__none__"}
+                        onValueChange={(value) =>
+                          onChangeCreateForm((f) => ({
+                            ...f,
+                            title:
+                              value === "__none__"
+                                ? ""
+                                : (value as DependentForm["title"]),
+                          }))
+                        }
+                      >
+                        <SelectTrigger id="dependent-title">
+                          <SelectValue placeholder="Select title" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">None</SelectItem>
+                          {TITLE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {showGender && (
+                    <div className="space-y-2">
+                      <Label htmlFor="dependent-gender">Gender</Label>
+                      <Select
+                        value={createForm.gender || "__none__"}
+                        onValueChange={(value) =>
+                          onChangeCreateForm((f) => ({
+                            ...f,
+                            gender:
+                              value === "__none__"
+                                ? ""
+                                : (value as DependentForm["gender"]),
+                          }))
+                        }
+                      >
+                        <SelectTrigger id="dependent-gender">
+                          <SelectValue placeholder="Select gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">None</SelectItem>
+                          {GENDER_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dependent-gender">Gender</Label>
-                  <Select
-                    value={createForm.gender || "__none__"}
-                    onValueChange={(value) =>
-                      onChangeCreateForm((f) => ({
-                        ...f,
-                        gender:
-                          value === "__none__"
-                            ? ""
-                            : (value as DependentForm["gender"]),
-                      }))
-                    }
-                  >
-                    <SelectTrigger id="dependent-gender">
-                      <SelectValue placeholder="Select gender" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {GENDER_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">

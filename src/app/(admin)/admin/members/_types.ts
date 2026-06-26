@@ -7,7 +7,7 @@ import type {
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card";
 import type { XeroEntranceFeeInvoiceOptions } from "@/lib/admin-xero-entrance-fee";
 
-export type MemberRole = "MEMBER" | "ADMIN";
+export type MemberRole = "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
 
 export interface Member {
   id: string;
@@ -15,6 +15,7 @@ export interface Member {
   firstName: string;
   lastName: string;
   gender: Gender | null;
+  occupation: string | null;
   email: string;
   phoneCountryCode: string | null;
   phoneAreaCode: string | null;
@@ -28,8 +29,6 @@ export interface Member {
   cancelledAt: string | null;
   cancelledReason: string | null;
   lifeMemberDate: string | null;
-  committeeRole: string | null;
-  associateMember: boolean;
   comments: string | null;
   archivedAt: string | null;
   archivedReason: string | null;
@@ -69,6 +68,7 @@ export interface MemberForm {
   firstName: string;
   lastName: string;
   gender: Gender | "";
+  occupation: string;
   email: string;
   phoneCountryCode: string;
   phoneAreaCode: string;
@@ -82,8 +82,6 @@ export interface MemberForm {
   forcePasswordChange: boolean;
   joinedDate: string;
   lifeMemberDate: string;
-  committeeRole: string;
-  associateMember: boolean;
   comments: string;
   canLogin: boolean;
   streetAddressLine1: string;
@@ -118,6 +116,7 @@ export interface ImportRow {
   firstName: string;
   lastName: string;
   gender?: string;
+  occupation?: string;
   email: string;
   phone?: string;
   phoneCountryCode?: string;

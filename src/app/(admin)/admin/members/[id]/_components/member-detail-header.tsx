@@ -19,7 +19,6 @@ interface MemberDetailHeaderProps {
   pendingDeleteRequest: MemberLifecycleActionRequest | undefined;
   xeroPushing: boolean;
   xeroUnlinking: boolean;
-  adminOnlyFieldsDisabled: boolean;
   onOpenDependentDialog: () => void;
   onOpenLinkXero: () => void;
   onOpenCreateXero: () => void;
@@ -36,7 +35,6 @@ export function MemberDetailHeader({
   pendingDeleteRequest,
   xeroPushing,
   xeroUnlinking,
-  adminOnlyFieldsDisabled,
   onOpenDependentDialog,
   onOpenLinkXero,
   onOpenCreateXero,
@@ -164,11 +162,7 @@ export function MemberDetailHeader({
               </Button>
             </>
           )}
-          <Button
-            size="sm"
-            onClick={onOpenEditDialog}
-            disabled={adminOnlyFieldsDisabled}
-          >
+          <Button size="sm" onClick={onOpenEditDialog}>
             <Pencil className="h-4 w-4 mr-1" />
             Edit Member
           </Button>

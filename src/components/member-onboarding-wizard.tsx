@@ -62,6 +62,7 @@ interface ProfileFormMember {
   postalRegion: string;
   postalPostalCode: string;
   postalCountry: string;
+  occupation?: string;
 }
 
 interface FamilyMember {
@@ -108,6 +109,8 @@ interface OnboardingData {
   currentMember: {
     id: string;
     name: string;
+    ageTier: string;
+    showOccupation: boolean;
     profile: ProfileFormMember;
     status: OnboardingStatus;
     needsOwnDetailsConfirmation: boolean;
@@ -331,6 +334,8 @@ export function MemberOnboardingWizard({
                   member={data.currentMember.profile}
                   onSaved={loadOnboarding}
                   submitLabel="Save and continue"
+                  ageTier={data.currentMember.ageTier}
+                  showOccupation={data.currentMember.showOccupation}
                 />
               </div>
             ) : null}

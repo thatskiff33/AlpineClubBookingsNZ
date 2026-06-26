@@ -264,11 +264,11 @@ describe("member CSV import parser", () => {
     );
   });
 
-  it("maps structured street address, life member date, associate member, and comments", () => {
+  it("maps structured street address, life member date, occupation, and comments", () => {
     const parsed = parseMemberImportCsv(
       [
-        "First Name,Last Name,Email,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Life Member Date,Associate Member,Comments",
-        "Alice,Anderson,alice@example.com,12 Hill Rd,Unit 2,Wellington,Wellington,New Zealand,6011,2024-05-01,Yes,Prefers email",
+        "First Name,Last Name,Email,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Life Member Date,Occupation,Comments",
+        "Alice,Anderson,alice@example.com,12 Hill Rd,Unit 2,Wellington,Wellington,New Zealand,6011,2024-05-01,Mountain Guide,Prefers email",
       ].join("\n"),
     );
 
@@ -287,7 +287,7 @@ describe("member CSV import parser", () => {
       streetCountry: "New Zealand",
       streetPostalCode: "6011",
       lifeMemberDate: "2024-05-01",
-      associateMember: "Yes",
+      occupation: "Mountain Guide",
       comments: "Prefers email",
     });
     expect(preview.rows[0].normalizedDateValues).toMatchObject({
@@ -295,11 +295,11 @@ describe("member CSV import parser", () => {
     });
   });
 
-  it("flags an unrecognised associate member value", () => {
+  it("flags an occupation longer than 100 characters", () => {
     const parsed = parseMemberImportCsv(
       [
-        "First Name,Last Name,Email,Associate Member",
-        "Alice,Anderson,alice@example.com,maybe",
+        "First Name,Last Name,Email,Occupation",
+        `Alice,Anderson,alice@example.com,${"a".repeat(101)}`,
       ].join("\n"),
     );
 
@@ -313,9 +313,7 @@ describe("member CSV import parser", () => {
 
     expect(preview.hasErrors).toBe(true);
     expect(
-      preview.rows[0].errors.some((error) =>
-        error.includes("Associate Member"),
-      ),
+      preview.rows[0].errors.some((error) => error.includes("Occupation")),
     ).toBe(true);
   });
 

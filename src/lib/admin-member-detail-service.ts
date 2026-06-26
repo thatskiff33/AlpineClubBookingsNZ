@@ -58,6 +58,7 @@ export const updateMemberSchema = z.object({
   firstName: nameField({ required: "First name is required" }).optional(),
   lastName: nameField({ required: "Last name is required" }).optional(),
   gender: genderEnum.optional().nullable(),
+  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
   email: z.string().email("Invalid email address").optional(),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
@@ -68,7 +69,7 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  role: z.enum(["MEMBER", "ADMIN"]).optional(),
+  role: z.enum(["MEMBER", "ADMIN", "LODGE", "ASSOCIATE", "LIFE"]).optional(),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
@@ -88,8 +89,6 @@ export const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  committeeRole: z.string().max(100).optional().nullable().or(z.literal("")),
-  associateMember: z.boolean().optional(),
   comments: z.string().max(4000).optional().nullable().or(z.literal("")),
   // Addresses
   streetAddressLine1: maxStr(200),
@@ -133,6 +132,7 @@ const ADMIN_MEMBER_AUDIT_FIELDS = [
   "firstName",
   "lastName",
   "gender",
+  "occupation",
   "email",
   ...PHONE_FIELDS,
   ...ADDRESS_FIELDS,
@@ -140,14 +140,12 @@ const ADMIN_MEMBER_AUDIT_FIELDS = [
   "ageTier",
   "joinedDate",
   "lifeMemberDate",
-  "committeeRole",
   "role",
   "financeAccessLevel",
   "active",
   "canLogin",
   "forcePasswordChange",
   "requiresInduction",
-  "associateMember",
   "comments",
   "inheritEmailFromId",
 ] as const;
@@ -307,8 +305,7 @@ export async function getAdminMemberDetail(params: {
         xeroContactId: true,
         joinedDate: true,
         lifeMemberDate: true,
-        committeeRole: true,
-        associateMember: true,
+        occupation: true,
         requiresInduction: true,
         cancelledAt: true,
         cancelledReason: true,
@@ -650,6 +647,8 @@ export async function updateAdminMember(params: {
     updateData.firstName = data.firstName.trim();
   if (data.lastName !== undefined) updateData.lastName = data.lastName.trim();
   if (data.gender !== undefined) updateData.gender = data.gender ?? null;
+  if (data.occupation !== undefined)
+    updateData.occupation = data.occupation?.trim() || null;
   for (const f of PHONE_FIELDS) {
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
@@ -669,8 +668,6 @@ export async function updateAdminMember(params: {
     updateData.forcePasswordChange = data.forcePasswordChange;
   if (data.requiresInduction !== undefined)
     updateData.requiresInduction = data.requiresInduction;
-  if (data.associateMember !== undefined)
-    updateData.associateMember = data.associateMember;
   if (data.inheritEmailFromId !== undefined) {
     updateData.inheritEmailFromId = data.inheritEmailFromId?.trim() || null;
   }
@@ -721,10 +718,6 @@ export async function updateAdminMember(params: {
     } else {
       updateData.lifeMemberDate = null;
     }
-  }
-
-  if (data.committeeRole !== undefined) {
-    updateData.committeeRole = data.committeeRole;
   }
 
   if (data.comments !== undefined) {
@@ -778,6 +771,7 @@ export async function updateAdminMember(params: {
           firstName: true,
           lastName: true,
           gender: true,
+          occupation: true,
           email: true,
           phoneCountryCode: true,
           phoneAreaCode: true,
@@ -795,8 +789,6 @@ export async function updateAdminMember(params: {
           xeroContactId: true,
           joinedDate: true,
           lifeMemberDate: true,
-          committeeRole: true,
-          associateMember: true,
           requiresInduction: true,
           cancelledAt: true,
           comments: true,
@@ -832,6 +824,7 @@ export async function updateAdminMember(params: {
               name: hasAnyField(changedFields, ["firstName", "lastName"]),
               title: changedFields.includes("title"),
               gender: changedFields.includes("gender"),
+              occupation: changedFields.includes("occupation"),
               email: changedFields.includes("email"),
               phone: hasAnyField(changedFields, PHONE_FIELDS),
               address: hasAnyField(changedFields, ADDRESS_FIELDS),
@@ -840,8 +833,6 @@ export async function updateAdminMember(params: {
               ageTier: changedFields.includes("ageTier"),
               joinedDate: changedFields.includes("joinedDate"),
               lifeMemberDate: changedFields.includes("lifeMemberDate"),
-              committeeRole: changedFields.includes("committeeRole"),
-              associateMember: changedFields.includes("associateMember"),
               comments: changedFields.includes("comments"),
               emailInheritance: changedFields.includes("inheritEmailFromId"),
             },

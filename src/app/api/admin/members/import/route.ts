@@ -23,11 +23,12 @@ import {
   MEMBER_IMPORT_DATE_FIELD_KEYS,
   MEMBER_IMPORT_DATE_FORMAT_VALUES,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
+  MEMBER_IMPORT_OCCUPATION_MAX_LENGTH,
   normalizeMemberImportDateValue,
-  parseMemberImportBoolean,
   type MemberImportDateFieldKey,
   type MemberImportDateFormatMapping,
 } from "@/lib/member-csv-import";
+import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
   TITLE_OPTIONS,
@@ -46,6 +47,7 @@ const importRowSchema = z
     firstName: nullableImportString(100),
     lastName: nullableImportString(100),
     gender: nullableImportString(40),
+    occupation: nullableImportString(MEMBER_IMPORT_OCCUPATION_MAX_LENGTH),
     email: z.string().email("Invalid email address"),
     phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
     phoneCountryCode: z.string().max(5).optional().nullable(),
@@ -72,7 +74,6 @@ const importRowSchema = z
       MEMBER_IMPORT_ADDRESS_MAX_LENGTHS.streetPostalCode,
     ),
     lifeMemberDate: z.string().max(32).optional().nullable(),
-    associateMember: z.string().max(20).optional().nullable(),
     comments: nullableImportString(MEMBER_IMPORT_COMMENTS_MAX_LENGTH),
     role: z.enum(["MEMBER", "ADMIN"]).optional().default("MEMBER"),
     sourceLineNumber: z.number().int().positive().optional(),
@@ -208,6 +209,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { rows, sendInvites } = parsed.data;
+  // Optional-field visibility settings. When a field is switched off club-wide
+  // we ignore any value present in the CSV rather than importing it.
+  const flags = await loadMemberFieldsFlags();
   const dateFormats: MemberImportDateFormatMapping = {
     dateOfBirth:
       parsed.data.dateFormats?.dateOfBirth ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
@@ -262,6 +266,7 @@ export async function POST(req: NextRequest) {
     firstName: string;
     lastName: string;
     gender: Gender | null;
+    occupation: string | null;
     phoneCountryCode: string | null;
     phoneAreaCode: string | null;
     phoneNumber: string | null;
@@ -274,7 +279,6 @@ export async function POST(req: NextRequest) {
     streetCountry: string | null;
     streetPostalCode: string | null;
     lifeMemberDate: Date | null;
-    associateMember: boolean;
     comments: string | null;
     ageTier: AgeTier;
     role: "MEMBER" | "ADMIN";
@@ -322,25 +326,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const associateMember = parseMemberImportBoolean(row.associateMember);
-    if (associateMember === null) {
-      rowErrors.push(
-        `Associate Member${getImportColumnContext(row, "associateMember")} must be Yes or No`,
-      );
+    // Title/Gender are only parsed and validated when the field is enabled
+    // club-wide; when disabled any CSV value is ignored.
+    let title: Title | null | undefined = null;
+    if (flags.showTitle) {
+      title = parseTitleValue(row.title);
+      if (title === undefined) {
+        rowErrors.push(
+          `Title${getImportColumnContext(row, "title")} must be one of ${TITLE_OPTIONS.map((option) => option.label).join(", ")}`,
+        );
+      }
     }
 
-    const title = parseTitleValue(row.title);
-    if (title === undefined) {
-      rowErrors.push(
-        `Title${getImportColumnContext(row, "title")} must be one of ${TITLE_OPTIONS.map((option) => option.label).join(", ")}`,
-      );
-    }
-
-    const gender = parseGenderValue(row.gender);
-    if (gender === undefined) {
-      rowErrors.push(
-        `Gender${getImportColumnContext(row, "gender")} must be one of ${GENDER_OPTIONS.map((option) => option.label).join(", ")}`,
-      );
+    let gender: Gender | null | undefined = null;
+    if (flags.showGender) {
+      gender = parseGenderValue(row.gender);
+      if (gender === undefined) {
+        rowErrors.push(
+          `Gender${getImportColumnContext(row, "gender")} must be one of ${GENDER_OPTIONS.map((option) => option.label).join(", ")}`,
+        );
+      }
     }
 
     if (rowErrors.length > 0) {
@@ -359,6 +364,12 @@ export async function POST(req: NextRequest) {
       )) as AgeTier;
     }
 
+    // Occupation is adult-only and gated by the club-wide field setting.
+    const occupation =
+      flags.showOccupation && ageTier === "ADULT"
+        ? row.occupation?.trim() || null
+        : null;
+
     validatedRows.push({
       rowNum,
       email,
@@ -366,6 +377,7 @@ export async function POST(req: NextRequest) {
       firstName: names.firstName,
       lastName: names.lastName,
       gender: gender ?? null,
+      occupation,
       phoneCountryCode: row.phoneCountryCode?.trim() || null,
       phoneAreaCode: row.phoneAreaCode?.trim() || null,
       phoneNumber: row.phoneNumber?.trim() || row.phone?.trim() || null,
@@ -378,7 +390,6 @@ export async function POST(req: NextRequest) {
       streetCountry: row.streetCountry?.trim() || null,
       streetPostalCode: row.streetPostalCode?.trim() || null,
       lifeMemberDate,
-      associateMember: associateMember ?? false,
       comments: row.comments?.trim() || null,
       ageTier,
       role: (row.role || "MEMBER") as "MEMBER" | "ADMIN",
@@ -423,6 +434,7 @@ export async function POST(req: NextRequest) {
               firstName: row.firstName,
               lastName: row.lastName,
               gender: row.gender,
+              occupation: row.occupation,
               phoneCountryCode: row.phoneCountryCode,
               phoneAreaCode: row.phoneAreaCode,
               phoneNumber: row.phoneNumber,
@@ -435,7 +447,6 @@ export async function POST(req: NextRequest) {
               streetCountry: row.streetCountry,
               streetPostalCode: row.streetPostalCode,
               lifeMemberDate: row.lifeMemberDate,
-              associateMember: row.associateMember,
               comments: row.comments,
               role: row.role,
               ageTier: row.ageTier,

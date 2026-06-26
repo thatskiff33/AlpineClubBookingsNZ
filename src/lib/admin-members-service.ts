@@ -58,6 +58,7 @@ export const createMemberSchema = z.object({
   firstName: nameField({ required: "First name is required" }),
   lastName: nameField({ required: "Last name is required" }),
   gender: genderEnum.optional().nullable(),
+  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
@@ -66,7 +67,9 @@ export const createMemberSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
     .optional()
     .nullable(),
-  role: z.enum(["MEMBER", "ADMIN"]).default("MEMBER"),
+  role: z
+    .enum(["MEMBER", "ADMIN", "LODGE", "ASSOCIATE", "LIFE"])
+    .default("MEMBER"),
   financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
   ageTier: ageTierEnum.optional(),
   active: z.boolean().default(true),
@@ -88,8 +91,6 @@ export const createMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
-  committeeRole: z.string().max(100).optional().nullable().or(z.literal("")),
-  associateMember: z.boolean().optional(),
   comments: z.string().max(4000).optional().nullable().or(z.literal("")),
   streetAddressLine1: maxStr(200),
   streetAddressLine2: maxStr(200),
@@ -484,6 +485,7 @@ export async function listAdminMembers(
     firstName: true,
     lastName: true,
     gender: true,
+    occupation: true,
     email: true,
     phoneCountryCode: true,
     phoneAreaCode: true,
@@ -526,6 +528,8 @@ export async function listAdminMembers(
     },
     xeroContactId: true,
     joinedDate: true,
+    lifeMemberDate: true,
+    comments: true,
     createdAt: true,
     forcePasswordChange: true,
     passwordChangedAt: true,
@@ -757,8 +761,6 @@ export async function createAdminMember(
       return jsonResult({ error: "Invalid life member date" }, { status: 422 });
     }
   }
-  const committeeRole = data.committeeRole ?? null;
-
   // Determine canLogin: explicit if provided, otherwise adult members without a parent can log in
   const canLogin =
     data.canLogin !== undefined
@@ -817,6 +819,7 @@ export async function createAdminMember(
           firstName: data.firstName.trim(),
           lastName: data.lastName.trim(),
           gender: data.gender ?? null,
+          occupation: data.occupation?.trim() || null,
           phoneCountryCode: data.phoneCountryCode?.trim() || null,
           phoneAreaCode: data.phoneAreaCode?.trim() || null,
           phoneNumber: data.phoneNumber?.trim() || null,
@@ -834,8 +837,6 @@ export async function createAdminMember(
           emailVerified: !canLogin, // Non-login members don't need verification
           joinedDate,
           lifeMemberDate,
-          committeeRole,
-          associateMember: data.associateMember ?? false,
           comments: data.comments?.trim() || null,
           streetAddressLine1: data.streetAddressLine1?.trim() || null,
           streetAddressLine2: data.streetAddressLine2?.trim() || null,
@@ -872,8 +873,7 @@ export async function createAdminMember(
           xeroContactId: true,
           joinedDate: true,
           lifeMemberDate: true,
-          committeeRole: true,
-          associateMember: true,
+          occupation: true,
           cancelledAt: true,
           comments: true,
           createdAt: true,

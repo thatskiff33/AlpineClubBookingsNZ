@@ -35,14 +35,14 @@ declare module "next-auth" {
       id: string;
       email: string;
       name: string;
-      role: "MEMBER" | "ADMIN" | "LODGE";
+      role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
       sessionInvalidated?: boolean;
     };
   }
   interface User {
-    role: "MEMBER" | "ADMIN" | "LODGE";
+    role: "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
     forcePasswordChange: boolean;
     isEmailVerified: boolean;
   }
@@ -163,7 +163,7 @@ export const authConfig = {
       return token;
     },
     async session({ session, token }) {
-      session.user.role = token.role as "MEMBER" | "ADMIN" | "LODGE";
+      session.user.role = token.role as "MEMBER" | "ADMIN" | "LODGE" | "ASSOCIATE" | "LIFE";
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;

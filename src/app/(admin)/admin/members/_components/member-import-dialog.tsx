@@ -264,6 +264,9 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
               Gender
             </TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">
+              Occupation
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
               Email
             </TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">
@@ -298,6 +301,7 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
               <TableCell>{row.values.firstName}</TableCell>
               <TableCell>{row.values.lastName}</TableCell>
               <TableCell>{row.values.gender}</TableCell>
+              <TableCell>{row.values.occupation}</TableCell>
               <TableCell className="break-all">{row.values.email}</TableCell>
               <TableCell>
                 {row.normalizedDateValues.dateOfBirth ||

@@ -28,7 +28,12 @@ export async function POST() {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  if (!member.active || !member.canLogin || member.role !== "MEMBER") {
+  const MEMBER_LEVEL_ROLES = ["MEMBER", "ASSOCIATE", "LIFE"];
+  if (
+    !member.active ||
+    !member.canLogin ||
+    !MEMBER_LEVEL_ROLES.includes(member.role)
+  ) {
     return NextResponse.json(
       { error: "Onboarding confirmation is only available to active login-capable member accounts" },
       { status: 403 }

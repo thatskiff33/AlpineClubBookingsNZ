@@ -6,6 +6,8 @@ import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
 import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
+import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
+import { createAuditLog } from "@/lib/audit";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = [
@@ -25,8 +27,22 @@ const MEMBER_LIFECYCLE_STATUS_FILTERS = [
 /**
  * Escape a value for RFC 4180 CSV format.
  * Wraps in double-quotes if value contains comma, quote, or newline.
+ * Also guards against CSV/formula injection: values whose first character could
+ * be interpreted as a formula by a spreadsheet (= + - @, tab, or CR) are
+ * prefixed with a single quote before the RFC-4180 quoting logic runs.
  */
 function csvEscape(value: string): string {
+  const firstChar = value.charAt(0);
+  if (
+    firstChar === "=" ||
+    firstChar === "+" ||
+    firstChar === "-" ||
+    firstChar === "@" ||
+    firstChar === "\t" ||
+    firstChar === "\r"
+  ) {
+    value = "'" + value;
+  }
   if (
     value.includes('"') ||
     value.includes(",") ||
@@ -46,6 +62,7 @@ function csvEscape(value: string): string {
 export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
+  const flags = await loadMemberFieldsFlags();
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q") || undefined;
   const now = new Date();
@@ -217,6 +234,7 @@ export async function GET(req: NextRequest) {
         firstName: true,
         lastName: true,
         gender: true,
+        occupation: true,
         email: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
@@ -237,7 +255,6 @@ export async function GET(req: NextRequest) {
         streetCountry: true,
         streetPostalCode: true,
         lifeMemberDate: true,
-        associateMember: true,
         comments: true,
         subscriptions: {
           where: { seasonYear: currentSeasonYear },
@@ -247,72 +264,150 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const headers = [
-      "Title",
-      "First Name",
-      "Last Name",
-      "Gender",
-      "Email",
-      "Phone Country Code",
-      "Phone Area Code",
-      "Phone Number",
-      "Street Address Line 1",
-      "Street Address Line 2",
-      "City",
-      "Region",
-      "Country",
-      "Postal Code",
-      "Date of Birth",
-      "Life Member Date",
-      "Role",
-      "Age Tier",
-      "Associate Member",
-      "Active",
-      "Cancelled At",
-      "Archived At",
-      "Xero Contact ID",
-      "Subscription Status",
-      "Comments",
-      "Created At",
-    ];
+    // Column descriptors. Optional fields gated by club settings are filtered
+    // out below so the header row and every data row stay aligned.
+    type MemberRow = (typeof members)[number];
+    const columns: Array<{ header: string; value: (m: MemberRow) => string }> =
+      [
+        ...(flags.showTitle
+          ? [
+              {
+                header: "Title",
+                value: (m: MemberRow) => csvEscape(formatTitleLabel(m.title)),
+              },
+            ]
+          : []),
+        { header: "First Name", value: (m: MemberRow) => csvEscape(m.firstName) },
+        { header: "Last Name", value: (m: MemberRow) => csvEscape(m.lastName) },
+        ...(flags.showGender
+          ? [
+              {
+                header: "Gender",
+                value: (m: MemberRow) => csvEscape(formatGenderLabel(m.gender)),
+              },
+            ]
+          : []),
+        ...(flags.showOccupation
+          ? [
+              {
+                header: "Occupation",
+                value: (m: MemberRow) => csvEscape(m.occupation || ""),
+              },
+            ]
+          : []),
+        { header: "Email", value: (m: MemberRow) => csvEscape(m.email) },
+        {
+          header: "Phone Country Code",
+          value: (m: MemberRow) => csvEscape(m.phoneCountryCode || ""),
+        },
+        {
+          header: "Phone Area Code",
+          value: (m: MemberRow) => csvEscape(m.phoneAreaCode || ""),
+        },
+        {
+          header: "Phone Number",
+          value: (m: MemberRow) => csvEscape(m.phoneNumber || ""),
+        },
+        {
+          header: "Street Address Line 1",
+          value: (m: MemberRow) => csvEscape(m.streetAddressLine1 || ""),
+        },
+        {
+          header: "Street Address Line 2",
+          value: (m: MemberRow) => csvEscape(m.streetAddressLine2 || ""),
+        },
+        { header: "City", value: (m: MemberRow) => csvEscape(m.streetCity || "") },
+        {
+          header: "Region",
+          value: (m: MemberRow) => csvEscape(m.streetRegion || ""),
+        },
+        {
+          header: "Country",
+          value: (m: MemberRow) => csvEscape(m.streetCountry || ""),
+        },
+        {
+          header: "Postal Code",
+          value: (m: MemberRow) => csvEscape(m.streetPostalCode || ""),
+        },
+        {
+          header: "Date of Birth",
+          value: (m: MemberRow) =>
+            m.dateOfBirth
+              ? new Date(m.dateOfBirth).toISOString().split("T")[0]
+              : "",
+        },
+        {
+          header: "Life Member Date",
+          value: (m: MemberRow) =>
+            m.lifeMemberDate
+              ? new Date(m.lifeMemberDate).toISOString().split("T")[0]
+              : "",
+        },
+        { header: "Role", value: (m: MemberRow) => m.role },
+        { header: "Age Tier", value: (m: MemberRow) => m.ageTier },
+        { header: "Active", value: (m: MemberRow) => (m.active ? "Yes" : "No") },
+        {
+          header: "Cancelled At",
+          value: (m: MemberRow) =>
+            m.cancelledAt ? new Date(m.cancelledAt).toISOString() : "",
+        },
+        {
+          header: "Archived At",
+          value: (m: MemberRow) =>
+            m.archivedAt ? new Date(m.archivedAt).toISOString() : "",
+        },
+        {
+          header: "Xero Contact ID",
+          value: (m: MemberRow) => m.xeroContactId || "",
+        },
+        {
+          header: "Subscription Status",
+          value: (m: MemberRow) =>
+            m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+              ? "NOT_REQUIRED"
+              : m.subscriptions[0]?.status || "NONE",
+        },
+        { header: "Comments", value: (m: MemberRow) => csvEscape(m.comments || "") },
+        {
+          header: "Created At",
+          value: (m: MemberRow) => new Date(m.createdAt).toISOString(),
+        },
+      ];
 
-    const rows = members.map((m) => [
-      csvEscape(formatTitleLabel(m.title)),
-      csvEscape(m.firstName),
-      csvEscape(m.lastName),
-      csvEscape(formatGenderLabel(m.gender)),
-      csvEscape(m.email),
-      csvEscape(m.phoneCountryCode || ""),
-      csvEscape(m.phoneAreaCode || ""),
-      csvEscape(m.phoneNumber || ""),
-      csvEscape(m.streetAddressLine1 || ""),
-      csvEscape(m.streetAddressLine2 || ""),
-      csvEscape(m.streetCity || ""),
-      csvEscape(m.streetRegion || ""),
-      csvEscape(m.streetCountry || ""),
-      csvEscape(m.streetPostalCode || ""),
-      m.dateOfBirth ? new Date(m.dateOfBirth).toISOString().split("T")[0] : "",
-      m.lifeMemberDate
-        ? new Date(m.lifeMemberDate).toISOString().split("T")[0]
-        : "",
-      m.role,
-      m.ageTier,
-      m.associateMember ? "Yes" : "No",
-      m.active ? "Yes" : "No",
-      m.cancelledAt ? new Date(m.cancelledAt).toISOString() : "",
-      m.archivedAt ? new Date(m.archivedAt).toISOString() : "",
-      m.xeroContactId || "",
-      m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
-        ? "NOT_REQUIRED"
-        : m.subscriptions[0]?.status || "NONE",
-      csvEscape(m.comments || ""),
-      new Date(m.createdAt).toISOString(),
-    ]);
+    const headers = columns.map((column) => column.header);
+    const rows = members.map((m) => columns.map((column) => column.value(m)));
 
     const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join(
       "\r\n",
     );
     const today = new Date().toISOString().split("T")[0];
+
+    // Privacy audit: record that a members CSV was exported. Only the applied
+    // filters and the row count are stored — never member row contents.
+    await createAuditLog({
+      action: "member.exported",
+      memberId: guard.session.user.id,
+      category: "privacy",
+      severity: "info",
+      outcome: "success",
+      summary: "Exported members CSV",
+      metadata: {
+        filters: {
+          q: sp.get("q"),
+          role: sp.get("role"),
+          lifecycleStatus: sp.get("lifecycleStatus"),
+          includeArchived: sp.get("includeArchived"),
+          active: sp.get("active"),
+          ageTier: sp.get("ageTier"),
+          xeroLinked: sp.get("xeroLinked"),
+          financeAccess: sp.get("financeAccess"),
+          inviteStatus: sp.get("inviteStatus"),
+          subscription: sp.get("subscription"),
+          familyGroup: sp.get("familyGroup"),
+        },
+        rowCount: members.length,
+      },
+    });
 
     return new Response(csv, {
       status: 200,

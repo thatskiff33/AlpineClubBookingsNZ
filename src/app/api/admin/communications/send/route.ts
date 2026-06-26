@@ -98,7 +98,7 @@ export async function POST(request: Request) {
   // Build recipient query
   const whereClause: Record<string, unknown> = { active: true };
   if (recipientFilter === "members-only") {
-    whereClause.role = "MEMBER";
+    whereClause.role = { in: ["MEMBER", "ASSOCIATE", "LIFE"] };
   } else if (recipientFilter === "admins-only") {
     whereClause.role = "ADMIN";
   } else if (recipientFilter === "custom") {

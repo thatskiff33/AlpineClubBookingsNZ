@@ -24,6 +24,9 @@ import {
   getAuditRequestContext,
 } from "@/lib/audit";
 import { nameField } from "@/lib/zod-helpers";
+import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
+
+const MEMBER_LEVEL_ROLES = ["MEMBER", "ASSOCIATE", "LIFE"];
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -53,6 +56,7 @@ const profileSchema = z.object({
   postalRegion: maxStr(200),
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
+  occupation: z.string().max(100).optional().nullable().or(z.literal("")),
   postalSameAsPhysical: z.boolean().optional(),
 });
 
@@ -67,6 +71,7 @@ const PROFILE_AUDIT_FIELDS = [
   "ageTier",
   ...STREET_FIELDS,
   ...POSTAL_FIELDS,
+  "occupation",
   "profileCompletedAt",
 ] as const;
 const PROFILE_XERO_SYNC_SELECT = {
@@ -80,6 +85,7 @@ const PROFILE_XERO_SYNC_SELECT = {
   phoneNumber: true,
   dateOfBirth: true,
   ageTier: true,
+  occupation: true,
   email: true,
   xeroContactId: true,
   streetAddressLine1: true,
@@ -217,7 +223,18 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  if (existing.canLogin && existing.role === "MEMBER") {
+  // Occupation: adult-only and gated behind the admin showOccupation flag.
+  // Use the freshly computed ageTier when DOB was supplied, otherwise the
+  // member's existing ageTier. If not adult or the flag is off, leave the
+  // stored occupation untouched.
+  const flags = await loadMemberFieldsFlags();
+  const effectiveAgeTier =
+    (updateData.ageTier as string | undefined) ?? existing.ageTier;
+  if (flags.showOccupation && effectiveAgeTier === "ADULT") {
+    updateData.occupation = data.occupation?.trim() || null;
+  }
+
+  if (existing.canLogin && MEMBER_LEVEL_ROLES.includes(existing.role)) {
     const profileCompleteness = evaluateSelfServiceProfilePayload({
       firstName: updateData.firstName as string | null | undefined,
       lastName: updateData.lastName as string | null | undefined,
@@ -289,6 +306,7 @@ export async function PUT(req: NextRequest) {
               ]),
               dateOfBirth: changedFields.includes("dateOfBirth"),
               ageTier: changedFields.includes("ageTier"),
+              occupation: changedFields.includes("occupation"),
               profileCompleted: changedFields.includes("profileCompletedAt"),
             },
             postalSameAsPhysical: data.postalSameAsPhysical === true,

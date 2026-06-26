@@ -40,8 +40,11 @@ interface ProfileDetailsCardProps {
     postalRegion: string;
     postalPostalCode: string;
     postalCountry: string;
+    occupation?: string;
   };
   returnTo?: string | null;
+  ageTier?: string;
+  showOccupation?: boolean;
 }
 
 const PROFILE_DETAILS_FORM_ID = "profile-details-form";
@@ -144,6 +147,8 @@ export function ProfileDetailsPageActions() {
 export function ProfileDetailsCard({
   member,
   returnTo,
+  ageTier,
+  showOccupation,
 }: ProfileDetailsCardProps) {
   const { isEditing, isExpanded, setIsEditing, setIsExpanded, setIsSaving } =
     useProfileDetails();
@@ -187,6 +192,8 @@ export function ProfileDetailsCard({
           onSavingChange={setIsSaving}
           returnTo={returnTo}
           showSubmitButton={false}
+          ageTier={ageTier}
+          showOccupation={showOccupation}
         />
       </CardContent>
     </Card>

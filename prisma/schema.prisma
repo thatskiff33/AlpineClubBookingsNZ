@@ -17,6 +17,11 @@ enum Role {
   MEMBER
   ADMIN
   LODGE
+  // Membership categories. These carry the SAME access as MEMBER; only ADMIN and
+  // LODGE grant elevated access. Treat ASSOCIATE and LIFE as ordinary members in
+  // every permission check.
+  ASSOCIATE
+  LIFE
 }
 
 enum FinanceAccessLevel {
@@ -281,6 +286,9 @@ model Member {
   lastName            String
   gender              Gender?
   dateOfBirth         DateTime?
+  // Free-text occupation. Optional, adult-only, and admin-toggleable via
+  // MemberFieldsSettings.showOccupation.
+  occupation          String?
 
   // Structured phone (matches Xero's countryCode/areaCode/number format)
   phoneCountryCode String? // e.g. "64"
@@ -314,9 +322,9 @@ model Member {
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
   joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
+  // Date the member was granted life membership. Only meaningful when role is
+  // LIFE; surfaced in the editor when that membership category is selected.
   lifeMemberDate                      DateTime?
-  committeeRole                       String?
-  associateMember                     Boolean            @default(false)
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   cancelledAt                         DateTime?
   cancelledReason                     String?
@@ -1128,6 +1136,22 @@ model BedAllocationSettings {
   updatedByMemberId     String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+// Single-row ("default") club setting controlling which optional member fields
+// are collected/displayed. Defaults are ON to preserve existing behaviour; a
+// club can switch a field off to avoid collecting data it does not need
+// (Privacy Act minimisation). Gates UI, onboarding/profile capture and CSV.
+model MemberFieldsSettings {
+  id                String   @id @default("default")
+  showTitle         Boolean  @default(true)
+  showGender        Boolean  @default(true)
+  showOccupation    Boolean  @default(true)
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([updatedByMemberId])
 }

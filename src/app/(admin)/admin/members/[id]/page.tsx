@@ -79,8 +79,7 @@ const defaultEditForm: EditForm = {
   dateOfBirth: "",
   joinedDate: "",
   lifeMemberDate: "",
-  committeeRole: "",
-  associateMember: false,
+  occupation: "",
   comments: "",
   role: "MEMBER",
   ageTier: "ADULT",
@@ -830,8 +829,7 @@ export default function MemberDetailPage({
       lifeMemberDate: member.lifeMemberDate
         ? new Date(member.lifeMemberDate).toISOString().split("T")[0]
         : "",
-      committeeRole: member.committeeRole || "",
-      associateMember: member.associateMember,
+      occupation: member.occupation ?? "",
       comments: member.comments || "",
       role: member.role,
       ageTier: member.ageTier,
@@ -992,8 +990,7 @@ export default function MemberDetailPage({
           dateOfBirth: form.dateOfBirth || null,
           joinedDate: form.joinedDate || null,
           lifeMemberDate: form.lifeMemberDate || null,
-          committeeRole: form.committeeRole || null,
-          associateMember: form.associateMember,
+          occupation: form.occupation || null,
           comments: form.comments || null,
           role: form.role,
           ageTier: form.ageTier,
@@ -1577,7 +1574,6 @@ export default function MemberDetailPage({
   };
 
   const isSelf = session?.user?.id === id;
-  const adminOnlyFieldsDisabled = session?.user?.role !== "ADMIN";
 
   if (loading) {
     return (
@@ -1666,7 +1662,6 @@ export default function MemberDetailPage({
         pendingDeleteRequest={pendingDeleteRequest}
         xeroPushing={xeroPushing}
         xeroUnlinking={xeroUnlinking}
-        adminOnlyFieldsDisabled={adminOnlyFieldsDisabled}
         onOpenDependentDialog={openDependentDialog}
         onOpenLinkXero={openLinkXero}
         onOpenCreateXero={openCreateXero}
@@ -1967,7 +1962,6 @@ export default function MemberDetailPage({
         saving={saving}
         isSelf={isSelf}
         memberLifecycleLocked={memberLifecycleLocked}
-        adminOnlyFieldsDisabled={adminOnlyFieldsDisabled}
         postalSameAsPhysical={editPostalSameAsPhysical}
         selectedInheritEmailSource={selectedInheritEmailSource}
         inheritEmailSearch={inheritEmailSearch}

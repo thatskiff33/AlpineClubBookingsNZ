@@ -188,6 +188,7 @@ const navSections: NavSection[] = [
         icon: CalendarRange,
       },
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/member-fields", label: "Member Fields", icon: Sliders },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
       {
         href: "/admin/booking-policies",

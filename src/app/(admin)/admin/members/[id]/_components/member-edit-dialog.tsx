@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCommitteeRoleOptions } from "@/lib/use-committee-role-options";
+import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { ExternalLink, Link2, Plus } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
@@ -43,7 +43,6 @@ interface MemberEditDialogProps {
   saving: boolean;
   isSelf: boolean;
   memberLifecycleLocked: boolean;
-  adminOnlyFieldsDisabled: boolean;
   postalSameAsPhysical: boolean;
   // inherit email search
   selectedInheritEmailSource: EmailInheritanceSearchResult | null;
@@ -88,7 +87,6 @@ export function MemberEditDialog({
   saving,
   isSelf,
   memberLifecycleLocked,
-  adminOnlyFieldsDisabled,
   postalSameAsPhysical,
   selectedInheritEmailSource,
   inheritEmailSearch,
@@ -121,7 +119,7 @@ export function MemberEditDialog({
   onXeroUnlink,
   onSubmit,
 }: MemberEditDialogProps) {
-  const committeeRoleOptions = useCommitteeRoleOptions();
+  const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -170,58 +168,68 @@ export function MemberEditDialog({
                 : ""}
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-title">Title</Label>
-              <Select
-                value={form.title || "__none__"}
-                onValueChange={(value) =>
-                  onChangeForm((f) => ({
-                    ...f,
-                    title:
-                      value === "__none__" ? "" : (value as EditForm["title"]),
-                  }))
-                }
-              >
-                <SelectTrigger id="edit-title">
-                  <SelectValue placeholder="Select title" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  {TITLE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          {(showTitle || showGender) && (
+            <div className="grid grid-cols-2 gap-4">
+              {showTitle && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-title">Title</Label>
+                  <Select
+                    value={form.title || "__none__"}
+                    onValueChange={(value) =>
+                      onChangeForm((f) => ({
+                        ...f,
+                        title:
+                          value === "__none__"
+                            ? ""
+                            : (value as EditForm["title"]),
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="edit-title">
+                      <SelectValue placeholder="Select title" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None</SelectItem>
+                      {TITLE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {showGender && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-gender">Gender</Label>
+                  <Select
+                    value={form.gender || "__none__"}
+                    onValueChange={(value) =>
+                      onChangeForm((f) => ({
+                        ...f,
+                        gender:
+                          value === "__none__"
+                            ? ""
+                            : (value as EditForm["gender"]),
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="edit-gender">
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None</SelectItem>
+                      {GENDER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-gender">Gender</Label>
-              <Select
-                value={form.gender || "__none__"}
-                onValueChange={(value) =>
-                  onChangeForm((f) => ({
-                    ...f,
-                    gender:
-                      value === "__none__" ? "" : (value as EditForm["gender"]),
-                  }))
-                }
-              >
-                <SelectTrigger id="edit-gender">
-                  <SelectValue placeholder="Select gender" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
-                  {GENDER_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="edit-firstName">First Name *</Label>
@@ -321,35 +329,19 @@ export function MemberEditDialog({
               Used for finance and Xero-linked member history.
             </p>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="edit-committeeRole">Committee Role</Label>
-            <Select
-              value={form.committeeRole || "__none__"}
-              onValueChange={(value) =>
-                onChangeForm((f) => ({
-                  ...f,
-                  committeeRole: value === "__none__" ? "" : value,
-                }))
-              }
-              disabled={adminOnlyFieldsDisabled}
-            >
-              <SelectTrigger id="edit-committeeRole">
-                <SelectValue placeholder="Select a committee position" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">Not set</SelectItem>
-                {(form.committeeRole &&
-                !committeeRoleOptions.includes(form.committeeRole)
-                  ? [form.committeeRole, ...committeeRoleOptions]
-                  : committeeRoleOptions
-                ).map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {showOccupation && form.ageTier === "ADULT" && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-occupation">Occupation</Label>
+              <Input
+                id="edit-occupation"
+                value={form.occupation}
+                maxLength={100}
+                onChange={(e) =>
+                  onChangeForm((f) => ({ ...f, occupation: e.target.value }))
+                }
+              />
+            </div>
+          )}
 
           <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
             <legend className="px-1 text-sm font-medium">Xero</legend>
@@ -541,7 +533,10 @@ export function MemberEditDialog({
               <Select
                 value={form.role}
                 onValueChange={(v) =>
-                  onChangeForm((f) => ({ ...f, role: v as "MEMBER" | "ADMIN" }))
+                  onChangeForm((f) => ({
+                    ...f,
+                    role: v as EditForm["role"],
+                  }))
                 }
                 disabled={isSelf}
               >
@@ -551,6 +546,9 @@ export function MemberEditDialog({
                 <SelectContent>
                   <SelectItem value="MEMBER">Member</SelectItem>
                   <SelectItem value="ADMIN">Admin</SelectItem>
+                  <SelectItem value="LODGE">Lodge</SelectItem>
+                  <SelectItem value="ASSOCIATE">Associate Member</SelectItem>
+                  <SelectItem value="LIFE">Life Member</SelectItem>
                 </SelectContent>
               </Select>
               {isSelf && (
@@ -772,34 +770,22 @@ export function MemberEditDialog({
             values={form}
           />
 
-          <div className="space-y-2">
-            <Label htmlFor="edit-lifeMemberDate">Life Member</Label>
-            <Input
-              id="edit-lifeMemberDate"
-              type="date"
-              value={form.lifeMemberDate}
-              onChange={(e) =>
-                onChangeForm((f) => ({ ...f, lifeMemberDate: e.target.value }))
-              }
-              disabled={adminOnlyFieldsDisabled}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="edit-associateMember"
-              checked={form.associateMember}
-              onChange={(e) =>
-                onChangeForm((f) => ({
-                  ...f,
-                  associateMember: e.target.checked,
-                }))
-              }
-              className="h-4 w-4 rounded border-gray-300"
-              disabled={adminOnlyFieldsDisabled}
-            />
-            <Label htmlFor="edit-associateMember">Associate Member</Label>
-          </div>
+          {form.role === "LIFE" && (
+            <div className="space-y-2">
+              <Label htmlFor="edit-lifeMemberDate">Life member from</Label>
+              <Input
+                id="edit-lifeMemberDate"
+                type="date"
+                value={form.lifeMemberDate}
+                onChange={(e) =>
+                  onChangeForm((f) => ({
+                    ...f,
+                    lifeMemberDate: e.target.value,
+                  }))
+                }
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="edit-comments">Comments</Label>
             <Textarea
@@ -809,7 +795,6 @@ export function MemberEditDialog({
               onChange={(e) =>
                 onChangeForm((f) => ({ ...f, comments: e.target.value }))
               }
-              disabled={adminOnlyFieldsDisabled}
             />
           </div>
         </div>
