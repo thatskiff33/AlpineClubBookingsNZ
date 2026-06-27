@@ -15,7 +15,7 @@ describe("feature route map", () => {
   it("maps optional module routes to the expected feature flags", () => {
     expect(getRequiredFeaturesForPath("/lodge/kiosk")).toEqual(["kiosk"]);
     expect(getRequiredFeaturesForPath("/admin/chores")).toEqual(["chores"]);
-    expect(getRequiredFeaturesForPath("/finance/revenue")).toEqual([
+    expect(getRequiredFeaturesForPath("/finance")).toEqual([
       "financeDashboard",
     ]);
     expect(getRequiredFeaturesForPath("/admin/waitlist")).toEqual(["waitlist"]);

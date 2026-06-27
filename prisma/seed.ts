@@ -18,6 +18,7 @@ import {
   isValidLogoDataUrl,
 } from "../src/lib/club-theme-schema";
 import { DEFAULT_INDUCTION_TEMPLATE } from "../src/lib/induction-checklist-template";
+import { DEFAULT_FINANCE_REPORT_CATEGORIES } from "../src/lib/finance-report-mapping-defaults";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
@@ -404,6 +405,20 @@ async function main() {
     });
   }
   console.log("Xero account mappings seeded");
+
+  for (const category of DEFAULT_FINANCE_REPORT_CATEGORIES) {
+    await prisma.financeReportCategory.upsert({
+      where: {
+        kind_name: {
+          kind: category.kind,
+          name: category.name,
+        },
+      },
+      update: {},
+      create: category,
+    });
+  }
+  console.log("Finance report categories seeded");
 
   // Seed age tier settings from club config (create-if-missing so settings
   // edited by admins survive a re-run).

@@ -23,6 +23,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { LodgeCapacityCard } from "@/components/admin/lodge-capacity-card";
+import { FinanceReportMappingsPanel } from "@/components/admin/finance-report-mappings-panel";
 
 type SetupStatus = "complete" | "warning" | "blocked" | "not_started";
 type ProgressStatus = "open" | "completed" | "skipped";
@@ -323,6 +324,8 @@ export default function SetupPage() {
       ) : null}
 
       <LodgeCapacityCard />
+
+      <FinanceReportMappingsPanel />
 
       {readiness ? (
         <>

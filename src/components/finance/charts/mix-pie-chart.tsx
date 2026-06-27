@@ -49,8 +49,7 @@ export function MixPieChart({
   const total = positive.reduce((sum, datum) => sum + datum.value, 0);
   // A pie cannot render zero/negative slices, so they are excluded from the
   // chart and its percentage base. Surface the count so the chart is not
-  // silently inconsistent with the table beside it (e.g. an income reversal
-  // line). The table remains the complete, signed record.
+  // silently inconsistent with exported detail (e.g. an income reversal line).
   const omittedCount = data.length - positive.length;
 
   const renderTooltip = ({
@@ -108,8 +107,8 @@ export function MixPieChart({
       {omittedCount > 0 ? (
         <p className="mt-2 text-center text-xs text-slate-500">
           {omittedCount} line{omittedCount === 1 ? "" : "s"} with a zero or
-          negative amount {omittedCount === 1 ? "is" : "are"} not shown; see the
-          table for the full breakdown.
+          negative amount {omittedCount === 1 ? "is" : "are"} not shown; use
+          CSV export for the full breakdown.
         </p>
       ) : null}
     </div>

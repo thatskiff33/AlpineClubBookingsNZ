@@ -4,16 +4,7 @@ import { requireFinanceManagerApiAccess } from "@/lib/finance-api-auth";
 import { runManualFinanceSync } from "@/lib/finance-sync-manual";
 import logger from "@/lib/logger";
 
-const FINANCE_REVALIDATE_PATHS = [
-  "/finance",
-  "/finance/bookings",
-  "/finance/revenue",
-  "/finance/costs",
-  "/finance/pricing-sensitivity",
-  "/finance/working-capital",
-  "/finance/cash",
-  "/finance/balance-sheet",
-] as const;
+const FINANCE_REVALIDATE_PATHS = ["/finance"] as const;
 
 function buildFinanceRedirectUrl(
   request: NextRequest,

@@ -189,7 +189,7 @@ export async function buildFinanceLandingPageModel(input: {
             {
               label: "Xero reporting data",
               description:
-                "Revenue, costs, and balance figures come from the single Xero connection shared with bookings, payments, and subscriptions. Manage it from the admin Xero page.",
+                "Revenue, costs, and balance figures come from the single Xero connection shared with bookings, payments, and subscriptions. Setup and mappings live in Admin Setup.",
             },
           ]
         : []),
@@ -201,9 +201,9 @@ export async function buildFinanceLandingPageModel(input: {
 function buildFinanceManagerWorkspace(): FinanceLandingManagerWorkspace {
   return {
     eyebrow: "Manager access",
-    title: "Finance data & connection",
+    title: "Finance data sync",
     description:
-      "Finance reports read from the single Xero connection shared with bookings, payments, and subscriptions. Run a manual sync after large changes, or manage the connection from the admin Xero page.",
+      "Finance reports read from stored snapshots from the single Xero connection shared with bookings, payments, and subscriptions. Run a manual sync after large changes.",
     badgeLabel: "Manager tools",
     badgeVariant: "secondary",
     actions: [
@@ -213,13 +213,6 @@ function buildFinanceManagerWorkspace(): FinanceLandingManagerWorkspace {
         label: "Run finance sync now",
         description:
           "Trigger a manager-started sync now instead of waiting for the next scheduled cycle.",
-      },
-      {
-        kind: "link",
-        href: "/admin/xero",
-        label: "Manage Xero connection",
-        description:
-          "Connect, reconnect, or review the shared Xero connection from the admin Xero page.",
       },
     ],
     technicalActions: [

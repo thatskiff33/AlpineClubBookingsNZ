@@ -1,5 +1,9 @@
 # Finance Revenue Report Contract
 
+Superseded: the `/finance/revenue` page route has been removed. Revenue metrics
+now appear as the Revenue view on the selector-driven `/finance` dashboard. Keep
+this document only as historical calculation background.
+
 This document defines the native `/finance/revenue` report page.
 
 It is intentionally small. The page turns the landed `PROFIT_AND_LOSS_MONTHLY` finance snapshot storage into a native monthly revenue report, but it does not add charts, balance-sheet views, cash reporting, or live Xero read paths.
@@ -8,7 +12,7 @@ It is intentionally small. The page turns the landed `PROFIT_AND_LOSS_MONTHLY` f
 
 - `src/app/(finance)/finance/revenue/page.tsx` renders the native revenue report page.
 - `src/lib/finance-revenue-report-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance snapshot read helper used by the report page.
 
 ## Access
 
@@ -33,7 +37,7 @@ Invalid values must fall back safely to the default `6`-period view instead of b
 The page must keep source ownership explicit:
 
 - revenue figures come from stored `FinanceSnapshot` rows with `snapshotType = PROFIT_AND_LOSS_MONTHLY`
-- those snapshots are synced through the finance-only Xero boundary
+- those snapshots are synced through the single operational Xero connection
 - the page does not use AlpineClubBookingsNZ booking metrics or payment rows for its revenue totals
 - the page does not trigger live Xero reads or manual sync mutations while rendering
 

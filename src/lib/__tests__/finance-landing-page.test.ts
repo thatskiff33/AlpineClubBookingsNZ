@@ -304,10 +304,6 @@ describe("finance landing page model", () => {
         kind: "sync",
         href: "/api/finance/sync/run",
       },
-      {
-        kind: "link",
-        href: "/admin/xero",
-      },
     ]);
     expect(
       model.managerWorkspace?.technicalActions.map((action) => action.href ?? null)

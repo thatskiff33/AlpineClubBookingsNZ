@@ -1,5 +1,10 @@
 # Finance Working-Capital Report Contract
 
+Superseded: the `/finance/working-capital` page route has been removed. Working
+capital metrics now appear as the Working Capital view on the selector-driven
+`/finance` dashboard. Keep this document only as historical calculation
+background.
+
 This document defines the native `/finance/working-capital` report page.
 
 ## Surface Area
@@ -7,7 +12,7 @@ This document defines the native `/finance/working-capital` report page.
 - `src/app/(finance)/finance/working-capital/page.tsx` renders the native working-capital report page.
 - `src/lib/finance-working-capital-report-page.ts` is the loader and view-model boundary for the page.
 - `src/lib/finance-balance-sheet-report-page.ts` provides the narrow stored balance-sheet snapshot parser reused by the working-capital page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance snapshot read helper used by the report page.
 
 ## Access and Routing Contract
 

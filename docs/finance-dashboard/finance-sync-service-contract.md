@@ -2,7 +2,9 @@
 
 This document defines the service boundary that sits on top of durable `FinanceSnapshot` and `FinanceSyncRun` storage.
 
-It is intentionally narrow. The service owns finance-only sync orchestration, but it does not register cron jobs, add overlap guards, or build diagnostics UI.
+It is intentionally narrow. The service owns finance sync orchestration through
+the single operational Xero connection, but it does not register cron jobs, add
+overlap guards, or build diagnostics UI.
 
 ## Service Boundary
 
@@ -10,7 +12,7 @@ It is intentionally narrow. The service owns finance-only sync orchestration, bu
 
 It currently owns:
 
-- establishing a finance-only Xero sync connection from the finance token boundary
+- establishing a finance sync connection from the operational Xero token boundary
 - creating a durable `FinanceSyncRun`
 - executing finance dataset handlers sequentially
 - writing snapshot payloads only through `upsertFinanceSnapshot`

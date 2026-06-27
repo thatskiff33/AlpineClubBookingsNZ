@@ -137,7 +137,7 @@ describe("finance manual sync route", () => {
       requestedByMemberId: "finance-manager-1",
     });
     expect(mockRevalidatePath).toHaveBeenCalledWith("/finance");
-    expect(mockRevalidatePath).toHaveBeenCalledWith("/finance/revenue");
+    expect(mockRevalidatePath).toHaveBeenCalledTimes(1);
   });
 
   it("redirects with a warning when another sync is already running", async () => {

@@ -1,5 +1,9 @@
 # Finance Cash Report Contract
 
+Superseded: the `/finance/cash` page route has been removed. Cash metrics now
+appear as the Cash view on the selector-driven `/finance` dashboard. Keep this
+document only as historical calculation background.
+
 This document defines the native `/finance/cash` report page.
 
 It is intentionally small. The page turns the landed `BANK_BALANCES` finance snapshot storage into a native cash balances report, but it does not add working-capital rollups, balance-sheet views, costs reporting, or live Xero read paths.
@@ -8,7 +12,7 @@ It is intentionally small. The page turns the landed `BANK_BALANCES` finance sna
 
 - `src/app/(finance)/finance/cash/page.tsx` renders the native cash report page.
 - `src/lib/finance-cash-report-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance snapshot read helper used by the report page.
 
 ## Access
 
@@ -33,7 +37,7 @@ Invalid values must fall back safely to the default `7`-period view instead of b
 The page must keep source ownership explicit:
 
 - cash figures come from stored `FinanceSnapshot` rows with `snapshotType = BANK_BALANCES`
-- those snapshots are synced through the finance-only Xero boundary
+- those snapshots are synced through the single operational Xero connection
 - the page does not use AlpineClubBookingsNZ payment rows for its cash totals
 - the page does not trigger live Xero reads or manual sync mutations while rendering
 

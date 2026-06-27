@@ -1,5 +1,9 @@
 # Finance Bookings Report Contract
 
+Superseded: the `/finance/bookings` page route has been removed. Booking
+metrics now appear as the Bookings view on the selector-driven `/finance`
+dashboard. Keep this document only as historical calculation background.
+
 This document defines the native `/finance/bookings` report page.
 
 It is intentionally small. The page turns the landed AlpineClubBookingsNZ finance booking metrics boundary into a native bookings report with realized stay detail and forward pipeline detail, but it does not add charts, finance snapshot-backed revenue pages, or broader balance-sheet reporting.

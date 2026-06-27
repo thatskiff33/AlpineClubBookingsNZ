@@ -1,12 +1,16 @@
 # Finance Costs Report Contract
 
+Superseded: the `/finance/costs` page route has been removed. Costs metrics now
+appear as the Costs view on the selector-driven `/finance` dashboard. Keep this
+document only as historical calculation background.
+
 This document defines the native `/finance/costs` report page.
 
 ## Surface Area
 
 - `src/app/(finance)/finance/costs/page.tsx` renders the native costs report page.
 - `src/lib/finance-costs-report-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance snapshot read helper used by the report page.
 
 ## Access and Routing Contract
 

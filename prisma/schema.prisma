@@ -56,6 +56,11 @@ enum FinanceSyncRunTrigger {
   BACKFILL
 }
 
+enum FinanceReportCategoryKind {
+  REVENUE
+  EXPENSE
+}
+
 enum AgeTier {
   INFANT
   CHILD
@@ -1619,6 +1624,35 @@ model FinanceSnapshot {
   @@index([snapshotType, asOfDate])
   @@index([scope, asOfDate])
   @@index([syncRunId])
+}
+
+model FinanceReportCategory {
+  id        String                    @id @default(cuid())
+  kind      FinanceReportCategoryKind
+  name      String                    @db.VarChar(120)
+  sortOrder Int                       @default(0)
+  archived  Boolean                   @default(false)
+  createdAt DateTime                  @default(now())
+  updatedAt DateTime                  @updatedAt
+  mappings  FinanceReportCategoryMapping[]
+
+  @@unique([kind, name])
+  @@index([kind, archived, sortOrder])
+}
+
+model FinanceReportCategoryMapping {
+  id           String                @id @default(cuid())
+  categoryId   String
+  accountCode  String?               @db.VarChar(40)
+  sectionLabel String?               @db.VarChar(200)
+  lineLabel    String?               @db.VarChar(200)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  category     FinanceReportCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@index([categoryId])
+  @@index([accountCode])
+  @@index([sectionLabel, lineLabel])
 }
 
 // ---------------------------------------------------------------------------

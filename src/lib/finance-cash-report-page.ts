@@ -52,12 +52,12 @@ interface FinanceSnapshotReportPayload {
   rows: FinanceSnapshotReportRow[];
 }
 
-interface ParsedCashAccount {
+export interface ParsedCashAccount {
   label: string;
   balanceCents: number;
 }
 
-interface ParsedCashSnapshot {
+export interface ParsedCashSnapshot {
   snapshotId: string;
   snapshotLabel: string;
   sourceWindow: string;
@@ -439,7 +439,7 @@ function buildCashAccountRows(
     }));
 }
 
-function parseCashSnapshot(snapshot: FinanceSnapshotRecord): ParsedCashSnapshot | null {
+export function parseCashSnapshot(snapshot: FinanceSnapshotRecord): ParsedCashSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
 
   if (!payload) {

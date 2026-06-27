@@ -1,12 +1,17 @@
 # Finance Balance-Sheet Report Contract
 
+Superseded: the `/finance/balance-sheet` page route has been removed. Balance
+sheet metrics now appear as the Balance Sheet view on the selector-driven
+`/finance` dashboard. Keep this document only as historical calculation
+background.
+
 This document defines the native `/finance/balance-sheet` report page.
 
 ## Surface Area
 
 - `src/app/(finance)/finance/balance-sheet/page.tsx` renders the native balance-sheet report page.
 - `src/lib/finance-balance-sheet-report-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance snapshot read helper used by the report page.
 
 ## Access and Routing Contract
 

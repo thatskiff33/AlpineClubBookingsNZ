@@ -1,12 +1,17 @@
 # Finance Pricing Sensitivity Report Contract
 
+Superseded: the `/finance/pricing-sensitivity` page route has been removed.
+Pricing sensitivity metrics now appear as the Pricing Sensitivity view on the
+selector-driven `/finance` dashboard. Keep this document only as historical
+calculation background.
+
 This document defines the native `/finance/pricing-sensitivity` report page.
 
 ## Surface Area
 
 - `src/app/(finance)/finance/pricing-sensitivity/page.tsx` renders the native pricing-sensitivity report page.
 - `src/lib/finance-pricing-sensitivity-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-sync-storage.ts` provides the finance-only monthly cost snapshot read helper used by the report page.
+- `src/lib/finance-sync-storage.ts` provides the finance monthly cost snapshot read helper used by the report page.
 - `src/lib/finance-booking-metrics.ts` provides the realized AlpineClubBookingsNZ booking metrics used to compare demand against the selected monthly cost periods.
 
 ## Access and Routing Contract
