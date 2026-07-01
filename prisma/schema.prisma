@@ -2250,11 +2250,12 @@ model ClubModuleSettings {
 }
 
 model LodgeSettings {
-  id                String   @id @default("default")
-  capacity          Int?
-  updatedByMemberId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @default(now()) @updatedAt
+  id                     String   @id @default("default")
+  capacity               Int?
+  hutLeaderLookaheadDays Int      @default(14)
+  updatedByMemberId      String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }

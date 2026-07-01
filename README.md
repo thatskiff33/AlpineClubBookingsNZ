@@ -22,7 +22,7 @@ fork for another organisation. See `NOTICE.md`.
   Banking invoice payments
 - Admin tools for members, shared-email-aware CSV import, bookings, bed
   allocation, payments, seasons, policies, reports, email, audit logs, issue
-  reports, waitlist, lodge, Xero operations, and hut leaders
+  reports, waitlist, lodge settings, Xero operations, and hut leaders
 - Admin-editable public website pages with sanitised HTML content, embed
   tokens for interactive sections, and a menu generated from page settings
   (see `CONFIGURATION.md`, "Website Page Content")

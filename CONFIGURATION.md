@@ -171,6 +171,18 @@ public page route.
 - The migration backfills the three empty documents, so deploy-only
   environments get editable rows without running the seed.
 
+## Lodge Settings
+
+Admin > Setup includes lodge-wide settings stored in the singleton
+`LodgeSettings` row:
+
+- Capacity override: optional. Leave blank to use the bed total from club
+  configuration, unless the Bed Allocation module is enabled with active beds.
+- Hut-leader lookahead: defaults to 14 days and controls how far ahead
+  unassigned hut-leader dates are reported on the admin dashboard, stuck-state
+  dashboard, the hut-leader assignment API, and the queue-driven Needs
+  Attention sidebar item.
+
 ## Required Local Setup Variables
 
 These are enough for a local database-backed app with external services left in

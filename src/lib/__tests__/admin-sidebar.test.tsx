@@ -27,7 +27,9 @@ function mockJsonResponse(body: unknown) {
   };
 }
 
-function buildFetchMock(options: { familyRequestCount?: number } = {}) {
+function buildFetchMock(
+  options: { familyRequestCount?: number; unassignedHutLeaderDates?: number } = {},
+) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
 
@@ -64,6 +66,16 @@ function buildFetchMock(options: { familyRequestCount?: number } = {}) {
     }
     if (url.includes("/api/admin/issue-reports")) {
       return mockJsonResponse({ total: 0 });
+    }
+    if (url.includes("/api/admin/hut-leaders/unassigned-dates")) {
+      return mockJsonResponse({
+        unassignedDates: Array.from(
+          { length: options.unassignedHutLeaderDates ?? 0 },
+          (_, index) => ({
+            date: `2026-07-${String(index + 1).padStart(2, "0")}`,
+          }),
+        ),
+      });
     }
 
     return mockJsonResponse({});
@@ -142,5 +154,17 @@ describe("AdminSidebar", () => {
       screen.getByRole("link", { name: /Family Groups/ }),
     ).not.toBeNull();
     expect(screen.getByText("2")).not.toBeNull();
+  });
+
+  it("shows unassigned hut leader dates in Needs Attention", async () => {
+    vi.stubGlobal("fetch", buildFetchMock({ unassignedHutLeaderDates: 4 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(screen.getByRole("link", { name: /Hut Leaders/ })).not.toBeNull();
+    expect(screen.getByText("4")).not.toBeNull();
   });
 });

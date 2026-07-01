@@ -4,7 +4,8 @@ import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 
 /**
  * GET /api/admin/hut-leaders/unassigned-dates
- * Returns dates in the next 14 days that have paid/operational bookings but no HutLeaderAssignment.
+ * Returns dates in the configured hut-leader lookahead window that have
+ * paid/operational bookings but no HutLeaderAssignment.
  */
 export async function GET() {
   const guard = await requireAdmin();

@@ -5,6 +5,11 @@ import {
   formatDateOnly,
   getTodayDateOnly,
 } from "@/lib/date-only";
+import {
+  loadHutLeaderLookaheadDays,
+  normalizeHutLeaderLookaheadDays,
+  type LodgeSettingsReader,
+} from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 
 export interface UnassignedHutLeaderDate {
@@ -25,7 +30,7 @@ type HutLeaderBooking = {
   };
 };
 
-type HutLeaderCoverageDb = {
+type HutLeaderCoverageDb = LodgeSettingsReader & {
   booking: {
     findMany(args: unknown): Promise<HutLeaderBooking[]>;
   };
@@ -41,7 +46,12 @@ export async function getUnassignedHutLeaderDates(input?: {
 }): Promise<UnassignedHutLeaderDate[]> {
   const db = input?.db ?? (prisma as unknown as HutLeaderCoverageDb);
   const today = input?.today ?? getTodayDateOnly();
-  const endDate = addDaysDateOnly(today, input?.lookAheadDays ?? 14);
+  const lookAheadDays =
+    input?.lookAheadDays ?? (await loadHutLeaderLookaheadDays(db));
+  const endDate = addDaysDateOnly(
+    today,
+    normalizeHutLeaderLookaheadDays(lookAheadDays),
+  );
 
   const [assignments, bookings] = await Promise.all([
     db.hutLeaderAssignment.findMany({

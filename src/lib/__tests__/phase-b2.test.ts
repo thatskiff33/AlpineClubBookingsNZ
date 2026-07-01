@@ -29,6 +29,9 @@ const mockPrisma = {
   clubModuleSettings: {
     findUnique: vi.fn().mockResolvedValue(null),
   },
+  lodgeSettings: {
+    findUnique: vi.fn().mockResolvedValue(null),
+  },
 };
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -373,6 +376,7 @@ describe("#25: Auto-Assign Hut Leaders", () => {
       forcePasswordChange: false,
       accessRoles: [{ role: "ADMIN" }],
     });
+    mockPrisma.lodgeSettings.findUnique.mockResolvedValue(null);
     vi.useFakeTimers();
     // Set to a time that resolves to the desired "today" in NZST after setHours(0,0,0,0)
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
@@ -455,6 +459,21 @@ describe("#25: Auto-Assign Hut Leaders", () => {
     expect(result.assignedCount).toBe(0);
     expect(mockPrisma.hutLeaderAssignment.create).not.toHaveBeenCalled();
   });
+
+  it("uses the configured hut-leader lookahead window", async () => {
+    mockPrisma.lodgeSettings.findUnique.mockResolvedValue({
+      capacity: null,
+      hutLeaderLookaheadDays: 2,
+    });
+    mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({ id: "exists" });
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
+
+    const { autoAssignHutLeaders } = await import("@/lib/cron-hut-leader-auto-assign");
+    await autoAssignHutLeaders();
+
+    expect(mockPrisma.hutLeaderAssignment.findFirst).toHaveBeenCalledTimes(3);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -471,6 +490,7 @@ describe("#25: Unassigned Dates API", () => {
       forcePasswordChange: false,
       accessRoles: [{ role: "ADMIN" }],
     });
+    mockPrisma.lodgeSettings.findUnique.mockResolvedValue(null);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
   });
@@ -486,7 +506,7 @@ describe("#25: Unassigned Dates API", () => {
   it("returns dates with bookings but no hut leader assigned", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
-    // Booking covering a range within the 14-day lookahead
+    // Booking covering a range within the configured lookahead
     const checkIn = localMidnight("2026-04-10");
     const checkOut = localMidnight("2026-04-12");
     mockPrisma.booking.findMany.mockResolvedValue([
@@ -511,7 +531,7 @@ describe("#25: Unassigned Dates API", () => {
 
   it("returns empty when all dates are covered by assignments", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } });
-    // Assignment covers the entire 14-day window
+    // Assignment covers the entire configured window
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       { startDate: localMidnight("2026-04-01"), endDate: localMidnight("2026-04-30") },
     ]);
@@ -582,8 +602,10 @@ describe("#25: Dashboard Hut Leader Warning", () => {
     const path = await import("path");
     const dashboardPath = path.resolve("src/app/(admin)/admin/dashboard/page.tsx");
     const content = fs.readFileSync(dashboardPath, "utf-8");
-    // Should query hutLeaderAssignment
-    expect(content).toContain("hutLeaderAssignment");
+    // Should call the shared coverage helper rather than reimplementing the
+    // unassigned-date query in the page.
+    expect(content).toContain("getUnassignedHutLeaderDates");
+    expect(content).not.toContain("hutLeaderAssignment.findMany");
     // Should have the warning UI
     expect(content).toContain("Hut Leader Assignment Required");
     // Should link to hut leaders page

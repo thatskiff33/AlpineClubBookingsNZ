@@ -28,18 +28,15 @@ import {
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { CLUB_NAME } from "@/config/club-identity";
-import {
-  ACTIVE_BOOKING_STATUSES,
-  OPERATIONAL_STAY_BOOKING_STATUSES,
-} from "@/lib/booking-status";
+import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
-  eachDateOnlyInRange,
   endOfDateOnlyForTimeZone,
   formatDateOnly,
   getTodayDateOnly,
   startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 
 async function getStats() {
   const today = getTodayDateOnly();
@@ -69,6 +66,7 @@ async function getStats() {
     pendingMemberArchives,
     pendingBookingReviews,
     pendingBookingChangeRequests,
+    unassignedHutLeaderDates,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -135,42 +133,10 @@ async function getStats() {
     prisma.bookingChangeRequest.count({
       where: { status: "REQUESTED" },
     }),
+    getUnassignedHutLeaderDates(),
   ]);
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
-
-  // Check for unassigned hut leader dates in the next 14 days
-  const lookAheadEnd = addDaysDateOnly(today, 14);
-  const [hutLeaderAssignments, bookingsFor14Days] = await Promise.all([
-    prisma.hutLeaderAssignment.findMany({
-      where: { startDate: { lte: lookAheadEnd }, endDate: { gte: today } },
-      select: { startDate: true, endDate: true },
-    }),
-    prisma.booking.findMany({
-      where: {
-        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
-        deletedAt: null,
-        checkIn: { lte: lookAheadEnd },
-        checkOut: { gt: today },
-      },
-      select: { checkIn: true, checkOut: true },
-    }),
-  ]);
-
-  const unassignedDatesWithBookings: string[] = [];
-  const days14 = eachDateOnlyInRange(today, addDaysDateOnly(lookAheadEnd, 1));
-  for (const day of days14) {
-    const isCovered = hutLeaderAssignments.some(
-      (a) => a.startDate.getTime() <= day.getTime() && a.endDate.getTime() >= day.getTime()
-    );
-    if (isCovered) continue;
-    const hasBooking = bookingsFor14Days.some(
-      (b) => b.checkIn.getTime() <= day.getTime() && b.checkOut.getTime() > day.getTime()
-    );
-    if (hasBooking) {
-      unassignedDatesWithBookings.push(formatDateOnly(day));
-    }
-  }
 
   return {
     totalMembers,
@@ -181,7 +147,9 @@ async function getStats() {
     revenueThisMonth,
     upcomingCheckIns,
     recentBookings,
-    unassignedDatesWithBookings,
+    unassignedDatesWithBookings: unassignedHutLeaderDates.map(
+      (item) => item.date,
+    ),
     pendingRefundAppeals,
     pendingCreditApprovals,
     pendingMembershipCancellations,

@@ -118,6 +118,7 @@ const navSections: NavSection[] = [
         icon: UserX,
       },
       { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
+      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
   },
   {
@@ -490,6 +491,29 @@ function usePendingIssueReports(): number {
   return count;
 }
 
+function useUnassignedHutLeaderDates(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/hut-leaders/unassigned-dates")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.unassignedDates)) {
+          setCount(data.unassignedDates.length);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({
   features,
   onNavigate,
@@ -505,6 +529,7 @@ function SidebarLinks({
   const pendingCreditApprovals = usePendingCreditApprovals();
   const pendingMembershipCancellations = usePendingMembershipCancellations();
   const pendingIssueReports = usePendingIssueReports();
+  const unassignedHutLeaderDates = useUnassignedHutLeaderDates();
 
   // Per-section expand state, keyed by label. Starts collapsed (empty map) so
   // server and first client render match; the stored preference is applied
@@ -562,6 +587,9 @@ function SidebarLinks({
   }
   if (pendingIssueReports > 0) {
     badges["/admin/issue-reports"] = pendingIssueReports;
+  }
+  if (unassignedHutLeaderDates > 0) {
+    badges["/admin/hut-leaders"] = unassignedHutLeaderDates;
   }
 
   const renderedNavSections = getRenderedAdminNavSections(features, badges);

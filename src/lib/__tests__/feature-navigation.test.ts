@@ -111,6 +111,7 @@ describe("feature-aware navigation", () => {
       "/admin/booking-requests": 2,
       "/admin/family-groups": 3,
       "/admin/issue-reports": 1,
+      "/admin/hut-leaders": 4,
     });
     const needsAttention = withPending.find(
       (section) => section.label === "Needs Attention",
@@ -120,6 +121,7 @@ describe("feature-aware navigation", () => {
       "/admin/booking-requests",
       "/admin/family-groups",
       "/admin/issue-reports",
+      "/admin/hut-leaders",
     ]);
   });
 

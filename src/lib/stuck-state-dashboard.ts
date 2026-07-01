@@ -8,6 +8,7 @@ import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escala
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
+import { loadHutLeaderLookaheadDays } from "@/lib/lodge-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 import { prisma } from "@/lib/prisma";
@@ -25,7 +26,6 @@ import {
 const PAYMENT_PROCESSING_STALE_MINUTES = 30;
 const PAYMENT_PENDING_OVERDUE_MINUTES = 15;
 const BED_ALLOCATION_LOOKAHEAD_DAYS = 7;
-const HUT_LEADER_LOOKAHEAD_DAYS = 14;
 
 export type StuckStateSeverity = "critical" | "warning" | "info";
 
@@ -106,6 +106,7 @@ export interface StuckStateDashboardDependencies {
   getWaitlistOfferEmailDeliveries: typeof getWaitlistOfferEmailDeliveries;
   getBedAllocationDashboard: typeof getBedAllocationDashboard;
   getUnassignedHutLeaderDates: typeof getUnassignedHutLeaderDates;
+  loadHutLeaderLookaheadDays: typeof loadHutLeaderLookaheadDays;
 }
 
 const DOMAIN_LABELS: Record<StuckStateDomain, string> = {
@@ -143,6 +144,7 @@ const defaultDependencies: StuckStateDashboardDependencies = {
   getWaitlistOfferEmailDeliveries,
   getBedAllocationDashboard,
   getUnassignedHutLeaderDates,
+  loadHutLeaderLookaheadDays,
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`) {
@@ -572,16 +574,17 @@ async function addLodgeItems(
   items: StuckStateItem[],
   deps: StuckStateDashboardDependencies,
 ) {
-  const [unassignedDates, openIssueReports] = await Promise.all([
-    deps.getUnassignedHutLeaderDates({
-      lookAheadDays: HUT_LEADER_LOOKAHEAD_DAYS,
-    }),
+  const [hutLeaderLookaheadDays, openIssueReports] = await Promise.all([
+    deps.loadHutLeaderLookaheadDays(),
     deps.db.issueReport.count({
       where: {
         resolvedAt: null,
       },
     }),
   ]);
+  const unassignedDates = await deps.getUnassignedHutLeaderDates({
+    lookAheadDays: hutLeaderLookaheadDays,
+  });
 
   addItem(items, {
     id: "lodge-unassigned-hut-leaders",
@@ -594,7 +597,7 @@ async function addLodgeItems(
     summary: `${unassignedDates.length} upcoming lodge ${plural(
       unassignedDates.length,
       "date",
-    )} with bookings have no hut leader assigned.`,
+    )} in the next ${hutLeaderLookaheadDays} days with bookings have no hut leader assigned.`,
   });
   addItem(items, {
     id: "lodge-open-issue-reports",

@@ -231,7 +231,9 @@ Admin pages cover member management, member CSV import, bookings, operational
 booking filters, bed allocation, payments, seasons, policies, refund requests,
 promo codes, communications, health, audit logs, reports, Xero operations and
 inbound-event drilldowns, committee data, issue reports, waitlist, lodge
-operations, hut leaders, and roster/chores.
+operations, hut leaders, and roster/chores. Lodge settings are a singleton
+record for lodge-wide operational defaults such as fallback capacity and the
+hut-leader lookahead window used by dashboard and Needs Attention warnings.
 
 Member CSV import allows distinct identities to share an email address while
 preserving the database invariant that only one member per email can have

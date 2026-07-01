@@ -116,6 +116,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       warnings: [],
     }),
     getUnassignedHutLeaderDates: vi.fn().mockResolvedValue([]),
+    loadHutLeaderLookaheadDays: vi.fn().mockResolvedValue(14),
   };
 
   return {
@@ -292,6 +293,39 @@ describe("getStuckStateDashboard", () => {
     });
     expect(dashboard.totals.itemCount).toBeGreaterThan(10);
     expect(dashboard.totals.critical).toBeGreaterThan(0);
+    expect(deps.getUnassignedHutLeaderDates).toHaveBeenCalledWith({
+      lookAheadDays: 14,
+    });
+  });
+
+  it("uses configured hut-leader lookahead for lodge stuck-state counts", async () => {
+    const getUnassignedHutLeaderDates = vi
+      .fn()
+      .mockResolvedValue(Array.from({ length: 3 }));
+    const deps = buildDeps({
+      loadHutLeaderLookaheadDays: vi.fn().mockResolvedValue(21),
+      getUnassignedHutLeaderDates,
+    });
+    vi.mocked(deps.db.paymentRecoveryOperation.count)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(0);
+
+    const dashboard = await getStuckStateDashboard({
+      deps,
+      now: new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    expect(getUnassignedHutLeaderDates).toHaveBeenCalledWith({
+      lookAheadDays: 21,
+    });
+    expect(
+      dashboard.items.find((item) => item.id === "lodge-unassigned-hut-leaders"),
+    ).toMatchObject({
+      count: 3,
+      summary:
+        "3 upcoming lodge dates in the next 21 days with bookings have no hut leader assigned.",
+    });
   });
 
   it("does not query disabled module-specific surfaces", async () => {
