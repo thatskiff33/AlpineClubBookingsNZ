@@ -2,6 +2,7 @@ import {
   adminMembershipApplicationPendingTemplate,
   adminFamilyGroupRequestTemplate,
   adminMembershipCancellationRequestTemplate,
+  adminAccountDeletionRequestedTemplate,
   adminMemberArchiveRequestedTemplate,
   adminMemberDeleteRequestedTemplate,
   adminMemberDeleteApprovedTemplate,
@@ -78,6 +79,35 @@ export async function sendAdminMembershipCancellationRequestAlert(params: {
     templateData: {
       requesterName: params.requesterName,
       participantSummary: params.participantSummary,
+      reason: params.reason ?? "",
+      reviewUrl,
+    },
+    preferenceKey: "adminFamilyGroupRequest",
+  });
+}
+
+export async function sendAdminAccountDeletionRequestedAlert(params: {
+  requestId: string;
+  memberName: string;
+  memberEmail: string;
+  reason?: string | null;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/deletion-requests?status=PENDING`;
+
+  await sendToAdmins({
+    subject: `Account deletion requested: ${params.memberName}`,
+    html: adminAccountDeletionRequestedTemplate({
+      memberName: params.memberName,
+      memberEmail: params.memberEmail,
+      reason: params.reason,
+      reviewUrl,
+    }),
+    templateName: "admin-account-deletion-requested",
+    templateData: {
+      requestId: params.requestId,
+      memberName: params.memberName,
+      memberEmail: params.memberEmail,
       reason: params.reason ?? "",
       reviewUrl,
     },

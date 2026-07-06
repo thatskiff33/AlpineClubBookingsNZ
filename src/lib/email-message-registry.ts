@@ -37,6 +37,7 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-booking-change-request",
   "admin-issue-report",
   "admin-membership-cancellation-request",
+  "admin-account-deletion-requested",
   "admin-member-archive-requested",
   "admin-member-delete-requested",
   "admin-member-delete-approved",
@@ -107,6 +108,7 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
     "reason",
     "reviewUrl",
   ],
+  "admin-account-deletion-requested": ["reason", "requestId", "reviewUrl"],
   "admin-member-archive-requested": ["memberName", "reason", "reviewUrl"],
   "member-archive-approved": ["reason", "reviewNote"],
   "member-archive-rejected": ["reason", "reviewNote"],
@@ -150,6 +152,11 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "admin-membership-cancellation-request": [
     "participantSummary",
     "requesterName",
+    "reviewUrl",
+  ],
+  "admin-account-deletion-requested": [
+    "memberEmail",
+    "memberName",
     "reviewUrl",
   ],
   "admin-member-archive-requested": [
@@ -231,6 +238,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "admin-member-delete-requested": {
     triggerSummary: "Member hard-delete request submitted",
     frequency: "Per delete request",
+  },
+  "admin-account-deletion-requested": {
+    triggerSummary: "Self-service account deletion request submitted",
+    frequency: "Per member deletion request",
   },
   "admin-member-delete-approved": {
     triggerSummary: "Member hard-delete request approved",

@@ -31,6 +31,7 @@ const ZERO_COUNTS: AdminPendingCounts = {
   publicBookingRequests: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
+  deletionRequests: 0,
   issueReports: 0,
   unassignedHutLeaderDates: 0,
 };
@@ -197,6 +198,24 @@ describe("AdminSidebar", () => {
     );
     expect(screen.getByRole("link", { name: /Hut Leaders/ })).not.toBeNull();
     expect(screen.getByText("4")).not.toBeNull();
+  });
+
+  it("surfaces pending account deletion requests in Needs Attention", async () => {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      JSON.stringify({ "Monitoring & Support": false }),
+    );
+    vi.stubGlobal("fetch", buildFetchMock({ deletionRequests: 2 }));
+
+    render(<AdminSidebar features={allOn} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Needs Attention")).not.toBeNull(),
+    );
+    expect(
+      screen.getByRole("link", { name: /Deletion Requests/ }),
+    ).not.toBeNull();
+    expect(screen.getByText("2")).not.toBeNull();
   });
 
   it("labels the membership cancellation queue as Cancellation Requests", () => {

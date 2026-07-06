@@ -24,6 +24,7 @@ import {
   CalendarCheck,
   AlertTriangle,
   UserX,
+  Trash2,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
@@ -65,6 +66,7 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
     unassignedHutLeaderDates,
@@ -128,6 +130,9 @@ async function getStats() {
         status: MemberLifecycleActionRequestStatus.REQUESTED,
       },
     }),
+    prisma.deletionRequest.count({
+      where: { status: "PENDING" },
+    }),
     prisma.booking.count({
       where: { adminReviewStatus: "PENDING", deletedAt: null },
     }),
@@ -155,6 +160,7 @@ async function getStats() {
     pendingCreditApprovals,
     pendingMembershipCancellations,
     pendingMemberArchives,
+    pendingDeletionRequests,
     pendingBookingReviews,
     pendingBookingChangeRequests,
     pendingMembershipReviews:
@@ -236,6 +242,26 @@ export default async function AdminDashboardPage() {
                 <p className="font-medium text-amber-900">Booking Requests</p>
                 <p className="text-sm text-amber-800 mt-1">
                   {bookingApprovalSummary.join(" and ")} waiting for admin decision.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {stats.pendingDeletionRequests > 0 && (
+        <Link href="/admin/deletion-requests?status=PENDING">
+          <Card className="border-red-200 bg-red-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <Trash2 className="h-5 w-5 text-red-700 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-red-950">
+                  Account Deletion Requests
+                </p>
+                <p className="text-sm text-red-800 mt-1">
+                  {stats.pendingDeletionRequests} account deletion request
+                  {stats.pendingDeletionRequests === 1 ? "" : "s"} waiting for
+                  admin review.
                 </p>
               </div>
             </CardContent>

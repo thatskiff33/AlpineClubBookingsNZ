@@ -68,6 +68,7 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/email", () => ({
   sendAccountDeletionApprovedEmail: vi.fn().mockResolvedValue(undefined),
   sendAccountDeletionRejectedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminAccountDeletionRequestedAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/booking-cancel", () => ({
@@ -243,6 +244,11 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
       memberId: "m1",
       status: "PENDING",
       reason: "Moving overseas",
+      member: {
+        firstName: "Jane",
+        lastName: "Member",
+        email: "jane@example.org",
+      },
     } as any);
 
     const req = new NextRequest("http://localhost/api/member/request-deletion", {
@@ -254,12 +260,21 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.requestId).toBe("dr1");
-    expect(mockedPrisma.deletionRequest.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        memberId: "m1",
-        reason: "Moving overseas",
-        status: "PENDING",
+    expect(mockedPrisma.deletionRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: "m1",
+          reason: "Moving overseas",
+          status: "PENDING",
+        }),
       }),
+    );
+    const { sendAdminAccountDeletionRequestedAlert } = await import("@/lib/email");
+    expect(sendAdminAccountDeletionRequestedAlert).toHaveBeenCalledWith({
+      requestId: "dr1",
+      memberName: "Jane Member",
+      memberEmail: "jane@example.org",
+      reason: "Moving overseas",
     });
   });
 

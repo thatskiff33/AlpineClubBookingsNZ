@@ -1927,6 +1927,37 @@ export function adminMembershipApplicationPendingTemplate(data: {
   `);
 }
 
+export function adminAccountDeletionRequestedTemplate(data: {
+  memberName: string;
+  memberEmail: string;
+  reason?: string | null;
+  reviewUrl: string;
+}): string {
+  const reasonHtml = data.reason
+    ? multilineBlock(escapeHtml(data.reason))
+    : muted("No reason was provided.");
+
+  return layout(`
+    ${heading("Account Deletion Request Submitted")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(data.memberName) +
+        "</strong> submitted an account deletion request."
+    )}
+    ${alertBox(
+      "Review privacy requests promptly and record the decision from the deletion requests queue.",
+      "warning"
+    )}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Email", value: escapeHtml(data.memberEmail) },
+    ])}
+    ${reasonHtml}
+    ${button("Review Deletion Requests", data.reviewUrl, { sameOrigin: true })}
+    ${supportContactMuted()}
+  `);
+}
+
 export function membershipApplicationApprovedTemplate(
   firstName: string,
   resetUrl: string,

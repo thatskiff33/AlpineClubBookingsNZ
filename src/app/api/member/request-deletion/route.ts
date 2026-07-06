@@ -14,6 +14,8 @@ import { checkRateLimit, rateLimiters, getClientIp } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { sendAdminAccountDeletionRequestedAlert } from "@/lib/email";
+import { memberDisplayName } from "@/lib/member-serialization";
 
 const requestSchema = z.object({
   reason: z.string().max(500).optional(),
@@ -78,6 +80,15 @@ export async function POST(request: NextRequest) {
         reason: body.reason ?? null,
         status: "PENDING",
       },
+      include: {
+        member: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
     });
 
     logAudit({
@@ -87,6 +98,19 @@ export async function POST(request: NextRequest) {
       details: body.reason ? `Reason: ${body.reason}` : "No reason provided",
       ipAddress: getClientIp(request),
     });
+
+    const memberName = memberDisplayName(request_.member);
+    sendAdminAccountDeletionRequestedAlert({
+      requestId: request_.id,
+      memberName,
+      memberEmail: request_.member.email,
+      reason: body.reason ?? null,
+    }).catch((alertErr) =>
+      logger.error(
+        { err: alertErr, memberId: session.user.id, requestId: request_.id },
+        "Failed to send admin account deletion request alert"
+      )
+    );
 
     return NextResponse.json({
       message: "Deletion request submitted. An admin will review it shortly.",

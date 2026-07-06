@@ -1494,6 +1494,37 @@ Triggers and frequency:
 - Admin rejects an account deletion request.
 - Sent once per rejection.
 
+### admin-account-deletion-requested
+
+Subject:
+
+```text
+Account deletion requested: {{memberName}}
+```
+
+Body:
+
+```text
+Account Deletion Request Submitted
+
+{{memberName}} submitted an account deletion request.
+
+Member: {{memberName}}
+Email: {{memberEmail}}
+
+Reason:
+{{reason}} [only when reason exists]
+
+Review Deletion Requests: {{reviewUrl}}
+
+{{CLUB_NAME}} — {{SUPPORT_EMAIL}}
+```
+
+Triggers and frequency:
+
+- Member submits a self-service account deletion request.
+- Sent once per newly queued pending deletion request. Email failure is logged but does not block queueing.
+
 ### admin-member-archive-requested
 
 Subject:

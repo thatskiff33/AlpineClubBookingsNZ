@@ -9,7 +9,13 @@ The rows marked "Playwright E2E" below now have automated browser coverage in
 [`E2E_PLAYWRIGHT.md`](E2E_PLAYWRIGHT.md). This spans the Critical booking,
 two-factor, and Stripe rows plus the High role-boundary, waitlist, internet-
 banking, and membership-application rows. The Stripe payment specs skip unless
-genuine Stripe test-mode keys are configured. Deliberate browser-coverage gaps
+genuine Stripe test-mode keys are configured, and they cover **only test-mode
+payment success and decline** — refund, cancellation-with-refund, saved-card,
+and member-credit paths have no browser coverage yet (Vitest/service only).
+Neither the admin approve → bed-allocation journey nor access-role *management*
+(create/edit/assign) has a browser spec yet either. These tracked additions
+(cancellation-with-refund, bed-allocation, and role-management specs) are being
+added under issue #1373; the deliberate, ratified browser-coverage gaps
 (email-code 2FA, cron-driven waitlist offer/expiry, webhook signature classes)
 are listed in `E2E_PLAYWRIGHT.md`.
 
@@ -24,7 +30,9 @@ are listed in `E2E_PLAYWRIGHT.md`.
 | Booking/capacity | Member | Create booking with capacity lock and per-guest stay ranges | Critical | Service tests, concurrency tests, manual booking flow | Targeted booking/capacity suites; Playwright E2E `e2e/booking.spec.ts` (`/book` journey, payment-owed booking holds no bed per #737, duplicate member-night block) and `e2e/stripe-payment.spec.ts` (paid booking occupies its beds) |
 | Booking/capacity | Member | Prevent the same linked member from being booked on the same lodge night in multiple live bookings, with open-existing-booking and future self-removal recovery paths | High | Service, route, and booking-flow UI tests | Targeted member-night conflict helper, booking quote/create, and guest-removal route tests; manual `/book` duplicate-member flow |
 | Booking/capacity | Member/admin | Waitlist, offer expiry, force-confirm, bump/cancel | High | Service tests and cron tests | Targeted waitlist tests plus safe cron unit tests; Playwright E2E `e2e/waitlist.spec.ts` (full-night refusal → WAITLISTED, admin force-confirm/overbook, member offer accept, offer/expiry admin state). Offer creation + expiry run only on the in-process scheduler (no HTTP endpoint) and stay cron-unit-tested |
-| Payment/refund/credit | Member/admin | Stripe payment success/failure, saved card, refund, member credit | Critical | Unit/service tests with Stripe mocked | Targeted payment, refund, credit suites; Playwright E2E `e2e/stripe-payment.spec.ts` (test-mode success/decline; skips without test-mode keys) |
+| Payment/refund/credit | Member/admin | Stripe payment success/failure, saved card, refund, member credit | Critical | Unit/service tests with Stripe mocked | Targeted payment, refund, credit suites; Playwright E2E `e2e/stripe-payment.spec.ts` covers **only** test-mode payment success + decline (skips without test-mode keys). **No browser coverage of refund, cancellation-with-refund, saved card, or member credit** — those stay Vitest/service-only for now; a cancellation-with-refund browser spec is tracked in #1373 |
+| Payment/refund/credit | Member/admin | Cancel a paid booking and receive the settlement (card refund or member credit) with correct status transitions | Critical | Service/route tests plus manual staging | Targeted booking-cancel/settlement/refund suites; **no Playwright browser coverage yet** — cancellation-with-refund money-outcome E2E tracked in #1373 (also guards the P0-1/P0-2 cancel-refund fixes) |
+| Booking/capacity | Admin | Approve a review-flagged booking, then allocate its guests to specific beds (auto + manual) | High | Service/route tests plus manual staging | Targeted bed-allocation service/route tests (module enabled on the staging stack); **no Playwright browser coverage yet** — admin approve → allocate journey E2E tracked in #1373 |
 | Payment/refund/credit | Member/admin | Internet Banking/Xero invoice settlement distinct from Stripe | Critical | Service tests with Xero mocked | Targeted Xero booking invoice/reconciliation tests; Playwright E2E `e2e/internet-banking.spec.ts` (switch a card booking to Internet Banking with Xero absent — reference shown, invoice queued not sent, no crash) |
 | Webhook replay/idempotency | Stripe/Xero/SES | Valid, duplicate, malformed, oversized, and wrong-signature payloads | Critical | Route tests with fake signed payloads | Targeted webhook route tests, no live provider calls. All five payload classes are covered per handler (issue #1133): `stripe-webhook-alerts.test.ts`, `xero-webhook-route.test.ts`, `ses-sns-webhook.test.ts`, plus DB-level replay dedup in `xero-sync.test.ts` and the SES claim-release retry path |
 | Cron rerun/recovery | Scheduler | Payment recovery, pending confirmation, waitlist, Xero retry, email retry | High | Unit/route tests with local DB or mocks | Targeted cron tests; never use production `CRON_SECRET` |

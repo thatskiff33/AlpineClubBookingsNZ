@@ -174,6 +174,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Update on Your Account Deletion Request",
     "defaultBody": "Account Deletion Request Update\n\nHi {{firstName}},\n\nYour account deletion request has been reviewed and was not approved at this time.\n\nAdmin note: {{adminNote}} [only when adminNote exists]\n\nIf you have questions about this decision, please contact the club directly.\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
   },
+  "admin-account-deletion-requested": {
+    "defaultSubject": "Account deletion requested: {{memberName}}",
+    "defaultBody": "Account Deletion Request Submitted\n\n{{memberName}} submitted an account deletion request.\n\nMember: {{memberName}}\nEmail: {{memberEmail}}\n\nReason:\n{{reason}} [only when reason exists]\n\nReview Deletion Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"
+  },
   "admin-member-archive-requested": {
     "defaultSubject": "Member archive requested: {{memberName}}",
     "defaultBody": "Member Archive Requested\n\n{{requesterName}} requested archive review for {{memberName}}.\n\nMember: {{memberName}}\nRequested by: {{requesterName}}\n\nReason:\n{{reason}}\n\nReview Archive Requests: {{reviewUrl}}\n\n{{CLUB_NAME}} — {{SUPPORT_EMAIL}}"

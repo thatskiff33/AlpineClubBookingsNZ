@@ -286,6 +286,8 @@ record for lodge-wide operational defaults such as fallback capacity and the
 hut-leader lookahead window used by dashboard and Needs Attention warnings.
 The sidebar's Needs Attention Booking Requests badge sums pending internal
 booking reviews, requested change requests, and queued public booking requests.
+Pending self-service account deletion requests are also counted there and link
+admins to the deletion request queue.
 All sidebar badge counts come from the single `GET /api/admin/pending-counts`
 endpoint (`src/lib/admin-pending-counts.ts`), whose per-queue where-clauses
 mirror the individual queue routes. Sidebar sections render expanded by

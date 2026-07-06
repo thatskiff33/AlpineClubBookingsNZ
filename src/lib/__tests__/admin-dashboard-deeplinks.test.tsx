@@ -10,6 +10,7 @@ vi.mock("@/lib/prisma", () => ({
     adminCreditAdjustmentRequest: { count: vi.fn() },
     membershipCancellationRequest: { count: vi.fn() },
     memberLifecycleActionRequest: { count: vi.fn() },
+    deletionRequest: { count: vi.fn() },
     bookingChangeRequest: { count: vi.fn() },
   },
 }));
@@ -25,9 +26,11 @@ import { prisma } from "@/lib/prisma";
 function mockDashboardCounts({
   pendingBookingReviews,
   pendingBookingChangeRequests,
+  pendingDeletionRequests = 0,
 }: {
   pendingBookingReviews: number;
   pendingBookingChangeRequests: number;
+  pendingDeletionRequests?: number;
 }) {
   vi.mocked(prisma.member.count).mockResolvedValue(0);
   vi.mocked(prisma.booking.count)
@@ -43,6 +46,9 @@ function mockDashboardCounts({
   vi.mocked(prisma.adminCreditAdjustmentRequest.count).mockResolvedValue(0);
   vi.mocked(prisma.membershipCancellationRequest.count).mockResolvedValue(0);
   vi.mocked(prisma.memberLifecycleActionRequest.count).mockResolvedValue(0);
+  vi.mocked(prisma.deletionRequest.count).mockResolvedValue(
+    pendingDeletionRequests,
+  );
   vi.mocked(prisma.bookingChangeRequest.count).mockResolvedValue(
     pendingBookingChangeRequests,
   );
@@ -74,5 +80,21 @@ describe("admin dashboard deep links", () => {
     const html = renderToStaticMarkup(await AdminDashboardPage());
 
     expect(html).toContain('href="/admin/booking-requests?tab=approvals"');
+  });
+
+  it("links pending account deletion request alerts to the deletion request queue", async () => {
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+      pendingDeletionRequests: 2,
+    });
+
+    const html = renderToStaticMarkup(await AdminDashboardPage());
+
+    expect(html).toContain('href="/admin/deletion-requests?status=PENDING"');
+    expect(html).toContain("Account Deletion Requests");
+    expect(html).toContain(
+      "2 account deletion requests waiting for admin review",
+    );
   });
 });

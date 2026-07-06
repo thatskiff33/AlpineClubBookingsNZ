@@ -129,6 +129,11 @@ const navSections: NavSection[] = [
         label: "Cancellation Requests",
         icon: UserX,
       },
+      {
+        href: "/admin/deletion-requests",
+        label: "Deletion Requests",
+        icon: Trash2,
+      },
       { href: "/admin/issue-reports", label: "Issue Reports", icon: Bug },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: Bell },
     ],
@@ -370,6 +375,7 @@ const ZERO_PENDING_COUNTS: AdminPendingCounts = {
   publicBookingRequests: 0,
   membershipCancellations: 0,
   archiveRequests: 0,
+  deletionRequests: 0,
   issueReports: 0,
   unassignedHutLeaderDates: 0,
 };
@@ -473,6 +479,9 @@ function SidebarLinks({
   if (counts.membershipCancellations + counts.archiveRequests > 0) {
     badges["/admin/membership-cancellations"] =
       counts.membershipCancellations + counts.archiveRequests;
+  }
+  if (counts.deletionRequests > 0) {
+    badges["/admin/deletion-requests"] = counts.deletionRequests;
   }
   if (counts.issueReports > 0) {
     badges["/admin/issue-reports"] = counts.issueReports;

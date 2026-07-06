@@ -35,6 +35,20 @@ Not covered by browser tests (by design):
   confirmation pages using seeded tokens rather than parsing the captured email
   (see below). Only the email-code two-factor spec reads a captured message back.
 
+Not covered yet, but tracked for addition (issue #1373 — restored to this list
+so the gaps are not silently implied as covered):
+
+- **Stripe refund, cancellation-with-refund, saved card, and member credit** —
+  `e2e/stripe-payment.spec.ts` covers only test-mode payment success + decline;
+  the refund/credit money outcomes stay Vitest/service-tested until the
+  cancellation-with-refund browser spec lands.
+- **Admin approve → bed allocation** — the `bedAllocation` module is enabled on
+  the staging stack, but the approve-then-allocate journey has no browser spec
+  yet.
+- **Access-role management** (create → edit → assign a role definition) — the
+  role *boundary* matrix is covered by `e2e/admin-roles.spec.ts`, but role
+  *management* is not yet browser-tested (deferred from #1134).
+
 ## Running locally
 
 ```bash

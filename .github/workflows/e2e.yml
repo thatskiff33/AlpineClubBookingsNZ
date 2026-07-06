@@ -22,7 +22,12 @@ permissions:
 
 concurrency:
   group: e2e-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs only on pull requests (a new push to the same PR
+  # supersedes the previous run). Pushes to main must NOT cancel each other:
+  # every merge needs its own browser verdict, so main-push runs queue and each
+  # completes instead of being voided (finding F13 / #1373 — cancel-in-progress
+  # previously voided most main-push E2E runs).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   playwright:

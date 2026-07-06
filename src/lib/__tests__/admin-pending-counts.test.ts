@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   bookingCount: vi.fn(),
   bookingChangeRequestCount: vi.fn(),
   bookingRequestCount: vi.fn(),
+  deletionRequestCount: vi.fn(),
   issueReportCount: vi.fn(),
   getPendingMembershipCancellationReviewCount: vi.fn(),
   getPendingMemberArchiveReviewCount: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
     booking: { count: mocks.bookingCount },
     bookingChangeRequest: { count: mocks.bookingChangeRequestCount },
     bookingRequest: { count: mocks.bookingRequestCount },
+    deletionRequest: { count: mocks.deletionRequestCount },
     issueReport: { count: mocks.issueReportCount },
   },
 }));
@@ -57,7 +59,8 @@ describe("getAdminPendingCounts", () => {
     mocks.bookingRequestCount.mockResolvedValue(7);
     mocks.getPendingMembershipCancellationReviewCount.mockResolvedValue(8);
     mocks.getPendingMemberArchiveReviewCount.mockResolvedValue(9);
-    mocks.issueReportCount.mockResolvedValue(10);
+    mocks.deletionRequestCount.mockResolvedValue(10);
+    mocks.issueReportCount.mockResolvedValue(11);
     mocks.getUnassignedHutLeaderDates.mockResolvedValue([
       "2026-07-04",
       "2026-07-05",
@@ -75,7 +78,8 @@ describe("getAdminPendingCounts", () => {
       publicBookingRequests: 7,
       membershipCancellations: 8,
       archiveRequests: 9,
-      issueReports: 10,
+      deletionRequests: 10,
+      issueReports: 11,
       unassignedHutLeaderDates: 2,
     });
   });
@@ -127,6 +131,9 @@ describe("getAdminPendingCounts", () => {
           ],
         },
       },
+    });
+    expect(mocks.deletionRequestCount).toHaveBeenCalledWith({
+      where: { status: "PENDING" },
     });
     expect(mocks.issueReportCount).toHaveBeenCalledWith({
       where: { resolvedAt: null },
