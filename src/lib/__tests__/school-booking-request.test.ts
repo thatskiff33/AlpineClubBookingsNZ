@@ -651,6 +651,18 @@ describe("approveSchoolBookingRequest", () => {
     const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0]
       .data as Record<string, unknown>;
     expect(updateArgs.memberId).toBe("school-member");
+    // The #1352 capacity re-check runs on the held-reuse path even WITHOUT a
+    // guestOverride (submitted snapshot), excluding the hold's own beds. Guards
+    // against a future regression that gates the check behind input.guestOverride.
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      expect.anything()
+    );
+    const ranges = mockedCheckCapacity.mock.calls[0][2] as unknown[];
+    expect(ranges).toHaveLength(3); // submitted snapshot: 1 teacher + 2 children
     expect(mockedLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "booking_request.owner_substituted",
