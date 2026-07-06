@@ -662,6 +662,113 @@ describe("approveSchoolBookingRequest", () => {
     );
   });
 
+  it("returns capacityExceeded on the held-reuse path when a guest-count override overbooks a night, and swaps/confirms nothing (issue #1352)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ heldBookingId: "held-1" }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-school",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    // Valid non-login SCHOOL owner → re-validation passes; capacity is the guard.
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-school",
+      canLogin: false,
+      role: "SCHOOL",
+      archivedAt: null,
+      active: true,
+    } as never);
+    // The enlarged list (admin bumps CHILD to 4) overbooks the first night even
+    // after excluding the hold's own beds.
+    mockedCheckCapacity.mockResolvedValue({
+      available: false,
+      minAvailable: -1,
+      nightDetails: [
+        { date: new Date("2026-08-01T00:00:00.000Z"), availableBeds: -1 },
+        { date: new Date("2026-08-02T00:00:00.000Z"), availableBeds: 2 },
+      ],
+    } as never);
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 4 } },
+    });
+
+    expect(result).toEqual({ type: "capacityExceeded", fullNights: ["2026-08-01"] });
+    // The re-check excludes the held booking's own held beds (excludeBookingId).
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      expect.anything()
+    );
+    // The enlarged (5-guest) list, not the 3-guest hold, drove the check.
+    const ranges = mockedCheckCapacity.mock.calls[0][2] as unknown[];
+    expect(ranges).toHaveLength(5);
+    // No guest swap persisted and the hold was NOT flipped to CONFIRMED.
+    expect(prisma.bookingGuest.findMany).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.bookingGuest.createMany).not.toHaveBeenCalled();
+    expect(prisma.booking.update).not.toHaveBeenCalled();
+    expect(mockedEnqueueInvoice).not.toHaveBeenCalled();
+  });
+
+  it("re-checks capacity on the held-reuse path (excluding the hold) and confirms when the enlarged list still fits (issue #1352)", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ heldBookingId: "held-1" }) as never
+    );
+    vi.mocked(prisma.booking.findUnique).mockResolvedValue({
+      id: "held-1",
+      memberId: "held-school",
+      status: BookingStatus.AWAITING_REVIEW,
+    } as never);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "held-school",
+      canLogin: false,
+      role: "SCHOOL",
+      archivedAt: null,
+      active: true,
+    } as never);
+    // Guest counts differ from the hold → reassign deletes+recreates (mocked).
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.bookingGuest.deleteMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.bookingGuest.createMany).mockResolvedValue({ count: 5 } as never);
+    vi.mocked(prisma.booking.update).mockResolvedValue({ id: "held-1" } as never);
+    // beforeEach leaves capacity available → the enlarged list fits, guard passes.
+
+    const result = await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+      guestOverride: { childCounts: { CHILD: 4 } },
+    });
+
+    expect(result).toMatchObject({
+      type: "approved",
+      schoolMemberId: "held-school",
+    });
+    // The re-check ran against the NEW 5-guest list and excluded the hold itself.
+    expect(mockedCheckCapacity).toHaveBeenCalledWith(
+      CHECK_IN,
+      CHECK_OUT,
+      expect.any(Array),
+      "held-1",
+      expect.anything()
+    );
+    const ranges = mockedCheckCapacity.mock.calls[0][2] as Array<{
+      stayStart: Date;
+      stayEnd: Date;
+    }>;
+    expect(ranges).toHaveLength(5); // 1 teacher + 4 children
+    expect(ranges[0]).toMatchObject({ stayStart: CHECK_IN, stayEnd: CHECK_OUT });
+    // The guest swap ran and the hold flipped to CONFIRMED (guard did not over-reject).
+    const updateArgs = vi.mocked(prisma.booking.update).mock.calls[0][0]
+      .data as Record<string, unknown>;
+    expect(updateArgs.status).toBe(BookingStatus.CONFIRMED);
+  });
+
   it("uses an officer-set price override when present", async () => {
     mockedFindUnique.mockResolvedValue(
       schoolRequest({ status: BookingRequestStatus.PRICED, priceCents: 33000 }) as never

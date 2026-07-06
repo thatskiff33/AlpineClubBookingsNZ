@@ -668,6 +668,31 @@ export async function approveSchoolBookingRequest(input: {
           };
         }
 
+        // Re-check per-night capacity for the NEW guest list before swapping
+        // (issue #1352). The guest swap below can ENLARGE the list — an admin
+        // varying guestOverride.childCounts is bounded only by total lodge
+        // capacity (checked above), not per-night occupancy — so without this
+        // an accept could silently oversell a night other bookings already
+        // fill. Runs inside the same advisory-locked tx, mirroring the
+        // fresh-create path. Exclude held.id so the hold's OWN beds (still its
+        // old rows while AWAITING_REVIEW) don't count against the new list: the
+        // check measures whether the new list fits alongside every OTHER booking.
+        const capacityRanges = guests.map(() => ({
+          stayStart: request.checkIn,
+          stayEnd: request.checkOut,
+        }));
+        const capacity = await checkCapacityForGuestRanges(
+          request.checkIn,
+          request.checkOut,
+          capacityRanges,
+          held.id,
+          tx
+        );
+        if (!capacity.available) {
+          capacityFullNights = getCapacityFullNights(capacity.nightDetails);
+          throw new Error("CAPACITY_EXCEEDED_SENTINEL");
+        }
+
         // Preserve the held booking's beds across the guest swap (issue #1254):
         // update guest rows in place rather than deleteMany+recreate, so an
         // admin's pre-assigned beds (and #713 night sets) survive. CONFIRMED
