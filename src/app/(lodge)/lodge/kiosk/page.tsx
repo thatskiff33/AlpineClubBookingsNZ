@@ -1,11 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw } from "lucide-react";
+import { CalendarDays, RefreshCw } from "lucide-react";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
+import {
+  addDaysToDateKey,
+  getWeekStartDateKey,
+  KioskWeekView,
+  type KioskWeekDaySummary,
+  weekHasAccessibleDay,
+} from "./_components/kiosk-week-view";
 
 interface Guest {
   id: string;
@@ -57,6 +64,8 @@ interface AccessInfo {
   lodgeName?: string | null;
 }
 
+type KioskView = "week" | "day";
+
 function formatDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -90,6 +99,11 @@ export default function KioskPage() {
   const hutLeaderSentence =
     hutLeaderLower.charAt(0).toUpperCase() + hutLeaderLower.slice(1);
   const [date, setDate] = useState(() => formatDate(new Date()));
+  const [view, setView] = useState<KioskView>("week");
+  const [weekStart, setWeekStart] = useState(() =>
+    getWeekStartDateKey(formatDate(new Date()))
+  );
+  const [weekDays, setWeekDays] = useState<KioskWeekDaySummary[]>([]);
   const [bookings, setBookings] = useState<BookingGroup[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [access, setAccess] = useState<AccessInfo | null>(null);
@@ -116,6 +130,7 @@ export default function KioskPage() {
       const accessRes = await fetch(`/api/lodge/access?date=${date}`);
       if (!accessRes.ok) {
         setAccess(null);
+        setWeekDays([]);
         setBookings([]);
         setAssignments([]);
         setAuthRequired(accessRes.status === 401);
@@ -131,6 +146,27 @@ export default function KioskPage() {
       const accessData = await accessRes.json();
       setAccess(accessData);
       setAuthRequired(false);
+
+      if (view === "week") {
+        const weekRes = await fetch(`/api/lodge/week?start=${weekStart}`);
+
+        if (!weekRes.ok) {
+          setWeekDays([]);
+          setBookings([]);
+          setAssignments([]);
+          setError("Failed to load lodge kiosk week data.");
+          setFailCount(0);
+          return;
+        }
+
+        const weekData = await weekRes.json();
+        setWeekDays(weekData.days ?? []);
+        setBookings([]);
+        setAssignments([]);
+        setError(null);
+        setFailCount(0);
+        return;
+      }
 
       const [guestsRes, rosterRes] = await Promise.all([
         fetch(`/api/lodge/guests/${date}?scope=lodge-list`),
@@ -154,12 +190,13 @@ export default function KioskPage() {
       setFailCount(0);
     } catch {
       setAuthRequired(false);
+      setWeekDays([]);
       setError("Failed to load data");
       setFailCount((c) => c + 1);
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, [date, view, weekStart]);
 
   useEffect(() => {
     setLoading(true);
@@ -209,6 +246,38 @@ export default function KioskPage() {
     }
 
     setDate(newDate);
+    setWeekStart(getWeekStartDateKey(newDate));
+  };
+
+  const canNavigateWeek = (deltaWeeks: number) => {
+    const nextWeekStart = addDaysToDateKey(weekStart, deltaWeeks * 7);
+    return weekHasAccessibleDay(nextWeekStart, access?.dateRange ?? null);
+  };
+
+  const changeWeek = (deltaWeeks: number) => {
+    const nextWeekStart = addDaysToDateKey(weekStart, deltaWeeks * 7);
+    if (!weekHasAccessibleDay(nextWeekStart, access?.dateRange ?? null)) {
+      return;
+    }
+    setWeekStart(nextWeekStart);
+  };
+
+  const openDayView = (dateKey: string) => {
+    setDate(dateKey);
+    setWeekStart(getWeekStartDateKey(dateKey));
+    setView("day");
+  };
+
+  const showWeekForDate = () => {
+    setWeekStart(getWeekStartDateKey(date));
+    setView("week");
+  };
+
+  const showToday = () => {
+    const today = formatDate(new Date());
+    setDate(today);
+    setWeekStart(getWeekStartDateKey(today));
+    setView("week");
   };
 
   const showActionError = (message: string) => {
@@ -374,7 +443,14 @@ export default function KioskPage() {
   }
 
   return (
-    <div className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none">
+    <div
+      className="theme-aware-kiosk min-h-screen bg-slate-900 text-white p-4 select-none"
+      style={
+        view === "week"
+          ? { backgroundColor: "#0f172a", color: "#ffffff" }
+          : undefined
+      }
+    >
       <div className="mb-4 flex justify-end">
         <ThemeSwitcher className="w-full max-w-sm" />
       </div>
@@ -387,7 +463,9 @@ export default function KioskPage() {
       {/* Admin tier preview dropdown */}
       {access?.tier === "admin" && (
         <div className="flex items-center justify-end mb-3 gap-2">
-          <span className="text-sm text-slate-400">Viewing as:</span>
+          <span className={`text-sm ${view === "week" ? "text-[#cbd5e1]" : "text-slate-400"}`}>
+            Viewing as:
+          </span>
           <select
             value={viewAs ?? "admin"}
             onChange={(e) => {
@@ -404,55 +482,64 @@ export default function KioskPage() {
         </div>
       )}
 
-      {/* Header with date navigation */}
-      <header className="flex items-center justify-between mb-6">
-        <button
-          onClick={() => changeDate(-1)}
-          disabled={!canNavigateBack()}
-          className={`text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px] ${
-            canNavigateBack()
-              ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
-              : "bg-slate-800 text-slate-600 cursor-not-allowed"
-          }`}
-          aria-label="Previous day"
-        >
-          &lsaquo;
-        </button>
-        <div className="text-center">
-          {access?.lodgeName && (
-            <p className="text-slate-300 text-sm font-medium uppercase tracking-wide">
-              {access.lodgeName}
-            </p>
-          )}
-          <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
-          <p className="text-slate-400 text-lg">
-            {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
-          </p>
-          {(effectiveTier === "staying-guest" || effectiveTier === "none") && (
-            <p className="text-blue-400 text-sm mt-1">Read-only view</p>
-          )}
+      {view === "day" && (
+        <header className="mb-6 flex items-center justify-between">
           <button
-            onClick={refreshNow}
-            disabled={refreshing}
-            className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600 disabled:cursor-wait disabled:text-slate-400"
+            onClick={() => changeDate(-1)}
+            disabled={!canNavigateBack()}
+            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-white ${
+              canNavigateBack()
+                ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
+                : "cursor-not-allowed bg-slate-800 text-slate-600"
+            }`}
+            aria-label="Previous day"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Refreshing..." : "Refresh"}
+            &lsaquo;
           </button>
-        </div>
-        <button
-          onClick={() => changeDate(1)}
-          disabled={!canNavigateForward()}
-          className={`text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px] ${
-            canNavigateForward()
-              ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
-              : "bg-slate-800 text-slate-600 cursor-not-allowed"
-          }`}
-          aria-label="Next day"
-        >
-          &rsaquo;
-        </button>
-      </header>
+          <div className="text-center">
+            {access?.lodgeName && (
+              <p className="text-sm font-medium uppercase text-slate-300">
+                {access.lodgeName}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={showWeekForDate}
+              className="mb-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600"
+            >
+              <CalendarDays className="h-4 w-4" />
+              &lsaquo; Week
+            </button>
+            <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
+            <p className="text-lg text-slate-400">
+              {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
+            </p>
+            {(effectiveTier === "staying-guest" || effectiveTier === "none") && (
+              <p className="mt-1 text-sm text-blue-400">Read-only view</p>
+            )}
+            <button
+              onClick={refreshNow}
+              disabled={refreshing}
+              className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600 disabled:cursor-wait disabled:text-slate-400"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          <button
+            onClick={() => changeDate(1)}
+            disabled={!canNavigateForward()}
+            className={`min-h-[56px] min-w-[64px] rounded-xl px-6 py-4 text-2xl font-bold text-white ${
+              canNavigateForward()
+                ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
+                : "cursor-not-allowed bg-slate-800 text-slate-600"
+            }`}
+            aria-label="Next day"
+          >
+            &rsaquo;
+          </button>
+        </header>
+      )}
 
       {error && (
         <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
@@ -551,11 +638,30 @@ export default function KioskPage() {
         </section>
       )}
 
+      {!error && view === "week" && (
+        <KioskWeekView
+          days={weekDays}
+          weekStart={weekStart}
+          todayDate={formatDate(new Date())}
+          selectedDate={date}
+          lodgeName={access?.lodgeName}
+          readOnly={effectiveTier === "staying-guest" || effectiveTier === "none"}
+          refreshing={refreshing}
+          canGoToPreviousWeek={canNavigateWeek(-1)}
+          canGoToNextWeek={canNavigateWeek(1)}
+          onSelectDate={openDayView}
+          onChangeWeek={changeWeek}
+          onToday={showToday}
+          onRefresh={refreshNow}
+        />
+      )}
+
       {/* Lodge instructions for the signed-in hut leader (API re-checks access) */}
-      {(effectiveTier === "admin" || effectiveTier === "hut-leader") && (
+      {view === "day" && (effectiveTier === "admin" || effectiveTier === "hut-leader") && (
         <KioskLodgeInstructions date={date} />
       )}
 
+      {view === "day" && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Lodge List Panel */}
         <section>
@@ -833,9 +939,10 @@ export default function KioskPage() {
           )}
         </section>
       </div>
+      )}
 
       {/* Last refresh indicator */}
-      <footer className="mt-6 text-center text-sm text-slate-600">
+      <footer className={`mt-6 text-center text-sm ${view === "week" ? "text-[#94a3b8]" : "text-slate-600"}`}>
         Auto-refreshes every {failCount >= 3 ? "5m" : "60s"}
       </footer>
     </div>

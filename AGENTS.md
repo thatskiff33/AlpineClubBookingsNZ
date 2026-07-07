@@ -46,6 +46,10 @@ before changing Next.js APIs or conventions.
 - Booking dates must remain New Zealand date-only lodge nights unless a feature
   explicitly requires time-of-day semantics.
 - Stripe and Internet Banking/Xero settlement paths must remain distinct.
+- Hand-edit `prisma/schema.prisma`; never run `npx prisma format` — it realigns
+  whitespace across unrelated models, inflating diffs and merge-conflict
+  surface. Landed realignment churn is accepted as sunk cost; do not ship
+  whitespace-only revert PRs (#1567).
 - Webhooks and cron jobs must be idempotent.
 - Keep external provider calls outside long database transactions unless there
   is a documented reason.

@@ -37,6 +37,11 @@ the full environment and club config contract.
   transactions where possible.
 - Do not add plaintext token storage; bearer tokens should be stored hashed or
   encrypted as appropriate for their use.
+- Hand-edit `prisma/schema.prisma`; never run `npx prisma format`. The
+  formatter realigns column whitespace across models a change does not touch,
+  which inflates diffs, creates merge-conflict surface for concurrent schema
+  PRs, and makes `git blame` noisier. Existing realignment churn is accepted
+  once landed — do not ship whitespace-only reverts (#1567).
 - Update docs whenever a feature is added, changed, or removed, and when public
   setup, deployment, architecture, or environment contracts change. Ship the
   README, `docs/` guides, and implementation notes in the same PR as the code.

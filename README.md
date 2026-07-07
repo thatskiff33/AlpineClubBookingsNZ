@@ -34,7 +34,8 @@ recommended reading paths.
   the tokens it supports
 - Admin-managed site banners (urgent/warning/notify) shown above the site
   header for a set NZ date window, dismissible per browser
-- Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
+- Lodge kiosk with PIN access, week-at-a-glance counts, arrivals/departures,
+  chores, and issue reporting
 - Xero integrations for operational accounting, Internet Banking settlement,
   and finance reports backed by the same operational Xero connection
 - AWS SES email, SES SNS suppression feedback, Sentry/pino observability, cron

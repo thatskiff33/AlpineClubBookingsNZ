@@ -20,6 +20,7 @@ const {
     hutLeaderAssignment: {
       count: vi.fn(),
       create: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -641,6 +642,161 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(data.bookings[0].guests.map((guest: { id: string }) => guest.id)).toEqual([
       "active-guest",
     ]);
+  });
+
+  it("returns kiosk week summaries only for dates inside a hut leader's accessible range", async () => {
+    mockAuth.mockResolvedValue({
+      user: {
+        id: "leader-1",
+        role: "USER",
+        accessRoles: [{ role: "USER" }],
+        email: "leader@example.org",
+      },
+    });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "leader-1",
+      accessRoles: [{ role: "USER" }],
+    });
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(1);
+    mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
+      {
+        startDate: new Date("2026-04-14T00:00:00.000Z"),
+        endDate: new Date("2026-04-16T00:00:00.000Z"),
+      },
+    ]);
+    mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({
+      lodgeId: "default-lodge",
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.choreAssignment.findMany.mockResolvedValue([]);
+
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("@/app/api/lodge/week/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/lodge/week?start=2026-04-13")
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.start).toBe("2026-04-13");
+    expect(data.days).toHaveLength(7);
+    expect(
+      data.days.map((day: { date: string; accessible: boolean }) => [
+        day.date,
+        day.accessible,
+      ])
+    ).toEqual([
+      ["2026-04-13", true],
+      ["2026-04-14", true],
+      ["2026-04-15", true],
+      ["2026-04-16", true],
+      ["2026-04-17", false],
+      ["2026-04-18", false],
+      ["2026-04-19", false],
+    ]);
+    expect(Object.keys(data.days[4]).sort()).toEqual([
+      "accessible",
+      "date",
+    ]);
+  });
+
+  it("returns kiosk week counts from one booking query without guest PII", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }], email: "support@example.org" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        checkIn: new Date("2026-04-13T00:00:00.000Z"),
+        checkOut: new Date("2026-04-16T00:00:00.000Z"),
+        memberName: "Secret Owner",
+        guests: [
+          {
+            firstName: "Alice",
+            lastName: "Secret",
+            stayStart: new Date("2026-04-13T00:00:00.000Z"),
+            stayEnd: new Date("2026-04-15T00:00:00.000Z"),
+            ageTier: "ADULT",
+            nights: [],
+          },
+          {
+            firstName: "Bob",
+            lastName: "Hidden",
+            stayStart: new Date("2026-04-14T00:00:00.000Z"),
+            stayEnd: new Date("2026-04-16T00:00:00.000Z"),
+            ageTier: "YOUTH",
+            nights: [],
+          },
+          {
+            firstName: "Cara",
+            lastName: "Private",
+            stayStart: new Date("2026-04-12T00:00:00.000Z"),
+            stayEnd: new Date("2026-04-14T00:00:00.000Z"),
+            ageTier: "CHILD",
+            nights: [],
+          },
+        ],
+      },
+    ]);
+    mockPrisma.choreAssignment.findMany.mockResolvedValue([
+      {
+        date: new Date("2026-04-14T00:00:00.000Z"),
+        status: "CONFIRMED",
+        bookingId: "booking-1",
+      },
+    ]);
+
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("@/app/api/lodge/week/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/lodge/week?start=2026-04-13")
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const apr14 = data.days.find(
+      (day: { date: string }) => day.date === "2026-04-14"
+    );
+    expect(apr14).toEqual({
+      date: "2026-04-14",
+      accessible: true,
+      guestCount: 3,
+      arrivingCount: 1,
+      departingCount: 1,
+      rosterStatus: "confirmed",
+    });
+    expect(Object.keys(apr14).sort()).toEqual([
+      "accessible",
+      "arrivingCount",
+      "date",
+      "departingCount",
+      "guestCount",
+      "rosterStatus",
+    ]);
+    expect(JSON.stringify(data)).not.toMatch(
+      /Alice|Secret|Bob|Hidden|Cara|Private|memberName|firstName|lastName|phone|booking-1/
+    );
+
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.choreAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkIn: { lte: new Date("2026-04-19T00:00:00.000Z") },
+          checkOut: { gte: new Date("2026-04-13T00:00:00.000Z") },
+          guests: {
+            some: {
+              stayStart: { lte: new Date("2026-04-19T00:00:00.000Z") },
+              stayEnd: { gte: new Date("2026-04-13T00:00:00.000Z") },
+            },
+          },
+        }),
+      })
+    );
+    const bookingQuery = mockPrisma.booking.findMany.mock.calls[0][0];
+    expect(bookingQuery.select.member).toBeUndefined();
+    expect(bookingQuery.select.guests.select.firstName).toBeUndefined();
+    expect(bookingQuery.select.guests.select.lastName).toBeUndefined();
   });
 
   it("rotates hut leader PINs and returns the new PIN once for admins", async () => {

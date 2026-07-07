@@ -147,6 +147,7 @@ export function FinanceReportMappingsPanel() {
   const [backfilling, setBackfilling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
 
   async function loadMappings() {
     setLoading(true);
@@ -155,6 +156,22 @@ export function FinanceReportMappingsPanel() {
       const response = await fetch("/api/admin/setup/finance-report-mappings", {
         credentials: "same-origin",
       });
+      // The embedding page normally hides this panel by permission matrix; this
+      // in-card backstop makes a future cross-area embedding degrade quietly
+      // (render nothing) instead of showing the error box for a viewer lacking
+      // finance access. Xero-not-connected returns 500, not 403, so the
+      // chart-of-accounts amber note below is unaffected.
+      if (response.status === 401 || response.status === 403) {
+        // Dev breadcrumb: the embedding page hides this panel by matrix, so a
+        // denial here means matrix↔enforcement drift or mid-session revocation.
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            "FinanceReportMappingsPanel: mappings fetch denied; hiding panel (matrix/enforcement drift or revoked session?)",
+          );
+        }
+        setForbidden(true);
+        return;
+      }
       const body = (await response.json()) as
         | FinanceMappingsState
         | { error?: string };
@@ -181,6 +198,19 @@ export function FinanceReportMappingsPanel() {
       const response = await fetch("/api/admin/xero/chart-of-accounts", {
         credentials: "same-origin",
       });
+      // Same backstop as the mappings load: a finance-area denial hides the
+      // whole panel quietly. This route returns 500 (not 401/403) when Xero is
+      // simply not connected, so the coaError amber note stays the graceful path
+      // for a legitimate finance viewer.
+      if (response.status === 401 || response.status === 403) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            "FinanceReportMappingsPanel: chart-of-accounts fetch denied; hiding panel (matrix/enforcement drift or revoked session?)",
+          );
+        }
+        setForbidden(true);
+        return;
+      }
       const body = (await response.json()) as
         | { accounts?: XeroAccount[] }
         | { error?: string };
@@ -368,6 +398,8 @@ export function FinanceReportMappingsPanel() {
       setBackfilling(false);
     }
   }
+
+  if (forbidden) return null;
 
   return (
     <Card>

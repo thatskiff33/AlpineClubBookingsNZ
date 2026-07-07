@@ -136,6 +136,18 @@ Two behaviours were pinned down during implementation:
   carries a `DUPLICATE_STAY` code (surfaced by the confirm route like
   `OFFER_PRICE_CHANGED`); the offer is left intact so the member can cancel
   the duplicate and re-confirm.
+- **Event-level offer order is club-wide join order (owner decision
+  2026-07-08, #1566).** `OWN_LODGE_FIRST` is applied per candidate — an
+  entry's own-lodge opportunity is always considered before any
+  cross-lodge opportunity — but *across* candidates the processor walks
+  all overlapping entries in global `createdAt` order and stops at the
+  first successful offer per event. A slot freed at lodge B can therefore
+  be offered first to a globally-older lodge-A waitlister whose own lodge
+  had standing capacity; lodge B's own queue is served on the next
+  trigger event. Capacity remains checked per lodge (no overbooking) —
+  this is purely who is offered first. Accepted as join-order fairness
+  across the club, consistent with the `MERGED` philosophy, in preference
+  to exhausting the freed lodge's own queue before any other offer.
 
 ### Configuration
 
