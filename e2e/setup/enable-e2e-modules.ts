@@ -17,6 +17,10 @@ import { createPrismaPgAdapter } from "../../src/lib/prisma-adapter";
 
 const prisma = new PrismaClient({ adapter: createPrismaPgAdapter() });
 
+// multiLodge stays OFF by default so the blocking suite proves single-lodge
+// parity (ADR-002) byte-for-byte. The advisory two-lodge project (#1568) sets
+// E2E_ENABLE_MULTI_LODGE=1 for its own stack ONLY, turning the lodge step, the
+// per-lodge scoping and the cross-lodge waitlist flow on for those specs.
 const MODULES = {
   twoFactor: true,
   waitlist: true,
@@ -24,6 +28,7 @@ const MODULES = {
   chores: true,
   financeDashboard: true,
   bedAllocation: true,
+  multiLodge: process.env.E2E_ENABLE_MULTI_LODGE === "1",
 } as const;
 
 async function main() {
@@ -33,7 +38,10 @@ async function main() {
     create: { id: "default", ...MODULES },
   });
   console.log(
-    `E2E modules enabled (settings id: ${settings.id}): ${Object.keys(MODULES).join(", ")}`,
+    `E2E modules enabled (settings id: ${settings.id}): ${Object.entries(MODULES)
+      .filter(([, enabled]) => enabled)
+      .map(([name]) => name)
+      .join(", ")}`,
   );
 }
 

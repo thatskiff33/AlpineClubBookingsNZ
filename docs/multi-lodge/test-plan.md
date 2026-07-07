@@ -61,6 +61,40 @@ lifted.
 - Xero invoice generation unchanged: club-wide item/account mappings
   produce identical output for bookings at either lodge
 
+## Advisory Two-Lodge E2E Coverage (#1568)
+
+An **advisory, non-blocking** Playwright project now runs the app with two
+active lodges and `multiLodge` ON, giving CI its first real two-lodge signal:
+`e2e/two-lodge/two-lodge.spec.ts`, run via `playwright.two-lodge.config.ts` and
+`.github/workflows/e2e-two-lodge.yml` against a staging stack prepared with a
+second lodge (West Ridge Hut, `DEMO_SECOND_LODGE=1`), the module ON
+(`E2E_ENABLE_MULTI_LODGE=1`), and the two-lodge fixtures
+(`E2E_TWO_LODGE=1` → `e2e/setup/seed-two-lodge.ts`).
+
+This **does not replace any manual row below.** The manual staging matrix
+remains the hard gate before the second-lodge guard is lifted; the advisory
+project only smoke-guards a subset against regressions between manual passes.
+Advisory automated coverage now exists for:
+
+- **Cross-Lodge Isolation** — per-lodge availability isolation and "a booking at
+  one lodge does not consume the other's capacity" (spec scenarios a/b). The
+  real-database *concurrent* two-lodge contention row is still manual-only.
+- **Operations** — a kiosk account bound to West Ridge (single STAFF grant) sees
+  only West Ridge's roster on a shared date, not the default lodge's (scenario
+  c). Hut-leader-PIN rejection and roster-overlay rows stay manual-only.
+- **Waitlist (cross-lodge accept path, ADR-004)** — a **non-member-guest**
+  cross-lodge offer confirms end to end (scenario d). The **member-guest**
+  cross-lodge confirm is encoded as an **expected-fail** documenting #1609 (the
+  Phase-2 member-night guard trips on the entry's own `WAITLIST_OFFERED`
+  booking); an unexpected pass there would signal #1609 is fixed.
+
+Money/pricing at the second lodge and the door-code/travel-note email rows have
+**no** advisory automated coverage and remain manual-only.
+
+Promotion of this project from advisory to a blocking required check is a later
+owner decision, to be taken after observing its flake rate on `main` — the same
+advisory→blocking precedent as the main E2E suite (#1315).
+
 ## Manual Verification (Staging)
 
 ### Cross-Lodge Isolation

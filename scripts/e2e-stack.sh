@@ -81,6 +81,16 @@ prepare() {
   echo "==> Enabling the modules the E2E journeys need"
   DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/enable-e2e-modules.ts
 
+  # Advisory two-lodge project (#1568): when E2E_TWO_LODGE=1, the demo seed ran
+  # with DEMO_SECOND_LODGE=1 (West Ridge Hut) and enable-e2e-modules turned
+  # multiLodge on (E2E_ENABLE_MULTI_LODGE=1). Layer on the West Ridge seasons,
+  # kiosk binding, isolation bookings and cross-lodge offers the two-lodge specs
+  # need. The default blocking stack never sets this, so it is a no-op there.
+  if [[ "${E2E_TWO_LODGE:-}" == "1" ]]; then
+    echo "==> Seeding two-lodge E2E fixtures (West Ridge seasons, kiosk, offers)"
+    DATABASE_URL="$HOST_DATABASE_URL" npx tsx e2e/setup/seed-two-lodge.ts
+  fi
+
   echo "==> Starting app (http://localhost:${STAGING_HTTP_PORT})"
   if [[ "${E2E_SKIP_APP_BUILD:-}" == "1" ]]; then
     compose up -d --wait app

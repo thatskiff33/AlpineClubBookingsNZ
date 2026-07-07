@@ -1,0 +1,147 @@
+name: E2E two-lodge (advisory)
+
+# ADVISORY two-lodge Playwright coverage (#1568). It boots the SAME staging
+# compose stack as the blocking E2E workflow, but prepared with a SECOND active
+# lodge (DEMO_SECOND_LODGE=1 → West Ridge Hut), the multiLodge module ON
+# (E2E_ENABLE_MULTI_LODGE=1), and the two-lodge fixtures (E2E_TWO_LODGE=1 →
+# e2e/setup/seed-two-lodge.ts). It runs only e2e/two-lodge/* via
+# playwright.two-lodge.config.ts.
+#
+# ADVISORY, NOT BLOCKING: this job's name ("Playwright two-lodge (advisory)") is
+# deliberately NOT one of the branch-protection required checks (verify,
+# Migration drift check, Playwright E2E, Static analysis gate), so a red run
+# never blocks a merge. Promoting it to blocking is a later owner decision, to be
+# taken after observing its flake rate on main — the same advisory→blocking flip
+# precedent as the main E2E suite (#1315). It is also NEVER a substitute for the
+# manual two-lodge staging matrix in docs/multi-lodge/test-plan.md, which remains
+# the hard gate before enabling multiLodge in production.
+#
+# The Stripe payment specs are not part of the two-lodge project, so this
+# workflow needs no Stripe keys; a placeholder is written so the stack boots.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-two-lodge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  playwright-two-lodge:
+    name: Playwright two-lodge (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APP_IMAGE: tacbookings-e2e-app:ci
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write staging env file
+        run: |
+          cat > .env.staging <<EOF
+          STAGING_HTTP_PORT=3001
+          STAGING_POSTGRES_PORT=5433
+          NEXTAUTH_URL=http://localhost:3001
+          AUTH_TRUST_HOST=true
+          DB_PASSWORD=e2e-ci-db-password
+          AUTH_SECRET=e2e-ci-auth-secret
+          NEXTAUTH_SECRET=e2e-ci-auth-secret
+          SEED_ADMIN_EMAIL=e2e-admin@example.org
+          SEED_ADMIN_PASSWORD=e2e-ci-seed-password
+          SEED_LODGE_PASSWORD=e2e-ci-lodge-password
+          STRIPE_SECRET_KEY=sk_test_e2e_placeholder
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_e2e_placeholder
+          STRIPE_WEBHOOK_SECRET=whsec_e2e_placeholder
+          XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false
+          XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS=false
+          XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
+          SMTP_PORT=587
+          USE_AWS_SES=false
+          USE_SMTP_RELAY=true
+          EMAIL_SERVER_HOST=mailpit
+          EMAIL_SERVER_PORT=1025
+          EMAIL_SERVER_USER=e2e
+          EMAIL_SERVER_PASSWORD=e2e
+          MAILPIT_HTTP_PORT=8025
+          EMAIL_FROM=e2e@example.org
+          CONTACT_EMAIL=e2e@example.org
+          NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+          CRON_SECRET=e2e-ci-cron-secret
+          CRON_ENABLED=false
+          BACKUP_ENABLED=false
+          LOG_LEVEL=info
+          # Two-lodge stack knobs (#1568): a second active lodge, multiLodge ON,
+          # and the dedicated two-lodge e2e fixtures. The blocking E2E workflow
+          # sets none of these, so it stays single-lodge with multiLodge OFF.
+          DEMO_SECOND_LODGE=1
+          E2E_ENABLE_MULTI_LODGE=1
+          E2E_TWO_LODGE=1
+          EOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Reuse the same gha cache scopes the app/E2E jobs populate so this
+      # advisory run does not rebuild Next.js from scratch.
+      - name: Build app image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: tacbookings-e2e-app:ci
+          build-args: |
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_e2e_placeholder
+            NEXT_PUBLIC_CONTACT_EMAIL=e2e@example.org
+            NEXT_PUBLIC_SENTRY_DSN=
+          cache-from: |
+            type=gha,scope=alpineclubbookingsnz-app
+            type=gha,scope=alpineclubbookingsnz-e2e
+            type=gha,scope=alpineclubbookingsnz-e2e-two-lodge
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-e2e-two-lodge
+
+      - name: Prepare staging stack (postgres, migrate, seed, second lodge, app)
+        run: E2E_SKIP_APP_BUILD=1 bash scripts/e2e-stack.sh prepare
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run two-lodge Playwright project
+        run: bash scripts/e2e-stack.sh run --config=playwright.two-lodge.config.ts
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-two-lodge-${{ github.run_id }}
+          path: playwright-report/
+          if-no-files-found: ignore
+
+      - name: Show app logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file .env.staging -p tacbookings-staging \
+            -f docker-compose.yml -f docker-compose.staging.yml logs app | tail -200
+
+      - name: Tear down stack
+        if: always()
+        run: bash scripts/e2e-stack.sh down

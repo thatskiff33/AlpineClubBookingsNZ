@@ -179,3 +179,78 @@ export const NOMINATION_TOKEN_TWO = "b2".repeat(32); // nominator = Nadia
 // Applicant used by the light public-submit assertion (distinct email so it
 // never collides with the seeded application or an existing login).
 export const PUBLIC_APPLICANT_EMAIL = demoEmail("penny.public");
+
+// --- Two-lodge fixtures (e2e/two-lodge/*, #1568) -------------------------
+// These drive the ADVISORY two-lodge Playwright project only. They require the
+// second demo lodge (DEMO_SECOND_LODGE=1 → West Ridge Hut + rooms + beds) PLUS
+// the dedicated two-lodge e2e seed step (e2e/setup/seed-two-lodge.ts, which adds
+// West Ridge seasons/rates, the West-Ridge kiosk grant, the per-lodge isolation
+// bookings and the cross-lodge waitlist offers) and the multiLodge module ON.
+// They are never seeded or asserted by the default single-lodge blocking suite.
+export const WEST_RIDGE_SLUG = "west-ridge-hut";
+export const WEST_RIDGE_NAME = "West Ridge Hut";
+
+// A LODGE (kiosk) account bound to West Ridge via a single STAFF
+// MemberLodgeAccess grant, so resolveKioskLodgeId scopes its roster/guest
+// lookups to West Ridge only (scenario 3c). Loginable with the demo password.
+export const WEST_RIDGE_KIOSK = {
+  email: demoEmail("westridge-kiosk"),
+  firstName: "Winnie",
+  lastName: "Westkiosk",
+} as const;
+
+// Per-lodge isolation: one PAID (capacity-holding, operational) booking at the
+// DEFAULT lodge and one at West Ridge on the SAME single night, each with a
+// distinct guest count and a distinct guest name. Proves capacity and roster
+// are per-lodge (scenarios 3a/3b/3c). A late-September (Winter 2026) night no
+// other seeded booking touches. Owners are seeded as non-login members.
+export const TWO_LODGE_ISOLATION_WINDOW = {
+  checkIn: "2026-09-28",
+  checkOut: "2026-09-29",
+  nights: ["2026-09-28"],
+};
+export const LODGE_A_ISOLATION_GUEST_COUNT = 3;
+export const WEST_RIDGE_ISOLATION_GUEST_COUNT = 2;
+export const LODGE_A_ISOLATION_GUEST = {
+  firstName: "Ana",
+  lastName: "Alpha",
+} as const;
+export const WEST_RIDGE_ISOLATION_GUEST = {
+  firstName: "Wade",
+  lastName: "Westguest",
+} as const;
+
+// Cross-lodge waitlist offers (ADR-004): WAITLIST_OFFERED entries whose home
+// lodge is the DEFAULT lodge, offered to West Ridge (waitlistOfferedLodgeId).
+// The stored offer price is deliberately stale so the FIRST confirm always
+// returns OFFER_PRICE_CHANGED and refreshes it to the pricing engine's figure;
+// the spec primes it once before asserting, so it never hardcodes a West Ridge
+// rate. Both are owned by Wanda (WAITLISTER: complete profile, PAID) on
+// disjoint August (Winter 2026) windows West Ridge is otherwise empty for.
+export const CROSS_LODGE_STALE_OFFER_PRICE_CENTS = 1;
+
+// (3d) A composition that can pass today: the offer's only guest is a
+// NON-member (no memberId), so the Phase-2 member-night guard has no member to
+// conflict on and the cross-lodge confirm succeeds (#1609 does not bite).
+export const CROSS_LODGE_OFFER_NONMEMBER_ID = "e2e-xlodge-offer-nonmember";
+export const CROSS_LODGE_OFFER_NONMEMBER_GUEST = {
+  firstName: "Gus",
+  lastName: "Guestonly",
+} as const;
+export const CROSS_LODGE_OFFER_NONMEMBER_WINDOW = {
+  checkIn: "2026-08-24",
+  checkOut: "2026-08-26",
+  nights: ["2026-08-24", "2026-08-25"],
+};
+
+// (3e) The #1609 scenario: a member self-booked entry (Wanda is her own guest,
+// carrying her memberId). The Phase-2 member-night guard trips on this entry's
+// own WAITLIST_OFFERED booking (createConfirmedBooking passes it no
+// excludeBookingId), so the confirm is expected to FAIL today — encoded as a
+// Playwright expected-fail. An unexpected pass disproves #1609.
+export const CROSS_LODGE_OFFER_MEMBER_ID = "e2e-xlodge-offer-member";
+export const CROSS_LODGE_OFFER_MEMBER_WINDOW = {
+  checkIn: "2026-08-27",
+  checkOut: "2026-08-29",
+  nights: ["2026-08-27", "2026-08-28"],
+};

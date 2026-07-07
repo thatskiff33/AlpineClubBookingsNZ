@@ -248,6 +248,33 @@ hold genuine Stripe **test-mode** keys, and otherwise `test.skip` cleanly (they
 are also retry-scoped to absorb the datacenter-IP Link/hCaptcha flake). So a
 green E2E run does not imply Stripe E2E coverage ran unless those secrets are set.
 
+### Advisory two-lodge project (#1568)
+
+A separate, **advisory** project runs the app with two active lodges and the
+`multiLodge` module ON — the one configuration the blocking suite above never
+exercises (it runs single-lodge with `multiLodge` OFF, proving ADR-002 parity).
+
+- Specs: `e2e/two-lodge/two-lodge.spec.ts`; config:
+  `playwright.two-lodge.config.ts` (its own `testDir`; the blocking config
+  `testIgnore`s `**/two-lodge/**`, so the two never overlap).
+- Stack prep is the same `scripts/e2e-stack.sh`, driven by three env vars the
+  default stack never sets: `DEMO_SECOND_LODGE=1` (demo seed adds West Ridge
+  Hut + rooms + beds), `E2E_ENABLE_MULTI_LODGE=1` (`enable-e2e-modules.ts` turns
+  `multiLodge` on), and `E2E_TWO_LODGE=1` (runs `e2e/setup/seed-two-lodge.ts`,
+  which adds West Ridge seasons/rates, a West-Ridge-bound kiosk grant, the
+  per-lodge isolation bookings, and the cross-lodge waitlist offers).
+- Run locally against a prepared two-lodge stack with
+  `scripts/e2e-stack.sh run --config=playwright.two-lodge.config.ts` (set those
+  three vars in your `.env.staging` first).
+- CI: `.github/workflows/e2e-two-lodge.yml`, job **"Playwright two-lodge
+  (advisory)"** — deliberately NOT one of the branch-protection required checks
+  (`verify`, `Migration drift check`, `Playwright E2E`, `Static analysis gate`),
+  so a red run never blocks a merge. Promotion to blocking is a later owner
+  decision after observing flake rate on `main` (#1315 precedent). It is never a
+  substitute for the manual matrix in `multi-lodge/test-plan.md`.
+- Scenario (e) is an encoded **expected-fail** for #1609 (member-guest
+  cross-lodge confirm); an unexpected pass there disproves #1609.
+
 ## Safety
 
 - The stack is the isolated `tacbookings-staging` compose project with its own
