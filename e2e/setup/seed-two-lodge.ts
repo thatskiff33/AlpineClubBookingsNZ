@@ -302,7 +302,7 @@ async function seedCrossLodgeOffer(
 async function main(): Promise<void> {
   const westRidge = await prisma.lodge.findFirst({
     where: { slug: WEST_RIDGE_SLUG },
-    select: { id: true, active: true },
+    select: { id: true, active: true, createdAt: true },
   });
   if (!westRidge) {
     throw new Error(
@@ -311,6 +311,37 @@ async function main(): Promise<void> {
     );
   }
   const westRidgeId = westRidge.id;
+
+  // The migration-created default lodge (fixed slug "lodge") writes createdAt
+  // with the database's CURRENT_TIMESTAMP — under the staging stack's
+  // PGTZ=Pacific/Auckland that renders NZ local time into the naive timestamp
+  // column, ~12h AHEAD of the UTC timestamps Prisma seeds write. West Ridge
+  // then sorts "earlier" and getDefaultLodgeId (earliest active) resolves the
+  // WRONG lodge — which would skew every default-lodge fallback the app makes,
+  // not just this seed. Normalise the skew so the original lodge is
+  // unambiguously the default, then re-assert via the product resolver.
+  const originalLodge = await prisma.lodge.findFirst({
+    where: { slug: "lodge" },
+    select: { id: true, createdAt: true },
+  });
+  if (!originalLodge) {
+    throw new Error(
+      'seed-two-lodge: the migration-created default lodge (slug "lodge") not found.',
+    );
+  }
+  if (originalLodge.createdAt >= westRidge.createdAt) {
+    await prisma.lodge.update({
+      where: { id: originalLodge.id },
+      data: {
+        createdAt: new Date(westRidge.createdAt.getTime() - 60_000),
+      },
+    });
+    console.log(
+      "seed-two-lodge: normalised the default lodge's createdAt (DB-local " +
+        "CURRENT_TIMESTAMP vs client-UTC skew) so default-lodge resolution is " +
+        "deterministic.",
+    );
+  }
   const defaultLodgeId = await getDefaultLodgeId(prisma);
   if (westRidgeId === defaultLodgeId) {
     throw new Error(
