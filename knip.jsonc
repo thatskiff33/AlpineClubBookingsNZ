@@ -11,6 +11,14 @@
     "e2e/auth.setup.ts",
     // Invoked from scripts/e2e-stack.sh (shell), never imported.
     "e2e/setup/enable-e2e-modules.ts",
+    // Invoked from scripts/e2e-stack.sh when E2E_TWO_LODGE=1 (#1568), never imported.
+    "e2e/setup/seed-two-lodge.ts",
+    // Second Playwright config for the advisory two-lodge project (#1568):
+    // passed via --config on the CLI, so knip's playwright plugin (which only
+    // auto-detects the default config name) cannot trace it or the specs under
+    // e2e/two-lodge/ that consume the cross-lodge fixtures.
+    "playwright.two-lodge.config.ts",
+    "e2e/two-lodge/**/*.spec.ts",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
     "scripts/codex/issue-to-prompt.mjs",
