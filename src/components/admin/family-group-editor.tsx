@@ -11,21 +11,17 @@ import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import { FamilyGroupLoginHolderSection } from "@/components/admin/family-groups/login-holder-section";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
 import {
-  buildInitialRequestNotificationParents,
-  buildInitialRequestSelections,
   buildSharedEmailClusters,
-  getFamilyGroupRequestSubjectName,
   getMemberName,
-  mapFamilyGroupRequestSearchResults,
   normalizeFamilyEmail,
   type FamilyGroupDetail,
   type FamilyGroupMemberRow,
   type FamilyGroupRequest,
-  type MemberOption,
-  type RequestMemberMatch,
   type SharedEmailCluster,
 } from "@/lib/admin-family-group-ui-helpers";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
+import { useFamilyGroupMemberPicker } from "@/hooks/use-family-group-member-picker";
+import { useFamilyGroupRequestReview } from "@/hooks/use-family-group-request-review";
 import { resolveEffectiveEmail } from "@/lib/member-email";
 
 export interface FamilyGroupEditorProps {
@@ -43,23 +39,10 @@ export function FamilyGroupEditor({
   const [requests, setRequests] = useState<FamilyGroupRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [formName, setFormName] = useState("");
-  const [selectedMembers, setSelectedMembers] = useState<MemberOption[]>([]);
-  const [memberSearch, setMemberSearch] = useState("");
-  const [searchResults, setSearchResults] = useState<MemberOption[]>([]);
-  const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
-  const [requestSelections, setRequestSelections] = useState<Record<string, string>>({});
-  const [requestSearchTerms, setRequestSearchTerms] = useState<Record<string, string>>({});
-  const [requestSearchResults, setRequestSearchResults] = useState<Record<string, RequestMemberMatch[]>>({});
-  const [requestSearchFeedback, setRequestSearchFeedback] = useState<Record<string, string>>({});
-  const [requestNotes, setRequestNotes] = useState<Record<string, string>>({});
-  const [requestNotificationParents, setRequestNotificationParents] = useState<Record<string, string>>({});
-  const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
-  const [requestSearchingId, setRequestSearchingId] = useState<string | null>(null);
-  const [requestSubmittingId, setRequestSubmittingId] = useState<string | null>(null);
   const [loginHolderSelections, setLoginHolderSelections] = useState<Record<string, string>>({});
   const [loginHolderSavingEmail, setLoginHolderSavingEmail] = useState<string | null>(null);
   const [loginHolderErrors, setLoginHolderErrors] = useState<Record<string, string>>({});
@@ -69,6 +52,27 @@ export function FamilyGroupEditor({
   const editorRef = useRef<HTMLDivElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const { scrollToError, scrollToTop } = useScrollToFeedback();
+
+  const {
+    memberSearch,
+    setMemberSearch,
+    searchResults,
+    searching,
+    selectedMembers,
+    setSelectedMembers,
+    addMember,
+    removeMember,
+  } = useFamilyGroupMemberPicker();
+
+  const { initializeRequestState, getRequestReviewCardProps } =
+    useFamilyGroupRequestReview({
+      onRefresh: async () => {
+        await refreshEditor();
+        onChanged?.();
+      },
+      missingSelectionError:
+        "Choose the member record to link, or create a new non-login adult where available.",
+    });
 
   const sharedEmailClusters = useMemo(
     () => buildSharedEmailClusters(group?.members ?? []),
@@ -127,19 +131,14 @@ export function FamilyGroupEditor({
         const groupRequests = ((requestData.requests ?? []) as FamilyGroupRequest[])
           .filter((request) => request.familyGroup.id === groupId);
         setRequests(groupRequests);
-        setRequestSelections((current) =>
-          buildInitialRequestSelections(groupRequests, current)
-        );
-        setRequestNotificationParents((current) =>
-          buildInitialRequestNotificationParents(groupRequests, current)
-        );
+        initializeRequestState(groupRequests);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load family group");
     } finally {
       setLoading(false);
     }
-  }, [groupId]);
+  }, [groupId, initializeRequestState, setSelectedMembers]);
 
   useEffect(() => {
     refreshEditor();
@@ -148,136 +147,6 @@ export function FamilyGroupEditor({
   useEffect(() => {
     if (error) scrollToError(errorRef);
   }, [error, scrollToError]);
-
-  useEffect(() => {
-    if (memberSearch.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-
-    let cancelled = false;
-    setSearching(true);
-
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/admin/members?q=${encodeURIComponent(memberSearch)}&type=primary&active=true&pageSize=10`
-        );
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          const selectedIds = new Set(selectedMembers.map((member) => member.id));
-          setSearchResults(
-            (data.members ?? [])
-              .filter((member: MemberOption) => !selectedIds.has(member.id))
-              .map((member: MemberOption) => ({
-                id: member.id,
-                firstName: member.firstName,
-                lastName: member.lastName,
-                email: member.email,
-              }))
-          );
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [memberSearch, selectedMembers]);
-
-  function addMember(member: MemberOption) {
-    setSelectedMembers((current) => [...current, member]);
-    setMemberSearch("");
-    setSearchResults([]);
-  }
-
-  function removeMember(id: string) {
-    setSelectedMembers((current) => current.filter((member) => member.id !== id));
-  }
-
-  function clearRequestError(requestId: string) {
-    setRequestErrors((current) => {
-      if (!current[requestId]) return current;
-      const next = { ...current };
-      delete next[requestId];
-      return next;
-    });
-  }
-
-  function clearRequestSearchFeedback(requestId: string) {
-    setRequestSearchFeedback((current) => {
-      if (!current[requestId]) return current;
-      const next = { ...current };
-      delete next[requestId];
-      return next;
-    });
-  }
-
-  async function searchRequestMembers(request: FamilyGroupRequest) {
-    const query =
-      requestSearchTerms[request.id]?.trim() ||
-      getFamilyGroupRequestSubjectName(request);
-
-    if (query.length < 2) {
-      setRequestErrors((current) => ({
-        ...current,
-        [request.id]: "Enter at least 2 characters to search for an existing member record.",
-      }));
-      return;
-    }
-
-    clearRequestError(request.id);
-    clearRequestSearchFeedback(request.id);
-    setRequestSearchingId(request.id);
-
-    try {
-      const ageTierSearchFilter =
-        request.type === "CHILD_REQUEST" ? "&ageTierIn=INFANT,CHILD,YOUTH" : "";
-      const res = await fetch(
-        `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=10${ageTierSearchFilter}`
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setRequestErrors((current) => ({
-          ...current,
-          [request.id]: data.error || "Failed to search member records.",
-        }));
-        return;
-      }
-
-      const foundMembers = mapFamilyGroupRequestSearchResults(
-        request,
-        data.members ?? []
-      );
-
-      setRequestSearchResults((current) => ({
-        ...current,
-        [request.id]: foundMembers,
-      }));
-
-      if (foundMembers.length === 1) {
-        setRequestSelections((current) => ({
-          ...current,
-          [request.id]: foundMembers[0].id,
-        }));
-      }
-
-      setRequestSearchFeedback((current) => ({
-        ...current,
-        [request.id]:
-          foundMembers.length === 0
-            ? `No eligible member records found for "${query}".`
-            : foundMembers.length === 1
-              ? `Found and selected ${foundMembers[0].firstName} ${foundMembers[0].lastName}.`
-              : `Found ${foundMembers.length} member records.`,
-      }));
-    } finally {
-      setRequestSearchingId((current) => (current === request.id ? null : current));
-    }
-  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -330,82 +199,6 @@ export function FamilyGroupEditor({
       onClose();
     } finally {
       setDeleting(false);
-    }
-  }
-
-  async function handleRequest(request: FamilyGroupRequest, action: "approve" | "reject") {
-    clearRequestError(request.id);
-    const linkedMemberId = requestSelections[request.id];
-    const needsMemberSelection =
-      request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
-
-    if (action === "approve" && needsMemberSelection && !linkedMemberId) {
-      setRequestErrors((current) => ({
-        ...current,
-        [request.id]: "Choose the member record to link, or create a new non-login adult where available.",
-      }));
-      return;
-    }
-
-    setRequestSubmittingId(request.id);
-
-    try {
-      const res = await fetch("/api/admin/family-groups/requests", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestId: request.id,
-          action,
-          ...(action === "approve" && needsMemberSelection && linkedMemberId
-            ? linkedMemberId === "__create__"
-              ? { createNewMember: true }
-              : {
-                  linkedMemberId,
-                  ...(request.type === "CHILD_REQUEST"
-                    ? { inheritEmailFromId: requestNotificationParents[request.id] ?? request.requester.id }
-                    : {}),
-                }
-            : {}),
-          ...(action === "reject" && requestNotes[request.id]?.trim()
-            ? { rejectionReason: requestNotes[request.id].trim() }
-            : {}),
-        }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setRequestErrors((current) => ({
-          ...current,
-          [request.id]: data.error || `Failed to ${action} request.`,
-        }));
-        return;
-      }
-
-      setRequestSearchResults((current) => {
-        const next = { ...current };
-        delete next[request.id];
-        return next;
-      });
-      setRequestSearchTerms((current) => {
-        const next = { ...current };
-        delete next[request.id];
-        return next;
-      });
-      setRequestSearchFeedback((current) => {
-        const next = { ...current };
-        delete next[request.id];
-        return next;
-      });
-      setRequestNotes((current) => {
-        const next = { ...current };
-        delete next[request.id];
-        return next;
-      });
-
-      await refreshEditor();
-      onChanged?.();
-    } finally {
-      setRequestSubmittingId((current) => (current === request.id ? null : current));
     }
   }
 
@@ -663,48 +456,7 @@ export function FamilyGroupEditor({
               <FamilyGroupRequestReviewCard
                 key={request.id}
                 idPrefix="editor-"
-                request={request}
-                requestSelection={requestSelections[request.id]}
-                requestSearchTerm={requestSearchTerms[request.id]}
-                searchedMembers={requestSearchResults[request.id] ?? []}
-                requestSearchMessage={requestSearchFeedback[request.id]}
-                requestNote={requestNotes[request.id]}
-                requestNotificationParentId={requestNotificationParents[request.id]}
-                requestError={requestErrors[request.id]}
-                searching={requestSearchingId === request.id}
-                submitting={requestSubmittingId === request.id}
-                showRemovalDetails
-                onClearRequestFeedback={() => {
-                  clearRequestError(request.id);
-                  clearRequestSearchFeedback(request.id);
-                }}
-                onSearchMembers={() => searchRequestMembers(request)}
-                onSelectMember={(memberId) =>
-                  setRequestSelections((current) => ({
-                    ...current,
-                    [request.id]: memberId,
-                  }))
-                }
-                onSearchTermChange={(value) =>
-                  setRequestSearchTerms((current) => ({
-                    ...current,
-                    [request.id]: value,
-                  }))
-                }
-                onNotificationParentChange={(memberId) =>
-                  setRequestNotificationParents((current) => ({
-                    ...current,
-                    [request.id]: memberId,
-                  }))
-                }
-                onNoteChange={(value) =>
-                  setRequestNotes((current) => ({
-                    ...current,
-                    [request.id]: value,
-                  }))
-                }
-                onApprove={() => handleRequest(request, "approve")}
-                onReject={() => handleRequest(request, "reject")}
+                {...getRequestReviewCardProps(request)}
               />
             ))
           )}
