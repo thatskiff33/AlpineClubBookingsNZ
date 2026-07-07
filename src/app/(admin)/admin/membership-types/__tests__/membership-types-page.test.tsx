@@ -289,4 +289,23 @@ describe("AdminMembershipTypesPage", () => {
     },
     10000,
   );
+
+  it("uses plain-language Xero rule mode labels with inline guidance", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[1]);
+
+    expect(screen.getByText("Accepted - allowed, but not synced")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Managed rules add matching members during Xero sync. Accepted rules only allow an existing group; each age scope can have one Managed rule.",
+      ),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Xero rule" }));
+
+    expect(
+      screen.getByText("Managed - sync adds members to this group"),
+    ).not.toBeNull();
+  });
 });

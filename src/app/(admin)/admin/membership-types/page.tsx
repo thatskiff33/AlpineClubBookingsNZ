@@ -136,9 +136,12 @@ const subscriptionBehaviorLabels: Record<SubscriptionBehavior, string> = {
 };
 
 const xeroRuleModeLabels: Record<XeroContactGroupRuleMode, string> = {
-  MANAGED: "Managed",
-  ACCEPTED: "Accepted",
+  MANAGED: "Managed - sync adds members to this group",
+  ACCEPTED: "Accepted - allowed, but not synced",
 };
+
+const xeroRuleModeHelper =
+  "Managed rules add matching members during Xero sync. Accepted rules only allow an existing group; each age scope can have one Managed rule.";
 
 const knownAgeTierOrder = ["INFANT", "CHILD", "YOUTH", "ADULT"];
 const allAgeTierValue = "__all__";
@@ -691,6 +694,7 @@ function MembershipTypeEditorDialog({
                   );
                   const groupSelectId = `membership-type-editor-xero-group-${rule.draftId}`;
                   const modeSelectId = `membership-type-editor-xero-mode-${rule.draftId}`;
+                  const modeHelpId = `membership-type-editor-xero-mode-help-${rule.draftId}`;
                   const ageSelectId = `membership-type-editor-xero-age-${rule.draftId}`;
                   const activeInputId = `membership-type-editor-xero-active-${rule.draftId}`;
 
@@ -724,7 +728,10 @@ function MembershipTypeEditorDialog({
                               })
                             }
                           >
-                            <SelectTrigger id={modeSelectId}>
+                            <SelectTrigger
+                              id={modeSelectId}
+                              aria-describedby={modeHelpId}
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -737,6 +744,9 @@ function MembershipTypeEditorDialog({
                               )}
                             </SelectContent>
                           </Select>
+                          <p id={modeHelpId} className="text-xs text-slate-500">
+                            {xeroRuleModeHelper}
+                          </p>
                         </div>
 
                         <div className="space-y-1.5">

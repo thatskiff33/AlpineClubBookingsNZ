@@ -247,6 +247,15 @@ export async function processWaitlistForDates(freedDates: {
       // pass offers at the freed lodge, so hold every active lodge's
       // capacity lock. Sorted order keeps concurrent processors
       // deadlock-free; the club has a handful of lodges at most.
+      //
+      // Accepted trade-off (#1565, owner-decided 2026-07-08): this
+      // serializes the whole waitlist path club-wide, partly negating the
+      // per-lodge lock isolation the booking path gained in the multi-lodge
+      // work. Keep it — correctness (stable candidate statuses, no
+      // cross-call double-offers) beats throughput at club scale. Narrow
+      // the lock set to {freed lodge} ∪ {eligible candidates' alternate
+      // lodges} only if real-world contention is ever observed, and only
+      // with careful re-validation under lock to stay double-offer-safe.
       const activeLodges = await tx.lodge.findMany({
         where: { active: true },
         select: { id: true },

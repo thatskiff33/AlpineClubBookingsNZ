@@ -152,6 +152,19 @@ Two behaviours were pinned down during implementation:
   this is purely who is offered first. Accepted as join-order fairness
   across the club, consistent with the `MERGED` philosophy, in preference
   to exhausting the freed lodge's own queue before any other offer.
+- **The processor serialises club-wide per event (owner decision
+  2026-07-08, #1565).** `processWaitlistForDates` acquires every active
+  lodge's capacity lock (sorted, deadlock-free) on each waitlist event:
+  own-lodge checks span every candidate's lodge and the cross-lodge pass
+  offers at the freed lodge, so the full lock set keeps candidate
+  statuses stable across the pass and blocks cross-call double-offers.
+  The cost is throughput only — waitlist events queue behind each other
+  club-wide, partly re-serialising what the per-lodge booking locks
+  parallelised — and nothing is incorrect. Accepted at club scale in
+  preference to a narrowed lock set ({freed lodge} ∪ eligible
+  candidates' alternates), which would need careful re-validation under
+  lock to stay double-offer-safe. Revisit only with observed contention
+  evidence.
 
 ### Configuration
 

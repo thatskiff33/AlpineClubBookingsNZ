@@ -1269,6 +1269,7 @@ const adminHelpEntries: HelpEntry[] = [
         "Complete required setup steps before opening public workflows.",
         "Use provider tests and progress indicators to confirm configuration is working.",
         "Review finance mappings if Xero-backed reports or invoices are enabled.",
+        "Use the setup hub links for lower-frequency membership, booking, content, integration, and notification setup pages.",
       ],
       [
         {
@@ -1285,6 +1286,136 @@ const adminHelpEntries: HelpEntry[] = [
           name: "Finance mappings",
           description:
             "Groups Xero report lines for the finance dashboard.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/membership-setup",
+    help(
+      "Membership & Members setup",
+      "Membership & Members groups the setup pages that define membership policy, profile fields, and subscription access behavior.",
+      [
+        "Open Membership Types for seasonal categories, booking-rate behavior, subscription behavior, age tiers, and Xero group rules.",
+        "Open Member Fields before changing what members or applicants are asked to provide.",
+        "Review Subscription Lockout before enabling or changing access restrictions for unpaid subscriptions.",
+      ],
+      [
+        {
+          name: "Membership Types",
+          description:
+            "Seasonal categories that drive booking policy, subscriptions, age-tier eligibility, and optional Xero contact-group rules.",
+        },
+        {
+          name: "Member Fields",
+          description:
+            "Extra profile fields collected from members and applicants.",
+        },
+        {
+          name: "Subscription Lockout",
+          description:
+            "Policy controls for when unpaid subscriptions restrict booking or access actions.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/bookings-setup",
+    help(
+      "Bookings Setup",
+      "Bookings Setup groups lower-frequency pages that shape booking inventory and member-facing booking copy.",
+      [
+        "Open Rooms & Beds before changing bed-allocation inventory.",
+        "Open Booking Messages when booking, payment, cancellation, or group-booking wording needs an operator-approved update.",
+        "Check module and permission gates if a setup card is hidden for the current admin.",
+      ],
+      [
+        {
+          name: "Rooms & Beds",
+          description:
+            "Lodge room and bed inventory used by bed-allocation workflows.",
+        },
+        {
+          name: "Booking Messages",
+          description:
+            "Editable wording shown during booking, payment, cancellation, and group-trip flows.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/integrations",
+    help(
+      "Integrations",
+      "Integrations groups provider-backed setup pages for accounting and other connected services.",
+      [
+        "Open Xero Setup to connect or test accounting configuration.",
+        "Keep provider tests on non-production credentials unless a live test window is approved.",
+        "Check finance mappings after changing Xero setup that affects reports or invoices.",
+      ],
+      [
+        {
+          name: "Xero Setup",
+          description:
+            "OAuth connection, account mapping, provider checks, and sync configuration for Xero-backed workflows.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/appearance",
+    help(
+      "Site Appearance & Content",
+      "Site Appearance & Content groups public-facing style, content, banner, media, and mountain-condition setup.",
+      [
+        "Open Site Style before changing shared theme, logo, colour, or font settings.",
+        "Use Page Content, Site Content, and Site Banners for public copy and notice changes.",
+        "Use Image Manager and Mountain Conditions only for reviewed public-media or module-backed content updates.",
+      ],
+      [
+        {
+          name: "Site Style",
+          description:
+            "Public theme, logo, colours, fonts, and first-run style completion.",
+        },
+        {
+          name: "Content pages",
+          description:
+            "Page content, shared site chrome, public banners, and reusable public text.",
+        },
+        {
+          name: "Media",
+          description:
+            "Filesystem images and module-backed mountain-condition content used by public pages.",
+        },
+      ],
+    ),
+  ),
+  entry(
+    "/admin/notifications",
+    help(
+      "Notifications & Email",
+      "Notifications & Email groups delivery rules, recipients, automated message wording, and member-facing notification copy.",
+      [
+        "Open Delivery Rules and Recipients before changing who receives admin or system alerts.",
+        "Open Email Messages for audited email-template wording.",
+        "Use Booking Messages and Membership Cancellation when changing member-facing copy tied to those workflows.",
+      ],
+      [
+        {
+          name: "Delivery Rules",
+          description:
+            "Controls which admin and system emails are sent when jobs or alerts run.",
+        },
+        {
+          name: "Recipients",
+          description:
+            "The active admins selected for each system-alert category.",
+        },
+        {
+          name: "Message wording",
+          description:
+            "Email, booking, and cancellation text that members or admins see in workflow messages.",
         },
       ],
     ),
@@ -1356,6 +1487,7 @@ const adminHelpEntries: HelpEntry[] = [
         "Use the type list to scan status, policy behavior, allowed tiers, assignment counts, and order.",
         "Create or edit a type in the editor before assigning it to members or rolling seasons forward.",
         "Use the separate roll-forward section to preview changes and exceptions before applying them.",
+        "When adding Xero rules, choose Managed only when sync should assert membership in the Xero group.",
         "Keep access roles separate from seasonal membership type policy.",
         "Delete removes an unused custom type outright; a custom type that still has seasonal assignments must be merged into another active type (reassign, then delete). Built-in types can never be deleted or merged.",
         "Before merging, check the Xero-rule warning: reassigned members keep their Xero contact-group membership until the next periodic Xero reconciliation.",
@@ -1375,6 +1507,29 @@ const adminHelpEntries: HelpEntry[] = [
           name: "Allowed age tiers",
           description:
             "Limits the age bands that can use the membership type.",
+        },
+        {
+          name: "Xero rule mode",
+          description:
+            "Managed means sync adds matching members to the group; Accepted means the group is allowed if present but is not enforced by sync.",
+        },
+        {
+          name: "Xero age scope",
+          description:
+            "Restricts a rule to one age tier or applies it to every allowed age tier for the membership type.",
+        },
+      ],
+      [],
+      [
+        {
+          title: "Xero rules",
+          details: [
+            "A membership-type Xero rule links this type to a Xero contact group, separately from age-tier Xero groups.",
+            "Managed rules actively add matching members to the selected group during Xero membership sync.",
+            "Accepted rules tolerate the selected group when it is already present, but sync will not add members to it.",
+            "The age scope and Xero group together define where the rule applies; only one Managed rule is allowed for the same age scope.",
+            "Changing type rules or merging types does not synchronously resync existing members. They reconcile through the existing periodic and mismatch tooling.",
+          ],
         },
       ],
     ),

@@ -59,6 +59,12 @@ export const reviewFamilyGroupRequestSchema = z.object({
   requestId: z.string().min(1),
   action: z.enum(["approve", "reject"]),
   linkedMemberId: z.string().min(1).optional(),
+  // Empty string is intentionally allowed: the admin request-review UI's
+  // "Use child's own email" option sends inheritEmailFromId: "" (its
+  // <option value="">), which the approve path coerces to null (no inheritance,
+  // child keeps its own email) via `data.inheritEmailFromId?.trim() || null` and
+  // resolveParentNotificationSourceId. Do not tighten to reject "" without
+  // updating that client — a rolling deploy would 422 the old client's requests.
   inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
   createNewMember: z.boolean().optional(),
   rejectionReason: z.string().max(500).optional(),

@@ -38,6 +38,53 @@ describe("contextual help registry", () => {
     ]);
   });
 
+  it("explains membership-type Xero rule modes in context", () => {
+    const help = getContextualHelp("/admin/membership-types", "admin");
+
+    expect(help.title).toBe("Membership Types");
+    expect(help.fields?.map((field) => field.name)).toEqual(
+      expect.arrayContaining(["Xero rule mode", "Xero age scope"]),
+    );
+
+    const xeroRules = help.sections?.find(
+      (section) => section.title === "Xero rules",
+    );
+    expect(xeroRules?.details.join(" ")).toContain(
+      "Managed rules actively add matching members",
+    );
+    expect(xeroRules?.details.join(" ")).toContain(
+      "Accepted rules tolerate the selected group",
+    );
+    expect(xeroRules?.details.join(" ")).toContain(
+      "only one Managed rule is allowed",
+    );
+  });
+
+  it("covers the Wave 5 admin setup and help surfaces", () => {
+    const routes = [
+      "/admin/hut-leaders",
+      "/admin/roster",
+      "/admin/setup",
+      "/admin/membership-setup",
+      "/admin/appearance",
+      "/admin/bookings-setup",
+      "/admin/integrations",
+      "/admin/notifications",
+      "/admin/membership-types",
+      "/admin/members/member-1",
+      "/admin/committee",
+      "/admin/access-roles",
+      "/admin/book",
+    ];
+
+    for (const route of routes) {
+      const help = getContextualHelp(route, "admin");
+      expect(help.title, `${route} should have route-specific help`).not.toBe(
+        "Admin Help",
+      );
+    }
+  });
+
   it("uses the most specific parent route for nested admin pages", () => {
     const help = getContextualHelp("/admin/xero/setup/provider-test", "admin");
 
@@ -65,6 +112,11 @@ describe("contextual help registry", () => {
         "/admin/dashboard",
         "/admin/bookings",
         "/admin/members",
+        "/admin/membership-setup",
+        "/admin/appearance",
+        "/admin/bookings-setup",
+        "/admin/integrations",
+        "/admin/notifications",
         "/admin/site-banners",
         "/admin/xero/setup",
       ]),
