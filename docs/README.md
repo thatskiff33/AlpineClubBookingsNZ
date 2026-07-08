@@ -68,3 +68,9 @@ architecture decisions, data-contract notes, and test plan. Start with
 The `multi-lodge/` directory contains the design, scoping contract,
 implementation plan, and test plan for supporting more than one lodge
 property. Start with `multi-lodge/README.md`.
+
+## Configuration Export & Import (Planned)
+
+The `config-transfer/` directory holds the decision records for the portable
+configuration/content/lodge-setup export & import tool (feature issue
+hoppers99/AlpineClubBookingsNZ#22). Start with `config-transfer/README.md`.
