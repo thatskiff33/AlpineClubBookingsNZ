@@ -281,6 +281,33 @@ async function assertMatchingBookingModificationCredit(
  * Validates that the member has sufficient balance.
  * Must be called within a transaction to prevent race conditions.
  */
+/**
+ * Total account credit locally applied to a booking, as a positive cents amount
+ * (`|Σ BOOKING_APPLIED|`). This is the ledger truth the effective booking price is
+ * derived from: `effectivePriceCents = finalPriceCents − deriveBookingAppliedCreditCents`.
+ *
+ * Reads ALL BOOKING_APPLIED rows (not the `xeroCreditNoteId: null` unallocated
+ * subset the Xero allocation engine keys on): the applied total is what every
+ * payment amount was minted against and is stable across allocation stamping, so
+ * it is the correct basis for the card/IB effective-price guards (#1641, mirroring
+ * the #1620 switch-to-internet-banking derive). Restores live in CANCELLED
+ * bookings (a positive CANCELLATION_REFUND row + status CANCELLED), which the card
+ * payment path never reconciles, so no restore subtraction is needed here.
+ */
+export async function deriveBookingAppliedCreditCents(
+  bookingId: string,
+  db: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<number> {
+  const agg = await db.memberCredit.aggregate({
+    where: {
+      appliedToBookingId: bookingId,
+      type: CreditType.BOOKING_APPLIED,
+    },
+    _sum: { amountCents: true },
+  });
+  return Math.max(0, -(agg._sum.amountCents ?? 0));
+}
+
 export async function applyCreditToBooking(
   memberId: string,
   amountCents: number,

@@ -260,6 +260,34 @@ Future reviews and issues should cite this file when proposing changes.
   via the noteless mint-fresh branch. ACCOUNTING-POLICY flag (open): the minted
   remainder note posts to the shared `hutFeeRefunds` mapping; whether admin /
   goodwill credit should post to a distinct write-off account is an owner call.
+- Applied credit reduces the CARD (Stripe) charge the same way — "spend credit,
+  pay less" on card too (#1641, owner decision 2026-07-08, extending the #1620
+  engine). The Stripe PaymentIntent is minted at the EFFECTIVE amount
+  (`finalPriceCents − Σ BOOKING_APPLIED`, derived from the ledger via
+  `deriveBookingAppliedCreditCents`; a fully credit-covered booking never reaches
+  the card flow — it is confirmed at $0 by the create-time zero-dollar path — so
+  the intent route guards `effective > 0` rather than minting a $0 intent). The
+  `Payment` mirror carries `amountCents = effective`, `creditAppliedCents = applied`
+  (invariant `amountCents + creditAppliedCents = finalPriceCents`). Every
+  capture/reconciliation guard accepts EITHER the effective price OR the full
+  `finalPriceCents` (legacy in-flight intents minted before the fix) and rejects any
+  other amount (create-payment-intent reuse, `stripe-webhook-service`,
+  `payment-reconciliation`, and the synchronous `confirm-payment` guard) — full
+  price is always a legitimate settlement, and new bookings only ever mint effective
+  intents, so the leniency cannot re-open the double-charge. Because a card invoice
+  is raised-and-paid near-instantly at capture (`queueXeroInvoiceForPaidBooking` →
+  `createXeroInvoiceForBooking`), the #1620 fire-after-invoice outbox op is NOT used
+  on card; instead `createXeroInvoiceForBooking` records the EFFECTIVE Stripe payment
+  and then SYNCHRONOUSLY re-drives the same allocation engine (gated to a card cash
+  capture with `creditAppliedCents > 0`) so the invoice settles to PAID via
+  (effective cash + credit-note allocation) and is never left with the applied slice
+  outstanding. The allocation throws on failure (the invoice op fails and the retry
+  short-circuits on the persisted `xeroInvoiceId`, re-driving the idempotent engine
+  without re-creating the invoice) rather than silently leaving credit unallocated. A
+  LEGACY full-price card capture (`creditAppliedCents = 0`) is settled in full by
+  cash and does NOT allocate (a Xero note cannot refund cash already sent); its
+  historical double-pay is repaired by an operator-reviewed LOCAL credit restore,
+  enumerated read-only by `auditCardAppliedCreditDoublePays`.
 - A payment landing on an already-CANCELLED booking's stale open invoice must
   never settle silently (#1357) — but a PAID invoice event alone proves
   nothing: Xero also reports PAID when OUR OWN clearing credit note is

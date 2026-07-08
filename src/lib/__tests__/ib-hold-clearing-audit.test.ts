@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  auditCardAppliedCreditDoublePays,
+  deriveCardAppliedCreditDoublePayFinding,
   deriveIbAppliedCreditStrandFinding,
   deriveIbHoldClearingFinding,
+  type CardAppliedCreditDoublePayRow,
   type IbAppliedCreditStrandRow,
   type IbHoldClearingRow,
 } from "@/lib/ib-hold-clearing-audit";
@@ -145,5 +148,135 @@ describe("deriveIbAppliedCreditStrandFinding (#1620 enumeration)", () => {
     );
     expect(finding?.mirrorLedgerMismatchCents).toBe(0);
     expect(finding?.mirrorInvariantDeltaCents).toBe(0);
+  });
+});
+
+function makeCardRow(
+  overrides: Partial<CardAppliedCreditDoublePayRow> = {},
+): CardAppliedCreditDoublePayRow {
+  return {
+    paymentId: "pay_card_1",
+    bookingId: "booking_card_1",
+    bookingStatus: "PAID",
+    paymentStatus: "SUCCEEDED",
+    paymentSource: "STRIPE",
+    // Pre-fix double-pay: full charge, no mirror, unallocated ledger credit.
+    amountCents: 10000,
+    creditAppliedCents: 0,
+    finalPriceCents: 10000,
+    ledgerAppliedCents: 3000,
+    ...overrides,
+  };
+}
+
+describe("deriveCardAppliedCreditDoublePayFinding (#1641 card double-pay)", () => {
+  it("flags a full-price card capture that consumed unallocated applied credit", () => {
+    const finding = deriveCardAppliedCreditDoublePayFinding(makeCardRow());
+    expect(finding).not.toBeNull();
+    expect(finding?.strandExposureCents).toBe(3000);
+  });
+
+  it("returns null when the booking carries no unallocated applied credit", () => {
+    expect(
+      deriveCardAppliedCreditDoublePayFinding(
+        makeCardRow({ ledgerAppliedCents: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("does NOT flag a #1641-fixed booking (positive mirror, effective charge)", () => {
+    // A fixed card booking: charged the effective 7000, mirror = applied 3000, and
+    // its BOOKING_APPLIED rows are stamped so the unallocated ledger sum is 0.
+    // Every discriminating clause fails, so it never appears.
+    expect(
+      deriveCardAppliedCreditDoublePayFinding(
+        makeCardRow({
+          amountCents: 7000,
+          creditAppliedCents: 3000,
+          ledgerAppliedCents: 0,
+        }),
+      ),
+    ).toBeNull();
+    // Even if a fixed booking still had an unallocated row transiently, the
+    // positive mirror + effective amount exclude it.
+    expect(
+      deriveCardAppliedCreditDoublePayFinding(
+        makeCardRow({
+          amountCents: 7000,
+          creditAppliedCents: 3000,
+          ledgerAppliedCents: 3000,
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("auditCardAppliedCreditDoublePays (#1641 card scan)", () => {
+  it("enumerates only the realized card double-pays and sizes the restore", async () => {
+    const payments = [
+      // A pre-fix double-pay (should be flagged).
+      {
+        id: "pay_bad",
+        bookingId: "booking_bad",
+        source: "STRIPE",
+        amountCents: 10000,
+        creditAppliedCents: 0,
+        status: "SUCCEEDED",
+        booking: { finalPriceCents: 10000, status: "PAID" },
+      },
+      // A no-credit card payment (ledger sum 0 -> not flagged).
+      {
+        id: "pay_nocredit",
+        bookingId: "booking_nocredit",
+        source: "STRIPE",
+        amountCents: 8000,
+        creditAppliedCents: 0,
+        status: "SUCCEEDED",
+        booking: { finalPriceCents: 8000, status: "PAID" },
+      },
+      // A #1641-fixed booking (effective charge + positive mirror -> not flagged).
+      {
+        id: "pay_fixed",
+        bookingId: "booking_fixed",
+        source: "STRIPE",
+        amountCents: 7000,
+        creditAppliedCents: 3000,
+        status: "SUCCEEDED",
+        booking: { finalPriceCents: 10000, status: "PAID" },
+      },
+    ];
+    const ledgerByBooking: Record<string, number> = {
+      // stored negative; the pre-fix booking has 3000 unallocated applied credit
+      booking_bad: -3000,
+      booking_nocredit: 0,
+      // the fixed booking's rows are stamped -> unallocated sum is 0
+      booking_fixed: 0,
+    };
+
+    const fakeDb = {
+      payment: {
+        findMany: async () => payments,
+      },
+      memberCredit: {
+        aggregate: async ({
+          where,
+        }: {
+          where: { appliedToBookingId: string };
+        }) => ({
+          _sum: {
+            amountCents: ledgerByBooking[where.appliedToBookingId] ?? 0,
+          },
+        }),
+      },
+    };
+
+    const result = await auditCardAppliedCreditDoublePays({
+      db: fakeDb as never,
+    });
+
+    expect(result.scannedCardPayments).toBe(3);
+    expect(result.doublePays).toHaveLength(1);
+    expect(result.doublePays[0].bookingId).toBe("booking_bad");
+    expect(result.doublePaidCents).toBe(3000);
   });
 });

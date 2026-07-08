@@ -11,6 +11,7 @@ import { z } from "zod";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -108,7 +109,16 @@ export async function POST(
       );
     }
 
-    if (pi.amount !== payment.booking.finalPriceCents) {
+    // #1641 — accept the credit-reduced effective price (new intents) as well as
+    // the full price (legacy in-flight intents). markBookingPaymentSucceeded
+    // re-derives and enforces the same split under the capacity lock. The ledger
+    // read is skipped for a full-price capture.
+    if (
+      pi.amount !== payment.booking.finalPriceCents &&
+      pi.amount !==
+        payment.booking.finalPriceCents -
+          (await deriveBookingAppliedCreditCents(bookingId, prisma))
+    ) {
       return NextResponse.json(
         { error: "Payment amount does not match booking total" },
         { status: 400 }

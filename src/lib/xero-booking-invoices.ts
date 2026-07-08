@@ -243,6 +243,51 @@ export function buildInvoiceLineItems(
   });
 }
 
+/**
+ * #1641 — after a CARD booking's invoice is raised with its effective Stripe
+ * payment, allocate the member's applied account credit against the invoice so it
+ * reaches PAID via (effective cash + credit-note allocation) rather than being left
+ * with the applied slice outstanding. Reuses the #1620 allocate-existing engine.
+ *
+ * Card-gated for three reasons: (1) Internet-Banking invoices allocate via their own
+ * fire-after outbox op (#1620) — running it here would double-drive them; (2) a card
+ * invoice is only raised after capture (payment SUCCEEDED); (3) a legacy full-price
+ * capture carries `creditAppliedCents = 0` (its mirror was never credit-reduced) and
+ * must NOT allocate — its invoice is settled in full by real cash and its historical
+ * double-pay is repaired by a LOCAL credit restore, not a Xero note (which cannot
+ * refund cash already sent). Dynamic import avoids a load-order cycle (mirrors
+ * xero-operation-retry's engine import).
+ *
+ * THROWS on allocation failure so the caller fails the invoice sync op and the retry
+ * re-drives the idempotent engine — the invoice is never re-created (the
+ * `xeroInvoiceId` short-circuit at the top of createXeroInvoiceForBooking), and the
+ * credit-note allocation is idempotent per join-row — rather than silently leaving
+ * the applied credit unallocated (the exact defect this closes).
+ */
+async function settleCardAppliedCreditAllocation(
+  payment: { source: PaymentSource; status: string; creditAppliedCents: number },
+  bookingId: string,
+  createdByMemberId?: string
+): Promise<void> {
+  // Proceed ONLY for a card cash capture that recorded a credit-reduced mirror
+  // (`creditAppliedCents > 0`). The positive test also skips on 0 / a missing
+  // mirror (legacy full-price captures, no-credit bookings), which is required:
+  // allocating against a full-price-paid invoice would over-allocate.
+  if (
+    payment.source === PaymentSource.INTERNET_BANKING ||
+    payment.status !== "SUCCEEDED" ||
+    !(payment.creditAppliedCents > 0)
+  ) {
+    return;
+  }
+  const { allocateAppliedCreditForBooking } = await import(
+    "@/lib/xero-applied-credit-allocation"
+  );
+  await allocateAppliedCreditForBooking(bookingId, {
+    ...(createdByMemberId ? { createdByMemberId } : {}),
+  });
+}
+
 export async function createXeroInvoiceForBooking(
   bookingId: string,
   options?: CreateXeroBookingInvoiceOptions
@@ -272,6 +317,13 @@ export async function createXeroInvoiceForBooking(
       xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
       role: "PRIMARY_INVOICE",
     });
+    // Retry-safe: a prior run that raised the invoice but failed before/at the
+    // applied-credit allocation re-drives the idempotent engine here (#1641).
+    await settleCardAppliedCreditAllocation(
+      booking.payment,
+      bookingId,
+      options?.createdByMemberId
+    );
     return booking.payment.xeroInvoiceId;
   }
 
@@ -558,6 +610,17 @@ export async function createXeroInvoiceForBooking(
         xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       },
     });
+
+    // #1641 — allocate the member's applied credit against this just-raised card
+    // invoice so it settles to PAID (effective cash + credit note) and is never left
+    // with the applied slice outstanding. xeroInvoiceId is already persisted above,
+    // so a throw here fails the op and the retry short-circuits on it (no duplicate
+    // invoice). No-op for IB / no-credit / legacy full-price captures.
+    await settleCardAppliedCreditAllocation(
+      booking.payment,
+      bookingId,
+      options?.createdByMemberId
+    );
 
     await completeXeroSyncOperation(operationId!, {
       status: paymentWriteError || invoiceEmailError ? "PARTIAL" : "SUCCEEDED",

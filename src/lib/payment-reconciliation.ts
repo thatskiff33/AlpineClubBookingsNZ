@@ -11,7 +11,10 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
-import { restoreCreditFromBooking } from "@/lib/member-credit";
+import {
+  deriveBookingAppliedCreditCents,
+  restoreCreditFromBooking,
+} from "@/lib/member-credit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -113,11 +116,23 @@ export async function markBookingPaymentSucceeded({
       throw new Error("Booking not found");
     }
 
+    // #1641 — split the captured amount into cash + credit so the mirror invariant
+    // `amountCents + creditAppliedCents = finalPriceCents` holds for BOTH a new
+    // effective capture (credit = applied) and a legacy full-price capture
+    // (credit = 0, repaired locally by the audit — never a Xero over-allocation).
+    // This is derived from the captured amount alone; the ledger is only read below
+    // when the amount is NOT the full price (to admit the effective capture).
+    const mirrorCreditAppliedCents = Math.max(
+      0,
+      booking.finalPriceCents - amountCents
+    );
+
     const payment = await tx.payment.upsert({
       where: { bookingId },
       create: {
         bookingId,
         amountCents,
+        creditAppliedCents: mirrorCreditAppliedCents,
         status: PaymentStatus.PENDING,
       },
       update: {},
@@ -154,8 +169,22 @@ export async function markBookingPaymentSucceeded({
       throw new Error(`Booking is not payable from status ${booking.status}`);
     }
 
+    // #1641 — accept EITHER the credit-reduced effective price (new intents) OR
+    // the full finalPriceCents (legacy in-flight intents minted before the fix).
+    // A wrong-amount capture (e.g. a stale intent from a since-changed price, #1161)
+    // equals neither and is still rejected. Full price is always a legitimate
+    // settlement of a full-price booking's invoice, so admitting it can never
+    // under-charge the member; new bookings never mint a full-price intent, so the
+    // leniency does not re-open the double-charge. The ledger read is skipped
+    // entirely for a full-price capture.
     if (amountCents !== booking.finalPriceCents) {
-      throw new Error("Payment amount does not match booking total");
+      const appliedCreditCents = await deriveBookingAppliedCreditCents(
+        booking.id,
+        tx
+      );
+      if (amountCents !== booking.finalPriceCents - appliedCreditCents) {
+        throw new Error("Payment amount does not match booking total");
+      }
     }
 
     const capacity = await checkCapacityForGuestRanges(

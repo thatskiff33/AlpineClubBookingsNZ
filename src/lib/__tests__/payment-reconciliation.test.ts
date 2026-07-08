@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   upsertPaymentIntentTransaction: vi.fn(),
   refundPaymentTransactions: vi.fn(),
   restoreCreditFromBooking: vi.fn(),
+  deriveBookingAppliedCreditCents: vi.fn(),
   sendAdminPaymentFailureAlert: vi.fn(),
   reconcileBedAllocationsForBooking: vi.fn(),
   lodgeFindFirst: vi.fn(),
@@ -33,6 +34,8 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/member-credit", () => ({
   restoreCreditFromBooking: (...args: unknown[]) =>
     mocks.restoreCreditFromBooking(...args),
+  deriveBookingAppliedCreditCents: (...args: unknown[]) =>
+    mocks.deriveBookingAppliedCreditCents(...args),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -117,6 +120,7 @@ describe("markBookingPaymentSucceeded", () => {
     mocks.bookingUpdate.mockResolvedValue({});
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mocks.restoreCreditFromBooking.mockResolvedValue(undefined);
+    mocks.deriveBookingAppliedCreditCents.mockResolvedValue(0);
     mocks.refundPaymentTransactions.mockResolvedValue({});
   });
 
@@ -158,6 +162,76 @@ describe("markBookingPaymentSucceeded", () => {
     expect(mocks.bookingUpdate).not.toHaveBeenCalledWith({
       where: { id: "booking-1" },
       data: expect.objectContaining({ status: BookingStatus.CANCELLED }),
+    });
+  });
+
+  // #1641 — the effective-price guard. A card booking with applied credit is
+  // captured at finalPrice − applied; the guard must accept that AND the full
+  // price (legacy in-flight intents) while still rejecting any other amount.
+  describe("#1641 applied-credit effective-price guard", () => {
+    const APPLIED = 3000;
+    const FINAL = 10000;
+    const EFFECTIVE = FINAL - APPLIED; // 7000
+
+    function makeCreditBooking() {
+      return {
+        id: "booking-1",
+        memberId: "member-1",
+        status: BookingStatus.PAYMENT_PENDING,
+        lodgeId: "lodge-1",
+        checkIn: parseDateOnly("2026-05-20"),
+        checkOut: parseDateOnly("2026-05-22"),
+        finalPriceCents: FINAL,
+        guests: [],
+        member: { firstName: "Alice", lastName: "Member", email: "alice@example.com" },
+      };
+    }
+
+    beforeEach(() => {
+      mocks.bookingFindUnique.mockResolvedValue(makeCreditBooking());
+      mocks.bookingFindMany.mockResolvedValue([]); // no occupancy -> available
+      mocks.deriveBookingAppliedCreditCents.mockResolvedValue(APPLIED);
+    });
+
+    it("accepts a credit-reduced effective capture and mirrors credit = finalPrice − captured", async () => {
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: "pi_effective",
+        amountCents: EFFECTIVE,
+        paymentMethodId: "pm_1",
+      });
+      expect(result.outcome).toBe("paid");
+      // A webhook-first Payment (create branch) carries the split so
+      // amountCents + creditAppliedCents = finalPriceCents.
+      expect(mocks.paymentUpsert.mock.calls[0][0].create).toMatchObject({
+        amountCents: EFFECTIVE,
+        creditAppliedCents: APPLIED,
+      });
+    });
+
+    it("still accepts a legacy full-price capture (mirror credit = 0)", async () => {
+      const result = await markBookingPaymentSucceeded({
+        bookingId: "booking-1",
+        paymentIntentId: "pi_legacy_full",
+        amountCents: FINAL,
+        paymentMethodId: "pm_1",
+      });
+      expect(result.outcome).toBe("paid");
+      expect(mocks.paymentUpsert.mock.calls[0][0].create).toMatchObject({
+        amountCents: FINAL,
+        creditAppliedCents: 0,
+      });
+    });
+
+    it("rejects an amount that is neither full nor effective", async () => {
+      await expect(
+        markBookingPaymentSucceeded({
+          bookingId: "booking-1",
+          paymentIntentId: "pi_wrong",
+          amountCents: 5000, // neither 10000 nor 7000
+          paymentMethodId: "pm_1",
+        })
+      ).rejects.toThrow("Payment amount does not match booking total");
     });
   });
 

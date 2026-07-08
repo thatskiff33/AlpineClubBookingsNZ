@@ -359,6 +359,22 @@ Repair guidance under the #1620 allocate-existing mechanism:
   the strand amount (a Xero credit note does not refund cash already sent);
   handle by hand per the reported per-row figures.
 
+The same script also prints a third, separate **#1641 card applied-credit
+double-pay enumeration** (read-only): every captured (SUCCEEDED) non-Internet-
+Banking card payment whose booking still carries UN-allocated applied credit AND
+whose mirror shows the pre-fix full-price shape — `creditAppliedCents = 0` and
+`amountCents = booking.finalPriceCents`. Before #1641 the card intent was minted at
+the full price while the applied credit was consumed at booking-create, so these
+members were double-charged by the applied slice. A #1641-fixed card booking is
+charged the EFFECTIVE amount with a positive `creditAppliedCents` mirror and its
+`BOOKING_APPLIED` rows stamped, so it fails every discriminating clause and never
+appears. CANCELLED bookings are excluded (the #1547 restore domain). Every finding
+is REALIZED (a card capture already moved cash), so the repair is an operator-
+reviewed LOCAL credit restore for the reported per-row amount (a Xero credit note
+does not refund cash already captured). Not-yet-captured legacy card intents need no
+repair here: the next `create-payment-intent` call supersedes the stale full-price
+intent and re-mints at the effective amount.
+
 ## Quarterly Backup Restore Drill
 
 A backup you have never restored is a hope, not a backup. `scripts/backup-restore-drill.sh`

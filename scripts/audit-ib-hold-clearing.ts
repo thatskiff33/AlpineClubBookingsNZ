@@ -20,8 +20,10 @@
 import "dotenv/config";
 import process from "node:process";
 import {
+  auditCardAppliedCreditDoublePays,
   auditIbAppliedCreditStrands,
   auditIbHoldClearingUnderclears,
+  formatCardAppliedCreditDoublePayReport,
   formatIbAppliedCreditStrandReport,
   formatIbHoldClearingAuditReport,
 } from "../src/lib/ib-hold-clearing-audit";
@@ -75,6 +77,15 @@ async function main() {
   console.log("");
   console.log(formatIbAppliedCreditStrandReport(strandResult));
 
+  // #1641 — enumerate every captured CARD payment that also consumed applied
+  // credit against a full-price charge (realized double-pay). Read-only.
+  const cardDoublePayResult = await auditCardAppliedCreditDoublePays();
+
+  console.log("");
+  console.log("=".repeat(70));
+  console.log("");
+  console.log(formatCardAppliedCreditDoublePayReport(cardDoublePayResult));
+
   if (args.json) {
     console.log("");
     console.log("---BEGIN IB HOLD CLEARING AUDIT JSON---");
@@ -84,6 +95,10 @@ async function main() {
     console.log("---BEGIN IB APPLIED-CREDIT STRAND JSON---");
     console.log(JSON.stringify(strandResult, null, 2));
     console.log("---END IB APPLIED-CREDIT STRAND JSON---");
+    console.log("");
+    console.log("---BEGIN CARD APPLIED-CREDIT DOUBLE-PAY JSON---");
+    console.log(JSON.stringify(cardDoublePayResult, null, 2));
+    console.log("---END CARD APPLIED-CREDIT DOUBLE-PAY JSON---");
   }
 }
 

@@ -161,6 +161,11 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
     },
+    // #1641 — the capture guard derives applied credit from the ledger only when
+    // the captured amount is not the full price; these fixtures apply none.
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
+    },
     groupBooking: {
       findUnique: (...args: unknown[]) => mockGroupBookingFindUnique(...args),
     },

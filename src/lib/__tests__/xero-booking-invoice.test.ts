@@ -79,6 +79,10 @@ const mocks = vi.hoisted(() => {
     findCanonicalPaymentRefundCreditNote: vi.fn(),
     upsertXeroObjectLink: vi.fn(),
     recordXeroApiUsage: vi.fn(),
+    // #1641 — the card-path applied-credit allocation engine, dynamically imported
+    // by createXeroInvoiceForBooking. Mocked so we assert the gate + placement
+    // without re-driving the (separately unit-tested) engine.
+    allocateAppliedCreditForBooking: vi.fn(),
     logger: {
       error: vi.fn(),
       info: vi.fn(),
@@ -159,6 +163,10 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
     upsertXeroObjectLink: mocks.upsertXeroObjectLink,
   };
 });
+
+vi.mock("@/lib/xero-applied-credit-allocation", () => ({
+  allocateAppliedCreditForBooking: mocks.allocateAppliedCreditForBooking,
+}));
 
 import {
   createXeroCreditNoteForModification,
@@ -242,6 +250,119 @@ describe("createXeroInvoiceForBooking", () => {
           },
         ],
       },
+    });
+  });
+
+  describe("#1641 card applied-credit allocation", () => {
+    function cardPayment(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        // effective (10000 finalPrice − 3000 applied credit)
+        amountCents: 7000,
+        creditAppliedCents: 3000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        source: "STRIPE",
+        ...overrides,
+      };
+    }
+
+    function cardCreditBooking(paymentOverrides: Record<string, unknown> = {}) {
+      return {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+        createdAt: "2026-05-15T10:30:00.000Z",
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        guests: [
+          {
+            firstName: "Jordan",
+            lastName: "Hartley-Smith",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 10000,
+          },
+        ],
+        payment: cardPayment(paymentOverrides),
+      };
+    }
+
+    beforeEach(() => {
+      mocks.xeroClientInstance.accountingApi.createPayment.mockResolvedValue({
+        body: { paymentID: "xpay_1" },
+      });
+      mocks.allocateAppliedCreditForBooking.mockResolvedValue(undefined);
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockResolvedValue({
+        body: {
+          invoices: [
+            { invoiceID: "inv_1", invoiceNumber: "INV-1", total: 10000, status: "AUTHORISED" },
+          ],
+        },
+      });
+    });
+
+    it("allocates the applied credit against a freshly raised card invoice", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+      // Effective Stripe payment recorded, then the credit note allocated so the
+      // invoice reaches PAID via (effective cash + credit).
+      expect(mocks.xeroClientInstance.accountingApi.createPayment).toHaveBeenCalledTimes(1);
+      expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledWith(
+        "booking_1",
+        expect.anything()
+      );
+    });
+
+    it("does NOT allocate for a legacy full-price card capture (creditAppliedCents = 0)", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ amountCents: 10000, creditAppliedCents: 0 })
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
+    });
+
+    it("does NOT allocate for an Internet-Banking invoice (its own outbox op handles it)", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ source: "INTERNET_BANKING", status: "PENDING" })
+      );
+
+      await createXeroInvoiceForBooking("booking_1");
+      expect(mocks.allocateAppliedCreditForBooking).not.toHaveBeenCalled();
+    });
+
+    it("fails the op when allocation rejects, and the retry does not re-create the invoice", async () => {
+      mocks.prisma.booking.findUnique.mockResolvedValue(cardCreditBooking());
+      mocks.allocateAppliedCreditForBooking.mockRejectedValueOnce(
+        new Error("Xero allocation rejected")
+      );
+
+      // First run: invoice raised + effective payment recorded, THEN allocation
+      // throws -> the op is failed and the function rejects (Q1: loud, not silent).
+      await expect(createXeroInvoiceForBooking("booking_1")).rejects.toThrow(
+        "Xero allocation rejected"
+      );
+      expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+      expect(mocks.xeroClientInstance.accountingApi.createInvoices).toHaveBeenCalledTimes(1);
+
+      // Retry: the invoice already exists (xeroInvoiceId persisted before the
+      // allocation call), so the early-return path re-drives the idempotent
+      // allocation WITHOUT creating a second invoice.
+      mocks.xeroClientInstance.accountingApi.createInvoices.mockClear();
+      mocks.prisma.booking.findUnique.mockResolvedValue(
+        cardCreditBooking({ xeroInvoiceId: "inv_1", xeroInvoiceNumber: "INV-1" })
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+      expect(mocks.xeroClientInstance.accountingApi.createInvoices).not.toHaveBeenCalled();
+      expect(mocks.allocateAppliedCreditForBooking).toHaveBeenCalledTimes(2);
     });
   });
 

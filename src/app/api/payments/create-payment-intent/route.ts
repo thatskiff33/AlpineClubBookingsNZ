@@ -20,6 +20,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { hasAdminAccess } from "@/lib/access-roles";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 
 export async function POST(request: NextRequest) {
   try {
@@ -117,6 +118,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // #1641 — the member may have applied account credit at booking-create (the
+    // credit was consumed into the BOOKING_APPLIED ledger there). The card charge
+    // must be the credit-reduced EFFECTIVE amount, not the full finalPriceCents, or
+    // the member double-pays by the applied slice. Derive the applied total from the
+    // ledger (the authoritative source; the booking row keeps the full price) and
+    // mint / reconcile every intent against the effective amount.
+    const appliedCreditCents = await deriveBookingAppliedCreditCents(booking.id);
+    const effectivePriceCents = booking.finalPriceCents - appliedCreditCents;
+
+    // A fully credit-covered booking is confirmed at $0 by the booking-create
+    // zero-dollar path before any intent is ever requested; it never legitimately
+    // reaches this route. Guard defensively rather than mint a $0 Stripe intent
+    // (Stripe rejects those) — do NOT invent a new zero-payment shape here.
+    if (effectivePriceCents <= 0) {
+      return NextResponse.json(
+        { error: "Fully credit-covered bookings do not take card payment." },
+        { status: 400 }
+      );
+    }
+
     // Reuse or reconcile an existing PaymentIntent before creating a new one.
     if (booking.payment?.stripePaymentIntentId) {
       const existingIntent = await getPaymentIntent(booking.payment.stripePaymentIntentId);
@@ -162,18 +183,20 @@ export async function POST(request: NextRequest) {
 
       if (
         existingIntent.status !== "canceled" &&
-        existingIntent.amount !== booking.finalPriceCents
+        existingIntent.amount !== effectivePriceCents
       ) {
-        // The booking was modified after this intent was minted (#1161):
-        // handing back its client_secret would let Stripe capture the old
-        // total and strand the booking in webhook reconciliation. Queue the
-        // stale intent's cancellation and fall through to mint a fresh one
-        // at the current price.
+        // The booking was modified after this intent was minted (#1161), or the
+        // intent predates the #1641 effective-price fix (a legacy full-price
+        // intent): handing back its client_secret would let Stripe capture the
+        // wrong total and strand the booking in webhook reconciliation. Queue the
+        // stale intent's cancellation and fall through to mint a fresh one at the
+        // current effective price (this also corrects a not-yet-paid legacy
+        // booking forward to the effective amount).
         if (booking.payment) {
           await queueSupersededPrimaryIntentCancellations(prisma, {
             bookingId: booking.id,
             paymentId: booking.payment.id,
-            newFinalPriceCents: booking.finalPriceCents,
+            newFinalPriceCents: effectivePriceCents,
           });
         }
       } else if (
@@ -246,9 +269,9 @@ export async function POST(request: NextRequest) {
       memberId: booking.member.id,
     });
 
-    // Create the PaymentIntent
+    // Create the PaymentIntent at the credit-reduced effective amount (#1641).
     const paymentIntent = await createPaymentIntent({
-      amountCents: booking.finalPriceCents,
+      amountCents: effectivePriceCents,
       customerId: customer.id,
       metadata: {
         bookingId: booking.id,
@@ -257,15 +280,22 @@ export async function POST(request: NextRequest) {
       idempotencyKey: `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
+    // Mirror the effective split onto the Payment so the invariant
+    // `amountCents + creditAppliedCents = finalPriceCents` holds (#1641). The
+    // update branch also corrects a not-yet-paid legacy full-price payment forward
+    // to the effective amount when a fresh intent is minted here.
     const payment = await prisma.payment.upsert({
       where: { bookingId: booking.id },
       create: {
         bookingId: booking.id,
-        amountCents: booking.finalPriceCents,
+        amountCents: effectivePriceCents,
+        creditAppliedCents: appliedCreditCents,
         stripeCustomerId: customer.id,
         status: PaymentStatus.PENDING,
       },
       update: {
+        amountCents: effectivePriceCents,
+        creditAppliedCents: appliedCreditCents,
         stripeCustomerId: customer.id,
       },
     });
@@ -274,7 +304,7 @@ export async function POST(request: NextRequest) {
       paymentId: payment.id,
       kind: PaymentTransactionKind.PRIMARY,
       paymentIntentId: paymentIntent.id,
-      amountCents: booking.finalPriceCents,
+      amountCents: effectivePriceCents,
       status: PaymentStatus.PROCESSING,
       reason: "primary_booking_payment",
       stripeCustomerId: customer.id,

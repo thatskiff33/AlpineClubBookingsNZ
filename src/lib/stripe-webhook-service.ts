@@ -13,6 +13,7 @@ import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupInten
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
+import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
@@ -290,9 +291,18 @@ async function handlePaymentIntentSucceeded(
   // a *stale* intent: one minted before an unpaid-booking modification moved
   // finalPriceCents (#1161). Without this guard the capture would loop
   // forever in markBookingPaymentSucceeded's mismatch throw with no alert.
+  //
+  //
+  // #1641 — a booking with applied account credit is charged the credit-reduced
+  // EFFECTIVE amount, so accept that too (and the full price for legacy in-flight
+  // intents). A stale intent from a since-changed price matches neither and is
+  // still rejected. The ledger read is skipped for a full-price capture.
   if (
     bookingRecord &&
-    paymentIntent.amount !== bookingRecord.finalPriceCents
+    paymentIntent.amount !== bookingRecord.finalPriceCents &&
+    paymentIntent.amount !==
+      bookingRecord.finalPriceCents -
+        (await deriveBookingAppliedCreditCents(bookingRecord.id, prisma))
   ) {
     logger.error(
       {

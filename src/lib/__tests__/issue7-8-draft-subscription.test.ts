@@ -50,6 +50,11 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       upsert: vi.fn(),
     },
+    // #1641 — create-payment-intent derives applied credit from the ledger; these
+    // draft fixtures carry none, so the effective price equals finalPriceCents.
+    memberCredit: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: 0 } }),
+    },
     bookingGuest: {
       findMany: vi.fn(),
     },

@@ -65,6 +65,12 @@ vi.mock("@/lib/xero-booking-invoice-queue", () => ({
   queueXeroInvoiceForPaidBooking: mocks.queueXeroInvoiceForPaidBooking,
 }));
 
+// #1641 — these fixtures apply no account credit, so the effective price equals
+// finalPriceCents and every existing intent-amount assertion is unchanged.
+vi.mock("@/lib/member-credit", () => ({
+  deriveBookingAppliedCreditCents: vi.fn().mockResolvedValue(0),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
