@@ -14,6 +14,10 @@ const cancelBookingParamsSchema = z.object({
 
 const cancelBookingMutationSchema = z.object({
   refundMethod: z.enum(["card", "credit"]),
+  // Issue #1705: the admin-on-behalf per-action email choice. Honored ONLY when
+  // the actor holds bookings:edit (see below); a member self-cancel never has
+  // that access, so their flag is dropped and the member is always notified.
+  notifyMember: z.boolean().optional(),
 });
 
 export async function POST(
@@ -60,6 +64,18 @@ export async function POST(
       );
     }
 
+    // Issue #1313 (owner-approved option A2): a Booking Officer (bookings:edit)
+    // may cancel any member's booking with the SAME authority — and
+    // byte-identical refund / Stripe path / cancellation email / audit — as a
+    // Full Admin acting on-behalf. The actor's real authorization role stays
+    // honest ("USER" for an officer); this flag ONLY widens the internal
+    // authorization gate, never the refund computation (which keys off booking
+    // state + policy tier only).
+    const hasBookingsEditAccess = hasAdminAreaAccess(session.user, {
+      area: "bookings",
+      level: "edit",
+    });
+
     const result = await cancelBooking(
       parsedParams.data.id,
       session.user.id,
@@ -67,17 +83,14 @@ export async function POST(
       getClientIp(request),
       parsed.data.refundMethod,
       {
-        // Issue #1313 (owner-approved option A2): a Booking Officer
-        // (bookings:edit) may cancel any member's booking with the SAME
-        // authority — and byte-identical refund / Stripe path / cancellation
-        // email / audit — as a Full Admin acting on-behalf. The actor's real
-        // authorization role stays honest ("USER" for an officer); this flag
-        // ONLY widens the internal authorization gate, never the refund
-        // computation (which keys off booking state + policy tier only).
-        hasBookingsEditAccess: hasAdminAreaAccess(session.user, {
-          area: "bookings",
-          level: "edit",
-        }),
+        hasBookingsEditAccess,
+        // Issue #1705: forward the email choice ONLY for an admin-on-behalf
+        // actor (bookings:edit). A member self-cancel lacks that access, so the
+        // flag is dropped here and cancelBooking defaults to notifying — the
+        // member always receives their cancellation email.
+        ...(hasBookingsEditAccess && parsed.data.notifyMember !== undefined
+          ? { notifyMember: parsed.data.notifyMember }
+          : {}),
       }
     );
 

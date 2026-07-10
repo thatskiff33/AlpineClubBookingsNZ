@@ -182,6 +182,18 @@ that commits after it. Callers cancelling a genuine member-created `PENDING`
 booking (member self-cancel, account-deletion cleanup) never set the flag and
 are unaffected.
 
+Independently of the money path, an admin cancelling on-behalf may choose per
+action whether the member is emailed (#1705): `cancelBooking` takes an optional
+`notifyMember` (default `true`) that, when `false`, suppresses every
+member-facing cancellation email this cancel would send — the member email, the
+linked provisional-child email, and the group-joiner emails on an organiser
+cancel — and records `notifyMember: false` in the `booking.cancel` audit
+metadata. The choice is honoured **only for an admin-on-behalf actor**: the
+cancel route forwards it only when the actor holds `bookings:edit`, so a member
+self-cancel is always notified, and the group-settlement reaper and every other
+automated caller leave it unset (always notify). The refund/credit/Xero outcome
+is unchanged by the choice.
+
 Every cancel path restores previously applied account credit (#1547) — all
 `cancelBooking` branches plus the Internet-Banking hold-expiry release
 (`internet-banking-payment-cron.ts`), the one automatic cancel outside

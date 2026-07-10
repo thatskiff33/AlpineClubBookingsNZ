@@ -2250,6 +2250,66 @@ describe("cancelBooking credit refunds", () => {
       );
     });
   });
+
+  // Issue #1705: the admin-on-behalf per-action email choice. The default paid
+  // booking here takes the card-refund branch, which sends the member
+  // cancellation email and writes the booking.cancel audit — the ideal branch to
+  // prove both directions of the notifyMember gate on a money-moving cancel.
+  describe("notifyMember email choice (#1705)", () => {
+    it("sends the cancellation email when notifyMember is undefined (default)", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card"
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+      // Default action records no notifyMember key — byte-identical audit.
+      const auditCall = mocks.logAudit.mock.calls.find(
+        ([arg]) => arg.action === "booking.cancel"
+      );
+      expect(auditCall?.[0].metadata.notifyMember).toBeUndefined();
+    });
+
+    it("sends the cancellation email when notifyMember is explicitly true", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card",
+        { notifyMember: true }
+      );
+
+      expect(result.status).toBe(200);
+      expect(mocks.sendBookingCancelledEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it("suppresses the cancellation email and records notifyMember:false when false", async () => {
+      const result = await cancelBooking(
+        "booking_1",
+        "member_1",
+        "MEMBER",
+        "127.0.0.1",
+        "card",
+        { notifyMember: false }
+      );
+
+      expect(result.status).toBe(200);
+      // The money outcome is unchanged — the refund still ran.
+      expect(mocks.refundPaymentTransactions).toHaveBeenCalled();
+      // But no member cancellation email was sent.
+      expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+      // The suppression is auditable.
+      const auditCall = mocks.logAudit.mock.calls.find(
+        ([arg]) => arg.action === "booking.cancel"
+      );
+      expect(auditCall?.[0].metadata.notifyMember).toBe(false);
+    });
+  });
 });
 
 

@@ -323,3 +323,87 @@ describe("DELETE guest removal — minors-only admin alert wiring (#1372)", () =
     expect(mocks.sendAdminMinorsOnlyReviewAlert).not.toHaveBeenCalled();
   });
 });
+
+// Issue #1705: the admin-on-behalf per-action email choice. The service honours
+// notifyMember:false ONLY for an admin removing a guest from a booking they do
+// not own; a member/linked-guest self-removal always notifies. The minors-only
+// ADMIN alert is never gated by the choice.
+describe("DELETE guest removal — notifyMember email choice (#1705)", () => {
+  function makeRequestWithBody(body: Record<string, unknown>) {
+    return new NextRequest(
+      "https://example.test/api/bookings/b1/guests/g1",
+      {
+        method: "DELETE",
+        body: JSON.stringify(body),
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  function asAdminOnBehalf() {
+    // An admin whose id differs from the booking owner (m1) — admin-on-behalf.
+    mocks.auth.mockResolvedValue({
+      user: { id: "admin-9", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+    });
+  }
+
+  it("suppresses the member email (and audits it) when an admin removes the last adult with notifyMember:false; the admin removal self-approves the minors review so no admin alert fires", async () => {
+    asAdminOnBehalf();
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(buildTx([ADULT, CHILD])),
+    );
+
+    const res = await DELETE(makeRequestWithBody({ notifyMember: false }), {
+      params: Promise.resolve({ id: "b1", guestId: "g-adult" }),
+    });
+
+    expect(res.status).toBe(200);
+    // The member modification email is suppressed by the admin's choice …
+    expect(mocks.sendBookingModifiedEmail).not.toHaveBeenCalled();
+    // … and no minors-only admin alert fires — but NOT because notifyMember
+    // gated it. An admin removing the last adult IS the approval
+    // (resolveRemovalReviewUpdate → adminReviewStatus APPROVED, not PENDING), so
+    // isCheckinBlockedByPendingReview is false and there is nothing to review.
+    // The alert is driven purely by review state, never by the notify choice;
+    // the #1372 suite above covers the non-admin path where the alert does fire.
+    expect(mocks.sendAdminMinorsOnlyReviewAlert).not.toHaveBeenCalled();
+    // The suppression is auditable.
+    const auditArg = mocks.logAudit.mock.calls[0]?.[0];
+    expect(auditArg.action).toBe("booking.modify.guests.remove");
+    expect(auditArg.metadata.notifyMember).toBe(false);
+  });
+
+  it("still sends the member email when an admin removes on-behalf without a notifyMember flag (default notify)", async () => {
+    asAdminOnBehalf();
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(buildTx([ADULT, CHILD])),
+    );
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    const auditArg = mocks.logAudit.mock.calls[0]?.[0];
+    expect(auditArg.metadata.notifyMember).toBeUndefined();
+  });
+
+  it("ignores notifyMember:false on a self-removal — the owner is always notified", async () => {
+    // Default auth is m1, the booking owner: a member self-removal, NOT
+    // admin-on-behalf, so the flag is forced to notify.
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(buildTx([ADULT, CHILD])),
+    );
+
+    const res = await DELETE(makeRequestWithBody({ notifyMember: false }), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(200);
+    // The member email is sent despite notifyMember:false.
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    const auditArg = mocks.logAudit.mock.calls[0]?.[0];
+    expect(auditArg.metadata.notifyMember).toBeUndefined();
+  });
+});

@@ -73,6 +73,118 @@ describe("CancelBookingButton — admin/member framing (#1303)", () => {
   });
 });
 
+describe("CancelBookingButton — admin notify choice (#1705)", () => {
+  function stubCapturingFetch(
+    calls: Array<{ url: string; init?: RequestInit }>,
+    body: Record<string, unknown> = previewBody,
+  ) {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return { ok: true, json: async () => body };
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  function cancelCall(calls: Array<{ url: string; init?: RequestInit }>) {
+    return calls.find(
+      (c) => c.url.includes("/cancel") && !c.url.includes("cancel-preview"),
+    );
+  }
+
+  it("offers both email choices and posts notifyMember:false without emailing", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    stubCapturingFetch(calls);
+    render(<CancelBookingButton bookingId="bk_1" onBehalfOfMember />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel on behalf of member" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Cancel without emailing" }),
+      ).toBeTruthy();
+    });
+    expect(
+      screen.getByRole("button", { name: "Cancel and email member" }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel without emailing" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No cancellation email was sent to the member/i),
+      ).toBeTruthy();
+    });
+    const call = cancelCall(calls);
+    expect(call).toBeTruthy();
+    expect(JSON.parse(call!.init!.body as string)).toMatchObject({
+      notifyMember: false,
+    });
+  });
+
+  it("posts notifyMember:true when the admin chooses to email", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    stubCapturingFetch(calls);
+    render(<CancelBookingButton bookingId="bk_1" onBehalfOfMember />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel on behalf of member" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Cancel and email member" }),
+      ).toBeTruthy();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel and email member" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/They will receive a confirmation email shortly/i),
+      ).toBeTruthy();
+    });
+    const call = cancelCall(calls);
+    expect(JSON.parse(call!.init!.body as string)).toMatchObject({
+      notifyMember: true,
+    });
+  });
+
+  it("member self-cancel has a single confirm and never sends notifyMember", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    stubCapturingFetch(calls);
+    render(<CancelBookingButton bookingId="bk_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Booking" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Confirm Cancellation" }),
+      ).toBeTruthy();
+    });
+    // No email-choice buttons in the member self-cancel flow.
+    expect(
+      screen.queryByRole("button", { name: "Cancel without emailing" }),
+    ).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm Cancellation" }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByText(/You will receive a confirmation email shortly/i),
+      ).toBeTruthy();
+    });
+    const call = cancelCall(calls);
+    const parsed = JSON.parse(call!.init!.body as string);
+    expect(parsed.notifyMember).toBeUndefined();
+    expect(parsed.refundMethod).toBe("card");
+  });
+});
+
 describe("CancelBookingButton — restored applied credit on a no-payment cancel (#1547)", () => {
   const noPaymentWithRestore = {
     refundAmountCents: 0,

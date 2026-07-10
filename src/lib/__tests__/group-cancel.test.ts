@@ -231,6 +231,35 @@ describe("settleGroupBookingOnOrganiserCancel", () => {
     });
   });
 
+  it("suppresses joiner cancellation emails when notifyMember is false, but still cancels and closes (#1705)", async () => {
+    mocks.groupBookingFindUnique.mockResolvedValue({
+      id: GROUP_ID,
+      paymentMode: GroupBookingPaymentMode.ORGANISER_PAYS,
+      settlement: null,
+    });
+    mocks.bookingFindMany.mockResolvedValue([
+      child({ id: "child-1", status: BookingStatus.PAYMENT_PENDING }),
+      child({ id: "child-2", status: BookingStatus.PAYMENT_PENDING }),
+    ]);
+
+    await settleGroupBookingOnOrganiserCancel(
+      ORG_BOOKING,
+      ORGANISER,
+      "1.2.3.4",
+      false
+    );
+
+    // The joiner cancellation emails are suppressed …
+    expect(mocks.sendBookingCancelledEmail).not.toHaveBeenCalled();
+    // … but the children are still cancelled, beds released, and the group closed.
+    expect(mocks.bookingUpdate).toHaveBeenCalledTimes(2);
+    expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(2);
+    expect(mocks.groupBookingUpdate).toHaveBeenCalledWith({
+      where: { id: GROUP_ID },
+      data: { status: GroupBookingStatus.CANCELLED },
+    });
+  });
+
   it("ORGANISER_PAYS settled: one refund, per-child Xero credit notes, children cancelled", async () => {
     mocks.groupBookingFindUnique.mockResolvedValue({
       id: GROUP_ID,

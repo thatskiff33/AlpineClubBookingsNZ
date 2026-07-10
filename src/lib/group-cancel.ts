@@ -166,7 +166,11 @@ async function markGroupCancelled(groupBookingId: string): Promise<void> {
 export async function settleGroupBookingOnOrganiserCancel(
   organiserBookingId: string,
   sessionUserId: string,
-  ipAddress: string
+  ipAddress: string,
+  // #1705: forwarded from the admin-on-behalf cancel choice. When `false`, skip
+  // the group-joiner cancellation emails alongside the organiser's. Defaults to
+  // `true`, so the cron settlement reaper and every other caller keep notifying.
+  notifyMember = true
 ): Promise<void> {
   const group = await prisma.groupBooking.findUnique({
     where: { organiserBookingId },
@@ -507,6 +511,9 @@ export async function settleGroupBookingOnOrganiserCancel(
         statusBefore: child.status,
         refundForChild,
         paymentId: child.payment?.id ?? null,
+        // #1705: record only when the admin-on-behalf organiser cancel
+        // suppressed the joiner email; default notify stays byte-identical.
+        ...(notifyMember === false ? { notifyMember: false } : {}),
       },
       ipAddress,
     });
@@ -527,21 +534,23 @@ export async function settleGroupBookingOnOrganiserCancel(
       )
     );
 
-    sendBookingCancelledEmail(
-      child.member.email,
-      child.member.firstName,
-      child.checkIn,
-      child.checkOut,
-      refundForChild,
-      "card",
-      0,
-      child.lodgeId
-    ).catch((err) =>
-      logger.error(
-        { err, bookingId: child.id },
-        "Failed to send cancellation email to group joiner"
-      )
-    );
+    if (notifyMember !== false) {
+      sendBookingCancelledEmail(
+        child.member.email,
+        child.member.firstName,
+        child.checkIn,
+        child.checkOut,
+        refundForChild,
+        "card",
+        0,
+        child.lodgeId
+      ).catch((err) =>
+        logger.error(
+          { err, bookingId: child.id },
+          "Failed to send cancellation email to group joiner"
+        )
+      );
+    }
 
     processWaitlistForDates({
       checkIn: child.checkIn,

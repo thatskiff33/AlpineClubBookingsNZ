@@ -246,4 +246,94 @@ describe("POST /api/bookings/[id]/cancel", () => {
       { hasBookingsEditAccess: true }
     );
   });
+
+  // Issue #1705: the admin-on-behalf email choice is honoured ONLY when the
+  // actor holds bookings:edit. A member self-cancel lacks it, so a notifyMember
+  // flag in the body is dropped and cancelBooking defaults to notifying.
+  it("drops notifyMember from a member self-cancel (no bookings:edit)", async () => {
+    const res = await POST(
+      makeCancelRequest(
+        JSON.stringify({ refundMethod: "card", notifyMember: false })
+      ),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    // The options object carries ONLY hasBookingsEditAccess — no notifyMember —
+    // so the member is always emailed.
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "member-1",
+      "USER",
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: false }
+    );
+  });
+
+  it("forwards notifyMember:false for a Booking Officer acting on-behalf", async () => {
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "officer-1",
+        role: "MEMBER",
+        accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+      },
+    } as any);
+
+    const res = await POST(
+      makeCancelRequest(
+        JSON.stringify({ refundMethod: "card", notifyMember: false })
+      ),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "officer-1",
+      "USER",
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: true, notifyMember: false }
+    );
+  });
+
+  it("forwards notifyMember:true for a Booking Officer acting on-behalf", async () => {
+    mockedAuth.mockResolvedValue({
+      user: {
+        id: "officer-1",
+        role: "MEMBER",
+        accessRoles: [{ role: "ADMIN_BOOKINGS" }],
+      },
+    } as any);
+
+    const res = await POST(
+      makeCancelRequest(
+        JSON.stringify({ refundMethod: "card", notifyMember: true })
+      ),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(cancelBooking).toHaveBeenCalledWith(
+      "booking-1",
+      "officer-1",
+      "USER",
+      "127.0.0.1",
+      "card",
+      { hasBookingsEditAccess: true, notifyMember: true }
+    );
+  });
+
+  it("rejects a non-boolean notifyMember with 400", async () => {
+    const res = await POST(
+      makeCancelRequest(
+        JSON.stringify({ refundMethod: "card", notifyMember: "yes" })
+      ),
+      { params: Promise.resolve({ id: "booking-1" }) }
+    );
+
+    expect(res.status).toBe(400);
+    expect(cancelBooking).not.toHaveBeenCalled();
+  });
 });

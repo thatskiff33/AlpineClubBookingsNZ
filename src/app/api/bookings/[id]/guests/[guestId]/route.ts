@@ -61,6 +61,20 @@ export async function DELETE(
     | BookingModificationSettlementMethod
     | undefined;
 
+  // Issue #1705: the admin-on-behalf per-action email choice. The service honors
+  // it ONLY for an admin removing a guest from a booking they do not own — a
+  // member/linked-guest self-removal (the wizard's only caller) always notifies,
+  // so a stray flag from that path is ignored there.
+  const rawNotifyMember = (body as { notifyMember?: unknown } | null)
+    ?.notifyMember;
+  if (rawNotifyMember !== undefined && typeof rawNotifyMember !== "boolean") {
+    return NextResponse.json(
+      { error: "notifyMember must be a boolean" },
+      { status: 400 },
+    );
+  }
+  const notifyMember = rawNotifyMember as boolean | undefined;
+
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
@@ -70,6 +84,7 @@ export async function DELETE(
         actorMemberId: session.user.id,
         actorRole: authorizationRoleFromAccessRoles(session.user),
         settlementMethod,
+        notifyMember,
       })
     );
 
@@ -146,6 +161,9 @@ export async function DELETE(
         policyRetainedAmountCents: result.policyRetainedAmountCents,
         choreWarnings: result.choreWarnings,
         newGuestCount: result.booking.guests.length,
+        // Issue #1705: record only when an admin-on-behalf removal suppressed the
+        // member email; a default (notify) removal stays byte-identical.
+        ...(result.notifyMember ? {} : { notifyMember: false }),
       },
       ipAddress,
     });
@@ -177,10 +195,16 @@ export async function DELETE(
       logger.error({ err, bookingId }, "Failed to queue Xero settlement for guest removal")
     );
 
-    // Send email
-    const member = await prisma.member.findUnique({
-      where: { id: result.booking.memberId },
-    });
+    // Send email. Issue #1705: an admin acting on-behalf may opt out via
+    // notifyMember:false (result.notifyMember echoes the service's effective
+    // decision — always true for member/linked-guest self-removal). The
+    // minors-only admin alert below is an ADMIN notification, not the member
+    // email, so it stays unconditional.
+    const member = result.notifyMember
+      ? await prisma.member.findUnique({
+          where: { id: result.booking.memberId },
+        })
+      : null;
     if (member) {
       sendBookingModifiedEmail({
         email: member.email,

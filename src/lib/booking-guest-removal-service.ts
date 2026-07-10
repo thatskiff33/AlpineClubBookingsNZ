@@ -84,6 +84,10 @@ export type RemoveBookingGuestResult = {
   // #1372: this removal newly dropped a paid (capacity-holding) booking into the
   // blocked minors-only review state, so the route should alert admins.
   minorsOnlyReviewNewlyFlagged: boolean;
+  // #1705: the effective member-email decision. `false` ONLY when an admin acting
+  // on-behalf opted out; member/linked-guest self-removal is always `true`. The
+  // route uses this to gate the member email and to record it in the audit log.
+  notifyMember: boolean;
 };
 
 const SELF_REMOVABLE_GUEST_BOOKING_STATUSES = new Set<string>([
@@ -250,6 +254,7 @@ export async function removeBookingGuestInTransaction({
   actorMemberId,
   actorRole,
   settlementMethod,
+  notifyMember,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -257,6 +262,11 @@ export async function removeBookingGuestInTransaction({
   actorMemberId: string;
   actorRole: string;
   settlementMethod?: BookingModificationSettlementMethod;
+  // Issue #1705: the admin-on-behalf per-action email choice. Honored ONLY when
+  // the actor is an admin removing a guest from a booking they do NOT own; a
+  // member/linked-guest self-removal always notifies (the effective decision is
+  // computed below and echoed back so the route gates the member email + audit).
+  notifyMember?: boolean;
 }): Promise<RemoveBookingGuestResult> {
   // Pre-lock read: only the lock key. lodgeId is immutable, so keying the lock
   // from this read is safe; the guest set, pricing and refund below consume
@@ -307,6 +317,14 @@ export async function removeBookingGuestInTransaction({
   const isOwnerOrAdmin = booking.memberId === actorMemberId || actorRole === "ADMIN";
   const isSelfRemoval =
     !isOwnerOrAdmin && guestToRemove?.memberId === actorMemberId;
+  // Issue #1705: only an admin acting on a booking they do NOT own may suppress
+  // the member email. An owner removing their own guest, or a linked guest
+  // self-removing, is a member-self action and always notifies — so a stray
+  // notifyMember:false from those paths is ignored (defence in depth; the DELETE
+  // route's only member-facing caller is the wizard self-removal).
+  const isAdminOnBehalf =
+    actorRole === "ADMIN" && booking.memberId !== actorMemberId;
+  const effectiveNotifyMember = isAdminOnBehalf ? notifyMember !== false : true;
   const isLinkedGuestViewer = booking.guests.some(
     (guest) => guest.memberId === actorMemberId,
   );
@@ -627,6 +645,7 @@ export async function removeBookingGuestInTransaction({
     zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
     supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
     minorsOnlyReviewNewlyFlagged,
+    notifyMember: effectiveNotifyMember,
   };
 }
 

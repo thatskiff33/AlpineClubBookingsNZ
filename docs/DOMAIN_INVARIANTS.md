@@ -646,6 +646,28 @@ The member confirmation / hold email is an **explicit per-create choice**
 `confirmOverCapacity`, and `capacityOverridden`; `sendAdminNewBookingAlert` and
 the Xero invoice email are unaffected by the choice.
 
+Issue #1705 extends the same per-action `notifyMember` email choice to two more
+admin-on-behalf flows: **cancellation** and **guest removal**. `cancelBooking`
+and `removeBookingGuestInTransaction` both take an optional `notifyMember`
+(default `true`), so every existing caller — member self-cancel, admin
+review/decline/release-hold, the group-settlement reaper, deletion cleanup,
+IB-hold and backfill jobs, and the booking wizard's linked-guest self-removal —
+is byte-identical (always notifies). The choice is **honoured only for an admin
+acting on-behalf**: the cancel route forwards `notifyMember` to `cancelBooking`
+**only when the actor holds `bookings:edit`** (a member self-cancel lacks it, so
+the flag is dropped and the member is always emailed), and the guest-removal
+service computes it as `actorRole === "ADMIN" && booking.memberId !==
+actorMemberId` (an owner removing their own guest, or a linked guest
+self-removing, always notifies). When suppressed, `notifyMember: false` is
+recorded in the `booking.cancel` / `booking.modify.guests.remove` audit
+metadata (mirroring `booking.modify.admin_override`); a default (notify) action
+records nothing extra. Suppression covers the member cancellation email, the
+linked provisional-child cancellation email, and the group-joiner cancellation
+emails on an organiser cancel — but the **minors-only admin review alert stays
+unconditional** (it is an admin notification, not the member email), and the
+**Xero invoice/IB payment-instruction email is deliberately never suppressed**
+(it carries the outstanding-balance instruction; owner decision).
+
 A booking left with only non-adults (YOUTH/CHILD/INFANT) requires admin
 approval regardless of how it got there or whether it was already paid: every
 edit path — including single-guest self-removal, which is never blocked for a

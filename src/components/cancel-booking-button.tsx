@@ -35,7 +35,7 @@ export function CancelBookingButton({
 }) {
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
-  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number } | null>(null);
+  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number; notified: boolean } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [refundMethod, setRefundMethod] = useState<"card" | "credit">("card");
   const router = useRouter();
@@ -60,13 +60,22 @@ export function CancelBookingButton({
     }
   }
 
-  async function handleConfirmCancel() {
+  // Issue #1705: an admin cancelling on behalf of the member chooses per action
+  // whether the member is emailed. notifyMember is only defined on that path; a
+  // member self-cancel calls handleConfirmCancel() with no argument, never sets
+  // notifyMember, and is always notified by the server.
+  async function handleConfirmCancel(notifyMember?: boolean) {
     setStep("cancelling");
     try {
+      const requestBody: { refundMethod: "card" | "credit"; notifyMember?: boolean } =
+        { refundMethod };
+      if (notifyMember !== undefined) {
+        requestBody.notifyMember = notifyMember;
+      }
       const res = await fetch(`/api/bookings/${bookingId}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refundMethod }),
+        body: JSON.stringify(requestBody),
       });
       if (res.ok) {
         const data = await res.json();
@@ -75,6 +84,7 @@ export function CancelBookingButton({
           refundMethod: data.refundMethod || "card",
           creditAmountCents: data.creditAmountCents,
           creditRestoredCents: data.creditRestoredCents,
+          notified: notifyMember ?? true,
         });
         setStep("success");
         router.refresh();
@@ -108,6 +118,15 @@ export function CancelBookingButton({
   if (step === "success") {
     const refund = result?.refundAmountCents || 0;
     const isCredit = result?.refundMethod === "credit";
+    // Issue #1705: a member self-cancel is always emailed; an admin-on-behalf
+    // cancel reflects the admin's per-action choice, so the copy never promises
+    // an email that was deliberately suppressed.
+    const notified = result?.notified ?? true;
+    const emailNote = onBehalfOfMember
+      ? notified
+        ? "They will receive a confirmation email shortly."
+        : "No cancellation email was sent to the member."
+      : "You will receive a confirmation email shortly.";
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-1">
         <p className="text-sm font-medium text-green-800">
@@ -127,15 +146,11 @@ export function CancelBookingButton({
         ) : refund > 0 ? (
           <p className="text-sm text-green-700">
             {onBehalfOfMember
-              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method. They will receive a confirmation email shortly.`
-              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method. You will receive a confirmation email shortly.`}
+              ? `The refund of ${formatDollars(refund)} has been processed to the member's original payment method. ${emailNote}`
+              : `Your refund of ${formatDollars(refund)} has been processed to your original payment method. ${emailNote}`}
           </p>
         ) : (
-          <p className="text-sm text-green-700">
-            {onBehalfOfMember
-              ? "The member will receive a confirmation email shortly."
-              : "You will receive a confirmation email shortly."}
-          </p>
+          <p className="text-sm text-green-700">{emailNote}</p>
         )}
       </div>
     );
@@ -173,8 +188,8 @@ export function CancelBookingButton({
         {onBehalfOfMember && (
           <p className="text-sm text-red-700">
             You are cancelling this booking on behalf of the member. Any refund
-            or account credit is applied to the member&apos;s account and they
-            are notified by email.
+            or account credit is applied to the member&apos;s account. Choose
+            below whether to email them about the cancellation.
           </p>
         )}
 
@@ -290,14 +305,36 @@ export function CancelBookingButton({
           </div>
         )}
 
-        <div className="flex items-center gap-3 pt-1">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleConfirmCancel}
-          >
-            Confirm Cancellation
-          </Button>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          {/* Issue #1705: an admin-on-behalf cancel chooses per action whether
+              the member is emailed (mirrors the edit-panel notify dialog). The
+              member self-cancel path keeps its single always-notify confirm. */}
+          {onBehalfOfMember ? (
+            <>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => handleConfirmCancel(true)}
+              >
+                Cancel and email member
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => handleConfirmCancel(false)}
+              >
+                Cancel without emailing
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handleConfirmCancel()}
+            >
+              Confirm Cancellation
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setStep("idle")}>
             Keep Booking
           </Button>
