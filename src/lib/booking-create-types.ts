@@ -204,3 +204,22 @@ export class BookingLodgeError extends Error {
     this.name = "BookingLodgeError";
   }
 }
+
+/**
+ * Thrown when an admin retroactive create (#1695) would settle a past stay's
+ * outstanding balance on the card PAYMENT_PENDING path (#1709). A finished stay
+ * has no future arrival to gate a card hold on, so a card obligation for it has
+ * nothing to release it and could linger forever. Option A (issue #1709): a
+ * retroactive create must settle via internet banking, account credit, or a
+ * $0/comp booking — a fully-covered ($0 effective) booking is allowed because
+ * it settles immediately to PAID and never opens a card obligation. The route
+ * maps this to a 400 with code `RETROACTIVE_CARD_NOT_ALLOWED`.
+ */
+export class RetroactiveCardPaymentError extends Error {
+  constructor() {
+    super(
+      "A retroactive booking with an outstanding balance can't be paid by card. Use internet banking, apply account credit, or record it as a $0/comp booking.",
+    );
+    this.name = "RetroactiveCardPaymentError";
+  }
+}

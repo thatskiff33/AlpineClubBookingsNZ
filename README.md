@@ -38,7 +38,10 @@ recommended reading paths.
   check-in (up to 365 days back), guarded by the Xero organisation lock dates
   (the check-in must clear the locked period, unlock it in Xero to proceed),
   with over-capacity nights allowed via an explicit confirmation, an explicit
-  per-create choice of whether to email the member, and full audit metadata
+  per-create choice of whether to email the member, and full audit metadata. A
+  past stay cannot be paid by card (a finished stay has no arrival to gate a card
+  hold on); an outstanding balance settles via internet banking, account credit,
+  or a $0/comp booking instead
 - Admin-editable public website pages and footer sections with sanitised HTML
   content, embed/text tokens where supported, and a menu generated from page
   settings (see `CONFIGURATION.md`, "Website Page Content" and "Website Site

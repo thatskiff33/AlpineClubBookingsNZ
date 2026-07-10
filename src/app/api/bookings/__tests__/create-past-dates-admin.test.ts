@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
+// Real class from the unmocked types module — the route imports it from here for
+// the same instanceof-through-mock reason, so this matches what the route sees.
+import { RetroactiveCardPaymentError } from "@/lib/booking-create-types";
 import {
   addDaysDateOnly,
   formatDateOnly,
@@ -364,6 +367,19 @@ describe("POST /api/bookings retroactive create gating (#1695)", () => {
     expect(res.status).toBe(201);
     expect(h.getXeroLockDates).not.toHaveBeenCalled();
     expect(h.createConfirmedBooking).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps RetroactiveCardPaymentError to a 400 with code RETROACTIVE_CARD_NOT_ALLOWED (#1709)", async () => {
+    h.createConfirmedBooking.mockRejectedValue(new RetroactiveCardPaymentError());
+
+    const res = await POST(
+      makeRequest(pastPayload({ allowPastDates: true })),
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("RETROACTIVE_CARD_NOT_ALLOWED");
+    expect(body.error).toContain("can't be paid by card");
   });
 
   it("maps OverCapacityConfirmationRequiredError to a 409 with code + nightDetails", async () => {

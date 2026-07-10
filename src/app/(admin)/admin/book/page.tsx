@@ -324,8 +324,12 @@ export default function AdminBookPage() {
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId: lodgeId ?? undefined,
         forMemberId: selectedMember!.id,
-        paymentMethod:
-          showPaymentMethodChoice && paymentMethod === "internet_banking"
+        // A retroactive booking with a balance can never use the card path
+        // (#1709); force internet banking. A fully-covered ($0) retroactive
+        // booking falls through to "stripe" and settles to PAID immediately.
+        paymentMethod: retroactiveNeedsInternetBanking
+          ? "internet_banking"
+          : showPaymentMethodChoice && paymentMethod === "internet_banking"
             ? "internet_banking"
             : "stripe",
         memberReviewJustification: requiresAdminReviewLocal
@@ -422,6 +426,16 @@ export default function AdminBookPage() {
     : 0;
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
   const showPaymentMethodChoice = internetBankingEnabled && remainingToPay > 0;
+  // Retroactive bookings can't use the card PAYMENT_PENDING path (#1709): a
+  // finished stay has no arrival to gate a card hold on, so any outstanding
+  // balance must settle via internet banking, account credit (reduced to $0),
+  // or a $0/comp booking. With a balance and no Internet Banking module there
+  // is no valid settlement, so Confirm is blocked with an explanation.
+  const retroactiveBalanceOwed = isRetroactive && remainingToPay > 0;
+  const retroactiveNeedsInternetBanking =
+    retroactiveBalanceOwed && internetBankingEnabled;
+  const retroactiveNoSettlement =
+    retroactiveBalanceOwed && !internetBankingEnabled;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -781,44 +795,80 @@ export default function AdminBookPage() {
             <Card>
               <CardContent className="space-y-3 pt-6">
                 <p className="text-sm font-medium text-slate-900">Payment method</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod("stripe")}
-                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                      paymentMethod === "stripe"
-                        ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                    }`}
-                  >
-                    <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Card</span>
-                      <span className="block text-xs opacity-80">
-                        The member pays by card to secure the booking.
+                {isRetroactive ? (
+                  // Card is not an option for a past stay (#1709): a finished
+                  // stay has no arrival to gate a card hold on. Internet Banking
+                  // (or account credit / $0 comp) is the only settlement.
+                  <div className="space-y-2">
+                    <div className="flex min-h-16 items-start gap-3 rounded-md border border-blue-500 bg-blue-50 p-3 text-left text-sm text-blue-950">
+                      <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Internet Banking</span>
+                        <span className="block text-xs opacity-80">
+                          Email the member a Xero invoice to pay by bank transfer.
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPaymentMethod("internet_banking")}
-                    className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
-                      paymentMethod === "internet_banking"
-                        ? "border-blue-500 bg-blue-50 text-blue-950"
-                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                    }`}
-                  >
-                    <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>
-                      <span className="block font-medium">Internet Banking</span>
-                      <span className="block text-xs opacity-80">
-                        Email the member a Xero invoice to pay by bank transfer.
+                    </div>
+                    <p className="text-xs text-slate-600">
+                      Card payment isn&apos;t available for a past stay. Record it
+                      with internet banking, apply account credit, or make it a
+                      $0/comp booking.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("stripe")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "stripe"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Card</span>
+                        <span className="block text-xs opacity-80">
+                          The member pays by card to secure the booking.
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("internet_banking")}
+                      className={`flex min-h-16 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "internet_banking"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Internet Banking</span>
+                        <span className="block text-xs opacity-80">
+                          Email the member a Xero invoice to pay by bank transfer.
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                )}
               </CardContent>
             </Card>
+          )}
+
+          {retroactiveNoSettlement && (
+            <div className="rounded-md border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+              <p className="font-medium">
+                Card payment isn&apos;t available for a past stay
+              </p>
+              <p className="mt-1">
+                A retroactive booking with an outstanding balance (
+                {formatCents(remainingToPay)}) can&apos;t be paid by card. Apply
+                account credit to cover it in full, or turn on Internet Banking
+                (Admin &gt; Setup &gt; Modules) to invoice the member.
+              </p>
+            </div>
           )}
 
           {isRetroactive && (
@@ -874,8 +924,13 @@ export default function AdminBookPage() {
               </Button>
               <Button
                 onClick={handleConfirmClick}
-                disabled={submitting || savingDraft}
+                disabled={submitting || savingDraft || retroactiveNoSettlement}
                 size="lg"
+                title={
+                  retroactiveNoSettlement
+                    ? "A retroactive booking with a balance needs account credit or Internet Banking — card can't settle a past stay"
+                    : undefined
+                }
               >
                 {submitting ? "Creating booking..." : "Confirm Booking"}
               </Button>

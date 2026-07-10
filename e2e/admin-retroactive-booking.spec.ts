@@ -3,6 +3,11 @@ import { loginPersona, storageStatePath } from "./helpers/auth";
 import { personas } from "./helpers/personas";
 import { E2E_ADMIN } from "./helpers/fixtures";
 import { calendarDayLabel } from "./helpers/stay-dates";
+import {
+  overrideModules,
+  setModuleSettings,
+  type ModuleSettings,
+} from "./helpers/modules";
 
 // docs/END_TO_END_TEST_MATRIX.md row "Admin retroactive create (#1695)": a Full
 // Admin records a stay that already happened via /admin/book — toggle "Record a
@@ -20,6 +25,7 @@ test.describe.configure({ mode: "serial" });
 
 let memberContext: BrowserContext;
 let adminContext: BrowserContext;
+let previousModules: ModuleSettings | undefined;
 
 function isoDay(offsetDays: number): string {
   const d = new Date();
@@ -135,12 +141,28 @@ test.beforeAll(async ({ browser }) => {
     disabled.ok(),
     `disable auto-allocation (${disabled.status()})`,
   ).toBeTruthy();
+
+  // A past stay can't settle on the card path (#1709), so this happy path
+  // records it via Internet Banking. Both flags default off in the E2E stack,
+  // so turn them on for this serial file and restore them afterwards (workers:1
+  // means no other spec runs concurrently). Xero stays unconnected, so the
+  // queued invoice is never sent and the lock-date guard is a no-op.
+  previousModules = await overrideModules(adminContext.request, {
+    xeroIntegration: true,
+    internetBankingPayments: true,
+  });
   await adminPage.close();
 });
 
 test.afterAll(async () => {
   try {
     if (adminContext) {
+      // Restore modules FIRST: leaving xeroIntegration / internetBankingPayments
+      // enabled would leak into every later spec in the serial run, so it must
+      // not be gated behind the bed-allocation restore (which could throw).
+      if (previousModules) {
+        await setModuleSettings(adminContext.request, previousModules);
+      }
       await adminContext.request.put("/api/admin/bed-allocation/settings", {
         data: { autoAllocationEnabled: true },
       });
@@ -190,6 +212,16 @@ test("an admin records a past stay on behalf of a member without emailing them",
   await expect(page.getByText("Booking Summary")).toBeVisible();
   // The review step flags the retroactive context.
   await expect(page.getByText(/Recording a past stay/)).toBeVisible();
+
+  // Card can't settle a past stay (#1709): the card option is hidden and the
+  // explanation steers to Internet Banking, the forced settlement for a balance.
+  await expect(
+    page.getByText(/Card payment isn't available for a past stay/),
+  ).toBeVisible();
+  await expect(
+    page.getByText("The member pays by card to secure the booking."),
+  ).toHaveCount(0);
+  await expect(page.getByText("Internet Banking")).toBeVisible();
 
   // Confirm opens the per-create email-choice dialog; take "without emailing".
   await page.getByRole("button", { name: "Confirm Booking" }).click();

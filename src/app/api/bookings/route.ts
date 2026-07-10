@@ -51,6 +51,10 @@ import {
   type BookingGuestInput,
 } from "@/lib/booking-create";
 import { resolveBookingDateEnvelope } from "@/lib/booking-create-guests";
+// Imported from the types module (not @/lib/booking-create) so a booking-create
+// mock in the route tests can't shadow the class and break `instanceof`, the
+// same precedent as OverCapacityConfirmationRequiredError below.
+import { RetroactiveCardPaymentError } from "@/lib/booking-create-types";
 import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confirmation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -761,6 +765,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         getBookingMemberNightConflictResponse(err.conflicts),
         { status: 409 },
+      );
+    }
+    // Retroactive card path rejected (#1709): a past stay's outstanding balance
+    // can't sit on the card PAYMENT_PENDING path; steer the admin to internet
+    // banking, account credit, or a $0/comp booking.
+    if (err instanceof RetroactiveCardPaymentError) {
+      return NextResponse.json(
+        { error: err.message, code: "RETROACTIVE_CARD_NOT_ALLOWED" },
+        { status: 400 },
       );
     }
     // Retroactive over-capacity warn-and-confirm (#1695): surface the code and

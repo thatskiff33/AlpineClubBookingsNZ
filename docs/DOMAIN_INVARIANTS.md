@@ -640,6 +640,22 @@ call is made outside any DB transaction and its result is cached ~5 minutes.
 Over-capacity past nights are **warn-and-confirm** (the same
 `OverCapacityConfirmationRequiredError` → 409 `OVER_CAPACITY_CONFIRM_REQUIRED`
 contract as #1668, capacity lock still taken, `capacityOverridden` recorded).
+A retroactive create must **not** settle on the card (Stripe) PAYMENT_PENDING
+path (#1709): a finished stay has no future arrival to gate a card hold on, so a
+card obligation for it has nothing to release it and could linger forever. When
+the resolved envelope is in the past, `createConfirmedBooking` rejects a
+positive-balance card create with `RetroactiveCardPaymentError` (route → 400
+`RETROACTIVE_CARD_NOT_ALLOWED`) *before* the capacity check, steering the admin
+to **internet banking, account credit, or a $0/comp** settlement. A retroactive
+booking whose effective price is $0 (genuinely free, or fully covered by credit)
+is still allowed on the default path — it settles immediately to PAID via the
+zero-dollar path and never opens a card obligation. The admin book page mirrors
+this: for a past stay with a balance it hides the card option and forces
+Internet Banking, or blocks Confirm with an explanation when the Internet
+Banking module is off and credit cannot cover the balance. The internal
+inherited-stay callers (`allowPastCheckIn`: group join, cross-lodge waitlist
+confirm) are unaffected — the restriction keys on the retroactive override, not
+on any past check-in.
 The member confirmation / hold email is an **explicit per-create choice**
 (`notifyMember`, honoured only for on-behalf creates) recorded in the
 `booking.created_on_behalf` audit metadata alongside `allowPastDates`,

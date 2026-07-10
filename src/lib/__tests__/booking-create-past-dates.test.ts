@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({
   sendBookingConfirmedEmail: vi.fn(),
   sendBookingPendingEmail: vi.fn(),
   sendAdminNewBookingAlert: vi.fn(),
+  getMemberCreditBalance: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -78,7 +79,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 
 vi.mock("@/lib/member-credit", () => ({
   applyCreditToBooking: vi.fn(),
-  getMemberCreditBalance: vi.fn().mockResolvedValue(0),
+  getMemberCreditBalance: (...a: unknown[]) => h.getMemberCreditBalance(...a),
 }));
 
 vi.mock("@/lib/payment-transactions", () => ({
@@ -103,6 +104,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   createConfirmedBooking,
+  RetroactiveCardPaymentError,
   type BookingGuestInput,
 } from "@/lib/booking-create";
 
@@ -220,6 +222,7 @@ function armMocks() {
   h.lodgeFindFirst.mockResolvedValue({ id: "lodge-1" });
   h.memberLodgeAccessFindMany.mockResolvedValue([]);
   h.bookingGuestFindMany.mockResolvedValue([]);
+  h.getMemberCreditBalance.mockResolvedValue(0);
   h.bookingCreate.mockImplementation((args: { data: Record<string, unknown> }) => {
     createdCount += 1;
     const id = `booking-${createdCount}`;
@@ -280,7 +283,10 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
 
     let thrown: unknown;
     try {
-      await createConfirmedBooking(retroInput());
+      // Internet Banking: a positive-balance retroactive card create is now
+      // rejected before the capacity check (#1709), so over-capacity
+      // warn-and-confirm is exercised on the valid IB settlement path.
+      await createConfirmedBooking(retroInput({ paymentMethod: "internet_banking" }));
     } catch (err) {
       thrown = err;
     }
@@ -299,7 +305,9 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     });
 
     const outcome = await createConfirmedBooking(
-      retroInput({ confirmOverCapacity: true }),
+      // Internet Banking is the valid retroactive settlement for a positive
+      // balance (#1709); over-capacity confirm is orthogonal to it.
+      retroInput({ confirmOverCapacity: true, paymentMethod: "internet_banking" }),
     );
 
     expect(outcome.type).toBe("created");
@@ -398,4 +406,95 @@ describe("createConfirmedBooking retroactive behaviour (#1695)", () => {
     expect(h.bookingCreate).not.toHaveBeenCalled();
   });
 
+});
+
+describe("createConfirmedBooking retroactive card-path restriction (#1709)", () => {
+  it("rejects a positive-balance retroactive card create with RetroactiveCardPaymentError (no booking written)", async () => {
+    // Default paymentMethod is card (stripe) and the seeded rate makes the
+    // price positive, so the card PAYMENT_PENDING path is barred for a past stay.
+    let thrown: unknown;
+    try {
+      await createConfirmedBooking(retroInput());
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(RetroactiveCardPaymentError);
+    expect((thrown as Error).message).toContain("can't be paid by card");
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects the card path before the capacity check — an over-capacity retroactive card create is a card rejection, not an over-capacity prompt (ordering pin)", async () => {
+    // Lodge is over capacity and confirmOverCapacity is not set: if the card
+    // guard were placed after the capacity check this would surface
+    // OverCapacityConfirmationRequiredError instead of the card rejection.
+    h.checkCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      nightDetails: [{ date: pastCheckIn, availableBeds: -2 }],
+    });
+
+    let thrown: unknown;
+    try {
+      await createConfirmedBooking(retroInput());
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(RetroactiveCardPaymentError);
+    expect(thrown).not.toBeInstanceOf(OverCapacityConfirmationRequiredError);
+    expect(h.bookingCreate).not.toHaveBeenCalled();
+  });
+
+  it("allows a retroactive card create when the effective price is $0 (genuinely free) — settles to PAID", async () => {
+    h.seasonFindMany.mockResolvedValue(seasonWithRate(0));
+
+    const outcome = await createConfirmedBooking(retroInput());
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    // Zero-dollar path auto-pays: a $0 SUCCEEDED payment is written and PAID set.
+    expect(h.paymentCreate).toHaveBeenCalledTimes(1);
+    expect(h.bookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: BookingStatus.PAID } }),
+    );
+  });
+
+  it("allows a retroactive card create fully covered by account credit — settles to PAID", async () => {
+    // Price 5000 (rate 2500 x 2 nights); 5000 credit applied and available →
+    // effective $0, so the card guard does not fire and the booking auto-pays.
+    h.getMemberCreditBalance.mockResolvedValue(5000);
+
+    const outcome = await createConfirmedBooking(
+      retroInput({ applyCreditCents: 5000 }),
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    expect(h.bookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: BookingStatus.PAID } }),
+    );
+  });
+
+  it("allows a positive-balance retroactive Internet Banking create", async () => {
+    const outcome = await createConfirmedBooking(
+      retroInput({ paymentMethod: "internet_banking" }),
+    );
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the future-dated card path unchanged — a normal card create is not blocked (regression pin)", async () => {
+    // Future window, default card payment, positive price: retroactiveOverride
+    // is false so the #1709 guard never fires and the booking lands
+    // PAYMENT_PENDING exactly as before.
+    const outcome = await createConfirmedBooking(baseInput([guest(true, "Alice")]));
+
+    expect(outcome.type).toBe("created");
+    expect(h.bookingCreate).toHaveBeenCalledTimes(1);
+    const created = h.bookingCreate.mock.calls[0][0] as {
+      data: { status: string };
+    };
+    expect(created.data.status).toBe(BookingStatus.PAYMENT_PENDING);
+  });
 });

@@ -85,6 +85,7 @@ import {
   BookingPromoError,
   BookingReviewJustificationRequiredError,
   BookingLodgeError,
+  RetroactiveCardPaymentError,
   GroupJoinConflictError,
   DuplicateStayConflictError,
   RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
@@ -113,6 +114,7 @@ export {
   BookingPromoError,
   BookingReviewJustificationRequiredError,
   BookingLodgeError,
+  RetroactiveCardPaymentError,
   GroupJoinConflictError,
   DuplicateStayConflictError,
   RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS,
@@ -785,6 +787,30 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         finalPriceCents,
         status: creditApplicationStatus,
       });
+
+      // Retroactive card path (#1709). A finished stay has no future arrival to
+      // gate a card hold on, so a card PAYMENT_PENDING obligation for it has
+      // nothing to release it and could linger forever. Option A (#1709): a
+      // retroactive create must settle via internet banking, account credit, or
+      // a $0/comp booking — never the card path. A fully-covered booking
+      // (effectivePriceCents === 0, whether genuinely $0 or fully credit-covered)
+      // is allowed: it settles immediately to PAID via the zero-dollar path
+      // below and never opens a card obligation. Runs before the capacity check
+      // so the payment-path rejection wins over a secondary over-capacity prompt.
+      //
+      // Deliberately NOT conditioned on `review.blockForReview`: today
+      // retroactiveOverride ⇒ isOnBehalf ⇒ !blockForReview, but if review
+      // semantics ever widen to on-behalf creates, a blocked-for-review
+      // retroactive card create must still be rejected here rather than parking
+      // in AWAITING_REVIEW and being released straight to card PAYMENT_PENDING by
+      // the approve route with no re-check.
+      if (
+        retroactiveOverride &&
+        !internetBankingPaymentSelected &&
+        effectivePriceCents > 0
+      ) {
+        throw new RetroactiveCardPaymentError();
+      }
 
       // AWAITING_REVIEW holds capacity, so capacity must be verified even
       // when the booking would otherwise have skipped the check (zero-dollar
