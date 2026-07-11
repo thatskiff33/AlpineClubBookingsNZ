@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { format, subMonths } from "date-fns";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -596,17 +597,17 @@ export default function PaymentsPage() {
       </div>
 
       {invoiceError && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <Alert variant="error">
           {invoiceError}
           <button onClick={() => setInvoiceError(null)} className="ml-2 underline">Dismiss</button>
-        </div>
+        </Alert>
       )}
 
       {invoiceNotice && (
-        <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+        <Alert variant="warning">
           {invoiceNotice}
           <button onClick={() => setInvoiceNotice(null)} className="ml-2 underline">Dismiss</button>
-        </div>
+        </Alert>
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

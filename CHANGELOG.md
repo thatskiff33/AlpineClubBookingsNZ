@@ -4,6 +4,25 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Shared `Alert` status-banner primitive (#1802, epic #1800 phase 1).** A new
+  `src/components/ui/alert.tsx` renders persistent inline status banners with an
+  `info | success | warning | error` variant — each pairing a lucide icon with
+  text (colour is never the sole signal) and reading only from the semantic
+  status tokens (`--success`/`--warning`/`--destructive` plus a new calm
+  slate-blue `--info` trio added to `globals.css` for light and dark). The
+  ad-hoc coloured `<div>` banners on the login form, the booking wizard, and the
+  admin members and payments pages now use it. Presentation-only for product
+  behaviour: no message, conditional, focus/scroll, or money/capacity/lifecycle/
+  auth/schema/provider behaviour changed — the admin members error banner keeps
+  its ref, `role="alert"`, `scroll-mt-20`, and programmatic focus/scroll-into-view.
+  The one assistive-technology-visible change is additive: banners that
+  previously carried no ARIA role now announce through the variant's live-region
+  role (warning/error assertive, info/success polite), so screen-reader users
+  hear errors that were previously silent — an a11y improvement, and a caller can
+  pass an explicit `role` to override it. Establishes the "inline `Alert` for
+  persistent state, `sonner` toast for transient" convention for the rest of
+  the epic.
+
 - **Admin email-notify choice extended across the remaining admin-initiated
   member emails (#1780 / #1769b, completing the sweep).** The canonical
   `notifyMember` two-button pattern (#1705/#1769a) now covers: membership

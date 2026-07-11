@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { isFullAdmin } from "@/lib/access-roles"
 import { Download, RefreshCw, Upload } from "lucide-react"
+import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -305,17 +306,18 @@ export default function MembersPage() {
       )}
 
       {error && (
-        <div
+        <Alert
           ref={errorRef}
+          variant="error"
           role="alert"
           tabIndex={-1}
-          className="scroll-mt-20 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 focus:outline-none"
+          className="scroll-mt-20 focus:outline-none"
         >
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">
             Dismiss
           </button>
-        </div>
+        </Alert>
       )}
       <MemberFilterToolbar
         search={search}

@@ -58,11 +58,15 @@ every screen:
   action confirmations and failures — a button was clicked, the action
   succeeded or failed, there is nothing further to read or fix in place
   (e.g. "Invitation sent", "Profile updated", "Banner deleted").
-- **Inline banners** for feedback the user must act on in place: validation
-  errors pointing at form fields, multi-step flow outcomes that carry
-  next-step content (cancellation summaries, nomination confirmations), and
-  long admin forms — pair those with the `use-scroll-to-feedback` hook so the
-  banner is brought into view.
+- **Inline banners** for persistent feedback the user must act on in place:
+  validation errors pointing at form fields, multi-step flow outcomes that
+  carry next-step content (cancellation summaries, nomination confirmations),
+  and long admin forms — pair those with the `use-scroll-to-feedback` hook so
+  the banner is brought into view. Render them with the shared `Alert`
+  primitive (`src/components/ui/alert.tsx`, #1802): pick a
+  `info | success | warning | error` variant (each pairs an icon with text and
+  reads only from the semantic status tokens) rather than hand-rolling a
+  coloured `<div>`.
 - **Destructive confirmations** use `useConfirm()` from
   `src/components/confirm-dialog.tsx`, never `window.confirm`.
 
@@ -86,7 +90,9 @@ shadcn neutral (epic #1800). The foundation (#1801) establishes:
   `@theme inline`) are defined for light **and** dark and clear WCAG AA. Use
   `bg-success-muted text-success` / `bg-warning-muted text-warning` (or the
   solid `bg-success text-success-foreground`) instead of hardcoded
-  green/yellow Tailwind classes so badges/chips adapt to dark mode.
+  green/yellow Tailwind classes so badges/chips adapt to dark mode. #1802 adds
+  a matching calm slate-blue `--info` trio for the `Alert` primitive's `info`
+  variant.
 - **Tabular figures:** numeric/data cells inside `.app-theme-scope table` get
   `tabular-nums` automatically; opt any other money/count/date node in with the
   `.tabular-figures` class.

@@ -48,6 +48,11 @@
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-warning-muted: var(--warning-muted);
+  /* Info status token (#1802) — completes the semantic set alongside #1801's
+     success/warning; consumed by the shared Alert primitive. */
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-muted: var(--info-muted);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -112,6 +117,12 @@
   --warning: #854d0e;
   --warning-foreground: #ffffff;
   --warning-muted: #fef9c3;
+  /* Info token (#1802) — a calm, restrained slate-blue. Contrast verified:
+     --info on --info-muted 8.49:1, --info-foreground on --info 10.36:1 (text
+     >= 4.5:1), --info border vs surface 10.36:1 (non-text >= 3:1). */
+  --info: #1e3a8a;
+  --info-foreground: #ffffff;
+  --info-muted: #dbeafe;
 }
 
 .dark {
@@ -167,6 +178,13 @@
   --warning: oklch(0.84 0.11 75);
   --warning-foreground: oklch(0.2 0 0);
   --warning-muted: oklch(0.33 0.05 75);
+  /* Info token (#1802) — dark re-tint mirrors the blue colored-callout remap
+     (hue 262) at the same tones as success/warning above: muted bg
+     oklch(0.33 0.05 262), accent/text oklch(0.84 0.11 262), near-black
+     foreground on the solid accent. */
+  --info: oklch(0.84 0.11 262);
+  --info-foreground: oklch(0.2 0 0);
+  --info-muted: oklch(0.33 0.05 262);
 }
 
 .website-theme {
