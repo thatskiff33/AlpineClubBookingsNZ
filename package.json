@@ -135,7 +135,7 @@
     "pg": "^8.22.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
-    "typescript": "^6",
+    "typescript": "^7",
     "vitest": "^4.1.9"
   }
 }
