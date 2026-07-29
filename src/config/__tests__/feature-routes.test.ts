@@ -259,6 +259,66 @@ describe("feature route map", () => {
     expect(getDisabledFeatureForPath("/admin/bookings", allOn)).toBeNull();
   });
 
+  // The Lodge Display guided setup wizard (#2249) is the ONE page under
+  // /admin/display that must survive the module being off — its first step is
+  // "turn the module on". The exemption is exact-match, so every neighbouring
+  // path (and the whole display API) stays gated.
+  describe("lobbyDisplay setup-wizard exemption (#2249)", () => {
+    it("exempts the wizard page itself, with or without a trailing slash", () => {
+      expect(getRequiredFeaturesForPath("/admin/display/setup")).toEqual([]);
+      expect(getRequiredFeaturesForPath("/admin/display/setup/")).toEqual([]);
+      expect(
+        isFeatureHrefVisible("/admin/display/setup", {
+          ...allOn,
+          lobbyDisplay: false,
+        })
+      ).toBe(true);
+    });
+
+    it("keeps every neighbouring display path gated", () => {
+      for (const path of [
+        "/admin/display",
+        "/admin/display/devices",
+        "/admin/display/templates",
+        "/admin/display/setup/extra",
+        "/admin/display/setupfoo",
+        "/admin/display/setup-foo",
+        "/api/admin/display/setup",
+        "/api/admin/display/devices",
+        "/display",
+      ]) {
+        expect(getRequiredFeaturesForPath(path)).toEqual(["lobbyDisplay"]);
+        expect(
+          getDisabledFeatureForPath(path, { ...allOn, lobbyDisplay: false })
+        ).toBe("lobbyDisplay");
+      }
+    });
+
+    it("requires nothing of a doubled-slash path, which matches no rule at all", () => {
+      // Stated because the neighbouring comment used to claim this "fails
+      // closed", which it does not: `//admin/display/setup` does not start with
+      // `/admin/display`, so no rule matches and this map asks for no flag. It
+      // is harmless because Next normalises the duplicate slash before a page is
+      // resolved — there is nothing behind it to reach — but the test records
+      // the real behaviour rather than the comfortable one (#2249 review L1).
+      expect(getRequiredFeaturesForPath("//admin/display/setup")).toEqual([]);
+      expect(getRequiredFeaturesForPath("//admin/display/devices")).toEqual([]);
+    });
+
+    it("does not let the exemption leak into another rule's flags", () => {
+      // A path exempted from ONE rule still collects every other rule it
+      // matches; nothing about /admin/display/setup should touch kiosk/chores.
+      expect(
+        getDisabledFeatureForPath("/admin/display/setup", {
+          ...allOn,
+          lobbyDisplay: false,
+          kiosk: false,
+          chores: false,
+        })
+      ).toBeNull();
+    });
+  });
+
   it("supports nav filtering with query strings", () => {
     expect(
       isFeatureHrefVisible("/admin/waitlist?status=WAITLISTED", {

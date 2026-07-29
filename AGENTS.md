@@ -485,26 +485,39 @@ CI-green → evidence**.
   will stay open after merge.
 - **PRs open as drafts and stay drafts** through review → fix → CI. Flip to
   ready-for-review only when the PR is fully reviewed, all confirmed findings are
-  fixed, and **CI is green**. At that point post an **owner-addressed "merge
-  ready" comment** summarising: what was built, the review lenses + findings, the
-  fixes, any A/B **decisions**, and carry-forward items. (In an owner-gated wave
-  the orchestrator does **not** merge — every PR is left open for the owner.)
+  fixed, **every residual risk has been resolved inside the PR** (see §6 — a
+  ready PR carries none), and **CI is green**. At that point post an
+  **owner-addressed "merge ready" comment** summarising: what was built, the
+  review lenses + findings, the fixes, and any A/B **decisions**. (In an
+  owner-gated wave the orchestrator does **not** merge — every PR is left open
+  for the owner.)
 - **Claim / progress comments:** comment when you claim an issue, again when the
   reviewed+fixed+green PR is ready, so the issue thread is a full audit trail.
 
-### 6. Carry-forward items become issues — but minimise them
+### 6. Residual risks are resolved in the PR — never just noted
 
-- Prefer to **fix a follow-up inside the same PR** so everything lands at once,
-  even if it slightly widens scope (re-open the PR to draft, add it, re-review
-  the delta, re-green). Only defer to a **new GitHub issue** when the item needs
-  more scoping or an owner decision. A **refuted change is not a fenced-off
+- A "residual risk" is work, not a disclosure. **Ideally: discuss it, resolve
+  it, and land the fix in the same PR** — iterate the PR (drop back to draft,
+  widen scope slightly, re-review the delta, re-green) until **zero** residuals
+  remain. A PR goes ready/merge-ready — and waits for approval — only once every
+  residual has been dealt with. That is how complete, high-quality code ships
+  (owner directive, 30 Jul 2026).
+- **Never** leave a residual merely noted in the PR body. A written "Residual
+  Risks" entry that describes a known, achievable fix is a deferral, not a
+  disclosure — make the fix instead. A **refuted change is not a fenced-off
   file**: when review rejects one edit to a file or area, that verdict covers
   that edit only — a different, correct change to the same place still belongs
-  in this PR, especially when the reviewer has already specified it. Writing a
-  known, small, specified fix into "Residual risks" instead of making it is a
-  deferral, not a disclosure. File deferred items as issues at
-  PR-finalisation time (not "eventually"), each linked to its parent PR + epic,
-  so they cannot be lost if the session ends before the owner merges.
+  in this PR.
+- A residual that genuinely needs an **owner decision** holds the PR **draft**
+  while the decision is put to the owner explicitly (on the PR or the epic, with
+  options and a recommended default), and the fix lands in this same PR once
+  answered.
+- Carrying a residual forward into a **new GitHub issue is acceptable when
+  justified** — e.g. during an overnight run when the owner is unavailable, or
+  when the item needs a full planning-agent pass to scope properly — but it is
+  the fallback, not the default. File it immediately (not "eventually"), linked
+  to the parent PR + epic, with enough context to action cold. In-PR resolution
+  remains the ideal in every case.
 
 ### 7. Priorities if time runs short
 

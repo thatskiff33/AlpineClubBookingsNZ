@@ -1197,6 +1197,52 @@ const adminHelpEntries: HelpEntry[] = [
       ],
     ),
   ),
+  // Registered at the PREFIX, so every Lobby Display page — the hub, Devices,
+  // Templates, the Visual builder, the wizard itself — resolves to this entry.
+  // That is the "always-available Help link" the guided setup wizard needs
+  // (#2249): the hub's gold setup card disappears once a screen is live, but a
+  // club replacing a TV a year later still needs to find the wizard, and the
+  // Help panel is the one affordance present on all of those pages.
+  entry(
+    "/admin/display",
+    help(
+      "Lobby Display",
+      "Lobby Display pairs the TVs in your lodges and authors the boards they show. Three words, two of them stored: a Layout is the skeleton, a Template is a Layout filled in, and a board is what a screen actually shows.",
+      [
+        "Setting up a screen for the first time, or replacing one? Open the guided setup wizard at /admin/display/setup — it walks the whole path from the module being off to a TV showing the right board, and it can be re-run safely at any time.",
+        "Use Devices to pair a screen, swap which board it shows, change its refresh interval, or revoke a screen that has left the building.",
+        "Use the Visual builder to compose a board without writing HTML; Layouts and Templates are the advanced, hand-authored equivalents.",
+        "Restore built-in boards on the Templates page if the shipped boards are missing — it never runs by itself, and it overwrites anything saved under a reserved built-in key.",
+      ],
+      [
+        {
+          name: "Device",
+          description:
+            "One lobby screen, bound to a lodge. It holds its own token once paired, so pairing survives reboots until you revoke it.",
+        },
+        {
+          name: "Pairing code",
+          description:
+            "The six characters the screen shows while it waits. You type them into the admin; the screen then claims its own token on its next poll.",
+        },
+        {
+          name: "Board / Template",
+          description:
+            "What the screen shows. A device bound to no template falls back to the club default board.",
+        },
+        {
+          name: "Lodge display settings",
+          description:
+            "The per-lodge values boards print through {{config:…}} tokens (Wi-Fi, checkout time, notices) and the guest-name privacy setting.",
+        },
+      ],
+      [
+        "The guided setup wizard remembers its position for the WHOLE club, not per admin — two admins running it share one place in the flow. Every step re-checks real state, so a shared position can only change which step opens first.",
+        "Everything under Lobby Display is hidden while the Lobby TV display module is off, except the guided setup wizard, whose first step turns the module on.",
+        "A value a board asks for but the lodge has not saved renders as a visible placeholder on the wall, so fill the lodge details in before the TV goes up.",
+      ],
+    ),
+  ),
   entry(
     "/admin/stuck-states",
     help(

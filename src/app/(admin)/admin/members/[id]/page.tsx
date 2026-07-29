@@ -41,6 +41,7 @@ import { MemberSubscriptionHistoryTable } from "./_components/member-subscriptio
 import { MemberHistoryGroup } from "./_components/member-history-group";
 import { MemberDeletionCard } from "./_components/member-deletion-card";
 import { MemberLifecycleCard } from "./_components/member-lifecycle-card";
+import { MemberFamilyTreeCard } from "./_components/member-family-tree-card";
 import { MemberParentLinksCard } from "./_components/member-parent-links-card";
 import { MemberBillingFamilyCard } from "./_components/member-billing-family-card";
 import { MemberPartnerLinkCard } from "./_components/member-partner-link-card";
@@ -709,6 +710,11 @@ export default function MemberDetailPage({
                 )}
               </div>
             </div>
+            <MemberFamilyTreeCard
+              className={embeddedCardClassName}
+              memberId={member.id}
+              currentMemberPath={currentMemberPath}
+            />
             {member.familyGroups && member.familyGroups.length > 0 && (
               <MemberBillingFamilyCard
                 memberId={member.id}

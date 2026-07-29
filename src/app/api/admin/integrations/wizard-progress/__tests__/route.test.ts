@@ -65,6 +65,26 @@ describe("GET wizard-progress", () => {
     expect(res.status).toBe(400);
     expect(mocks.getProgress).not.toHaveBeenCalled();
   });
+
+  // #2249: the Lodge Display wizard persists under the SAME finance gate as the
+  // provider wizards — the owner decided not to widen the area for it — so the
+  // only change the display wizard needed here was its id on the allowlist.
+  it("allows the display wizard id, still under the finance gate", async () => {
+    mocks.getProgress.mockResolvedValue({
+      wizardId: "display",
+      currentStepId: "boards",
+      completedStepIds: [],
+      updatedAt: "2026-07-29T00:00:00.000Z",
+    });
+    const res = await get(
+      "http://localhost/api/admin/integrations/wizard-progress?wizardId=display",
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).progress.currentStepId).toBe("boards");
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: { area: "finance", level: "view" },
+    });
+  });
 });
 
 describe("POST wizard-progress", () => {
@@ -97,6 +117,27 @@ describe("POST wizard-progress", () => {
     });
     expect(res.status).toBe(400);
     expect(mocks.saveProgress).not.toHaveBeenCalled();
+  });
+
+  it("persists the display wizard cursor under finance edit", async () => {
+    mocks.saveProgress.mockResolvedValue({
+      wizardId: "display",
+      currentStepId: "pair",
+      completedStepIds: ["config"],
+      updatedAt: "2026-07-29T00:00:00.000Z",
+    });
+    const res = await post({
+      wizardId: "display",
+      currentStepId: "pair",
+      completedStepIds: ["config"],
+    });
+    expect(res.status).toBe(200);
+    expect(mocks.requireAdmin).toHaveBeenCalledWith({
+      permission: { area: "finance", level: "edit" },
+    });
+    expect(mocks.saveProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ wizardId: "display", currentStepId: "pair" }),
+    );
   });
 
   it("403s when the guard rejects", async () => {

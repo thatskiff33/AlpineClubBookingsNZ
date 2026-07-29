@@ -26,6 +26,17 @@ vi.mock("@/lib/module-settings", () => ({
   loadEffectiveModuleFlags: vi.fn().mockResolvedValue({ lobbyDisplay: true }),
 }));
 
+// The hub counts boards + working screens to decide whether to LEAD with the
+// guided-setup card (#2249). These tests are about the definitions on the cards,
+// so the counts are stubbed to a fully set-up club — the state in which the hub
+// shows its ordinary card grid.
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    displayTemplate: { count: vi.fn().mockResolvedValue(7) },
+    lodgeDisplayDevice: { count: vi.fn().mockResolvedValue(1) },
+  },
+}));
+
 // The Layouts/Templates pages read the session permission matrix for view-only
 // gating; the definitions they carry are in the header either way.
 vi.mock("next-auth/react", () => ({
