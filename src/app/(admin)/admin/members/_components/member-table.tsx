@@ -29,6 +29,7 @@ import {
 import { deriveUserType, USER_TYPE_LABELS } from "@/lib/access-roles"
 import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones"
 import { memberName } from "@/lib/member-serialization"
+import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links"
 import type { SubscriptionStatus } from "@prisma/client"
 import type { Member } from "../_types"
 import { formatTypeTierLabel } from "../_utils"
@@ -41,6 +42,12 @@ interface MemberTableProps {
   // Tri-state (#2065): `undefined` while the session resolves; the affordance
   // columns falsy-hide (accepted neutral) rather than flash enabled.
   canEdit: boolean | undefined
+  /**
+   * Organisation short code for the Xero invoice/contact deep links, or null
+   * when unavailable — the links then degrade to the generic session-scoped
+   * Xero URL, they are never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null
   sortBy: string
   sortDir: "asc" | "desc"
   membersListPath: string
@@ -90,6 +97,7 @@ export function MemberTable({
   debouncedSearch,
   selectedIds,
   canEdit,
+  xeroOrgShortCode,
   sortBy,
   sortDir,
   membersListPath,
@@ -299,7 +307,9 @@ export function MemberTable({
               <TableCell>
                 {member.subscriptionXeroInvoiceId ? (
                   <a
-                    href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`}
+                    href={buildXeroInvoiceUrl(member.subscriptionXeroInvoiceId, {
+                      shortCode: xeroOrgShortCode,
+                    })}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1"
@@ -315,7 +325,9 @@ export function MemberTable({
                 <div className="space-y-1">
                   {member.xeroContactId ? (
                     <a
-                      href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`}
+                      href={buildXeroContactUrl(member.xeroContactId, {
+                        shortCode: xeroOrgShortCode,
+                      })}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

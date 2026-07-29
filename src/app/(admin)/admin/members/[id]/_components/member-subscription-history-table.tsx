@@ -15,12 +15,20 @@ import {
   subscriptionStatusLabel,
 } from "@/lib/status-colors"
 import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { buildXeroInvoiceUrl } from "@/lib/xero-links"
 import type { MemberDetail } from "../_types"
 
 export function MemberSubscriptionHistoryTable({
   subscriptions,
+  xeroOrgShortCode,
 }: {
   subscriptions: MemberDetail["subscriptions"]
+  /**
+   * Organisation short code for the invoice deep links, or null when
+   * unavailable — the links then degrade to the generic session-scoped Xero
+   * URL, they are never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null
 }) {
   if (subscriptions.length === 0) {
     return <p className="text-sm text-muted-foreground">No subscription records</p>
@@ -55,7 +63,9 @@ export function MemberSubscriptionHistoryTable({
             <TableCell>
               {sub.xeroInvoiceId ? (
                 <a
-                  href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
+                  href={buildXeroInvoiceUrl(sub.xeroInvoiceId, {
+                    shortCode: xeroOrgShortCode,
+                  })}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-info-11 hover:underline inline-flex items-center gap-1"

@@ -569,6 +569,35 @@ Future reviews and issues should cite this file when proposing changes.
   exactly as an ordinary full lodge (decision 6); only admin surfaces are told
   a hold is in effect. Full scenario table in `docs/CAPACITY_MODEL.md`,
   "Exclusive whole-lodge hold — a non-bypassable block".
+- **A held booking owns no `BedAllocation` rows (ADR-001 §Bed allocation,
+  #2285):** the group implicitly occupies every bed, so both **automatic**
+  allocation paths skip it — the admin board excludes it from the
+  awaiting-allocation set and the planner, and the lifecycle reconcile prunes
+  its rows and never auto-places it (keyed on the flag, not status). Every
+  planner additionally re-reads the bookings it is about to write rows for
+  immediately before the write, so a hold, cancel or soft delete landing
+  between planning and writing cannot be undone by a re-insert. The manual
+  board path is guarded separately, at the single allocation-write chokepoint
+  added by #2251 (stacked on #2285 and landing with it); until that lands, a
+  hand placement onto a held booking is not refused at the API. The
+  exclusive-hold toggle reconciles both directions (set prunes, release
+  re-plans), and a school approval granting exclusivity prunes after stamping
+  the hold; both record the removed rows in their audit entry so a mistaken
+  hold can be undone by hand. Divergence guard:
+  `src/lib/__tests__/held-booking-allocation-agreement.test.ts`.
+- **A held booking's nights are not modelled as occupied for other bookings'
+  planning (ADR-001 amendment, #2285):** the hold blocks new admissions through
+  the capacity rule, but neither planner sees the held group's beds as taken or
+  its minors as present, so an officer-kept overlapping booking can be
+  auto-placed onto those beds and the cross-booking age-mix invariant (#1768)
+  cannot account for the held group. Overlaps remain officer-resolved
+  (#119/#177); changing this is the open decision #2317.
+- **The requested-room lock follows the approved rows, not the hold (#776,
+  #2285):** setting an exclusive hold prunes the booking's approved allocations,
+  so `isBookingBedAllocationLocked` goes false and the member's requested-room
+  editor re-opens; the re-plan after a clear creates unapproved AUTO rows, so it
+  stays open until an admin approves again. Intended: with no allocated beds
+  there is nothing for the lock to protect.
 
 ## Payment And Settlement
 

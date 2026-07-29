@@ -30,6 +30,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: { create: vi.fn() },
     hutLeaderAssignment: { create: vi.fn() },
+    // #2285 review: an exclusivity approval reads the booking's per-bed rows
+    // BEFORE pruning them, so the prune audit can list what it destroyed.
+    bedAllocation: { findMany: vi.fn().mockResolvedValue([]) },
     season: { findMany: vi.fn() },
     groupDiscountSetting: { findUnique: vi.fn() },
     lodge: { findFirst: vi.fn().mockResolvedValue({ id: "lodge-1" }) },
@@ -57,7 +60,12 @@ vi.mock("@/lib/email", () => ({
   sendAdminOwnerSubstitutionAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  logAudit: vi.fn(),
+  // #2285 review: the held-conversion prune writes its own audit row on the
+  // approval transaction (createAuditLog, not the post-commit logAudit).
+  createAuditLog: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
@@ -90,6 +98,21 @@ vi.mock("@/lib/admin-modules", () => ({
   isEffectiveModuleEnabled: vi.fn().mockResolvedValue(true),
 }));
 
+// #2285 (ADR-001 bed-allocation short-circuit): an exclusivity approval prunes
+// the booking's per-bed rows via the flag-keyed lifecycle reconcile — a held
+// conversion preserves pre-assigned beds (#1254), which is wrong once the
+// booking is whole-lodge-held. Mocked here; the prune semantics themselves are
+// covered by bed-allocation-lifecycle.test.ts.
+vi.mock("@/lib/bed-allocation-lifecycle", () => ({
+  reconcileBedAllocationsForBooking: vi.fn().mockResolvedValue({
+    enabled: true,
+    deletedCount: 0,
+    createdCount: 0,
+    promotedCount: 0,
+  }),
+  MAX_AUDITED_PRUNED_ALLOCATIONS: 50,
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -120,7 +143,8 @@ import {
   checkCapacityForGuestRanges,
   findOverlappingCapacityHoldingBookings,
 } from "@/lib/capacity";
-import { logAudit } from "@/lib/audit";
+import { createAuditLog, logAudit } from "@/lib/audit";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import {
@@ -768,6 +792,98 @@ describe("approveSchoolBookingRequest", () => {
       entityType: "Booking",
       entityId: "booking-1",
     });
+
+    // #2285 (ADR-001 short-circuit): granting exclusivity prunes any per-bed
+    // rows the booking carries (a held conversion preserves pre-assigned beds,
+    // #1254, which is wrong once whole-lodge-held). With the flag freshly
+    // stamped, the flag-keyed reconcile is a pure whole-booking prune.
+    expect(reconcileBedAllocationsForBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "booking-1" }),
+    );
+  });
+
+  // #2285 review: the prune on this path used to audit NOTHING, so a school
+  // approval could silently destroy pre-assigned (and approved) beds with no
+  // record of what they were. It now records the same compact list the admin
+  // toggle route records, on the approval transaction.
+  it("audits WHAT the exclusivity prune destroyed, read before the prune", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: true }) as never,
+    );
+    // ...Once: the suite's beforeEach clears CALLS but not implementations, so a
+    // sticky override here would leak into the "destroyed nothing" case below.
+    vi.mocked(prisma.bedAllocation.findMany).mockResolvedValueOnce([
+      {
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: new Date("2026-08-01T00:00:00.000Z"),
+        source: "MANUAL",
+        approvedAt: new Date("2026-07-20T04:05:06.000Z"),
+      },
+    ] as never);
+    vi.mocked(reconcileBedAllocationsForBooking).mockResolvedValueOnce({
+      enabled: true,
+      deletedCount: 1,
+      createdCount: 0,
+      promotedCount: 0,
+    });
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    // Read BEFORE the prune — afterwards the rows are gone.
+    expect(
+      vi.mocked(prisma.bedAllocation.findMany).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(reconcileBedAllocationsForBooking).mock.invocationCallOrder[0],
+    );
+
+    const pruneAudit = vi
+      .mocked(createAuditLog)
+      .mock.calls.map((call) => call[0])
+      .find((entry) => entry.action === "BED_ALLOCATION_HELD_BOOKING_PRUNED");
+    expect(pruneAudit).toMatchObject({
+      entityType: "Booking",
+      entityId: "booking-1",
+      actorMemberId: "admin-1",
+      category: "lodge",
+      outcome: "success",
+      metadata: expect.objectContaining({
+        deletedCount: 1,
+        removedAllocationsTruncated: false,
+        removedAllocations: [
+          {
+            bookingGuestId: "guest-1",
+            roomId: "room-a",
+            bedId: "bed-a1",
+            stayDate: "2026-08-01",
+            source: "MANUAL",
+            approvedAt: "2026-07-20T04:05:06.000Z",
+          },
+        ],
+      }),
+    });
+  });
+
+  it("writes no prune audit when the exclusivity approval destroyed nothing", async () => {
+    mockedFindUnique.mockResolvedValue(
+      schoolRequest({ exclusivityRequested: true }) as never,
+    );
+
+    await approveSchoolBookingRequest({
+      requestId: "req-school",
+      adminMemberId: "admin-1",
+    });
+
+    expect(
+      vi
+        .mocked(createAuditLog)
+        .mock.calls.map((call) => call[0])
+        .find((entry) => entry.action === "BED_ALLOCATION_HELD_BOOKING_PRUNED"),
+    ).toBeUndefined();
   });
 
   it("surfaces overlapping conflicts when a hold is set at approval, without refusing (issue #119)", async () => {
@@ -827,6 +943,10 @@ describe("approveSchoolBookingRequest", () => {
       .map((call) => call[0])
       .find((entry) => entry.action === "booking.exclusiveHold.set");
     expect(setAudit).toBeUndefined();
+
+    // #2285: no exclusivity → no allocation prune. The #1254 bed-preservation
+    // behaviour of an ordinary approval is untouched.
+    expect(reconcileBedAllocationsForBooking).not.toHaveBeenCalled();
   });
 
   it("creates the booking at the request's lodge instead of the default lodge", async () => {

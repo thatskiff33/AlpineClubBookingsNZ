@@ -23,6 +23,9 @@ page — see [Family billing](#family-billing) below.
   need to approve or reject it.
 - You invited an unregistered partner by email and want to check or revoke that
   invitation.
+- You want to see how a whole family connects: each member's detail page draws a
+  read-only **family tree** from the recorded parent and partner links — see
+  [Members](members.md#the-member-detail-page).
 
 ## Step-by-step
 

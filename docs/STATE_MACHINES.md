@@ -934,7 +934,26 @@ booking confirmed/paid -> auto allocation proposal
 admin manually adjusts -> MANUAL allocation
 admin approves -> approved allocation metadata set
 booking modified/cancelled/completed/deleted -> allocation reconciliation
+exclusive whole-lodge hold SET -> allocation reconciliation (pure prune)
+exclusive whole-lodge hold CLEARED -> allocation reconciliation (re-plan)
 ```
+
+The exclusive whole-lodge hold is a first-class reconciliation trigger on BOTH
+directions (ADR-001, #2285). A held booking implicitly occupies every bed, so it
+owns **no** `BedAllocation` rows: reconciliation short-circuits on the
+`wholeLodgeHold` flag (not the status — a held booking sits in an ordinary
+bed-allocatable status), which makes the SET a whole-booking prune that creates
+nothing, and makes any later reconcile of a still-held booking a no-op that also
+self-heals rows an older lifecycle wrongly created. Clearing the hold makes the
+booking ordinary again, so the same reconcile re-plans its guests through the
+auto-allocator — beds may come back different, and other bookings' provisional
+placements may be moved or unallocated by that re-plan. Both directions run
+inside the exclusive-hold route's transaction, under the per-lodge capacity
+lock, so the flag and the rows can never commit apart; a school approval that
+grants exclusivity prunes the same way after stamping the hold. Every write path
+additionally re-reads the bookings it is about to write rows for immediately
+before the write, so a hold (or cancel, or soft delete) landing between planning
+and writing cannot be undone by a re-insert.
 
 Auto-allocation plans booking-first and whole-stay-first (issue #1677). Per
 booking (capacity-holding first on the lifecycle path, then createdAt/id), the

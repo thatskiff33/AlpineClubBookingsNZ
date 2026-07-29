@@ -596,14 +596,48 @@ The `xero-links.ts` builders cover two shapes of outbound link:
   There is one such button, in the page header rather than inside a section, so
   it is present whichever sections the admin has expanded.
 
-They are **not** the only outbound links, though: about twenty inline
-`https://go.xero.com/…` strings across ten admin components (member detail and
-table, payments, subscriptions, `sync-results-panel`, `shared.tsx`, and two in
-`health-diagnostics-panel.tsx` itself) never import `xero-links.ts`. They are
-per-contact / per-invoice links that resolve for a signed-in Xero user;
-consolidating them behind the builders — which would also let them carry the
-short code — is an open follow-up. A change to `xero-links.ts` therefore should
-not be assumed to reach every admin link into Xero.
+Since #2283 the builders are the **only** way a Xero URL is spelled in `src/`:
+the twenty-one inline `https://go.xero.com/…` strings that used to sit across
+ten admin components (member detail and table, payments, subscriptions,
+`sync-results-panel`, `shared.tsx`, `health-diagnostics-panel.tsx`) were all
+migrated, so a change to `xero-links.ts` **does** reach every admin link into
+Xero — though *reaching* a link is not the same as *scoping* it to the club's
+organisation; see the bound below. The owner verified the failure mode those inline links carried: on a
+Xero login with more than one organisation, a short-code-less URL lands in
+whichever organisation the session last used — another club's books. Four of
+them also used the new-app `/app/contacts/contact/…` path, which needs the
+short code in the URL; they now go through `buildXeroContactUrl`, whose
+`organisationlogin?shortcode=…&redirecturl=…` wrapper (short code known) or
+session-scoped classic path (short code unavailable) is live either way. The
+guard test `src/lib/__tests__/xero-links-guard.test.ts` fails CI on any new
+`go.xero.com` URL literal in `src/` outside `xero-links.ts` — `https:`,
+`http:` and protocol-relative `//` spellings alike, with prose mentions of the
+bare host still legal and test files excluded (they assert and mock the
+builders' exact output). It cannot see a host assembled from pieces, so it is
+a brake on the obvious drift rather than a proof.
+
+**What "every admin link" does *not* yet cover.** Passing through a builder is
+not the same as carrying the short code. Five admin surfaces render a URL that
+was built on the **server**, by a producer that has no short code to pass, so
+they still open in whichever organisation the Xero session last used:
+
+| Render site | URL produced by |
+| --- | --- |
+| `xero/_components/operations-panel.tsx:485` | `api/admin/xero/operations/route.ts:142` |
+| `xero/_components/inbound-events-panel.tsx:286` | `api/admin/xero/inbound-events/route.ts:151` |
+| `xero/_components/setup-panels.tsx:471` (duplicate contacts) | `xero-duplicate-contacts.ts:199` |
+| `components/admin/xero-record-activity-panel.tsx:125,385,566,655` | `xero-record-activity.ts:637,662,690` |
+| `components/admin/xero-suggested-contact-card.tsx:72` | `api/admin/xero/import-member-contact/route.ts:202` |
+
+Two further paths **persist** a built URL —
+`XeroObjectLink.xeroObjectUrl` and `XeroSyncOperation.xeroObjectUrl`
+(`prisma/schema.prisma:3084,3139`) — which the panels above and the admin
+alert emails render verbatim, so a short code baked in there would also have to
+survive a reconnect to a different organisation. `xero-duplicate-contacts.ts`
+is an in-tree counterexample worth noting: line 199 omits the short code while
+line 255, in the same file, already passes one. All of this is within #2283's
+acceptance criterion (links land in the right organisation **or degrade to the
+generic link**) and is tracked as an owner decision in **#2314**.
 
 The identifier a Xero URL needs is the organisation **short code** (`!aBc12`),
 *not* the tenant GUID stored on the `XeroToken` row. The GUID is not usable in a
@@ -619,13 +653,29 @@ financial-year-end month), behind `getXeroConnectedOrganisation`'s 12-hour
 in-process cache. It is deliberately **not** on `/api/admin/xero/status`:
 status is a pure `XeroToken`-row read that every admin surface gating on Xero
 hits (`useXeroStatus`), and hanging a live Xero call off it would spend API
-budget on pages that only ask "is Xero connected?". The Xero Sync page reads the
-organisation route once, and only when connected (`useXeroOrgShortCode`); it is
-one of several callers of that route (the setup wizard's org confirmation and
-the subscription-lockout settings panel read it too), and they all share the one
-in-process cache, so a cold cache costs at most one `getOrganisations` call per
-server process per 12 hours. The finance dashboard makes the opposite trade and
-links without a short code rather than fetching one.
+budget on pages that only ask "is Xero connected?". Client-side, the pages that
+render Xero deep links — the Xero Sync page, the members list and member
+detail pages, payments, and subscriptions — each mount
+`useXeroOrgShortCode` (in `src/hooks`, shared since #2283) **once per page**,
+only when connected, and pass the short code down to their link-rendering
+components as a required prop; a null short code degrades every link to the
+generic session-scoped URL, it never hides one. They join the setup wizard's
+org confirmation and the subscription-lockout settings panel as callers of the
+organisation route, and all of them share the one in-process cache, so a cold
+cache still costs at most one `getOrganisations` call per server process per
+12 hours. The finance dashboard makes the opposite trade and links without a
+short code rather than fetching one.
+
+Two honest bounds on that. First, `/api/admin/xero/**` maps to the **finance**
+permission area (`admin-permissions.ts`), so an admin with membership access
+but not finance gets a 403 from the organisation route and sees the unqualified
+links — degraded, never hidden, which is the documented contract, but it means
+"every admin" above reads "every admin with finance access". Widening the
+route's authz is an open question, not something this convention assumes.
+Second, the short code arrives from a client fetch, so between mount and
+resolution the links render their degraded `href`; a very fast first click gets
+the session-scoped URL. That window is the pre-existing behaviour of the Xero
+Sync page's button, now shared by four more pages.
 
 `getXeroConnectedOrganisation` is single-flight and caches **failures** as well
 as successes. A present-but-failing connection (revoked refresh token awaiting
@@ -655,7 +705,36 @@ callers on a cold or failing cache collapse to one underlying Xero call instead
 of N, at the cost only that a joiner shares the leader's outcome rather than
 making its own attempt. Negative caching is the half that is not free here —
 this is a money-adjacent value, so a connection an admin has just fixed must be
-picked up by the very next call, not up to a minute later.
+picked up by the very next call, not up to a minute later. What it **does**
+share with the summary read (#2283) is the retry posture: the same
+`maxRetries: 0, maxTransientRetries: 1` pair, for the same reasons — a read
+that degrades immediately and re-attempts shortly gains nothing by waiting out
+a 429 inside the call, and it must never be one 5xx away from arming the
+process-global breaker.
+
+Capping the retries removed something the waiting did as a side effect, so
+#2283's review restored both halves explicitly:
+
+- **An honest fallback.** A failing read returns the last successful year-end
+  month if it has one, else the year-end month sitting on the connected-org
+  **summary** cache — the same `getOrganisations` field, one cache along.
+  Before, a cold cache plus one 429 returned `null`, and
+  `getFinancialYearResolution` turns `null` into `DEFAULT_FINANCIAL_YEAR_END_MONTH`
+  (March), silently moving the season boundary — and with it
+  `isSubscriptionEnforcementActive` — for the requests that hit it. Both
+  sources are cleared by the same invalidation and guarded by the same
+  generation counter, so neither can resurrect a previous organisation's month.
+- **Attempt throttling.** A failure records the time, and for **15 seconds**
+  non-forced callers are handed that same fallback without a live Xero call.
+  This is attempt control, not a negative value cache (the owner's option A
+  bans the latter): nothing is pinned, and `forceRefresh` ignores the window
+  entirely. It matters because this read sits behind member-facing traffic,
+  which is **serial** — single flight only collapses callers that overlap in
+  time, so without a throttle a broken connection became one live
+  `getOrganisations` per request, the fastest way to pin Xero's per-minute
+  limit and push an instance towards the daily limit and the global breaker.
+  Fifteen seconds is deliberately a quarter of the summary read's negative TTL:
+  this value is money-adjacent, so the recovery delay is kept small.
 
 All three organisation reads in that module — the year-end month, the
 connected-org summary, and `getXeroLockDates` — share **one generation
@@ -679,7 +758,8 @@ across a reconnect would repopulate the just-cleared 5-minute cache with the
 rejected would pass the guard and post its invoice into a locked period in the
 organisation now connected.
 
-**This read fires on mount of `/admin/xero`**, and that is a deliberate,
+**This read fires on mount of `/admin/xero`** (and, since #2283, of the other
+deep-linking admin pages via the same hook), and that is a deliberate,
 accepted exception to the usual reflex that live Xero calls hang off a click.
 The click-only rule written on `/api/admin/xero/status` is scoped to the
 **`?probe=1` connection-health probe** (#2105) and is untouched — a probe is an
@@ -690,8 +770,8 @@ cache bounds that to **at most one `getOrganisations` call per server process
 per 12 hours** — or per **60 seconds** while the read is failing, via the
 negative cache below. A cold cache is also the only case that could stall the
 link, and it degrades to the generic `go.xero.com` URL rather than blocking the
-page. That was judged an acceptable price for a header button that always
-points at the right organisation; hanging it off a click instead would mean the
+page. That was judged an acceptable price for links that always point at the
+right organisation; hanging the read off a click instead would mean the
 admin's first click went to the wrong organisation. `useXeroOrgShortCode`'s doc
 comment carries the same note for anyone who arrives from the client side.
 

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select"
 import type { XeroSearchResult } from "@/components/admin/xero-suggested-contact-card"
 import type { UseXeroEntranceFeeDecisionResult } from "@/lib/admin-xero-entrance-fee"
+import { buildXeroContactUrl } from "@/lib/xero-links"
 import type { Member, MemberForm, XeroChoice } from "../_types"
 import { getBlankOptionalXeroFields, getMissingFieldsForXeroCreate } from "../_utils"
 import { MemberXeroEntranceFeeFields } from "./member-xero-entrance-fee-fields"
@@ -22,6 +23,12 @@ interface MemberXeroControlsProps {
   editingMember: Member | null
   form: MemberForm
   xeroConnected: boolean | null
+  /**
+   * Organisation short code for the "View in Xero" deep link, or null when
+   * unavailable — the link then degrades to the generic session-scoped Xero
+   * URL, it is never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null
   xeroChoice: XeroChoice
   xeroUnlinking: boolean
   xeroSearchQuery: string
@@ -105,6 +112,7 @@ export function MemberXeroControls({
   editingMember,
   form,
   xeroConnected,
+  xeroOrgShortCode,
   xeroChoice,
   xeroUnlinking,
   xeroSearchQuery,
@@ -154,7 +162,9 @@ export function MemberXeroControls({
                 Linked
               </Badge>
               <a
-                href={`https://go.xero.com/app/contacts/contact/${editingMember.xeroContactId}`}
+                href={buildXeroContactUrl(editingMember.xeroContactId, {
+                  shortCode: xeroOrgShortCode,
+                })}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-info-11 hover:underline inline-flex items-center gap-1"

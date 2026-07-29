@@ -20,8 +20,14 @@ export interface XeroOrgShortCodeState {
 }
 
 /**
- * The connected Xero organisation's short code, for the page's "Go to Xero"
- * deep links (#2261).
+ * The connected Xero organisation's short code, for admin "open in Xero" deep
+ * links. Introduced for the Xero Sync page's "Go to Xero" button (#2261); now
+ * shared by every admin surface that deep-links into Xero (members list and
+ * detail, payments, subscriptions, and the Xero Sync panels), which is why it
+ * lives in `src/hooks` rather than under the Xero route (#2283). Pages mount
+ * it ONCE and pass the short code down to their link-rendering components —
+ * per-component mounting would work (the server-side cache bounds the cost)
+ * but N identical fetches per page is noise.
  *
  * Read from `/api/admin/xero/organisation`, deliberately NOT from
  * `/api/admin/xero/status`: status is a pure token-row read that every admin

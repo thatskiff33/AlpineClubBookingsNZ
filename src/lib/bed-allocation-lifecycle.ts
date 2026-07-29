@@ -41,6 +41,25 @@ export const BED_ALLOCATABLE_BOOKING_STATUSES = [
   BookingStatus.WAITLIST_OFFERED,
 ] as const;
 
+/**
+ * Cap on how many pruned `BedAllocation` rows an audit entry records verbatim
+ * (#2285 review). Setting an exclusive whole-lodge hold destroys every per-bed
+ * row the booking owns — including manually placed and admin-approved ones —
+ * and a deleted row otherwise leaves no trace of WHAT it was, so both prune
+ * sites (the admin toggle route and the school-approval conversion) list the
+ * removed rows in their audit metadata.
+ *
+ * The value is pinned to the audit layer's own `MAX_METADATA_ARRAY_ITEMS`
+ * (`src/lib/audit.ts`): the sanitiser silently truncates any metadata array
+ * past 50 entries and replaces the WHOLE metadata blob with a short preview
+ * once the serialised JSON passes its size budget — so reading more rows than
+ * this would not preserve them, and could cost the entries that DO fit. A
+ * whole-lodge group is guests × nights and will routinely exceed it, so the
+ * exact figure is always recorded alongside as `deletedCount` and a
+ * `removedAllocationsTruncated` flag says the list is partial.
+ */
+export const MAX_AUDITED_PRUNED_ALLOCATIONS = 50;
+
 interface BedAllocationLifecycleRange {
   checkIn: Date;
   checkOut: Date;
@@ -114,6 +133,67 @@ export async function promoteOrphanedSecondOccupants(
   return promoted;
 }
 
+/**
+ * Batched form of {@link promoteOrphanedSecondOccupants}: ONE `findMany` over
+ * every vacated bed-night plus ONE `updateMany`, instead of a `findFirst` +
+ * `update` round-trip per night (#2285 review). The per-night helper above is
+ * kept for the single-night board callers (a board delete/move vacates exactly
+ * one bed-night); every whole-booking / whole-stay sweep uses this one, because
+ * those run under the per-lodge capacity lock (the exclusive-hold toggle) or
+ * under the global + per-lodge locks (the school approval), where guests ×
+ * nights sequential round-trips hold the lock far longer than they need to.
+ *
+ * Semantics are identical to the per-night helper and deliberately re-stated
+ * here rather than shared: the WHERE gate is `isSecondOccupant` only (never the
+ * denormalized `bedType`, #1749), the JS re-check of `isSecondOccupant` keeps a
+ * test mock whose `findMany` ignores the WHERE from fabricating a promotion, the
+ * bed-night key set is deduped so no bed-night is flipped twice, and the
+ * `updateMany` re-asserts `isSecondOccupant: true` so a row concurrently removed
+ * or already promoted is an idempotent no-op rather than a crash. Returns the
+ * promoted rows (with the flag flipped) so the caller can audit them — a
+ * promoted partner may belong to a DIFFERENT booking than the row that was
+ * removed. Runs on the supplied client, never opening a nested transaction.
+ */
+export async function promoteOrphanedSecondOccupantsBatch(
+  db: BedAllocationLifecycleDb,
+  bedNights: OrphanedBedNight[],
+): Promise<BedAllocation[]> {
+  const wanted = new Map<string, OrphanedBedNight>();
+  for (const { bedId, stayDate } of bedNights) {
+    const key = `${bedId}:${formatDateOnly(stayDate)}`;
+    if (!wanted.has(key)) wanted.set(key, { bedId, stayDate });
+  }
+  if (wanted.size === 0) return [];
+
+  const partners = await db.bedAllocation.findMany({
+    where: {
+      isSecondOccupant: true,
+      OR: [...wanted.values()].map((night) => ({
+        bedId: night.bedId,
+        stayDate: night.stayDate,
+      })),
+    },
+  });
+
+  const byBedNight = new Map<string, BedAllocation>();
+  for (const partner of partners) {
+    if (!partner.isSecondOccupant) continue;
+    const key = `${partner.bedId}:${formatDateOnly(partner.stayDate)}`;
+    if (!wanted.has(key) || byBedNight.has(key)) continue;
+    byBedNight.set(key, partner);
+  }
+
+  const targets = [...byBedNight.values()];
+  if (targets.length === 0) return [];
+
+  await db.bedAllocation.updateMany({
+    where: { id: { in: targets.map((row) => row.id) }, isSecondOccupant: true },
+    data: { isSecondOccupant: false },
+  });
+
+  return targets.map((row) => ({ ...row, isSecondOccupant: false }));
+}
+
 async function recordPartnerPromotionAudit(
   db: BedAllocationLifecycleDb,
   promoted: BedAllocation,
@@ -180,7 +260,11 @@ async function sweepAllocationsWithPromotion(
     return { deletedCount: deleted.count, promotedCount: 0 };
   }
 
-  const promoted = await promoteOrphanedSecondOccupants(db, doomedPrimaries);
+  // Batched (#2285 review): a whole-booking / whole-stay sweep vacates guests ×
+  // nights bed-nights, and this sweep runs under the caller's capacity lock on
+  // the hold-toggle and school-approval paths — one findMany + one updateMany
+  // instead of two round-trips per vacated night.
+  const promoted = await promoteOrphanedSecondOccupantsBatch(db, doomedPrimaries);
   for (const row of promoted) {
     await recordPartnerPromotionAudit(db, row);
   }
@@ -222,6 +306,69 @@ function isAllocatableBookingStatus(status: string): boolean {
   return (BED_ALLOCATABLE_BOOKING_STATUSES as readonly string[]).includes(status);
 }
 
+/**
+ * Write-time re-check of the bookings a planner is about to write rows for
+ * (#2285 review).
+ *
+ * Every bed-allocation planner reads state, plans in memory, then writes — and
+ * the two are not serialised against the hold toggle: `runAutoBedAllocation`
+ * reads the dashboard and `createMany`s with no lock at all, and
+ * `reconcileBedAllocationsForBooking` is called post-commit and unlocked from
+ * several lifecycle callers. A hold SET (or a cancel, or a soft delete) that
+ * commits between the read and the write would otherwise be silently undone:
+ * the prune frees the unique keys, so `skipDuplicates` cannot save us and the
+ * planner happily re-inserts rows for a booking that must own none.
+ *
+ * So immediately before the write, re-read the live held/status/deleted state of
+ * every booking in the payload in ONE query and drop the rows of any booking
+ * that is no longer allocatable — whole-lodge-held (ADR-001), soft-deleted, or
+ * moved to a non-allocatable status by a concurrent cancel, which reaches here
+ * through the hold's clear-direction re-plan and serialises on the DISJOINT
+ * club-wide key. A booking id the re-read does not return at all is dropped: it
+ * no longer exists, so its rows would fail the FK anyway.
+ *
+ * Structural row type, so both writers can pass their own payload shape.
+ */
+export async function dropAllocationRowsForUnallocatableBookings<
+  TRow extends { bookingId: string },
+>(
+  db: BedAllocationLifecycleDb,
+  rows: TRow[],
+): Promise<{ rows: TRow[]; droppedBookingIds: string[] }> {
+  if (rows.length === 0) return { rows, droppedBookingIds: [] };
+
+  const bookingIds = [...new Set(rows.map((row) => row.bookingId))];
+  const live = await db.booking.findMany({
+    where: { id: { in: bookingIds } },
+    select: {
+      id: true,
+      status: true,
+      deletedAt: true,
+      wholeLodgeHold: true,
+    },
+  });
+
+  const allocatable = new Set(
+    live
+      .filter(
+        (booking) =>
+          !booking.deletedAt &&
+          !booking.wholeLodgeHold &&
+          isAllocatableBookingStatus(booking.status),
+      )
+      .map((booking) => booking.id),
+  );
+
+  const droppedBookingIds = bookingIds.filter((id) => !allocatable.has(id));
+  if (droppedBookingIds.length === 0) {
+    return { rows, droppedBookingIds };
+  }
+  return {
+    rows: rows.filter((row) => allocatable.has(row.bookingId)),
+    droppedBookingIds,
+  };
+}
+
 function normalizeRange(
   range?: BedAllocationLifecycleRange | null,
 ): BedAllocationLifecycleRange | null {
@@ -253,6 +400,11 @@ async function loadBookingForBedAllocation(
       checkIn: true,
       checkOut: true,
       lodgeId: true,
+      // ADR-001 bed-allocation short-circuit (#2285): a whole-lodge-held
+      // booking implicitly occupies every bed, so the lifecycle must neither
+      // create nor keep per-bed rows for it. Keyed on the flag, NOT the
+      // status — a held booking sits in an ordinary allocatable status.
+      wholeLodgeHold: true,
       guests: {
         select: {
           id: true,
@@ -305,12 +457,18 @@ async function pruneAllocationsForBooking(
     !booking ||
     booking.deletedAt ||
     !isAllocatableBookingStatus(booking.status) ||
+    // ADR-001 short-circuit (#2285): a whole-lodge-held booking owns NO
+    // per-bed rows — the group implicitly occupies the whole lodge. Sweeping
+    // here (not just skipping creation) is what makes legacy rows self-heal:
+    // any reconcile that touches a held booking removes rows an older
+    // lifecycle wrongly created, with no data migration needed.
+    booking.wholeLodgeHold ||
     booking.guests.length === 0
   ) {
-    // Whole-booking sweep (cancelled / soft-deleted / non-allocatable / no
-    // guests): cancelling the primary's booking orphans a partner sitting on
-    // ANOTHER booking (sharing eligibility is member-level), so promote after
-    // the sweep (#1750).
+    // Whole-booking sweep (cancelled / soft-deleted / non-allocatable /
+    // whole-lodge-held / no guests): cancelling the primary's booking orphans
+    // a partner sitting on ANOTHER booking (sharing eligibility is
+    // member-level), so promote after the sweep (#1750).
     return sweepAllocationsWithPromotion(db, { bookingId });
   }
 
@@ -431,6 +589,9 @@ async function autoAllocateMissingBedNights({
         originBookingRequest: { select: { id: true, type: true } },
         heldForBookingRequest: { select: { type: true } },
         adminCapacityHoldAt: true,
+        // ADR-001 short-circuit (#2285): a whole-lodge-held booking is never
+        // auto-placed (deep guard in the planner-bookings filter below).
+        wholeLodgeHold: true,
         // Whole-stay planning (issue #1677): load every guest of an
         // overlapping booking, not just the reconcile-range slice — guest
         // stays sit inside the booking envelope, which is inside the widened
@@ -523,7 +684,14 @@ async function autoAllocateMissingBedNights({
     // envelope (#1677) and see/displace their occupancy (#1387), but their own
     // missing guest-nights are never opportunistically drafted here — lodge-
     // wide re-planning belongs exclusively to the explicit board action.
-    .filter((booking) => booking.id === bookingId)
+    //
+    // ADR-001 short-circuit (#2285), deep guard: a whole-lodge-held booking is
+    // NEVER auto-placed, even if a caller reaches this planner with a held
+    // bookingId directly. reconcileBedAllocationsForBooking already skips the
+    // planner for held bookings; this keeps the invariant local to the code
+    // that writes BedAllocation rows. The board planner applies the same
+    // exclusion (admin-bed-allocation.ts heldSpans / unallocatedGuestNights).
+    .filter((booking) => booking.id === bookingId && !booking.wholeLodgeHold)
     .map((booking): BedAllocationBooking | null => {
       const guests: BedAllocationBooking["guests"] = [];
 
@@ -648,9 +816,35 @@ async function autoAllocateMissingBedNights({
 
   const displacements = plan.displacements ?? [];
 
-  // Common case (no displacement): a plain createMany, unchanged.
+  // Write-time re-check (#2285 review): the planner's booking read happened
+  // several queries ago and this reconcile is often called post-commit and
+  // unlocked, so a hold SET / cancel / soft delete may have landed in between.
+  // Re-read the payload's bookings and drop any that are no longer allocatable
+  // rather than re-inserting rows a concurrent prune just removed.
+  const recheckPayload = async (client: BedAllocationLifecycleDb) => {
+    const { rows, droppedBookingIds } =
+      await dropAllocationRowsForUnallocatableBookings(
+        client,
+        createManyArgs.data,
+      );
+    if (droppedBookingIds.length > 0) {
+      logger.info(
+        { bookingId, droppedBookingIds },
+        "Bed allocation write-time re-check dropped rows for bookings that became unallocatable (held/cancelled/deleted) after planning",
+      );
+    }
+    return rows;
+  };
+
+  // Common case (no displacement): a plain createMany, unchanged apart from the
+  // re-checked payload.
   if (displacements.length === 0) {
-    const created = await db.bedAllocation.createMany(createManyArgs);
+    const data = await recheckPayload(db);
+    if (data.length === 0) return 0;
+    const created = await db.bedAllocation.createMany({
+      ...createManyArgs,
+      data,
+    });
     return created.count;
   }
 
@@ -660,6 +854,12 @@ async function autoAllocateMissingBedNights({
   // deleteMany (not update/delete) make a row that was concurrently pruned an
   // idempotent no-op (count 0) rather than a P2025 crash.
   const applyPlan = async (client: BedAllocationLifecycleDb) => {
+    // Re-check FIRST, on the transaction client: if the booking we are planning
+    // for became held/cancelled/deleted since the read, we must not displace
+    // anyone else's provisional rows on its behalf either.
+    const data = await recheckPayload(client);
+    if (data.length === 0) return { count: 0, applied: false };
+
     for (const displacement of displacements) {
       const where = {
         bookingGuestId: displacement.bookingGuestId,
@@ -678,7 +878,11 @@ async function autoAllocateMissingBedNights({
         await client.bedAllocation.deleteMany({ where });
       }
     }
-    return client.bedAllocation.createMany(createManyArgs);
+    const created = await client.bedAllocation.createMany({
+      ...createManyArgs,
+      data,
+    });
+    return { count: created.count, applied: true };
   };
 
   // Apply atomically: a failed createMany after an UNALLOCATE must never
@@ -688,7 +892,7 @@ async function autoAllocateMissingBedNights({
   const transactionalDb = db as typeof prisma;
   const canOpenTransaction = typeof transactionalDb.$transaction === "function";
 
-  let created: { count: number };
+  let created: { count: number; applied: boolean };
   if (canOpenTransaction) {
     created = await transactionalDb.$transaction((tx) => applyPlan(tx));
   } else {
@@ -699,8 +903,12 @@ async function autoAllocateMissingBedNights({
   // AFTER the plan is applied (post-commit when we own the transaction) so an
   // audit-write failure can never roll back a committed displacement, and every
   // committed displacement always attempts its audit. Best-effort (swallowed).
-  for (const displacement of displacements) {
-    await recordBedDisplacementAudit(db, displacement);
+  // Skipped entirely when the write-time re-check abandoned the plan (#2285
+  // review): nothing was displaced, so nothing may be audited as displaced.
+  if (created.applied) {
+    for (const displacement of displacements) {
+      await recordBedDisplacementAudit(db, displacement);
+    }
   }
 
   return created.count;
@@ -770,8 +978,16 @@ export async function reconcileBedAllocationsForBooking({
   // missing, soft-deleted, non-allocatable status (cancelled etc.), or an
   // empty range — skip the planner entirely: it would deterministically place
   // nothing, and cancel/delete flows call this inside their transactions.
+  // ADR-001 short-circuit (#2285): a whole-lodge-held booking must never be
+  // fed to the planner — the board already excludes it (admin-bed-allocation
+  // heldSpans), and the lifecycle must agree. Keyed on the flag, not the
+  // status: a held booking sits in an ordinary allocatable status, so
+  // BED_ALLOCATABLE_BOOKING_STATUSES alone cannot express this.
   const bookingCanReceiveAllocations = Boolean(
-    booking && !booking.deletedAt && isAllocatableBookingStatus(booking.status),
+    booking &&
+      !booking.deletedAt &&
+      !booking.wholeLodgeHold &&
+      isAllocatableBookingStatus(booking.status),
   );
   const currentRange = normalizeRange(
     bookingCanReceiveAllocations && booking

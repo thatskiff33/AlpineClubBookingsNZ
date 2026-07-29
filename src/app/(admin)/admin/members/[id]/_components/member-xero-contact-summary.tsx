@@ -2,9 +2,21 @@
 
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink } from "lucide-react";
+import { buildXeroContactUrl } from "@/lib/xero-links";
 import type { MemberDetail } from "../_types";
 
-export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
+export function MemberXeroContactSummary({
+  member,
+  xeroOrgShortCode,
+}: {
+  member: MemberDetail;
+  /**
+   * Organisation short code for the contact deep link, or null when
+   * unavailable — the link then degrades to the generic session-scoped Xero
+   * URL, it is never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null;
+}) {
   return (
     <div className="text-sm">
       <p className="text-muted-foreground">Xero Contact</p>
@@ -12,7 +24,9 @@ export function MemberXeroContactSummary({ member }: { member: MemberDetail }) {
         <div>
           {member.xeroContactId ? (
             <a
-              href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+              href={buildXeroContactUrl(member.xeroContactId, {
+                shortCode: xeroOrgShortCode,
+              })}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-info-11 hover:underline"

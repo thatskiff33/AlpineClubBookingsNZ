@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { buildXeroContactUrl } from "@/lib/xero-links"
 import { SyncReportView } from "./shared"
 import type { SyncResult } from "./types"
 
@@ -9,7 +10,20 @@ import type { SyncResult } from "./types"
 // thousands of rows; the full picture is on the summary audit row.
 const IMPORT_LIST_CAP = 20
 
-export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: SyncResult | null; currentXeroPath: string }) {
+export function SyncResultsPanel({
+  syncResult,
+  shortCode,
+  currentXeroPath,
+}: {
+  syncResult: SyncResult | null
+  /**
+   * Organisation short code for the "Open in Xero" links, or null when
+   * unavailable — the links then degrade to the generic session-scoped Xero
+   * URL, they are never hidden (#2283).
+   */
+  shortCode: string | null
+  currentXeroPath: string
+}) {
   if (!syncResult) return null
   return (
     <Card className="mb-6">
@@ -32,7 +46,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                       <span>{member.name}</span>
                       <span className="text-xs text-muted-foreground">{member.email}</span>
                       <Badge variant="outline" className="text-xs">{member.group}</Badge>
-                      <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
+                      <a href={buildXeroContactUrl(member.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                     </li>
                   ))}
                 </ul>
@@ -51,7 +65,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span className="text-xs text-muted-foreground">{member.email}</span>
                           <Badge variant="outline" className="text-xs">{member.group}</Badge>
                           <span className="text-xs text-muted-foreground">Linked to {member.parentName}</span>
-                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
+                          <a href={buildXeroContactUrl(member.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -71,7 +85,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span>{member.name}</span>
                           <span className="text-xs text-muted-foreground">{member.email}</span>
                           <Badge variant="outline" className="text-xs">{member.group}</Badge>
-                          <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
+                          <a href={buildXeroContactUrl(member.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -86,7 +100,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                       {syncResult.skippedNoEmailDetails.map((contact, index) => (
                         <li key={`${contact.xeroContactId}-${index}`} className="flex items-center gap-2">
                           <span>{contact.name}</span>
-                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
+                          <a href={buildXeroContactUrl(contact.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -103,7 +117,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
                           <span>{contact.name}</span>
                           <Badge variant="outline" className="text-xs">{contact.group}</Badge>
                           {contact.reason ? <span className="text-xs text-muted-foreground">{contact.reason}</span> : null}
-                          <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
+                          <a href={buildXeroContactUrl(contact.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Xero</a>
                         </li>
                       ))}
                     </ul>
@@ -203,7 +217,7 @@ export function SyncResultsPanel({ syncResult, currentXeroPath }: { syncResult: 
               ) : null}
             </>
           ) : null}
-          {syncResult.syncReport ? <SyncReportView report={syncResult.syncReport} returnTo={currentXeroPath} /> : null}
+          {syncResult.syncReport ? <SyncReportView report={syncResult.syncReport} shortCode={shortCode} returnTo={currentXeroPath} /> : null}
           {syncResult.checked !== undefined ? (
             <>
               <p><span className="text-muted-foreground">Members checked:</span> {syncResult.checked}</p>

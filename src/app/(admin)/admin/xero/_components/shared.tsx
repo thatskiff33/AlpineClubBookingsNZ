@@ -19,6 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatNZDateTime } from "@/lib/nzst-date"
 import { formatRedactedJson } from "@/lib/redact-sensitive-json"
 import { cn } from "@/lib/utils"
@@ -386,7 +387,20 @@ function SyncReportSection({
   )
 }
 
-export function SyncReportView({ report, returnTo }: { report: SyncReport; returnTo: string }) {
+export function SyncReportView({
+  report,
+  shortCode,
+  returnTo,
+}: {
+  report: SyncReport
+  /**
+   * Organisation short code for the per-contact Xero links, or null when
+   * unavailable — the links then degrade to the generic session-scoped Xero
+   * URL, they are never hidden (#2283).
+   */
+  shortCode: string | null
+  returnTo: string
+}) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">Scanned {report.total} Xero contacts</p>
@@ -401,7 +415,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
                 {member.changes.map((change) => <li key={change}>{change}</li>)}
               </ul>
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
+            <a href={buildXeroContactUrl(member.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>
@@ -424,7 +438,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
               </p>
               <p className="text-warning">{mismatch.reasons.join(", ")}</p>
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="shrink-0 text-primary hover:underline">
+            <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>
@@ -434,7 +448,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
         {report.skippedNoEmail.map((contact) => (
           <div key={contact.xeroContactId} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
             <span>{contact.name}</span>
-            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
+            <a href={buildXeroContactUrl(contact.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Open in Xero
             </a>
           </div>
@@ -448,7 +462,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
               <span className="ml-1 text-muted-foreground">- {contact.reason}</span>
             </div>
             {contact.xeroContactId ? (
-              <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
+              <a href={buildXeroContactUrl(contact.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
                 Xero
               </a>
             ) : null}
@@ -463,7 +477,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
               <span className="ml-1">- {error.error}</span>
             </div>
             {error.xeroContactId ? (
-              <a href={`https://go.xero.com/Contacts/View/${error.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
+              <a href={buildXeroContactUrl(error.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
                 Xero
               </a>
             ) : null}
@@ -478,7 +492,7 @@ export function SyncReportView({ report, returnTo }: { report: SyncReport; retur
               <span className="ml-1 text-muted-foreground">{contact.email}</span>
               {contact.group ? <Badge variant="secondary" className="ml-1 py-0 text-[10px]">{contact.group}</Badge> : null}
             </div>
-            <a href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
+            <a href={buildXeroContactUrl(contact.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="ml-2 shrink-0 text-primary hover:underline">
               Xero
             </a>
           </div>

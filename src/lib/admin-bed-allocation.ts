@@ -29,8 +29,10 @@ import {
 } from "@/lib/bed-allocation";
 import {
   BED_ALLOCATABLE_BOOKING_STATUSES,
+  dropAllocationRowsForUnallocatableBookings,
   promoteOrphanedSecondOccupants,
 } from "@/lib/bed-allocation-lifecycle";
+import logger from "@/lib/logger";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   bookingHoldsCapacity,
@@ -1883,15 +1885,37 @@ export async function runAutoBedAllocation(input: {
     return { count: 0 };
   }
 
+  // Write-time re-check (#2285 review): the dashboard read above is not held
+  // under any lock, so an exclusive hold set (or a cancel / soft delete) can
+  // commit between the read and this write. Its prune frees the unique keys, so
+  // `skipDuplicates` cannot stop us re-inserting rows for a booking that must
+  // own none — re-read the payload's bookings and drop those that are no longer
+  // allocatable. Shared with the lifecycle planner so both writers agree.
+  const { rows, droppedBookingIds } =
+    await dropAllocationRowsForUnallocatableBookings(
+      db,
+      dashboard.suggestedAllocations.map((allocation) => ({
+        bookingId: allocation.bookingId,
+        bookingGuestId: allocation.bookingGuestId,
+        roomId: allocation.roomId,
+        bedId: allocation.bedId,
+        stayDate: parseDateOnly(allocation.stayDate),
+        source: "AUTO" as const,
+      })),
+    );
+
+  if (droppedBookingIds.length > 0) {
+    logger.info(
+      { droppedBookingIds, lodgeId: input.lodgeId ?? null },
+      "Run Auto Allocation write-time re-check dropped suggestions for bookings that became unallocatable (held/cancelled/deleted) after planning",
+    );
+  }
+  if (rows.length === 0) {
+    return { count: 0 };
+  }
+
   return db.bedAllocation.createMany({
-    data: dashboard.suggestedAllocations.map((allocation) => ({
-      bookingId: allocation.bookingId,
-      bookingGuestId: allocation.bookingGuestId,
-      roomId: allocation.roomId,
-      bedId: allocation.bedId,
-      stayDate: parseDateOnly(allocation.stayDate),
-      source: "AUTO" as const,
-    })),
+    data: rows,
     skipDuplicates: true,
   });
 }

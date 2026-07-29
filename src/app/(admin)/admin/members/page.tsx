@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
+import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { MemberBulkActionBar } from "./_components/member-bulk-action-bar"
 import { MemberBulkDialog } from "./_components/member-bulk-dialog"
@@ -130,6 +131,13 @@ export default function MembersPage() {
     onSuccess: showSuccess,
     refreshMembers: fetchMembers,
   })
+
+  // Org short code for the table/editor "open in Xero" deep links (#2283).
+  // One mount per page; served from the server-side 12h org cache, and null
+  // degrades every link to the generic Xero URL rather than hiding it.
+  const { shortCode: xeroOrgShortCode } = useXeroOrgShortCode(
+    xeroConnected === true,
+  )
 
   const membersListPath = buildMembersListPath()
   const exportUrl = buildExportUrl()
@@ -389,6 +397,7 @@ export default function MembersPage() {
           debouncedSearch={debouncedSearch}
           selectedIds={selectedIds}
           canEdit={canEditMembership}
+          xeroOrgShortCode={xeroOrgShortCode}
           sortBy={sortBy}
           sortDir={sortDir}
           membersListPath={membersListPath}
@@ -409,6 +418,7 @@ export default function MembersPage() {
         open={createDialogOpen}
         actorIsFullAdmin={actorIsFullAdmin}
         xeroConnected={xeroConnected}
+        xeroOrgShortCode={xeroOrgShortCode}
         onOpenChange={setCreateDialogOpen}
         onSaved={() => void fetchMembers()}
         onSuccess={showSuccess}

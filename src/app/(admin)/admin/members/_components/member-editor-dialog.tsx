@@ -72,6 +72,12 @@ interface MemberEditorDialogProps {
   editingMember?: Member | null;
   actorIsFullAdmin?: boolean;
   xeroConnected: boolean | null;
+  /**
+   * Organisation short code for the Xero controls' "View in Xero" deep link,
+   * or null when unavailable — the link then degrades to the generic
+   * session-scoped Xero URL, it is never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
   onSuccess: (message: string) => void;
@@ -148,6 +154,7 @@ export function MemberEditorDialog({
   editingMember = null,
   actorIsFullAdmin = true,
   xeroConnected,
+  xeroOrgShortCode,
   onOpenChange,
   onSaved,
   onSuccess,
@@ -1011,6 +1018,7 @@ export function MemberEditorDialog({
               editingMember={currentEditingMember}
               form={form}
               xeroConnected={xeroConnected}
+              xeroOrgShortCode={xeroOrgShortCode}
               xeroChoice={xeroChoice}
               xeroUnlinking={xeroUnlinking}
               xeroSearchQuery={xeroSearchQuery}

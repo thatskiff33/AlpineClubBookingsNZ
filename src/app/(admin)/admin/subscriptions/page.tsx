@@ -53,6 +53,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useXeroStatus } from "@/hooks/use-xero-status";
+import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
+import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { useConfirm } from "@/components/confirm-dialog";
 import { SubscriptionBillingPanel } from "./_components/subscription-billing-panel";
 import {
@@ -182,6 +185,13 @@ export default function SubscriptionsPage() {
   const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
   const canEditFinance = useAdminAreaEditAccess("finance");
+  // Org short code for the Xero invoice deep links (#2283). One mount per
+  // page; served from the server-side 12h org cache, and null degrades the
+  // links to the generic Xero URL rather than hiding them.
+  const { connected: xeroConnected } = useXeroStatus();
+  const { shortCode: xeroOrgShortCode } = useXeroOrgShortCode(
+    xeroConnected === true,
+  );
   const { confirm, confirmDialog } = useConfirm();
   const [seasonYear, setSeasonYear] = useState(() => parseSeasonYearParam(searchParams.get("seasonYear")));
   const [status, setStatus] = useState(searchParams.get("status") || "all");
@@ -655,7 +665,9 @@ export default function SubscriptionsPage() {
                 <TableCell>
                   {sub.xeroInvoiceId ? (
                     <a
-                      href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
+                      href={buildXeroInvoiceUrl(sub.xeroInvoiceId, {
+                        shortCode: xeroOrgShortCode,
+                      })}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

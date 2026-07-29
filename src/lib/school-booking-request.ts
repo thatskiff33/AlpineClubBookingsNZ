@@ -37,7 +37,12 @@ import {
 import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { issueActionToken } from "@/lib/action-tokens";
-import { logAudit } from "@/lib/audit";
+import { createAuditLog, logAudit } from "@/lib/audit";
+import { formatDateOnly } from "@/lib/date-only";
+import {
+  MAX_AUDITED_PRUNED_ALLOCATIONS,
+  reconcileBedAllocationsForBooking,
+} from "@/lib/bed-allocation-lifecycle";
 import {
   assertMappableOwnerContact,
   BOOKING_REQUEST_VERIFICATION_TTL_MS,
@@ -945,6 +950,84 @@ export async function approveSchoolBookingRequest(input: {
           },
           select: { id: true },
         });
+      }
+
+      // ADR-001 bed-allocation short-circuit (#2285): a hold granted at
+      // approval means the booking must own NO per-bed rows. The held
+      // conversion above deliberately preserves pre-assigned beds across the
+      // guest swap (#1254) — right for an ordinary approval, but rows on a
+      // now-held booking would be invisible on the board and contradict the
+      // invariant. Run the same flag-keyed reconcile the admin toggle uses:
+      // with wholeLodgeHold freshly stamped it is a pure whole-booking prune
+      // (no placement). Fresh creates own no rows yet, so there it is an
+      // idempotent no-op. Non-exclusive approvals are untouched — their
+      // #1254 bed preservation stands.
+      if (request.exclusivityRequested) {
+        // Recoverability (#2285 review): a held CONVERSION can prune beds an
+        // officer pre-assigned to the held booking (#1254 preserves them across
+        // the guest swap). Capture what is about to be destroyed BEFORE the
+        // prune, then audit it — the toggle route records the same list in its
+        // own `booking.exclusiveHold.set` entry, and this path previously
+        // recorded nothing at all for the prune.
+        const prunedAllocations = await tx.bedAllocation.findMany({
+          where: { bookingId: booking.id },
+          select: {
+            bookingGuestId: true,
+            roomId: true,
+            bedId: true,
+            stayDate: true,
+            source: true,
+            approvedAt: true,
+          },
+          orderBy: [{ stayDate: "asc" }, { bedId: "asc" }],
+          take: MAX_AUDITED_PRUNED_ALLOCATIONS + 1,
+        });
+
+        const reconcile = await reconcileBedAllocationsForBooking({
+          bookingId: booking.id,
+          db: tx,
+        });
+
+        if (reconcile.deletedCount > 0) {
+          await createAuditLog(
+            {
+              action: "BED_ALLOCATION_HELD_BOOKING_PRUNED",
+              memberId: input.adminMemberId,
+              actorMemberId: input.adminMemberId,
+              subjectMemberId: schoolMember.id,
+              targetId: booking.id,
+              entityType: "Booking",
+              entityId: booking.id,
+              category: "lodge",
+              severity: "important",
+              outcome: "success",
+              summary:
+                "Bed assignments removed because the approved school request granted an exclusive whole-lodge hold",
+              details:
+                "Approving this school request granted sole occupancy of the lodge, so the converted booking owns no per-bed assignments (ADR-001). The assignments it carried were removed and are listed here so the placement can be reconstructed if the hold is later cleared.",
+              metadata: {
+                issue: 2285,
+                requestId: request.id,
+                bookingId: booking.id,
+                deletedCount: reconcile.deletedCount,
+                promotedCount: reconcile.promotedCount,
+                removedAllocations: prunedAllocations
+                  .slice(0, MAX_AUDITED_PRUNED_ALLOCATIONS)
+                  .map((row) => ({
+                    bookingGuestId: row.bookingGuestId,
+                    roomId: row.roomId,
+                    bedId: row.bedId,
+                    stayDate: formatDateOnly(row.stayDate),
+                    source: row.source,
+                    approvedAt: row.approvedAt?.toISOString() ?? null,
+                  })),
+                removedAllocationsTruncated:
+                  prunedAllocations.length > MAX_AUDITED_PRUNED_ALLOCATIONS,
+              },
+            },
+            tx,
+          );
+        }
       }
 
       await tx.payment.create({

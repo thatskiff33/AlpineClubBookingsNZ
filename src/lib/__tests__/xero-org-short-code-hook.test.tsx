@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   useXeroOrgShortCode,
   type XeroOrgShortCodeState,
-} from "@/app/(admin)/admin/xero/_hooks/use-xero-org-short-code";
+} from "@/hooks/use-xero-org-short-code";
 
 // #2261: the short code is read from /api/admin/xero/organisation (which caches
 // the underlying Xero getOrganisations call in-process for 12 hours), never

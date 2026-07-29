@@ -25,6 +25,44 @@ export interface ExclusiveHoldConflict {
   overridden?: boolean;
 }
 
+/**
+ * What the toggle did to the booking's bed assignments (#2285). Setting the
+ * hold removes every per-bed row the booking owns; clearing it re-plans them
+ * through the ordinary auto-allocator. `enabled: false` means the bed
+ * allocation module is off, so nothing was touched.
+ */
+export interface ExclusiveHoldBedAllocationReconcile {
+  enabled: boolean;
+  deletedCount: number;
+  createdCount: number;
+  promotedCount: number;
+}
+
+function plural(count: number, singular: string, pluralForm: string): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/**
+ * The sentence appended to the success toast so the officer is told what
+ * happened to the beds (#2285). Silence here is what made the destructive SET
+ * feel like a no-op; "none" is reported too, because on CLEAR it is the signal
+ * that auto-allocation is switched off and the beds must be placed by hand.
+ */
+export function describeBedAllocationReconcile(
+  hold: boolean,
+  reconcile?: ExclusiveHoldBedAllocationReconcile,
+): string {
+  if (!reconcile || !reconcile.enabled) return "";
+  if (hold) {
+    return reconcile.deletedCount > 0
+      ? ` ${plural(reconcile.deletedCount, "bed assignment", "bed assignments")} removed.`
+      : " It had no bed assignments to remove.";
+  }
+  return reconcile.createdCount > 0
+    ? ` ${plural(reconcile.createdCount, "bed", "beds")} re-planned.`
+    : " No beds were re-planned — assign them on the bed allocation board.";
+}
+
 interface AdminExclusiveHoldControlsProps {
   bookingId: string;
   /** Whether the exclusive whole-lodge hold is currently set (#121). */
@@ -89,20 +127,28 @@ export function AdminExclusiveHoldControls({
       if (res.ok) {
         const data = (await res.json().catch(() => ({}))) as {
           conflicts?: ExclusiveHoldConflict[];
+          bedAllocationReconcile?: ExclusiveHoldBedAllocationReconcile;
         };
+        // Bed-assignment surfacing (#2285): the toggle rewrites the booking's
+        // bed rows — SET removes them all, CLEAR re-plans them — so say so
+        // rather than letting a destructive action report a bare success.
+        const bedNote = describeBedAllocationReconcile(
+          hold,
+          data.bedAllocationReconcile,
+        );
         // Conflict surfacing (issue #119): the set succeeded (decision 1); warn
         // if existing bookings overlap so the officer resolves them manually.
         if (hold && data.conflicts && data.conflicts.length > 0) {
           toast.warning(
-            `Exclusive hold set. ${data.conflicts.length} existing booking${
+            `Exclusive hold set.${bedNote} ${data.conflicts.length} existing booking${
               data.conflicts.length === 1 ? "" : "s"
             } overlap these nights — resolve manually.`,
           );
         } else {
           toast.success(
             hold
-              ? "Exclusive whole-lodge hold set."
-              : "Exclusive whole-lodge hold cleared.",
+              ? `Exclusive whole-lodge hold set.${bedNote}`
+              : `Exclusive whole-lodge hold cleared.${bedNote}`,
           );
         }
         router.refresh();
@@ -128,10 +174,15 @@ export function AdminExclusiveHoldControls({
   }
 
   async function handleSet() {
+    // #2285: lead with the destruction. Setting the hold deletes every bed
+    // assignment this booking owns — including ones placed by hand and ones an
+    // admin approved — because a held group takes the whole lodge and is never
+    // placed on individual beds. The old copy described only the capacity
+    // effect and never mentioned the beds at all.
     const confirmed = await confirm({
       title: "Set the exclusive whole-lodge hold?",
       description:
-        "The whole lodge is reserved for this booking's group — no other beds can be booked on its nights, even if beds are free. Any existing overlapping bookings are not changed; resolve them manually.",
+        "This booking's existing bed assignments will be removed — including any placed by hand and any already approved. A held group takes the whole lodge, so nobody in it is given an individual bed; the removed assignments are recorded in the audit log. No other beds can be booked on these nights, even if beds are free. Any existing overlapping bookings are not changed; resolve them manually.",
       confirmLabel: "Set hold",
     });
     if (!confirmed) return;
@@ -139,10 +190,14 @@ export function AdminExclusiveHoldControls({
   }
 
   async function handleClear() {
+    // #2285: clearing is NOT a no-op for beds. The booking becomes ordinary
+    // again, so it is re-planned by the auto-allocator right away (or left with
+    // no beds when auto-allocation is off), and that re-plan can move other
+    // bookings' provisional placements aside.
     const confirmed = await confirm({
       title: "Clear the exclusive whole-lodge hold?",
       description:
-        "Other members can book the remaining beds on these nights again. The booking itself is unchanged.",
+        "Other members can book the remaining beds on these nights again. This booking's guests are given beds again straight away if auto-allocation is on — they may not be the beds they had before the hold — or left unassigned for you to place on the bed allocation board if it is off. Re-planning can also move other bookings' provisional bed placements.",
       confirmLabel: "Clear hold",
     });
     if (!confirmed) return;

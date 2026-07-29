@@ -6,6 +6,7 @@ import { AlertTriangle, CheckCircle2, Circle, Clock } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
+import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import { fetchJson, postJson } from "./api"
 import {
@@ -26,6 +27,12 @@ import type {
 
 type Props = {
   connected: boolean
+  /**
+   * Organisation short code for "Open in Xero" deep links, or null when
+   * unavailable — the links then degrade to the generic session-scoped Xero
+   * URL, they are never hidden (#2283).
+   */
+  shortCode: string | null
   currentXeroPath: string
   healthOpen: boolean
   contactGroupMismatchesOpen: boolean
@@ -39,6 +46,7 @@ type Props = {
 
 export function HealthAndDiagnosticsPanels({
   connected,
+  shortCode,
   currentXeroPath,
   healthOpen,
   contactGroupMismatchesOpen,
@@ -308,6 +316,7 @@ export function HealthAndDiagnosticsPanels({
 
       <ContactGroupMismatchPanel
         open={contactGroupMismatchesOpen}
+        shortCode={shortCode}
         data={groupMismatches}
         loading={loadingGroupMismatches}
         resyncing={resyncingGroupMismatches}
@@ -318,6 +327,7 @@ export function HealthAndDiagnosticsPanels({
       />
       <ContactLinkMismatchPanel
         open={contactLinkMismatchesOpen}
+        shortCode={shortCode}
         data={linkMismatches}
         loading={loadingLinkMismatches}
         resyncing={resyncingLinkMismatches}
@@ -379,6 +389,7 @@ function MissingInvoicesList({
 
 function ContactGroupMismatchPanel({
   open,
+  shortCode,
   data,
   loading,
   resyncing,
@@ -388,6 +399,7 @@ function ContactGroupMismatchPanel({
   onRefresh,
 }: {
   open: boolean
+  shortCode: string | null
   data: ContactGroupMismatchResponse | null
   loading: boolean
   resyncing: boolean
@@ -468,7 +480,7 @@ function ContactGroupMismatchPanel({
                       <p className="text-xs text-muted-foreground">Would add: {mismatch.addGroupId ? (mismatch.managedGroup?.name ?? mismatch.addGroupId) : "nothing"}</p>
                       <p className="text-xs text-muted-foreground">Would remove: {mismatch.removeGroupIds.length > 0 ? mismatch.removeGroupIds.join(", ") : "nothing"}</p>
                     </div>
-                    <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
+                    <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">Open in Xero</a>
                   </div>
                 </div>
               ))}
@@ -484,6 +496,7 @@ function ContactGroupMismatchPanel({
 
 function ContactLinkMismatchPanel({
   open,
+  shortCode,
   data,
   loading,
   resyncing,
@@ -495,6 +508,7 @@ function ContactLinkMismatchPanel({
   onUnlink,
 }: {
   open: boolean
+  shortCode: string | null
   data: ContactLinkMismatchResponse | null
   loading: boolean
   resyncing: boolean
@@ -568,7 +582,7 @@ function ContactLinkMismatchPanel({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <a href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)} className="inline-flex"><Button variant="outline" size="sm">Open Member</Button></a>
-                      <a href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="inline-flex"><Button variant="outline" size="sm">Open in Xero</Button></a>
+                      <a href={buildXeroContactUrl(mismatch.xeroContactId, { shortCode })} target="_blank" rel="noopener noreferrer" className="inline-flex"><Button variant="outline" size="sm">Open in Xero</Button></a>
                       <Button size="sm" variant="outline" onClick={() => void onUnlink(mismatch.memberId)} disabled={unlinkingMemberId === mismatch.memberId}>
                         {unlinkingMemberId === mismatch.memberId ? "Unlinking..." : "Unlink"}
                       </Button>

@@ -142,6 +142,7 @@ function renderMemberTable(members: Member[]) {
       debouncedSearch=""
       selectedIds={new Set()}
       canEdit
+      xeroOrgShortCode={null}
       sortBy="name"
       sortDir="asc"
       membersListPath="/admin/members"

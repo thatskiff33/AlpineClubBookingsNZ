@@ -109,8 +109,32 @@ prose here rather than with a screenshot:
   comments (a privileged member's login email is Full-Admin-only to change).
 - **Account & Access** — user type, login, access roles, status, induction, and
   lodge access.
-- **Family** — family groups, the billing family selector (finance edit), parent
-  links, partner, and dependents. Parent links can run up to **four
+- **Family** — family groups, the family tree, the billing family selector
+  (finance edit), parent links, partner, and dependents. The **family tree**
+  sits just under the family-group chips, above the billing family and parent
+  link cards, and is a read-only picture of the whole connected family: it
+  follows every recorded parent, second-parent, and confirmed-partner link
+  transitively — across households — and draws each person once. It reaches
+  **three generations above and below the member you are viewing** (four
+  counting the member's own), the same limit parent links themselves are capped
+  at. Relationships that are not stored anywhere (siblings, half-siblings,
+  cousins, aunts/uncles, a dependant's other parent) are worked out from the
+  links and marked **Derived** with a dashed outline; a solid rail is a recorded
+  parent link, a dashed rail a second-parent link, and a double rule a confirmed
+  partner. Half-siblings are separated from full siblings by *which* parents are
+  shared, not how many — and where that verdict comes from a **missing** record
+  rather than a different parentage (one member has no second parent recorded),
+  the tree says so beside the label and names whose record is incomplete. Where
+  a member's club email is inherited, the tree repeats the stored answer ("Club
+  email goes to …", naming the person and, when the mailbox is beyond the direct
+  parent, the relationship) — it never derives its own, and when the mailbox
+  belongs to someone outside this family it says only that, without naming them.
+  Archived members stay in the tree, badged, with contact details left off.
+  If the family runs past the generation limit, or is larger than the tree can
+  draw, the heading says which of the two happened rather than pretending the
+  family ends there. Nothing in the tree can be edited: change the links in the
+  Parent Links, Partner, and Dependents cards below it and the tree follows.
+  Parent links can run up to **four
   generations** — great-grandparent, grandparent, parent, child — with at most
   two parents recorded per member. A member who has dependants of their own can
   still be linked under a parent, as long as the whole chain stays within four

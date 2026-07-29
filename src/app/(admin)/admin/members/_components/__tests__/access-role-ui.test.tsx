@@ -202,6 +202,7 @@ function renderMemberTable(members: Member[], canEdit = true) {
       debouncedSearch=""
       selectedIds={new Set()}
       canEdit={canEdit}
+      xeroOrgShortCode={null}
       sortBy="name"
       sortDir="asc"
       membersListPath="/admin/members"
@@ -452,6 +453,7 @@ describe("admin member access-role UI", () => {
           financeAccessLevel: "MANAGER",
         }}
         xeroConnected={false}
+        xeroOrgShortCode={null}
         onOpenChange={vi.fn()}
         onSaved={vi.fn()}
         onSuccess={vi.fn()}
@@ -525,6 +527,7 @@ describe("admin member access-role UI", () => {
       <MemberEditorDialog
         open
         xeroConnected={false}
+        xeroOrgShortCode={null}
         onOpenChange={vi.fn()}
         onSaved={vi.fn()}
         onSuccess={vi.fn()}

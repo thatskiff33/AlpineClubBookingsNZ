@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { accessRoleLabelForToken } from "@/lib/access-role-definitions";
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options";
+import { buildXeroContactUrl } from "@/lib/xero-links";
 import type { MemberDetail, MemberLifecycleActionRequest } from "../_types";
 
 interface MemberDetailHeaderProps {
@@ -29,6 +30,12 @@ interface MemberDetailHeaderProps {
   pendingDeleteRequest: MemberLifecycleActionRequest | undefined;
   /** null = status still loading; no Xero UI renders until it resolves. */
   xeroConnected: boolean | null;
+  /**
+   * Organisation short code for the "View in Xero" deep link, or null when
+   * unavailable — the link then degrades to the generic session-scoped Xero
+   * URL, it is never hidden (#2283).
+   */
+  xeroOrgShortCode: string | null;
   xeroPushing: boolean;
   xeroUnlinking: boolean;
   /**
@@ -58,6 +65,7 @@ export function MemberDetailHeader({
   memberIsArchived,
   pendingDeleteRequest,
   xeroConnected,
+  xeroOrgShortCode,
   xeroPushing,
   xeroUnlinking,
   canEditMembership,
@@ -157,7 +165,9 @@ export function MemberDetailHeader({
             (member.xeroContactId ? (
               <>
                 <a
-                  href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                  href={buildXeroContactUrl(member.xeroContactId, {
+                    shortCode: xeroOrgShortCode,
+                  })}
                   target="_blank"
                   rel="noopener noreferrer"
                 >

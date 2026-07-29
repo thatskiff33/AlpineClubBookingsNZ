@@ -76,7 +76,14 @@ approve, or save. Dates are NZ date-only lodge nights, and the board shows up to
 Notes: bed types (single, bunk top/bottom, double) are descriptive and do not
 change capacity; a double bed-night can hold two occupants (declared partners).
 Bookings that hold an **exclusive whole-lodge hold** are not placed on
-individual beds — the whole lodge is taken for their nights.
+individual beds — the whole lodge is taken for their nights. Setting a hold on a
+booking therefore **removes the bed assignments it already has**, including any
+you placed by hand and any that were approved; the removed assignments are
+recorded in the audit log, so you can rebuild them if the hold turns out to be a
+mistake. Clearing a hold makes the booking ordinary again and re-plans its beds
+automatically — but only when **Auto allocation enabled** is on. With
+auto-allocation off, the guests come back to the awaiting-allocation list and
+you place them yourself.
 
 ## Troubleshooting
 

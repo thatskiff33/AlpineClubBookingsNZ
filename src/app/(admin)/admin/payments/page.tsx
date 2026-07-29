@@ -13,6 +13,9 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
+import { useXeroStatus } from "@/hooks/use-xero-status";
+import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
+import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import {
@@ -315,6 +318,13 @@ export default function PaymentsPage() {
   // Generate Invoice writes the finance-area generate-invoice route; a view-only
   // finance admin browses payments but cannot mint invoices (#1997).
   const canEditFinance = useAdminAreaEditAccess("finance");
+  // Org short code for the Xero invoice deep links (#2283). One mount per
+  // page; served from the server-side 12h org cache, and null degrades the
+  // links to the generic Xero URL rather than hiding them.
+  const { connected: xeroConnected } = useXeroStatus();
+  const { shortCode: xeroOrgShortCode } = useXeroOrgShortCode(
+    xeroConnected === true,
+  );
   const [generatingInvoice, setGeneratingInvoice] = useState<string | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [invoiceNotice, setInvoiceNotice] = useState<string | null>(null);
@@ -975,7 +985,9 @@ export default function PaymentsPage() {
                       </Link>
                       {p.xeroInvoiceId ? (
                         <a
-                          href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
+                          href={buildXeroInvoiceUrl(p.xeroInvoiceId, {
+                            shortCode: xeroOrgShortCode,
+                          })}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 rounded-sm text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
