@@ -2,6 +2,7 @@ import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
 } from "@/lib/email-message-audit-defaults";
+import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   adminSplitSettlementUnpaidLeadParagraph,
   duplicateCaptureRefundOutcomeParagraph,
@@ -730,9 +731,12 @@ export function sampleValue(token: string): string {
     return "Latest Error: Rate limit exceeded\n";
   }
   if (token === "xeroLinksNote") {
+    // #2283: the Xero half is built by the one URL builder rather than spelled
+    // out, so this preview shows the organisation-scoped link an operator will
+    // actually receive — and the xero-links guard stays honest.
     return (
       "Open local record: https://bookings.example.org/admin/bookings/bk_1234\n" +
-      "Open Xero object: https://go.xero.com/example\n"
+      `Open Xero object: ${buildXeroInvoiceUrl("sample-invoice-id")}\n`
     );
   }
   if (token === "refundOutcomeNote") {

@@ -94,6 +94,7 @@ All notable public reference-release changes should be recorded here.
   reasons instead of a bare "Invalid email template". Only clubs that saved an
   override of these templates ever saw the broken email; clubs on the defaults
   always got the correct built-in HTML version.
+
 - **A member's admin page now draws the whole family as a read-only tree
   (#2253).** In the Family section — under the family-group chips, above the
   billing family and parent link cards — the page works out how everyone
