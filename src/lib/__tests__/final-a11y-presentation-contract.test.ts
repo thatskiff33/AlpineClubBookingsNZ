@@ -241,6 +241,27 @@ describe("#1819 final accessibility presentation contract", () => {
     );
   });
 
+  it("keeps the admin family tree reachable when its nesting outgrows the card", () => {
+    // #2253 — the family tree draws nesting with indentation (7 levels x 1.5rem)
+    // inside the member page's `overflow-hidden` Family accordion item, so at
+    // phone width the far side of a deep family is clipped with no scrollbar
+    // and no way to reach it. Same remedy as the hut-fees rate table above: a
+    // focusable, NAMED scroll region, not a bare `overflow-x-auto` div (axe
+    // `scrollable-region-focusable`, WCAG 2.1.1).
+    const tree = source(
+      "src/app/(admin)/admin/members/[id]/_components/member-family-tree-card.tsx",
+    );
+
+    expect(tree).toContain('className="max-w-full overflow-x-auto"');
+    expect(tree).toContain('role="region"');
+    expect(tree).toContain("tabIndex={0}");
+    expect(tree).toContain("aria-labelledby={headingId}");
+    // ...and node content shrinks and wraps inside it rather than forcing the
+    // scroll on every ordinary family.
+    expect(tree).toContain("min-w-0");
+    expect(tree).toContain("break-words");
+  });
+
   it("keeps partner search results contained on narrow member cards", () => {
     const partner = source(
       "src/app/(admin)/admin/members/[id]/_components/member-partner-link-card.tsx",

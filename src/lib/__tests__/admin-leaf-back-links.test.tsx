@@ -53,6 +53,18 @@ vi.mock("@/lib/xero-record-activity", () => ({
 vi.mock("@/components/admin/xero-record-activity-panel", () => ({
   XeroRecordActivityPanel: () => null,
 }));
+// #2249: the Lobby Display guided setup wizard is a leaf whose only await is the
+// `lobbyDisplay` module flag, and whose body is a heavy client wizard that
+// fetches on mount. Stub both so the async server component renders down to its
+// top-of-page BackLink. The flag is stubbed OFF on purpose: this page stays
+// reachable while the module is off (that is what its first step fixes), and the
+// back-link must render in exactly that state.
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: async () => ({ lobbyDisplay: false }),
+}));
+vi.mock("@/app/(admin)/admin/display/setup/display-setup-wizard", () => ({
+  DisplaySetupWizard: () => null,
+}));
 // #2046 F6: the Induction Settings leaf drills in from the Induction Register;
 // stub its two client panels so only the top-of-page BackLink is asserted.
 vi.mock("@/components/admin/induction-settings-panel", () => ({
@@ -74,6 +86,8 @@ import DisplayPreviewPage from "@/app/(admin)/admin/display/preview/page";
 // #2048: the visual builder is a statically-renderable Lobby Display leaf (its
 // header renders before the loading/fetch gate), so it joins the frozen suite.
 import DisplayBuilderPage from "@/app/(admin)/admin/display/builder/page";
+// #2249: the guided setup wizard, the sixth Lobby Display leaf.
+import DisplaySetupPage from "@/app/(admin)/admin/display/setup/page";
 import LodgeDisplaySettingsPage from "@/app/(admin)/admin/lodges/[id]/display/page";
 import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel]/[localId]/page";
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
@@ -134,6 +148,18 @@ describe("admin drill-down leaf back links", () => {
       expect(html).toContain(label);
     },
   );
+
+  // #2249: the guided setup wizard is an async server component (its one await
+  // is the module flag), so it takes its own case rather than joining the
+  // synchronous it.each above. It is the one leaf that is reachable while its
+  // parent hub is feature-gated OFF, which is exactly why its back-link matters:
+  // it is the operator's only way out of the wizard.
+  it("points the Lobby Display guided setup wizard back at its parent hub", async () => {
+    const html = renderToStaticMarkup(await DisplaySetupPage());
+
+    expect(html).toContain('href="/admin/display"');
+    expect(html).toContain("← Lobby Display");
+  });
 
   // #2046: ad-hoc ArrowLeft back-links normalised onto BackLink. The [id]-aware
   // targets carry a dynamic href (the parent is itself a drill-down record, not a

@@ -77,6 +77,13 @@ describe("admin setup hub pages", () => {
     expect(html).toContain("/admin/display/templates");
     expect(html).toContain("Reference");
     expect(html).toContain("/admin/display/reference");
+    // #2249: the guided setup wizard is reachable from the hub at all times.
+    // These renders have no database, so the readiness counts fall back to
+    // "already set up" and it appears as an ordinary card rather than the gold
+    // lead card — which is exactly the always-available half of the entry-point
+    // decision (the lead-vs-ordinary switch itself is pinned in
+    // `src/app/(admin)/admin/display/__tests__/display-setup-entry.test.tsx`).
+    expect(html).toContain("/admin/display/setup");
   });
 
   it("hides Lobby Display hub cards when the module is disabled", async () => {

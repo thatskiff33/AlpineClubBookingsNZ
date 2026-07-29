@@ -48,6 +48,68 @@ compose one. The authoring model behind the split is
 - A screen is showing the wrong lodge, a stale board, or the pairing screen, and
   you need to fix or revoke it.
 
+## The quickest path: the guided setup wizard
+
+If you are setting a screen up for the first time — or replacing a TV — use
+**Admin → Lobby Display → Guided setup** (`/admin/display/setup`) instead of
+working through the cards yourself. It is six steps in the order the job
+actually happens:
+
+1. **Module** — turn **Lobby TV display** on. This wizard is the one display
+   page that stays open while the module is off, precisely so this step is
+   reachable. Turning a module on needs system-settings (support) edit access;
+   if your role has lodge access only, the step tells you who to ask.
+2. **Built-in boards** — check that boards exist, and run **Restore built-in
+   boards** if they do not. It never runs by itself, and it states exactly what
+   it overwrites before it runs.
+3. **Pick the board** — choose which board the TV will show, and open a preview
+   of it as the lodge will see it (the preview opens in a new tab, so the wizard
+   keeps your place). Nothing is bound to a screen yet, so browsing is safe.
+4. **Lodge details** — fill in the handful of values the boards print (Wi-Fi
+   name and password, checkout time, door code) and the on-screen notice. A
+   value the board asks for but the lodge has not saved renders as a visible
+   `⟨config:key?⟩` placeholder on the wall. Anything beyond these is edited on
+   the lodge's full display settings, linked from the step.
+5. **Pair the TV** — open the display URL on the screen, type the six-character
+   code it shows, and the wizard creates the screen record, binds the board you
+   picked, and arms the pairing in one go. The TV claims the code on its own
+   check a few seconds later, so the step then **waits with you**: it re-reads
+   your screens every few seconds and ticks over by itself, and there is a
+   **Check again** button if you would rather not wait. Only ever one screen
+   record is created, however many times a code is mistyped — a retry re-arms
+   the same screen. If the board could not be assigned to it, the step says so
+   rather than promising a board the screen is not showing. And if the choice
+   you made at step 3 was lost (a reload, or another admin resuming), the step
+   asks for the board again instead of quietly pairing onto the club default.
+6. **Done** — this step only ticks once a paired screen has actually fetched its
+   board with its own token. That is the proof the whole path works, not just
+   the admin half of it. It re-checks itself every few seconds while it waits,
+   and carries the same **Check again** button.
+
+**Two things worth knowing.**
+
+- **Every step checks real state**, not what you typed. You can leave and come
+  back, run the wizard again after replacing a TV, and nothing you have already
+  done is undone.
+- **Where you got to is saved for the whole club, not for you personally.** The
+  resume position is one record per wizard for the whole install, so another
+  admin opening the wizard resumes from the same step, and the later of two
+  admins to move wins. That was an accepted trade rather than an oversight: the
+  position is only a hint about which step to open on, and because every step
+  re-derives its own state, a clobbered position can never tick something off
+  that has not actually happened. The wizard says so on every step.
+  (Saving the position also needs finance access, which is what the underlying
+  route is gated on. An admin without it still runs the whole wizard — it simply
+  does not remember where they were between visits.)
+
+**Where you find it.** While your club has no boards, or no working screen, the
+Lobby Display hub leads with a gold **Guided setup** card. Once a screen is
+live that card retires and the wizard stays available as an ordinary card in the
+hub grid, and the **Help** panel on every Lobby Display page names it too.
+
+The rest of this guide is the same ground, card by card, for when you want to
+change one thing rather than set the whole thing up.
+
 ## Step-by-step
 
 ### 1. Turn on the module and open the hub
@@ -217,6 +279,12 @@ compose one. The authoring model behind the split is
 | Editing a built-in warns me | Built-ins are rewritten from code whenever the seed runs again or **Restore built-in boards** is pressed | Duplicate the built-in to a custom template and edit the copy |
 | A key I want is refused as "reserved for a built-in board" | The seven built-in keys (`everyday-board`, `whole-lodge`, `singles-house`, `room-by-room`, `nights-ahead`, `operations-board`, `welcome-kiosk`) are reserved, because **Restore built-in boards** overwrites whatever is saved under them | Choose a different key — e.g. `foyer-board` |
 | The gallery is empty and my club is an older install | The built-in boards are only created by the database seed, which upgrading does not re-run | Press **Restore built-in boards** on the **Templates** page |
+| I am new to this and don't know which card to start with | Nothing is wrong — the cards are a menu, not an order | Use **Guided setup** (`/admin/display/setup`), which walks the whole path in the order it happens |
+| The guided wizard opened on a step I didn't leave it on | The resume position is shared by the whole club, not per admin | Expected. Click any earlier step in the stepper; nothing is lost, because each step re-checks real state |
+| Step 1 offers me no way to turn the module on | Changing modules needs system-settings (support) edit access; the rest of the wizard only needs lodge access | Ask an admin with support edit to turn on **Lobby TV display**, then reopen the wizard |
+| The "Done" step won't tick although the screen is paired | The TV has not fetched its board yet — pairing alone is only the admin half | Leave the TV on the display page and leave the wizard open: it re-reads your screens every few seconds and ticks itself over. Use **Check again** to look now. If it never ticks after a couple of minutes, the screen has no route to the server |
+| The wizard says my lodges could not be read | The lodges list did not load, or the club has no active lodge | Steps 3–6 stop rather than guess: a screen at another lodge is not this lodge's screen. Reload the page, and check **Admin → Lodges** has an active lodge |
+| Step 4 warns that a saved value "is not text" | That `{{config:…}}` value was hand-edited (or imported) into the lodge's JSON settings as a number or a list | Display values are text; the save here can only write text and replaces the whole set, so it would remove them. Copy them somewhere first, or fix them on the lodge's own display settings, and skip step 4 |
 
 ## Related links
 

@@ -81,10 +81,13 @@ for an interactive Claude Code session:
 - **PRs open as drafts and stay draft** until fully reviewed, fixed, and
   CI-green; then flip to ready and post an owner-addressed "merge ready" comment
   covering what was built, review findings, fixes, decisions, and carry-forward.
-- **Minimise carry-forward:** fix a follow-up in the same PR when you can (even
-  if it slightly widens scope — re-draft, add it, re-review the delta); only
-  file a new GitHub issue when it needs owner scoping, and file it at
-  finalisation time, linked to its parent PR + epic, so it is never lost.
+- **Residual risks are resolved in the PR — never just noted** (owner
+  directive, 30 Jul 2026; full rule in `AGENTS.md` §6): ideally iterate the PR
+  until zero residuals remain, and flip to ready only then. An owner-decision
+  residual holds the PR draft while the question is put to the owner, with the
+  fix landing in the same PR. Carrying one into a new issue is acceptable when
+  justified (overnight run, needs a full planning pass) — filed immediately and
+  linked, never left as prose — but in-PR resolution is always the ideal.
 
 ## Keep docs in lockstep
 

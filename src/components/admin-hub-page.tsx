@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { BackLink } from "@/components/admin/back-link";
@@ -60,12 +61,25 @@ export function AdminHubPage({
   permissionMatrix,
   backHref,
   backLabel,
+  lead,
 }: {
   title: string;
   description: string;
   sections: AdminHubSection[];
   features: FeatureFlags;
   permissionMatrix?: AdminPermissionMatrix;
+  /**
+   * Optional callout rendered between the hub heading and the card grid, for a
+   * hub that has something to say BEFORE its cards — today, the Lobby Display
+   * hub leading with its guided-setup card while the club has no boards or no
+   * paired screen (#2249).
+   *
+   * Deliberately a node rather than another card shape: the hub does not decide
+   * whether the callout applies, and it must be able to look different from the
+   * uniform destination cards below it, which is the whole point of leading
+   * with it.
+   */
+  lead?: ReactNode;
   // Optional back-to-parent link, rendered above the title for a sub-hub that
   // is drilled into from another hub (e.g. the Setup sub-hubs off /admin/setup).
   // Top-level sidebar destinations omit these.
@@ -89,6 +103,8 @@ export function AdminHubPage({
         <h1 className="text-2xl font-bold text-foreground">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
+
+      {lead}
 
       {visibleSections.length > 0 ? (
         <div className="grid gap-4 sm:grid-cols-2">

@@ -24,10 +24,26 @@ import Link from "next/link";
  * `/admin/lodges/${id}`) and pass it as `href`. The static-hub case is the
  * common one; the dynamic-parent case is the documented exception.
  */
-export function BackLink({ href, label }: { href: string; label: string }) {
+export function BackLink({
+  href,
+  label,
+  prefetch,
+}: {
+  href: string;
+  label: string;
+  /**
+   * Passed straight to `next/link`. Pass `false` on the rare leaf that is
+   * reachable while its PARENT hub is feature-gated off (e.g. the Lodge Display
+   * setup wizard, #2249): prefetching the parent would fire a background request
+   * for a route that answers 404 in exactly that state. Everywhere else, leave
+   * it alone — Next's default prefetch is what makes hub navigation feel instant.
+   */
+  prefetch?: boolean;
+}) {
   return (
     <Link
       href={href}
+      prefetch={prefetch}
       className="text-sm font-medium text-foreground underline decoration-brand-gold/70 decoration-2 underline-offset-4"
     >
       ← {label}
