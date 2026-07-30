@@ -4,6 +4,21 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **A member page that cannot offer cancellation now says why, instead of
+  showing nothing (#2356).** Cancellation applies to member accounts, so a
+  member who has also been given an admin account is refused — that has always
+  been the rule, and it is the right one. What changed is what the page does
+  about it. It used to offer the button and then throw a bare error when the
+  action was clicked; more recently it simply left the space empty, which read
+  as "this person's membership can never be cancelled". The Lifecycle section
+  now states the reason in plain words and gives the fix: open **Account &
+  Access** on that member, change their **User Type** from Admin to User, and
+  save — then the **Request Cancellation** form appears. Members recorded as an
+  Admin who cannot actually sign in (usually older or imported records) get the
+  extra step their case needs. Lodge kiosk, school, and non-member records are
+  untouched: they hold no membership in the first place, so nothing about
+  cancelling one is shown on their pages.
+
 - **Admins can now cancel the membership of a member who has no login of
   their own (#2354).** Opening such a member's admin page used to show no
   **Request Cancellation** action at all — not greyed out, simply absent —
