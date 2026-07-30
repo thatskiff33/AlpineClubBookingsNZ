@@ -14,6 +14,10 @@ const { mockPrisma, mockRequireAdmin } = vi.hoisted(() => ({
     lodgeRoom: { findMany: vi.fn() },
     booking: { findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
+    // #2286: the display payload carries the custodian in residence, read from
+    // a bed-holding hut-leader assignment. None here, so the privacy-reduced
+    // state below is unchanged.
+    hutLeaderAssignment: { findFirst: vi.fn().mockResolvedValue(null) },
     displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   },
