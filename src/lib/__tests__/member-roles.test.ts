@@ -4,8 +4,10 @@ import {
   MEMBER_LEVEL_ROLE_VALUES,
   NON_MEMBER_ROLE_VALUES,
   OPERATIONAL_ROLE_VALUES,
+  ROLE_VALUES,
   canAdminRequestMembershipCancellation,
   isMemberLevelRole,
+  isMembershipCancellationBlockedByAdminRole,
   isOperationalRole,
 } from "@/lib/member-roles";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
@@ -152,6 +154,63 @@ describe("admin membership-cancellation eligibility", () => {
     ).toBe(false);
     expect(
       canAdminRequestMembershipCancellation({
+        ...base,
+        archivedAt: new Date(),
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("membership cancellation blocked by the ADMIN role (#2356)", () => {
+  const base = {
+    role: "ADMIN",
+    active: true,
+    cancelledAt: null,
+    archivedAt: null,
+  };
+
+  it("explains the ADMIN case, which is a real person's account", () => {
+    expect(isMembershipCancellationBlockedByAdminRole(base)).toBe(true);
+    // The two predicates partition the eligible states: exactly one of them is
+    // true for any given active member, never both.
+    expect(canAdminRequestMembershipCancellation(base)).toBe(false);
+  });
+
+  it("stays silent for every role that is not a person holding admin access", () => {
+    // LODGE is the shared kiosk device, SCHOOL/NON_MEMBER are the
+    // booking-request organisation and guest records: no membership to
+    // cancel, so "cannot be cancelled" would be noise. USER is the working
+    // case and gets the action, not an explanation.
+    for (const role of ["USER", "LODGE", "SCHOOL", "NON_MEMBER", null, undefined]) {
+      expect(
+        isMembershipCancellationBlockedByAdminRole({ ...base, role }),
+      ).toBe(false);
+    }
+    // Belt and braces over the role vocabulary itself: ADMIN is the only value
+    // in ROLE_VALUES that gets the explanation, so adding a role cannot widen
+    // it silently.
+    expect(
+      ROLE_VALUES.filter((role) =>
+        isMembershipCancellationBlockedByAdminRole({ ...base, role }),
+      ),
+    ).toEqual(["ADMIN"]);
+  });
+
+  it("stays silent once the membership is inactive, cancelled, or archived", () => {
+    // Those states have their own explanation on the card, and the block is
+    // only ever about the role standing in the way of an otherwise-live
+    // membership.
+    expect(
+      isMembershipCancellationBlockedByAdminRole({ ...base, active: false }),
+    ).toBe(false);
+    expect(
+      isMembershipCancellationBlockedByAdminRole({
+        ...base,
+        cancelledAt: new Date(),
+      }),
+    ).toBe(false);
+    expect(
+      isMembershipCancellationBlockedByAdminRole({
         ...base,
         archivedAt: new Date(),
       }),

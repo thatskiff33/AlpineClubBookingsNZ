@@ -88,3 +88,43 @@ describe("admin membership-cancellation gate (#2354)", () => {
     expect(gate).toContain("openCancellationRequest");
   });
 });
+
+/*
+  #2356 — withholding the action correctly is only half the fix. A real person
+  whose account is classed as an Admin is active, uncancelled and unarchived,
+  so #2355 left their page with no cancellation affordance AND no explanation:
+  the admin is told nothing, where before they at least got a 422 on click.
+
+  The page must therefore compute the explanatory state from the same shared
+  helper, for the same structural reason as the gate above: a component test
+  proves the card renders the explanation when told to, and stays green if the
+  page stops telling it.
+*/
+describe("admin membership-cancellation explanation (#2356)", () => {
+  const sourceFile = parse(PAGE);
+  const explanation = declarationInitialiser(
+    sourceFile,
+    "cancellationBlockedByAdminRole",
+  );
+
+  it("derives the explanatory state from the shared helper", () => {
+    expect(explanation).not.toBeNull();
+    expect(explanation).toContain(
+      "isMembershipCancellationBlockedByAdminRole",
+    );
+  });
+
+  it("suppresses the explanation while a request is already open", () => {
+    // The pending-request panel above it already says what is happening; two
+    // statements about the same membership would contradict each other.
+    expect(explanation).toContain("openCancellationRequest");
+  });
+
+  it("hands the state to the lifecycle card", () => {
+    // The computation is worthless if the prop is dropped at the render site.
+    const page = readFileSync(PAGE, "utf8");
+    expect(page).toContain(
+      "cancellationBlockedByAdminRole={cancellationBlockedByAdminRole}",
+    );
+  });
+});
