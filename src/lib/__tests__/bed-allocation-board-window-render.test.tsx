@@ -186,7 +186,7 @@ describe("bed allocation board — a payload with no custodianHolds (#2286)", ()
   });
 
   it("renders the whole board, with no custodian banner and no crash", async () => {
-    const drainPayload = buildPayload() as Record<string, unknown>;
+    const drainPayload = buildPayload() as unknown as Record<string, unknown>;
     delete drainPayload.custodianHolds;
     vi.stubGlobal(
       "fetch",
@@ -203,7 +203,7 @@ describe("bed allocation board — a payload with no custodianHolds (#2286)", ()
   });
 
   it("renders the banner when the field IS present, so the tolerance is not hiding it", async () => {
-    const payload = buildPayload() as Record<string, unknown>;
+    const payload = buildPayload() as unknown as Record<string, unknown>;
     payload.custodianHolds = [
       {
         assignmentId: "a1",
