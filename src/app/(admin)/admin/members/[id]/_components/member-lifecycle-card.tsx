@@ -26,6 +26,45 @@ import type {
   OpenCancellationRequestSummary,
 } from "../_types"
 
+/**
+ * #2356: shown where the Request Cancellation form would be, for an ordinary
+ * active member whose account is classed as an Admin. Exported so the tests
+ * quote one source rather than a second copy of the wording.
+ */
+export const CANCELLATION_BLOCKED_BY_ADMIN_ROLE_HEADING =
+  "This membership cannot be cancelled while the account is classed as an Admin"
+
+/**
+ * The remedy for the ordinary case: the account is classed as Admin BECAUSE it
+ * holds admin access roles, which only login-enabled records can hold. Setting
+ * User Type to User rewrites the stored role to `USER`
+ * (`legacyRoleFromAccessRoles`), which is exactly what the cancellation flow
+ * tests.
+ */
+export const CANCELLATION_BLOCKED_BY_ADMIN_ROLE_REASON =
+  "Cancellation only applies to member accounts, and this person's account is " +
+  "classed as an Admin. To cancel their membership, open Account & Access " +
+  "above, change User Type from Admin to User, and save — a Full Admin can do " +
+  "this. The Request Cancellation form then appears here."
+
+/**
+ * The remedy differs for a non-login record that still carries the Admin
+ * classification (a legacy row, or a CSV import whose email was already
+ * claimed by another login account). Account & Access disables the User Type
+ * control while Can Login is off — "Access roles only apply to login-enabled
+ * records" — so naming the same steps as above would send the admin to a
+ * greyed-out select and strand them one step further along. Can Login must be
+ * turned on to reach the control; unticking it again before saving clears the
+ * access roles, which still resolves the stored role to `USER`, so the account
+ * ends the edit exactly as non-login as it started.
+ */
+export const CANCELLATION_BLOCKED_BY_DORMANT_ADMIN_ROLE_REASON =
+  "Cancellation only applies to member accounts, and this person's account is " +
+  "classed as an Admin even though they cannot sign in — usually a legacy or " +
+  "imported record. Open Account & Access above, tick Can Login, change User " +
+  "Type from Admin to User, then untick Can Login again before saving — a " +
+  "Full Admin can do this. The Request Cancellation form then appears here."
+
 interface MemberLifecycleCardProps extends AncestorViewOnlyBannerProps {
   member: MemberDetail
   pendingArchiveRequest: MemberLifecycleActionRequest | null
@@ -33,6 +72,13 @@ interface MemberLifecycleCardProps extends AncestorViewOnlyBannerProps {
   isArchiveRequester: boolean
   canRequestArchive: boolean
   canRequestCancellation: boolean
+  /**
+   * #2356: the member is an ordinary active person whose membership the
+   * cancellation flow refuses only because their account is classed as an Admin.
+   * The card explains that in place of the request form, rather than leaving a
+   * silent gap where the action used to be.
+   */
+  cancellationBlockedByAdminRole: boolean
   openCancellationRequest: OpenCancellationRequestSummary | null
   archiveError: string
   archiveReason: string
@@ -64,6 +110,7 @@ export function MemberLifecycleCard({
   isArchiveRequester,
   canRequestArchive,
   canRequestCancellation,
+  cancellationBlockedByAdminRole,
   openCancellationRequest,
   archiveError,
   archiveReason,
@@ -203,6 +250,25 @@ export function MemberLifecycleCard({
             <ViewOnlyActionButton canEdit={canEdit} describeReason={!ancestorRendersViewOnlyBanner} className="mt-3" size="sm" onClick={onSubmitCancellation} disabled={cancellationSubmitting}>
               {cancellationSubmitting ? "Submitting..." : "Request Cancellation"}
             </ViewOnlyActionButton>
+          </div>
+        )}
+
+        {/* #2356: an Admin-classed account is a real person whose membership the
+            server refuses ("Only member accounts can be cancelled"), so the
+            reason and the remedy are stated in the reading order where the
+            request form would otherwise be. Plain prose, like the sibling
+            "Archive is available after cancellation." line above — there is no
+            control to disable here, because the fix is in another section. */}
+        {cancellationBlockedByAdminRole && (
+          <div className="rounded-md border border-border p-4">
+            <p className="text-sm font-medium text-foreground">
+              {CANCELLATION_BLOCKED_BY_ADMIN_ROLE_HEADING}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {member.canLogin
+                ? CANCELLATION_BLOCKED_BY_ADMIN_ROLE_REASON
+                : CANCELLATION_BLOCKED_BY_DORMANT_ADMIN_ROLE_REASON}
+            </p>
           </div>
         )}
 

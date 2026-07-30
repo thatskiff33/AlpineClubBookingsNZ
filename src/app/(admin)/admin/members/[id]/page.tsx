@@ -24,7 +24,10 @@ import {
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { isFullAdmin } from "@/lib/access-roles";
-import { canAdminRequestMembershipCancellation } from "@/lib/member-roles";
+import {
+  canAdminRequestMembershipCancellation,
+  isMembershipCancellationBlockedByAdminRole,
+} from "@/lib/member-roles";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
@@ -537,6 +540,14 @@ export default function MemberDetailPage({
   const canRequestCancellation = Boolean(
     canAdminRequestMembershipCancellation(member) && !openCancellationRequest,
   );
+  // …and where the ONLY thing standing in the way is that this real person's
+  // account is classed as an Admin, say so instead of showing nothing (#2356).
+  // Lodge kiosk, school, and non-member records hold no membership, so they
+  // stay silent; an already-open request explains itself above.
+  const cancellationBlockedByAdminRole = Boolean(
+    isMembershipCancellationBlockedByAdminRole(member) &&
+      !openCancellationRequest,
+  );
 
   const currentSeasonAssignment =
     (member.seasonalMembershipAssignments ?? []).find(
@@ -881,6 +892,7 @@ export default function MemberDetailPage({
               isArchiveRequester={isArchiveRequester}
               canRequestArchive={canRequestArchive}
               canRequestCancellation={canRequestCancellation}
+              cancellationBlockedByAdminRole={cancellationBlockedByAdminRole}
               openCancellationRequest={openCancellationRequest}
               archiveError={archiveError}
               archiveReason={archiveReason}
