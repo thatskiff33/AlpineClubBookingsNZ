@@ -4,6 +4,33 @@ All notable public reference-release changes should be recorded here.
 
 ## Unreleased
 
+- **Web addresses for pictures and files that do not exist are now answered
+  properly, instead of being handed a broken copy of the club's "page not found"
+  screen (#2404).** When something asks the site for a picture that is not there
+  — an old link, a search engine following a stale address, or one of the
+  automated scanners that probe every website continuously — the site used to
+  reply with its whole "page not found" page: about 29KB of the club's branding,
+  fonts and menus, sent to something that only wanted a picture. Worse, that
+  particular copy of the page arrived without the security instructions every
+  other page carries, so a browser that received it refused to run any of it. It
+  was a broken page nobody could see was broken, because nobody looks at what a
+  scanner gets back.
+
+  These addresses now answer "not found" and nothing else — no page, no
+  branding, no wasted work. Two side effects are worth knowing about. Pages that
+  people actually type stay exactly as they were: mistyping the address of a real
+  page still shows the club's own "page not found" screen, which is unchanged.
+  And the site now does less work per stray request, because it no longer builds
+  a full page to throw at a robot.
+
+  A second, quieter fault was found while measuring this and is fixed with it: a
+  couple of ordinary web addresses — anything beginning with the letters "api",
+  such as a page called "apiary" — were being treated as if they were part of the
+  site's machine interface, and so were served without those same security
+  instructions. They are ordinary pages again.
+
+  Nothing about how the site looks, how members use it, or how anything is
+  stored has changed.
 - **The finance dashboard was counting a paid price increase twice, and now
   counts it once (#2408).** When a booking's price goes up after it was made —
   someone adds a guest — the difference is tracked as an "additional payment".

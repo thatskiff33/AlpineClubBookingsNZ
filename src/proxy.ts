@@ -258,11 +258,56 @@ export async function proxy(request: NextRequest) {
 
 export default proxy;
 
+/**
+ * The proxy mints the per-request CSP nonce, so ANY path it skips is a path
+ * whose response has no nonce and no policy of ours. It now skips exactly three
+ * namespaces, and each one is separately proven never to reach a page render
+ * (#2404):
+ *
+ *  - `api(?:/|$)` — every `/api` URL is answered by a real route handler or by
+ *    `src/app/api/[[...unmatched]]/route.ts`, which returns JSON. Never a
+ *    document. Also the namespace whose replies must stay byte-identical
+ *    whether an optional module is on or off (#2405), which is why nothing else
+ *    in this fix is allowed to touch it.
+ *  - `_next/static/` — the framework's chunk directory, and the hottest traffic
+ *    in the app: one page load pulls dozens of files. A MISS under it (a stale
+ *    tab asking for a chunk a deploy removed) is terminated with an empty 404 by
+ *    the `afterFiles` rewrites in `next.config.ts`.
+ *  - `_next/image$` — the image optimiser, which carries the app's real image
+ *    volume. It answers a bad request with its own short plain-text 400 (27-57
+ *    bytes, measured, no `<script>` in any of them) and never renders a page.
+ *    Anchored with `$` because that is the only path it serves: `/_next/imagemap`
+ *    and `/_next/image/x` are ordinary URLs and must keep the nonce.
+ *
+ * Everything else runs the proxy, which is the point of the #2404 shape. The
+ * list used to also carry `favicon.ico`, `logo.png` and a blanket
+ * `.*\.(png|jpg|…)$` tail, and the gaps between those and the rewrites were the
+ * bug:
+ *  - bare prefixes matched more than they named. `api` also skipped `/apixyz`
+ *    and `_next/static` also skipped `/_next/staticfoo` — page-shaped URLs a
+ *    person can type, measured answering 404 with 18 unnonced inline scripts and
+ *    no CSP header at all. Hence `(?:/|$)`.
+ *  - `favicon.ico` and `logo.png` named files that do not exist (`public/` holds
+ *    `robots.txt` and `branding/`; the app's icon is `/branding/favicon.ico`).
+ *  - the extension tail was the real trap. This matcher is compiled
+ *    case-SENSITIVELY and Next's rewrites are compiled case-INSENSITIVELY, so
+ *    `/API/x.png` fell between them: skipped here by the extension rule, and
+ *    skipped by the rewrite's own `/api` carve-out. Measured at 404 with ~29KB
+ *    of `text/html` and no CSP. Dropping the tail removes the class of bug
+ *    rather than the one instance — a path can no longer be excluded here for a
+ *    reason the rewrites do not share.
+ *
+ * The cost of dropping the tail is small and was checked rather than assumed:
+ * the two paths that carry real image volume are `_next/image` (optimised
+ * `next/image` output) and `/api/images/uploaded/*` (uploaded imagery, which
+ * `Caddyfile` rewrites `/images/*` onto), and BOTH are still excluded. What
+ * newly runs the proxy is `public/branding/*` — the handful of shipped brand
+ * images — and misses, which pay for a nonce they should always have had.
+ */
 export const config = {
   matcher: [
     {
-      source:
-        "/((?!api|_next/static|_next/image|favicon.ico|logo.png|.*\\.(?:png|jpg|jpeg|gif|webp|svg|ico)$).*)",
+      source: "/((?!api(?:/|$)|_next/static/|_next/image$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
