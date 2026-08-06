@@ -48,12 +48,14 @@ export function AllocationPreferencesSection({
 }: AllocationPreferencesSectionProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const mountedRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // React StrictMode rehearses setup -> cleanup -> setup. Re-arm the guard in
+    // setup so the real mounted instance still refreshes its parent after Save.
+    mountedRef.current = true;
+    return () => {
       mountedRef.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   const endpoint = `/api/admin/bed-allocation/settings?lodgeId=${encodeURIComponent(lodgeId)}`;
   const section = useSectionEditState<AllocationPreferencesDraft>({
     load: async (signal) => {

@@ -1387,10 +1387,6 @@ describe("view-only section banner coverage (#2160)", () => {
         // The style guide publishes the exception TOTAL only, on purpose.
         `${f.exceptions} controls still carry their own per-button reason`,
       ],
-      "CHANGELOG.md": [
-        `${f.callSites} gated admin controls, ${f.optOuts} of them covered by a banner (${f.staticOptOuts} in their own file, ${f.vouchedOptOuts} by a verified vouching parent — ${f.shellVouchedOptOuts} of those through the wizard frame)`,
-        `and ${f.exceptions} across ${f.exceptionFiles} files deliberately keeping their own reason`,
-      ],
       "src/components/admin/view-only-action.tsx": [
         `pass describeReason={false} here (${f.staticOptOuts} of ${f.callSites} call sites)`,
         `a further ${f.vouchedOptOuts} pass describeReason={!${VOUCH_PROP}}`,
@@ -1399,6 +1395,10 @@ describe("view-only section banner coverage (#2160)", () => {
         `counts ${f.leafControls} controls here`,
       ],
     };
+    const changelogPhrases = [
+      `${f.callSites} gated admin controls, ${f.optOuts} of them covered by a banner (${f.staticOptOuts} in their own file, ${f.vouchedOptOuts} by a verified vouching parent — ${f.shellVouchedOptOuts} of those through the wizard frame)`,
+      `and ${f.exceptions} across ${f.exceptionFiles} files deliberately keeping their own reason`,
+    ];
 
     // Collapse the formatting a prose edit is free to change: line wrapping,
     // markdown emphasis, inline code fences, and JSDoc's leading ` * `.
@@ -1411,10 +1411,9 @@ describe("view-only section banner coverage (#2160)", () => {
     /*
       #2452 moved changelog entries OUT of CHANGELOG.md: a PR now writes its
       entry as a `changelog.d/<pr>-<slug>.md` fragment, and the release compile
-      folds the fragments into a version section later. A stale figure written
-      into a fragment therefore dodges the scan above entirely — it is invisible
-      until the release that publishes it, by which point the PR that introduced
-      it merged green and is long gone.
+      folds the fragments into the compiled CHANGELOG ledger later. Feature PRs
+      do not edit that ledger or its Unreleased list, so current census
+      enforcement applies to the source documents and new fragments instead.
 
       So every fragment is scanned in the same bucket as CHANGELOG.md, and a
       stale figure fails on its OWN pull request. The difference is presence: a
@@ -1433,7 +1432,7 @@ describe("view-only section banner coverage (#2160)", () => {
             .filter((name) => name.endsWith(".md") && name !== "README.md")
             .map((name) => ({
               rel: `changelog.d/${name}`,
-              phrases: published["CHANGELOG.md"],
+              phrases: changelogPhrases,
               requirePresence: false,
             }))
         : []),
@@ -1453,14 +1452,10 @@ describe("view-only section banner coverage (#2160)", () => {
           offenders.push(`${rel}: "${phrase}"`);
           continue;
         }
-        // A CORRECT SENTENCE ELSEWHERE IN THE SAME FILE MUST NOT EXCUSE A STALE
-        // ONE, and that is not hypothetical: `includes` only answers "does the
-        // measured figure appear at least once". A CHANGELOG quotes this
-        // sentence once per release that moved the numbers, so a new entry
-        // carrying the right figure let an older entry keep publishing a
-        // superseded one — a reader landing on the wrong paragraph is told a
-        // number no test disagrees with, which is the exact failure the census
-        // above exists to prevent.
+        // A CORRECT SENTENCE ELSEWHERE IN THE SAME CURRENT DOCUMENT MUST NOT
+        // EXCUSE A STALE ONE: `includes` only answers "does the measured figure
+        // appear at least once". Release-compiler-owned CHANGELOG entries are
+        // not in this set; current changelog fragments are.
         //
         // So every occurrence of each sentence's SHAPE — the same words with any
         // digits in the numeric slots — has to carry the measured figures.
@@ -1480,8 +1475,8 @@ describe("view-only section banner coverage (#2160)", () => {
       offenders,
       `These documents no longer state the figures the census above measures. ` +
         `A rollout change moves the numbers; re-measure and update AGENTS.md, ` +
-        `docs/ARCHITECTURE.md, docs/STYLE_GUIDE.md, CHANGELOG.md (and any ` +
-        `changelog.d/ fragment quoting them) and the ` +
+        `docs/ARCHITECTURE.md, docs/STYLE_GUIDE.md, any changelog.d/ fragment ` +
+        `quoting them, and the ` +
         `ViewOnlyActionButton JSDoc together.`,
     ).toEqual([]);
   });

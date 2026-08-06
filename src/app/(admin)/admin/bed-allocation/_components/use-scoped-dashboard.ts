@@ -101,14 +101,13 @@ export function useScopedDashboard<T>({
 
   const setValue = useCallback(
     (value: T) => {
-      const currentScope = scopeRef.current;
       setState((current) =>
-        current?.scopeKey === currentScope
-          ? { scopeKey: currentScope, value }
+        scopeRef.current === scopeKey && current?.scopeKey === scopeKey
+          ? { scopeKey, value }
           : current,
       );
     },
-    [],
+    [scopeKey],
   );
 
   return {

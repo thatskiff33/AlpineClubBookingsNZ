@@ -63,6 +63,28 @@ describe("useScopedDashboard", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores an A-bound optimistic rollback after B has loaded", async () => {
+    const load = vi.fn(async (_signal: AbortSignal, scope: string) =>
+      Promise.resolve(`dashboard-${scope}`),
+    );
+    const { result, rerender } = renderHook(
+      ({ scope }) =>
+        useScopedDashboard({
+          scopeKey: scope,
+          load: (signal) => load(signal, scope),
+        }),
+      { initialProps: { scope: "A" } },
+    );
+    await waitFor(() => expect(result.current.value).toBe("dashboard-A"));
+    const rollbackA = result.current.setValue;
+
+    rerender({ scope: "B" });
+    await waitFor(() => expect(result.current.value).toBe("dashboard-B"));
+    act(() => rollbackA("optimistic-A-rollback"));
+
+    expect(result.current.value).toBe("dashboard-B");
+  });
+
   it("does not call onLoaded for a completion after unmount", async () => {
     const pending = deferred<string>();
     const onLoaded = vi.fn();

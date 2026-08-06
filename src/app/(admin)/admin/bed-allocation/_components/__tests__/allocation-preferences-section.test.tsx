@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ADMIN_VIEW_ONLY_SECTION_HEADING } from "@/components/admin/view-only-action";
 import { AllocationPreferencesSection } from "../allocation-preferences-section";
@@ -15,6 +16,7 @@ const LOADED = {
   autoAllocationEnabled: true,
   allocationPriorityOrder: ["BOOKING_COHESION", "STAY_CONTINUITY"],
 };
+type SavedSettings = typeof LOADED;
 
 function response(settings = LOADED) {
   return new Response(JSON.stringify({ settings }), { status: 200 });
@@ -23,7 +25,7 @@ function response(settings = LOADED) {
 async function renderLoaded(
   options: {
     canEdit?: boolean;
-    onSaved?: ReturnType<typeof vi.fn>;
+    onSaved?: (settings: SavedSettings) => Promise<void> | void;
     renderViewOnlyBanner?: boolean;
   } = {},
 ) {
@@ -33,7 +35,9 @@ async function renderLoaded(
       lodgeId="lodge-1"
       canEdit={options.canEdit ?? true}
       onSaved={onSaved}
-      renderViewOnlyBanner={options.renderViewOnlyBanner}
+      {...(options.renderViewOnlyBanner === undefined
+        ? {}
+        : { renderViewOnlyBanner: options.renderViewOnlyBanner })}
     />,
   );
   await waitFor(() =>
@@ -88,7 +92,7 @@ describe("AllocationPreferencesSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(toggle);
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Disable", exact: true })[0],
+      screen.getAllByRole("button", { name: /^Disable$/ })[0]!,
     );
 
     expect(toggle.checked).toBe(false);
@@ -144,7 +148,7 @@ describe("AllocationPreferencesSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Disable", exact: true })[0],
+      screen.getAllByRole("button", { name: /^Disable$/ })[0]!,
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -154,6 +158,32 @@ describe("AllocationPreferencesSection", () => {
       screen.queryByRole("button", { name: "Cancel" }),
     ).toBeNull();
     expect(screen.getAllByText("Disabled")).toHaveLength(3);
+  });
+
+  it("refreshes its parent after Save under StrictMode effect rehearsal", async () => {
+    const fetchMock = vi.fn(async () => response());
+    vi.stubGlobal("fetch", fetchMock);
+    const onSaved = vi.fn(async () => {});
+    render(
+      <StrictMode>
+        <AllocationPreferencesSection
+          lodgeId="lodge-1"
+          canEdit
+          onSaved={onSaved}
+        />
+      </StrictMode>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Edit" })).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^Disable$/ })[0]!,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   });
 
   it("disables every edit affordance for the full save window", async () => {
@@ -169,7 +199,7 @@ describe("AllocationPreferencesSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Disable", exact: true })[0],
+      screen.getAllByRole("button", { name: /^Disable$/ })[0]!,
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -212,7 +242,7 @@ describe("AllocationPreferencesSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(
-      screen.getAllByRole("button", { name: "Disable", exact: true })[0],
+      screen.getAllByRole("button", { name: /^Disable$/ })[0]!,
     );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     view.unmount();

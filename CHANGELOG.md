@@ -1015,7 +1015,7 @@ and are folded in the same way.
   is stuck and what actually fixes it (cancel the booking, add another guest,
   re-quote the request), never a dead-end "ask the club".
   The published banner-coverage figures were re-measured with the new settings
-  card: **311** gated admin controls, **262** of them covered by a banner (235
+  card: **310** gated admin controls, **261** of them covered by a banner (234
   in their own file, 27 by a verified vouching parent — 5 of those through the
   wizard frame), and **49** across 26 files deliberately keeping their own
   reason.
@@ -1516,8 +1516,8 @@ and are folded in the same way.
   added its three, once more when #2286's Release/Change bed controls landed,
   again when the cash / off-Xero payment feature, #2262, landed its four
   per-button-reason controls, and again with #2307's Member guests settings
-  card): **311**
-  gated admin controls, **262** of them covered by a banner (235 in their own
+  card): **310**
+  gated admin controls, **261** of them covered by a banner (234 in their own
   file, 27 by a verified vouching parent — 5 of those through the wizard frame),
   and **49** across 26 files deliberately keeping their own reason.
 - **Choosing to use your account credit and then saving the booking as a draft
