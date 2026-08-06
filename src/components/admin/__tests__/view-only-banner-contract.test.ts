@@ -322,11 +322,11 @@ const NOTICE = "AdminViewOnlyNotice";
 */
 const FIGURES = {
   /** Every `<ViewOnlyActionButton>` render site in the admin tree. */
-  callSites: 310,
+  callSites: 311,
   /** Those that hand their explanation to a banner, by either rule. */
-  optOuts: 261,
+  optOuts: 262,
   /** `describeReason={false}` — needs a banner in the SAME file. */
-  staticOptOuts: 234,
+  staticOptOuts: 235,
   /** `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch. */
   vouchedOptOuts: 27,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
@@ -340,7 +340,7 @@ const FIGURES = {
   leafControls: 36,
   leafFiles: 21,
   /** Components that render an `AdminViewOnlySectionBanner`. */
-  bannerComponents: 83,
+  bannerComponents: 84,
 } as const;
 
 const WIZARD_SHELL = "IntegrationWizard";
@@ -1250,6 +1250,11 @@ describe("view-only section banner coverage (#2160)", () => {
                vouched by the roster page's unconditional lodge-access banner,
                so static opt-outs move 237 -> 234, render-site vouches move
                21 -> 22, and total opt-outs move 263 -> 261.
+          311  +1  #2593 adds the per-lodge allocation-preferences card. It
+               owns a banner for standalone reuse, while the bed-allocation
+               page suppresses that child banner and covers its one Edit/Save
+               control site with the page's existing bookings-area banner.
+               static opt-outs move 234 -> 235 and banner components 83 -> 84.
       */
       // #2259 adds the per-booking "No emails"
       // switch (`booking-no-emails-controls.tsx`), a leaf control dropped into

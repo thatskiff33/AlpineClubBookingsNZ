@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import Link from "next/link";
@@ -23,7 +23,6 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  Save,
   Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -85,6 +84,8 @@ import {
   describeBedAllocationDrop,
 } from "./_components/allocation-drag-feedback";
 import { useSyncedScroll } from "./_components/use-synced-scroll";
+import { AllocationPreferencesSection } from "./_components/allocation-preferences-section";
+import { useScopedDashboard } from "./_components/use-scoped-dashboard";
 
 // #2286: a bulk drop can now be refused for two different reasons on different
 // nights, and they need different fixes — "someone else is in that bed" (clear
@@ -295,10 +296,8 @@ export default function AdminBedAllocationPage() {
     searchParams.get("lodgeId"),
   );
 
-  const [payload, setPayload] = useState<DashboardPayload | null>(null);
-  const [loading, setLoading] = useState(true);
+  const dashboardScopeKey = `${lodgeId ?? "all"}:${fromDate}:${toDate}:${highlightedBookingId}`;
   const [saving, setSaving] = useState<string | null>(null);
-  const [autoAllocationEnabled, setAutoAllocationEnabled] = useState(true);
   const [singleNightMode, setSingleNightMode] = useState(false);
   const [selectedBeds, setSelectedBeds] = useState<Record<string, string>>({});
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set());
@@ -328,6 +327,42 @@ export default function AdminBedAllocationPage() {
     () => boardWindowError(fromDate, toDate),
     [fromDate, toDate],
   );
+
+  const fetchDashboard = useCallback(
+    async (signal: AbortSignal) => {
+      const params = new URLSearchParams({ from: fromDate, to: toDate });
+      if (lodgeId) params.set("lodgeId", lodgeId);
+      if (highlightedBookingId) {
+        params.set("bookingId", highlightedBookingId);
+      }
+      const response = await fetch(`/api/admin/bed-allocation?${params}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) {
+        throw new Error(
+          await readApiError(response, "Failed to load bed allocation"),
+        );
+      }
+      return (await response.json()) as DashboardPayload;
+    },
+    [fromDate, highlightedBookingId, lodgeId, toDate],
+  );
+  const scopedDashboard = useScopedDashboard({
+    scopeKey: dashboardScopeKey,
+    enabled: !windowError,
+    load: fetchDashboard,
+    onLoaded: () => setSingleNightMode(false),
+  });
+  const payload = scopedDashboard.value;
+  const loading = scopedDashboard.loading;
+  const dashboardError = scopedDashboard.error;
+  const loadDashboard = scopedDashboard.reload;
+  const setPayload = scopedDashboard.setValue;
+
+  useEffect(() => {
+    if (dashboardError) toast.error(dashboardError);
+  }, [dashboardError]);
 
   // A refused window has NO columns. Enumerating it anyway would build a column
   // per night for whatever the admin typed — a year, a century — and the board
@@ -460,48 +495,6 @@ export default function AdminBedAllocationPage() {
     [payload?.allocations, bucketGroups, bedOptions, singleNightMode],
   );
 
-  async function loadDashboard() {
-    // The server 400s on an over-long window anyway; withholding the request
-    // keeps the on-screen reason as the single explanation.
-    if (boardWindowError(fromDate, toDate)) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ from: fromDate, to: toDate });
-      if (lodgeId) params.set("lodgeId", lodgeId);
-      if (highlightedBookingId) {
-        params.set("bookingId", highlightedBookingId);
-      }
-      const response = await fetch(`/api/admin/bed-allocation?${params}`, {
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error(
-          await readApiError(response, "Failed to load bed allocation"),
-        );
-      }
-
-      const data = (await response.json()) as DashboardPayload;
-      setPayload(data);
-      setAutoAllocationEnabled(data.settings.autoAllocationEnabled);
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to load bed allocation",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromDate, toDate, lodgeId]);
-
   // Snap the date window onto a deep-linked focused booking that loaded outside
   // the current range (#1302). The server returns its stay window only while it
   // is out of range, so this fires at most once per booking; the ref guards a
@@ -565,26 +558,8 @@ export default function AdminBedAllocationPage() {
     }
   }
 
-  async function saveSettings() {
-    if (!canEditBookings) return;
-
-    await mutate(
-      "settings",
-      () =>
-        fetch("/api/admin/bed-allocation/settings", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            autoAllocationEnabled,
-            ...(lodgeId ? { lodgeId } : {}),
-          }),
-        }),
-      "Bed allocation mode saved",
-    );
-  }
-
   async function runAutoAllocation() {
-    if (!canEditBookings) return;
+    if (!canEditBookings || !lodgeId) return;
 
     await mutate(
       "auto",
@@ -595,7 +570,7 @@ export default function AdminBedAllocationPage() {
           body: JSON.stringify({
             from: fromDate,
             to: toDate,
-            ...(lodgeId ? { lodgeId } : {}),
+            lodgeId,
           }),
         }),
       "Auto allocation applied",
@@ -1059,6 +1034,8 @@ export default function AdminBedAllocationPage() {
   const unapprovedCount =
     payload?.allocations.filter((allocation) => !allocation.approvedAt).length ?? 0;
   const activeBedCount = bedOptions.length;
+  const autoAllocationEnabled =
+    payload?.settings.autoAllocationEnabled ?? false;
 
   // A focused booking is "on the board" when it has a bucket card or a placed
   // allocation in the current range (#1302).
@@ -1092,8 +1069,9 @@ export default function AdminBedAllocationPage() {
   */
   const viewOnlyBanner = (
     <AdminViewOnlySectionBanner canEdit={canEditBookings} className="mb-6">
-      Your admin role can view bed allocation but cannot move, allocate,
-      approve, or save assignments.
+      Your admin role can view bed allocation but cannot change allocation
+      preferences, move or allocate guests, approve placements, or save
+      assignments.
     </AdminViewOnlySectionBanner>
   );
 
@@ -1243,43 +1221,41 @@ export default function AdminBedAllocationPage() {
         </Alert>
       ) : null}
 
+      {lodgeId ? (
+        <AllocationPreferencesSection
+          key={lodgeId}
+          lodgeId={lodgeId}
+          canEdit={canEditBookings}
+          renderViewOnlyBanner={false}
+          onSaved={async () => {
+            // Preferences change both the header state and the planner output;
+            // reload the complete dashboard instead of patching one field.
+            await loadDashboard();
+          }}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Allocation preferences</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            {lodgesLoading ? "Loading lodge…" : "Choose a lodge to continue."}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <BedDouble className="h-4 w-4" />
-            Allocation Mode
-          </CardTitle>
+          <CardTitle className="text-base">Board drag controls</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
-            <label className="flex items-center gap-3 text-sm font-medium">
-              <Checkbox
-                checked={autoAllocationEnabled}
-                disabled={!canEditBookings}
-                onCheckedChange={(checked) =>
-                  setAutoAllocationEnabled(checked === true)
-                }
-              />
-              Auto allocation enabled
-            </label>
-            <label className="flex items-center gap-3 text-sm font-medium">
-              <Checkbox
-                checked={singleNightMode}
-                onCheckedChange={(checked) => setSingleNightMode(checked === true)}
-              />
-              Single-night drag mode
-            </label>
-          </div>
-          <ViewOnlyActionButton
-            canEdit={canEditBookings}
-            describeReason={false}
-            onClick={() => void saveSettings()}
-            disabled={saving === "settings"}
-            className="gap-2 md:w-auto"
-          >
-            <Save className="h-4 w-4" />
-            Save Mode
-          </ViewOnlyActionButton>
+        <CardContent>
+          <label className="flex items-center gap-3 text-sm font-medium">
+            <Checkbox
+              checked={singleNightMode}
+              onCheckedChange={(checked) => setSingleNightMode(checked === true)}
+            />
+            Single-night drag mode (not saved)
+          </label>
         </CardContent>
       </Card>
 
@@ -1290,10 +1266,18 @@ export default function AdminBedAllocationPage() {
         </div>
       ) : null}
 
-      {/* The fetch is withheld while the window is out of range, but a payload
-          from the PREVIOUS good window survives in state. Rendering the board
-          against a refused window would show stale rows under a header the
-          admin no longer asked for, so the Alert above stands alone. */}
+      {!loading && dashboardError && !windowError ? (
+        <Alert variant="error" title="Bed allocation could not be loaded">
+          <p className="mb-3">{dashboardError}</p>
+          <Button variant="outline" onClick={() => void loadDashboard()}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+
+      {/* A dashboard is exposed only when its lodge/date key matches the
+          controls above. Loading and failures therefore leave no stale action
+          surface from the previous scope. */}
       {payload && !windowError ? (
         <DndContext
           sensors={sensors}
@@ -1385,6 +1369,7 @@ export default function AdminBedAllocationPage() {
                   describeReason={false}
                   onClick={() => void runAutoAllocation()}
                   disabled={
+                    !lodgeId ||
                     !payload.settings.autoAllocationEnabled ||
                     payload.suggestedAllocations.length === 0 ||
                     saving === "auto"

@@ -12,6 +12,8 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
 import { parseBedAllocationPriorityOrder } from "@/lib/bed-allocation-settings";
+import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { prisma } from "@/lib/prisma";
 
 // Explicit bookings:view / bookings:edit is enforced by the split guards.
 const settingsSchema = z
@@ -39,6 +41,12 @@ export async function GET(request: Request) {
       );
     }
     const lodgeId = lodgeIdResult.data;
+    if (!(await resolveOptionalActiveLodgeId(prisma, lodgeId))) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      );
+    }
     const settings = await getEffectiveBedAllocationSettings(undefined, lodgeId);
     return NextResponse.json({ settings });
   } catch (error) {
@@ -62,6 +70,17 @@ export async function PUT(request: Request) {
       );
     }
 
+    const lodgeId = await resolveOptionalActiveLodgeId(
+      prisma,
+      body.data.lodgeId,
+    );
+    if (!lodgeId) {
+      return NextResponse.json(
+        { error: "Lodge not found or not active" },
+        { status: 400 },
+      );
+    }
+
     const settings = await updateBedAllocationSettings({
       autoAllocationEnabled: body.data.autoAllocationEnabled,
       allocationPriorityOrder: parseBedAllocationPriorityOrder(
@@ -70,14 +89,14 @@ export async function PUT(request: Request) {
         400,
       ),
       updatedByMemberId: guard.session.user.id,
-      lodgeId: body.data.lodgeId,
+      lodgeId,
     });
 
     await createAuditLog({
       action: "BED_ALLOCATION_SETTINGS_UPDATED",
       memberId: guard.session.user.id,
       entityType: "BedAllocationSettings",
-      entityId: body.data.lodgeId,
+      entityId: lodgeId,
       category: "admin",
       severity: "important",
       outcome: "success",
