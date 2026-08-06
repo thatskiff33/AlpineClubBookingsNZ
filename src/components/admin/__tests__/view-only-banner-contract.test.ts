@@ -311,11 +311,11 @@ const NOTICE = "AdminViewOnlyNotice";
 /*
   The published census, in ONE place.
 
-  Four documents and one JSDoc block quote these numbers as fact, and they have
+  Three documents and one JSDoc block quote these numbers as fact, and they have
   drifted twice — once by being counted from raw text (a `describeReason={false}`
   inside a comment counted as a call site), and once by a doc being updated while
   a sibling doc was not. The census test below measures them; the
-  "figures the docs publish" test below that reads the four documents and fails
+  "figures the docs publish" test below reads those sources and fails
   when any of them no longer states the measured value. So a rollout change
   cannot land with the prose out of step: both tests fail, and the fix is always
   to re-measure and update every place together — never to loosen an assertion.
@@ -1250,10 +1250,11 @@ describe("view-only section banner coverage (#2160)", () => {
                vouched by the roster page's unconditional lodge-access banner,
                so static opt-outs move 237 -> 234, render-site vouches move
                21 -> 22, and total opt-outs move 263 -> 261.
-          311  +1  #2593 adds the per-lodge allocation-preferences card. It
-               owns a banner for standalone reuse, while the bed-allocation
-               page suppresses that child banner and covers its one Edit/Save
-               control site with the page's existing bookings-area banner.
+          311  +1  #2593 replaces the old Save Mode site with two Edit/Save
+               sites in the per-lodge allocation-preferences card. It owns a
+               banner for standalone reuse, while the bed-allocation page
+               suppresses that child banner and covers both control sites with
+               the page's existing bookings-area banner.
                static opt-outs move 234 -> 235 and banner components 83 -> 84.
       */
       // #2259 adds the per-booking "No emails"
@@ -1355,9 +1356,9 @@ describe("view-only section banner coverage (#2160)", () => {
 
       Both halves are needed, and the gap between them is where the drift has
       actually happened: the numbers moved, the census was updated, and one of the
-      four documents was not. That leaves a reader trusting a figure no test
-      disagrees with. Here every document that quotes a figure has to still quote
-      the measured one.
+      one of the three documents or the JSDoc was not. That leaves a reader
+      trusting a figure no test disagrees with. Here every document that quotes
+      a figure has to still quote the measured one.
 
       Matching is on whitespace-collapsed, markup-stripped text, so re-wrapping a
       paragraph or bolding a number is free; changing a number is not. The
@@ -1415,10 +1416,10 @@ describe("view-only section banner coverage (#2160)", () => {
       do not edit that ledger or its Unreleased list, so current census
       enforcement applies to the source documents and new fragments instead.
 
-      So every fragment is scanned in the same bucket as CHANGELOG.md, and a
-      stale figure fails on its OWN pull request. The difference is presence: a
-      fragment is not REQUIRED to quote these sentences (almost none do), it is
-      only forbidden from quoting a superseded version of one.
+      Every new fragment is therefore scanned separately, and a stale figure
+      fails on its OWN pull request. A fragment is not REQUIRED to quote these
+      sentences (almost none do); it is only forbidden from quoting a
+      superseded version of one.
     */
     const fragmentsDir = join(process.cwd(), "changelog.d");
     const scanned: { rel: string; phrases: string[]; requirePresence: boolean }[] = [

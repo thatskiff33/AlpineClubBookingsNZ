@@ -1482,22 +1482,64 @@ function splitGuestOrderVariants(
 
   // Direct-family membership is a graph, not a single grouping key: a guest
   // may belong to several groups and a useful pair may share only a later id.
-  // Add bounded group-cluster and direct-pair-front variants so the scorer can
-  // compare those layouts without factorial search.
-  const groupIds = [
-    ...new Set(canonical.flatMap((guest) => guest.familyGroupIds ?? [])),
-  ].sort();
-  for (const groupId of groupIds) {
-    const members = canonical.filter((guest) =>
-      guest.familyGroupIds?.includes(groupId),
-    );
-    if (members.length < 2) continue;
-    const others = canonical.filter((guest) => !members.includes(guest));
-    familyVariants.push(
-      [...members, ...others],
-      [...members].reverse().concat(others),
-    );
+  // First cluster every connected component at once. This is the whole-family
+  // candidate that can seat three or more interleaved, independent subsets
+  // without spending one candidate per subset.
+  const canonicalIndex = new Map(
+    canonical.map((guest, index) => [guest.id, index]),
+  );
+  const neighbours = new Map(
+    canonical.map((guest) => [guest.id, new Set<string>()]),
+  );
+  for (let left = 0; left < canonical.length; left += 1) {
+    for (let right = left + 1; right < canonical.length; right += 1) {
+      const a = canonical[left];
+      const b = canonical[right];
+      if (!shareDirectFamilyGroup(a, b)) continue;
+      neighbours.get(a.id)?.add(b.id);
+      neighbours.get(b.id)?.add(a.id);
+    }
   }
+  const guestById = new Map(canonical.map((guest) => [guest.id, guest]));
+  const visited = new Set<string>();
+  const components: StayGuest[][] = [];
+  for (const guest of canonical) {
+    if (visited.has(guest.id)) continue;
+    const pending = [guest.id];
+    const component: StayGuest[] = [];
+    visited.add(guest.id);
+    while (pending.length > 0) {
+      const guestId = pending.shift();
+      if (!guestId) continue;
+      const member = guestById.get(guestId);
+      if (member) component.push(member);
+      const nextIds = [...(neighbours.get(guestId) ?? [])].sort(
+        (a, b) =>
+          (canonicalIndex.get(a) ?? 9999) -
+          (canonicalIndex.get(b) ?? 9999),
+      );
+      for (const nextId of nextIds) {
+        if (visited.has(nextId)) continue;
+        visited.add(nextId);
+        pending.push(nextId);
+      }
+    }
+    component.sort(
+      (a, b) =>
+        (canonicalIndex.get(a.id) ?? 9999) -
+        (canonicalIndex.get(b.id) ?? 9999),
+    );
+    components.push(component);
+  }
+  const componentCluster = components.flat();
+  familyVariants.push(
+    componentCluster,
+    components.flatMap((component) => [...component].reverse()),
+  );
+
+  // Retain direct-pair-front candidates for overlapping or impossible chains:
+  // a connected component may not have any linear order that makes every
+  // directly related pair share a capacity-constrained room.
   for (let left = 0; left < canonical.length; left += 1) {
     for (let right = left + 1; right < canonical.length; right += 1) {
       const a = canonical[left];
@@ -1506,6 +1548,34 @@ function splitGuestOrderVariants(
       const others = canonical.filter((guest) => guest !== a && guest !== b);
       familyVariants.push([a, b, ...others], [b, a, ...others]);
     }
+  }
+
+  // Finally cluster each direct group inside every component simultaneously.
+  // These bounded subset variants let the scorer choose which shared-group
+  // edges to preserve when an overlapping component cannot preserve them all.
+  const groupIds = [
+    ...new Set(canonical.flatMap((guest) => guest.familyGroupIds ?? [])),
+  ].sort();
+  for (const groupId of groupIds) {
+    const clustered = components.flatMap((component) => [
+      ...component.filter((guest) => guest.familyGroupIds?.includes(groupId)),
+      ...component.filter((guest) => !guest.familyGroupIds?.includes(groupId)),
+    ]);
+    const members = clustered.filter((guest) =>
+      guest.familyGroupIds?.includes(groupId),
+    );
+    if (members.length < 2) continue;
+    familyVariants.push(
+      clustered,
+      components.flatMap((component) => [
+        ...component
+          .filter((guest) => guest.familyGroupIds?.includes(groupId))
+          .reverse(),
+        ...component.filter(
+          (guest) => !guest.familyGroupIds?.includes(groupId),
+        ),
+      ]),
+    );
   }
 
   const distinctFamilyVariants = uniqueGuestOrders(familyVariants).filter(
@@ -1523,14 +1593,18 @@ function splitGuestOrderVariants(
   if (distinctFamilyVariants.length <= remaining) {
     return [...foundational, ...distinctFamilyVariants];
   }
-  // Sample the full deterministic family candidate set evenly. A high-sorted
-  // group id or later overlapping pair must not disappear merely because the
-  // total matching budget is bounded.
-  const spreadFamilyVariants = Array.from({ length: remaining }, (_, index) =>
-    distinctFamilyVariants[
-      Math.floor((index * distinctFamilyVariants.length) / remaining)
-    ],
-  );
+  // Sample the full deterministic family candidate set evenly and include both
+  // endpoints. In particular, the final high-sorted group candidate must not
+  // disappear merely because the total matching budget is bounded.
+  const spreadFamilyVariants = Array.from({ length: remaining }, (_, index) => {
+    const sampledIndex =
+      remaining === 1
+        ? distinctFamilyVariants.length - 1
+        : Math.floor(
+            (index * (distinctFamilyVariants.length - 1)) / (remaining - 1),
+          );
+    return distinctFamilyVariants[sampledIndex];
+  });
   return [...foundational, ...spreadFamilyVariants];
 }
 
