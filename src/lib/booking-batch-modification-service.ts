@@ -72,7 +72,7 @@ import {
   assertProposedCheckInClearsXeroLockDate,
   assertProposedDateEditClearsXeroLockDate,
 } from "@/lib/xero-period-lock-guard";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
   loadMemberGuestAddPolicy,
   matchMemberGuestNotificationRows,
@@ -765,7 +765,7 @@ export async function modifyBookingBatch({
       include: { guests: true, payment: true },
     });
 
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId,
       db: tx,
       previousRange: {

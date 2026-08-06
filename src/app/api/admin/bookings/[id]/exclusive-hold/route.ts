@@ -14,7 +14,7 @@ import {
 } from "@/lib/booking-status";
 import {
   MAX_AUDITED_PRUNED_ALLOCATIONS,
-  reconcileBedAllocationsForBooking,
+  reconcileBedAllocationsForBookingWithGlobalLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import { formatDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
@@ -70,6 +70,7 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       // Read only the immutable lock key before taking the lock. A concurrent
       // date/status writer may commit while this transaction waits, so no
       // mutable field from this first read may drive a decision.
@@ -245,7 +246,7 @@ export async function POST(
           })
         : [];
 
-      const allocationReconcile = await reconcileBedAllocationsForBooking({
+      const allocationReconcile = await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId: booking.id,
         db: tx,
         previousRange: {

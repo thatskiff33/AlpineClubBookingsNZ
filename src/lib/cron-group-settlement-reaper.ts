@@ -60,7 +60,7 @@ import {
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import {
@@ -400,7 +400,7 @@ async function releaseSettlementChildren(
       if (reverted.count === 0) continue;
       claimedChildren.push(child);
       // PAYMENT_PENDING does not hold capacity: drop the bed allocations.
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId: child.id,
         db: tx,
         previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },

@@ -31,7 +31,7 @@ import {
   evaluateNonMemberPricingRequirements,
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { hasAdminAccess } from "@/lib/access-roles";
 
 export async function POST(
@@ -187,6 +187,7 @@ export async function POST(
 
   // Check capacity + transition to PAID in transaction
   await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // Lock the booking's lodge before re-reading it: the draft's lodge cannot
     // change, so the pre-read outside the lock is safe for key selection.
     const lockTarget = await tx.booking.findUnique({
@@ -254,7 +255,7 @@ export async function POST(
         creditElectionCents: null,
       },
     });
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: id,
       db: tx,
       previousRange: {

@@ -28,13 +28,15 @@ import {
   sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
 import {
+  acquireFuturePartnerSharedAllocationLocks,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
-  sweepFuturePartnerSharedAllocations,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld,
   type SweptPartnerSharedAllocation,
 } from "@/lib/bed-allocation-lifecycle";
 import logger from "@/lib/logger";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 
 const actionSchema = z.object({
   action: z.enum(["approve", "reject"]),
@@ -281,6 +283,8 @@ export async function POST(
     // #2255: who was still pointed at this member when we anonymised them.
     let detachedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;
     await prisma.$transaction(async (tx) => {
+      await acquireFuturePartnerSharedAllocationLocks(tx, [member.id]);
+      await acquireMemberLifecycleLocks(tx, [member.id]);
       // Race-safe re-check of the last-admin invariant inside the mutation
       // transaction (issue #1604): the fail-fast check above ran before the
       // booking cleanup, so re-count against this transaction's read view.
@@ -294,7 +298,7 @@ export async function POST(
       // step 5 below) still identifies them. Second-occupant appearances on
       // OTHER members' bookings survive the own-booking cancellation above, so
       // this is not vacuously empty.
-      sweptShares = await sweepFuturePartnerSharedAllocations({
+      sweptShares = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
         memberId: member.id,
         reason: "member_deactivated",
         db: tx,

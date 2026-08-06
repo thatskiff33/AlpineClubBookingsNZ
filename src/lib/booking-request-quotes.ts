@@ -27,7 +27,7 @@ import {
   splitPriceAcrossGuests,
   type BookingRequestLinkedGuestMember,
 } from "@/lib/booking-request";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
   collectNotifiedMemberGuestIds,
   notifyMemberGuestsHoldReleased,
@@ -897,6 +897,7 @@ export async function respondToBookingRequestQuote(input: {
     // must NOT overwrite DECLINED/CONVERTED/etc. -> CANCELLED — it claims nothing
     // and touches neither the quote nor the hold.
     const cancelled = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const claimed = await tx.bookingRequest.updateMany({
         where: {
           id: quote.bookingRequestId,
@@ -943,7 +944,7 @@ export async function respondToBookingRequestQuote(input: {
         // (issue #1254). Locking the Booking row after the BookingRequest row
         // adds no new cycle — decline releases its hold in a SEPARATE self-locked
         // cancelBooking tx, outside decline's claim transaction.
-        await reconcileBedAllocationsForBooking({ bookingId: heldBookingId, db: tx });
+        await reconcileBedAllocationsForBookingWithGlobalLockHeld({ bookingId: heldBookingId, db: tx });
         await tx.bookingRequest.update({
           where: { id: quote.bookingRequestId },
           data: { heldBookingId: null, version: { increment: 1 } },

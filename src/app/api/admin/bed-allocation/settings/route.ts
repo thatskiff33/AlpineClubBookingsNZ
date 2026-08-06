@@ -18,9 +18,8 @@ const settingsSchema = z
   .object({
     autoAllocationEnabled: z.boolean(),
     allocationPriorityOrder: z.array(z.unknown()),
-    // Lodge whose auto-allocation switch is edited; omitted keeps the
-    // legacy club-wide row (lodge-scoping contract).
-    lodgeId: z.string().min(1).optional(),
+    // Settings editing is always scoped to exactly one lodge.
+    lodgeId: z.string().min(1),
   })
   .strict();
 
@@ -29,7 +28,17 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   try {
-    const lodgeId = new URL(request.url).searchParams.get("lodgeId") || undefined;
+    const lodgeIdResult = z
+      .string()
+      .min(1)
+      .safeParse(new URL(request.url).searchParams.get("lodgeId"));
+    if (!lodgeIdResult.success) {
+      return NextResponse.json(
+        { error: "A lodgeId is required." },
+        { status: 400 },
+      );
+    }
+    const lodgeId = lodgeIdResult.data;
     const settings = await getEffectiveBedAllocationSettings(undefined, lodgeId);
     return NextResponse.json({ settings });
   } catch (error) {
@@ -68,7 +77,7 @@ export async function PUT(request: Request) {
       action: "BED_ALLOCATION_SETTINGS_UPDATED",
       memberId: guard.session.user.id,
       entityType: "BedAllocationSettings",
-      entityId: body.data.lodgeId ?? "default",
+      entityId: body.data.lodgeId,
       category: "admin",
       severity: "important",
       outcome: "success",

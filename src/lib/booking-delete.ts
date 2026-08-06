@@ -7,7 +7,7 @@ import {
 import { createAuditLog } from "@/lib/audit";
 import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import { prisma } from "@/lib/prisma";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -101,6 +101,7 @@ async function hardDeleteDraftBooking(
   actor: BookingDeleteActor
 ): Promise<DeleteBookingResult> {
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const booking = await loadBookingForDelete(tx, bookingId);
 
     if (!booking) {
@@ -221,7 +222,7 @@ async function softDeleteCancelledBooking(
         deletedReason: reason,
       },
     });
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: booking.id,
       db: tx,
       previousRange: {

@@ -76,7 +76,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
 } from "./cancellation";
-import { reconcileBedAllocationsForBooking } from "./bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "./bed-allocation-lifecycle";
 import {
   RELEASE_ADMIN_CAPACITY_HOLD_UPDATE,
   RELEASE_WHOLE_LODGE_HOLD_UPDATE,
@@ -502,6 +502,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     let childClaimed = false;
     try {
       queuedCreditNoteOperationId = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
         const cancelled = await tx.booking.updateMany({
           where: { id: child.id, status: { in: [...ACTIVE_CHILD_STATUSES] } },
           data: {
@@ -515,7 +516,7 @@ export async function settleGroupBookingOnOrganiserCancel(
         });
         if (cancelled.count === 0) return null;
         childClaimed = true;
-        await reconcileBedAllocationsForBooking({
+        await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: child.id,
           db: tx,
           previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },

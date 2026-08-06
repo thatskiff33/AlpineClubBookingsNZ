@@ -76,7 +76,7 @@ import { logAudit } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import logger from "@/lib/logger";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { buildInternetBankingHoldUntil } from "@/lib/internet-banking-settings";
 import {
   type BookingWithGuests,
@@ -264,6 +264,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   const draftStatus = review.blockForReview ? BookingStatus.AWAITING_REVIEW : BookingStatus.DRAFT;
 
   const newBooking = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const bookingLodgeId = await resolveBookingLodgeId(
       tx,
       lodgeId,
@@ -421,7 +422,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       );
     }
 
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithGlobalLockHeld({
       bookingId: createdBooking.id,
       db: tx,
     });
@@ -707,6 +708,9 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     // re-enters that same per-lodge key (a no-op) so the lock order holds either
     // way.
     booking = await withOptionalTransaction(input.tx, async (tx) => {
+      if (!input.tx) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      }
       const bookingLodgeId = await resolveBookingLodgeId(
         tx,
         lodgeId,
@@ -1093,7 +1097,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         });
       }
 
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId: newBooking.id,
         db: tx,
       });
@@ -1172,7 +1176,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           },
           include: { guests: true },
         });
-        await reconcileBedAllocationsForBooking({
+        await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: childBooking.id,
           db: tx,
         });

@@ -42,13 +42,15 @@ import {
   getAdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import {
+  acquireFuturePartnerSharedAllocationLocks,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
-  sweepFuturePartnerSharedAllocations,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld,
   type SweptPartnerSharedAllocation,
 } from "@/lib/bed-allocation-lifecycle";
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 
 const bulkUpdateSchema = z.object({
   ids: z.array(z.string()).min(1, "At least one member ID is required").max(100),
@@ -362,9 +364,26 @@ export async function POST(req: NextRequest) {
       reason: "member_deactivated" | "member_age_tier_changed";
       swept: SweptPartnerSharedAllocation[];
     }> = [];
+    const sweepLockMemberIds =
+      action === "deactivate"
+        ? idsToUpdate
+        : setRoleTargets
+            .filter(({ member }) => {
+              const reconciledAgeTier = ageTierReconById.get(member.id);
+              return (
+                reconciledAgeTier !== undefined &&
+                member.ageTier === "ADULT" &&
+                reconciledAgeTier !== "ADULT"
+              );
+            })
+            .map(({ member }) => member.id);
 
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
+      if (sweepLockMemberIds.length > 0) {
+        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds);
+        await acquireMemberLifecycleLocks(tx, sweepLockMemberIds);
+      }
       // Last-admin end-state guard (issue #1604): evaluate the whole set, not
       // per row, so a bulk deactivate that collectively removes every
       // remaining Full Admin fails as a whole. Counted inside the transaction
@@ -421,7 +440,7 @@ export async function POST(req: NextRequest) {
             member.ageTier === "ADULT" &&
             reconciledAgeTier !== "ADULT"
           ) {
-            const swept = await sweepFuturePartnerSharedAllocations({
+            const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
               memberId: member.id,
               reason: "member_age_tier_changed",
               db: tx,
@@ -471,7 +490,7 @@ export async function POST(req: NextRequest) {
         // The removed second occupants return to the awaiting-allocation
         // queue; admins are alerted per affected member after commit.
         for (const memberId of idsToUpdate) {
-          const swept = await sweepFuturePartnerSharedAllocations({
+          const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
             memberId,
             reason: "member_deactivated",
             db: tx,

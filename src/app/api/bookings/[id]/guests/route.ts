@@ -86,7 +86,7 @@ import {
   assertBookingNotQuotePriced,
   lockedNightPricesForGuest,
 } from "@/lib/booking-modify";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
 import { getSeasonYear } from "@/lib/utils";
 import {
@@ -254,6 +254,7 @@ export async function POST(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       // Lock the booking's lodge before re-reading it; the booking's lodge
       // cannot change, so the pre-read outside the lock is safe for key
       // selection.
@@ -797,7 +798,7 @@ export async function POST(
         include: { guests: true, payment: true },
       });
 
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId,
         db: tx,
         previousRange: {

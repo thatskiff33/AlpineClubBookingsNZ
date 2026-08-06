@@ -285,7 +285,6 @@ async function sweepAllocationsWithPromotion(
 
 interface ReconcileBedAllocationsForBookingInput {
   bookingId: string;
-  db?: BedAllocationLifecycleDb;
   // Retained for API stability and as pruning context for the ~45 call sites
   // that pass a booking's pre-change dates. Since #1686 the auto-placement
   // range is the booking's CURRENT range only; stale rows outside it are
@@ -1319,10 +1318,16 @@ async function recordBedDisplacementAudit(
   }
 }
 
-export async function reconcileBedAllocationsForBooking({
+/**
+ * Internal reconciliation entrypoint for callers that already hold the global
+ * booking lock followed by this booking's lodge-capacity lock.
+ */
+export async function reconcileBedAllocationsForBookingWithLodgeLockHeld({
   bookingId,
-  db = prisma,
-}: ReconcileBedAllocationsForBookingInput): Promise<BedAllocationLifecycleResult> {
+  db,
+}: ReconcileBedAllocationsForBookingInput & {
+  db: BedAllocationLifecycleDb;
+}): Promise<BedAllocationLifecycleResult> {
   const enabled = await isEffectiveModuleEnabled("bedAllocation", db);
 
   if (!enabled) {
@@ -1369,6 +1374,48 @@ export async function reconcileBedAllocationsForBooking({
     : 0;
 
   return { enabled: true, deletedCount, createdCount, promotedCount };
+}
+
+/**
+ * Composition boundary for a transaction that already owns global lock(1)
+ * but has not yet acquired the booking's lodge key. It resolves that key under
+ * the global lock, acquires the lodge tier, then delegates to the fully-held
+ * implementation. Call this before any member-family lock is acquired.
+ */
+export async function reconcileBedAllocationsForBookingWithGlobalLockHeld(
+  input: ReconcileBedAllocationsForBookingInput & {
+    db: BedAllocationLifecycleDb;
+  },
+): Promise<BedAllocationLifecycleResult> {
+  const bookingKey = await input.db.booking.findUnique({
+    where: { id: input.bookingId },
+    select: { lodgeId: true },
+  });
+  if (bookingKey?.lodgeId) {
+    await acquireLodgeCapacityLock(input.db, bookingKey.lodgeId);
+  }
+  return reconcileBedAllocationsForBookingWithLodgeLockHeld(input);
+}
+
+/**
+ * Self-locking public boundary. Supplying a transaction client never bypasses
+ * the lock contract: advisory xact locks are re-entrant when an outer lifecycle
+ * already owns them. The booking's lodge key is immutable and is resolved
+ * before locking; mutable booking/allocation state is re-read by the internal
+ * implementation after global -> lodge acquisition.
+ */
+export async function reconcileBedAllocationsForBooking(
+  input: ReconcileBedAllocationsForBookingInput,
+): Promise<BedAllocationLifecycleResult> {
+  const runLocked = async (tx: BedAllocationLifecycleDb) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    return reconcileBedAllocationsForBookingWithGlobalLockHeld({
+      ...input,
+      db: tx,
+    });
+  };
+
+  return prisma.$transaction(runLocked);
 }
 
 // ---------------------------------------------------------------------------
@@ -1584,9 +1631,69 @@ export async function sweepFuturePartnerSharedAllocations(params: {
   memberId: string;
   partnerMemberId?: string;
   reason: PartnerSharedSweepReason;
-  db?: BedAllocationLifecycleDb;
 }): Promise<SweptPartnerSharedAllocation[]> {
-  const db = params.db ?? prisma;
+  return prisma.$transaction(async (tx) => {
+    await acquireFuturePartnerSharedAllocationLocks(tx, [
+      params.memberId,
+      ...(params.partnerMemberId ? [params.partnerMemberId] : []),
+    ]);
+    return sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      ...params,
+      db: tx,
+    });
+  });
+}
+
+/**
+ * Acquire the complete lock prefix for a transaction that will invalidate
+ * future partner-shared placements. Call this before any member/link mutation:
+ * the sweep may touch allocations in several lodges, so the canonical order is
+ * global cohort, then every affected lodge in sorted order, then any member
+ * lifecycle locks owned by the caller.
+ */
+export async function acquireFuturePartnerSharedAllocationLocks(
+  tx: Prisma.TransactionClient,
+  memberIds: readonly string[],
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+  const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
+  if (uniqueMemberIds.length === 0) return;
+
+  // Either occupant's own allocation names the affected lodge. This may lock
+  // a lodge where the member has another, non-shared future placement too; the
+  // conservative over-lock keeps discovery bounded and cannot miss the lodge
+  // of a shared bed-night whose counterpart belongs to another booking.
+  const allocationLodges = await tx.bedAllocation.findMany({
+    where: {
+      stayDate: { gte: getTodayDateOnly() },
+      bookingGuest: { memberId: { in: uniqueMemberIds } },
+    },
+    select: { room: { select: { lodgeId: true } } },
+  });
+  const lodgeIds = [
+    ...new Set(
+      allocationLodges
+        .map((allocation) => allocation.room.lodgeId)
+        .filter((lodgeId): lodgeId is string => Boolean(lodgeId)),
+    ),
+  ].sort();
+  for (const lodgeId of lodgeIds) {
+    await acquireLodgeCapacityLock(tx, lodgeId);
+  }
+}
+
+/**
+ * Internal sweep for callers that already hold the global cohort lock and all
+ * affected lodge locks through `acquireFuturePartnerSharedAllocationLocks`.
+ * The candidate rows are deliberately re-read after those locks.
+ */
+export async function sweepFuturePartnerSharedAllocationsWithLocksHeld(params: {
+  memberId: string;
+  partnerMemberId?: string;
+  reason: PartnerSharedSweepReason;
+  db: BedAllocationLifecycleDb;
+}): Promise<SweptPartnerSharedAllocation[]> {
+  const db = params.db;
   const today = getTodayDateOnly();
   const scopeIds = params.partnerMemberId
     ? [params.memberId, params.partnerMemberId]

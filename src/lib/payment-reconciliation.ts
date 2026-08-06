@@ -55,7 +55,7 @@ import {
 import logger from "@/lib/logger";
 import { clearStaleCreditElection } from "@/lib/booking-credit-election";
 import { reportUnappliedCreditElection } from "@/lib/booking-credit-election-report";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import {
   isManualSettleFromPaymentStatus,
@@ -1057,7 +1057,7 @@ async function settleBookingPaymentInTransaction(
     }
 
     if (booking.status === BookingStatus.PAID) {
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
         db: tx,
         previousRange: {
@@ -1352,7 +1352,7 @@ async function settleBookingPaymentInTransaction(
           "Booking status changed concurrently during the capacity-failed void (#1881)"
         );
       }
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
         db: tx,
         previousRange: {
@@ -1528,7 +1528,7 @@ async function settleBookingPaymentInTransaction(
     // writer is never clobbered; see clearStaleCreditElection.
     const staleCreditElectionCents = await clearStaleCreditElection(tx, booking);
 
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId: booking.id,
       db: tx,
       previousRange: {
@@ -2716,7 +2716,7 @@ export async function reverseManualBookingPayment({
     // Releases the claimed beds only when the restore lands on
     // PAYMENT_PENDING; a restored CONFIRMED booking deliberately keeps holding
     // capacity, because that is what CONFIRMED means.
-    await reconcileBedAllocationsForBooking({
+    await reconcileBedAllocationsForBookingWithLodgeLockHeld({
       bookingId: booking.id,
       db: tx,
       previousRange: { checkIn: booking.checkIn, checkOut: booking.checkOut },

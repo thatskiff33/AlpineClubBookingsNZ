@@ -19,7 +19,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   queueSupersededPrimaryIntentCancellations,
@@ -358,7 +358,7 @@ export async function POST(request: NextRequest) {
             // immediately after its own guarded claim). An arm that changed no
             // status has nothing to reconcile.
             if (previousRange || settledAtZero) {
-              await reconcileBedAllocationsForBooking({
+              await reconcileBedAllocationsForBookingWithLodgeLockHeld({
                 bookingId,
                 db: tx,
                 previousRange: previousRange ?? {

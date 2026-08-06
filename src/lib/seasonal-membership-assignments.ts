@@ -30,14 +30,16 @@ import { membershipTypeAgeExemption } from "@/lib/membership-types";
 import { reconcileSeasonSubscriptionForAssignment } from "@/lib/member-subscription-defaults";
 import { resolveEnforcedAgeTier } from "@/lib/age-tier-enforcement";
 import {
+  acquireFuturePartnerSharedAllocationLocks,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
-  sweepFuturePartnerSharedAllocations,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld,
   type SweptPartnerSharedAllocation,
 } from "@/lib/bed-allocation-lifecycle";
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import {
   reconcileMembersXeroContactGroups,
   triggerMemberXeroContactGroupSync,
@@ -786,6 +788,10 @@ export async function saveSeasonalMembershipAssignment(params: {
   let sweptShares: SweptPartnerSharedAllocation[] = [];
 
   const assignment = await db.$transaction(async (tx) => {
+    if (tierLeavesAdult) {
+      await acquireFuturePartnerSharedAllocationLocks(tx, [params.memberId]);
+      await acquireMemberLifecycleLocks(tx, [params.memberId]);
+    }
     let saved: SeasonalAssignmentWithType;
     if (assignmentUnchanged && preview.previousAssignment) {
       // Tier-only repair: the assignment itself is unchanged, so re-read it for
@@ -833,7 +839,7 @@ export async function saveSeasonalMembershipAssignment(params: {
         data: { ageTier: preview.resultingAgeTier },
       });
       if (tierLeavesAdult) {
-        sweptShares = await sweepFuturePartnerSharedAllocations({
+        sweptShares = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
           memberId: params.memberId,
           reason: "member_age_tier_changed",
           db: tx,
@@ -1389,6 +1395,8 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
         );
         try {
           const chunkResult = await db.$transaction(async (tx) => {
+            await acquireFuturePartnerSharedAllocationLocks(tx, chunkMemberIds);
+            await acquireMemberLifecycleLocks(tx, chunkMemberIds);
             // Fresh reads on the tx client — never trust the pre-copy snapshot.
             const [freshMembers, freshAssignments] = await Promise.all([
               tx.member.findMany({
@@ -1488,7 +1496,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                 newAgeTier: resolved.ageTier,
               });
               if (currentAgeTier === "ADULT" && resolved.ageTier !== "ADULT") {
-                const swept = await sweepFuturePartnerSharedAllocations({
+                const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
                   memberId: member.id,
                   reason: "member_age_tier_changed",
                   db: tx,

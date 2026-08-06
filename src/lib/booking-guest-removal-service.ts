@@ -44,7 +44,7 @@ import {
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import { createBookingModificationCredit } from "@/lib/member-credit";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
 import { getSeasonYear } from "@/lib/utils";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
@@ -702,7 +702,7 @@ export async function removeBookingGuestInTransaction({
     updated: updatedBooking,
   });
 
-  await reconcileBedAllocationsForBooking({
+  await reconcileBedAllocationsForBookingWithLodgeLockHeld({
     bookingId,
     db: tx,
     previousRange: {

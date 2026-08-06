@@ -11,7 +11,7 @@ import {
   sendBookingReviewRejectedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 const reviewSchema = z
@@ -137,7 +137,7 @@ export async function PATCH(
       });
       if (claim.count !== 1) return null;
 
-      await reconcileBedAllocationsForBooking({ bookingId, db: tx });
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
       return current;
     });
 
@@ -217,7 +217,7 @@ export async function PATCH(
     if (claim.count !== 1) return null;
 
     if (legacyDraft) {
-      await reconcileBedAllocationsForBooking({ bookingId, db: tx });
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({ bookingId, db: tx });
     }
     return current;
   });

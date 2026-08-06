@@ -5,7 +5,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { sendBookingCancelledEmail } from "@/lib/email";
@@ -100,7 +100,7 @@ function releaseOneHold(paymentId: string, now: Date) {
         },
       });
       await revokePaymentLinksForBooking(fresh.bookingId, tx);
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
         bookingId: fresh.bookingId,
         db: tx,
       });

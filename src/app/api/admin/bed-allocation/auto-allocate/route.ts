@@ -16,9 +16,8 @@ const autoAllocateSchema = z
   .object({
     from: z.string().optional(),
     to: z.string().optional(),
-    // Board lodge scope (ADR-003): suggestions only place guests of this
-    // lodge's bookings into this lodge's beds. Omitted = club-wide.
-    lodgeId: z.string().min(1).optional(),
+    // Board actions are always scoped to exactly one lodge.
+    lodgeId: z.string().min(1),
   })
   .strict();
 

@@ -6,10 +6,9 @@ import { BedAllocationSettingsValidationError } from "@/lib/bed-allocation-setti
 import { requireAdmin } from "@/lib/session-guards";
 
 async function requireBedAllocationPermission(
-  area: "bookings" | "lodge",
   level: "view" | "edit",
 ) {
-  const guard = await requireAdmin({ permission: { area, level } });
+  const guard = await requireAdmin({ permission: { area: "bookings", level } });
   if (!guard.ok) {
     return { ok: false as const, response: guard.response };
   }
@@ -26,22 +25,22 @@ async function requireBedAllocationPermission(
 
 /** Bed-board/settings reads require the explicit bookings:view contract. */
 export function requireBedAllocationRead() {
-  return requireBedAllocationPermission("bookings", "view");
+  return requireBedAllocationPermission("view");
 }
 
 /** Every allocation/settings/approval mutation requires bookings:edit. */
 export function requireBedAllocationWrite() {
-  return requireBedAllocationPermission("bookings", "edit");
+  return requireBedAllocationPermission("edit");
 }
 
-/** Room/bed inventory remains Lodge Operations, not a booking-editor grant. */
+/** Semantic inventory read helper; D-R17 preserves bookings:view. */
 export function requireBedInventoryRead() {
-  return requireBedAllocationPermission("lodge", "view");
+  return requireBedAllocationPermission("view");
 }
 
-/** Capacity-bearing room/bed inventory changes require lodge:edit. */
+/** Semantic inventory write helper; D-R17 preserves bookings:edit. */
 export function requireBedInventoryWrite() {
-  return requireBedAllocationPermission("lodge", "edit");
+  return requireBedAllocationPermission("edit");
 }
 
 export function bedAllocationErrorResponse(error: unknown) {

@@ -17,7 +17,7 @@ import {
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { buildInternetBankingPaymentReference } from "@/lib/booking-payment-methods";
 import {
@@ -320,7 +320,7 @@ export async function POST(request: NextRequest) {
       if (claimed.count === 0) {
         return { type: "notSwitchable" as const };
       }
-      await reconcileBedAllocationsForBooking({
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
         db: tx,
       });

@@ -98,13 +98,15 @@ import {
 } from "@/lib/admin-permissions";
 import { serializeSeasonalMembershipAssignment } from "@/lib/seasonal-membership-assignments";
 import {
+  acquireFuturePartnerSharedAllocationLocks,
   describePartnerSharedSweepReason,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
-  sweepFuturePartnerSharedAllocations,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld,
   type SweptPartnerSharedAllocation,
 } from "@/lib/bed-allocation-lifecycle";
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
+import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -1255,6 +1257,10 @@ export async function updateAdminMember(params: {
       auditUpdateData,
     );
     const updated = await prisma.$transaction(async (tx) => {
+      if (deactivatesTarget || tierLeavesAdult) {
+        await acquireFuturePartnerSharedAllocationLocks(tx, [id]);
+        await acquireMemberLifecycleLocks(tx, [id]);
+      }
       // Last-admin guard (issue #1604): counted inside the mutation
       // transaction so it sees this transaction's read view. Only a real
       // deactivate/de-login can strand the club; role demotion of another
@@ -1318,7 +1324,7 @@ export async function updateAdminMember(params: {
       // occupants return to the awaiting-allocation queue (audited against
       // both bookings inside the sweep) and admins are alerted post-commit.
       if (deactivatesTarget || tierLeavesAdult) {
-        sweptShares = await sweepFuturePartnerSharedAllocations({
+        sweptShares = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
           memberId: id,
           reason: deactivatesTarget
             ? "member_deactivated"

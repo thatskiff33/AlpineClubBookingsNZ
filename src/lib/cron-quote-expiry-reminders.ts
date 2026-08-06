@@ -5,7 +5,7 @@ import {
 } from "@prisma/client";
 import { issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
 import {
   getBookingRequestSettings,
   parseBookingRequestGuests,
@@ -203,7 +203,7 @@ async function releaseExpiredQuoteHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
-        await reconcileBedAllocationsForBooking({
+        await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,
         });
@@ -367,7 +367,7 @@ async function releaseStaleModificationHolds(now: Date): Promise<number> {
           data: { status: BookingStatus.CANCELLED, nonMemberHoldUntil: null },
         });
         if (releasedRows.count === 0) return false;
-        await reconcileBedAllocationsForBooking({
+        await reconcileBedAllocationsForBookingWithGlobalLockHeld({
           bookingId: heldBookingId,
           db: tx,
         });

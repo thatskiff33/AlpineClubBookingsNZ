@@ -11,9 +11,10 @@ import {
   sendAdminPartnerShareSweptAlert,
 } from "@/lib/email";
 import {
+  acquireFuturePartnerSharedAllocationLocks,
   describePartnerSharedSweepReason,
   partnerShareSweepNights,
-  sweepFuturePartnerSharedAllocations,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld,
   type SweptPartnerSharedAllocation,
 } from "@/lib/bed-allocation-lifecycle";
 
@@ -934,6 +935,13 @@ export async function removeOwnPartnerLink(params: {
   // awaiting-allocation queue in the same transaction (audited against both
   // bookings inside the sweep; admins alerted post-commit).
   const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
+    if (wasConfirmed) {
+      await acquireFuturePartnerSharedAllocationLocks(tx, [
+        link.memberAId,
+        link.memberBId,
+      ]);
+    }
+    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
     const deleted = await tx.memberPartnerLink.deleteMany({
       where: { id: link.id, status: link.status },
     });
@@ -941,7 +949,7 @@ export async function removeOwnPartnerLink(params: {
       return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
     }
     const swept = wasConfirmed
-      ? await sweepFuturePartnerSharedAllocations({
+      ? await sweepFuturePartnerSharedAllocationsWithLocksHeld({
           memberId: link.memberAId,
           partnerMemberId: link.memberBId,
           reason: "partner_link_dissolved",
@@ -1215,6 +1223,13 @@ export async function adminRemovePartnerLink(params: {
   // (#1756): the admin dissolve must also clear the pair's future shared
   // double-bed placements.
   const { deletedCount, sweptShares } = await prisma.$transaction(async (tx) => {
+    if (wasConfirmed) {
+      await acquireFuturePartnerSharedAllocationLocks(tx, [
+        link.memberAId,
+        link.memberBId,
+      ]);
+    }
+    await lockPartnerMembers(tx, [link.memberAId, link.memberBId]);
     const deleted = await tx.memberPartnerLink.deleteMany({
       where: { id: link.id, status: link.status },
     });
@@ -1222,7 +1237,7 @@ export async function adminRemovePartnerLink(params: {
       return { deletedCount: 0, sweptShares: [] as SweptPartnerSharedAllocation[] };
     }
     const swept = wasConfirmed
-      ? await sweepFuturePartnerSharedAllocations({
+      ? await sweepFuturePartnerSharedAllocationsWithLocksHeld({
           memberId: link.memberAId,
           partnerMemberId: link.memberBId,
           reason: "partner_link_dissolved",
