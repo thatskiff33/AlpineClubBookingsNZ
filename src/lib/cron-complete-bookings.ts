@@ -24,26 +24,36 @@ export interface CompleteBookingsResult {
 export async function completeBookings(): Promise<CompleteBookingsResult> {
   const today = getTodayDateOnly();
 
-  const bookingsToComplete = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
-    const candidates = await tx.booking.findMany({
-      where: { status: BookingStatus.PAID, checkOut: { lt: today } },
-      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
-    });
-    const lockedLodgeIds = new Set(candidates.map((booking) => booking.lodgeId));
-    for (const lodgeId of [...lockedLodgeIds].sort()) {
-      await acquireLodgeCapacityLock(tx, lodgeId);
-    }
-    const current = await tx.booking.findMany({
-      where: { status: BookingStatus.PAID, checkOut: { lt: today } },
-      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
-    });
-    if (current.some((booking) => !lockedLodgeIds.has(booking.lodgeId))) {
-      throw new Error("Completion lodge set changed during lock acquisition; retry");
-    }
-
-    const completed: typeof current = [];
-    for (const booking of current) {
+  const candidates = await prisma.booking.findMany({
+    where: { status: BookingStatus.PAID, checkOut: { lt: today } },
+    select: { id: true },
+  });
+  const bookingsToComplete: Array<{
+    id: string;
+    checkIn: Date;
+    checkOut: Date;
+    lodgeId: string;
+  }> = [];
+  for (const candidate of candidates) {
+    const completed = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+      const key = await tx.booking.findUnique({
+        where: { id: candidate.id },
+        select: { lodgeId: true },
+      });
+      if (!key) return null;
+      await acquireLodgeCapacityLock(tx, key.lodgeId);
+      const booking = await tx.booking.findUnique({
+        where: { id: candidate.id },
+        select: { id: true, checkIn: true, checkOut: true, lodgeId: true, status: true },
+      });
+      if (
+        !booking ||
+        booking.status !== BookingStatus.PAID ||
+        booking.checkOut >= today
+      ) {
+        return null;
+      }
       const claimed = await tx.booking.updateMany({
         where: {
           id: booking.id,
@@ -52,7 +62,7 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
         },
         data: { status: BookingStatus.COMPLETED },
       });
-      if (claimed.count === 0) continue;
+      if (claimed.count === 0) return null;
       await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
         db: tx,
@@ -61,10 +71,10 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
           checkOut: booking.checkOut,
         },
       });
-      completed.push(booking);
-    }
-    return completed;
-  });
+      return booking;
+    });
+    if (completed) bookingsToComplete.push(completed);
+  }
 
   if (bookingsToComplete.length === 0) {
     return { completedCount: 0, completedBookingIds: [] };

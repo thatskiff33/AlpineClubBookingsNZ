@@ -110,11 +110,27 @@ describe("bed allocation lock topology", () => {
       "pg_advisory_xact_lock(1)",
       "acquireLodgeCapacityLock",
       "booking.updateMany",
-      "status },",
+      "status: newBooking.status",
       "cancelled.count === 0",
       "reconcileBedAllocationsForBookingWithLodgeLockHeld",
       "status: BookingStatus.WAITLIST_OFFERED",
-      "refreshedOffer.count === 0",
+      "return refreshedOffer.count === 1",
+      "!refreshedCurrentOffer",
+    ]);
+
+    const phaseThree = text.slice(text.indexOf("// Phase 3"));
+    expectInOrder(phaseThree, [
+      "pg_advisory_xact_lock(1)",
+      "acquireLodgeCapacityLock",
+      "booking.updateMany",
+      "status: BookingStatus.WAITLIST_OFFERED",
+      "updatedAt: entry.updatedAt",
+      "waitlistOfferedAt: entry.waitlistOfferedAt",
+      "waitlistOfferExpiresAt: entry.waitlistOfferExpiresAt",
+      "waitlistOfferedLodgeId: entry.waitlistOfferedLodgeId",
+      "waitlistOfferedPriceCents: entry.waitlistOfferedPriceCents",
+      "cancelled.count === 0",
+      "reconcileBedAllocationsForBookingWithLodgeLockHeld",
     ]);
   });
 
@@ -124,10 +140,13 @@ describe("bed allocation lock topology", () => {
   ])("uses locks, a fresh read, and a status claim in %s", (file, status) => {
     const text = source(file);
     expectInOrder(text, [
-      "pg_advisory_xact_lock(1)",
       "const candidates",
+      "for (const candidate of candidates)",
+      "prisma.$transaction",
+      "pg_advisory_xact_lock(1)",
+      "const key = await tx.booking.findUnique",
       "acquireLodgeCapacityLock",
-      "const current",
+      "const booking = await tx.booking.findUnique",
       "booking.updateMany",
       status,
       "claimed.count === 0",

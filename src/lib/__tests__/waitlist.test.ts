@@ -28,6 +28,7 @@ const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
 const mockBookingCreate = vi.fn();
 const mockExecuteRaw = vi.fn().mockResolvedValue(undefined);
+const mockReconcileBedAllocations = vi.fn().mockResolvedValue(undefined);
 /**
  * #2543: both waitlist paths now read the offered booking's party on the MODULE
  * client, outside the claiming transaction — the offer, to word the "why you are
@@ -99,6 +100,19 @@ vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   LODGE_CAPACITY: 29,
 }));
+
+vi.mock("@/lib/bed-allocation-lifecycle", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/bed-allocation-lifecycle")>(
+      "@/lib/bed-allocation-lifecycle",
+    );
+  return {
+    ...actual,
+    reconcileBedAllocationsForBookingWithLodgeLockHeld: (
+      ...args: unknown[]
+    ) => mockReconcileBedAllocations(...args),
+  };
+});
 
 // #2363: confirmWaitlistOffer re-checks the CURRENT minimum-stay policy set
 // before it turns an offer into held capacity. Only that one export is stubbed
@@ -172,6 +186,8 @@ beforeEach(() => {
   mockBookingUpdate.mockReset();
   mockBookingUpdateMany.mockReset();
   mockBookingCreate.mockReset();
+  mockReconcileBedAllocations.mockReset();
+  mockReconcileBedAllocations.mockResolvedValue(undefined);
   mockExecuteRaw.mockReset();
   mockTx.booking.findMany.mockReset();
   mockTx.booking.findUnique.mockReset();
@@ -1289,17 +1305,38 @@ describe("processWaitlistCron", () => {
       },
       { id: "old2" },
     ]);
-    mockBookingUpdateMany.mockResolvedValue({ count: 2 });
+    const old1 = {
+      id: "old1",
+      status: "WAITLISTED",
+      lodgeId: "lodge-1",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+    };
+    const old2 = {
+      ...old1,
+      id: "old2",
+      status: "WAITLIST_OFFERED",
+    };
+    mockTx.booking.findUnique
+      .mockResolvedValueOnce(old1)
+      .mockResolvedValueOnce(old1)
+      .mockResolvedValueOnce(old2)
+      .mockResolvedValueOnce(old2);
 
     const result = await processWaitlistCron();
 
     expect(result.autoCancelled).toBe(2);
-    expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+    expect(mockTx.booking.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: { in: ["old1", "old2"] } },
+        where: expect.objectContaining({
+          id: "old1",
+          status: { in: ["WAITLISTED", "WAITLIST_OFFERED"] },
+        }),
         data: expect.objectContaining({ status: "CANCELLED" }),
       })
     );
+    expect(mockReconcileBedAllocations).toHaveBeenCalledTimes(2);
   });
 
   // F32 (#1888): checkOut is @db.Date (the NZ calendar date stored at UTC
@@ -1343,16 +1380,23 @@ describe("processWaitlistCron", () => {
           );
         }
       );
-      mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+      const current = {
+        ...candidates[0],
+        status: "WAITLISTED",
+        lodgeId: "lodge-1",
+      };
+      mockTx.booking.findUnique
+        .mockResolvedValueOnce(current)
+        .mockResolvedValueOnce(current);
 
       const result = await processWaitlistCron();
 
       // Behavioural: the today-NZ checkout is in the cancel set (was excluded
       // under the local-midnight bug).
       expect(result.autoCancelled).toBe(1);
-      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+      expect(mockTx.booking.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: { in: ["checks-out-today-nz"] } },
+          where: expect.objectContaining({ id: "checks-out-today-nz" }),
           data: expect.objectContaining({ status: "CANCELLED" }),
         })
       );
@@ -1364,6 +1408,28 @@ describe("processWaitlistCron", () => {
       vi.useRealTimers();
       hostTimeZone.restore();
     }
+  });
+
+  it("does not reconcile or report a past waitlist candidate that loses its claim", async () => {
+    const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+    const booking = {
+      id: "lost-waitlist-claim",
+      status: "WAITLIST_OFFERED",
+      lodgeId: "lodge-1",
+      checkIn: new Date("2026-06-01"),
+      checkOut: new Date("2026-06-03"),
+    };
+    mockTx.booking.findMany.mockResolvedValueOnce([]);
+    mockBookingFindMany.mockResolvedValueOnce([{ id: booking.id }]);
+    mockTx.booking.findUnique
+      .mockResolvedValueOnce(booking)
+      .mockResolvedValueOnce(booking);
+    mockTx.booking.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await processWaitlistCron();
+
+    expect(result.autoCancelled).toBe(0);
+    expect(mockReconcileBedAllocations).not.toHaveBeenCalled();
   });
 });
 

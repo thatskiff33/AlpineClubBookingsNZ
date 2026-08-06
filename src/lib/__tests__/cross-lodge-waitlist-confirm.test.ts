@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   validateMinimumStay: vi.fn(),
   bookingFindFirst: vi.fn(),
   bookingUpdate: vi.fn(),
+  bookingUpdateMany: vi.fn(),
   lodgeFindUnique: vi.fn(),
   seasonFindMany: vi.fn(),
   groupDiscountFindUnique: vi.fn(),
@@ -36,10 +37,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const txClient = {
+  $executeRaw: vi.fn(),
   booking: {
     findUnique: mocks.bookingFindUnique,
     findFirst: mocks.bookingFindFirst,
     update: mocks.bookingUpdate,
+    updateMany: mocks.bookingUpdateMany,
   },
   lodge: { findUnique: mocks.lodgeFindUnique },
   season: { findMany: mocks.seasonFindMany },
@@ -92,6 +95,8 @@ vi.mock("@/lib/lodge-access", () => ({
 }));
 vi.mock("@/lib/bed-allocation-lifecycle", () => ({
   reconcileBedAllocationsForBooking: mocks.reconcileBedAllocations,
+  reconcileBedAllocationsForBookingWithLodgeLockHeld:
+    mocks.reconcileBedAllocations,
 }));
 vi.mock("@/lib/booking-create", () => ({
   createConfirmedBooking: mocks.createConfirmedBooking,
@@ -126,6 +131,9 @@ function offeredEntry(overrides: Record<string, unknown> = {}) {
     id: "entry-1",
     memberId: "member-1",
     status: BookingStatus.WAITLIST_OFFERED,
+    lodgeId: "lodge-a",
+    updatedAt: new Date("2026-08-06T00:00:00.000Z"),
+    waitlistOfferedAt: new Date("2026-08-06T00:00:00.000Z"),
     waitlistOfferExpiresAt: new Date(Date.now() + 86_400_000),
     waitlistOfferedLodgeId: "lodge-b",
     waitlistOfferedPriceCents: 34_000,
@@ -136,6 +144,20 @@ function offeredEntry(overrides: Record<string, unknown> = {}) {
     notes: null,
     ...overrides,
   };
+}
+
+function expectOfferEpochFence(where: unknown): void {
+  expect(where).toEqual(
+    expect.objectContaining({
+      id: "entry-1",
+      status: BookingStatus.WAITLIST_OFFERED,
+      updatedAt: new Date("2026-08-06T00:00:00.000Z"),
+      waitlistOfferedAt: new Date("2026-08-06T00:00:00.000Z"),
+      waitlistOfferExpiresAt: expect.any(Date),
+      waitlistOfferedLodgeId: "lodge-b",
+      waitlistOfferedPriceCents: 34_000,
+    }),
+  );
 }
 
 beforeEach(() => {
@@ -151,6 +173,7 @@ beforeEach(() => {
   mocks.acquireLodgeCapacityLock.mockResolvedValue(undefined);
   mocks.reconcileBedAllocations.mockResolvedValue(undefined);
   mocks.bookingUpdate.mockResolvedValue({});
+  mocks.bookingUpdateMany.mockResolvedValue({ count: 1 });
   // Default: no duplicate stay.
   mocks.bookingFindFirst.mockResolvedValue(null);
   // #2543 defaults: a club in the relaxed mode, an empty promoted party, and
@@ -351,12 +374,12 @@ describe("confirmCrossLodgeWaitlistOffer minimum-stay guard (#2363)", () => {
       expect.anything(),
       "lodge-b",
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "entry-1" },
         data: expect.objectContaining({ status: BookingStatus.WAITLISTED }),
       }),
     );
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(1);
   });
 
@@ -566,9 +589,8 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
       expect.anything(),
       "lodge-b",
     );
-    expect(mocks.bookingUpdate).toHaveBeenCalledWith(
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "entry-1" },
         data: expect.objectContaining({
           status: BookingStatus.WAITLISTED,
           waitlistOfferedLodgeId: null,
@@ -576,6 +598,7 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
         }),
       }),
     );
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
     expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(1);
   });
 
@@ -670,6 +693,71 @@ describe("confirmCrossLodgeWaitlistOffer paid-up-adult requirement (#2543)", () 
 
     expect(result.success).toBe(true);
     expect("subscriptionMemberRateNotice" in result).toBe(false);
+  });
+
+  it("cancels Phase 3 only for the exact offer epoch and reconciles the winner", async () => {
+    letPhase1Pass();
+    mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
+
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+
+    expect(result.success).toBe(true);
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(1);
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
+    expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(1);
+    expect(mocks.recordBookingEvent).toHaveBeenCalledTimes(1);
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ waitlistEntryCleanupCompleted: true }),
+      }),
+    );
+  });
+
+  it("keeps a changed offer intact when Phase 3 loses its epoch claim", async () => {
+    letPhase1Pass();
+    mocks.createConfirmedBooking.mockResolvedValue(createdBooking());
+    mocks.bookingUpdateMany.mockResolvedValue({ count: 0 });
+
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+
+    expect(result.success).toBe(true);
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[0][0].where);
+    expect(mocks.reconcileBedAllocations).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.stringContaining("changed before cleanup"),
+        metadata: expect.objectContaining({ waitlistEntryCleanupCompleted: false }),
+      }),
+    );
+  });
+
+  it("commits replacement cancellation when the price-refresh epoch claim loses", async () => {
+    letPhase1Pass();
+    mocks.createConfirmedBooking.mockResolvedValue({
+      ...createdBooking(),
+      booking: { ...createdBooking().booking, finalPriceCents: 35_000 },
+    });
+    mocks.bookingUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    const result = await confirmCrossLodgeWaitlistOffer("entry-1", "member-1");
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "This waitlist offer changed while it was being confirmed. Refresh and review the current offer.",
+    });
+    expect(mocks.bookingUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.bookingUpdateMany.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        where: { id: "new-booking", status: BookingStatus.PAYMENT_PENDING },
+        data: { status: BookingStatus.CANCELLED },
+      }),
+    );
+    expectOfferEpochFence(mocks.bookingUpdateMany.mock.calls[1][0].where);
+    expect(mocks.reconcileBedAllocations).toHaveBeenCalledTimes(1);
   });
 
   it("resolves the club's mode ONCE, and before any capacity lock is taken", async () => {

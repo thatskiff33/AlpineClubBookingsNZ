@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 type FixtureBooking = {
   id: string;
+  lodgeId: string;
   status: string;
   checkIn: Date;
   checkOut: Date;
@@ -57,20 +58,40 @@ const mockFindMany = vi.fn(
 );
 
 const mockUpdateMany = vi.fn(async (_args: unknown) => ({ count: 0 }));
+const mockFindUnique = vi.fn(async ({ where }: { where: { id: string } }) =>
+  fixtures.find((booking) => booking.id === where.id) ?? null,
+);
+const mockExecuteRaw = vi.fn(async () => undefined);
+const txClient = {
+  $executeRaw: mockExecuteRaw,
+  booking: {
+    findUnique: mockFindUnique,
+    updateMany: mockUpdateMany,
+  },
+};
+const mockTransaction = vi.fn(
+  async (callback: (tx: typeof txClient) => unknown) => callback(txClient),
+);
 
 vi.mock("../prisma", () => ({
   prisma: {
+    $transaction: (...args: unknown[]) => mockTransaction(...(args as [never])),
     booking: {
       findMany: (...args: unknown[]) => mockFindMany(...(args as [never])),
-      updateMany: (...args: unknown[]) => mockUpdateMany(...(args as [never])),
     },
   },
 }));
 
 const mockReconcile = vi.fn(async (_args: unknown) => undefined);
 vi.mock("../bed-allocation-lifecycle", () => ({
-  reconcileBedAllocationsForBooking: (...args: unknown[]) =>
+  reconcileBedAllocationsForBookingWithLodgeLockHeld: (...args: unknown[]) =>
     mockReconcile(...(args as [never])),
+}));
+
+const mockAcquireLodgeCapacityLock = vi.fn(async () => undefined);
+vi.mock("../capacity", () => ({
+  acquireLodgeCapacityLock: (...args: unknown[]) =>
+    mockAcquireLodgeCapacityLock(...(args as [never])),
 }));
 
 vi.mock("../logger", () => ({
@@ -90,9 +111,13 @@ const CONFIRMED = "CONFIRMED";
 beforeEach(() => {
   fixtures = [];
   mockFindMany.mockClear();
+  mockFindUnique.mockClear();
   mockUpdateMany.mockClear();
+  mockTransaction.mockClear();
+  mockExecuteRaw.mockClear();
+  mockAcquireLodgeCapacityLock.mockClear();
   mockReconcile.mockClear();
-  mockUpdateMany.mockImplementation(async (_args: unknown) => ({ count: 0 }));
+  mockUpdateMany.mockImplementation(async (_args: unknown) => ({ count: 1 }));
 });
 
 afterEach(() => {
@@ -112,13 +137,13 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
 
     fixtures = [
       // Check-out is TODAY: guests may still be at the lodge — must stay PAID.
-      { id: "checkout-today", status: PAID, checkIn: addDaysDateOnly(today, -2), checkOut: today },
+      { id: "checkout-today", lodgeId: "lodge-1", status: PAID, checkIn: addDaysDateOnly(today, -2), checkOut: today },
       // Check-out was YESTERDAY: the whole check-out day has passed — complete.
-      { id: "checkout-yesterday", status: PAID, checkIn: addDaysDateOnly(today, -3), checkOut: yesterday },
+      { id: "checkout-yesterday", lodgeId: "lodge-1", status: PAID, checkIn: addDaysDateOnly(today, -3), checkOut: yesterday },
       // Check-out is in the future — never complete.
-      { id: "checkout-future", status: PAID, checkIn: today, checkOut: tomorrow },
+      { id: "checkout-future", lodgeId: "lodge-1", status: PAID, checkIn: today, checkOut: tomorrow },
       // Correct check-out but not PAID — never touched by this cron.
-      { id: "confirmed-past", status: CONFIRMED, checkIn: addDaysDateOnly(today, -3), checkOut: yesterday },
+      { id: "confirmed-past", lodgeId: "lodge-1", status: CONFIRMED, checkIn: addDaysDateOnly(today, -3), checkOut: yesterday },
     ];
 
     const result = await completeBookings();
@@ -129,13 +154,18 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     // Only the yesterday-checkout booking is flipped to COMPLETED.
     expect(mockUpdateMany).toHaveBeenCalledTimes(1);
     expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["checkout-yesterday"] } },
+      where: {
+        id: "checkout-yesterday",
+        status: "PAID",
+        checkOut: { lt: today },
+      },
       data: { status: "COMPLETED" },
     });
     // And its bed allocations are reconciled with its date envelope.
     expect(mockReconcile).toHaveBeenCalledTimes(1);
     expect(mockReconcile).toHaveBeenCalledWith({
       bookingId: "checkout-yesterday",
+      db: txClient,
       previousRange: { checkIn: addDaysDateOnly(today, -3), checkOut: yesterday },
     });
   });
@@ -166,9 +196,9 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     fixtures = [
       // Its NZ check-out day (07-18) is the current NZ day — must stay PAID.
       // A UTC-based boundary (today = 07-17) would wrongly complete this.
-      { id: "nz-checkout-today", status: PAID, checkIn: parseDateOnly("2026-07-15"), checkOut: parseDateOnly("2026-07-18") },
+      { id: "nz-checkout-today", lodgeId: "lodge-1", status: PAID, checkIn: parseDateOnly("2026-07-15"), checkOut: parseDateOnly("2026-07-18") },
       // Check-out 07-17 is now a full NZ day in the past — complete it.
-      { id: "nz-checkout-yesterday", status: PAID, checkIn: parseDateOnly("2026-07-14"), checkOut: parseDateOnly("2026-07-17") },
+      { id: "nz-checkout-yesterday", lodgeId: "lodge-1", status: PAID, checkIn: parseDateOnly("2026-07-14"), checkOut: parseDateOnly("2026-07-17") },
     ];
 
     const result = await completeBookings();
@@ -185,13 +215,35 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
 
     const today = getTodayDateOnly();
     fixtures = [
-      { id: "still-staying", status: PAID, checkIn: addDaysDateOnly(today, -1), checkOut: today },
+      { id: "still-staying", lodgeId: "lodge-1", status: PAID, checkIn: addDaysDateOnly(today, -1), checkOut: today },
     ];
 
     const result = await completeBookings();
 
     expect(result).toEqual({ completedCount: 0, completedBookingIds: [] });
     expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile or report a candidate that loses the PAID claim", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-18T02:00:00.000Z"));
+    const today = getTodayDateOnly();
+    fixtures = [
+      {
+        id: "lost-claim",
+        lodgeId: "lodge-1",
+        status: PAID,
+        checkIn: addDaysDateOnly(today, -3),
+        checkOut: addDaysDateOnly(today, -1),
+      },
+    ];
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(completeBookings()).resolves.toEqual({
+      completedCount: 0,
+      completedBookingIds: [],
+    });
     expect(mockReconcile).not.toHaveBeenCalled();
   });
 });
