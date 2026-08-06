@@ -1562,11 +1562,11 @@ function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
 }
 
 function matchedFamilyComponentOrder(components: StayGuest[][]): StayGuest[] {
-  return components.flatMap((component) => {
+  const paired: StayGuest[] = [];
+  const unmatched: StayGuest[] = [];
+  for (const component of components) {
     const match = maximumCardinalityFamilyPairs(component);
     const emitted = new Set<number>();
-    const paired: StayGuest[] = [];
-    const unmatched: StayGuest[] = [];
     for (let index = 0; index < component.length; index += 1) {
       if (emitted.has(index)) continue;
       const partner = match[index];
@@ -1579,8 +1579,10 @@ function matchedFamilyComponentOrder(components: StayGuest[][]): StayGuest[] {
       emitted.add(index);
       emitted.add(partner);
     }
-    return [...paired, ...unmatched];
-  });
+  }
+  // Pair blocks from every component stay adjacent before any singleton or
+  // unmatched vertex can consume half of a capacity-two room.
+  return [...paired, ...unmatched];
 }
 
 function splitGuestOrderVariants(
@@ -1664,10 +1666,17 @@ function splitGuestOrderVariants(
     components.push(component);
   }
   const componentCluster = components.flat();
-  familyVariants.push(
+  const requiredFamilyVariants = uniqueGuestOrders([
     componentCluster,
     components.flatMap((component) => [...component].reverse()),
     matchedFamilyComponentOrder(components),
+  ]).filter(
+    (candidate) =>
+      !foundational.some(
+        (base) =>
+          base.length === candidate.length &&
+          base.every((guest, index) => guest.id === candidate[index]?.id),
+      ),
   );
 
   // Retain direct-pair-front candidates for overlapping or impossible chains:
@@ -1717,14 +1726,27 @@ function splitGuestOrderVariants(
         (base) =>
           base.length === candidate.length &&
           base.every((guest, index) => guest.id === candidate[index]?.id),
+      ) &&
+      !requiredFamilyVariants.some(
+        (required) =>
+          required.length === candidate.length &&
+          required.every(
+            (guest, index) => guest.id === candidate[index]?.id,
+          ),
       ),
   );
   const remaining = Math.max(
-    BED_ALLOCATION_MAX_MATCHING_LAYOUTS - foundational.length,
+    BED_ALLOCATION_MAX_MATCHING_LAYOUTS -
+      foundational.length -
+      requiredFamilyVariants.length,
     0,
   );
   if (distinctFamilyVariants.length <= remaining) {
-    return [...foundational, ...distinctFamilyVariants];
+    return [
+      ...foundational,
+      ...requiredFamilyVariants,
+      ...distinctFamilyVariants,
+    ];
   }
   // Sample the full deterministic family candidate set evenly and include both
   // endpoints. In particular, the final high-sorted group candidate must not
@@ -1738,7 +1760,11 @@ function splitGuestOrderVariants(
           );
     return distinctFamilyVariants[sampledIndex];
   });
-  return [...foundational, ...spreadFamilyVariants];
+  return [
+    ...foundational,
+    ...requiredFamilyVariants,
+    ...spreadFamilyVariants,
+  ];
 }
 
 interface PreferredBedRow {

@@ -1019,6 +1019,120 @@ describe("bed allocation planner", () => {
     expect(buildFirstFitBedAllocationPlan(input)).toEqual(plan);
   });
 
+  it("keeps pair blocks from later components ahead of unmatched guests", () => {
+    const pairRooms: BedAllocationRoom[] = Array.from(
+      { length: 4 },
+      (_, roomIndex) => ({
+        id: `pair-block-room-${roomIndex}`,
+        name: `Pair block room ${roomIndex}`,
+        sortOrder: roomIndex,
+        beds: Array.from({ length: 2 }, (_, bedIndex) => ({
+          id: `pair-block-bed-${roomIndex}-${bedIndex}`,
+          roomId: `pair-block-room-${roomIndex}`,
+          name: `Bed ${bedIndex}`,
+          sortOrder: bedIndex,
+        })),
+      }),
+    );
+    const groupsByGuest: Record<string, string[]> = {
+      g0: ["g0-g7"],
+      g1: [],
+      g2: ["g2-g3"],
+      g3: ["g2-g3"],
+      g4: [],
+      g5: ["g5-g6"],
+      g6: ["g5-g6"],
+      g7: ["g0-g7"],
+    };
+    const input = {
+      enabled: true,
+      allocationPriorityOrder: ["FAMILY_COHESION" as const],
+      rooms: pairRooms,
+      bookings: [
+        multiGuestBooking(
+          "pair-blocks",
+          "2026-06-01",
+          ["g7", "g0", "g4", "g2", "g6", "g3", "g1", "g5"].map(
+            (id) => ({ id, familyGroupIds: groupsByGuest[id] }),
+          ),
+        ),
+      ],
+    };
+    const plan = buildFirstFitBedAllocationPlan(input);
+    const roomByGuest = new Map(
+      plan.allocations.map((row) => [row.bookingGuestId, row.roomId]),
+    );
+
+    expect(roomByGuest.get("g0")).toBe(roomByGuest.get("g7"));
+    expect(roomByGuest.get("g2")).toBe(roomByGuest.get("g3"));
+    expect(roomByGuest.get("g5")).toBe(roomByGuest.get("g6"));
+    expect(buildFirstFitBedAllocationPlan(input)).toEqual(plan);
+  });
+
+  it("reserves the maximum direct-edge matching candidate above the sampling cap", () => {
+    const denseRooms: BedAllocationRoom[] = Array.from(
+      { length: 4 },
+      (_, roomIndex) => ({
+        id: `dense-room-${roomIndex}`,
+        name: `Dense room ${roomIndex}`,
+        sortOrder: roomIndex,
+        beds: Array.from({ length: 2 }, (_, bedIndex) => ({
+          id: `dense-bed-${roomIndex}-${bedIndex}`,
+          roomId: `dense-room-${roomIndex}`,
+          name: `Bed ${bedIndex}`,
+          sortOrder: bedIndex,
+        })),
+      }),
+    );
+    const edges = [
+      ["g0", "g1"],
+      ["g0", "g3"],
+      ["g0", "g7"],
+      ["g1", "g2"],
+      ["g1", "g3"],
+      ["g1", "g4"],
+      ["g1", "g7"],
+      ["g2", "g4"],
+      ["g3", "g4"],
+      ["g4", "g5"],
+    ] as const;
+    const familyGroupIds = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`g${index}`, [] as string[]]),
+    );
+    for (const [left, right] of edges) {
+      const groupId = `${left}-${right}`;
+      familyGroupIds[left].push(groupId);
+      familyGroupIds[right].push(groupId);
+    }
+    const input = {
+      enabled: true,
+      allocationPriorityOrder: ["FAMILY_COHESION" as const],
+      rooms: denseRooms,
+      bookings: [
+        multiGuestBooking(
+          "dense-family",
+          "2026-06-01",
+          ["g4", "g2", "g0", "g5", "g1", "g3", "g6", "g7"].map(
+            (id) => ({ id, familyGroupIds: familyGroupIds[id] }),
+          ),
+        ),
+      ],
+    };
+    const plan = buildFirstFitBedAllocationPlan(input);
+    const roomByGuest = new Map(
+      plan.allocations.map((row) => [row.bookingGuestId, row.roomId]),
+    );
+    const preservedEdges = edges.filter(
+      ([left, right]) => roomByGuest.get(left) === roomByGuest.get(right),
+    );
+
+    expect(preservedEdges).toHaveLength(3);
+    expect(roomByGuest.get("g4")).toBe(roomByGuest.get("g5"));
+    expect(roomByGuest.get("g2")).toBe(roomByGuest.get("g1"));
+    expect(roomByGuest.get("g0")).toBe(roomByGuest.get("g3"));
+    expect(buildFirstFitBedAllocationPlan(input)).toEqual(plan);
+  });
+
   it("retains a direct-pair choice inside an overlapping family chain", () => {
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
