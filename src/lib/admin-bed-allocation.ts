@@ -1952,6 +1952,48 @@ export async function getBedAllocationDashboard(input: {
   ]);
   const serializedAllocations = serializeAllocations(allocationRecords);
 
+  // Planner-only continuity context: the board still returns and renders only
+  // the requested window, but a guest allocated just outside it must influence
+  // STAY_CONTINUITY when an adjacent visible night is suggested. Load only the
+  // overlapping board bookings' full envelopes and keep those extra rows out
+  // of `serializedAllocations` and every response collection.
+  let plannerAllocationRecords = allocationRecords;
+  if (settings.autoAllocationEnabled && bookings.length > 0) {
+    const contextFrom = bookings.reduce(
+      (earliest, booking) =>
+        booking.checkIn < earliest ? booking.checkIn : earliest,
+      input.range.from,
+    );
+    const contextTo = bookings.reduce(
+      (latest, booking) =>
+        booking.checkOut > latest ? booking.checkOut : latest,
+      input.range.to,
+    );
+    if (contextFrom < input.range.from || contextTo > input.range.to) {
+      const bookingIds = new Set(bookings.map((booking) => booking.id));
+      const visibleIds = new Set(allocationRecords.map((row) => row.id));
+      const contextRecords = await loadAllocationRecords(
+        {
+          from: contextFrom,
+          to: contextTo,
+          fromDate: formatDateOnly(contextFrom),
+          toDate: formatDateOnly(contextTo),
+        },
+        db,
+        input.lodgeId,
+      );
+      plannerAllocationRecords = [
+        ...allocationRecords,
+        ...contextRecords.filter(
+          (row) => bookingIds.has(row.bookingId) && !visibleIds.has(row.id),
+        ),
+      ];
+    }
+  }
+  const serializedPlannerAllocations = serializeAllocations(
+    plannerAllocationRecords,
+  );
+
   // Exclusive whole-lodge holds (ADR-001, issues #119/#120). A held booking
   // implicitly occupies every bed, so it is short-circuited OUT of per-bed
   // allocation: its guest-nights are excluded from the awaiting-allocation set
@@ -2059,7 +2101,7 @@ export async function getBedAllocationDashboard(input: {
         rooms: plannerRooms,
         bookings: plannerBookings,
         occupiedBedNights: [
-          ...serializedAllocations.map((allocation) => ({
+          ...serializedPlannerAllocations.map((allocation) => ({
             bedId: allocation.bedId,
             bookingId: allocation.bookingId,
             bookingGuestId: allocation.bookingGuestId,

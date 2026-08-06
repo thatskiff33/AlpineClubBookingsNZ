@@ -832,7 +832,10 @@ async function autoAllocateMissingBedNights({
           createdAt: true,
           checkIn: true,
           checkOut: true,
-          originBookingRequest: { select: { id: true } },
+          lodgeId: true,
+          requestedRoomId: true,
+          originBookingRequest: { select: { id: true, type: true } },
+          heldForBookingRequest: { select: { type: true } },
           adminCapacityHoldAt: true,
         },
       },
@@ -1017,6 +1020,11 @@ async function autoAllocateMissingBedNights({
           allocation.bookingGuest.member?.familyGroupMemberships.map(
             (membership) => membership.familyGroupId,
           ) ?? [],
+        bookingRequestedRoomId:
+          allocation.booking?.requestedRoomId ?? null,
+        bookingIsSchoolGroup:
+          allocation.booking?.originBookingRequest?.type === "SCHOOL" ||
+          allocation.booking?.heldForBookingRequest?.type === "SCHOOL",
         approvedAt: allocation.approvedAt,
         // #1677: newest provisional bookings are evicted first when a held
         // booking needs a whole room.

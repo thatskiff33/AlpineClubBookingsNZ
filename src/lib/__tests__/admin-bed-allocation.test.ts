@@ -3,6 +3,7 @@ import path from "path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
 import { canonicalPartnerPair } from "@/lib/member-partner-link-shared";
+import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -2391,11 +2392,14 @@ describe("getBedAllocationDashboard school-group threading (#1768)", () => {
       ageTier,
       stayStart: parseDateOnly("2026-07-01"),
       stayEnd: parseDateOnly("2026-07-02"),
+      nights: [{ stayDate: parseDateOnly("2026-07-01") }],
+      member: null,
     });
     const db = {
       bedAllocationSettings: {
         findUnique: vi.fn().mockResolvedValue({
           autoAllocationEnabled: true,
+          allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
           updatedByMemberId: null,
           updatedAt: parseDateOnly("2026-06-30"),
         }),
@@ -2454,6 +2458,125 @@ describe("getBedAllocationDashboard school-group threading (#1768)", () => {
     for (const roomId of studentRooms) {
       expect(teacherRooms.has(roomId)).toBe(false);
     }
+  });
+
+  it("uses off-screen allocation rows for continuity without returning them", async () => {
+    const range = parseBedAllocationDateRange({
+      from: "2026-07-02",
+      to: "2026-07-03",
+    });
+    const room = (id: string, sortOrder: number) => ({
+      id,
+      name: `Room ${id}`,
+      sortOrder,
+      active: true,
+      notes: null,
+      lodgeId: null,
+      beds: [
+        {
+          id: `bed-${id}`,
+          roomId: id,
+          name: `Bed ${id}`,
+          sortOrder: 1,
+          active: true,
+          bedType: "SINGLE",
+          bunkGroup: null,
+        },
+      ],
+    });
+    const guest = {
+      id: "guest-1",
+      bookingId: "booking-1",
+      firstName: "Guest",
+      lastName: "One",
+      ageTier: "ADULT",
+      stayStart: parseDateOnly("2026-07-01"),
+      stayEnd: parseDateOnly("2026-07-03"),
+      nights: [{ stayDate: parseDateOnly("2026-07-02") }],
+      member: null,
+    };
+    const booking = {
+      id: "booking-1",
+      status: "PAID",
+      createdAt: new Date("2026-06-01T00:00:00.000Z"),
+      checkIn: parseDateOnly("2026-07-01"),
+      checkOut: parseDateOnly("2026-07-03"),
+      lodgeId: null,
+      requestedRoomId: null,
+      parentBookingId: null,
+      originBookingRequest: null,
+      heldForBookingRequest: null,
+      adminCapacityHoldAt: null,
+      wholeLodgeHold: false,
+      requestedRoom: null,
+      member: { firstName: "Member", lastName: "One", email: "m@example.nz" },
+      guests: [guest],
+    };
+    const contextAllocation = {
+      id: "allocation-before-window",
+      bookingId: booking.id,
+      bookingGuestId: guest.id,
+      roomId: "rb",
+      bedId: "bed-rb",
+      stayDate: parseDateOnly("2026-07-01"),
+      source: "AUTO",
+      approvedAt: null,
+      approvedBy: null,
+      isSecondOccupant: false,
+      booking: {
+        status: "PAID",
+        originBookingRequest: null,
+        adminCapacityHoldAt: null,
+      },
+      bookingGuest: {
+        id: guest.id,
+        bookingId: booking.id,
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+        ageTier: guest.ageTier,
+        member: null,
+      },
+      room: { id: "rb", name: "Room rb" },
+      bed: { id: "bed-rb", name: "Bed rb" },
+    };
+    const allocationFindMany = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([contextAllocation]);
+    const db = {
+      bedAllocationSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "default",
+          lodgeId: null,
+          autoAllocationEnabled: true,
+          allocationPriorityOrder: ["STAY_CONTINUITY"],
+          updatedByMemberId: null,
+          updatedAt: parseDateOnly("2026-06-30"),
+        }),
+      },
+      lodgeRoom: {
+        findMany: vi.fn().mockResolvedValue([room("ra", 1), room("rb", 2)]),
+      },
+      hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
+      booking: { findMany: vi.fn().mockResolvedValue([booking]) },
+      bedAllocation: { findMany: allocationFindMany },
+    };
+
+    const dashboard = await getBedAllocationDashboard({
+      range,
+      db: db as never,
+    });
+
+    expect(allocationFindMany).toHaveBeenCalledTimes(2);
+    expect(dashboard.allocations).toEqual([]);
+    expect(dashboard.suggestedAllocations).toEqual([
+      expect.objectContaining({
+        bookingGuestId: "guest-1",
+        stayDate: "2026-07-02",
+        roomId: "rb",
+        bedId: "bed-rb",
+      }),
+    ]);
   });
 });
 
@@ -3546,7 +3669,7 @@ describe("bed allocation lock semantics are two-way (#2252)", () => {
 
     const db = {
       bedAllocation: {
-        findFirst: vi.fn(async (_args: unknown) => rows[0] ?? null),
+        findFirst: vi.fn(async () => rows[0] ?? null),
         delete: vi.fn(async ({ where }: { where: { id: string } }) => {
           const removed = rows.find((row) => row.id === where.id);
           rows = rows.filter((row) => row.id !== where.id);

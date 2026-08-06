@@ -165,7 +165,7 @@ async function processWaitlistCronOnce(): Promise<{
 /**
  * Waitlist processor cron job.
  * - Expires stale WAITLIST_OFFERED bookings and re-offers to next candidates
- * - Auto-cancels WAITLISTED bookings where all dates are in the past
+ * - Auto-cancels WAITLISTED and WAITLIST_OFFERED bookings whose dates passed
  * - Retries transient Prisma transaction-start failures; each attempt is safe
  *   because waitlist mutations are guarded by statuses and advisory locks.
  */
