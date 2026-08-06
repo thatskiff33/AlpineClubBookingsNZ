@@ -41,6 +41,10 @@ prisma/schema.prisma text eol=lf
 # exactly the churn that matters. Every tracked source file on `main` is
 # already LF, so pinning the set is zero-churn today and ends the class.
 *.ts text eol=lf
+# The main-branch blob for this file contains a historical literal NUL in the
+# resolution-key separator. Force textual review while this change normalises
+# it to the equivalent escaped source form.
+src/lib/config-transfer/import-types.ts text eol=lf diff
 *.tsx text eol=lf
 *.js text eol=lf
 *.mjs text eol=lf

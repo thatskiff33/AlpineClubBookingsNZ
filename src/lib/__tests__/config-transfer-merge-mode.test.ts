@@ -13,13 +13,14 @@ import {
 // writes everything. Creates are unaffected (they always use the full data).
 
 describe("config-transfer import merge mode", () => {
-  it("rawHasValue treats blank/absent as no-value but false/0 as values", () => {
+  it("rawHasValue treats blank/absent as no-value but false/0/empty arrays as values", () => {
     expect(rawHasValue({ x: "hello" }, "x")).toBe(true);
     expect(rawHasValue({ x: "  " }, "x")).toBe(false); // whitespace only
     expect(rawHasValue({ x: "" }, "x")).toBe(false);
     expect(rawHasValue({}, "x")).toBe(false); // absent
     expect(rawHasValue({ x: false }, "x")).toBe(true); // boolean false is a value
     expect(rawHasValue({ x: 0 }, "x")).toBe(true); // 0 is a value
+    expect(rawHasValue({ x: [] }, "x")).toBe(true); // explicit empty JSON list is a value
     expect(rawHasValue({ x: null }, "x")).toBe(false);
   });
 

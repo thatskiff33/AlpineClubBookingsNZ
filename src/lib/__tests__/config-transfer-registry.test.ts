@@ -16,6 +16,7 @@ import {
 import "@/lib/config-transfer/categories/site-content";
 import "@/lib/config-transfer/categories/club-settings";
 import "@/lib/config-transfer/categories/lodge-config";
+import "@/lib/config-transfer/categories/bed-allocation-settings";
 import "@/lib/config-transfer/categories/booking-policies";
 import "@/lib/config-transfer/categories/lodge-ops";
 import "@/lib/config-transfer/categories/committee";
@@ -165,6 +166,7 @@ describe("config-transfer registry — registered descriptors", () => {
         "lodge",
         "lodge-room",
         "lodge-bed",
+        "lodge-bed-allocation-settings",
         "season",
         "season-rate",
         "lodge-instruction",

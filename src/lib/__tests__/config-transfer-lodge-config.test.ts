@@ -24,7 +24,7 @@ function sourceDb(): ReadDb {
     lodge: {
       findMany: vi.fn().mockResolvedValue([
         {
-          slug: "main", name: "Main Lodge", active: true, travelNote: "Turn left",
+          id: "lodge-main", slug: "main", name: "Main Lodge", active: true, travelNote: "Turn left",
           doorCode: "9999", isDefault: true,
           displayConfig: { "wifi-code": "alpine1234" },
           displayNameGranularity: "FULL_NAME",
@@ -81,6 +81,20 @@ function sourceDb(): ReadDb {
     // reads both tables even when empty.
     displayLayout: { findMany: vi.fn().mockResolvedValue([]) },
     displayTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    bedAllocationSettings: {
+      findUnique: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
+        where.id === "lodge-main"
+          ? {
+              id: "lodge-main",
+              lodgeId: "lodge-main",
+              autoAllocationEnabled: false,
+              allocationPriorityOrder: ["REQUESTED_ROOM", "BOOKING_COHESION"],
+              updatedByMemberId: null,
+              updatedAt: null,
+            }
+          : null,
+      ),
+    },
   } as unknown as ReadDb;
 }
 

@@ -48,8 +48,8 @@ import { RowValidator, asStr, coerceBool, nz, readCsvRows } from "../values";
 //
 // Row validation is strict and BLOCKS apply (plan errors): malformed dates,
 // enums, and money never reach a write; blank cells are only legal where merge
-// mode would keep the existing value. Per-lodge capacity/settings stay out of
-// scope (id="default"-vs-lodgeId duality; set on the lodge page). ADR-001/002.
+// mode would keep the existing value. Per-lodge capacity stays out of scope;
+// allocation settings are handled by the ordered companion module. ADR-001/002.
 
 /** Every per-lodge folder lives under this prefix. */
 export const LODGES_PREFIX = "lodge-config/lodges/";

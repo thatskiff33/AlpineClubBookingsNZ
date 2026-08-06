@@ -122,6 +122,77 @@ describe("config-transfer club-settings", () => {
     expect("doorCode" in email).toBe(false);
   });
 
+  it("keeps the legacy singleton file and exports its priority order", async () => {
+    const { zip } = await buildConfigExport({
+      db: stubDb({
+        bedAllocationSettings: {
+          autoAllocationEnabled: false,
+          allocationPriorityOrder: ["REQUESTED_ROOM"],
+        },
+      }),
+      categories: ["club-settings"],
+      includeDoorCodes: false,
+      appVersion: "0.10.1",
+      prismaMigration: null,
+      generatedAt: "2026-08-06T00:00:00.000Z",
+    });
+    const { files } = readBundle(zip);
+    expect(
+      JSON.parse(
+        strFromU8(files.get("club-settings/bed-allocation-settings.json")!),
+      ),
+    ).toEqual({
+      autoAllocationEnabled: false,
+      allocationPriorityOrder: ["REQUESTED_ROOM"],
+    });
+  });
+
+  it("normalises an older legacy singleton file's missing priority to the canonical order", async () => {
+    const plan = await clubSettingsImporter.plan({
+      db: stubDb({
+        bedAllocationSettings: {
+          autoAllocationEnabled: false,
+          allocationPriorityOrder: [],
+        },
+      }),
+      files: new Map([
+        [
+          "club-settings/bed-allocation-settings.json",
+          strToU8(JSON.stringify({ autoAllocationEnabled: false })),
+        ],
+      ]),
+      manifest: {} as never,
+      mode: "merge",
+      resolutions: new Map(),
+    });
+    expect(plan.errors).toEqual([]);
+    expect(plan.items).toEqual([
+      {
+        entity: "bed-allocation-settings",
+        key: "default",
+        action: "update",
+        changedFields: ["allocationPriorityOrder"],
+      },
+    ]);
+  });
+
+  it("rejects an invalid priority in the legacy singleton during the dry-run", async () => {
+    const plan = await clubSettingsImporter.plan({
+      db: stubDb({}),
+      files: new Map([
+        [
+          "club-settings/bed-allocation-settings.json",
+          strToU8(JSON.stringify({ allocationPriorityOrder: ["UNKNOWN"] })),
+        ],
+      ]),
+      manifest: {} as never,
+      mode: "overwrite",
+      resolutions: new Map(),
+    });
+    expect(plan.items).toEqual([]);
+    expect(plan.errors.join(" ")).toMatch(/unknown bed-allocation priority/i);
+  });
+
   it("round-trips the club-identity facebookUrl and leaves the email fields on their own entry (C5 #1984)", async () => {
     const IDENTITY = {
       name: "Renamed Club",

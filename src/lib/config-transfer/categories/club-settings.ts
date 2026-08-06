@@ -19,6 +19,10 @@ import {
 import { DEFAULT_MEMBER_FIELDS_SETTINGS } from "@/config/member-fields";
 import { DEFAULT_LOGIN_SECURITY_POLICY } from "@/lib/password-policy";
 import {
+  BedAllocationSettingsValidationError,
+  parseBedAllocationPriorityOrder,
+} from "@/lib/bed-allocation-settings";
+import {
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
 } from "@/config/modules";
@@ -73,6 +77,8 @@ interface SingletonFieldConstraint {
   required?: boolean;
   min?: number;
   max?: number;
+  /** Optional strict validator for structured fields Prisma's scalar check cannot cover. */
+  validate?: (value: unknown) => string | null;
 }
 
 interface SingletonSpec {
@@ -335,17 +341,48 @@ export const SINGLETONS: SingletonSpec[] = [
   {
     entity: "bed-allocation-settings",
     delegate: "bedAllocationSettings",
-    fields: ["autoAllocationEnabled"],
-    // Non-null Boolean (@default true); a present null fails the dry-run (#2200).
+    fields: ["autoAllocationEnabled", "allocationPriorityOrder"],
+    // Both columns are non-null. The ordered list additionally shares the
+    // runtime closed-vocabulary parser so config transfer cannot bypass it.
     constraints: {
       autoAllocationEnabled: { required: true },
+      allocationPriorityOrder: {
+        required: true,
+        validate: (value) => {
+          try {
+            parseBedAllocationPriorityOrder(
+              value,
+              "allocationPriorityOrder",
+              400,
+            );
+            return null;
+          } catch (error) {
+            return error instanceof BedAllocationSettingsValidationError
+              ? error.message
+              : "must be a valid bed-allocation priority order";
+          }
+        },
+      },
     },
     excluded: {
       lodgeId:
-        "soft-link FK for the phase-7 per-lodge conversion, unused by runtime " +
-        "reads today; a source lodge id is not portable across installs",
+        "legacy singleton's soft link to a source lodge is not portable across " +
+        "installs; authoritative per-lodge settings travel with lodge-config",
     },
     defaults: () => DEFAULT_BED_ALLOCATION_SETTINGS,
+    // Older singleton bundles predate configurable priority ordering. Their
+    // present settings file means "restore allocation settings", so omission
+    // of this one newer field intentionally restores the historical canonical
+    // order. `autoAllocationEnabled` has no such exception and remains omitted.
+    reconcile: (incoming) =>
+      "allocationPriorityOrder" in incoming
+        ? incoming
+        : {
+            ...incoming,
+            allocationPriorityOrder: [
+              ...DEFAULT_BED_ALLOCATION_SETTINGS.allocationPriorityOrder,
+            ],
+          },
   },
   {
     entity: "booking-request-settings",
@@ -810,6 +847,15 @@ function parseSingleton(
       }
       continue;
     }
+    const customValidationError = rule?.validate?.(value);
+    if (customValidationError) {
+      errors.push(`${file}: ${field} â€” ${customValidationError}`);
+      ok = false;
+      continue;
+    }
+    // A custom validator owns the complete shape check for structured values
+    // (notably String[]); Prisma's scalar `column.type` alone is insufficient.
+    if (rule?.validate) continue;
     // Enum columns (e.g. familyBillingMode) are validated against the real
     // Prisma enum so an invalid value fails the dry-run, not the write (#2200).
     if (column.kind === "enum") {

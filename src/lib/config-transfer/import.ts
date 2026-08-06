@@ -16,6 +16,7 @@ import { mediaApplies, planBundleMedia } from "./media";
 import { siteContentImporter } from "./categories/site-content";
 import { clubSettingsImporter } from "./categories/club-settings";
 import { lodgeConfigImporter } from "./categories/lodge-config";
+import { bedAllocationSettingsImporter } from "./categories/bed-allocation-settings";
 import { bookingPoliciesImporter } from "./categories/booking-policies";
 import { lodgeOpsImporter } from "./categories/lodge-ops";
 import { displayImporter } from "./categories/display";
@@ -36,6 +37,7 @@ export const CATEGORY_IMPORTERS: CategoryImporter[] = [
   siteContentImporter,
   clubSettingsImporter,
   lodgeConfigImporter,
+  bedAllocationSettingsImporter,
   // Booking policies depend on lodge slugs and intentionally replace their
   // complete policy set, so they apply immediately after lodge configuration.
   bookingPoliciesImporter,
