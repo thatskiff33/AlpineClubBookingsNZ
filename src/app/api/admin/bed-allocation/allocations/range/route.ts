@@ -6,7 +6,7 @@ import {
 } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 
@@ -40,7 +40,7 @@ const rangeAllocationSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
 
   try {

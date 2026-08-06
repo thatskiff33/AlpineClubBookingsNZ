@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { BedAllocationAdminError } from "@/lib/admin-bed-allocation";
+import { BedAllocationSettingsValidationError } from "@/lib/bed-allocation-settings";
 import { requireAdmin } from "@/lib/session-guards";
 
-export async function requireBedAllocationAdmin() {
-  const guard = await requireAdmin();
+async function requireBedAllocationPermission(
+  area: "bookings" | "lodge",
+  level: "view" | "edit",
+) {
+  const guard = await requireAdmin({ permission: { area, level } });
   if (!guard.ok) {
     return { ok: false as const, response: guard.response };
   }
@@ -20,7 +24,30 @@ export async function requireBedAllocationAdmin() {
   return { ok: true as const, session: guard.session };
 }
 
+/** Bed-board/settings reads require the explicit bookings:view contract. */
+export function requireBedAllocationRead() {
+  return requireBedAllocationPermission("bookings", "view");
+}
+
+/** Every allocation/settings/approval mutation requires bookings:edit. */
+export function requireBedAllocationWrite() {
+  return requireBedAllocationPermission("bookings", "edit");
+}
+
+/** Room/bed inventory remains Lodge Operations, not a booking-editor grant. */
+export function requireBedInventoryRead() {
+  return requireBedAllocationPermission("lodge", "view");
+}
+
+/** Capacity-bearing room/bed inventory changes require lodge:edit. */
+export function requireBedInventoryWrite() {
+  return requireBedAllocationPermission("lodge", "edit");
+}
+
 export function bedAllocationErrorResponse(error: unknown) {
+  if (error instanceof BedAllocationSettingsValidationError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
   if (error instanceof BedAllocationAdminError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }

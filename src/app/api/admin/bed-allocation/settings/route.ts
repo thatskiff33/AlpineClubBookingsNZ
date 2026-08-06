@@ -1,25 +1,44 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { updateBedAllocationSettings } from "@/lib/admin-bed-allocation";
+import {
+  getEffectiveBedAllocationSettings,
+  updateBedAllocationSettings,
+} from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedAllocationRead,
+  requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
+import { parseBedAllocationPriorityOrder } from "@/lib/bed-allocation-settings";
 
-// requireAdmin() is enforced by requireBedAllocationAdmin().
+// Explicit bookings:view / bookings:edit is enforced by the split guards.
 const settingsSchema = z
   .object({
     autoAllocationEnabled: z.boolean(),
+    allocationPriorityOrder: z.array(z.unknown()),
     // Lodge whose auto-allocation switch is edited; omitted keeps the
     // legacy club-wide row (lodge-scoping contract).
     lodgeId: z.string().min(1).optional(),
   })
   .strict();
 
+export async function GET(request: Request) {
+  const guard = await requireBedAllocationRead();
+  if (!guard.ok) return guard.response;
+
+  try {
+    const lodgeId = new URL(request.url).searchParams.get("lodgeId") || undefined;
+    const settings = await getEffectiveBedAllocationSettings(undefined, lodgeId);
+    return NextResponse.json({ settings });
+  } catch (error) {
+    return bedAllocationErrorResponse(error);
+  }
+}
+
 export async function PUT(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
 
   try {
@@ -36,6 +55,11 @@ export async function PUT(request: Request) {
 
     const settings = await updateBedAllocationSettings({
       autoAllocationEnabled: body.data.autoAllocationEnabled,
+      allocationPriorityOrder: parseBedAllocationPriorityOrder(
+        body.data.allocationPriorityOrder,
+        "allocationPriorityOrder",
+        400,
+      ),
       updatedByMemberId: guard.session.user.id,
       lodgeId: body.data.lodgeId,
     });

@@ -5,14 +5,14 @@ import {
 } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedAllocationRead,
 } from "@/lib/admin-bed-allocation-routes";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 
 // requireAdmin() is enforced by requireBedAllocationAdmin().
 export async function GET(request: NextRequest) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationRead();
   if (!guard.ok) return guard.response;
 
   try {

@@ -7,7 +7,6 @@ import {
   type BedAllocationRoom,
 } from "@/lib/bed-allocation";
 import { createAuditLog } from "@/lib/audit";
-import { DEFAULT_BED_ALLOCATION_SETTINGS } from "@/config/club-settings-defaults";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
@@ -31,6 +30,7 @@ import { lodgeNullTolerantScope } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
+import { resolveEffectiveBedAllocationSettings } from "@/lib/bed-allocation-settings";
 
 type BedAllocationLifecycleDb = Prisma.TransactionClient | typeof prisma;
 
@@ -532,17 +532,6 @@ function normalizeRange(
   return range;
 }
 
-function clampRange(
-  stayStart: Date,
-  stayEnd: Date,
-  range: BedAllocationLifecycleRange,
-): BedAllocationLifecycleRange | null {
-  return normalizeRange({
-    checkIn: stayStart > range.checkIn ? stayStart : range.checkIn,
-    checkOut: stayEnd < range.checkOut ? stayEnd : range.checkOut,
-  });
-}
-
 async function loadBookingForBedAllocation(
   db: BedAllocationLifecycleDb,
   bookingId: string,
@@ -585,6 +574,13 @@ async function loadBookingForBedAllocation(
           // included night, so non-contiguous stays only hold beds on the
           // nights the guest actually stays.
           nights: { select: { stayDate: true } },
+          member: {
+            select: {
+              familyGroupMemberships: {
+                select: { familyGroupId: true },
+              },
+            },
+          },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
@@ -603,18 +599,13 @@ function getGuestNightDatesInRange(
 ): Date[] {
   const rangeStartKey = formatDateOnly(range.checkIn);
   const rangeEndKey = formatDateOnly(range.checkOut); // exclusive
-  if (guest.nights && guest.nights.length > 0) {
-    return guest.nights
-      .map((night) => night.stayDate)
-      .filter((stayDate) => {
-        const key = formatDateOnly(stayDate);
-        return key >= rangeStartKey && key < rangeEndKey;
-      })
-      .sort((a, b) => a.getTime() - b.getTime());
-  }
-  const clamped = clampRange(guest.stayStart, guest.stayEnd, range);
-  if (!clamped) return [];
-  return eachDateOnlyInRange(clamped.checkIn, clamped.checkOut);
+  return (guest.nights ?? [])
+    .map((night) => night.stayDate)
+    .filter((stayDate) => {
+      const key = formatDateOnly(stayDate);
+      return key >= rangeStartKey && key < rangeEndKey;
+    })
+    .sort((a, b) => a.getTime() - b.getTime());
 }
 
 async function pruneAllocationsForBooking(
@@ -648,7 +639,6 @@ async function pruneAllocationsForBooking(
 
   for (const guest of booking.guests) {
     const nightDates = guest.nights?.map((night) => night.stayDate) ?? [];
-    if (nightDates.length > 0) {
       // Prune any allocation on a night the guest no longer stays — this covers
       // gaps in a non-contiguous stay and nights switched off in the grid
       // (issue #713), not just the range edges.
@@ -656,18 +646,6 @@ async function pruneAllocationsForBooking(
         bookingGuestId: guest.id,
         stayDate: { notIn: nightDates },
       });
-    } else {
-      staleGuestNightClauses.push(
-        {
-          bookingGuestId: guest.id,
-          stayDate: { lt: guest.stayStart },
-        },
-        {
-          bookingGuestId: guest.id,
-          stayDate: { gte: guest.stayEnd },
-        },
-      );
-    }
   }
 
   // Stale guest-night sweep (date change / night dropped / guest removed):
@@ -690,25 +668,18 @@ export async function resolveAutoAllocationEnabled(
     bedAllocationSettings: {
       findUnique: (args: {
         where: { id: string };
-      }) => Promise<{ autoAllocationEnabled: boolean; lodgeId?: string | null } | null>;
+      }) => Promise<{
+        id: string;
+        autoAllocationEnabled: boolean;
+        allocationPriorityOrder: unknown;
+        lodgeId?: string | null;
+      } | null>;
     };
   },
   lodgeId?: string | null,
 ): Promise<boolean> {
-  if (lodgeId && lodgeId !== "default") {
-    const ownRow = await db.bedAllocationSettings.findUnique({
-      where: { id: lodgeId },
-    });
-    if (ownRow) return ownRow.autoAllocationEnabled;
-  }
-  const legacy = await db.bedAllocationSettings.findUnique({
-    where: { id: "default" },
-  });
-  if (!legacy) return DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled;
-  if (lodgeId && legacy.lodgeId && legacy.lodgeId !== lodgeId) {
-    return DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled;
-  }
-  return legacy.autoAllocationEnabled;
+  return (await resolveEffectiveBedAllocationSettings(db, lodgeId))
+    .autoAllocationEnabled;
 }
 
 async function autoAllocateMissingBedNights({
@@ -717,8 +688,8 @@ async function autoAllocateMissingBedNights({
   range,
   lodgeId,
 }: AutoAllocateMissingBedNightsInput): Promise<number> {
-  const enabled = await resolveAutoAllocationEnabled(db, lodgeId);
-  if (!enabled) {
+  const settings = await resolveEffectiveBedAllocationSettings(db, lodgeId);
+  if (!settings.autoAllocationEnabled) {
     return 0;
   }
 
@@ -754,6 +725,7 @@ async function autoAllocateMissingBedNights({
       select: {
         id: true,
         createdAt: true,
+        lodgeId: true,
         requestedRoomId: true,
         // #1677 envelope widening: the overlapping bookings' own stay windows
         // widen the loads below so the planner sees WHOLE stays.
@@ -788,6 +760,13 @@ async function autoAllocateMissingBedNights({
             stayStart: true,
             stayEnd: true,
             nights: { select: { stayDate: true } },
+            member: {
+              select: {
+                familyGroupMemberships: {
+                  select: { familyGroupId: true },
+                },
+              },
+            },
           },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
@@ -861,6 +840,13 @@ async function autoAllocateMissingBedNights({
       bookingGuest: {
         select: {
           ageTier: true,
+          member: {
+            select: {
+              familyGroupMemberships: {
+                select: { familyGroupId: true },
+              },
+            },
+          },
         },
       },
     },
@@ -907,6 +893,11 @@ async function autoAllocateMissingBedNights({
             ageTier: guest.ageTier,
             stayStart: stayDate,
             stayEnd: addDaysDateOnly(stayDate, 1),
+            nights: [stayDate],
+            familyGroupIds:
+              guest.member?.familyGroupMemberships.map(
+                (membership) => membership.familyGroupId,
+              ) ?? [],
           });
         }
       }
@@ -915,6 +906,7 @@ async function autoAllocateMissingBedNights({
         ? {
             id: booking.id,
             createdAt: booking.createdAt,
+            lodgeId: booking.lodgeId,
             requestedRoomId: booking.requestedRoomId,
             holdsCapacity: bookingHoldsCapacity({
               status: booking.status,
@@ -941,6 +933,7 @@ async function autoAllocateMissingBedNights({
     name: room.name,
     sortOrder: room.sortOrder,
     active: room.active,
+    lodgeId: room.lodgeId,
     beds: room.beds.map((bed) => ({
       id: bed.id,
       roomId: bed.roomId,
@@ -998,6 +991,7 @@ async function autoAllocateMissingBedNights({
     // allocation is moved aside or unallocated so a held booking always gets a
     // bed the availability math already admitted it to.
     prioritizeCapacityHolding: true,
+    allocationPriorityOrder: settings.allocationPriorityOrder,
     rooms: plannerRooms,
     bookings: plannerBookings,
     occupiedBedNights: [
@@ -1020,6 +1014,10 @@ async function autoAllocateMissingBedNights({
         roomId: allocation.roomId,
         stayDate: allocation.stayDate,
         ageTier: allocation.bookingGuest.ageTier,
+        familyGroupIds:
+          allocation.bookingGuest.member?.familyGroupMemberships.map(
+            (membership) => membership.familyGroupId,
+          ) ?? [],
         approvedAt: allocation.approvedAt,
         // #1677: newest provisional bookings are evicted first when a held
         // booking needs a whole room.

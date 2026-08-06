@@ -8,7 +8,7 @@ import {
 import { formatDateOnly } from "@/lib/date-only";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { createAuditLog } from "@/lib/audit";
@@ -33,7 +33,7 @@ const moveAllocationSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
 
   try {
@@ -95,7 +95,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
 
   try {

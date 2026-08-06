@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { deleteBedAllocation } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedAllocationWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { createAuditLog } from "@/lib/audit";
 
@@ -11,7 +11,7 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedAllocationWrite();
   if (!guard.ok) return guard.response;
 
   try {

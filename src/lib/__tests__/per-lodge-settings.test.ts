@@ -25,7 +25,18 @@ function bedSettingsDb(rows: Record<string, Record<string, unknown>>) {
   return {
     bedAllocationSettings: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
-        (rows[where.id] as never) ?? null,
+        rows[where.id]
+          ? ({
+              id: where.id,
+              allocationPriorityOrder: [
+                "BOOKING_COHESION",
+                "STAY_CONTINUITY",
+                "REQUESTED_ROOM",
+                "FAMILY_COHESION",
+              ],
+              ...rows[where.id],
+            } as never)
+          : null,
       ),
     },
   };

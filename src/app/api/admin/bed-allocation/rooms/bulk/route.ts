@@ -7,7 +7,7 @@ import {
 } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedInventoryWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
@@ -30,7 +30,7 @@ const bulkSchema = z
  * Seed N rooms of M beds each in one transaction (ADR-003 bulk seeding).
  */
 export async function POST(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
 
   try {

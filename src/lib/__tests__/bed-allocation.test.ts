@@ -533,6 +533,88 @@ describe("bed allocation planner", () => {
     ]);
   });
 
+  it("lets requested-room-first split an equal-count placement when booking cohesion is omitted", () => {
+    const input = {
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking(
+          "booking-1",
+          "2026-06-01",
+          [{ id: "guest-1" }, { id: "guest-2" }],
+          "room-b",
+        ),
+      ],
+    };
+
+    const cohesive = buildFirstFitBedAllocationPlan(input);
+    const requestedFirst = buildFirstFitBedAllocationPlan({
+      ...input,
+      allocationPriorityOrder: ["REQUESTED_ROOM"],
+    });
+    const tiedContinuityThenRequested = buildFirstFitBedAllocationPlan({
+      ...input,
+      allocationPriorityOrder: [
+        "STAY_CONTINUITY",
+        "REQUESTED_ROOM",
+        "BOOKING_COHESION",
+      ],
+    });
+
+    expect(cohesive.allocations).toHaveLength(2);
+    expect(new Set(cohesive.allocations.map((row) => row.roomId))).toEqual(
+      new Set(["room-a"]),
+    );
+    expect(requestedFirst.allocations).toHaveLength(2);
+    expect(requestedFirst.allocations[0]).toMatchObject({
+      bookingGuestId: "guest-1",
+      roomId: "room-b",
+    });
+    expect(new Set(requestedFirst.allocations.map((row) => row.roomId))).toEqual(
+      new Set(["room-a", "room-b"]),
+    );
+    expect(
+      new Set(tiedContinuityThenRequested.allocations.map((row) => row.roomId)),
+    ).toEqual(new Set(["room-a", "room-b"]));
+  });
+
+  it("does not use stable-bed continuity when that preference is disabled", () => {
+    const continuityRooms: BedAllocationRoom[] = [
+      {
+        id: "room-a",
+        name: "Room A",
+        sortOrder: 1,
+        beds: [
+          { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+          { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+        ],
+      },
+    ];
+    const input = {
+      enabled: true,
+      rooms: continuityRooms,
+      bookings: [booking("booking-1", "2026-06-01", "guest-1")],
+      occupiedBedNights: [
+        { bedId: "bed-a1", stayDate: "2026-07-02", ageTier: "ADULT" as const },
+      ],
+    };
+
+    const withContinuity = buildFirstFitBedAllocationPlan(input);
+    const neutral = buildFirstFitBedAllocationPlan({
+      ...input,
+      allocationPriorityOrder: [],
+    });
+
+    expect(withContinuity.allocations.map((row) => row.bedId)).toEqual([
+      "bed-a2",
+      "bed-a2",
+    ]);
+    expect(neutral.allocations.map((row) => row.bedId)).toEqual([
+      "bed-a1",
+      "bed-a2",
+    ]);
+  });
+
   it("falls back silently to first-fit when the requested room is full", () => {
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
@@ -813,8 +895,8 @@ describe("bed allocation whole-stay room continuity (issue #1677)", () => {
     ]);
   });
 
-  it("switches beds within the room only when no single bed spans the stay", () => {
-    // A1 is taken on night 2 and A2 on night 1: no bed is free for the whole
+  it("uses a stable bed in another room when cohesion ties and continuity decides", () => {
+    // A1 is taken on night 2 and A2 on night 1, while B1 spans the whole stay.
     // stay, but room A still hosts every night — the guest stays in ONE room
     // and switches beds, never rooms.
     const plan = buildFirstFitBedAllocationPlan({
@@ -853,16 +935,16 @@ describe("bed allocation whole-stay room continuity (issue #1677)", () => {
       {
         bookingId: "booking-1",
         bookingGuestId: "guest-1",
-        roomId: "room-a",
-        bedId: "bed-a1",
+        roomId: "room-b",
+        bedId: "bed-b1",
         stayDate: "2026-07-01",
         source: "AUTO",
       },
       {
         bookingId: "booking-1",
         bookingGuestId: "guest-1",
-        roomId: "room-a",
-        bedId: "bed-a2",
+        roomId: "room-b",
+        bedId: "bed-b1",
         stayDate: "2026-07-02",
         source: "AUTO",
       },

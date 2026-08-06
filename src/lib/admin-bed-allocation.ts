@@ -6,7 +6,6 @@ import {
   type LodgeRoom,
 } from "@prisma/client";
 import { clubConfig } from "@/config/club";
-import { DEFAULT_BED_ALLOCATION_SETTINGS } from "@/config/club-settings-defaults";
 import {
   addDaysDateOnly,
   countNightsDateOnly,
@@ -70,6 +69,12 @@ import {
   isOperationallyPresentConsent,
 } from "@/lib/member-guest-consent";
 import { prisma } from "@/lib/prisma";
+import {
+  parseBedAllocationPriorityOrder,
+  resolveEffectiveBedAllocationSettings,
+  type BedAllocationPriority,
+  type EffectiveBedAllocationSettings,
+} from "@/lib/bed-allocation-settings";
 
 const BED_ALLOCATION_SETTINGS_ID = "default";
 export const MAX_BED_ALLOCATION_RANGE_NIGHTS = 31;
@@ -91,11 +96,7 @@ export interface BedAllocationDateRange {
   toDate: string;
 }
 
-export interface BedAllocationSettingsPayload {
-  autoAllocationEnabled: boolean;
-  updatedByMemberId: string | null;
-  updatedAt: string | null;
-}
+export type BedAllocationSettingsPayload = EffectiveBedAllocationSettings;
 
 export interface AdminBedAllocationWarning {
   id: string;
@@ -194,6 +195,8 @@ interface DashboardAllocation {
   source: "AUTO" | "MANUAL";
   approvedAt: string | null;
   approvedByName: string | null;
+  isSecondOccupant?: boolean;
+  familyGroupIds?: string[];
   // Raw booking status (issue #1251), kept for display/debugging.
   bookingStatus: string;
   // Server-computed "Held" vs "Provisional" signal (#1254). Holding is no longer
@@ -209,6 +212,7 @@ interface DashboardGuestNight {
   guestAgeTier: BedAllocationAgeTier;
   memberName: string;
   stayDate: string;
+  familyGroupIds: string[];
 }
 
 interface DashboardRequestedRoom {
@@ -338,47 +342,19 @@ export function parseBedAllocationDateRange(input: {
   return { from, to, fromDate, toDate };
 }
 
-async function getBedAllocationSettings(
+export async function getEffectiveBedAllocationSettings(
   db: BedAllocationDb = prisma,
   // Lodge scope (lodge-scoping contract): the lodge's own row (id =
   // lodgeId) wins; else the legacy "default" row applies when unlinked or
   // soft-linked to this lodge; else code defaults.
   lodgeId?: string | null,
 ): Promise<BedAllocationSettingsPayload> {
-  if (lodgeId && lodgeId !== BED_ALLOCATION_SETTINGS_ID) {
-    const ownRow = await db.bedAllocationSettings.findUnique({
-      where: { id: lodgeId },
-    });
-    if (ownRow) {
-      return {
-        autoAllocationEnabled: ownRow.autoAllocationEnabled,
-        updatedByMemberId: ownRow.updatedByMemberId,
-        updatedAt: ownRow.updatedAt.toISOString(),
-      };
-    }
-  }
-  const record = await db.bedAllocationSettings.findUnique({
-    where: { id: BED_ALLOCATION_SETTINGS_ID },
-  });
-  if (record && lodgeId && record.lodgeId && record.lodgeId !== lodgeId) {
-    return {
-      autoAllocationEnabled: DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled,
-      updatedByMemberId: null,
-      updatedAt: null,
-    };
-  }
-
-  return {
-    autoAllocationEnabled:
-      record?.autoAllocationEnabled ??
-      DEFAULT_BED_ALLOCATION_SETTINGS.autoAllocationEnabled,
-    updatedByMemberId: record?.updatedByMemberId ?? null,
-    updatedAt: record?.updatedAt.toISOString() ?? null,
-  };
+  return resolveEffectiveBedAllocationSettings(db, lodgeId);
 }
 
 export async function updateBedAllocationSettings(input: {
   autoAllocationEnabled: boolean;
+  allocationPriorityOrder: BedAllocationPriority[];
   updatedByMemberId: string;
   db?: BedAllocationDb;
   // Lodge scope: the legacy "default" row keeps serving the lodge it was
@@ -387,6 +363,11 @@ export async function updateBedAllocationSettings(input: {
   lodgeId?: string | null;
 }): Promise<BedAllocationSettingsPayload> {
   const db = input.db ?? prisma;
+  const allocationPriorityOrder = parseBedAllocationPriorityOrder(
+    input.allocationPriorityOrder,
+    "allocationPriorityOrder",
+    400,
+  );
   const legacy = await db.bedAllocationSettings.findUnique({
     where: { id: BED_ALLOCATION_SETTINGS_ID },
   });
@@ -399,16 +380,18 @@ export async function updateBedAllocationSettings(input: {
     ? BED_ALLOCATION_SETTINGS_ID
     : input.lodgeId!;
 
-  const record = await db.bedAllocationSettings.upsert({
+  await db.bedAllocationSettings.upsert({
     where: { id: targetId },
     create: {
       id: targetId,
       autoAllocationEnabled: input.autoAllocationEnabled,
+      allocationPriorityOrder,
       updatedByMemberId: input.updatedByMemberId,
       lodgeId: input.lodgeId ?? null,
     },
     update: {
       autoAllocationEnabled: input.autoAllocationEnabled,
+      allocationPriorityOrder,
       updatedByMemberId: input.updatedByMemberId,
       ...(input.lodgeId && (!legacy || legacy.lodgeId === null) && targetsLegacyRow
         ? { lodgeId: input.lodgeId }
@@ -416,11 +399,7 @@ export async function updateBedAllocationSettings(input: {
     },
   });
 
-  return {
-    autoAllocationEnabled: record.autoAllocationEnabled,
-    updatedByMemberId: record.updatedByMemberId,
-    updatedAt: record.updatedAt.toISOString(),
-  };
+  return resolveEffectiveBedAllocationSettings(db, input.lodgeId);
 }
 
 export async function listBedAllocationRooms(
@@ -1423,6 +1402,19 @@ async function loadBookingRecords(
           ageTier: true,
           stayStart: true,
           stayEnd: true,
+          nights: {
+            where: { stayDate: { gte: range.from, lt: range.to } },
+            select: { stayDate: true },
+            orderBy: { stayDate: "asc" },
+          },
+          member: {
+            select: {
+              familyGroupMemberships: {
+                select: { familyGroupId: true },
+                orderBy: { familyGroupId: "asc" },
+              },
+            },
+          },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       },
@@ -1463,6 +1455,14 @@ async function loadAllocationRecords(
           firstName: true,
           lastName: true,
           ageTier: true,
+          member: {
+            select: {
+              familyGroupMemberships: {
+                select: { familyGroupId: true },
+                orderBy: { familyGroupId: "asc" },
+              },
+            },
+          },
         },
       },
       room: {
@@ -1588,12 +1588,15 @@ function serializeAllocations(
       hasAdminCapacityHold: Boolean(allocation.booking.adminCapacityHoldAt),
     }),
     isSecondOccupant: allocation.isSecondOccupant,
+    familyGroupIds:
+      allocation.bookingGuest.member?.familyGroupMemberships.map(
+        (membership) => membership.familyGroupId,
+      ) ?? [],
   }));
 }
 
 function buildGuestNightRows(
   bookings: DashboardBookingRecord[],
-  range: BedAllocationDateRange,
 ): DashboardGuestNight[] {
   const rows: DashboardGuestNight[] = [];
 
@@ -1601,16 +1604,18 @@ function buildGuestNightRows(
     const bookingMemberName = memberName(booking.member);
 
     for (const guest of booking.guests) {
-      const clamped = clampGuestToRange(guest, range);
-
-      for (const date of eachDateOnlyInRange(clamped.stayStart, clamped.stayEnd)) {
+      for (const night of guest.nights) {
         rows.push({
           bookingId: booking.id,
           bookingGuestId: guest.id,
           guestName: guestName(guest),
           guestAgeTier: guest.ageTier,
           memberName: bookingMemberName,
-          stayDate: formatDateOnly(date),
+          stayDate: formatDateOnly(night.stayDate),
+          familyGroupIds:
+            guest.member?.familyGroupMemberships.map(
+              (membership) => membership.familyGroupId,
+            ) ?? [],
         });
       }
     }
@@ -1644,6 +1649,8 @@ function candidateGuestBookings(
       ageTier: guestNight.guestAgeTier,
       stayStart,
       stayEnd,
+      nights: [guestNight.stayDate],
+      familyGroupIds: guestNight.familyGroupIds,
     });
     guestsByBooking.set(booking.id, guests);
   }
@@ -1869,7 +1876,7 @@ export async function getBedAllocationDashboard(input: {
 }): Promise<BedAllocationDashboardPayload> {
   const db = input.db ?? prisma;
   const [settings, rooms, bookings, allocationRecords] = await Promise.all([
-    getBedAllocationSettings(db, input.lodgeId),
+    getEffectiveBedAllocationSettings(db, input.lodgeId),
     listBedAllocationRooms(db, input.lodgeId),
     loadBookingRecords(input.range, db, input.lodgeId),
     loadAllocationRecords(input.range, db, input.lodgeId),
@@ -1892,7 +1899,7 @@ export async function getBedAllocationDashboard(input: {
     }));
   const heldBookingIds = new Set(heldSpans.map((held) => held.id));
 
-  const allGuestNights = buildGuestNightRows(bookings, input.range);
+  const allGuestNights = buildGuestNightRows(bookings);
   const allocatedGuestNights = new Set(
     serializedAllocations.map((allocation) =>
       guestNightKey(allocation.bookingGuestId, allocation.stayDate),
@@ -1979,6 +1986,7 @@ export async function getBedAllocationDashboard(input: {
   const plan = settings.autoAllocationEnabled
     ? buildFirstFitBedAllocationPlan({
         enabled: true,
+        allocationPriorityOrder: settings.allocationPriorityOrder,
         rooms: plannerRooms,
         bookings: plannerBookings,
         occupiedBedNights: [
@@ -1989,6 +1997,7 @@ export async function getBedAllocationDashboard(input: {
             roomId: allocation.roomId,
             stayDate: allocation.stayDate,
             ageTier: allocation.guestAgeTier,
+            familyGroupIds: allocation.familyGroupIds ?? [],
           })),
           ...custodianOccupiedBedNightsForPlanner(
             custodianBedHolds,

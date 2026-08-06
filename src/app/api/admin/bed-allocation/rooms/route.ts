@@ -6,7 +6,8 @@ import {
 } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedInventoryRead,
+  requireBedInventoryWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
@@ -26,7 +27,7 @@ const roomSchema = z
   .strict();
 
 export async function GET(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedInventoryRead();
   if (!guard.ok) return guard.response;
 
   try {
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
 
   try {

@@ -48,8 +48,16 @@ export const DEFAULT_BOOKING_DEFAULTS = {
 } as const;
 
 /** `BedAllocationSettings` — read by `resolveAutoAllocationEnabled` and the admin surface. */
+export const BED_ALLOCATION_PRIORITY_VOCABULARY = [
+  "BOOKING_COHESION",
+  "STAY_CONTINUITY",
+  "REQUESTED_ROOM",
+  "FAMILY_COHESION",
+] as const;
+
 export const DEFAULT_BED_ALLOCATION_SETTINGS = {
   autoAllocationEnabled: true,
+  allocationPriorityOrder: BED_ALLOCATION_PRIORITY_VOCABULARY,
 } as const;
 
 /** `BookingRequestSettings` — read by `getBookingRequestSettings`. */

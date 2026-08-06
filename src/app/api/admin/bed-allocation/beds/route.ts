@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createBedAllocationBed } from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
-  requireBedAllocationAdmin,
+  requireBedInventoryWrite,
 } from "@/lib/admin-bed-allocation-routes";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
@@ -25,7 +25,7 @@ const bedSchema = z
   .strict();
 
 export async function POST(request: Request) {
-  const guard = await requireBedAllocationAdmin();
+  const guard = await requireBedInventoryWrite();
   if (!guard.ok) return guard.response;
 
   try {
