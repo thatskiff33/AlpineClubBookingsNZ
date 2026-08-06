@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  eachDateOnlyInRange,
+  formatDateOnly,
+  parseDateOnly,
+} from "@/lib/date-only";
 
 /**
  * Exclusive whole-lodge holds as PLANNER occupancy (#2317, owner decision
@@ -48,7 +52,8 @@ import {
   parseBedAllocationDateRange,
 } from "@/lib/admin-bed-allocation";
 import { buildFirstFitBedAllocationPlan } from "@/lib/bed-allocation";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { getLodgeHeldNights } from "@/lib/capacity";
 import {
   buildWholeLodgeHeldNightPredicate,
@@ -130,15 +135,19 @@ const ROOM = {
 const RANGE = parseBedAllocationDateRange({ from: "2026-07-01", to: "2026-07-04" });
 
 function guest(overrides: AnyRow = {}) {
+  const stayStart = overrides.stayStart ?? parseDateOnly("2026-07-01");
+  const stayEnd = overrides.stayEnd ?? parseDateOnly("2026-07-04");
   return {
     id: "guest-ord",
     bookingId: "booking-ord",
     firstName: "Ada",
     lastName: "Ordinary",
     ageTier: "ADULT",
-    stayStart: parseDateOnly("2026-07-01"),
-    stayEnd: parseDateOnly("2026-07-04"),
-    nights: [],
+    stayStart,
+    stayEnd,
+    nights: eachDateOnlyInRange(stayStart, stayEnd).map((stayDate) => ({
+      stayDate,
+    })),
     ...overrides,
   };
 }
@@ -213,6 +222,7 @@ function buildBoardDb(bookings: AnyRow[], rooms: AnyRow[] = [ROOM]) {
     bedAllocationSettings: {
       findUnique: vi.fn().mockResolvedValue({
         autoAllocationEnabled: true,
+        allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
         updatedByMemberId: null,
         updatedAt: parseDateOnly("2026-06-30"),
       }),
@@ -855,7 +865,10 @@ describe("planner 2 — the lifecycle auto-allocator", () => {
         createMany: vi.fn(async ({ data }: AnyRow) => ({ count: data.length })),
       },
       bedAllocationSettings: {
-        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+        findUnique: vi.fn().mockResolvedValue({
+          autoAllocationEnabled: true,
+          allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
+        }),
       },
       lodgeRoom: { findMany: vi.fn().mockResolvedValue([ROOM]) },
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },

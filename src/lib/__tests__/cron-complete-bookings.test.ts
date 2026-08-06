@@ -88,10 +88,12 @@ vi.mock("../bed-allocation-lifecycle", () => ({
     mockReconcile(...(args as [never])),
 }));
 
-const mockAcquireLodgeCapacityLock = vi.fn(async () => undefined);
+const mockAcquireLodgeCapacityLock = vi.fn(
+  async (_db: unknown, _lodgeId: string) => undefined,
+);
 vi.mock("../capacity", () => ({
   acquireLodgeCapacityLock: (...args: unknown[]) =>
-    mockAcquireLodgeCapacityLock(...(args as [never])),
+    mockAcquireLodgeCapacityLock(...(args as [unknown, string])),
 }));
 
 vi.mock("../logger", () => ({

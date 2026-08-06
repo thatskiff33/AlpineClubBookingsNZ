@@ -26,8 +26,9 @@ import {
   BedAllocationAdminError,
   MAX_AUDITED_RANGE_PARTNER_PROMOTIONS,
   MAX_BED_ALLOCATION_ASSIGN_RANGE_NIGHTS,
-  assignBedRange,
-  manuallyAllocateBed,
+  assignBedRange as assignBedRangePublic,
+  assignBedRangeWithLocksHeld as assignBedRange,
+  manuallyAllocateBedWithLocksHeld as manuallyAllocateBed,
   summariseNightRuns,
 } from "@/lib/admin-bed-allocation";
 import { eachDateOnlyInRange, formatDateOnly, parseDateOnly } from "@/lib/date-only";
@@ -1028,7 +1029,7 @@ describe("assignBedRange write-conflict handling", () => {
       const transaction = vi.fn().mockRejectedValue(knownError(code));
       prismaMock.$transaction = transaction;
 
-      const error = await assignBedRange({
+      const error = await assignBedRangePublic({
         bookingGuestId: "guest-1",
         bedId: "bed-1",
         from: "2026-06-01",
@@ -1055,7 +1056,7 @@ describe("assignBedRange write-conflict handling", () => {
       );
     prismaMock.$transaction = transaction;
 
-    const result = await assignBedRange({
+    const result = await assignBedRangePublic({
       bookingGuestId: "guest-1",
       bedId: "bed-1",
       from: "2026-06-01",
@@ -1072,7 +1073,7 @@ describe("assignBedRange write-conflict handling", () => {
     prismaMock.$transaction = transaction;
 
     await expect(
-      assignBedRange({
+      assignBedRangePublic({
         bookingGuestId: "guest-1",
         bedId: "bed-1",
         from: "2026-06-01",

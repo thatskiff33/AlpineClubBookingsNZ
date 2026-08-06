@@ -24,7 +24,8 @@ import {
   normalizeGuestStayRange,
   BookingGuestStayRangeValidationError,
 } from "@/lib/booking-guest-stay-range-input";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 import { parseDateOnly } from "@/lib/date-only";
 
 const MEMBER_TYPE = "type-member";
@@ -257,7 +258,10 @@ describe("bed-allocation pruning by night set", () => {
     const db = {
       clubModuleSettings: { findUnique: vi.fn().mockResolvedValue({ bedAllocation: true }) },
       bedAllocationSettings: {
-        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: false }),
+        findUnique: vi.fn().mockResolvedValue({
+          autoAllocationEnabled: false,
+          allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
+        }),
       },
       booking: {
         findUnique: vi.fn().mockResolvedValue({

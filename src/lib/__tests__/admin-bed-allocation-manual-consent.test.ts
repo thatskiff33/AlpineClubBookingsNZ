@@ -33,9 +33,9 @@ vi.mock("@/lib/lodge-capacity", () => ({
 import type { MemberGuestConsentStatus } from "@prisma/client";
 import {
   BedAllocationAdminError,
-  assignBedRange,
-  manuallyAllocateBed,
-  manuallyAllocateBedForNights,
+  assignBedRangeWithLocksHeld as assignBedRange,
+  manuallyAllocateBedForNightsWithLocksHeld as manuallyAllocateBedForNights,
+  manuallyAllocateBedWithLocksHeld as manuallyAllocateBed,
 } from "@/lib/admin-bed-allocation";
 import { parseDateOnly } from "@/lib/date-only";
 

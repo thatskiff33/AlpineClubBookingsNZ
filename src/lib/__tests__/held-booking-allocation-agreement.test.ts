@@ -17,8 +17,21 @@ import { describe, expect, it, vi } from "vitest";
 // identical ordinary booking), so the held assertions cannot pass vacuously.
 // ---------------------------------------------------------------------------
 
+const prismaState = vi.hoisted(() => ({
+  db: undefined as any,
+  transaction: vi.fn(),
+}));
+
 vi.mock("@/lib/prisma", () => ({
-  prisma: {},
+  prisma: new Proxy(
+    {},
+    {
+      get: (_target, property) =>
+        property === "$transaction"
+          ? prismaState.transaction
+          : prismaState.db?.[property as keyof typeof prismaState.db],
+    },
+  ),
 }));
 
 vi.mock("@/lib/lodge-capacity", () => ({
@@ -46,7 +59,8 @@ import {
   parseBedAllocationDateRange,
   runAutoBedAllocation,
 } from "@/lib/admin-bed-allocation";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { parseDateOnly } from "@/lib/date-only";
 
 // --- Shared scenario: one booking, two guests, one night, a room with two ---
@@ -83,6 +97,7 @@ function scenarioGuest(id: string) {
     ageTier: "ADULT",
     stayStart: CHECK_IN,
     stayEnd: CHECK_OUT,
+    nights: [{ stayDate: CHECK_IN }],
   };
 }
 
@@ -112,6 +127,7 @@ function boardDb(wholeLodgeHold: boolean) {
     bedAllocationSettings: {
       findUnique: vi.fn().mockResolvedValue({
         autoAllocationEnabled: true,
+        allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
         updatedByMemberId: null,
         updatedAt: parseDateOnly("2026-06-30"),
       }),
@@ -127,6 +143,14 @@ function boardDb(wholeLodgeHold: boolean) {
     // #2286: runAutoBedAllocation now writes inside a locked transaction.
     $executeRaw: vi.fn().mockResolvedValue(1),
   };
+}
+
+async function runAutoWithDb(db: any) {
+  prismaState.db = db;
+  prismaState.transaction.mockImplementation(
+    async (callback: (tx: typeof db) => unknown) => callback(db),
+  );
+  return runAutoBedAllocation({ range: RANGE, lodgeId: "lodge-1" });
 }
 
 // Lifecycle-shaped mock client (mirrors bed-allocation-lifecycle.test.ts).
@@ -172,7 +196,10 @@ function lifecycleDb(wholeLodgeHold: boolean) {
       findFirst: vi.fn().mockResolvedValue(null),
     },
     bedAllocationSettings: {
-      findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+      findUnique: vi.fn().mockResolvedValue({
+        autoAllocationEnabled: true,
+        allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
+      }),
     },
     lodgeRoom: { findMany: vi.fn().mockResolvedValue([ROOM]) },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
@@ -289,7 +316,7 @@ describe("Run Auto Allocation re-checks the bookings it is about to write (#2285
   it("writes nothing when an exclusive hold lands between the dashboard read and the write", async () => {
     const db = driftingBoardDb({ wholeLodgeHold: true });
 
-    const result = await runAutoBedAllocation({ range: RANGE, db });
+    const result = await runAutoWithDb(db);
 
     expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
     expect(result.count).toBe(0);
@@ -298,7 +325,7 @@ describe("Run Auto Allocation re-checks the bookings it is about to write (#2285
   it("writes nothing when a cancel lands between the dashboard read and the write", async () => {
     const db = driftingBoardDb({ status: "CANCELLED" });
 
-    const result = await runAutoBedAllocation({ range: RANGE, db });
+    const result = await runAutoWithDb(db);
 
     expect(db.bedAllocation.createMany).not.toHaveBeenCalled();
     expect(result.count).toBe(0);
@@ -307,7 +334,7 @@ describe("Run Auto Allocation re-checks the bookings it is about to write (#2285
   it("control: an unchanged booking is still written in full", async () => {
     const db = driftingBoardDb({});
 
-    const result = await runAutoBedAllocation({ range: RANGE, db });
+    const result = await runAutoWithDb(db);
 
     expect(db.bedAllocation.createMany).toHaveBeenCalledWith({
       data: [
@@ -370,7 +397,10 @@ describe("requested-room lock is OFF after a hold set and after a hold clear (#2
         findFirst: vi.fn(async () => store.find((row) => row.approvedAt !== null) ?? null),
       },
       bedAllocationSettings: {
-        findUnique: vi.fn().mockResolvedValue({ autoAllocationEnabled: true }),
+        findUnique: vi.fn().mockResolvedValue({
+          autoAllocationEnabled: true,
+          allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
+        }),
       },
       lodgeRoom: { findMany: vi.fn().mockResolvedValue([ROOM]) },
       // #2286: custodian bed holds. None here.

@@ -5,10 +5,45 @@ import {
   BED_ALLOCATABLE_BOOKING_STATUSES,
   partnerShareSweepCounterpartNames,
   partnerShareSweepNights,
-  reconcileBedAllocationsForBooking,
-  sweepFuturePartnerSharedAllocations,
+  reconcileBedAllocationsForBookingWithLodgeLockHeld,
+  sweepFuturePartnerSharedAllocationsWithLocksHeld as sweepFuturePartnerSharedAllocations,
 } from "@/lib/bed-allocation-lifecycle";
-import { parseDateOnly } from "@/lib/date-only";
+import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
+import { eachDateOnlyInRange, parseDateOnly } from "@/lib/date-only";
+
+const NORMALIZED_GUEST_NIGHTS = Symbol("normalizedGuestNights");
+
+function addSelectedNights<T>(value: T): T {
+  const rows = Array.isArray(value) ? value : [value];
+  for (const row of rows as any[]) {
+    if (!row?.guests) continue;
+    for (const guest of row.guests) {
+      if (guest.nights?.length) continue;
+      guest.nights = eachDateOnlyInRange(guest.stayStart, guest.stayEnd).map(
+        (stayDate) => ({ stayDate }),
+      );
+    }
+  }
+  return value;
+}
+
+async function reconcileBedAllocationsForBooking(input: {
+  bookingId: string;
+  db: any;
+  previousRange?: { checkIn: Date; checkOut: Date };
+}) {
+  const db = input.db;
+  if (!db[NORMALIZED_GUEST_NIGHTS]) {
+    db[NORMALIZED_GUEST_NIGHTS] = true;
+    for (const method of ["findUnique", "findMany"] as const) {
+      const original = db.booking[method];
+      db.booking[method] = vi.fn(async (...args: any[]) =>
+        addSelectedNights(await original(...args)),
+      );
+    }
+  }
+  return reconcileBedAllocationsForBookingWithLodgeLockHeld(input);
+}
 
 function makeDb(overrides: Record<string, unknown> = {}) {
   const db: any = {
@@ -73,6 +108,18 @@ function makeDb(overrides: Record<string, unknown> = {}) {
   }
   if (typeof db.$executeRaw !== "function") {
     db.$executeRaw = vi.fn().mockResolvedValue(1);
+  }
+  const findSettings = db.bedAllocationSettings?.findUnique;
+  if (typeof findSettings === "function") {
+    db.bedAllocationSettings.findUnique = vi.fn(async (...args: any[]) => {
+      const row = await findSettings(...args);
+      return row
+        ? {
+            allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
+            ...row,
+          }
+        : row;
+    });
   }
   return db;
 }
@@ -284,11 +331,7 @@ describe("bed allocation lifecycle", () => {
           { bookingGuestId: { notIn: ["guest-1"] } },
           {
             bookingGuestId: "guest-1",
-            stayDate: { lt: parseDateOnly("2026-07-02") },
-          },
-          {
-            bookingGuestId: "guest-1",
-            stayDate: { gte: parseDateOnly("2026-07-03") },
+            stayDate: { notIn: [parseDateOnly("2026-07-02")] },
           },
         ],
       },
@@ -545,11 +588,13 @@ describe("bed allocation lifecycle", () => {
           { bookingGuestId: { notIn: ["guest-1"] } },
           {
             bookingGuestId: "guest-1",
-            stayDate: { lt: parseDateOnly("2026-07-03") },
-          },
-          {
-            bookingGuestId: "guest-1",
-            stayDate: { gte: parseDateOnly("2026-07-06") },
+            stayDate: {
+              notIn: [
+                parseDateOnly("2026-07-03"),
+                parseDateOnly("2026-07-04"),
+                parseDateOnly("2026-07-05"),
+              ],
+            },
           },
         ],
       },

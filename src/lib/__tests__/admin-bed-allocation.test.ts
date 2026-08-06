@@ -43,19 +43,23 @@ import {
   createBedAllocationBed,
   createBedAllocationRoom,
   createBedAllocationRoomsBulk,
-  deleteBedAllocation,
-  deleteBedAllocationRoom,
-  approveBedAllocations,
+  deleteBedAllocation as deleteBedAllocationPublic,
+  deleteBedAllocationRoom as deleteBedAllocationRoomPublic,
+  approveBedAllocationsWithLocksHeld as approveBedAllocations,
   countApprovedBedAllocationNights,
   isBookingBedAllocationLocked,
   getBedAllocationDashboard,
   getRoomsAndBedsConfiguration,
   listBedAllocationRooms,
   manuallyAllocateBed,
-  manuallyAllocateBedForNights,
+  manuallyAllocateBedForNights as manuallyAllocateBedForNightsPublic,
+  manuallyAllocateBedForNightsWithLocksHeld as manuallyAllocateBedForNights,
   moveBedAllocationsSameDate,
   parseBedAllocationDateRange,
-  updateBedAllocationBed,
+  updateBedAllocationBed as updateBedAllocationBedPublic,
+  updateBedAllocationBedWithLocksHeld as updateBedAllocationBed,
+  deleteBedAllocationWithLocksHeld as deleteBedAllocation,
+  deleteBedAllocationRoomWithLocksHeld as deleteBedAllocationRoom,
 } from "@/lib/admin-bed-allocation";
 import { getLodgePartnerSharedCapacityStatus } from "@/lib/lodge-capacity";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
@@ -66,6 +70,31 @@ function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+}
+
+async function withPrismaRoomDb<T>(
+  db: { lodgeRoom: unknown; lodge: unknown },
+  run: () => Promise<T>,
+): Promise<T> {
+  // Room creation has no held-lock implementation: it is a simple public
+  // singleton write, not an allocation lifecycle writer. Install only the two
+  // delegates this unit needs instead of re-opening a caller-supplied db seam.
+  const prismaMock = prisma as unknown as {
+    lodgeRoom?: unknown;
+    lodge?: unknown;
+  };
+  const previousRoom = prismaMock.lodgeRoom;
+  const previousLodge = prismaMock.lodge;
+  prismaMock.lodgeRoom = db.lodgeRoom;
+  prismaMock.lodge = db.lodge;
+  try {
+    return await run();
+  } finally {
+    if (previousRoom === undefined) delete prismaMock.lodgeRoom;
+    else prismaMock.lodgeRoom = previousRoom;
+    if (previousLodge === undefined) delete prismaMock.lodge;
+    else prismaMock.lodge = previousLodge;
+  }
 }
 
 describe("admin bed allocation", () => {
@@ -360,7 +389,7 @@ describe("admin bed allocation", () => {
     );
 
     expect(schema).toContain("model BedAllocationSettings");
-    expect(schema).toContain("autoAllocationEnabled Boolean");
+    expect(schema).toMatch(/autoAllocationEnabled\s+Boolean/);
     expect(migration).toContain('CREATE TABLE IF NOT EXISTS "BedAllocationSettings"');
     expect(migration).toContain(
       'INSERT INTO "BedAllocationSettings" ("id")',
@@ -989,7 +1018,7 @@ describe("manuallyAllocateBedForNights", () => {
     const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
     prismaMock.$transaction = txnMock;
     try {
-      const result = await manuallyAllocateBedForNights({
+      const result = await manuallyAllocateBedForNightsPublic({
         bookingGuestId: "guest-1",
         bedId: "new-bed",
         stayDates: ["2026-07-02", "2026-07-03"],
@@ -1899,6 +1928,7 @@ describe("bunk write transaction self-wrap (#1675)", () => {
       lodgeBed: {
         findUnique: vi
           .fn()
+          .mockResolvedValueOnce({ room: { lodgeId: "lodge-1" } })
           .mockResolvedValue({ roomId: "room-1", bedType: "SINGLE", bunkGroup: null }),
         findMany: vi.fn().mockResolvedValue([]),
         update: vi
@@ -1914,14 +1944,15 @@ describe("bunk write transaction self-wrap (#1675)", () => {
     const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
     prismaMock.$transaction = txnMock;
     try {
-      await updateBedAllocationBed({
+      await updateBedAllocationBedPublic({
         id: "bed-1",
         bedType: "BUNK_TOP",
         bunkGroup: "Bunk A",
       });
 
       expect(txnMock).toHaveBeenCalledTimes(1);
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      // Public ownership: global, owning lodge, then the grouped-bed room lock.
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
       expect(tx.lodgeBed.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
@@ -1969,26 +2000,30 @@ describe("bunk write transaction self-wrap (#1675)", () => {
     }
   });
 
-  it("does NOT open a transaction for an update that touches neither bed type nor group", async () => {
-    // A name-only PATCH is not bunk-affecting, so it skips the transaction and
-    // updates on the prisma singleton directly.
+  it("self-wraps even a name-only update so the public writer owns global then lodge", async () => {
     const update = vi
       .fn()
       .mockImplementation(({ data }) => ({ id: "bed-1", ...data }));
-    const txnMock = vi.fn();
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      lodgeBed: {
+        findUnique: vi.fn().mockResolvedValue({ room: { lodgeId: "lodge-1" } }),
+        update,
+      },
+    };
+    const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
     prismaMock.$transaction = txnMock;
-    prismaMock.lodgeBed = { update };
     try {
-      await updateBedAllocationBed({ id: "bed-1", name: "Renamed" });
+      await updateBedAllocationBedPublic({ id: "bed-1", name: "Renamed" });
 
-      expect(txnMock).not.toHaveBeenCalled();
+      expect(txnMock).toHaveBeenCalledOnce();
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
       expect(update).toHaveBeenCalledWith({
         where: { id: "bed-1" },
         data: { name: "Renamed" },
       });
     } finally {
       delete prismaMock.$transaction;
-      delete prismaMock.lodgeBed;
     }
   });
 });
@@ -2027,11 +2062,12 @@ describe("multi-lodge room scoping (phase 7)", () => {
       lodge: { findFirst },
     };
 
-    await createBedAllocationRoom({
-      name: "Bunkroom 1",
-      lodgeId: "lodge-2",
-      db: db as never,
-    });
+    await withPrismaRoomDb(db, () =>
+      createBedAllocationRoom({
+        name: "Bunkroom 1",
+        lodgeId: "lodge-2",
+      }),
+    );
 
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({ lodgeId: "lodge-2" }),
@@ -2047,7 +2083,9 @@ describe("multi-lodge room scoping (phase 7)", () => {
       lodge: { findFirst },
     };
 
-    await createBedAllocationRoom({ name: "Bunkroom 1", db: db as never });
+    await withPrismaRoomDb(db, () =>
+      createBedAllocationRoom({ name: "Bunkroom 1" }),
+    );
 
     expect(create).toHaveBeenCalledWith({
       data: expect.objectContaining({ lodgeId: "lodge-default" }),
@@ -2178,11 +2216,12 @@ describe("createBedAllocationRoomsBulk (ADR-003 bulk seeding)", () => {
     });
     const db = { lodgeRoom: { create, findFirst: roomFindFirst }, lodge: { findFirst: vi.fn() } };
 
-    await createBedAllocationRoom({
-      name: "Room 1",
-      lodgeId: "lodge-2",
-      db: db as never,
-    });
+    await withPrismaRoomDb(db, () =>
+      createBedAllocationRoom({
+        name: "Room 1",
+        lodgeId: "lodge-2",
+      }),
+    );
 
     expect(roomFindFirst).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalled();
@@ -2199,11 +2238,12 @@ describe("createBedAllocationRoomsBulk (ADR-003 bulk seeding)", () => {
     };
 
     await expect(
-      createBedAllocationRoom({
-        name: "Room 1",
-        lodgeId: "lodge-2",
-        db: db as never,
-      }),
+      withPrismaRoomDb(db, () =>
+        createBedAllocationRoom({
+          name: "Room 1",
+          lodgeId: "lodge-2",
+        }),
+      ),
     ).rejects.toThrow('A room named "Room 1" already exists at this lodge.');
     expect(create).not.toHaveBeenCalled();
   });
@@ -2240,6 +2280,7 @@ describe("bed allocation board lodge scope (ADR-003)", () => {
         bedAllocationSettings: {
           findUnique: vi.fn().mockResolvedValue({
             autoAllocationEnabled: false,
+            allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
             updatedByMemberId: null,
             updatedAt: parseDateOnly("2026-07-01"),
           }),
@@ -2813,8 +2854,12 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
     // without failing this test. The tx client is a distinct object from the
     // top-level prisma singleton, which has no room/bed methods here.
     const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
       lodgeRoom: {
-        findFirst: vi.fn().mockResolvedValue({ id: "room-1" }),
+        findFirst: vi
+          .fn()
+          .mockResolvedValueOnce({ lodgeId: "lodge-1" })
+          .mockResolvedValue({ id: "room-1" }),
         delete: vi.fn().mockResolvedValue({ id: "room-1", name: "Bunkroom" }),
       },
       bedAllocation: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -2829,9 +2874,10 @@ describe("deleteBedAllocationRoom (#1674 guarded hard delete)", () => {
     const prismaMock = prisma as unknown as { $transaction?: unknown };
     prismaMock.$transaction = txnMock;
     try {
-      const result = await deleteBedAllocationRoom({ id: "room-1" });
+      const result = await deleteBedAllocationRoomPublic({ id: "room-1" });
 
       expect(txnMock).toHaveBeenCalledTimes(1);
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
       expect(tx.bedAllocation.findFirst).toHaveBeenCalledWith({
         where: { roomId: "room-1" },
         select: { id: true },
@@ -3074,16 +3120,27 @@ describe("deleteBedAllocation orphan auto-promote (#1743)", () => {
     // suite): a path that skips the wrap and reaches for prisma.bedAllocation
     // would throw here rather than silently pass.
     const prismaMock = prisma as unknown as { $transaction?: unknown };
-    const tx = buildDeleteDb({
+    const deleteDb = buildDeleteDb({
       deleted: allocationRow(),
       partner: allocationRow({ id: "alloc-partner", isSecondOccupant: true }),
     });
+    const tx = {
+      ...deleteDb,
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      bedAllocation: {
+        ...deleteDb.bedAllocation,
+        findUnique: vi
+          .fn()
+          .mockResolvedValue({ room: { lodgeId: "lodge-1" } }),
+      },
+    };
     const txnMock = vi.fn(async (cb: (client: typeof tx) => unknown) => cb(tx));
     prismaMock.$transaction = txnMock;
     try {
-      await deleteBedAllocation({ id: "alloc-1" });
+      await deleteBedAllocationPublic({ id: "alloc-1" });
 
       expect(txnMock).toHaveBeenCalledTimes(1);
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
       // All three statements ran on the tx client.
       expect(tx.bedAllocation.delete).toHaveBeenCalledTimes(1);
       expect(tx.bedAllocation.findFirst).toHaveBeenCalledTimes(1);
@@ -3121,6 +3178,9 @@ describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", ()
     ageTier: "ADULT",
     stayStart: parseDateOnly("2026-07-01"),
     stayEnd: parseDateOnly("2026-07-04"),
+    nights: ["2026-07-01", "2026-07-02", "2026-07-03"].map((stayDate) => ({
+      stayDate: parseDateOnly(stayDate),
+    })),
   });
 
   function bookingRow(overrides: Record<string, unknown>) {
@@ -3148,6 +3208,7 @@ describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", ()
       bedAllocationSettings: {
         findUnique: vi.fn().mockResolvedValue({
           autoAllocationEnabled: true,
+          allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
           updatedByMemberId: null,
           updatedAt: parseDateOnly("2026-06-30"),
         }),
@@ -3184,6 +3245,7 @@ describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", ()
           ageTier: "ADULT",
           stayStart: parseDateOnly("2026-07-02"),
           stayEnd: parseDateOnly("2026-07-03"),
+          nights: [{ stayDate: parseDateOnly("2026-07-02") }],
         },
       ],
     });
@@ -3276,6 +3338,7 @@ describe("bed allocation board member-guest consent exclusion (D-12, #2307)", ()
         bedAllocationSettings: {
           findUnique: vi.fn().mockResolvedValue({
             autoAllocationEnabled: false,
+            allocationPriorityOrder: [...BED_ALLOCATION_PRIORITY_VOCABULARY],
             updatedByMemberId: null,
             updatedAt: parseDateOnly("2026-07-01"),
           }),
@@ -3603,9 +3666,15 @@ describe("countApprovedBedAllocationNights (#2252 review)", () => {
  */
 describe("bed allocation lock semantics are two-way (#2252)", () => {
   it("a board move re-drafts the row it updates", async () => {
-    const upsert = vi
-      .fn()
-      .mockImplementation(({ create }) => ({ id: "alloc", ...create }));
+    const upsert = vi.fn(
+      ({ create }: {
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => ({
+        id: "alloc",
+        ...create,
+      }),
+    );
     const db = {
       bookingGuest: {
         findUnique: vi.fn().mockResolvedValue({
@@ -3669,7 +3738,7 @@ describe("bed allocation lock semantics are two-way (#2252)", () => {
 
     const db = {
       bedAllocation: {
-        findFirst: vi.fn(async () => rows[0] ?? null),
+        findFirst: vi.fn(async (_args: unknown) => rows[0] ?? null),
         delete: vi.fn(async ({ where }: { where: { id: string } }) => {
           const removed = rows.find((row) => row.id === where.id);
           rows = rows.filter((row) => row.id !== where.id);
