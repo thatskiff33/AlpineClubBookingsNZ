@@ -1585,6 +1585,117 @@ function matchedFamilyComponentOrder(components: StayGuest[][]): StayGuest[] {
   return [...paired, ...unmatched];
 }
 
+const BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS = 24;
+
+function overlappingNightCount(left: StayGuest, right: StayGuest): number {
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let count = 0;
+  while (leftIndex < left.nights.length && rightIndex < right.nights.length) {
+    const comparison = left.nights[leftIndex].localeCompare(
+      right.nights[rightIndex],
+    );
+    if (comparison === 0) {
+      count += 1;
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (comparison < 0) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+  return count;
+}
+
+function sampledFamilyBlockSeeds(guests: StayGuest[]): StayGuest[] {
+  if (guests.length <= BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS) return guests;
+  return Array.from(
+    { length: BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS },
+    (_, index) =>
+      guests[
+        Math.floor(
+          (index * (guests.length - 1)) /
+            (BED_ALLOCATION_MAX_FAMILY_BLOCK_SEEDS - 1),
+        )
+      ],
+  );
+}
+
+/**
+ * Builds one capacity-aware family layout without enumerating room partitions.
+ * For each room-sized block, try at most 24 evenly sampled seeds, greedily add
+ * the guest with the largest direct-family overlapping-night gain, then retain
+ * the highest scoring block (canonical input order breaks every tie). Building
+ * edge weights is O(g^2 * overlapping nights); block search is O(R * 24 * C *
+ * g). This adds exactly one bounded layout and can preserve useful triples or
+ * larger groups that pair matching necessarily misses. It remains a
+ * deterministic heuristic rather than an exact graph-partition optimizer.
+ */
+function capacityAwareFamilyBlockOrder(
+  guests: StayGuest[],
+  roomCapacities: number[],
+  directFamilyWeights: Map<string, Map<string, number>>,
+): StayGuest[] {
+  let remaining = [...guests];
+  const ordered: StayGuest[] = [];
+
+  for (const capacity of roomCapacities) {
+    if (remaining.length === 0) break;
+    const blockSize = Math.min(capacity, remaining.length);
+    if (blockSize <= 0) continue;
+
+    let bestBlock: StayGuest[] | undefined;
+    let bestScore = -1;
+    for (const seed of sampledFamilyBlockSeeds(remaining)) {
+      const block = [seed];
+      const available = remaining.filter((guest) => guest !== seed);
+      const marginalEdges = new Map(
+        available.map((guest) => [
+          guest.id,
+          directFamilyWeights.get(seed.id)?.get(guest.id) ?? 0,
+        ]),
+      );
+      let score = 0;
+
+      while (block.length < blockSize) {
+        let selectedIndex = 0;
+        for (let index = 1; index < available.length; index += 1) {
+          if (
+            (marginalEdges.get(available[index].id) ?? 0) >
+            (marginalEdges.get(available[selectedIndex].id) ?? 0)
+          ) {
+            selectedIndex = index;
+          }
+        }
+        const [selected] = available.splice(selectedIndex, 1);
+        const gain = marginalEdges.get(selected.id) ?? 0;
+        score += gain;
+        block.push(selected);
+        for (const candidate of available) {
+          marginalEdges.set(
+            candidate.id,
+            (marginalEdges.get(candidate.id) ?? 0) +
+              (directFamilyWeights.get(selected.id)?.get(candidate.id) ?? 0),
+          );
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestBlock = block;
+      }
+    }
+
+    if (!bestBlock) continue;
+    ordered.push(...bestBlock);
+    const selectedIds = new Set(bestBlock.map((guest) => guest.id));
+    remaining = remaining.filter((guest) => !selectedIds.has(guest.id));
+  }
+
+  return [...ordered, ...remaining];
+}
+
 function splitGuestOrderVariants(
   state: PlannerState,
   booking: BedAllocationBooking,
@@ -1625,6 +1736,9 @@ function splitGuestOrderVariants(
   const neighbours = new Map(
     canonical.map((guest) => [guest.id, new Set<string>()]),
   );
+  const directFamilyWeights = new Map(
+    canonical.map((guest) => [guest.id, new Map<string, number>()]),
+  );
   for (let left = 0; left < canonical.length; left += 1) {
     for (let right = left + 1; right < canonical.length; right += 1) {
       const a = canonical[left];
@@ -1632,6 +1746,9 @@ function splitGuestOrderVariants(
       if (!shareDirectFamilyGroup(a, b)) continue;
       neighbours.get(a.id)?.add(b.id);
       neighbours.get(b.id)?.add(a.id);
+      const weight = overlappingNightCount(a, b);
+      directFamilyWeights.get(a.id)?.set(b.id, weight);
+      directFamilyWeights.get(b.id)?.set(a.id, weight);
     }
   }
   const guestById = new Map(canonical.map((guest) => [guest.id, guest]));
@@ -1666,10 +1783,16 @@ function splitGuestOrderVariants(
     components.push(component);
   }
   const componentCluster = components.flat();
+  const capacityAwareFamilyBlocks = capacityAwareFamilyBlockOrder(
+    canonical,
+    roomsForBooking(state.activeRooms, booking).map((room) => room.beds.length),
+    directFamilyWeights,
+  );
   const requiredFamilyVariants = uniqueGuestOrders([
     componentCluster,
     components.flatMap((component) => [...component].reverse()),
     matchedFamilyComponentOrder(components),
+    capacityAwareFamilyBlocks,
   ]).filter(
     (candidate) =>
       !foundational.some(
