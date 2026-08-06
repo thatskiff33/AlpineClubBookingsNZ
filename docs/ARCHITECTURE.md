@@ -780,7 +780,10 @@ unknown, or duplicate persisted values fail closed instead of silently
 changing planner behavior. Preferences are lexicographic after hard placement
 count and invariant scores: the split matcher maximizes guest-night cardinality
 for each bounded candidate, and at most 24 matching-layout candidates are
-executed per booking. Whole-room, legacy, and displacement trials remain
+executed per booking. Those candidates include a capacity-aware, direct-family
+high-affinity packing order as well as connected-component, direct-group,
+direct-pair, and maximum-cardinality pairing orders. Whole-room, legacy, and
+displacement trials remain
 separate and may scale with room count. The overall booking-first planner is a
 bounded deterministic heuristic, not a global optimum across all bookings.
 Changing preferences affects future suggestions and lifecycle reconciliation;

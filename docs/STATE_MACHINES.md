@@ -1544,8 +1544,9 @@ saved top-to-bottom order: booking cohesion, stay continuity, requested room,
 and direct-family cohesion by default. Any subset — including `[]` — is valid;
 omitted settings use the default. The split planner executes at most 24
 deterministic matching-layout candidates, including connected-family,
-direct-group, direct-pair, and maximum-cardinality direct-edge pairing orders;
-whole-room, legacy, and displacement trials are additional. This is a bounded
+direct-group, direct-pair, capacity-aware high-affinity room packing, and
+maximum-cardinality direct-edge pairing orders; whole-room, legacy, and
+displacement trials are additional. This is a bounded
 heuristic rather than a global optimum. Saving a different order is not a
 lifecycle transition and rewrites no allocation: it changes only plans made
 after the save.

@@ -146,9 +146,10 @@ record the outcome here when decided:
   `LodgeSettings` retains its existing first-write compatibility behavior and
   `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row.
   `BedAllocationSettings` reads the same compatibility chain, but its admin
-  API always requires one active lodge: a write updates `default` only when
-  that row is already linked to this lodge, otherwise it creates/updates the
-  lodge-id row and leaves the legacy fallback untouched. Its
+  API always requires one active lodge: a write updates `default` only when no
+  lodge-id row exists and that legacy row is already linked to this lodge;
+  otherwise it creates/updates the lodge-id row and leaves the legacy fallback
+  untouched. Its
   `autoAllocationEnabled` and strict ordered `allocationPriorityOrder` apply to
   that lodge's board and booking lifecycle only; `[]` is a valid explicit
   neutral order. Config transfer writes authoritative per-lodge settings by

@@ -564,11 +564,12 @@ Future reviews and issues should cite this file when proposing changes.
   separation, adult coverage, cross-booking age mix, lodge isolation,
   custodian/exclusive holds, approved-row pins, and displacement safety) is
   scored or enforced ahead of those preferences. Preference values then
-  compare feasible layouts lexicographically from top to bottom; disabling a
-  value removes only that comparison. Family cohesion means guests sharing at
-  least one family-group id **directly**; connected components, direct subsets,
-  and maximum-cardinality direct-edge pairings provide bounded candidates but
-  do not turn transitive acquaintances into a scored family pair. The planner
+  compare the bounded feasible candidates lexicographically from top to bottom;
+  disabling a value removes only that comparison. Family cohesion means guests
+  sharing at least one family-group id **directly**; connected components,
+  direct subsets, capacity-aware high-affinity room packing, and
+  maximum-cardinality direct-edge pairings provide bounded candidates but do
+  not turn transitive acquaintances into a scored family pair. The planner
   executes at most 24 matching-layout candidates per booking, alongside its
   whole-room, legacy, and displacement trials. This is a deterministic bounded
   heuristic, not a claim of global optimality across all bookings. A settings

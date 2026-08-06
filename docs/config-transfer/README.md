@@ -340,6 +340,8 @@ deeper reference for what each category contains and the import safety model.
   uses the default only when creating a target row. A bundle with no per-lodge
   settings file at all leaves that lodge row untouched; an older legacy
   singleton file may still restore the compatible fallback described above.
+  This optional additive file remains part of config-transfer format version 4;
+  it does not require a format-version bump.
   `seasons.csv` carries the season windows plus the per-season **flat
   whole-lodge night rate** (#2338):
   `name, type, startDate, endDate, active, flatWholeLodgeNightCents` — the last
