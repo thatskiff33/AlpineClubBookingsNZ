@@ -18,6 +18,30 @@ unauthorized delivery copy is sanitized. Booking-page actions such as `#consent`
 and bearer consent routes keep their exact target. A rolled-back pre-#2362 retry
 worker cannot see new-version booking retry bodies.
 
+## Bed-allocation preferences (#2593)
+
+A bookings-view admin opens `/admin/bed-allocation`, selects a lodge, and can
+read that lodge's **Allocation preferences** above the drag controls. A
+bookings-edit admin clicks **Edit**, stages the auto-allocation switch and the
+ordered priorities (drag or arrow movement, Enable/Disable), then chooses
+**Save** or **Cancel**. Save remains disabled while pristine and, after a
+successful write, reloads the complete lodge/date dashboard because both the
+header mode and suggestions can change. If that recompute fails after the write,
+the settings card reports the successful save while the board clears and offers
+**Try again**; it never presents the previous lodge's board as current.
+
+The enabled values are compared top-to-bottom: keep the booking together, keep
+each guest in the same room/bed, honour the requested room, and keep directly
+linked family members together. All may be disabled for deterministic neutral
+allocation. Hard placement, school separation, age mix, lodge isolation,
+holds, and approval/displacement rules always outrank them. Copy must describe
+this as a bounded deterministic heuristic, not a globally optimal arrangement,
+and must say that saving affects future suggestions/reconciliation only rather
+than moving existing guests. Lodge changes abort or ignore stale reads and stale
+optimistic callbacks. A view-only role sees one section banner and disabled
+Edit/Save affordances; the API independently enforces `bookings:view` on GET and
+`bookings:edit` on PUT.
+
 ## Minimum-stay exception foundation (#2363)
 
 An operator creating or editing a minimum-stay rule must choose whether a later

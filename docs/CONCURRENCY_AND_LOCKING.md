@@ -922,6 +922,30 @@ preserves every member-night footprint. Its custodian-hold counterpart takes
 the same lodge key, cancellation takes the same global key, and the fixed
 global -> lodge order introduces no inverse.
 
+Bed-allocation mutation boundaries follow the same composition rule (#2593).
+The public lifecycle reconciler owns a transaction and takes global `lock(1)`
+before resolving and taking the booking's immutable lodge lock; callers already
+holding global use `reconcileBedAllocationsForBookingWithGlobalLockHeld`, and
+callers holding both use the explicitly named lodge-lock-held seam. Room/bed
+inventory update/delete, manual placement/range assignment, allocation delete,
+and approval similarly expose transaction-owning public wrappers plus narrow
+`*WithLocksHeld` internals for existing transactions. A caller must never pass a
+client into a public wrapper to bypass lock ownership. The explicit board
+auto-allocation write takes global first, then all affected lodge locks in
+sorted id order, and re-reads booking eligibility, whole-lodge holds, and
+custodian bed holds before inserting. The planner's per-lodge priority order
+changes candidate choice but introduces no lock key and never weakens these
+write-time re-reads.
+
+Cron/waitlist counterpart writers keep their guarded claims inside that same
+topology. Completion and past-waitlist cancellation re-read each candidate
+under global → lodge before the status claim and reconciliation. Cross-lodge
+waitlist offer/confirm paths lock affected lodges in sorted order, re-read the
+offer/version epoch, and only the winning guarded claim reconciles. A lost
+claim performs no allocation side effect. This is why settings or planner
+changes must still reconcile against the current writer matrix rather than
+assuming a route-local plan is safe to apply.
+
 ### Global-cohort money / status transition → global `lock(1)`
 
 Cancel (`booking-cancel.ts`), Stripe capture, the manual cash / off-Xero

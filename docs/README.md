@@ -100,7 +100,8 @@ seasons, promos, and booking money):
 - [Age Groups](guides/age-tier-settings.md) — membership age tiers and their
   booking rules.
 - [Promo Codes](guides/promo-codes.md) — discount codes and vouchers.
-- [Bed Allocation](guides/bed-allocation.md) — the drag-and-drop bed board.
+- [Bed Allocation](guides/bed-allocation.md) — the drag-and-drop bed board and
+  per-lodge auto-allocation preferences.
 - [Waitlist](guides/waitlist.md) — the waitlist queue and force-confirm.
 - [Payments](guides/payments.md) — the booking-payment ledger and Xero invoice
   state.

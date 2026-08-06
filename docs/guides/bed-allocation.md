@@ -10,6 +10,13 @@ automatically, drag guests onto beds yourself, and approve the resulting
 allocation. Find it at **Admin → Bookings & Beds → Bed Allocation**
 (`/admin/bed-allocation`).
 
+Each lodge has its own auto-allocation switch and ordered preferences. The
+planner always protects hard safety rules first, then places as many guest
+nights as its bounded search can, then compares the feasible layouts using the
+enabled preferences from top to bottom. The result is deterministic for the
+same inputs, but it is a practical heuristic rather than a promise of the one
+globally optimal arrangement across every booking.
+
 Bed allocation is gated by the **`bedAllocation`** module — when it is on, each
 lodge's capacity is its active bed count. Editing needs **bookings edit**
 access; a view-only bookings role can browse the board but not move, allocate,
@@ -25,6 +32,9 @@ year in one go).
 - To put one guest in the same bed for a long stay in a single action, instead
   of dragging night by night across several board loads.
 - To let the system auto-allocate approved bookings, then review and approve.
+- To choose whether that lodge should favour booking cohesion, room/bed
+  continuity, requested rooms, or direct-family cohesion when those aims
+  conflict.
 - To move a guest from one bed to another, or free a bed by unallocating.
 - To check which beds are free on a given night.
 
@@ -45,14 +55,40 @@ year in one go).
    longer than 31 nights, the board shows the first 31 nights and says it is
    showing part of the stay.
 
-   ![Bed Allocation board: the date controls and Allocation Mode card, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
+   ![Bed Allocation board: the date controls, allocation preferences, the "Bookings approved, awaiting allocation" pool with Run Auto Allocation, and the room-by-night Allocation Board](../images/admin/admin-bed-allocation.png)
 
-### Choose the allocation mode
+### Set this lodge's allocation preferences
 
-1. In the **Allocation Mode** card, tick **Auto allocation enabled** to let the
-   system propose placements, and optionally **Single-night drag mode** (when
+1. Choose the lodge whose board you want to work on. Preferences never cross
+   lodge boundaries, including in a single-lodge club.
+2. In **Allocation preferences**, click **Edit**. Tick **Auto allocation
+   enabled** if the board and booking lifecycle should propose placements for
+   this lodge.
+3. Put the enabled preferences in the order you want them compared. Drag a row
+   or use its up/down buttons; **Disable** removes it from the comparison and
+   **Enable** adds it back at the bottom.
+4. Click **Save**. It is disabled until something changed. **Cancel** restores
+   the saved snapshot. A successful save reloads the board because its header
+   mode and suggestions may both have changed.
+5. In the separate **Board drag controls** card, optionally tick
+   **Single-night drag mode**. This remains browser-only and is not saved: when
    on, dragging a guest allocates only the night you drop on; when off, dropping
-   allocates the guest's whole stay). Click **Save Mode**.
+   allocates the guest's visible stay.
+
+The shipped preference order is:
+
+1. **Keep each booking together** — use fewer rooms for one booking on a night.
+2. **Keep guests in the same room and bed** — prefer continuity between their
+   consecutive allocated nights.
+3. **Honour the requested room** — prefer new placements in the room requested
+   on the booking.
+4. **Keep direct family members together** — reduce splits between guests who
+   share a family-group id directly.
+
+You may disable all four. An empty order is valid and means deterministic
+neutral allocation; it does not disable the hard safety rules. Preference
+changes affect future suggestions and lifecycle reconciliation only. They do
+not rearrange or re-approve allocation rows that already exist.
 
 ### Auto-allocate and approve
 
@@ -250,10 +286,11 @@ that booking, so the booking's own **Audit log** link finds it.
 | Date In / Date Out | The night range shown on the board | today to today + 7 | NZ date-only; window capped at 31 nights and refused (not shortened) if longer |
 | ‹ / › month steppers | Move the whole board window one calendar month | — | Window is trimmed back to 31 nights when a month change widens it, and says so |
 | Assign range… | Place one guest in one bed across a stay of any length | — | Up to 366 nights; all-or-nothing, then an explicit free-nights option; auto-approves the beds |
-| Auto allocation enabled | Let the system propose bed placements | as saved | Persisted setting; enables Run Auto Allocation |
+| Auto allocation enabled | Let the board and booking lifecycle propose bed placements for the selected lodge | on | Saved per lodge; enables Run Auto Allocation |
+| Allocation preference order | Compare feasible layouts from top to bottom | booking cohesion → stay continuity → requested room → direct-family cohesion | Drag or use up/down while editing; each item can be disabled |
 | Single-night drag mode | Drag allocates one night vs the whole stay | off | Client-side only, not saved |
 | Move an existing chip | Change its bed while preserving its original night | — | First visible chip moves all visible original nights atomically; later chips move one night; the hovered date column is ignored; no-op only when every represented row already uses the destination |
-| Save Mode | Persist the auto-allocation setting | — | — |
+| Edit / Save / Cancel | Stage, persist, or discard this lodge's allocation preferences | — | Needs bookings edit; Save is dirty-gated |
 | Run Auto Allocation | Apply suggested placements | — | Needs auto-allocation on and suggestions available |
 | Approve Visible | Approve the visible draft allocations | — | Disabled when nothing is unapproved |
 | Select bed / Allocate | Place a guest on a chosen bed | — | Needs bookings edit access |
@@ -282,7 +319,9 @@ you place them yourself.
 | --- | --- | --- |
 | A view-only notice, drag disabled | Your admin role can view but not edit bed allocation | Ask a full admin for bookings edit access |
 | Bed Allocation is missing from the sidebar | The `bedAllocation` module is off | Enable it under **Admin → Setup → Modules** — see [`CONFIGURATION.md`](../../CONFIGURATION.md#module-controls-and-admin-modules) |
-| **Run Auto Allocation** is disabled | Auto-allocation is off, or there are no suggestions | Tick **Auto allocation enabled** and **Save Mode**, then refresh |
+| **Run Auto Allocation** is disabled | Auto-allocation is off for this lodge, or there are no suggestions | Click **Edit**, tick **Auto allocation enabled**, then **Save**; the board reloads automatically |
+| A preference is marked **Disabled** | It is not part of this lodge's saved comparison order | Click **Edit**, then **Enable**; use the arrows or drag to place it where you want |
+| Saving preferences succeeds but the board says it could not reload | The settings write completed, but recomputing the board failed | Use **Try again** on the board. Do not repeat the save unless you intend another settings write |
 | "No rooms available" / "No active beds" | Rooms and beds are not set up | Configure them in **Rooms & Beds** (via [Bookings Setup](bookings-setup.md)) |
 | "That bed was just taken … refreshing" | Someone else allocated that bed-night at the same moment | The board reloads automatically; pick another bed |
 | A focused booking is "not on the board" | The deep-linked booking is outside the date range or was cancelled | Adjust Date In / Date Out to bring it into view |

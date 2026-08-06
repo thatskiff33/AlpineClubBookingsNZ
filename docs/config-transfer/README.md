@@ -279,6 +279,15 @@ deeper reference for what each category contains and the import safety model.
     older bundle that omits a singleton still imports and leaves that singleton
     untouched — covered by a test. The same reasoning carried the #2200 model
     additions (see "Model-level completeness" above).
+  - **Legacy bed-allocation singleton compatibility (#2593).**
+    `club-settings/bed-allocation-settings.json` remains registered for bundles
+    and installs that still carry the legacy `id = "default"` row. Its portable
+    fields are the auto-allocation switch and ordered priorities; the soft-linked
+    source `lodgeId` is excluded. An older singleton file that omits only
+    `allocationPriorityOrder` normalises to the historical canonical order,
+    while unknown/duplicate values fail preview. Authoritative per-lodge values
+    additionally travel in each lodge-config folder as described below; runtime
+    resolution decides whether a compatible legacy row or a lodge row applies.
 - **booking-policies** - the complete club-wide and lodge-scoped minimum-stay
   policy set in `booking-policies/minimum-stay.csv`. This is the one deliberate
   replace-set category: a policy omitted from the file is previewed as
@@ -307,15 +316,30 @@ deeper reference for what each category contains and the import safety model.
   version 4; a version 3 reader would ignore it while reporting that it had
   replaced the club's complete booking-policy set.
 - **lodge-config** — lodges, rooms, beds, seasons, season rates, lodge
-  instructions (content images bundled + remapped), and chore templates. Each
+  instructions (content images bundled + remapped), chore templates, and each
+  lodge's bed-allocation settings. Each
   lodge is a **self-contained folder**, `lodge-config/lodges/<slug>/` with a
   `lodge.json` descriptor (slug, name, active, travel note, `isDefault`, door
-  code if opted in) plus `rooms.csv` / `beds.csv` / `seasons.csv` / `season-rates.csv` /
-  `instructions.csv` / `chore-templates.csv`. The lodge a row belongs to is
+  code if opted in) plus `rooms.csv` / `beds.csv` / `seasons.csv` /
+  `season-rates.csv` / `instructions.csv` / `chore-templates.csv` /
+  `bed-allocation-settings.json`. The lodge a row belongs to is
   **implied by its folder**, not a CSV column, so a whole lodge is easy to add,
   curate, or spot as a unit. The full per-lodge file set is always emitted
   (header-only when a collection is empty) so a folder captures the entire
   lodge config and the format is discoverable for hand-authoring.
+  `bed-allocation-settings.json` contains `autoAllocationEnabled` and the
+  ordered `allocationPriorityOrder`. Export resolves the same effective
+  per-lodge value the board and lifecycle use, so a lodge with only a compatible
+  legacy/default row still emits its actual behavior. Import matches by the
+  sibling `lodge.json` slug and writes the target lodge id, never a source id.
+  Unknown, duplicate, or non-array priority values block preview and Apply.
+  Explicit `[]` is a real value in both Merge and Overwrite modes and preserves
+  neutral ordering. If an older file omits only `allocationPriorityOrder`, the
+  importer restores the historical canonical order; omission of
+  `autoAllocationEnabled` leaves an existing target unchanged in both modes and
+  uses the default only when creating a target row. A bundle with no per-lodge
+  settings file at all leaves that lodge row untouched; an older legacy
+  singleton file may still restore the compatible fallback described above.
   `seasons.csv` carries the season windows plus the per-season **flat
   whole-lodge night rate** (#2338):
   `name, type, startDate, endDate, active, flatWholeLodgeNightCents` — the last

@@ -33,6 +33,18 @@ stampede over the per-lodge advisory lock. See
 [`LOAD_TESTING.md`](LOAD_TESTING.md); runs are owner-gated and target only
 the throwaway staging stack.
 
+The #2593 bed-allocation preference contract is High-risk booking/capacity work
+and requires this matrix:
+
+| Surface | Required behavior | Automated evidence |
+| --- | --- | --- |
+| Settings model/API | Per-lodge effective resolution; canonical default; explicit empty order; strict closed vocabulary with duplicates/unknowns refused; active lodge required; `bookings:view` GET and `bookings:edit` PUT | `per-lodge-settings`, `bed-allocation-settings-route`, planner boundary cases |
+| Admin section | Read-only load; Edit → dirty Save/Cancel; reorder plus Enable/Disable; save re-seeds from server response; view-only banner; stale lodge responses ignored; successful save recomputes header/suggestions, while recompute failure clears the board and offers retry without misreporting the save | `allocation-preferences-section`, `use-scoped-dashboard`, `allocation-preferences-dashboard-integration`, `view-only-banner-contract` |
+| Planner semantics | Hard invariants and maximum feasible candidate placement outrank saved lexicographic priorities; all 24 priority permutations; empty neutral order; meaningful booking/family/requested-room/continuity reversals; sparse nights and off-window continuity; bounded connected/subset/pair and maximum direct-edge family layouts; deterministic >24 sampling; no global-optimum claim | `bed-allocation` planner suite, including 100 guests × 31 nights performance guard |
+| Board and lifecycle | Explicit board run and automatic booking reconcile use the same lodge's order; a partial free-space maximum is retained before held-only displacement fills the remainder; no stale `NO_BED` output; existing allocations are not rewritten by a settings save | `admin-bed-allocation`, `bed-allocation-lifecycle`, `bed-allocation` attributed displacement fixture |
+| Lock topology | Public mutation wrappers own global → lodge acquisition where composed; held-lock seams are explicit; cron/waitlist claims re-read and status/version-claim before reconciliation; lost claims have no side effects | `bed-allocation-lock-topology-contract`, allocation lifecycle/cron/waitlist suites |
+| Config transfer and migration | Per-lodge file round-trip; older priority omission restores canonical order; explicit `[]` survives merge/overwrite; corrupt arrays fail preview; legacy singleton compatibility; additive cold-table migration has old/new-colour compatibility and no allocation rewrite | `config-transfer-bed-allocation-settings`, config-transfer club/lodge/registry/merge suites, `BLUE_GREEN_MIGRATION_SAFETY.tsv`, migration drift |
+
 The #2363 minimum-stay exception foundation is intentionally covered below the
 browser layer because it adds no member review journey or booking-state
 transition yet. Its required matrix is:

@@ -555,6 +555,25 @@ Future reviews and issues should cite this file when proposing changes.
   envelope. Existing allocation rows are never rewritten by planning — only
   provisional displacement moves rows — and re-planning a fully-allocated
   state is a no-op.
+- **Allocation preferences are per lodge and advisory, never safety
+  overrides (#2593):** the board and lifecycle resolve the same strict saved
+  order for the booking's lodge. The canonical default is booking cohesion →
+  stay continuity → requested room → direct-family cohesion; an explicitly
+  saved empty list is valid deterministic neutral behavior. Every hard
+  invariant (maximum feasible placement count within a candidate, school
+  separation, adult coverage, cross-booking age mix, lodge isolation,
+  custodian/exclusive holds, approved-row pins, and displacement safety) is
+  scored or enforced ahead of those preferences. Preference values then
+  compare feasible layouts lexicographically from top to bottom; disabling a
+  value removes only that comparison. Family cohesion means guests sharing at
+  least one family-group id **directly**; connected components, direct subsets,
+  and maximum-cardinality direct-edge pairings provide bounded candidates but
+  do not turn transitive acquaintances into a scored family pair. The planner
+  executes at most 24 matching-layout candidates per booking, alongside its
+  whole-room, legacy, and displacement trials. This is a deterministic bounded
+  heuristic, not a claim of global optimality across all bookings. A settings
+  save never moves an existing row: it affects later board suggestions and
+  later lifecycle reconciliation only.
 - **Cross-booking age mix (#1768, owner-set):** a room-night containing minors
   from booking X must never also contain an adult from a DIFFERENT booking —
   planner-enforced in both placement directions on every path (whole-stay,

@@ -63,7 +63,7 @@ Exportable categories:
 | Site content & appearance | CMS pages, keyed site content, club theme (embedded images travel in the bundle) |
 | Club settings | Club-wide singletons: modules, booking defaults, member fields, club identity, email message settings, etc. |
 | Booking policies | The complete club-wide and lodge-scoped minimum-stay policy set and the adult-member hosting setting for each scope, including whether each soft violation holds capacity or not |
-| Lodge configuration | Lodges, rooms, beds, seasons, season rates, lodge instructions, chore templates |
+| Lodge configuration | Lodges, rooms, beds, seasons, season rates, lodge instructions, chore templates, and each lodge's auto-allocation switch plus ordered allocation priorities |
 | Committee (roles) | `CommitteeRole` definitions only (not member-linked assignments) |
 | Induction checklists | Induction templates with their sections and items |
 | Membership fees (joining & annual) | Joining-fee and annual-fee schedules with invoice-line components (integer cents) |
@@ -118,6 +118,18 @@ Three consequences worth knowing:
   after an import. Before, an unsaved group-discount setting left Save enabled
   so you could create the record; the import has now created it. Change a value
   and Save works as normal.
+
+Bed-allocation settings also travel inside each lodge's folder as
+`bed-allocation-settings.json`. The lodge slug identifies the target; source
+database ids do not travel. An explicit empty `allocationPriorityOrder` is not
+blank — it deliberately restores neutral deterministic ordering in both Merge
+and Overwrite modes. Older settings files that omit only this newer field are
+accepted and restore the historical order (keep the booking together, then
+stay continuity, requested room, and direct-family cohesion). Invalid or
+duplicate priority names stop the preview. If an older per-lodge file omits the
+auto-allocation switch, an existing target keeps its switch in both modes; a
+new target receives the built-in on default. If the whole per-lodge settings
+file is absent, that lodge's existing row is left alone.
 
 Club identity and email message settings work slightly differently. Their fields
 — club name, short name, hut-leader label, Facebook URL, support and contact

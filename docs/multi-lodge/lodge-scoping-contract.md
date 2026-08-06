@@ -140,13 +140,22 @@ record the outcome here when decided:
 - **`LodgeSettings` / `BedAllocationSettings` per-lodge rows.** A lodge's
   row is keyed by its lodge id (`id = lodgeId`); the legacy "default" row
   keeps serving the lodge it was soft-linked to in the phase-2 backfill
-  (and single-lodge clubs), and an unlinked legacy row is claimed on
-  first per-lodge write. Resolution: own row → legacy row when unlinked
-  or linked to the same lodge → code defaults; one lodge's values never
-  leak to another. `hutLeaderLookaheadDays` stays a club-wide knob on the
-  legacy row. No migration needed — these settings soft-links keep a nullable
-  `lodgeId` by design (the `NOT NULL` tightening applies only to the six entity
-  tables; see `contract-release.md`).
+  (and single-lodge clubs). Resolution is own row → legacy row when unlinked
+  or linked to the same lodge → code defaults; a legacy row linked elsewhere
+  is never inherited, so one lodge's values cannot leak to another.
+  `LodgeSettings` retains its existing first-write compatibility behavior and
+  `hutLeaderLookaheadDays` remains a club-wide knob on its legacy row.
+  `BedAllocationSettings` reads the same compatibility chain, but its admin
+  API always requires one active lodge: a write updates `default` only when
+  that row is already linked to this lodge, otherwise it creates/updates the
+  lodge-id row and leaves the legacy fallback untouched. Its
+  `autoAllocationEnabled` and strict ordered `allocationPriorityOrder` apply to
+  that lodge's board and booking lifecycle only; `[]` is a valid explicit
+  neutral order. Config transfer writes authoritative per-lodge settings by
+  lodge slug and keeps the legacy singleton path for older bundles. These
+  settings soft-links keep a nullable `lodgeId` by design (the `NOT NULL`
+  tightening applies only to the six entity tables; see
+  `contract-release.md`).
 - **CMS `{{lodge-capacity}}` token.** Gains an optional slug parameter
   (`{{lodge-capacity:lodge-slug}}`) for per-lodge figures; the bare token
   keeps resolving the default lodge. No cross-lodge total token — the

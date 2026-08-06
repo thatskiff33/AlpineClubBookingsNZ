@@ -1537,6 +1537,19 @@ reported `NO_BOOKING_ADULT` and removed from demand):
    its adults room together (one room when they fit) and its students take
    their own rooms.
 
+The selected lodge's `BedAllocationSettings` governs both the explicit board
+run and this lifecycle reconcile (#2593). After placement count and the hard
+school/age-mix rules, feasible layouts are compared lexicographically in the
+saved top-to-bottom order: booking cohesion, stay continuity, requested room,
+and direct-family cohesion by default. Any subset — including `[]` — is valid;
+omitted settings use the default. The split planner executes at most 24
+deterministic matching-layout candidates, including connected-family,
+direct-group, direct-pair, and maximum-cardinality direct-edge pairing orders;
+whole-room, legacy, and displacement trials are additional. This is a bounded
+heuristic rather than a global optimum. Saving a different order is not a
+lifecycle transition and rewrites no allocation: it changes only plans made
+after the save.
+
 **Cross-booking age-mix invariant (#1768, all phases and both placement
 directions):** a room-night holding minors from booking X never also holds an
 adult from a DIFFERENT booking — the planner neither places a minor beside
