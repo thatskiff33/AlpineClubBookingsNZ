@@ -60,7 +60,8 @@ import {
 } from "@/lib/booking-status";
 import { cancelPaymentIntentIfCancellable } from "@/lib/stripe";
 import { settleGroupBookingOnOrganiserCancel } from "@/lib/group-cancel";
-import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import {
@@ -372,6 +373,27 @@ async function releaseSettlementChildren(
       return null;
     }
 
+    const candidateChildren = await tx.booking.findMany({
+      where: {
+        parentBookingId: organiserBookingId,
+        organiserSettled: true,
+        deletedAt: null,
+        status: BookingStatus.CONFIRMED,
+      },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        lodgeId: true,
+        member: { select: { id: true, email: true, firstName: true } },
+      },
+    });
+    const lockedLodgeIds = new Set(
+      candidateChildren.map((child) => child.lodgeId),
+    );
+    for (const lodgeId of [...lockedLodgeIds].sort()) {
+      await acquireLodgeCapacityLock(tx, lodgeId);
+    }
     const children = await tx.booking.findMany({
       where: {
         parentBookingId: organiserBookingId,
@@ -387,6 +409,11 @@ async function releaseSettlementChildren(
         member: { select: { id: true, email: true, firstName: true } },
       },
     });
+    if (children.some((child) => !lockedLodgeIds.has(child.lodgeId))) {
+      throw new Error(
+        "Group settlement child lodge changed during reaper lock acquisition; retry",
+      );
+    }
 
     const claimedChildren: typeof children = [];
     for (const child of children) {
@@ -400,7 +427,7 @@ async function releaseSettlementChildren(
       if (reverted.count === 0) continue;
       claimedChildren.push(child);
       // PAYMENT_PENDING does not hold capacity: drop the bed allocations.
-      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: child.id,
         db: tx,
         previousRange: { checkIn: child.checkIn, checkOut: child.checkOut },

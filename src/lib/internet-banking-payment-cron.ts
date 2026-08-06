@@ -5,7 +5,8 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
-import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { paymentHasCaptureEvidence } from "@/lib/cancel-flattened-payment-backfill";
 import { sendBookingCancelledEmail } from "@/lib/email";
@@ -71,6 +72,7 @@ function releaseOneHold(paymentId: string, now: Date) {
       // Holding both through the transition prevents inbound Xero repair and
       // allocation/deallocation reconciliation from changing precise slices
       // between this guard, the local restore, and the clearing aggregate.
+      await acquireLodgeCapacityLock(tx, fresh.booking.lodgeId);
       await lockMemberCreditLedger(fresh.booking.memberId, tx);
 
       if (await findUnconvergedAppliedCreditDeallocation(fresh.id, tx)) {
@@ -100,7 +102,7 @@ function releaseOneHold(paymentId: string, now: Date) {
         },
       });
       await revokePaymentLinksForBooking(fresh.bookingId, tx);
-      await reconcileBedAllocationsForBookingWithGlobalLockHeld({
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: fresh.bookingId,
         db: tx,
       });

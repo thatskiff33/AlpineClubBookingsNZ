@@ -42,7 +42,6 @@ import { createAuditLog, logAudit } from "@/lib/audit";
 import { formatDateOnly } from "@/lib/date-only";
 import {
   MAX_AUDITED_PRUNED_ALLOCATIONS,
-  reconcileBedAllocationsForBookingWithGlobalLockHeld,
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
 import {
@@ -1907,10 +1906,10 @@ export async function approveMemberWholeLodgeRequest(input: {
 
   try {
     conversion = await prisma.$transaction(async (tx) => {
-      // Fresh create only (no held booking is reachable here, guarded above), so
-      // the per-lodge capacity lock alone is the right scope — exactly as the
-      // school fresh-create branch does. Taking the global lifecycle lock too
-      // would needlessly serialise unrelated lodges.
+      // Whole-lodge conversion composes a booking lifecycle transition with
+      // allocation pruning, so it joins the global cohort before the booking's
+      // lodge capacity key. The held reconcile below reuses that lock prefix.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
       const bookingLodgeId = request.lodgeId ?? (await getDefaultLodgeId(tx));
       await acquireLodgeCapacityLock(tx, bookingLodgeId);
 
@@ -2092,7 +2091,7 @@ export async function approveMemberWholeLodgeRequest(input: {
         orderBy: [{ stayDate: "asc" }, { bedId: "asc" }],
         take: MAX_AUDITED_PRUNED_ALLOCATIONS + 1,
       });
-      const reconcile = await reconcileBedAllocationsForBookingWithGlobalLockHeld({
+      const reconcile = await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
         db: tx,
       });

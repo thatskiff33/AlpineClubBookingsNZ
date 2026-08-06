@@ -161,6 +161,7 @@ async function softDeleteCancelledBooking(
   reason: string
 ): Promise<DeleteBookingResult> {
   return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const booking = await loadBookingForDelete(tx, bookingId);
 
     if (!booking) {

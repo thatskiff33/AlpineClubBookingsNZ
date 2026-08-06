@@ -2,7 +2,8 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { getTodayDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 export interface CompleteBookingsResult {
   completedCount: number;
@@ -23,12 +24,46 @@ export interface CompleteBookingsResult {
 export async function completeBookings(): Promise<CompleteBookingsResult> {
   const today = getTodayDateOnly();
 
-  const bookingsToComplete = await prisma.booking.findMany({
-    where: {
-      status: BookingStatus.PAID,
-      checkOut: { lt: today },
-    },
-    select: { id: true, checkIn: true, checkOut: true },
+  const bookingsToComplete = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const candidates = await tx.booking.findMany({
+      where: { status: BookingStatus.PAID, checkOut: { lt: today } },
+      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
+    });
+    const lockedLodgeIds = new Set(candidates.map((booking) => booking.lodgeId));
+    for (const lodgeId of [...lockedLodgeIds].sort()) {
+      await acquireLodgeCapacityLock(tx, lodgeId);
+    }
+    const current = await tx.booking.findMany({
+      where: { status: BookingStatus.PAID, checkOut: { lt: today } },
+      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
+    });
+    if (current.some((booking) => !lockedLodgeIds.has(booking.lodgeId))) {
+      throw new Error("Completion lodge set changed during lock acquisition; retry");
+    }
+
+    const completed: typeof current = [];
+    for (const booking of current) {
+      const claimed = await tx.booking.updateMany({
+        where: {
+          id: booking.id,
+          status: BookingStatus.PAID,
+          checkOut: { lt: today },
+        },
+        data: { status: BookingStatus.COMPLETED },
+      });
+      if (claimed.count === 0) continue;
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
+        bookingId: booking.id,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
+      completed.push(booking);
+    }
+    return completed;
   });
 
   if (bookingsToComplete.length === 0) {
@@ -36,20 +71,6 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
   }
 
   const ids = bookingsToComplete.map((b) => b.id);
-
-  await prisma.booking.updateMany({
-    where: { id: { in: ids } },
-    data: { status: BookingStatus.COMPLETED },
-  });
-  for (const booking of bookingsToComplete) {
-    await reconcileBedAllocationsForBooking({
-      bookingId: booking.id,
-      previousRange: {
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-      },
-    });
-  }
 
   logger.info(
     { job: "complete-bookings", count: ids.length },

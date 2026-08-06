@@ -3,7 +3,8 @@ import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
 import { getTodayDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
-import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
+import { acquireLodgeCapacityLock } from "@/lib/capacity";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -84,35 +85,60 @@ async function processWaitlistCronOnce(): Promise<{
   // (F32, #1888).
   const today = getTodayDateOnly();
 
-  const pastWaitlisted = await prisma.booking.findMany({
-    where: {
-      status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
-      checkOut: { lte: today },
-    },
-    select: { id: true, checkIn: true, checkOut: true },
-  });
-
-  if (pastWaitlisted.length > 0) {
-    await prisma.booking.updateMany({
+  const pastWaitlisted = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+    const candidates = await tx.booking.findMany({
       where: {
-        id: { in: pastWaitlisted.map((b) => b.id) },
+        status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
+        checkOut: { lte: today },
       },
-      data: {
-        status: BookingStatus.CANCELLED,
-        waitlistPosition: null,
-        waitlistOfferedAt: null,
-        waitlistOfferExpiresAt: null,
-      },
+      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
     });
-    for (const booking of pastWaitlisted) {
-      await reconcileBedAllocationsForBooking({
+    const lockedLodgeIds = new Set(candidates.map((booking) => booking.lodgeId));
+    for (const lodgeId of [...lockedLodgeIds].sort()) {
+      await acquireLodgeCapacityLock(tx, lodgeId);
+    }
+    const current = await tx.booking.findMany({
+      where: {
+        status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
+        checkOut: { lte: today },
+      },
+      select: { id: true, checkIn: true, checkOut: true, lodgeId: true },
+    });
+    if (current.some((booking) => !lockedLodgeIds.has(booking.lodgeId))) {
+      throw new Error("Past waitlist lodge set changed during lock acquisition; retry");
+    }
+
+    const cancelled: typeof current = [];
+    for (const booking of current) {
+      const claimed = await tx.booking.updateMany({
+        where: {
+          id: booking.id,
+          status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
+          checkOut: { lte: today },
+        },
+        data: {
+          status: BookingStatus.CANCELLED,
+          waitlistPosition: null,
+          waitlistOfferedAt: null,
+          waitlistOfferExpiresAt: null,
+        },
+      });
+      if (claimed.count === 0) continue;
+      await reconcileBedAllocationsForBookingWithLodgeLockHeld({
         bookingId: booking.id,
+        db: tx,
         previousRange: {
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
         },
       });
+      cancelled.push(booking);
     }
+    return cancelled;
+  });
+
+  if (pastWaitlisted.length > 0) {
 
     logger.info(
       { count: pastWaitlisted.length, job: "processWaitlistCron" },

@@ -1398,11 +1398,10 @@ export async function reconcileBedAllocationsForBookingWithGlobalLockHeld(
 }
 
 /**
- * Self-locking public boundary. Supplying a transaction client never bypasses
- * the lock contract: advisory xact locks are re-entrant when an outer lifecycle
- * already owns them. The booking's lodge key is immutable and is resolved
- * before locking; mutable booking/allocation state is re-read by the internal
- * implementation after global -> lodge acquisition.
+ * Self-locking public boundary. It owns its transaction and acquires global
+ * then the booking's immutable lodge key; composed transactions use one of the
+ * explicit held entrypoints above. Mutable booking/allocation state is re-read
+ * by the internal implementation after lock acquisition.
  */
 export async function reconcileBedAllocationsForBooking(
   input: ReconcileBedAllocationsForBookingInput,

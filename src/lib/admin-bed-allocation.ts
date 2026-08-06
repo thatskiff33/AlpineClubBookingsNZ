@@ -4080,9 +4080,8 @@ export async function assignBedRange(
   // count is fixed (see runAssignBedRangeAttempt) but a 366-night createMany is
   // a big single statement — generous headroom, not a licence to grow the
   // statement count with nights.
-  // #2286: the lodge lock is acquired FIRST inside the transaction, so the
-  // custodian scan below cannot race a hold being created or cleared. Resolved
-  // outside the transaction so it is genuinely the first statement.
+  // #2286: the transaction takes global first and then the lodge key before the
+  // custodian scan, so a hold cannot race the scan and write.
   const lockLodgeId = await resolveBedLodgeIdForLock(input.bedId, prisma);
   const runAttempt = () =>
     prisma.$transaction(
