@@ -7,6 +7,7 @@ import { buildConfigExport } from "@/lib/config-transfer/export";
 import { buildImportPlan } from "@/lib/config-transfer/import";
 import { readBundle } from "@/lib/config-transfer/bundle";
 import { parseCsv } from "@/lib/config-transfer/csv";
+import { lodgeFolderFiles } from "@/lib/config-transfer/categories/lodge-config";
 import type { ReadDb } from "@/lib/config-transfer/import-types";
 
 const LODGE_JSON = "lodge-config/lodges/main/lodge.json";
@@ -132,6 +133,13 @@ async function exportLodges(includeDoorCodes: boolean) {
 }
 
 describe("config-transfer lodge-config (per-lodge folders)", () => {
+  it("publishes the complete eight-file per-lodge path contract", () => {
+    expect(lodgeFolderFiles("main").bedAllocationSettings).toBe(
+      "lodge-config/lodges/main/bed-allocation-settings.json",
+    );
+    expect(Object.keys(lodgeFolderFiles("main"))).toHaveLength(8);
+  });
+
   it("exports a lodge folder with lodge.json + collection CSVs (lodge implied by folder)", async () => {
     const { zip } = await exportLodges(false);
     const { files } = readBundle(zip);

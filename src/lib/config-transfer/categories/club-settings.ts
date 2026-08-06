@@ -849,7 +849,7 @@ function parseSingleton(
     }
     const customValidationError = rule?.validate?.(value);
     if (customValidationError) {
-      errors.push(`${file}: ${field} â€” ${customValidationError}`);
+      errors.push(`${file}: ${field} - ${customValidationError}`);
       ok = false;
       continue;
     }
@@ -922,6 +922,25 @@ function project(
   return out;
 }
 
+/** Validate structured database values before they become portable JSON. */
+function projectForExport(
+  spec: SingletonSpec,
+  row: Record<string, unknown>,
+  fields: string[],
+): Record<string, unknown> {
+  const out = project(row, fields);
+  if (
+    spec.entity === "bed-allocation-settings" &&
+    fields.includes("allocationPriorityOrder")
+  ) {
+    out.allocationPriorityOrder = parseBedAllocationPriorityOrder(
+      out.allocationPriorityOrder,
+      "BedAllocationSettings(default).allocationPriorityOrder",
+    );
+  }
+  return out;
+}
+
 export const clubSettingsExporter: CategoryExporter = {
   category: "club-settings",
   async export(ctx: ExportContext): Promise<BundleEntry[]> {
@@ -956,7 +975,11 @@ export const clubSettingsExporter: CategoryExporter = {
         category: "club-settings",
         rowCount: 1,
         bytes: strToU8(
-          JSON.stringify(project(row ?? spec.defaults(), fields), null, 2),
+          JSON.stringify(
+            projectForExport(spec, row ?? spec.defaults(), fields),
+            null,
+            2,
+          ),
         ),
       });
     }

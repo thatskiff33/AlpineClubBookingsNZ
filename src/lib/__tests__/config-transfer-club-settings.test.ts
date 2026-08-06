@@ -193,6 +193,35 @@ describe("config-transfer club-settings", () => {
     expect(plan.errors.join(" ")).toMatch(/unknown bed-allocation priority/i);
   });
 
+  it.each([
+    ["non-array", "BOOKING_COHESION", /must be an array/i],
+    [
+      "duplicate",
+      ["BOOKING_COHESION", "BOOKING_COHESION"],
+      /duplicate bed-allocation priority/i,
+    ],
+    ["unknown", ["UNKNOWN"], /unknown bed-allocation priority/i],
+  ] as const)("fails export for a corrupt %s legacy priority row", async (_name, value, error) => {
+    await expect(
+      buildConfigExport({
+        db: stubDb({
+          bedAllocationSettings: {
+            autoAllocationEnabled: true,
+            allocationPriorityOrder: value,
+            // A linked-away/orphan legacy row is still exported by the
+            // compatibility singleton and therefore must be validated here.
+            lodgeId: "source-only-lodge-id",
+          },
+        }),
+        categories: ["club-settings"],
+        includeDoorCodes: false,
+        appVersion: "0.10.1",
+        prismaMigration: null,
+        generatedAt: "2026-08-06T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(error);
+  });
+
   it("round-trips the club-identity facebookUrl and leaves the email fields on their own entry (C5 #1984)", async () => {
     const IDENTITY = {
       name: "Renamed Club",

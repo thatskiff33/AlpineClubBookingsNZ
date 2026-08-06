@@ -7,7 +7,7 @@ import {
   resolveEffectiveBedAllocationSettings,
   type BedAllocationPriority,
 } from "@/lib/bed-allocation-settings";
-import type { BundleEntry } from "../bundle";
+import { ConfigTransferBundleError, type BundleEntry } from "../bundle";
 import type { CategoryExporter, ExportContext } from "../export-types";
 import {
   changedFields,
@@ -25,13 +25,15 @@ import {
 } from "../import-types";
 import { registerEntity } from "../registry";
 import {
+  BED_ALLOCATION_SETTINGS_FILE,
   folderLodgeSlug,
   folderSegment,
+  lodgeFolderFiles,
   lodgeFolderSegments,
   LODGES_PREFIX,
 } from "./lodge-config";
 
-export const BED_ALLOCATION_SETTINGS_FILE = "bed-allocation-settings.json";
+export { BED_ALLOCATION_SETTINGS_FILE };
 const SETTINGS_FIELDS = [
   "autoAllocationEnabled",
   "allocationPriorityOrder",
@@ -49,7 +51,7 @@ registerEntity({
 });
 
 export function bedAllocationSettingsFile(segment: string): string {
-  return `${LODGES_PREFIX}${segment}/${BED_ALLOCATION_SETTINGS_FILE}`;
+  return lodgeFolderFiles(segment).bedAllocationSettings;
 }
 
 interface ParsedSettings {
@@ -282,9 +284,22 @@ async function applyBedAllocationSettings(
   };
   const segments = settingsSegments(ctx.files);
   const slugBySegment = new Map<string, string>();
+  const seenSlugs = new Set<string>();
   for (const segment of segments) {
+    const file = bedAllocationSettingsFile(segment);
     const slug = folderLodgeSlug(ctx.files, segment);
-    if (slug) slugBySegment.set(segment, slug);
+    if (!slug) {
+      throw new ConfigTransferBundleError(
+        `${file}: requires a valid sibling lodge.json with an authoritative slug`,
+      );
+    }
+    if (seenSlugs.has(slug)) {
+      throw new ConfigTransferBundleError(
+        `${file}: duplicate bed-allocation settings for lodge slug "${slug}"`,
+      );
+    }
+    seenSlugs.add(slug);
+    slugBySegment.set(segment, slug);
   }
   // Base lodge-config runs first in this transaction, so this re-query resolves
   // both pre-existing (active or inactive) lodges and lodges just created from
@@ -295,11 +310,15 @@ async function applyBedAllocationSettings(
     const slug = slugBySegment.get(segment);
     const file = bedAllocationSettingsFile(segment);
     const lodgeId = slug ? batch.lodgeIdBySlug.get(slug) ?? null : null;
+    if (!slug || !lodgeId) {
+      throw new ConfigTransferBundleError(
+        `${file}: target lodge "${slug ?? "unknown"}" was not resolved after base lodge configuration`,
+      );
+    }
     const errors: string[] = [];
     const parsed = parseSettings(ctx.files.get(file)!, file, errors);
-    if (!slug || !lodgeId || !parsed) {
-      result.skipped += 1;
-      continue;
+    if (!parsed) {
+      throw new ConfigTransferBundleError(errors.join("; "));
     }
     const current = batch.settingsByLodgeId.get(lodgeId) ?? null;
     if (!current) {

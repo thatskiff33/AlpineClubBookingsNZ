@@ -16,6 +16,7 @@ import {
 } from "@/lib/config-transfer/categories/lodge-config";
 import { CATEGORY_EXPORTERS } from "@/lib/config-transfer/export";
 import { CATEGORY_IMPORTERS } from "@/lib/config-transfer/import";
+import { updateBedAllocationSettings } from "@/lib/admin-bed-allocation";
 import type {
   ApplyContext,
   PlanContext,
@@ -67,6 +68,84 @@ function applyContext(
     notes: { doorCodesWritten: [] },
     selectedCategories: ["lodge-config"],
   };
+}
+
+interface StoredSettings {
+  id: string;
+  lodgeId: string | null;
+  autoAllocationEnabled: boolean;
+  allocationPriorityOrder: string[];
+  updatedByMemberId: string | null;
+  updatedAt: Date;
+}
+
+function statefulDb(options: {
+  lodgeId: string;
+  slug: string;
+  rows?: StoredSettings[];
+}) {
+  const rows = new Map(
+    (options.rows ?? []).map((row) => [row.id, { ...row }]),
+  );
+  const bedAllocationSettings = {
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) =>
+      rows.get(where.id) ?? null,
+    ),
+    findMany: vi.fn(
+      async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.flatMap((id) => {
+          const row = rows.get(id);
+          return row ? [row] : [];
+        }),
+    ),
+    create: vi.fn(async ({ data }: { data: StoredSettings }) => {
+      const row = {
+        ...data,
+        updatedByMemberId: data.updatedByMemberId ?? null,
+        updatedAt: data.updatedAt ?? new Date("2026-08-06T00:00:00.000Z"),
+      };
+      rows.set(row.id, row);
+      return row;
+    }),
+    update: vi.fn(
+      async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Partial<StoredSettings>;
+      }) => {
+        const row = { ...rows.get(where.id)!, ...data };
+        rows.set(where.id, row);
+        return row;
+      },
+    ),
+    upsert: vi.fn(
+      async ({
+        where,
+        create,
+        update,
+      }: {
+        where: { id: string };
+        create: StoredSettings;
+        update: Partial<StoredSettings>;
+      }) => {
+        const current = rows.get(where.id);
+        const row = current ? { ...current, ...update } : create;
+        rows.set(where.id, row);
+        return row;
+      },
+    ),
+  };
+  const db = {
+    lodge: {
+      findMany: vi.fn().mockResolvedValue([
+        { id: options.lodgeId, slug: options.slug },
+      ]),
+    },
+    bedAllocationSettings,
+  };
+  return { db, rows, bedAllocationSettings };
 }
 
 describe("per-lodge bed-allocation settings config transfer (#2593)", () => {
@@ -235,31 +314,144 @@ describe("per-lodge bed-allocation settings config transfer (#2593)", () => {
     });
   });
 
-  it("does not default or wipe omitted auto in overwrite mode", async () => {
-    const update = vi.fn().mockResolvedValue({});
-    const tx = {
+  it.each(["merge", "overwrite"] as const)(
+    "applies an explicit empty priority in %s mode without defaulting omitted auto",
+    async (mode) => {
+      const update = vi.fn().mockResolvedValue({});
+      const tx = {
+        lodge: { findMany: vi.fn().mockResolvedValue([{ id: "lodge-1", slug: SLUG }]) },
+        bedAllocationSettings: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: "lodge-1",
+              autoAllocationEnabled: false,
+              allocationPriorityOrder: [...DEFAULT_BED_ALLOCATION_SETTINGS.allocationPriorityOrder],
+            },
+          ]),
+          update,
+        },
+      } as unknown as TxDb;
+      const result = await bedAllocationSettingsImporter.apply(
+        applyContext(tx, files({ allocationPriorityOrder: [] }), mode),
+      );
+      expect(result).toMatchObject({ created: 0, updated: 1, deleted: 0 });
+      expect(update).toHaveBeenCalledWith({
+        where: { id: "lodge-1" },
+        data: {
+          allocationPriorityOrder: [],
+          updatedByMemberId: "actor-1",
+        },
+      });
+    },
+  );
+
+  it("fails closed when direct apply sees invalid data or an unresolved lodge", async () => {
+    const resolvedTx = {
       lodge: { findMany: vi.fn().mockResolvedValue([{ id: "lodge-1", slug: SLUG }]) },
-      bedAllocationSettings: {
-        findMany: vi.fn().mockResolvedValue([
-          {
-            id: "lodge-1",
-            autoAllocationEnabled: false,
-            allocationPriorityOrder: [...DEFAULT_BED_ALLOCATION_SETTINGS.allocationPriorityOrder],
-          },
-        ]),
-        update,
-      },
+      bedAllocationSettings: { findMany: vi.fn().mockResolvedValue([]) },
     } as unknown as TxDb;
-    const result = await bedAllocationSettingsImporter.apply(
-      applyContext(tx, files({ allocationPriorityOrder: [] }), "overwrite"),
+    await expect(
+      bedAllocationSettingsImporter.apply(
+        applyContext(
+          resolvedTx,
+          files({ allocationPriorityOrder: ["UNKNOWN"] }),
+        ),
+      ),
+    ).rejects.toThrow(/unknown bed-allocation priority/i);
+
+    const unresolvedTx = {
+      lodge: { findMany: vi.fn().mockResolvedValue([]) },
+    } as unknown as TxDb;
+    await expect(
+      bedAllocationSettingsImporter.apply(
+        applyContext(unresolvedTx, files({ allocationPriorityOrder: [] })),
+      ),
+    ).rejects.toThrow(/target lodge.*was not resolved/i);
+  });
+
+  it("round-trips an exported effective file through apply and re-export", async () => {
+    const source = statefulDb({
+      lodgeId: "source-lodge-id",
+      slug: SLUG,
+      rows: [
+        {
+          id: "source-lodge-id",
+          lodgeId: "source-lodge-id",
+          autoAllocationEnabled: false,
+          allocationPriorityOrder: [],
+          updatedByMemberId: null,
+          updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+        },
+      ],
+    });
+    const [exported] = await bedAllocationSettingsExporter.export({
+      db: source.db as unknown as ReadDb,
+      includeDoorCodes: false,
+      media: { reference: vi.fn() },
+    });
+    const target = statefulDb({ lodgeId: "target-lodge-id", slug: SLUG });
+    const segment = SLUG;
+    const transferFiles = new Map([
+      [
+        `lodge-config/lodges/${segment}/lodge.json`,
+        strToU8(JSON.stringify({ slug: SLUG, name: "Lodge" })),
+      ],
+      [exported.path, exported.bytes],
+    ]);
+    await bedAllocationSettingsImporter.apply(
+      applyContext(target.db as unknown as TxDb, transferFiles),
     );
-    expect(result).toMatchObject({ created: 0, updated: 1, deleted: 0 });
-    expect(update).toHaveBeenCalledWith({
-      where: { id: "lodge-1" },
-      data: {
-        allocationPriorityOrder: [],
-        updatedByMemberId: "actor-1",
-      },
+    const [reExported] = await bedAllocationSettingsExporter.export({
+      db: target.db as unknown as ReadDb,
+      includeDoorCodes: false,
+      media: { reference: vi.fn() },
+    });
+    expect(JSON.parse(strFromU8(reExported.bytes))).toEqual(
+      JSON.parse(strFromU8(exported.bytes)),
+    );
+  });
+
+  it("keeps an imported own row authoritative over a linked legacy row on later UI save", async () => {
+    const linkedLegacy: StoredSettings = {
+      id: "default",
+      lodgeId: "target-lodge-id",
+      autoAllocationEnabled: true,
+      allocationPriorityOrder: ["BOOKING_COHESION"],
+      updatedByMemberId: null,
+      updatedAt: new Date("2026-08-01T00:00:00.000Z"),
+    };
+    const target = statefulDb({
+      lodgeId: "target-lodge-id",
+      slug: SLUG,
+      rows: [linkedLegacy],
+    });
+    await bedAllocationSettingsImporter.apply(
+      applyContext(
+        target.db as unknown as TxDb,
+        files({
+          autoAllocationEnabled: false,
+          allocationPriorityOrder: ["REQUESTED_ROOM"],
+        }),
+      ),
+    );
+
+    const saved = await updateBedAllocationSettings({
+      db: target.db as never,
+      lodgeId: "target-lodge-id",
+      autoAllocationEnabled: true,
+      allocationPriorityOrder: [],
+      updatedByMemberId: "admin-2",
+    });
+
+    expect(target.bedAllocationSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "target-lodge-id" } }),
+    );
+    expect(target.rows.get("default")).toEqual(linkedLegacy);
+    expect(saved).toMatchObject({
+      settingsId: "target-lodge-id",
+      source: "LODGE",
+      autoAllocationEnabled: true,
+      allocationPriorityOrder: [],
     });
   });
 });

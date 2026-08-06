@@ -268,6 +268,32 @@ describe("config-transfer display — plan (round-trip + diff)", () => {
     expect(item.action).toBe("update");
     expect(item.changedFields).toContain("slotContent");
   });
+
+  it("treats an explicit empty areas array as present in merge mode", async () => {
+    const incoming = {
+      ...BOARD_LAYOUT,
+      bodyHtml: "<div>Static display</div>",
+      areas: [],
+    };
+    let zip = withFile(await exportBundle(), LAYOUTS_FILE, [incoming]);
+    zip = withFile(zip, TEMPLATES_FILE, []);
+    const target = emptyTargetDb({
+      displayLayout: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "L1", ...incoming, areas: BOARD_LAYOUT.areas },
+        ]),
+      },
+    });
+
+    const plan = await buildImportPlan(target, zip, { mode: "merge" });
+    const item = plan.categories
+      .find((category) => category.category === "lodge-config")!
+      .items.find((entry) => entry.entity === "display-layout")!;
+    expect(item).toMatchObject({
+      action: "update",
+      changedFields: ["areas"],
+    });
+  });
 });
 
 describe("config-transfer display — overwrites a differing built-in (#156)", () => {

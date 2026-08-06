@@ -59,6 +59,7 @@ const ROOMS_CSV = "rooms.csv";
 const BEDS_CSV = "beds.csv";
 const SEASONS_CSV = "seasons.csv";
 const RATES_CSV = "season-rates.csv";
+export const BED_ALLOCATION_SETTINGS_FILE = "bed-allocation-settings.json";
 
 const LODGE_FIELDS = [
   "slug", "name", "active", "travelNote", "doorCode", "isDefault",
@@ -95,7 +96,7 @@ export function folderSegment(slug: string): string {
   return slug.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
-/** The seven possible file paths inside one lodge folder segment. */
+/** The eight possible file paths inside one lodge folder segment. */
 export function lodgeFolderFiles(segment: string) {
   const base = `${LODGES_PREFIX}${segment}`;
   return {
@@ -106,6 +107,7 @@ export function lodgeFolderFiles(segment: string) {
     rates: `${base}/${RATES_CSV}`,
     instructions: `${base}/instructions.csv`,
     choreTemplates: `${base}/chore-templates.csv`,
+    bedAllocationSettings: `${base}/${BED_ALLOCATION_SETTINGS_FILE}`,
   };
 }
 

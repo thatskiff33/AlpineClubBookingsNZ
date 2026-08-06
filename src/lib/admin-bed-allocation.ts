@@ -357,9 +357,9 @@ export async function updateBedAllocationSettings(input: {
   allocationPriorityOrder: BedAllocationPriority[];
   updatedByMemberId: string;
   db?: BedAllocationDb;
-  // Scoped admin writes require a lodge. A legacy default row is updated only
-  // when it is already linked to that same lodge; otherwise the lodge-id row is
-  // authoritative and the legacy row remains fallback-only.
+  // Scoped admin writes require a lodge. An existing lodge-id row always wins;
+  // only when it is absent may a legacy default row linked to this lodge remain
+  // the write target. This keeps migration-forward/imported rows authoritative.
   lodgeId: string;
 }): Promise<BedAllocationSettingsPayload> {
   const db = input.db ?? prisma;
@@ -368,10 +368,13 @@ export async function updateBedAllocationSettings(input: {
     "allocationPriorityOrder",
     400,
   );
-  const legacy = await db.bedAllocationSettings.findUnique({
-    where: { id: BED_ALLOCATION_SETTINGS_ID },
-  });
-  const targetsLegacyRow = legacy?.lodgeId === input.lodgeId;
+  const [own, legacy] = await Promise.all([
+    db.bedAllocationSettings.findUnique({ where: { id: input.lodgeId } }),
+    db.bedAllocationSettings.findUnique({
+      where: { id: BED_ALLOCATION_SETTINGS_ID },
+    }),
+  ]);
+  const targetsLegacyRow = !own && legacy?.lodgeId === input.lodgeId;
   const targetId = targetsLegacyRow
     ? BED_ALLOCATION_SETTINGS_ID
     : input.lodgeId;
