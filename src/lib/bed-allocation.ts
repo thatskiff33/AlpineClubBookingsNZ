@@ -1438,7 +1438,7 @@ interface FreeSpaceStrategy {
   compatibilityRank: number;
 }
 
-/** Hard total candidate bound per booking; never multiplied by room count. */
+/** Hard bound for matching-layout candidates; other strategy families are separate. */
 export const BED_ALLOCATION_MAX_MATCHING_LAYOUTS = 24;
 
 function uniqueGuestOrders(orders: StayGuest[][]): StayGuest[][] {
@@ -1448,6 +1448,138 @@ function uniqueGuestOrders(orders: StayGuest[][]): StayGuest[][] {
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
+  });
+}
+
+/** Deterministic Edmonds matching for one direct-family component. */
+function maximumCardinalityFamilyPairs(component: StayGuest[]): number[] {
+  const size = component.length;
+  const adjacency = component.map((guest, index) =>
+    component
+      .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
+      .filter(
+        ({ candidate, candidateIndex }) =>
+          candidateIndex !== index && shareDirectFamilyGroup(guest, candidate),
+      )
+      .map(({ candidateIndex }) => candidateIndex),
+  );
+  const match = Array<number>(size).fill(-1);
+  const parent = Array<number>(size).fill(-1);
+  const base = Array.from({ length: size }, (_, index) => index);
+  const used = Array<boolean>(size).fill(false);
+  const blossom = Array<boolean>(size).fill(false);
+
+  const lowestCommonAncestor = (leftStart: number, rightStart: number) => {
+    const path = Array<boolean>(size).fill(false);
+    let left = leftStart;
+    while (true) {
+      left = base[left];
+      path[left] = true;
+      if (match[left] === -1) break;
+      left = parent[match[left]];
+    }
+    let right = rightStart;
+    while (true) {
+      right = base[right];
+      if (path[right]) return right;
+      right = parent[match[right]];
+    }
+  };
+
+  const markBlossomPath = (
+    start: number,
+    commonBase: number,
+    childStart: number,
+  ) => {
+    let vertex = start;
+    let child = childStart;
+    while (base[vertex] !== commonBase) {
+      blossom[base[vertex]] = true;
+      blossom[base[match[vertex]]] = true;
+      parent[vertex] = child;
+      child = match[vertex];
+      vertex = parent[match[vertex]];
+    }
+  };
+
+  const augmentFrom = (root: number): boolean => {
+    used.fill(false);
+    parent.fill(-1);
+    for (let index = 0; index < size; index += 1) base[index] = index;
+    const queue = [root];
+    used[root] = true;
+    for (let head = 0; head < queue.length; head += 1) {
+      const vertex = queue[head];
+      for (const candidate of adjacency[vertex]) {
+        if (
+          base[vertex] === base[candidate] ||
+          match[vertex] === candidate
+        ) {
+          continue;
+        }
+        if (
+          candidate === root ||
+          (match[candidate] !== -1 && parent[match[candidate]] !== -1)
+        ) {
+          const commonBase = lowestCommonAncestor(vertex, candidate);
+          blossom.fill(false);
+          markBlossomPath(vertex, commonBase, candidate);
+          markBlossomPath(candidate, commonBase, vertex);
+          for (let index = 0; index < size; index += 1) {
+            if (!blossom[base[index]]) continue;
+            base[index] = commonBase;
+            if (used[index]) continue;
+            used[index] = true;
+            queue.push(index);
+          }
+          continue;
+        }
+        if (parent[candidate] !== -1) continue;
+        parent[candidate] = vertex;
+        if (match[candidate] === -1) {
+          let current = candidate;
+          while (current !== -1) {
+            const previous = parent[current];
+            const next = previous === -1 ? -1 : match[previous];
+            match[current] = previous;
+            if (previous !== -1) match[previous] = current;
+            current = next;
+          }
+          return true;
+        }
+        const matched = match[candidate];
+        used[matched] = true;
+        queue.push(matched);
+      }
+    }
+    return false;
+  };
+
+  for (let vertex = 0; vertex < size; vertex += 1) {
+    if (match[vertex] === -1) augmentFrom(vertex);
+  }
+  return match;
+}
+
+function matchedFamilyComponentOrder(components: StayGuest[][]): StayGuest[] {
+  return components.flatMap((component) => {
+    const match = maximumCardinalityFamilyPairs(component);
+    const emitted = new Set<number>();
+    const paired: StayGuest[] = [];
+    const unmatched: StayGuest[] = [];
+    for (let index = 0; index < component.length; index += 1) {
+      if (emitted.has(index)) continue;
+      const partner = match[index];
+      if (partner === -1) {
+        unmatched.push(component[index]);
+        emitted.add(index);
+        continue;
+      }
+      paired.push(component[index], component[partner]);
+      emitted.add(index);
+      emitted.add(partner);
+    }
+    return [...paired, ...unmatched];
   });
 }
 
@@ -1535,6 +1667,7 @@ function splitGuestOrderVariants(
   familyVariants.push(
     componentCluster,
     components.flatMap((component) => [...component].reverse()),
+    matchedFamilyComponentOrder(components),
   );
 
   // Retain direct-pair-front candidates for overlapping or impossible chains:

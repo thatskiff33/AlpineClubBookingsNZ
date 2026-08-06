@@ -967,6 +967,58 @@ describe("bed allocation planner", () => {
     expect(roomByGuest.get("e")).toBe(roomByGuest.get("f"));
   });
 
+  it("pairs the maximum number of direct-family edges in every disconnected chain", () => {
+    const chainRooms: BedAllocationRoom[] = Array.from(
+      { length: 4 },
+      (_, roomIndex) => ({
+        id: `chain-room-${roomIndex}`,
+        name: `Chain room ${roomIndex}`,
+        sortOrder: roomIndex,
+        beds: Array.from({ length: 2 }, (_, bedIndex) => ({
+          id: `chain-bed-${roomIndex}-${bedIndex}`,
+          roomId: `chain-room-${roomIndex}`,
+          name: `Bed ${bedIndex}`,
+          sortOrder: bedIndex,
+        })),
+      }),
+    );
+    const groupsByGuest: Record<string, string[]> = {
+      a: ["ab"],
+      b: ["ab", "bc"],
+      c: ["bc", "cd"],
+      d: ["cd"],
+      e: ["ef"],
+      f: ["ef", "fg"],
+      g: ["fg", "gh"],
+      h: ["gh"],
+    };
+    const input = {
+      enabled: true,
+      allocationPriorityOrder: ["FAMILY_COHESION" as const],
+      rooms: chainRooms,
+      bookings: [
+        multiGuestBooking(
+          "family-chains",
+          "2026-06-01",
+          ["c", "g", "b", "e", "d", "h", "f", "a"].map((id) => ({
+            id,
+            familyGroupIds: groupsByGuest[id],
+          })),
+        ),
+      ],
+    };
+    const plan = buildFirstFitBedAllocationPlan(input);
+    const roomByGuest = new Map(
+      plan.allocations.map((row) => [row.bookingGuestId, row.roomId]),
+    );
+
+    expect(roomByGuest.get("a")).toBe(roomByGuest.get("b"));
+    expect(roomByGuest.get("c")).toBe(roomByGuest.get("d"));
+    expect(roomByGuest.get("e")).toBe(roomByGuest.get("f"));
+    expect(roomByGuest.get("g")).toBe(roomByGuest.get("h"));
+    expect(buildFirstFitBedAllocationPlan(input)).toEqual(plan);
+  });
+
   it("retains a direct-pair choice inside an overlapping family chain", () => {
     const plan = buildFirstFitBedAllocationPlan({
       enabled: true,
