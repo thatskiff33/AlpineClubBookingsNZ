@@ -36,6 +36,12 @@ vi.mock("@/lib/lodge-auth", () => ({
 }));
 
 import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
+// Static imports: vitest hoists the vi.mock calls above these, so the mocks
+// still apply — and a per-call `await import(...)` inside the helpers paid the
+// whole module-graph resolution against each test's 5s budget, which timed out
+// under parallel load (found by the #2621 lane, same fix as its own suites).
+import { GET as getWeek } from "@/app/api/lodge/week/route";
+import { GET as getGuestsForDate } from "@/app/api/lodge/guests/[date]/route";
 
 // The frozen anchor. Week 1 = 2026-07-01 .. 2026-07-07.
 const WEEK_START = "2026-07-01";
@@ -54,7 +60,7 @@ type WeekDay = {
 };
 
 async function week(start = WEEK_START): Promise<WeekDay[]> {
-  const { GET } = await import("@/app/api/lodge/week/route");
+  const GET = getWeek;
   const url = `http://localhost/api/lodge/week?start=${start}`;
   const response = await GET({
     url,
@@ -286,8 +292,7 @@ describe("a review-blocked booking: rosterable presence vs the door list (#2631)
   it("...while the day list still shows them, flagged (#1422 flag-don't-hide)", async () => {
     installBlockedBookingMock();
 
-    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
-    const response = await GET(
+    const response = await getGuestsForDate(
       new Request("http://localhost/api/lodge/guests/2026-07-03") as never,
       { params: Promise.resolve({ date: "2026-07-03" }) } as never,
     );
