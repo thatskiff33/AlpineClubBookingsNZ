@@ -88,10 +88,9 @@ what that member receives.
 1. Check the **Booking Summary** (dates, nights, guests, and per-guest prices).
    If the member has account credit, tick **Apply credit to this booking** to
    use it. Add a promo code with the promo field if you have one.
-2. Add optional **Notes** if relevant. If the
-   booking has minors without an adult, an admin reason box appears — because
-   you are an admin the booking is auto-approved, and the reason is stored in
-   the audit trail.
+2. Add optional **Notes** if relevant. If the booking has minors without an
+   adult, an admin reason box appears — because you are an admin the booking is
+   auto-approved, and the reason is stored in the audit trail.
 3. If Internet Banking is enabled and there is money to pay, choose the
    **Payment method** (Card or Internet Banking).
 4. Click **Confirm Booking** (or **Save as Draft** to hold it without

@@ -864,7 +864,9 @@ export function ReviewStep({
             // #2562 review: the proposal is the party and the nights, but the
             // MEMBER's screen carries more than that, and the request carries none
             // of it — no promo, no working-bee discount, no credit election, no
-            // room request, no arrival time, no note, no payment-method choice.
+            // room request, no note, no payment-method choice. (An arrival time
+            // was on this list until #2621 retired the entry; the wizard no
+            // longer offers one.)
             // `executeApprovedNewBooking` calls the canonical create with none of
             // them, so an approval prices at the club's normal rates. Naming them
             // is what makes the card's disclosure block render on this path.

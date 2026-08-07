@@ -204,9 +204,11 @@ export function readExceptionOffer(body: unknown): ExceptionOffer | null {
  * nights: that is what gets hashed, frozen and re-executed byte-for-byte. The
  * wizard's own create call sends a great deal more, and
  * `executeApprovedNewBooking` calls `createConfirmedBooking` with none of it: no
- * promo, no credit election, no room request, no arrival time, no notes, no
- * payment-method choice. So an approval prices and books at the club's normal
- * rates.
+ * promo, no credit election, no room request, no notes, no payment-method
+ * choice. So an approval prices and books at the club's normal rates. (An
+ * expected arrival time was a fifth item here until #2621 retired the entry
+ * altogether; it is not a wizard choice any more, so there is nothing left to
+ * drop.)
  *
  * The card used to be told there was nothing to disclose here ("a new booking's
  * whole intent IS the party and the nights"), which is true of the PROPOSAL and

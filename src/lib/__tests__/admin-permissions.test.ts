@@ -219,6 +219,9 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
       // Member-facing admin-operational controls (cancel, admin notes, modify).
       // Option A2 widened their APIs, so the page predicates now admit a Booking
       // Officer alongside the owner and Full Admin. (#2621 removed a fourth,
+      // arrival-time, from this set: the expected-arrival-time entry and its
+      // PUT/DELETE /api/bookings/[id]/arrival-time route are retired, so there is
+      // no control left to gate — see the header note above.)
       canCancel: canManageBooking || canAdminEditBookings,
       canModify: canManageBooking || canAdminEditBookings,
       // A non-owner Full Admin OR Booking Officer acts on-behalf of the member

@@ -838,11 +838,9 @@ export default function KioskPage() {
                           key={`${section.title}-${booking.bookingId}`}
                           className="bg-kiosk-card rounded-xl p-4"
                         >
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm text-kiosk-muted-fg">
-                              Booked by {booking.memberName}
-                            </p>
-                          </div>
+                          <p className="mb-2 text-sm text-kiosk-muted-fg">
+                            Booked by {booking.memberName}
+                          </p>
                           {booking.blockedFromCheckin && (
                             <p className="mb-2 inline-block rounded-lg border border-kiosk-danger-border bg-kiosk-danger-bg px-3 py-1 text-sm font-semibold text-kiosk-danger-fg">
                               Blocked from Check-In — see Booking Officer

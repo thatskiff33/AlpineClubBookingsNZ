@@ -20,7 +20,7 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /**
  * GET /api/lodge/guests/[date]
  * Returns the lodge list for a date: all confirmed guests grouped by booking,
- * with arriving/departing indicators and expected arrival times.
+ * with arriving/departing indicators.
  *
  * ONE SCOPE, THE OPERATIONAL DAY (#2631). This route used to answer two
  * different questions depending on a `?scope=` parameter: the night model by

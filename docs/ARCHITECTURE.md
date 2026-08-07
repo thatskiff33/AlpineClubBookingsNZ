@@ -2405,8 +2405,8 @@ deletion. Direct `DELETE /api/admin/members/[id]` is intentionally disabled.
 
 The lodge kiosk has its own PIN session model and permission tiers for
 view-only, guest, hut-leader, and admin-style lodge actions. It supports guest
-arrival/departure, chores, and issue reporting without
-exposing the full admin interface.
+arrival/departure, chores, and issue reporting without exposing the full admin
+interface.
 
 ## Integrations
 

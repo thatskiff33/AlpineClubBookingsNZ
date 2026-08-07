@@ -308,8 +308,9 @@ describe("the allowlist itself", () => {
  * The wizard used to tell the card there was nothing to disclose here, on the
  * grounds that "a new booking's whole intent IS the party and the nights". That is
  * true of the PROPOSAL and false of the member's screen: the create call also sends
- * a promo, a credit election, a room request, an arrival time, a note and a payment
- * choice, `POST /api/bookings/exception-requests` accepts none of them, and
+ * a promo, a credit election, a room request, a note and a payment
+ * choice (an arrival time too, until #2621 retired that entry),
+ * `POST /api/bookings/exception-requests` accepts none of them, and
  * `executeApprovedNewBooking` calls the canonical create with none of them. So a
  * working-bee attendee whose free night is expressed as a promo saw the discounted
  * figure with no notice and the approved booking billed the full rate.
