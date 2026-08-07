@@ -67,6 +67,11 @@ import {
   validateEmailTemplateContent,
   renderTemplateString,
 } from "../email-message-renderer";
+// Imported statically rather than with `await import(...)` inside the test.
+// `vi.mock` above is hoisted, so the mocks are in place either way — but this
+// module pulls in a large graph, and paying for that inside a 5s test body made
+// the assertion time out on a loaded machine. Nothing about the wiring changes.
+import { sendPreArrivalReminderEmail } from "../email/booking";
 
 const TEMPLATE = "pre-arrival-reminder";
 
@@ -237,8 +242,6 @@ describe("#2621 sendPreArrivalReminderEmail still supplies both arrival keys", (
   });
 
   it("supplies them as empty strings, so an override renders nothing rather than a stale label", async () => {
-    const { sendPreArrivalReminderEmail } = await import("../email/booking");
-
     await sendPreArrivalReminderEmail({
       bookingId: "bk_test",
       recipientMemberId: "member_1",
