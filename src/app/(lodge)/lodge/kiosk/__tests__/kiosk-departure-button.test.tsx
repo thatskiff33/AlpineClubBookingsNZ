@@ -60,7 +60,6 @@ function guestPayload(opts: { isDeparting: boolean; isFinalDeparture: boolean })
       {
         bookingId: "booking-1",
         memberName: "Bev Booker",
-        expectedArrivalTime: null,
         blockedFromCheckin: false,
         guests: [
           {

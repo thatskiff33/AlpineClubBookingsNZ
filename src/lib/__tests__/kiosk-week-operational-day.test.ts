@@ -263,7 +263,6 @@ describe("a review-blocked booking: rosterable presence vs the door list (#2631)
           id: "booking-blocked",
           checkIn: day("2026-07-02"),
           checkOut: day("2026-07-04"),
-          expectedArrivalTime: null,
           requiresAdminReview: true,
           adminReviewStatus: "PENDING",
           adminReviewReason: "needs an adult",
