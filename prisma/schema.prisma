@@ -5883,6 +5883,17 @@ model PublicContentSettings {
   // the settings PUT refuses to save, so the supported page delete
   // (app/api/admin/page-content/route.ts DELETE) writes bookNowTarget back to
   // BOOKING_FLOW in the same transaction (#2352, first review finding 1).
+  // It does that TWICE in that transaction, and both halves are needed (#2352,
+  // second review finding S1): once BEFORE the delete, scoped to this page id,
+  // which is also how the route learns the button pointed here; and once AFTER
+  // it, scoped to `PAGE` + a null id, because the pre-delete statement matches
+  // no row when the setting points elsewhere and therefore takes no lock — so a
+  // concurrent settings PUT can still point at the page in that window and let
+  // the cascade produce the wedged pair. Only the cascade can produce PAGE +
+  // null, so the second statement cannot clobber a choice of another page. The
+  // settings PUT also maps the mirror-image race (its published-page check wins,
+  // then the page is deleted, then its upsert hits P2003) onto the 400 it already
+  // returns for an unavailable target, rather than a 500 (finding S4).
   showBookNow          Boolean       @default(false)
   bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
   bookNowPageId        String?

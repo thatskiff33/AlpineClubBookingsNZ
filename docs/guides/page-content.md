@@ -102,7 +102,13 @@ Four things worth knowing:
   provider API key, a signed token — the whole page body is replaced by
   `[REDACTED]` in the record rather than just that fragment. A page holding one
   of those is a page whose content you should keep a copy of elsewhere before
-  deleting it.
+  deleting it. **You are told when it happens**, so you do not have to guess: if
+  the record could not keep the whole page, the message after the delete says the
+  copy in the audit log is not complete. It is a warning, not a failure — the page
+  really is deleted — but it is the one case where retyping from the record is not
+  possible, so treat it as the moment to recover the wording from wherever else you
+  have it (your browser history, a draft, the live page in another tab) rather than
+  later.
 - **A configuration bundle exported before the deletion will bring the page
   back.** Importing a bundle creates any page it names that is not currently
   present, and that includes a page you have since deleted — so a clone, or a
@@ -112,11 +118,16 @@ Four things worth knowing:
   delete a page, and replace any archived bundle you would restore from.
 - **Rarely, the message says the page was deleted but the public site's stored
   copy could not be cleared.** That means exactly what it says: the page is gone
-  from the club's records, and the old address may keep answering for a few
-  minutes until the site refreshes itself. Nothing is wrong and nothing needs
-  redoing — do **not** delete it again, because it is already deleted and the
-  second attempt will simply say the page cannot be found. Check the address
-  again in a few minutes.
+  from the club's records, while the old address may keep answering from the
+  website's stored copy. Nothing is wrong and nothing needs redoing — do **not**
+  delete it again, because it is already deleted and the second attempt will
+  simply say the page cannot be found. **Don't wait it out, though.** The stored
+  copy is not on a countdown that clears itself: the website hands the stored
+  answer to the next visitor and refreshes afterwards, so an address can keep
+  answering for as long as visitors keep asking for it. The fix is another save:
+  open any page or any footer section, save it, and that clears the whole stored
+  copy of the public site including the deleted address. Then check the address
+  again.
 
 Deleting a page never deletes the images it used. Those live in the Image
 Manager and have their own delete, with its own warnings.
@@ -165,7 +176,9 @@ Manager and have their own delete, with its own warnings.
 | I can't unpublish a page | It's a built-in page — anything the starter site ships (Home, About, Join, Apply, Rules, Contact, Committee, Privacy, Terms, FAQ, 404), not just the two **System** pages | Built-in pages can't be hidden by design; only pages you added yourself can be |
 | There's no **Delete** button on a page | Same rule as hiding: only pages you added yourself can be deleted | Nothing to do — the page is one the site itself links, so it stays |
 | I deleted a page by mistake | Deletion is permanent; there is no Restore | Recreate the page at the same slug (it is free again immediately) and ask a full administrator to read the old content out of the audit log entry for it. Use **Hide** instead of **Delete** whenever the page might come back |
-| I deleted a page and the **Book Now** button changed | Expected: the button was pointing at that page, so the **Book Now target** setting was switched back to the booking flow with the delete rather than left pointing at nothing. The confirmation said so before the delete, and the message afterwards repeats it | Nothing to do — the saved setting is already the booking flow. Point **Book Now** at another page and **Save visibility** if you want it somewhere else |
+| I deleted a page and the **Book Now** button changed | Expected: the button was pointing at that page, so the **Book Now target** setting was switched back to the booking flow with the delete rather than left pointing at nothing. The confirmation said so before the delete, and the message afterwards repeats it | Nothing to do — the saved setting is already the booking flow, and the **Public fee and policy blocks** panel below refreshes itself to show it, so you can carry on saving in that panel straight away. Point **Book Now** at another page and **Save visibility** if you want it somewhere else |
+| **Save visibility** keeps failing with "The selected Book Now page is not published" | The **Book Now target** names a page that is no longer published, and that panel sends the whole set of settings each time it saves, so one unsavable setting blocks every other change in it | Under **Book Now button**, set the target back to **Go to the booking flow** (or choose a page that is published) and **Save visibility**. The target controls stay on screen even when the button itself is hidden, so this is always fixable from that panel |
+| The delete confirmation says a check "could not be run" | One of the two link checks — the footer, or the **Book Now** setting — could not be read at that moment. It is only a warning; the delete itself is unaffected | Take the warning at face value: look at **Site Content** (footer) or **Public fee and policy blocks** (Book Now) yourself before you confirm, or cancel, reload and try again |
 | A page I deleted is still linked from the footer | The footer's link lists are edited separately, under **Site Content**, so a delete cannot rewrite them for you. The confirmation names the footer section when it links the page you are deleting | Edit that footer section under **Site Appearance & Content → Site Content** and remove or repoint the link |
 | Save is rejected | A field exceeds `PAGE_CONTENT_LIMITS`, or the slug is invalid/reserved | Fix the flagged field; keep slugs valid and non-reserved |
 | Everything is read-only | Your admin role can view but not edit under the content area | Ask a full admin for content edit access |

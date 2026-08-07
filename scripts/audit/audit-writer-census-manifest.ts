@@ -51,8 +51,24 @@ type ProposedCategory =
  * comment says 350 total, and the Diagnostics docblock said "81 of ~350".
  */
 export const AUDIT_CENSUS_TOTALS = {
-  /** Row-producing production write sites across `src/`, `scripts/` and `prisma/`. */
-  writeSites: 418,
+  /**
+   * Row-producing production write sites across `src/`, `scripts/` and `prisma/`.
+   *
+   * 418 -> 419 (#2352): the supported page delete records `PAGE_CONTENT_DELETED`
+   * through `auditLog.create` with `category: "admin"`, so `bySink` and
+   * `categoryValues.admin` move with it and nothing joins
+   * `UNCATEGORISED_AUDIT_WRITERS`.
+   *
+   * MEASURED, NOT COMPUTED, and that distinction is load-bearing here. Commit
+   * 816c5879d on another live lane (#2636) bumps this SAME field 418 -> 419
+   * through a different sink (`createAuditLog` 101 -> 102). The literal `419` is
+   * byte-identical on both sides, so git merges the cell with no conflict while
+   * the truth once both land is 420 — the same collision the view-only banner
+   * census already has across three PRs. Whichever of the two lands second has to
+   * re-run `npm run audit:census` on the merged tree and measure again rather than
+   * trusting this number.
+   */
+  writeSites: 419,
   /** Of those, sites whose event object carries no `category` key. */
   uncategorised: 82,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
@@ -60,7 +76,8 @@ export const AUDIT_CENSUS_TOTALS = {
     logAudit: { total: 238, uncategorised: 69 },
     createAuditLog: { total: 101, uncategorised: 11 },
     createStructuredAuditLog: { total: 8, uncategorised: 0 },
-    "auditLog.create": { total: 71, uncategorised: 2 },
+    // 71 -> 72 (#2352): the page-content DELETE's snapshot row.
+    "auditLog.create": { total: 72, uncategorised: 2 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -74,7 +91,9 @@ export const AUDIT_CENSUS_TOTALS = {
     booking: 79,
     payment: 16,
     family: 27,
-    admin: 117,
+    // 117 -> 118 (#2352): `PAGE_CONTENT_DELETED`. Reading it needs `support:view`
+    // alone, the same as every other `admin` row, so this widens no reader.
+    admin: 118,
     security: 16,
     lodge: 16,
     xero: 19,

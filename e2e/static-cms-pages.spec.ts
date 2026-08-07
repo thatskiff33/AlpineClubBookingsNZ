@@ -866,6 +866,8 @@ test.describe("deleting a CMS page", () => {
         referencedBySlugs: string[];
         referencedByFooterSections: string[];
         wasBookNowTarget: boolean;
+        bookNowPairRepaired: boolean;
+        snapshotComplete: boolean;
         publicCacheCleared: boolean;
       };
       expect(removedBody.ok).toBe(true);
@@ -875,6 +877,14 @@ test.describe("deleting a CMS page", () => {
       // is genuinely unreferenced there.
       expect(removedBody.referencedByFooterSections).toEqual([]);
       expect(removedBody.wasBookNowTarget).toBe(false);
+      // Nothing was left for the post-delete repair to correct either: the probe
+      // was never the Book Now target, so the FK cascade had nothing to null
+      // (#2352, second review finding S1).
+      expect(removedBody.bookNowPairRepaired).toBe(false);
+      // The audit snapshot IS the recovery route for a hard delete, so against a
+      // real database and the real sanitiser the probe's own content must come back
+      // out of it whole (second review).
+      expect(removedBody.snapshotComplete).toBe(true);
       // Against a real server the flush really happened, which is what the 404
       // below then proves behaviourally. The flag exists so that a flush failure
       // is reported as "deleted but not flushed" rather than as a failed delete

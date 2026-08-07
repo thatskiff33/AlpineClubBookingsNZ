@@ -22,7 +22,20 @@
   the privacy protection doing its job: a value written as `password: ...` is
   redacted, and a page containing something the log treats as a secret — a
   membership-cancellation link, a provider key, a signed token — has its whole
-  body replaced by `[REDACTED]` rather than just that fragment.
+  body replaced by `[REDACTED]` rather than just that fragment. **When that
+  happens the message tells you**, rather than leaving you to find out the day you
+  need the content back: it says the copy kept in the audit log is not complete.
+  The page is still deleted; the warning is your cue to recover the wording from
+  wherever else you have it.
+
+  If the page was the **Book Now** target, the fee-and-policy panel further down
+  the same screen refreshes itself, so you can save a change in it immediately.
+  Before, that panel went on holding the deleted page and refused every save in it
+  — including changes that had nothing to do with the button — until you reloaded
+  the browser. That panel also now shows you the actual reason a save was refused
+  instead of one generic line, and it keeps the Book Now target controls on screen
+  even when the button is switched off, so a target that needs repairing can always
+  be reached.
 
   The pages the starter site ships — Home, About, Join, Apply, Rules, Contact,
   Committee, Privacy, Terms, FAQ and Page Not Found — cannot be deleted, exactly
@@ -36,8 +49,17 @@
   with no supported way to do it at all. It now clears that copy the same way, so
   a deleted address answers "page not found" on the very next request. In the rare
   case that clearing the copy fails, the message says so plainly — the page is
-  deleted, the old address may answer for a few more minutes — instead of
-  reporting a failure for something that succeeded.
+  deleted, and the old address may keep answering from the website's stored copy —
+  instead of reporting a failure for something that succeeded. It also names the
+  remedy, because that one is not "wait a few minutes": the stored copy is handed
+  to the next visitor and refreshed afterwards, so saving any page or footer
+  section is what clears it.
+
+  Two safeguards for two officers working at once. If someone else edits the page
+  in the moment between your confirmation and the delete, the copy kept in the
+  audit log is the version that was actually removed, not the version you were
+  looking at. And if someone else deletes the same page first, you are told the
+  page could not be found rather than shown an error page.
 
   Decisions taken here, each the recommended option on the issue: deletion is
   final rather than a second hidden state; a deleted address 404s through the
@@ -49,3 +71,12 @@
   dialog; a configuration bundle exported before a deletion still re-plants the
   page on import (documented rather than special-cased); and deleting a page does
   not delete its images.
+
+  Housekeeping for maintainers: the deletion writes one new audit row, so the
+  executable audit-writer census (`npm run audit:census`, #2581) was re-measured on
+  the merged tree and its pinned totals moved from 418 to 419 write sites, 71 to 72
+  through `auditLog.create`, and 117 to 118 `admin` rows. Measured rather than
+  computed on purpose: another open branch bumps the same 418 to the same 419
+  through a different sink, so git would merge the identical literal without a
+  conflict while the truth once both land is 420 — whichever lands second has to
+  re-run the census rather than trust the number.

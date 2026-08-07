@@ -1086,6 +1086,44 @@ mispricing a booking.
   deliberately **not** taken — the master stays unlocked until step 5, and the
   family-link drift re-check above is what closes that window.
 
+**Content-page delete — NO lock, and what that costs (#2352).**
+`DELETE /api/admin/page-content` takes no advisory or row lock and joins no lock
+family. It is recorded here because it is a hard delete with a cascade, and
+because its three windows are closed by three different mechanisms rather than by
+locking — a shape worth copying for admin config writers, and worth not mistaking
+for the guarded-transition protocol above.
+
+- **The audit snapshot** is built from the row `pageContent.delete` RETURNED, not
+  from the pre-transaction existence check. Nothing locks the page row between
+  those two statements, so a concurrent `PUT` on the same route can commit a new
+  body in the window; under READ COMMITTED the DELETE takes a fresh snapshot and
+  follows the update chain, so the returned row *is* the row destroyed. That
+  matters more here than usual: the audit `before` row is the only copy of a
+  deleted page, so archiving the earlier read would have lost the newer body
+  permanently and silently.
+- **The Book Now target** is repointed by a scoped `updateMany` BEFORE the delete
+  (`WHERE bookNowPageId = <id> AND bookNowTarget = 'PAGE'`) and repaired by a
+  second one AFTER it (`WHERE bookNowTarget = 'PAGE' AND bookNowPageId IS NULL`).
+  Both are needed. The first is a **probe, not an authority** — count 0 means
+  proceed, not refuse — and a statement that matches no row takes no lock, so when
+  the setting points elsewhere a concurrent `public-content-settings` PUT can still
+  point it at this page before the delete begins, and the FK's `SetNull` then
+  produces the `PAGE` + null pair the first statement exists to prevent. The second
+  statement cannot clobber an officer's choice of a DIFFERENT page: after the
+  delete no writer can point at the gone parent, and only the cascade can produce a
+  null id under a `PAGE` target. Both outcomes are reported (`wasBookNowTarget`,
+  `bookNowPairRepaired`) and recorded in the audit metadata, because an unexplained
+  change to the club's public button is the surprise a silent repair would leave.
+- **The mirror race** belongs to the sibling writer: `public-content-settings` PUT
+  validates the target page's published state outside its transaction, so the page
+  can be deleted before its upsert runs. That is caught as P2003 and answered with
+  the same `400` the check itself gives, not a 500.
+- **The concurrent loser** of two deletes is answered `404`, by catching P2025 from
+  the delete and rolling the whole transaction back. `deleteMany` + `count === 0`
+  (the image-library idiom) would also survive the race but returns no row, and the
+  snapshot above needs the row — so the mapped error is what keeps both properties
+  in one statement.
+
 Do not add or compose a row lock without updating this inventory and documenting
 its order against every advisory- and row-lock counterpart.
 

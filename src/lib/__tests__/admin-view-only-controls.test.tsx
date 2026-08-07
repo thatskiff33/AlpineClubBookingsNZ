@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import {
@@ -88,6 +88,9 @@ function stubFetchRoutes(routes: Record<string, unknown>) {
 // Imported after the mock is registered.
 import { SiteContentPanel } from "@/components/admin/site-content-panel";
 import { PageContentPanel } from "@/components/admin/page-content-panel";
+// The real admin page, so the two-panels-in-one-tree premise of #2352's finding S2
+// is the thing under test rather than a reconstruction of it.
+import PageContentAdminPage from "@/app/(admin)/admin/page-content/page";
 import { SiteBannersPanel } from "@/components/admin/site-banners-panel";
 import { LodgeInstructionsPanel } from "@/components/admin/lodge-instructions-panel";
 import { MountainConditionsPanel } from "@/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel";
@@ -310,7 +313,7 @@ describe("PageContentPanel view-only gating (#1927)", () => {
     vi.restoreAllMocks();
   });
 
-  it("disables Add Page and Hide for a content:view admin", async () => {
+  it("disables Add Page, Hide and Delete for a content:view admin", async () => {
     sessionMatrix = matrix("view");
     render(<PageContentPanel />);
 
@@ -318,12 +321,15 @@ describe("PageContentPanel view-only gating (#1927)", () => {
       await screen.findByRole("button", { name: /Add Page/i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Hide/i })).toBeDisabled();
+    // #2352 MC-03D: the per-page Delete is the most destructive control this
+    // panel has, so it is the one that must never be live for a viewer.
+    expect(screen.getByRole("button", { name: /Delete/i })).toBeDisabled();
     expect(
       screen.getByText(/can view page content but cannot change it/i),
     ).toBeInTheDocument();
   });
 
-  it("enables Add Page and Hide for a content:edit admin", async () => {
+  it("enables Add Page, Hide and Delete for a content:edit admin", async () => {
     sessionMatrix = matrix("edit");
     render(<PageContentPanel />);
 
@@ -331,6 +337,269 @@ describe("PageContentPanel view-only gating (#1927)", () => {
       await screen.findByRole("button", { name: /Add Page/i }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: /Hide/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Delete/i })).toBeEnabled();
+  });
+});
+
+/*
+  #2352, second review finding S2 — the defect a component test would have caught,
+  pinned in the suite that already mounts this panel.
+
+  `admin/page-content` renders PageContentPanel and PublicContentSettingsPanel as
+  siblings in one client tree. The settings panel loads once on mount and posts its
+  WHOLE settings object on save. Deleting the page the Book Now button pointed at
+  moves the stored target back to the booking flow inside the delete's own
+  transaction — but the settings panel never looked again, so it went on holding
+  `bookNowTarget: "PAGE"` plus a page id that no longer existed, and the officer's
+  next unrelated change in it (ticking hut fees, the committee photo) was refused
+  with `400 "The selected Book Now page is not published."` on every attempt until
+  they reloaded the browser. Deterministic, not a race.
+
+  The real admin page is rendered rather than the two panels side by side, because
+  "these two are in the same tree with nothing between them" is exactly the premise
+  the defect rests on. The fetch stub below enforces the REAL route's rule — a PAGE
+  target must name a page that is still published — so a panel that posts the stale
+  pair fails here the same way it fails in production.
+*/
+describe("Page Content delete keeps the sibling settings panel in step (#2352)", () => {
+  const PAGE = {
+    id: "p1",
+    slug: "trip-reports",
+    caption: "Caption",
+    menuTitle: "Trip Reports",
+    title: "Trip Reports",
+    headerText: "",
+    path: "/trip-reports",
+    sortOrder: 100,
+    contentHtml: "<p>Body</p>",
+    published: true,
+    updatedAt: null,
+    updatedByMemberId: null,
+  };
+
+  type StoredSettings = {
+    membershipTypes: boolean;
+    entranceFees: boolean;
+    hutFees: boolean;
+    bookingPolicySummary: boolean;
+    cancellationPolicy: boolean;
+    annualFees: boolean;
+    showBookNow: boolean;
+    bookNowTarget: "BOOKING_FLOW" | "PAGE";
+    bookNowPageId: string | null;
+    committeePhotoDisplay: "NONE" | "CIRCLE" | "SQUARE";
+  };
+
+  let stored: StoredSettings;
+  let publishedPageIds: string[];
+  let settingsPuts: StoredSettings[];
+  let settingsRefusals: number;
+
+  beforeEach(() => {
+    sessionMatrix = matrix("edit");
+    // The club has the button on and pointed at the page about to be deleted.
+    stored = {
+      membershipTypes: false,
+      entranceFees: false,
+      hutFees: false,
+      bookingPolicySummary: false,
+      cancellationPolicy: false,
+      annualFees: false,
+      showBookNow: true,
+      bookNowTarget: "PAGE",
+      bookNowPageId: "p1",
+      committeePhotoDisplay: "NONE",
+    };
+    publishedPageIds = ["p1"];
+    settingsPuts = [];
+    settingsRefusals = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : String(input);
+        const method = init?.method ?? "GET";
+
+        if (url.startsWith("/api/admin/page-content")) {
+          if (method === "DELETE") {
+            // What the endpoint does: the target moves back to the booking flow in
+            // the same transaction, and the page stops being an offerable target.
+            stored = {
+              ...stored,
+              bookNowTarget: "BOOKING_FLOW",
+              bookNowPageId: null,
+            };
+            publishedPageIds = [];
+            return jsonResponse({
+              ok: true,
+              page: {
+                id: PAGE.id,
+                slug: PAGE.slug,
+                path: PAGE.path,
+                title: PAGE.title,
+                published: true,
+              },
+              referencedBySlugs: [],
+              referencedByFooterSections: [],
+              wasBookNowTarget: true,
+              bookNowPairRepaired: false,
+              snapshotComplete: true,
+              publicCacheCleared: true,
+            });
+          }
+          return jsonResponse({ pages: [PAGE] });
+        }
+
+        if (url.startsWith("/api/admin/public-content-settings")) {
+          if (method === "PUT") {
+            const sent = JSON.parse(String(init?.body)) as StoredSettings;
+            settingsPuts.push(sent);
+            // The route's own rule, reproduced: a PAGE target must name a page
+            // that is still published.
+            if (
+              sent.bookNowTarget === "PAGE" &&
+              !publishedPageIds.includes(String(sent.bookNowPageId))
+            ) {
+              settingsRefusals += 1;
+              return jsonResponse(
+                { error: "The selected Book Now page is not published." },
+                400,
+              );
+            }
+            stored = sent;
+            return jsonResponse({ settings: stored });
+          }
+          return jsonResponse({
+            settings: stored,
+            pages: publishedPageIds.map((id) => ({
+              id,
+              title: PAGE.title,
+              path: PAGE.path,
+            })),
+          });
+        }
+
+        if (url.startsWith("/api/admin/site-content")) {
+          return jsonResponse({ documents: SITE_CONTENT_DOCUMENTS });
+        }
+
+        throw new Error(`Unstubbed fetch in test: ${url}`);
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function deleteTheBookNowTargetPage() {
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Delete Trip Reports|^Delete$/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    // The confirmation names the consequence before the officer commits.
+    expect(dialog).toHaveTextContent(
+      /Book Now button points at this page, so it will be set back to the booking flow/,
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: /Edit Trip Reports/ }),
+      ).not.toBeInTheDocument();
+    });
+  }
+
+  it("lets the officer save the settings panel straight after the delete", async () => {
+    render(<PageContentAdminPage />);
+
+    // Both panels are loaded, in the one tree, before anything is deleted.
+    const save = await screen.findByRole("button", {
+      name: /Save visibility/i,
+    });
+    await screen.findByRole("button", { name: /Edit Trip Reports/ });
+
+    await deleteTheBookNowTargetPage();
+
+    // The officer now ticks an unrelated box in the sibling panel and saves.
+    fireEvent.click(screen.getByRole("checkbox", { name: "Hut fees" }));
+    fireEvent.click(save);
+
+    await waitFor(() => expect(settingsPuts).toHaveLength(1));
+    // The save carries the CURRENT stored pair, not the deleted page id — which is
+    // only true because the delete told the sibling panel to reload.
+    expect(settingsPuts[0]).toMatchObject({
+      hutFees: true,
+      bookNowTarget: "BOOKING_FLOW",
+      bookNowPageId: null,
+    });
+    // …so the route accepted it. Before the fix this was a 400 on every attempt.
+    expect(settingsRefusals).toBe(0);
+  });
+
+  /*
+    #2352, second review. Both pre-delete reads answer `undefined` when they fail,
+    and the dialog used to omit the line — indistinguishable from "the footer does
+    not link to this page" at the one moment the officer is deciding whether to
+    destroy something. The authoritative answer only arrives in the toast, i.e.
+    after the irreversible act, so the dialog has to say the check did not run.
+  */
+  it("tells the officer when the footer check could not be run", async () => {
+    const realFetch = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : String(input);
+        if (url.startsWith("/api/admin/site-content")) {
+          return new Response("{}", { status: 500 });
+        }
+        return realFetch(input, init);
+      }),
+    );
+
+    render(<PageContentAdminPage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Delete Trip Reports|^Delete$/ }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      /footer could not be checked just now, so check Site Content/i,
+    );
+    // …and the blind spot both checks share is stated here rather than only in the
+    // operator guide.
+    expect(dialog).toHaveTextContent(/relative address/i);
+    // Nothing is deleted by opening the dialog.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: /Edit Trip Reports/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the deleted page from the Book Now target list", async () => {
+    render(<PageContentAdminPage />);
+
+    await screen.findByRole("button", { name: /Save visibility/i });
+    // The page is offered as a target while it exists.
+    expect(
+      screen.getByRole("option", { name: /Trip Reports \(\/trip-reports\)/ }),
+    ).toBeInTheDocument();
+
+    await deleteTheBookNowTargetPage();
+
+    // Afterwards the target is the booking flow and the deleted page is gone from
+    // the selector rather than sitting in it as a choice that cannot be saved.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("radio", { name: "Go to the booking flow" }),
+      ).toBeChecked();
+    });
+    expect(
+      screen.queryByRole("option", { name: /Trip Reports \(\/trip-reports\)/ }),
+    ).not.toBeInTheDocument();
   });
 });
 

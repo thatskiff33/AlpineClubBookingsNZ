@@ -155,7 +155,7 @@ covers it: the column is optional.
 
 `AuditLog.category` is `String?` with no default, and the audit writer sets it only when
 the caller supplies one. The **executable census** — `npm run audit:census`, pinned by
-`src/lib/__tests__/audit-writer-census.test.ts` — counts **418 production audit write
+`src/lib/__tests__/audit-writer-census.test.ts` — counts **419 production audit write
 sites, of which 82 pass no category**: 69 through `logAudit`, 11 through
 `createAuditLog`, 2 hand-built Prisma writes, and none through
 `createStructuredAuditLog`. Some are money-adjacent: subscription-billing settings, retry,

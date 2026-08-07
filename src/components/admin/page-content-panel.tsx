@@ -79,6 +79,7 @@ import {
   type TokenContextId,
 } from "@/lib/token-catalogue";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { emitPublicContentSettingsChanged } from "@/lib/public-content-settings-events";
 import {
   AdminForbiddenSaveNotice,
   AdminViewOnlySectionBanner,
@@ -1642,8 +1643,10 @@ export function PageContentPanel() {
    * on mount: it is only ever needed to answer one sentence in one dialog, and a
    * failed read must not stop a page load. `undefined` means "could not be
    * determined" and is deliberately distinct from `null` ("nothing is targeted")
-   * — the dialog stays silent on the subject rather than asserting either way,
-   * and the endpoint's own answer still drives the warning after the delete.
+   * — and the dialog SAYS so (second review), because staying silent on the
+   * subject was indistinguishable from "the button does not point here" at the
+   * one moment the officer is deciding whether to destroy something. The
+   * endpoint's own answer still drives the warning after the delete.
    *
    * The control itself lives in the sibling Public Content Settings panel on the
    * same admin page, so this is a read of that panel's authority, not a second
@@ -1681,9 +1684,10 @@ export function PageContentPanel() {
    * panel's authority rather than a second source of truth, and it uses the same
    * best-effort substring semantics as the endpoint so dialog and toast cannot
    * disagree. An empty array is a real "nothing in the footer points at it"; a
-   * failed read returns undefined so the dialog stays silent on the subject
-   * rather than asserting either way, and the endpoint's authoritative answer
-   * still drives the message afterwards.
+   * failed read returns undefined, and the dialog says it could not check rather
+   * than omitting the line (second review) — omission read exactly like "the
+   * footer does not link to this page", and the authoritative answer only reaches
+   * the officer in the toast, i.e. after the irreversible act.
    */
   async function loadFooterSectionsLinkingTo(
     path: string,
@@ -1762,9 +1766,22 @@ export function PageContentPanel() {
         footerSectionKeys !== undefined && footerSectionKeys.length > 0
           ? `The site footer links to it (${describeFooterSections(footerSectionKeys)}), and the footer is on every public page. That link will break too.`
           : null,
+        // Both reads answer `undefined` when they fail, and a missing line reads
+        // exactly like a clean answer (second review). So the failure is stated:
+        // an officer told the check did not run can go and look before committing
+        // to something irreversible, which is not true of silence.
+        footerSectionKeys === undefined
+          ? "The footer could not be checked just now, so check Site Content for a link to this address before you delete it."
+          : null,
         bookNowTargetPageId === page.id
           ? "The public Book Now button points at this page, so it will be set back to the booking flow."
           : null,
+        bookNowTargetPageId === undefined
+          ? "The Book Now button’s setting could not be checked just now; if it turns out to point here it will be set back to the booking flow."
+          : null,
+        // The one blind spot in both link scans, stated where the decision is made
+        // rather than only in the operator guide (second review).
+        "Links written as a relative address (“../this-page”) are not found by either check, so check any you wrote that way yourself.",
         "Hide it instead if you might want it back.",
       ]
         .filter((line): line is string => line !== null)
@@ -1812,6 +1829,20 @@ export function PageContentPanel() {
       )
         ? (body.referencedByFooterSections as string[])
         : [];
+      // The sibling Public Content Settings panel on this same page loaded once
+      // and holds its own copy of the settings row, so a delete that moved the
+      // Book Now target leaves it holding a page id that no longer exists — and
+      // because it posts the whole settings object, the officer's next unrelated
+      // save there fails, repeatably, until they reload (second review, finding
+      // S2). Told rather than left stale. Fires on the after-the-fact repair too,
+      // because that also changed the stored row.
+      if (
+        body?.wasBookNowTarget === true ||
+        body?.bookNowPairRepaired === true
+      ) {
+        emitPublicContentSettingsChanged();
+      }
+
       const consequences = [
         referencedBySlugs.length > 0
           ? `these pages still link to it: ${referencedBySlugs.join(", ")}`
@@ -1825,11 +1856,28 @@ export function PageContentPanel() {
         body?.wasBookNowTarget === true
           ? "the Book Now button has been set back to the booking flow"
           : null,
-        // The delete succeeded and the cache flush did not (finding 5). Worth the
-        // officer's attention because the old address can keep answering for a
-        // few minutes, and refreshing the public page is what proves it cleared.
+        // The after-the-fact repair (second review, finding S1): the button was
+        // not pointing here when the delete began, but the stored pair had to be
+        // corrected once it finished — because someone repointed at this page in
+        // the window, or because the row was already in that state. Worded to
+        // cover both rather than asserting which, and never silent.
+        body?.wasBookNowTarget !== true && body?.bookNowPairRepaired === true
+          ? "the Book Now setting was left pointing at a page that is no longer there, so it has been set back to the booking flow"
+          : null,
+        // The audit snapshot is the only copy of a deleted page's content, and two
+        // protections in the audit log can replace it wholesale — a secret-shaped
+        // value in the body costs the whole body (second review). Said now, while
+        // the officer may still have the content open in another tab, rather than
+        // discovered when they need it back.
+        body?.snapshotComplete === false
+          ? "the copy kept in the audit log is NOT complete — part of this page's content was redacted or too large to store, so it cannot be read back out"
+          : null,
+        // The delete succeeded and the cache flush did not (finding 5). The delay
+        // is not a countdown: `revalidate = 300` makes the stored copy eligible
+        // for refresh but still serves it to the next visitor, so the honest
+        // remedy is another content save, which calls the same invalidator.
         body?.publicCacheCleared === false
-          ? "the public site's stored copy could not be cleared, so that address may keep answering for a few minutes"
+          ? "the public site's stored copy could not be cleared, so that address may keep answering until the next content save — saving any page or footer section clears it"
           : null,
       ].filter((part): part is string => part !== null);
 
