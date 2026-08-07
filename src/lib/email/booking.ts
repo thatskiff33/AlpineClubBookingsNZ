@@ -33,6 +33,7 @@ import {
 import {
   bookingBumpedRebookAction,
   bookingPaymentDueNote,
+  checkoutDayChoreNote,
   composeChoreLine,
   composeOptionalEmailLine,
   splitGuestPortionOwnBookingLine,
@@ -46,6 +47,7 @@ import {
 } from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail } from "./core";
 import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 
@@ -1009,6 +1011,26 @@ export async function sendPreArrivalReminderEmail(params: {
   const settings = await loadEmailMessageSettingsForLodge(params.lodgeId);
   const outstandingAdditionalAmountCents =
     params.outstandingAdditionalAmountCents ?? 0;
+  // #2621 (owner decision D-M5) — the checkout-day chore sentence, and the one
+  // thing that decides whether it is said at all.
+  //
+  // The chores module DEFAULTS OFF (`ClubModuleSettings.chores` is
+  // `@default(false)`), so an unconditional sentence told every member of every
+  // club that never turns chores on that they are on a roster that does not
+  // exist — on the last message most members read before they travel. Composed
+  // once here and handed to BOTH the hand-built HTML and the admin-editable
+  // body's {{checkoutChoreNote}}, so an override and the built-in message cannot
+  // say different things (the {{namingUrgencyNote}} convention).
+  //
+  // Read here rather than threaded through every caller so no send site can
+  // forget it, and read BEFORE `sendEmail` rather than inside any transaction —
+  // there is none on this path, and the provider call stays outside one.
+  // `loadEffectiveModuleFlags` fails SOFT to all-modules-off, which is the right
+  // direction for this sentence: a database blip costs a club with chores one
+  // reminder sentence, whereas failing open would tell a club with no chore
+  // roster to go and talk to a hut leader about one.
+  const modules = await loadEffectiveModuleFlags();
+  const checkoutChoreNote = checkoutDayChoreNote(modules.chores);
   await sendEmail({
     to: params.email,
     subject: `Pre-arrival Information - ${EMAIL_DEFAULT_LODGE_NAME}`,
@@ -1016,6 +1038,7 @@ export async function sendPreArrivalReminderEmail(params: {
       ...params,
       lodgeTravelNote: settings.lodgeTravelNote,
       doorCode: settings.doorCode,
+      checkoutChoreNote,
     }),
     bookingContext: bookingOwnerEmailContext(params.bookingId, params.recipientMemberId),
     templateName: "pre-arrival-reminder",
@@ -1039,6 +1062,12 @@ export async function sendPreArrivalReminderEmail(params: {
       // compatibility exists to protect.
       expectedArrivalTime: "",
       expectedArrivalNote: "",
+      // #2621 (D-M5): the sentence, or "" for a club with no chore roster. On its
+      // own line between blank lines in the default body, so an empty value
+      // leaves no blank-line artefact — `plainTextEmailTemplate` drops a block
+      // that trims to nothing (the {{outstandingAdditionalNote}} convention
+      // below).
+      checkoutChoreNote,
       doorCode: settings.doorCode ?? "",
       // #2268: identical shape to the booking-confirmed line above — a bare
       // "Door code: 1234", or nothing at all for a lodge with no code.

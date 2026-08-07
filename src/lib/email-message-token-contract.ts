@@ -75,7 +75,20 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   // it (the declaration discipline described above).
   // #2621 MOVED {{expectedArrivalNote}} out of this list and into
   // EMPTYABLE_OVERRIDE_TOKENS below. It is not deleted: see the note there.
-  "pre-arrival-reminder": ["doorCodeNote", "outstandingAdditionalNote"],
+  //
+  // #2621 also ADDS {{checkoutChoreNote}} here — and here rather than in
+  // EMPTYABLE_OVERRIDE_TOKENS, because it IS in the shipped default body, which
+  // is the property that separates the two tables (guard 5 requires it, guard 6
+  // forbids it). Owner decision D-M5's checkout-day chore sentence is composed
+  // by `checkoutDayChoreNote` and is EMPTY for a club whose chores module is off
+  // — which is the default and the ordinary case — so guard 4 has real work to
+  // do here: it proves the shipped body still reads correctly with no chore
+  // sentence at all.
+  "pre-arrival-reminder": [
+    "checkoutChoreNote",
+    "doorCodeNote",
+    "outstandingAdditionalNote",
+  ],
   // A roster only exists for chores that exist, so the chore block itself is
   // never empty; the completion link is (a roster can be sent without one).
   "chore-roster": ["choreLinkNote"],

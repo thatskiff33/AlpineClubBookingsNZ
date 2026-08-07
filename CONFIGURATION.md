@@ -357,7 +357,7 @@ column, so rolling the application back to the pre-#2362 worker cannot resend it
 Anything optional is therefore supplied as a **pre-composed line**: the sender
 builds the whole line — label, value and its trailing blank line — or the empty
 string, and the default body carries only the token. `{{doorCodeNote}}`,
-`{{expectedArrivalNote}}`, `{{reasonNote}}`, `{{adminNoteLine}}`,
+`{{checkoutChoreNote}}`, `{{reasonNote}}`, `{{adminNoteLine}}`,
 `{{adminNotesLine}}`, `{{reviewNoteLine}}`, `{{committeeNote}}`,
 `{{rejoinProcessNote}}`, `{{reviewReasonNote}}`, `{{requestedAmountNote}}`,
 `{{amountRecordedNote}}`, `{{bookingReferenceNote}}`, `{{choreListNote}}`,
@@ -370,6 +370,25 @@ own and **never** write a label of their own in front of it. The raw value
 behind each (`{{doorCode}}`, `{{reason}}`, `{{adminNote}}` …) stays valid for
 overrides written before the change, so nothing an operator already saved stops
 rendering or stops being re-savable.
+
+`{{checkoutChoreNote}}` is the newest of these (#2621, owner decision D-M5) and
+shows the shape at its clearest: the sender emits the whole checkout-day chore
+sentence when the club's **Chores** module is enabled and the empty string when it
+is not, because the chores module defaults off and a club that keeps no roster
+must not tell its members to talk to a hut leader about one.
+
+**Two tokens are permanently-empty compatibility chips rather than pre-composed
+lines**: `{{expectedArrivalNote}}` and `{{expectedArrivalTime}}` on the
+**Pre-arrival Information** template. #2621 retired the expected-arrival-time
+entry — the club collects no travel times at all — so neither appears in the
+shipped default body any more and both render as the empty string on **every**
+send, not merely on sends where a value happens to be missing. They stay
+registered and accepted purely so a club that customised that template before the
+change can still save and still send its own wording; a stored override holding
+either one renders nothing for it. An operator who finds one in a saved body
+should delete the line, because an arrival line can no longer say anything, and a
+label typed in front of the chip ships a bare label to every member. Both are
+declared emptyable, so the admin editor names the exact dangling line.
 
 A related rule follows from the same limitation: **one registered template
 serves exactly one outcome.** A body that has to say either "your appeal was

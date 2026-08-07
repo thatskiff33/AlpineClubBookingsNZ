@@ -66,7 +66,8 @@ at all** — so a line you write as `Door code: {{doorCode}}` prints a bare
 That is why several tokens are **pre-composed whole lines** rather than bare
 values: `{{doorCodeNote}}`, `{{reasonNote}}`, `{{adminNoteLine}}`,
 `{{reviewNoteLine}}`, `{{committeeNote}}`, `{{amountRecordedNote}}`,
-`{{promoSummary}}`, `{{creditNote}}`, `{{provisionalGuestsNote}}` and their
+`{{promoSummary}}`, `{{creditNote}}`, `{{checkoutChoreNote}}`,
+`{{provisionalGuestsNote}}` and their
 siblings each render the **entire** line — label, value and the blank line after
 it — or nothing whatsoever. Put one of those tokens on its own, with no label of
 your own in front of it, and the email reads correctly whether or not the value
@@ -169,10 +170,16 @@ The page handles the two situations differently, on purpose.
   saves and still sends, and both now render as **nothing** on every message.
   If your copy has an arrival line, delete it — otherwise it goes out as an
   empty line, or worse, as a bare label if you typed one in front of the chip.
-  The same release added one sentence to the built-in wording: that guests are
-  on the chore roster on the morning they check out and should talk to the hut
-  leader beforehand if they plan to leave early. Your saved copy was not
-  touched, so add that sentence yourself if you want it.
+  The same release added one sentence to the built-in wording, carried by a new
+  chip, `{{checkoutChoreNote}}`: that guests are on the chore roster on the
+  morning they check out and should talk to the hut leader beforehand if they
+  plan to leave early. It is a **pre-composed line**, so it appears only when
+  your club runs chore rosters — the chip renders the whole sentence when the
+  Chores module is switched on under **Admin → Modules**, and nothing at all when
+  it is off, which is how a club that keeps no roster avoids telling its members
+  to talk to a hut leader about one. Your saved copy was not touched, so add the
+  chip yourself if you want the sentence; put it on a line of its own and never
+  type a label in front of it.
 - **Your copy simply reads differently.** That is stated as a plain fact under
   the template you have open, with no warning attached, because a customisation
   differing from the built-in wording is exactly what you asked for.

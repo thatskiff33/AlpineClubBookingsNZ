@@ -38,12 +38,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Sender harness mirrors checkin-reminder-guest-list.test.ts (#2307), which
 // pins the same kind of sender-to-token wiring.
 
-const { sendEmailMock } = vi.hoisted(() => ({
+const { sendEmailMock, loadEffectiveModuleFlagsMock } = vi.hoisted(() => ({
   sendEmailMock: vi.fn().mockResolvedValue({ status: "sent" }),
+  // #2621 D-M5: the chores module decides whether the checkout-day chore
+  // sentence is said at all, so the sender reads the club's module flags. Mocked
+  // rather than left to the real loader, which reads the database and — because
+  // it fails soft to all-modules-off — would otherwise make every test here the
+  // chores-OFF case by accident.
+  loadEffectiveModuleFlagsMock: vi.fn().mockResolvedValue({ chores: true }),
 }));
 
 vi.mock("@/lib/email/core", () => ({
   sendEmail: sendEmailMock,
+}));
+
+vi.mock("@/lib/module-settings", () => ({
+  loadEffectiveModuleFlags: loadEffectiveModuleFlagsMock,
 }));
 
 vi.mock("@/lib/email-message-settings", () => ({
@@ -69,6 +79,8 @@ import {
   validateEmailTemplateContent,
   renderTemplateString,
 } from "../email-message-renderer";
+import { checkoutDayChoreNote } from "../email-message-notes";
+import { plainTextEmailTemplate } from "../email-templates";
 // Imported statically rather than with `await import(...)` inside the test.
 // `vi.mock` above is hoisted, so the mocks are in place either way — but this
 // module pulls in a large graph, and paying for that inside a 5s test body made
@@ -283,14 +295,32 @@ describe("#2621 stored pre-arrival overrides keep working (the #2269 hazard)", (
 });
 
 describe("#2621 the shipped pre-arrival default (owner decision D-M5)", () => {
-  it("carries the checkout-day chore sentence and no arrival remnant", () => {
+  // The chore sentence is carried by a TOKEN, not written into the body. The
+  // chores module defaults OFF (`ClubModuleSettings.chores` is
+  // `@default(false)`), so an unconditional sentence told every member of every
+  // club that never turns chores on that they are on a roster that does not
+  // exist, and to talk to a hut leader about it — on the last message most
+  // members read before they travel. The sibling `checkin-reminder` template in
+  // the same file already solved this with {{choreListNote}}.
+  const RENDER_DATA = {
+    firstName: "Sam",
+    checkIn: "15 Jul 2026",
+    checkOut: "18 Jul 2026",
+    guestCount: 2,
+    outstandingAdditionalNote: "",
+    CLUB_LODGE_TRAVEL_NOTE: "Take the Bruce Road.",
+    doorCodeNote: "",
+    BASE_URL: "https://bookings.example.org",
+  };
+
+  it("carries the chore sentence as a token and no arrival remnant", () => {
     expect(defaults.defaultBody).toBe(
       "Upcoming Lodge Stay\n\n" +
         "Hi {{firstName}}, your lodge stay is coming up.\n\n" +
         "Check-in: {{checkIn}}\n" +
         "Check-out: {{checkOut}}\n" +
         "Guests: {{guestCount}}\n\n" +
-        "You are on the chore roster on the morning you check out, so please talk to the hut leader beforehand if you plan to leave early.\n\n" +
+        "{{checkoutChoreNote}}\n\n" +
         "{{outstandingAdditionalNote}}\n\n" +
         "How to get to the lodge\n\n" +
         "{{CLUB_LODGE_TRAVEL_NOTE}}\n\n" +
@@ -299,36 +329,68 @@ describe("#2621 the shipped pre-arrival default (owner decision D-M5)", () => {
         // booking-scoped default at export time. Not part of this change.
         "View this booking: {{bookingUrl}}",
     );
+    // Declared where a token that IS in the default body belongs: guard 5
+    // requires that, and guard 6 forbids the other table for it.
+    expect(OPTIONAL_TEMPLATE_TOKENS[TEMPLATE] ?? []).toContain(
+      "checkoutChoreNote",
+    );
+    expect(EMPTYABLE_OVERRIDE_TOKENS[TEMPLATE] ?? []).not.toContain(
+      "checkoutChoreNote",
+    );
   });
 
-  it("renders with no arrival line and no blank-line artefact where it was", () => {
+  it("renders the D-M5 sentence, verbatim, for a club that runs chore rosters", () => {
     const rendered = renderTemplateString(defaults.defaultBody, {
-      firstName: "Sam",
-      checkIn: "15 Jul 2026",
-      checkOut: "18 Jul 2026",
-      guestCount: 2,
-      outstandingAdditionalNote: "",
-      CLUB_LODGE_TRAVEL_NOTE: "Take the Bruce Road.",
-      doorCodeNote: "",
-      BASE_URL: "https://bookings.example.org",
+      ...RENDER_DATA,
+      checkoutChoreNote: checkoutDayChoreNote(true),
     });
 
     expect(rendered).not.toMatch(/arrival/i);
+    // The owner's wording, unparaphrased.
+    expect(rendered).toContain(
+      "You are on the chore roster on the morning you check out, so please talk to the hut leader beforehand if you plan to leave early.",
+    );
     // The guests line runs straight into the chore sentence with exactly one
-    // blank line between them — the gap the removed token used to sit in has
-    // not turned into a second empty line.
+    // blank line between them — the gap the removed arrival token used to sit in
+    // has not turned into a second empty line.
     expect(rendered).toContain(
       "Guests: 2\n\nYou are on the chore roster on the morning you check out,",
     );
   });
+
+  it("says nothing about chores, and leaves no artefact, for a club with no chore roster", () => {
+    const rendered = renderTemplateString(defaults.defaultBody, {
+      ...RENDER_DATA,
+      checkoutChoreNote: checkoutDayChoreNote(false),
+    });
+    expect(rendered).not.toMatch(/chore/i);
+    expect(rendered).not.toMatch(/hut leader/i);
+
+    // NO BLANK-LINE ARTEFACT, proved by equivalence rather than by eyeballing a
+    // gap: the delivered body with the token rendered empty is byte-identical to
+    // the delivered body of a default that never carried the line at all.
+    // `plainTextEmailTemplate` splits on blank lines, trims each block and drops
+    // the empty ones, which is what makes that true (the
+    // {{outstandingAdditionalNote}} convention in the same body).
+    const deliveredWithEmptyToken = plainTextEmailTemplate(rendered);
+    const deliveredWithoutTheLine = plainTextEmailTemplate(
+      renderTemplateString(
+        defaults.defaultBody.replace("{{checkoutChoreNote}}\n\n", ""),
+        RENDER_DATA,
+      ),
+    );
+    expect(deliveredWithEmptyToken).toBe(deliveredWithoutTheLine);
+  });
 });
 
-describe("#2621 sendPreArrivalReminderEmail still supplies both arrival keys", () => {
+describe("#2621 sendPreArrivalReminderEmail (arrival keys + the D-M5 sentence)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Chores ON unless a test says otherwise.
+    loadEffectiveModuleFlagsMock.mockResolvedValue({ chores: true });
   });
 
-  it("supplies them as empty strings, so an override renders nothing rather than a stale label", async () => {
+  it("supplies both arrival keys as empty strings, so an override renders nothing rather than a stale label", async () => {
     await sendPreArrivalReminderEmail({
       bookingId: "bk_test",
       recipientMemberId: "member_1",
@@ -347,6 +409,51 @@ describe("#2621 sendPreArrivalReminderEmail still supplies both arrival keys", (
     expect(call.templateData).toHaveProperty("expectedArrivalNote", "");
     // And the delivered HTML no longer carries the row either.
     expect(call.html).not.toContain("Expected arrival");
+  });
+
+  it("says the D-M5 sentence when the club's chores module is ON", async () => {
+    await sendPreArrivalReminderEmail({
+      bookingId: "bk_test",
+      recipientMemberId: "member_1",
+      email: "member@example.org",
+      firstName: "Sam",
+      checkIn: new Date("2026-07-15"),
+      checkOut: new Date("2026-07-18"),
+      guestCount: 2,
+    });
+
+    const call = sendEmailMock.mock.calls[0][0];
+    // Both paths, from the same composed value, so an admin override and the
+    // built-in message cannot say different things.
+    expect(call.templateData).toHaveProperty(
+      "checkoutChoreNote",
+      "You are on the chore roster on the morning you check out, so please talk to the hut leader beforehand if you plan to leave early.",
+    );
     expect(call.html).toContain("chore roster on the morning you check out");
+  });
+
+  it("says NOTHING about chores when the club's chores module is OFF", async () => {
+    // The default state of the module, and therefore the state of most clubs.
+    loadEffectiveModuleFlagsMock.mockResolvedValue({ chores: false });
+
+    await sendPreArrivalReminderEmail({
+      bookingId: "bk_test",
+      recipientMemberId: "member_1",
+      email: "member@example.org",
+      firstName: "Sam",
+      checkIn: new Date("2026-07-15"),
+      checkOut: new Date("2026-07-18"),
+      guestCount: 2,
+    });
+
+    const call = sendEmailMock.mock.calls[0][0];
+    // Supplied-and-empty, NOT absent: the token is in the shipped default body,
+    // so an absent key would render as "" anyway but would drop out of the
+    // supplied-token approval guard.
+    expect(call.templateData).toHaveProperty("checkoutChoreNote", "");
+    expect(call.html).not.toMatch(/chore/i);
+    expect(call.html).not.toMatch(/hut leader/i);
+    // And no empty paragraph where the sentence would have been.
+    expect(call.html).not.toMatch(/<p[^>]*>\s*<\/p>/);
   });
 });

@@ -7,6 +7,7 @@ import {
   adminSplitSettlementCancelledLeadParagraph,
   adminSplitSettlementUnpaidLeadParagraph,
   bookingPaymentDueNote,
+  checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
@@ -1220,6 +1221,13 @@ export function sampleValue(token: string): string {
   if (token === "namingUrgencyNote") {
     return wholeLodgeGuestNamesUrgencyNote("first");
   }
+  // #2621: the checkout-day chore sentence, previewed from its own composer so
+  // the wording cannot drift from what a member receives. The sample is the
+  // CHORES-ENABLED wording, not the empty one: an admin previewing this body
+  // needs to see the sentence they are laying out around, and guard 4 already
+  // proves the body reads correctly when the club has no chore roster and the
+  // sender supplies "".
+  if (token === "checkoutChoreNote") return checkoutDayChoreNote(true);
   // #2444: the internet-banking reference an unpaid member must quote. It fell
   // through to the literal word "paymentReference", which contradicted the
   // composed paragraph above (and previewed the admin manual-invoice alert's
@@ -1427,6 +1435,11 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "changeSummary",
   "checkIn",
   "checkOut",
+  // #2621 (owner decision D-M5): the pre-arrival reminder's checkout-day chore
+  // sentence, pre-composed by `checkoutDayChoreNote` and EMPTY for a club whose
+  // chores module is off — which is the default. Declared in
+  // OPTIONAL_TEMPLATE_TOKENS because it IS in the shipped default body.
+  "checkoutChoreNote",
   "childName",
   "confirmationUrl",
   "choreDescription",
