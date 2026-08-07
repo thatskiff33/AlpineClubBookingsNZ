@@ -52,7 +52,9 @@
 -- ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 with a recorded override reason and
 -- BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1 set only after the old runtime is
 -- confirmed stopped. Full ordered sequence in
--- docs/PRODUCTION_UPGRADE_RUNBOOK.md -> "Windowed migration deploy sequence";
+-- docs/PRODUCTION_UPGRADE_RUNBOOK.md -> "Windowed migration deploy sequence",
+-- with this migration's own step 2/8/10/12 differences and its rollback boundary
+-- at that document's section 2.4.2 ("#2621: drop Booking.expectedArrivalTime");
 -- summarised in DEPLOYMENT.md -> "Windowed migrations" and in
 -- docs/BLUE_GREEN_MIGRATION_SAFETY.tsv.
 --
@@ -64,8 +66,10 @@
 -- figure moves across this migration, and no member-facing number changes — so
 -- the loss is of the entries themselves and of nothing derived from them. An
 -- operator who wants the values kept for the record must take them BEFORE
--- migrating; the pre-migration checks in the runbook are where that belongs, and
--- the verified backup taken in the same window is the other copy. rollback.sql
+-- migrating: docs/PRODUCTION_UPGRADE_RUNBOOK.md section 2.4.2 step 8(d) carries
+-- the exact snapshot command, as an OPTIONAL record-keeping copy that nothing
+-- reads back, and the verified backup taken in the same window is the other
+-- copy. rollback.sql
 -- restores the empty column and refuses to pretend the times come back with it.
 --
 -- LOCK IMPACT. "Booking" is on the deploy guard's HOT_TABLE_SQL_REGEX, so the

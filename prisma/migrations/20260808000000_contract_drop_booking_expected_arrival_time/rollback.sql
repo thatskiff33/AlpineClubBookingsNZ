@@ -8,8 +8,9 @@
 -- on epic #2629 — the data deletion is deliberate and irreversible — written
 -- here so that an operator who sees the column reappear does not conclude the
 -- values came back with it. If you need the actual times, the ONLY sources are a
--- copy taken before migrating (the runbook's pre-migration checks) or the
--- verified backup taken in the same maintenance window. Restore from one of
+-- copy taken before migrating (docs/PRODUCTION_UPGRADE_RUNBOOK.md section 2.4.2
+-- step 8(d), which is optional and which NOTHING in this script reads back) or
+-- the verified backup taken in the same maintenance window. Restore from one of
 -- those instead of relying on this file.
 --
 -- WHAT THIS IS FOR. That migration is declared `old_code_compatible=windowed` in
@@ -99,5 +100,9 @@ WHERE table_name = 'Booking'
   AND column_name = 'expectedArrivalTime';
 
 -- 3. There is no step 3. There is no value-restore step for this rollback and
---    there never can be, by owner decision D-M2. If the times matter, restore
---    the verified backup taken before the migration ran.
+--    there never can be, by owner decision D-M2. If the times matter, the two
+--    sources are the OPTIONAL pre-migration snapshot
+--    (docs/PRODUCTION_UPGRADE_RUNBOOK.md section 2.4.2 step 8(d)) and the
+--    verified backup taken before the migration ran. Neither is wired into this
+--    script: reloading a snapshot is a separately reviewed operator UPDATE, not
+--    a step you can paste from here.

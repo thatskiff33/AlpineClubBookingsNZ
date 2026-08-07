@@ -643,7 +643,7 @@ Check for these before every deploy:
 awk -F'\t' '$4 == "windowed" { print $1 }' docs/BLUE_GREEN_MIGRATION_SAFETY.tsv
 ```
 
-**Current windowed migrations — there are three, and pending rows share ONE
+**Current windowed migrations — there are four, and pending rows share ONE
 window.** `prisma migrate deploy` applies them in the same command, so the
 sequence below is run once, not once per migration.
 
@@ -667,6 +667,18 @@ sequence below is run once, not once per migration.
   not: an old hosting worker ignores the token/expiry fields and can take, email and
   complete work that a new worker already owns. The old web colour and **every** old
   worker must therefore be stopped before migrate, and only new workers may start.
+- `20260808000000_contract_drop_booking_expected_arrival_time` (#2621). It drops
+  `Booking.expectedArrivalTime` **and the arrival times stored in it** — the
+  values are destroyed and PostgreSQL cannot un-drop a column (owner decision
+  D-M2), so a club that wants them for the record must copy them out before the
+  window: `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.2 carries the snapshot SQL.
+  The previous release's Prisma client SELECTs every scalar of a
+  model on any unnarrowed find, so it names this column on ordinary reads of
+  `"Booking"` — the booking detail page, the member bookings list, the lodge
+  guests route, the pre-arrival reminder cron and the booking-create paths — and
+  `"Booking"` is the hottest table in the product. The moment the DROP commits the
+  old colour raises Postgres 42703 / Prisma P2022 on all of them, so the
+  incompatibility is immediate and total rather than confined to one screen.
 
 There is no ordering that keeps both runtime protocols working, which is why the
 window exists.
@@ -705,6 +717,12 @@ says which governs when:
    **host** path and then move somewhere durable — a `\copy` through
    `docker compose exec postgres psql` writes inside that container's writable layer,
    which the deploy recreates. After migrate those values are unrecoverable.
+   For `20260808000000` it is the row count, the column-exists confirmation, the
+   proof that the replacement runtime cannot name the column, and — **only if the
+   club wants the entered arrival times kept for the record** — the optional
+   snapshot of those values, which is the one thing that cannot be taken
+   afterwards either. `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.2 step 8 carries
+   all four, and the snapshot lands on a **host** path for the same reason.
 6. **Run the safety validator, then migrate** — two commands, in that order. The
    validator is `scripts/validate-blue-green-migrations.sh`, a **separate script**
    that `prisma migrate deploy` knows nothing about: the only thing that runs it
@@ -719,10 +737,14 @@ says which governs when:
    dedicated compose service the deploy script uses,
    `docker compose --profile migrate run --rm migrate` — not `npx`, which this host
    is not documented as having and which is deliberately removed from the runtime
-   image. Pass all six pending migration files, in order — `20260803010000`,
-   `20260803020000`, `20260803030000`, `20260803070000`, `20260806000000` and
-   `20260806010000` — including the additive rows; exact commands are in
-   `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
+   image. Pass **every** pending migration file to the validator, in order,
+   including the additive rows — take the set from `prisma migrate status` against
+   the database you are about to migrate rather than from any list written here,
+   because additive migrations land between releases and a list in a document goes
+   stale between them. Every windowed row above must be in it: as at #2621 that
+   means `20260803010000`, `20260803030000`, `20260806010000` and
+   `20260808000000`, plus each additive migration still pending. Exact commands
+   are in `docs/PRODUCTION_UPGRADE_RUNBOOK.md` §2.4.1 step 9.
 7. **Verify the migrate step**: the dropped column is gone and
    `_prisma_migrations` records each migration once.
 8. **Start the replacement release and replacement workers only**, confirm
@@ -784,17 +806,25 @@ when the queue is empty. Repeat the ENFORCED, unprocessed-work and unresolved-in
 proofs after the last policy change. **Only after all three remain empty** may you
 stop every new worker and start the old-only release.
 
-**When all three windowed migrations were applied in one window, first follow
+**When all four windowed migrations were applied in one window, first follow
 `20260806010000/rollback.sql`'s no-op operational boundary:** keep traffic removed,
 stop every new app/worker, and leave its nullable columns plus migration history
-intact. Then roll back the two schema-removal migrations in reverse order —
-`20260803030000` first, then `20260803010000`. One schema script is not enough:
-whichever you skip leaves its column missing
-and the previous release still broken, and if you skip `20260803010000` what stays
+intact. Then roll back the **three** schema-removal migrations in reverse
+chronological order — `20260808000000` first, then `20260803030000`, then
+`20260803010000`. One schema script is not enough: whichever you skip leaves its
+column missing
+and the previous release still broken. Skip `20260803010000` and what stays
 broken is every booking write path, while the family-group pages look fine and
-suggest the rollback worked. The two touch different tables, so the order cannot
-corrupt anything; it is the rule to follow because it generalises. Rehearsed both
-scripts in that order.
+suggest the rollback worked; skip `20260808000000` and the old release cannot read
+`"Booking"` **at all** — the booking detail page, the member bookings list, the
+lodge guests route, the pre-arrival cron and every booking-create path raise
+42703 / P2022, which is the widest of the three and the easiest to mistake for
+"the rollback did not work" rather than "the rollback was not finished". The three
+touch different tables, so the order cannot corrupt anything; it is the rule to
+follow because it generalises. Note what `20260808000000/rollback.sql` says in its
+own first paragraph: it brings the column back EMPTY. Every arrival time a member
+entered is gone, and only a copy taken before the window or the verified backup
+holds them. Rehearsed both of the earlier scripts in that order.
 
 The first three additive hosting migrations (`20260803020000`, `20260803070000`
 and `20260806000000`) need no reverse scripts. `20260806010000` ships a mandatory

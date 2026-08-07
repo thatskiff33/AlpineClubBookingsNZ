@@ -276,7 +276,7 @@ cutover. Then let the warm-up gate (step 16) pass and step 17 perform the cutove
 ### 2.4 Windowed migration deploy sequence
 
 Use this instead of the normal blue/green flow whenever any pending migration is
-declared `old_code_compatible=windowed` in the safety ledger. Three migrations are
+declared `old_code_compatible=windowed` in the safety ledger. Four migrations are
 in that class:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) —
@@ -285,23 +285,33 @@ in that class:
   [§2.4.1](#241-2520-drop-familygroupmemberrole);
 - `20260806010000_fence_hosting_coverage_delivery_claims` (#2596) — additive DDL,
   but an old hosting worker ignores the new tokens and can process a new worker's
-  live claim, so mixed old/new workers are forbidden.
+  live claim, so mixed old/new workers are forbidden;
+- `20260808000000_contract_drop_booking_expected_arrival_time` (#2621) — covered
+  in [§2.4.2](#242-2621-drop-bookingexpectedarrivaltime). It drops
+  `Booking.expectedArrivalTime` and destroys the arrival times stored in it, and
+  `"Booking"` is the hottest table in the product, so the old colour cannot serve
+  a booking read of any kind once it commits.
 
 **If several are pending, they share ONE window.** `prisma migrate deploy` applies
 them in the same command — you do not stop and start the application repeatedly. Work
-the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) as well as the ones
-here, and name both migrations in the override reason.
+the checks in [§2.4.1](#241-2520-drop-familygroupmemberrole) and
+[§2.4.2](#242-2621-drop-bookingexpectedarrivaltime) as well as the ones here, and
+name every windowed migration in the window in the override reason.
 
 **Rolling a window containing #2596 back starts with its no-op `rollback.sql`
 boundary:** stop all new app/worker processes, but retain its nullable columns and
-applied history. Then the two schema-removal `rollback.sql` scripts run in reverse
-order — `20260803030000` first, then `20260803010000`. Running only one leaves the other's column missing, so the
+applied history. Then the **three** schema-removal `rollback.sql` scripts run in
+reverse chronological order — `20260808000000` first, then `20260803030000`, then
+`20260803010000`. Running only some of them leaves the others' columns missing, so the
 previous release is still broken; if the one you skip is `20260803010000`, what
-stays broken is every booking write path. Spelled out at
-[§2.4.1](#241-2520-drop-familygroupmemberrole)'s rollback boundary, and rehearsed
+stays broken is every booking write path, and if it is `20260808000000` the old
+release cannot read `"Booking"` at all. Spelled out at
+[§2.4.1](#241-2520-drop-familygroupmemberrole)'s and
+[§2.4.2](#242-2621-drop-bookingexpectedarrivaltime)'s rollback boundaries, and
+rehearsed for the first two
 at [§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role).
 
-**And when both are pending, §2.4.1's ordering governs the combined window**, not
+**And when several are pending, §2.4.1's ordering governs the combined window**, not
 the ordering in the list immediately below. The two differ in one place: this list
 takes the backup at step 2, before traffic is removed; §2.4.1 takes it at step 7,
 *after* the app and every worker have stopped and no old connection remains. The
@@ -498,10 +508,13 @@ and nomination. There is no ordering that keeps both versions working.
 
    Budget the pre-window drill and this in-window verification separately when you
    schedule, and see the window-length note after step 14.
-8. **Record the pre-migration checks.** Paste the output into the three windowed-
-   migration rows of [§8](#8-production-execution-record) — the check output, the
+8. **Record the pre-migration checks.** Paste the output into this migration's
+   three windowed-migration rows in [§8](#8-production-execution-record) — the
+   check output, the
    dump filename and where it is stored, and (at step 9) the override reason you
-   actually used. After step 9 none of these can be recovered from the database,
+   actually used. `20260808000000` has its own §8 rows, filled from
+   [§2.4.2](#242-2621-drop-bookingexpectedarrivaltime) step 8; these three are
+   `role`-specific and do not cover it. After step 9 none of these can be recovered from the database,
    and the console scrollback is not a record.
    ```sql
    -- (a) row count
@@ -577,12 +590,16 @@ and nomination. There is no ordering that keeps both versions working.
    passed to `prisma migrate deploy` alone are inert — they gate the validator, not
    Prisma.
 
-   9(a) **Validate.** Name every pending migration's `migration.sql`. For this
-   release the complete ordered set is six migrations; do not validate only the two
-   windowed rows:
+   9(a) **Validate.** Name every pending migration's `migration.sql` — take the set
+   from `prisma migrate status` against the database you are about to migrate
+   rather than from the list below, which was the pending set as at the #2520
+   window and goes stale as additive migrations land between releases. Do not
+   validate the windowed rows alone, and do not omit one: as at #2621 the windowed
+   set is `20260803010000`, `20260803030000`, `20260806010000` and
+   `20260808000000`, the last of which is included in the command below:
     ```bash
     ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
-    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, pre-migration checks recorded" \
+    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="#2543 + #2520 + #2596 + #2621 windowed maintenance window <DATE>: public traffic removed, web and all workers stopped, no old connections, fresh verified backup taken, pre-migration checks recorded" \
     BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1 \
    ./scripts/validate-blue-green-migrations.sh \
      prisma/migrations/20260803010000_contract_subscription_lockout_drop_enabled/migration.sql \
@@ -590,7 +607,8 @@ and nomination. There is no ordering that keeps both versions working.
      prisma/migrations/20260803030000_contract_drop_family_group_member_role/migration.sql \
      prisma/migrations/20260803070000_add_hosting_coverage_incidents/migration.sql \
      prisma/migrations/20260806000000_add_hosting_notification_delivery_claim/migration.sql \
-     prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql
+     prisma/migrations/20260806010000_fence_hosting_coverage_delivery_claims/migration.sql \
+     prisma/migrations/20260808000000_contract_drop_booking_expected_arrival_time/migration.sql
    ```
    Expect exit 0 with the override reason echoed back as a `WARNING:` line. It
    exits 1 without all three acknowledgements, and exits 1 regardless if `rollback.sql` is
@@ -703,17 +721,23 @@ scheduling note gives the shape rather than a number.
 - A rollback to the old version requires **first** either running
   `prisma/migrations/20260803030000_contract_drop_family_group_member_role/rollback.sql`
   by hand as the migration role, **or** restoring the verified step 7 backup.
-- **In a combined window, run BOTH migrations' `rollback.sql`, in the reverse of
-  the order they were applied** — `20260803030000` (this one) first, then
+- **In a combined window, run EVERY schema-removal migration's `rollback.sql`, in
+  the reverse of the order they were applied** — `20260808000000` first (see
+  [§2.4.2](#242-2621-drop-bookingexpectedarrivaltime)), then `20260803030000`
+  (this one), then
   `20260803010000_contract_subscription_lockout_drop_enabled`. This one alone is
   not enough and the gap is worse than the one it fixes: the family surface comes
   back but `MembershipLockoutSettings.enabled` is still dropped, the previous
   release's client names that column on every read of the model, and the booking
   gates resolve the club's lockout policy through that read — so **every booking
   write path still fails**, on money, while the family pages look fine and suggest
-  the rollback worked. The two touch different tables so neither order can corrupt
-  the other, but reverse order is the rule to follow and the one that was
-  rehearsed ([§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role)).
+  the rollback worked. Leave `20260808000000` out and it is wider still: the old
+  client names `"Booking"."expectedArrivalTime"` on ordinary reads of the busiest
+  table in the product, so no booking page, list, lodge guests read, pre-arrival
+  cron run or booking create works at all. The three touch different tables so no
+  order can corrupt another, but reverse chronological order is the rule to follow,
+  and it is the order the first two were
+  rehearsed in ([§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role)).
   `20260803000000_subscription_lockout_three_way_mode` needs no reverse script: it
   is additive and the previous release's client never names `mode`.
 - `20260803020000`, `20260803070000` and `20260806000000` are additive and need
@@ -781,6 +805,190 @@ the old version runs against the migrated schema.
 
 Both directions were rehearsed against a production-shaped database before merge
 ([§7.2](#72-windowed-migration-rehearsal-20260803030000_contract_drop_family_group_member_role)).
+
+#### 2.4.2 #2621: drop `Booking.expectedArrivalTime`
+
+`20260808000000_contract_drop_booking_expected_arrival_time` is the fourth
+`windowed` migration. It is one statement — `ALTER TABLE "Booking" DROP COLUMN
+"expectedArrivalTime"` — with no backfill and no DML of any kind.
+
+**Owner authorisation.** Owner decisions D-M1 and D-M2 (epic #2629, 8 Aug 2026).
+Under the motel-stay model a guest is present from just after midday NZ on their
+arrival date to just before midday NZ on their departure date, derived from the
+booked nights alone, so the club collects no travel times at all and a guest who
+wants to leave early liaises with the hut leader. D-M1 retires the entry; D-M2
+drops the column **and the data** in the same release rather than leaving a dormant
+nullable column behind a later gate. The reversible alternative was put to the
+owner once, in review, and the decision stands.
+
+**What is destroyed, and what is not.** Every expected arrival time a member ever
+entered goes with the column, and PostgreSQL cannot un-drop a column, so those
+values are unrecoverable from the migrated database. Nothing derived from them
+changes: the field was display-only for its whole life and no capacity, pricing,
+allocation, roster-eligibility, presence, invoice or report figure ever read it, so
+the loss is of the entries themselves and of nothing else. `rollback.sql` restores
+the **empty** column and says so in its own first paragraph — it does not, and
+cannot, bring the times back.
+
+**Why the normal flow does not work here.** The runtime removal was never deployed
+on its own — the write route, the create-pipeline field, both booking wizards, the
+booking-detail card, the kiosk chip and the pre-arrival email line all ship in the
+same commit as this migration — so the release in production names the column
+freely. Prisma's generated client SELECTs every scalar column of a model on any
+find that does not narrow itself with `select:`, and `"Booking"` is read that way
+on the booking detail page, the member bookings list, the lodge guests route, the
+pre-arrival reminder cron and the booking-create paths. The moment the DROP commits
+the previous release raises Postgres 42703 / Prisma P2022 on all of them. Because
+`"Booking"` is the hottest table in the product, the incompatibility is immediate
+and total rather than confined to one screen, which is exactly what `windowed`
+exists to say.
+
+**The sequence is §2.4.1's, unchanged.** Steps 1-7 and 9-14 are the same work in
+the same order; do not run a second window for this migration. Only two things are
+specific to it:
+
+- at **step 2**, the "does the image carry both halves" pair becomes:
+  ```bash
+  # the migration is present
+  docker compose run --rm --no-deps app \
+    ls prisma/migrations/20260808000000_contract_drop_booking_expected_arrival_time/
+  # and the runtime cannot name the column: no `expectedArrivalTime` in the
+  # client's scalar enum for Booking
+  docker compose run --rm --no-deps app \
+    node -e "const {Prisma}=require('@prisma/client');console.log(Object.keys(Prisma.BookingScalarFieldEnum).join(','))"
+  ```
+- at **step 8**, the pre-migration checks are the four below rather than §2.4.1's
+  `role` queries. Paste the output into this migration's rows in
+  [§8](#8-production-execution-record); §2.4.1's rows are `role`-specific and do
+  not cover it.
+
+**Step 8, for this migration.**
+
+```sql
+-- (a) row count, and how many rows actually hold a time. Both, because the
+--     second number is what an operator is really deciding about at 8(d): a
+--     zero there means there is nothing to keep.
+SELECT COUNT(*) AS booking_rows,
+       COUNT("expectedArrivalTime") AS rows_with_arrival_time
+FROM "Booking";
+
+-- (b) the column exists, and in the shape rollback.sql restores
+SELECT column_name, data_type, character_maximum_length, is_nullable,
+       column_default
+FROM information_schema.columns
+WHERE table_name = 'Booking' AND column_name = 'expectedArrivalTime';
+-- expect: expectedArrivalTime | character varying | 5 | YES | (null)
+```
+
+```bash
+# (c) the replacement runtime cannot reference the column. This runs INSIDE the
+#     replacement image built at step 1 — the deploy host has only Docker and
+#     Docker Compose, so a bare `node -e` at the host shell fails with
+#     `node: command not found` (or `Cannot find module '@prisma/client'`). Same
+#     wrapper as step 2, and the same assertion CI pins in
+#     src/lib/__tests__/pre-arrival-arrival-token-retirement.test.ts.
+docker compose run --rm --no-deps app \
+  node -e "const {Prisma}=require('@prisma/client');const s=Object.keys(Prisma.BookingScalarFieldEnum);if(s.includes('expectedArrivalTime'))throw new Error('ABORT: replacement client still names expectedArrivalTime');console.log('replacement runtime cannot name expectedArrivalTime')"
+```
+
+**(d) OPTIONAL — snapshot the entered arrival times, if the club wants them kept
+for the record.** This is the only chance: after step 9 the values are gone, and
+unlike §2.4.1's step 8(e) dump **nothing reads this file back**. `rollback.sql`
+restores every row as `NULL` by design (owner decision D-M2) and there is no
+value-restore step to feed. So this is record-keeping, not a rollback input, and
+it is genuinely optional — skip it if 8(a) reports zero rows with a time, or if
+the club has already agreed the entries are not worth keeping. Say which you did
+in [§8](#8-production-execution-record) either way, so "we chose not to" is on the
+record rather than looking like a missed step.
+
+**The file has to land on the HOST, not inside a container**, for exactly the
+reason §2.4.1 step 8(e) documents: `\copy` writes client-side, and on this host
+psql runs inside the postgres container, so the obvious `\copy` form puts the file
+in that container's writable layer — not the `postgres_data` volume, not any backup
+path, and gone the next time the deploy recreates the container. Use server-side
+`COPY … TO STDOUT` and redirect on the host instead:
+
+```bash
+docker compose exec -T postgres \
+  psql -U tac -d tacbookings -v ON_ERROR_STOP=1 \
+    -c 'COPY (SELECT "id", "expectedArrivalTime" FROM "Booking" WHERE "expectedArrivalTime" IS NOT NULL ORDER BY "id") TO STDOUT WITH (FORMAT csv, HEADER)' \
+  > ./booking-expected-arrival-time-$(date +%Y%m%d).csv
+wc -l ./booking-expected-arrival-time-*.csv   # expect 8(a)'s rows_with_arrival_time + 1 header
+```
+
+Then **move it off the host to wherever the backup lives** and record that
+location in [§8](#8-production-execution-record) — the answer to "where is it
+stored" has to survive the deploy, which recreates and prunes containers at its
+steps 14/17/18/19.
+
+Do **not** take the snapshot as a table inside the same database (`CREATE TABLE …
+AS SELECT …`). It survives the migration, which sounds like the point, but it is
+then an object no committed migration declares, so
+`prisma migrate diff --exit-code --from-config-datasource --to-schema
+prisma/schema.prisma` reports drift against a database nobody has actually broken
+— and the next operator has to decide whether that drift is the snapshot or a real
+problem. A file beside the backup carries no such ambiguity.
+
+**Step 10, for this migration.** The column is gone and the history is right:
+
+```sql
+-- expect zero rows
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'Booking' AND column_name = 'expectedArrivalTime';
+
+-- expect exactly one applied row, no rolled-back marker
+SELECT migration_name, finished_at, applied_steps_count, rolled_back_at
+FROM "_prisma_migrations"
+WHERE migration_name = '20260808000000_contract_drop_booking_expected_arrival_time';
+
+-- and the rest of the table is untouched
+SELECT COUNT(*) FROM "Booking";  -- matches step 8(a)'s booking_rows
+```
+
+**Step 12, for this migration.** Smoke-test the surfaces that read `"Booking"`,
+because those are the ones the old colour could not serve: sign-in, the member
+bookings list, one booking's detail page, the lodge kiosk guest list, taking a new
+booking, and the pre-arrival reminder cron's next run (or a manual trigger). Then
+sweep the logs for `42703`, `P2022`, `does not exist` and `Unknown field` as at
+step 13.
+
+**Rollback boundary — read before you start.** Once the DROP commits:
+
+- **Do not restart the old application version, and do not route traffic back to
+  it.** Its client names a column that no longer exists on the busiest table in the
+  product, so it fails on every booking read — re-pointing Caddy does not fix that.
+- A rollback to the old version requires **first** either running
+  `prisma/migrations/20260808000000_contract_drop_booking_expected_arrival_time/rollback.sql`
+  by hand as the migration role, **or** restoring the verified step 7 backup.
+- **The column comes back EMPTY.** `rollback.sql` recreates it as the nullable
+  `VARCHAR(5)` with no default that `20260408060000_add_expected_arrival_time`
+  created — byte-identical to what the previous release's client expects — so its
+  reads, its omitted-column inserts and its `PUT`/`DELETE
+  /api/bookings/[id]/arrival-time` writes all work again. Every booking comes back
+  with `NULL`, which on that release reads as "no expected arrival time given" and
+  renders gracefully everywhere: the booking card shows its empty editor, the kiosk
+  chip reads "Arrival time: Not specified", and the pre-arrival email composes no
+  arrival line. Nothing fails and nothing is mis-stated; the club has simply lost
+  the times, and members who care would have to re-enter them. `NULL` is not a
+  substitute chosen from among several — it is the only value available, because
+  the column was free text and no other field on the booking implies an arrival
+  time. Guessing one would put a time in front of a hut leader that no member ever
+  said.
+- **In a combined window, run every schema-removal migration's `rollback.sql` in
+  reverse chronological order** — this one **first**, then `20260803030000`, then
+  `20260803010000`. See §2.4.1's rollback boundary for what each of the other two
+  leaves broken if it is skipped.
+- **After a `rollback.sql` the migration history lies, and nothing in the deploy
+  path notices** — the same way §2.4.1 documents and measured: `_prisma_migrations`
+  still records this migration as applied, so `prisma migrate status`,
+  `prisma migrate deploy` and the deploy script's own drift gate all report a clean
+  database. The one command that sees the restored column is `prisma migrate diff
+  --exit-code --from-config-datasource --to-schema prisma/schema.prisma`, which
+  exits 2. Run it before you trust a rolled-back database.
+- **Rolling forward: re-apply `migration.sql` by hand** as the migration role. The
+  history row is already correct, so that leaves history, schema and database in
+  agreement. Any times members entered on the rolled-back release are destroyed
+  again at that point, for the same reason and with the same finality.
 
 ---
 
@@ -860,8 +1068,8 @@ already broken, so the boundary moves back to **step 13 (migrate)** and the
 recovery paths are forward to cutover, the migration's own `rollback.sql`, or the
 verified backup.
 
-**The ledger now holds three real `windowed` rows**, and they are not the only
-migrations in that class. Check for all four:
+**The ledger now holds four real `windowed` rows**, and they are not the only
+migrations in that class. Check for all five:
 
 - `20260803010000_contract_subscription_lockout_drop_enabled` (#2543 / #2561) is
   declared `old_code_compatible=windowed`. It drops `MembershipLockoutSettings.enabled`,
@@ -881,6 +1089,14 @@ migrations in that class. Check for all four:
   token-fenced claim. It ships a no-op `rollback.sql`; old/new worker overlap is
   forbidden in both deploy and rollback directions. Pending windowed migrations
   share **one** window.
+- `20260808000000_contract_drop_booking_expected_arrival_time` (#2621) is declared
+  `old_code_compatible=windowed` too. It drops `Booking.expectedArrivalTime`, which
+  the previous release's client names on ordinary unnarrowed reads of `"Booking"` —
+  the hottest table in the product — so the moment migrate commits the old version
+  fails on the booking detail page, the member bookings list, the lodge guests
+  route, the pre-arrival reminder cron and every booking-create path. It ships a
+  tested `rollback.sql` that restores the column **empty**, and has its own ordered
+  sequence at [§2.4.2](#242-2621-drop-bookingexpectedarrivaltime).
 - **`v0.10.0` has one migration in that class too**, declared before the value
   existed. `20260707000100_backfill_org_age_tier_not_applicable` is
   `old_code_compatible=no`, and its `lock_impact_plan` states plainly that
@@ -951,6 +1167,18 @@ rows as an owner-approved data operation (see below).
   backup. Nothing reads those labels — that is why the drop is safe — so this is a
   record-keeping loss, not a behavioural one, with the single fail-closed exception
   named in §2.4.1's rollback boundary.
+- **The `Booking.expectedArrivalTime` values dropped by `20260808000000`** are gone
+  for good, and deliberately so (owner decision D-M2, epic #2629). PostgreSQL
+  cannot un-drop a column and `rollback.sql` recreates this one as `NULL` for every
+  row — there is no value-restore step and there never can be, because the column
+  was free text with nothing on the booking to derive a time from. Recovering the
+  actual entries needs either the optional snapshot the pre-migration checks offer
+  ([§2.4.2](#242-2621-drop-bookingexpectedarrivaltime) step 8(d)) or the
+  [§1.1](#11-verified-restore-tested-database-backup-with-s3-durability-confirmed)
+  backup. Nothing ever read the values — the field was display-only for its whole
+  life — so this is a record-keeping loss with no behavioural consequence at all:
+  `NULL` reads as "no expected arrival time given" on the rolled-back release, which
+  is what most bookings genuinely held.
 
 If a rollback becomes necessary, capture evidence, re-point to the old color to
 restore service, and escalate to the owner before any data-repair action.
@@ -1302,9 +1530,13 @@ idempotent**: a second run fails with `ERROR: column "role" of relation
 not a silent double-apply) but worth knowing at 2am.
 
 **The schema-changing part of the combined-window rollback was rehearsed in reverse
-order**, since this release carries two schema-removal windowed migrations and
-rolling back only one is the failure mode the
-rollback boundary now calls out. With both applied, running
+order**, since at the time of this rehearsal the release carried two
+schema-removal windowed migrations and rolling back only one is the failure mode the
+rollback boundary now calls out. (#2621 added a **third**,
+`20260808000000_contract_drop_booking_expected_arrival_time`, after this rehearsal
+was recorded. It is not covered below: the combined order is now
+`20260808000000` → `20260803030000` → `20260803010000`, per
+[§2.4.2](#242-2621-drop-bookingexpectedarrivaltime).) With both applied, running
 `20260803030000/rollback.sql` and then
 `20260803010000_contract_subscription_lockout_drop_enabled/rollback.sql` restored
 `FamilyGroupMember.role` as `text | NO | 'MEMBER'::text` **and**
@@ -1418,6 +1650,8 @@ Fill this in live during the production window.
 | Windowed migration: pre-migration check output (§2.4.1 step 8) | _<paste 8(a) row count, 8(b) distinct role values + counts, 8(c) column shape, 8(d) replacement-client scalars>_ |
 | Windowed migration: per-row role dump (§2.4.1 step 8(e), REQUIRED) | _<host filename + the durable location it was moved to, beside the backup>_ |
 | Windowed migration: override reason used (§2.4.1 step 9a) | _<the exact BLUE_GREEN_MIGRATION_OVERRIDE_REASON string>_ |
+| #2621 arrival-time drop: pre-migration check output (§2.4.2 step 8) | _<paste 8(a) booking_rows + rows_with_arrival_time, 8(b) column shape, 8(c) replacement-client scalars>_ |
+| #2621 arrival-time drop: arrival-time snapshot (§2.4.2 step 8(d), OPTIONAL) | _<host filename + the durable location it was moved to, beside the backup — or "not taken", and why (nothing to keep / club agreed the entries are not worth keeping)>_ |
 | AgeTier plan (quiet window / deferred backfill) | _<...>_ |
 | Cutover time (step 17) | _<HH:MM TZ>_ |
 | Modules re-enabled | _<list>_ |
