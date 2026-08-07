@@ -88,7 +88,7 @@ what that member receives.
 1. Check the **Booking Summary** (dates, nights, guests, and per-guest prices).
    If the member has account credit, tick **Apply credit to this booking** to
    use it. Add a promo code with the promo field if you have one.
-2. Add optional **Notes** and an **Expected Arrival Time** if relevant. If the
+2. Add optional **Notes** if relevant. If the
    booking has minors without an adult, an admin reason box appears — because
    you are an admin the booking is auto-approved, and the reason is stored in
    the audit trail.
@@ -113,7 +113,7 @@ This is a wizard, not a settings page. The inputs it collects:
 | Lodge | Which lodge the booking is at | first/only lodge | Only shown with more than one active lodge |
 | Guests | Who is staying | — | Capped at the lodge's resolved capacity, not live availability. Member guests (members outside the owner's family) are added afterwards from the booking's edit panel — see Step 2 |
 | Apply credit to this booking | Spend the member's account credit | off | Money in integer cents |
-| Notes / Expected Arrival Time | Free-text booking notes | empty | Notes ≤ 1000 characters |
+| Notes | Free-text booking notes | empty | Notes ≤ 1000 characters |
 | Payment method | Card or Internet Banking | Card | Internet Banking option only when the module is on and a balance is due |
 | Email choice | Whether the member is emailed | asked at confirm | Recorded in the audit log |
 

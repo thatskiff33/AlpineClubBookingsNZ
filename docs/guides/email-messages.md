@@ -158,6 +158,21 @@ The page handles the two situations differently, on purpose.
   copy is kept in the audit log. Read the quoted lines, edit anything that no
   longer reads correctly, and press **Save Template**; saving clears the warning
   whether or not you changed anything.
+- **A feature was retired and its token now always renders as nothing.** The
+  club no longer collects an expected arrival time — everyone who stays a night
+  is treated as being at the lodge from midday NZ on their arrival date to
+  midday NZ on their departure date, and someone who needs to leave earlier
+  arranges it with the hut leader. The **Pre-arrival Information** template
+  therefore no longer carries an arrival line, and its two arrival chips,
+  `{{expectedArrivalNote}}` and `{{expectedArrivalTime}}`, are kept only for
+  compatibility: they stay accepted so a saved copy holding either one still
+  saves and still sends, and both now render as **nothing** on every message.
+  If your copy has an arrival line, delete it — otherwise it goes out as an
+  empty line, or worse, as a bare label if you typed one in front of the chip.
+  The same release added one sentence to the built-in wording: that guests are
+  on the chore roster on the morning they check out and should talk to the hut
+  leader beforehand if they plan to leave early. Your saved copy was not
+  touched, so add that sentence yourself if you want it.
 - **Your copy simply reads differently.** That is stated as a plain fact under
   the template you have open, with no warning attached, because a customisation
   differing from the built-in wording is exactly what you asked for.
