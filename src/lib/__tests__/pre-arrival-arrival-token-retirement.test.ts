@@ -21,10 +21,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //      EXTRA_TEMPLATE_TOKENS["pre-arrival-reminder"], so their allowance no
 //      longer depends on the default body at all;
 //   2. `sendPreArrivalReminderEmail` still SUPPLIES both keys, permanently `""`;
-//   3. `expectedArrivalNote` moved from OPTIONAL_TEMPLATE_TOKENS into
-//      EMPTYABLE_OVERRIDE_TOKENS (the {{creditNote}} #2328 / {{paymentDueNote}}
-//      #2444 precedent), so guard 5 passes and guard 4 still warns about a
-//      dangling label in front of it.
+//   3. BOTH tokens are declared in EMPTYABLE_OVERRIDE_TOKENS (the
+//      {{creditNote}} #2328 / {{paymentDueNote}} #2444 precedent) —
+//      `expectedArrivalNote` MOVED there out of OPTIONAL_TEMPLATE_TOKENS, so
+//      guard 5 passes, and `expectedArrivalTime` added beside it — so guard 4
+//      still warns about a dangling label in front of either.
 //
 // It also pins owner decision D-M5: the default body carries the checkout-day
 // chore sentence and no arrival remnant.
@@ -62,6 +63,7 @@ import { EMAIL_AUDIT_DEFAULTS } from "../email-message-audit-defaults";
 import {
   EMPTYABLE_OVERRIDE_TOKENS,
   OPTIONAL_TEMPLATE_TOKENS,
+  findDanglingDefaultLines,
 } from "../email-message-token-contract";
 import {
   validateEmailTemplateContent,
@@ -180,19 +182,104 @@ describe("#2621 stored pre-arrival overrides keep working (the #2269 hazard)", (
     expect(rendered).toContain("ring the lodge phone");
   });
 
-  it("keeps expectedArrivalNote declared, moved rather than deleted", () => {
-    // Deleting it outright would pass the build and turn guard 4 OFF, so an
+  it("keeps BOTH arrival tokens declared, moved rather than deleted", () => {
+    // Deleting either outright would pass the build and turn guard 4 OFF, so an
     // override reading "Arrival: {{expectedArrivalNote}}" — which now ships a
     // bare "Arrival:" to every member, forever — would stop being warned about.
     expect(EMPTYABLE_OVERRIDE_TOKENS[TEMPLATE]).toContain(
       "expectedArrivalNote",
     );
-    // And it must NOT be left in OPTIONAL_TEMPLATE_TOKENS, whose guard 5
+    // {{expectedArrivalTime}} was missed in the first cut of #2621 and matters
+    // MORE, not less: it is the raw value token, so it is the one likeliest to
+    // sit behind a hand-typed label ("Expected arrival: {{expectedArrivalTime}}"
+    // is the line the old shipped default taught). Undeclared, the warning
+    // depended on its preview sample happening to be "" — a value a future
+    // author could reasonably give a time back to, silently removing the club's
+    // only signal.
+    expect(EMPTYABLE_OVERRIDE_TOKENS[TEMPLATE]).toContain(
+      "expectedArrivalTime",
+    );
+    // And neither may be left in OPTIONAL_TEMPLATE_TOKENS, whose guard 5
     // requires a declared token to appear in the default body it describes.
     expect(OPTIONAL_TEMPLATE_TOKENS[TEMPLATE] ?? []).not.toContain(
       "expectedArrivalNote",
     );
+    expect(OPTIONAL_TEMPLATE_TOKENS[TEMPLATE] ?? []).not.toContain(
+      "expectedArrivalTime",
+    );
   });
+
+  describe.each([["expectedArrivalNote"], ["expectedArrivalTime"]])(
+    "a saved override with a label typed in front of {{%s}}",
+    (token) => {
+      // Drives guard 4 exactly as `GET /api/admin/email-templates` does — both
+      // declaration tables composed together, samples resolved through the
+      // definition — over an override that puts the token behind a hand-typed
+      // label. "Expected arrival: {{expectedArrivalTime}}" is the line the old
+      // shipped default taught, so it is the line real clubs hold.
+      const overrideBody = [
+        "Kia ora {{firstName}},",
+        "",
+        `Expected arrival: {{${token}}}`,
+        "",
+        "{{CLUB_LODGE_TRAVEL_NOTE}}",
+      ].join("\n");
+
+      const danglingWith = (sampleFor: (token: string) => string) =>
+        findDanglingDefaultLines(
+          {
+            [TEMPLATE]: {
+              defaultSubject: "Pre-arrival Information",
+              defaultBody: overrideBody,
+            },
+          },
+          {
+            [TEMPLATE]: [
+              ...(OPTIONAL_TEMPLATE_TOKENS[TEMPLATE] ?? []),
+              ...(EMPTYABLE_OVERRIDE_TOKENS[TEMPLATE] ?? []),
+            ],
+          },
+          sampleFor,
+        );
+
+      const EXPECTED = [
+        {
+          key: TEMPLATE,
+          field: "defaultBody",
+          detail: '"Expected arrival:"',
+        },
+      ];
+
+      it("is warned about, as the admin editor sees it today", () => {
+        expect(
+          danglingWith((sampled) => definition.sampleData[sampled] ?? sampled),
+        ).toEqual(EXPECTED);
+      });
+
+      it("is STILL warned about if the token's preview sample gets a value back", () => {
+        // THE MUTATION PIN. The assertion above cannot fail if either name is
+        // deleted from EMPTYABLE_OVERRIDE_TOKENS, because guard 4 renders an
+        // undeclared token with its PREVIEW SAMPLE and both samples are
+        // currently "" — so the line dangles either way, and today's warning is
+        // a coincidence of the sample rather than a consequence of the
+        // declaration. Giving the sample a value again is the obvious future
+        // edit for a token named "...Time", and it would silently remove the
+        // club's only signal.
+        //
+        // So this run supplies a NON-EMPTY sample for the token under test.
+        // Guard 4 then reports the line only because the token is declared
+        // emptyable, which is exactly the property being pinned: delete either
+        // name from EMPTYABLE_OVERRIDE_TOKENS and this test fails.
+        expect(
+          danglingWith((sampled) =>
+            sampled === token
+              ? "18:30"
+              : definition.sampleData[sampled] ?? sampled,
+          ),
+        ).toEqual(EXPECTED);
+      });
+    },
+  );
 });
 
 describe("#2621 the shipped pre-arrival default (owner decision D-M5)", () => {

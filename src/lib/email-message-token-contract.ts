@@ -213,12 +213,12 @@ export const EMPTYABLE_OVERRIDE_TOKENS: Record<string, readonly string[]> = {
   // own cannot be shown truthfully), so any override line built around it alone
   // renders a bare label.
   "checkin-reminder": ["guestLastName"],
-  // #2621 adds {{expectedArrivalNote}}, on the {{creditNote}} (#2328) /
-  // {{paymentDueNote}} (#2444) precedent above. It used to be declared in
-  // OPTIONAL_TEMPLATE_TOKENS, because the shipped pre-arrival default carried
-  // it; #2621 retires the expected-arrival-time entry entirely, so the token
-  // leaves the default body and is now supplied `""` on EVERY send rather than
-  // on most of them.
+  // #2621 adds BOTH arrival tokens, on the {{creditNote}} (#2328) /
+  // {{paymentDueNote}} (#2444) precedent above. {{expectedArrivalNote}} used to
+  // be declared in OPTIONAL_TEMPLATE_TOKENS, because the shipped pre-arrival
+  // default carried it; #2621 retires the expected-arrival-time entry entirely,
+  // so the token leaves the default body and is now supplied `""` on EVERY send
+  // rather than on most of them.
   //
   // It could not stay where it was and it must not simply be deleted:
   //   * guard 5 (`findStaleOptionalTokens`) requires every name declared in
@@ -230,11 +230,25 @@ export const EMPTYABLE_OVERRIDE_TOKENS: Record<string, readonly string[]> = {
   //     "Arrival:" to every member, forever — would stop being warned about at
   //     all. Only a saved override can still hold the token, which is precisely
   //     the population this table exists to protect.
-  // The three guard-6 properties hold: the key is a registered template, the
-  // token is still supplied for it (EXTRA_TEMPLATE_TOKENS in
-  // src/lib/email-message-registry.ts, which is also what keeps it approved and
-  // gives it a preview sample), and it is no longer in the current default body.
-  "pre-arrival-reminder": ["expectedArrivalNote"],
+  //
+  // {{expectedArrivalTime}} is declared for exactly the same reason and was
+  // missed in the first cut of this change. It is the RAW value token, so an
+  // override holding it is the likeliest of the two to have a hand-typed label
+  // in front — "Expected arrival: {{expectedArrivalTime}}" is the line the old
+  // shipped default taught, and it now sends a bare "Expected arrival:" to every
+  // member, forever. Leaving it undeclared made the warning depend on the
+  // token's PREVIEW SAMPLE being `""` (guard 4 renders an undeclared token with
+  // its sample, and a `""` sample happens to dangle the line the same way), so
+  // the club's only signal rested on a value in
+  // src/lib/email-message-registry.ts that a future author could reasonably give
+  // a time back to. Declared here, the warning comes from the declaration and
+  // the sample is free to change.
+  //
+  // The three guard-6 properties hold for both: the key is a registered
+  // template, each token is still supplied for it (EXTRA_TEMPLATE_TOKENS in
+  // src/lib/email-message-registry.ts, which is also what keeps them approved
+  // and gives them preview samples), and neither is in the current default body.
+  "pre-arrival-reminder": ["expectedArrivalNote", "expectedArrivalTime"],
 };
 
 export function extractTokens(value: string): string[] {
