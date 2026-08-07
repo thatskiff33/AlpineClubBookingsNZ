@@ -886,7 +886,7 @@ WHERE table_name = 'Booking' AND column_name = 'expectedArrivalTime';
 #     Docker Compose, so a bare `node -e` at the host shell fails with
 #     `node: command not found` (or `Cannot find module '@prisma/client'`). Same
 #     wrapper as step 2, and the same assertion CI pins in
-#     src/lib/__tests__/pre-arrival-arrival-token-retirement.test.ts.
+#     src/lib/__tests__/booking-expected-arrival-time-retirement.test.ts.
 docker compose run --rm --no-deps app \
   node -e "const {Prisma}=require('@prisma/client');const s=Object.keys(Prisma.BookingScalarFieldEnum);if(s.includes('expectedArrivalTime'))throw new Error('ABORT: replacement client still names expectedArrivalTime');console.log('replacement runtime cannot name expectedArrivalTime')"
 ```
