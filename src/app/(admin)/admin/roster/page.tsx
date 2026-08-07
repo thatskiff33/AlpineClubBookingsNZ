@@ -399,6 +399,11 @@ export default function RosterPage() {
                 onSelectionChange={({ startDate }) => changeDate(startDate)}
                 overlayByDate={overlayByDate}
                 overlayLegend={ROSTER_LEGEND}
+                // #2631: the roster overlay — and ONLY the roster overlay —
+                // colours the operational day, so this is the one calendar
+                // that explains the difference between its colours and the
+                // guest-night panel beneath them.
+                overlayCountsOperationalDay
                 onVisibleMonthChange={loadMonthStatus}
               />
             </div>

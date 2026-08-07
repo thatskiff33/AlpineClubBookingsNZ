@@ -168,12 +168,18 @@ describe("stay-range model contract (#2622)", () => {
     // "needs roster" could open empty. Both DB entry points in roster-status
     // now apply D-12's predicate in the booking `some` AND the guest select —
     // four occurrences. Removing any one of them fails here.
+    //
+    // Counted over CODE ONLY: comments are stripped first, so naming the
+    // predicate in a docstring neither satisfies this probe nor trips it.
     const rosterStatus = source("src/lib/roster-status.ts");
     expect(rosterStatus).toContain(
       'from "@/lib/member-guest-consent"',
     );
+    const rosterStatusCode = rosterStatus
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
     expect(
-      rosterStatus.split("OPERATIONALLY_PRESENT_GUEST_WHERE").length - 1,
+      rosterStatusCode.split("OPERATIONALLY_PRESENT_GUEST_WHERE").length - 1,
     ).toBe(5); // 1 import + 2 per entry point
   });
 

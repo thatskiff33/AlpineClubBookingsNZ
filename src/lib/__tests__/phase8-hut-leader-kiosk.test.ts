@@ -1454,7 +1454,12 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(content).toContain("Guests Departing Today");
     expect(content).toContain("guest.ageTier === \"ADULT\"");
     expect(content).toContain("canMarkAttendance && guest.isArriving");
-    expect(content).toContain("canMarkAttendance && guest.isDeparting");
+    // #2631: the check-out BUTTON hangs off `isFinalDeparture`, not off the
+    // Departing badge — the depart endpoint only accepts the morning after the
+    // LAST booked night, so a sparse stay's intermediate departure morning gets
+    // the badge and no button.
+    expect(content).toContain("canMarkAttendance && guest.isFinalDeparture");
+    expect(content).not.toContain("canMarkAttendance && guest.isDeparting");
     expect(content).toContain("120000");
     expect(content).toContain("Manage Today's Roster");
     expect(content).not.toContain("Manage Today&apos;s Roster");
@@ -1481,7 +1486,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       "canMarkAttendance && guest.isArriving && !guest.departedAt && !booking.blockedFromCheckin"
     );
     expect(content).toContain(
-      "canMarkAttendance && guest.isDeparting && !booking.blockedFromCheckin"
+      "canMarkAttendance && guest.isFinalDeparture && !booking.blockedFromCheckin"
     );
   });
 });

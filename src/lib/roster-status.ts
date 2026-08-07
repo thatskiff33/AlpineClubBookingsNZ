@@ -4,6 +4,7 @@ import {
   type BookingStayRange,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   eachDateOnlyInRange,
@@ -240,11 +241,22 @@ export function computeRosterDayStatuses(
  * `getAdminOccupancyMonth`: the overlap bounds are checkout-INCLUSIVE (`gte`),
  * because the roster covers the morning after the last night and a booking
  * whose only relevant night is the 30th of last month still puts people in the
- * lodge on the 1st. And it is not consent-blind: `OPERATIONALLY_PRESENT_GUEST_
- * WHERE` (owner decision D-12, #2307) is applied here exactly as
- * `roster-eligibility.ts` applies it, so the calendar counts the same people
- * the roster will actually offer. Without it a day whose only member guests
- * were still awaiting consent painted "needs roster" and then opened empty.
+ * lodge on the 1st. And it is no longer a different population from the roster
+ * it colours: it now applies BOTH of the roster's own exclusions, exactly as
+ * `roster-eligibility.ts` applies them —
+ * `OPERATIONALLY_PRESENT_GUEST_WHERE` (owner decision D-12, #2307) for member
+ * guests whose consent is still pending, and
+ * `checkinNotBlockedByPendingReviewFilter()` (#1372 / #1422) for a booking held
+ * by a pending admin review, which cannot be rostered because it cannot check
+ * in. Each was independently capable of the same symptom: a day painted "needs
+ * roster" that opened with nobody to roster.
+ *
+ * THE ONE EXCLUSION THAT IS DELIBERATELY NOT SHARED, so nobody "fixes" it: the
+ * kiosk's guest LIST keeps #1422's flag-don't-hide rule and still shows a
+ * review-blocked booking, marked `blockedFromCheckin`, because staff standing
+ * at the door need to see who has been turned away. That list answers "who is
+ * in the building"; this query answers "who can be given a chore", and on a day
+ * whose only booking is review-blocked the two correctly disagree.
  *
  * `lodgeId` scopes the aggregate to a single lodge so the roster calendar
  * overlay matches the lodge-filtered roster list (#1587 item 3). Bookings scope
@@ -278,6 +290,10 @@ export async function getRosterMonthStatus(input: {
           ...OPERATIONALLY_PRESENT_GUEST_WHERE,
         },
       },
+      // #1372 / #1422: a booking held by a pending admin review cannot check
+      // in, so `roster-eligibility.ts` never offers it a chore. Colouring its
+      // day "needs roster" would send an admin to a page with nobody on it.
+      ...checkinNotBlockedByPendingReviewFilter(),
     },
     select: {
       id: true,
@@ -346,6 +362,10 @@ export async function getRosterMonthStatus(input: {
  * needs-attention on the calendar), never as needs-roster, so this headline can
  * never read 0 while the roster surface shows needs-roster days in the same
  * window.
+ *
+ * The exclusions are the month query's, for the same reason: consent-pending
+ * member guests and review-blocked bookings are not people the roster will
+ * offer, so counting them here would send the officer to an empty page.
  */
 export async function countRosterDaysNeedingChores(input: {
   from: Date;
@@ -371,6 +391,10 @@ export async function countRosterDaysNeedingChores(input: {
             ...OPERATIONALLY_PRESENT_GUEST_WHERE,
           },
         },
+        // #1372 / #1422, same reason as the month query: the headline is "work
+        // to do", and a review-blocked booking is work the roster will not let
+        // anyone do.
+        ...checkinNotBlockedByPendingReviewFilter(),
       },
       select: {
         id: true,

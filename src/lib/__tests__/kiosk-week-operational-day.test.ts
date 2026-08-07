@@ -35,6 +35,8 @@ vi.mock("@/lib/lodge-auth", () => ({
   kioskLodgeAuthErrorResponse: vi.fn(() => null),
 }));
 
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
+
 // The frozen anchor. Week 1 = 2026-07-01 .. 2026-07-07.
 const WEEK_START = "2026-07-01";
 
@@ -219,5 +221,94 @@ describe("GET /api/lodge/week — the changeover morning (#2631)", () => {
     expect(args.select.guests.select.nights).toEqual({
       select: { stayDate: true },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one exclusion the strip and the day list deliberately disagree about
+// ---------------------------------------------------------------------------
+
+describe("a review-blocked booking: rosterable presence vs the door list (#2631)", () => {
+  // The row every query in this block would see if nothing filtered it: a
+  // booking held by a PENDING admin review, with one guest here on 3 July.
+  const BLOCKED_GUEST = {
+    id: "guest-blocked",
+    firstName: "Kid",
+    lastName: "Parent",
+    ageTier: "YOUTH",
+    isMember: false,
+    arrivedAt: null,
+    departedAt: null,
+    stayStart: day("2026-07-02"),
+    stayEnd: day("2026-07-04"),
+    member: null,
+    nights: [{ stayDate: day("2026-07-02") }, { stayDate: day("2026-07-03") }],
+  };
+
+  /**
+   * Honours the review filter the way Postgres would: if the caller asked for
+   * "not blocked by a pending review", the row is simply not returned. Remove
+   * the filter from the route and the row arrives, which is what the
+   * assertions below are watching for.
+   */
+  function installBlockedBookingMock() {
+    mockPrisma.booking.findMany.mockImplementation(async (args: never) => {
+      const { where } = args as unknown as { where: { OR?: unknown } };
+      const filtered =
+        JSON.stringify(where.OR) ===
+        JSON.stringify(checkinNotBlockedByPendingReviewFilter().OR);
+      if (filtered) return [];
+      return [
+        {
+          id: "booking-blocked",
+          checkIn: day("2026-07-02"),
+          checkOut: day("2026-07-04"),
+          expectedArrivalTime: null,
+          requiresAdminReview: true,
+          adminReviewStatus: "PENDING",
+          adminReviewReason: "needs an adult",
+          member: { firstName: "Alex", lastName: "Parent" },
+          guests: [BLOCKED_GUEST],
+        },
+      ];
+    });
+  }
+
+  it("the week strip reads no-guests, because there is no roster to do", async () => {
+    installBlockedBookingMock();
+
+    const days = await week();
+    for (const entry of days) {
+      expect(entry.guestCount, entry.date).toBe(0);
+      expect(entry.rosterStatus, entry.date).toBe("no-guests");
+    }
+  });
+
+  it("...while the day list still shows them, flagged (#1422 flag-don't-hide)", async () => {
+    installBlockedBookingMock();
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const response = await GET(
+      new Request("http://localhost/api/lodge/guests/2026-07-03") as never,
+      { params: Promise.resolve({ date: "2026-07-03" }) } as never,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // The leader at the door sees the party AND sees that it is blocked. This
+    // is the same fixture the week strip counted as zero, one route apart.
+    expect(body.totalGuests).toBe(1);
+    expect(body.bookings[0]).toMatchObject({
+      bookingId: "booking-blocked",
+      blockedFromCheckin: true,
+    });
+  });
+
+  it("MUTATION PROBE: the week query carries the review filter", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    await week();
+
+    const args = mockPrisma.booking.findMany.mock.calls[0][0];
+    expect(args.where.OR).toEqual(checkinNotBlockedByPendingReviewFilter().OR);
   });
 });

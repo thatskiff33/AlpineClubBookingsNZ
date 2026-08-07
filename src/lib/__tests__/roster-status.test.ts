@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
 import { parseDateOnly } from "@/lib/date-only";
 import {
   computeRosterDayStatuses,
@@ -515,5 +516,95 @@ describe("roster-status DB windows carry the operational day (#2631)", () => {
       to: parseDateOnly("2099-07-08"),
     });
     expect(count).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The roster's OTHER exclusion (#2631)
+// ---------------------------------------------------------------------------
+
+describe("roster-status excludes review-blocked bookings, as the roster does", () => {
+  const REVIEW_ALLOWED_OR = checkinNotBlockedByPendingReviewFilter().OR;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.choreAssignmentFindMany.mockResolvedValue([]);
+  });
+
+  /**
+   * Honours the review filter the way Postgres would. The booking is here on
+   * 1 and 2 July; it reaches the computation ONLY if the query forgot to
+   * exclude it, which is exactly the regression these cases watch for.
+   */
+  function installBlockedBookingMock() {
+    prismaMocks.bookingFindMany.mockImplementation(async (args: unknown) => {
+      const { where } = args as { where: { OR?: unknown } };
+      if (JSON.stringify(where.OR) === JSON.stringify(REVIEW_ALLOWED_OR)) {
+        return [];
+      }
+      return [
+        {
+          id: "booking-blocked",
+          checkIn: parseDateOnly("2099-07-01"),
+          checkOut: parseDateOnly("2099-07-03"),
+          guests: [
+            {
+              stayStart: parseDateOnly("2099-07-01"),
+              stayEnd: parseDateOnly("2099-07-03"),
+              ageTier: "ADULT",
+              nights: [
+                { stayDate: parseDateOnly("2099-07-01") },
+                { stayDate: parseDateOnly("2099-07-02") },
+              ],
+            },
+          ],
+        },
+      ];
+    });
+  }
+
+  it("the calendar paints no colour on a day whose only booking is blocked", async () => {
+    installBlockedBookingMock();
+
+    const statuses = await getRosterMonthStatus({ month: "2099-07" });
+
+    // Before the filter this read `needs-roster` on the 1st, 2nd and 3rd —
+    // and the roster page then opened with nobody on it, because
+    // `roster-eligibility.ts` has always excluded this booking.
+    expect(statuses.every((entry) => entry.status === "no-guests")).toBe(true);
+  });
+
+  it("the dashboard headline does not count it as work to do", async () => {
+    installBlockedBookingMock();
+
+    const count = await countRosterDaysNeedingChores({
+      from: parseDateOnly("2099-07-01"),
+      to: parseDateOnly("2099-07-08"),
+    });
+    expect(count).toBe(0);
+  });
+
+  it.each([
+    [
+      "getRosterMonthStatus",
+      async () => {
+        await getRosterMonthStatus({ month: "2099-07" });
+      },
+    ],
+    [
+      "countRosterDaysNeedingChores",
+      async () => {
+        await countRosterDaysNeedingChores({
+          from: parseDateOnly("2099-07-01"),
+          to: parseDateOnly("2099-07-08"),
+        });
+      },
+    ],
+  ])("MUTATION PROBE: %s carries the review filter", async (_label, run) => {
+    prismaMocks.bookingFindMany.mockResolvedValue([]);
+    await run();
+
+    const where = prismaMocks.bookingFindMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual(REVIEW_ALLOWED_OR);
   });
 });

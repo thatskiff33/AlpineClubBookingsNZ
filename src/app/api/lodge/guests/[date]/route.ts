@@ -11,6 +11,7 @@ import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { isCheckinBlockedByPendingReview } from "@/lib/booking-review";
 import {
   getGuestOperationalDayPresence,
+  getGuestStayEnd,
   getOperationallyPresentGuestsForDay,
 } from "@/lib/booking-guest-stay-ranges";
 
@@ -31,6 +32,19 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * a guest is here on day D if D−1 or D is one of their booked nights, and
  * `isDeparting` means "leaves today" here exactly as it does on the kiosk, in
  * the roster wizard and in chore generation.
+ *
+ * ONE SCOPE IS NOT ONE FLAG, THOUGH. `isDeparting` is the operational-day
+ * BADGE and it fires on every departure morning a sparse stay has — nights
+ * {11, 14} leave the lodge on the 12th and again on the 15th.
+ * `isFinalDeparture` is a second, narrower flag for the CHECK-OUT BUTTON: the
+ * depart endpoint resolves its guest by `stayEnd` equality
+ * (`findLodgeGuestDepartingOnDate`, deliberately fenced — see
+ * `lodge-arrive-depart-asymmetry.test.ts`), so it can only ever succeed on the
+ * one morning after the LAST booked night. Render "Mark Departed" off the
+ * badge and the kiosk offers a button that 404s on every intermediate
+ * departure morning, which is exactly the dead end this flag exists to
+ * prevent. Derived from the guest's own `stayEnd`, matching the endpoint's
+ * predicate rather than re-deriving presence.
  */
 export async function GET(
   req: NextRequest,
@@ -166,6 +180,12 @@ export async function GET(
             isMember: g.isMember,
             isArriving: presence.isArriving,
             isDeparting: presence.isDeparting,
+            // The check-out button's flag, NOT the badge's. Equality with the
+            // guest's own `stayEnd`, which is the depart endpoint's own
+            // predicate, so "the kiosk offers it" and "the server accepts it"
+            // are the same condition by construction.
+            isFinalDeparture:
+              getGuestStayEnd(g, b).getTime() === date.getTime(),
             arrivedAt: g.arrivedAt?.toISOString() ?? null,
             departedAt: g.departedAt?.toISOString() ?? null,
             phone:

@@ -100,6 +100,16 @@ type OccupancyCalendarProps = {
   // emphasis: "ring" to paint a low-emphasis outline instead of a solid fill.
   overlayByDate?: Record<string, CalendarOverlayValue>;
   overlayLegend?: Array<{ tone: CalendarTone; label: string }>;
+  // Does THIS overlay colour the operational DAY (the night plus the following
+  // morning) rather than the night? (#2631)
+  //
+  // Only the roster overlay does. The hut-leader assignment calendar paints
+  // `hut-leader-coverage`, which is night-based and fenced, so telling its user
+  // that "the day colours count who is in the lodge that day, including a
+  // checkout morning" would be a plain falsehood about their screen. The
+  // explainer beneath the grid is therefore opt-in per caller and NOT inferred
+  // from "an overlay exists", which is what shipped it onto the wrong page.
+  overlayCountsOperationalDay?: boolean;
   // Fires with the visible month key (YYYY-MM) on mount and every navigation, so
   // a parent can lazily load overlay data for the month in view.
   onVisibleMonthChange?: (month: string) => void;
@@ -174,6 +184,7 @@ export function OccupancyCalendar({
   onSelectionChange,
   overlayByDate,
   overlayLegend,
+  overlayCountsOperationalDay = false,
   onVisibleMonthChange,
 }: OccupancyCalendarProps) {
   const today = formatDateOnly(getTodayDateOnly());
@@ -480,9 +491,16 @@ export function OccupancyCalendar({
                   : hasGuests
                     ? "border-brand-gold/40 bg-card text-card-foreground hover:bg-muted"
                     : "border-border bg-card text-foreground hover:bg-muted";
+          // #2631: name the UNIT in the accessible label. `guestCount` is the
+          // NIGHT count, and the overlay beside it can be the operational day,
+          // so on a checkout morning a bare "No guests" was read out
+          // immediately before "Needs roster" — a screen-reader user got a flat
+          // contradiction where a sighted one at least sees two different
+          // marks. "No overnight guests" / "N staying overnight" says which of
+          // the two numbers this is.
           const guestLabel = night?.guestCount
-            ? `${night.guestCount} guest${night.guestCount === 1 ? "" : "s"}`
-            : "No guests";
+            ? `${night.guestCount} staying overnight`
+            : "No overnight guests";
 
           return (
             <button
@@ -562,17 +580,21 @@ export function OccupancyCalendar({
               {/* #2631: this panel and the day colours above measure two
                   different things, and on a changeover morning they read like a
                   contradiction unless each says what it counts. This one counts
-                  guest-NIGHTS (who sleeps here); the colours count the
+                  guest-NIGHTS (who sleeps here); the roster colours count the
                   operational DAY (who is here at any point, including guests
                   who leave before midday), which is what the chore roster
-                  covers. Shown only where an overlay is actually painted. */}
-              {overlayLegend && overlayLegend.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Counts guest-nights — who sleeps here. The day colours above
-                  count who is in the lodge that day, which includes a checkout
-                  morning.
-                </p>
-              )}
+                  covers. Shown only where an operational-day overlay is
+                  actually painted — the hut-leader calendar's overlay is
+                  night-based, so the sentence would be false there. */}
+              {overlayCountsOperationalDay &&
+                overlayLegend &&
+                overlayLegend.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Counts guest-nights — who sleeps here. The day colours above
+                    count who is in the lodge that day, which includes a
+                    checkout morning.
+                  </p>
+                )}
             </div>
             {selectedPanelRange && (
               <Badge variant="outline" className="bg-card">

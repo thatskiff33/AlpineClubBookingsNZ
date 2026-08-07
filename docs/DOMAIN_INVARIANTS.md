@@ -417,13 +417,14 @@ derivation).
   (fenced, below) derives its night counts by subtracting only the envelope end
   from that list, so per-segment presence there would count a sparse stay's gap
   morning as a phantom night and put guest names on a public screen. A source
-  contract freezes both the legacy semantics and the wrapper's remaining callers
-  to the three read surfaces #2631 converts (`api/lodge/week`,
-  `api/lodge/guests/[date]`, `lodge-display-state`), which is where the flag is
-  deleted and the first two pick up the per-segment rule. The lobby wall keeps
-  legacy semantics by design. Until #2631 lands those three still fork at the
-  call site rather than naming the model, and no other surface may grow a fourth
-  call.
+  contract freezes both the legacy semantics and the wrapper's remaining caller
+  list. #2631 converted the two kiosk read surfaces that used to call it
+  (`api/lodge/week` and `api/lodge/guests/[date]`) onto the named operational-day
+  helpers, so `lodge-display-state` — the lobby wall — is now its **only**
+  caller, and a PERMANENT one rather than a pending migration: nobody is to
+  "finish the job" by pointing it at the operational day, for the privacy reason
+  above (issue #58). The same statement lives beside the code in
+  `booking-guest-stay-ranges.ts`. No surface may grow a second call.
 - **The lobby wall is deliberately mixed and stays fenced** (issue #58): its
   guest-name privacy gate (sole-occupancy detection) uses NIGHT counts while
   its visibility rows are checkout-inclusive. It keeps its own code path

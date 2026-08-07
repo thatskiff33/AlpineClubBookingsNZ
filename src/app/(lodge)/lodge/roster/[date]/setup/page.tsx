@@ -456,12 +456,19 @@ export default function RosterSetupWizard() {
       {/* Step 1: Review Guests */}
       {step === 1 && (
         <div>
+          {/* #2631: "in the lodge", not "staying". This list is the guests
+              route's operational day, so it holds the people who leave this
+              morning as well as the people sleeping here tonight — "staying"
+              reads as the night model and made a changeover day look wrong.
+              Unlike the printed sheet, this list DOES include a booking held by
+              a pending admin review (#1422 flags rather than hides it), so
+              "in the lodge" is the accurate phrase here. */}
           <h2 className="text-xl font-semibold mb-4">
-            Guests Staying ({totalGuests})
+            Guests in the lodge ({totalGuests})
           </h2>
           {bookings.length === 0 ? (
             <div className="bg-kiosk-card rounded-xl p-6 text-center text-kiosk-muted-fg text-lg">
-              No guests staying on this date
+              No guests in the lodge on this date
             </div>
           ) : (
             <div className="space-y-3">

@@ -207,6 +207,11 @@ export function AssignmentForm({
             onSelectionChange={onPickNights}
             overlayByDate={overlayByDate}
             overlayLegend={overlayLegend}
+            // No `overlayCountsOperationalDay` here, deliberately (#2631):
+            // this overlay is hut-leader COVERAGE, which is night-based and
+            // fenced. Passing the flag would print "the day colours count who
+            // is in the lodge that day, including a checkout morning" under a
+            // calendar where that is simply not true.
             onVisibleMonthChange={onVisibleMonthChange}
           />
         </div>

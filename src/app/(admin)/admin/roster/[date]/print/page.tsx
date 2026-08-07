@@ -134,12 +134,21 @@ export default function PrintRosterPage() {
           <h2 className="text-xl mt-1">Chore Roster</h2>
           <p className="text-lg mt-1">{formattedDate}</p>
           <p className="text-sm text-gray-600 mt-1">
-            {/* #2631: "in the lodge", not "staying". The count is the
-                operational day — everyone here at some point today, including
-                the people who leave this morning — which is who the chore
-                table below assigns work to. */}
-            {roster.guestCount} guest{roster.guestCount !== 1 ? "s" : ""} in the
-            lodge
+            {/* #2631: "on today's roster", not "in the lodge". The count is
+                the operational day — everyone here at some point today,
+                including the people who leave this morning — but it is the
+                ROSTER's population, so it excludes anyone the roster will not
+                assign work to: a booking held by a pending admin review is
+                physically in the building (#1422 shows it on the kiosk,
+                flagged) and is deliberately not in this number. Saying "in the
+                lodge" on a printed sheet would overclaim a headcount, which is
+                the wrong way round for a wall sheet somebody might use to work
+                out who is on site. The count must keep matching the rows of
+                the table below it, so the wording moves, not the number.
+                "This roster" rather than "today's": the sheet is printed for
+                the date in the line above, which is not always today. */}
+            {roster.guestCount} guest{roster.guestCount !== 1 ? "s" : ""} on
+            this roster
           </p>
         </div>
 

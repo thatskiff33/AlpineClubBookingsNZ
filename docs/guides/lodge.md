@@ -55,8 +55,22 @@ week strip shows a guest count and offers a roster, because the beds still need
 stripping. And a stay with a gap in it — someone booked in for Friday and then
 again for Monday — shows nobody on the days in between, because they went home.
 
-The **Who's at the lodge** panel on the admin roster calendar is the one place
-that still counts guest-**nights** rather than days; it says so.
+The week strip and the day list count slightly different populations, on
+purpose. The strip counts who can be **rostered**, so a booking still held by
+an admin review is not in its numbers. The day list counts who is **in the
+building**, so it does show that booking, marked "Blocked from Check-In". A
+day can therefore read as empty on the strip and open onto a flagged party.
+
+**Mark Departed** appears only on a guest's *final* departure — the morning
+after their last booked night. On a stay with a gap in it, the earlier
+departure morning shows the **Departing** badge without the button, because
+check-out can only be recorded once, at the end of the booking.
+
+The **Who's at the lodge** panel that sits under an admin calendar counts
+guest-**nights** rather than lodge days. On the chore roster calendar, whose
+day colours *are* lodge days, the panel spells that difference out on screen;
+the hut-leader assignment calendar is night-based throughout, so there is no
+difference to explain there and it says nothing.
 
 ### Multi-lodge: bind and add kiosk accounts
 

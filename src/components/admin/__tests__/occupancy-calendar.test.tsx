@@ -241,6 +241,27 @@ function OverlayHarness({
   );
 }
 
+/**
+ * The ROSTER caller: its overlay colours the operational day, so it opts into
+ * the sentence that explains the difference from the guest-night panel (#2631).
+ */
+function OperationalDayOverlayHarness() {
+  const [selectedDate, setSelectedDate] = useState("2099-07-01");
+  return (
+    <OccupancyCalendar
+      mode="single"
+      selectedStartDate={selectedDate}
+      selectedEndDate={selectedDate}
+      onSelectionChange={({ startDate }) => setSelectedDate(startDate)}
+      overlayByDate={{ "2099-07-10": { tone: "orange", label: "Needs chores" } }}
+      overlayLegend={[
+        { tone: "orange", label: "Confirmed — some guests need chores" },
+      ]}
+      overlayCountsOperationalDay
+    />
+  );
+}
+
 function VioletRingHarness() {
   const [selectedDate, setSelectedDate] = useState("2099-07-01");
   return (
@@ -271,10 +292,10 @@ describe("OccupancyCalendar", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/admin/occupancy?month=2099-07"),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /10 Jul.*1 guest/i }));
+    fireEvent.click(screen.getByRole("button", { name: /10 Jul.*1 staying overnight/i }));
     expect(screen.getByTestId("range-output")).toHaveTextContent("2099-07-10|");
 
-    fireEvent.click(screen.getByRole("button", { name: /11 Jul.*2 guests/i }));
+    fireEvent.click(screen.getByRole("button", { name: /11 Jul.*2 staying overnight/i }));
     expect(screen.getByTestId("range-output")).toHaveTextContent("2099-07-10|2099-07-11");
 
     expect(screen.getByText("Alex Snow")).toBeInTheDocument();
@@ -292,14 +313,14 @@ describe("OccupancyCalendar", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/admin/occupancy?month=2099-07"),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /31 Jul.*1 guest/i }));
+    fireEvent.click(screen.getByRole("button", { name: /31 Jul.*1 staying overnight/i }));
     expect(screen.getByTestId("range-output")).toHaveTextContent("2099-07-31|");
 
     fireEvent.click(screen.getByRole("button", { name: "Next month" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/admin/occupancy?month=2099-08"),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /1 Aug.*1 guest/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /1 Aug.*1 staying overnight/i }));
 
     expect(screen.getByTestId("range-output")).toHaveTextContent(
       "2099-07-31|2099-08-01",
@@ -337,7 +358,7 @@ describe("OccupancyCalendar", () => {
       ).toHaveLength(2);
     });
 
-    expect(await screen.findByRole("button", { name: /10 Jul.*1 guest/i }))
+    expect(await screen.findByRole("button", { name: /10 Jul.*1 staying overnight/i }))
       .toBeInTheDocument();
   });
 
@@ -345,7 +366,7 @@ describe("OccupancyCalendar", () => {
     stubFetchWithAugustFailure();
     render(<RangeHarness />);
 
-    expect(await screen.findByRole("button", { name: /10 Jul.*1 guest/i }))
+    expect(await screen.findByRole("button", { name: /10 Jul.*1 staying overnight/i }))
       .toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next month" }));
@@ -355,7 +376,7 @@ describe("OccupancyCalendar", () => {
     await waitFor(() =>
       expect(screen.queryByText("Occupancy could not be loaded.")).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: /10 Jul.*1 guest/i }))
+    expect(screen.getByRole("button", { name: /10 Jul.*1 staying overnight/i }))
       .toBeInTheDocument();
   });
 
@@ -363,8 +384,8 @@ describe("OccupancyCalendar", () => {
     stubFetch();
     render(<SingleHarness />);
 
-    await screen.findByRole("button", { name: /11 Jul.*2 guests/i });
-    fireEvent.click(screen.getByRole("button", { name: /11 Jul.*2 guests/i }));
+    await screen.findByRole("button", { name: /11 Jul.*2 staying overnight/i });
+    fireEvent.click(screen.getByRole("button", { name: /11 Jul.*2 staying overnight/i }));
 
     expect(screen.getByTestId("single-output")).toHaveTextContent("2099-07-11");
     expect(screen.getByText(/2099-07-11 to 2099-07-11/i)).toBeInTheDocument();
@@ -387,7 +408,7 @@ describe("OccupancyCalendar", () => {
     expect(dayButton.className).toContain("bg-info-muted");
     expect(dayButton.className).not.toContain("bg-brand-gold/10");
     // aria-label keeps the existing guest label and appends the overlay label.
-    expect(dayButton.getAttribute("aria-label")).toMatch(/1 guest, Needs chores$/);
+    expect(dayButton.getAttribute("aria-label")).toMatch(/1 staying overnight, Needs chores$/);
     // Compact overlay badge renders the label as visible text.
     expect(screen.getByText("Needs chores")).toBeInTheDocument();
   });
@@ -439,10 +460,10 @@ describe("OccupancyCalendar", () => {
     render(<SingleHarness />);
 
     const dayButton = await screen.findByRole("button", {
-      name: /10 Jul.*1 guest/i,
+      name: /10 Jul.*1 staying overnight/i,
     });
     // No overlay label appended; aria-label ends at the guest count.
-    expect(dayButton.getAttribute("aria-label")).toMatch(/, 1 guest$/);
+    expect(dayButton.getAttribute("aria-label")).toMatch(/, 1 staying overnight$/);
     // No overlay data attributes when no overlay prop is supplied.
     expect(dayButton).not.toHaveAttribute("data-overlay-tone");
     // Guest cells use a directly gated card pair with a brand border; no
@@ -451,5 +472,59 @@ describe("OccupancyCalendar", () => {
     expect(dayButton.className).toContain("text-card-foreground");
     expect(dayButton.className).not.toContain("bg-brand-gold/10");
     expect(dayButton.className).not.toContain("bg-info-muted");
+  });
+
+  // -------------------------------------------------------------------------
+  // #2631: the day cell says WHICH number it is reading out, and the
+  // operational-day explainer belongs only to the overlay that is one
+  // -------------------------------------------------------------------------
+
+  it("names the unit in the accessible day label, so a colour cannot contradict it", async () => {
+    stubFetch();
+    render(<OperationalDayOverlayHarness />);
+
+    // A day with nobody sleeping there. The overlay beside it can still say a
+    // roster is needed (a checkout morning), so a bare "No guests" read out
+    // next to "Needs roster" was a flat contradiction for a screen-reader user.
+    const emptyDay = await screen.findByRole("button", {
+      // Anchored: every empty day in the month carries this label.
+      name: /^\w+, 9 Jul, No overnight guests$/,
+    });
+    expect(emptyDay.getAttribute("aria-label")).toContain(
+      "No overnight guests",
+    );
+    expect(emptyDay.getAttribute("aria-label")).not.toMatch(/No guests\b/);
+
+    const busyDay = screen.getByRole("button", {
+      name: /11 Jul.*2 staying overnight/i,
+    });
+    expect(busyDay.getAttribute("aria-label")).not.toMatch(/\d guests?\b/);
+  });
+
+  it("explains the two units only for an overlay that counts the operational day", async () => {
+    stubFetch();
+    render(<OperationalDayOverlayHarness />);
+
+    await screen.findByRole("button", { name: /10 Jul.*Needs chores/i });
+    expect(
+      screen.getByText(/The day colours above count who is in the lodge/i),
+    ).toBeInTheDocument();
+  });
+
+  it("stays silent for a NIGHT-based overlay, which the sentence would misdescribe", async () => {
+    // The hut-leader assignment calendar passes an overlay legend but paints
+    // hut-leader COVERAGE, which is night-based and fenced. Gating the sentence
+    // on "an overlay exists" put a false statement under that calendar.
+    stubFetch();
+    render(<OverlayHarness />);
+
+    await screen.findByRole("button", { name: /10 Jul.*Needs chores/i });
+    // The legend still renders — only the operational-day explainer is absent.
+    expect(
+      screen.getByText("Confirmed — some guests need chores"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/The day colours above count who is in the lodge/i),
+    ).toBeNull();
   });
 });

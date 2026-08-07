@@ -544,6 +544,9 @@ describe("hut-leader roster wizard reaches the generate step (#2622)", () => {
       id: "leaving",
       isDeparting: true,
       isArriving: false,
+      // Their last night was the 12th and `stayEnd` is the 13th, so this is
+      // also the one morning the depart endpoint will accept.
+      isFinalDeparture: true,
     });
   });
 
@@ -604,20 +607,29 @@ describe("hut-leader roster wizard reaches the generate step (#2622)", () => {
     expect(await guestsOn("2026-07-11")).toMatchObject({
       isArriving: true,
       isDeparting: false,
+      isFinalDeparture: false,
     });
+    // THE INTERMEDIATE DEPARTURE MORNING. They really do leave today — the
+    // badge is right — but `stayEnd` is the 15th, so the depart endpoint
+    // (`stayEnd` equality, fenced) can never accept a check-out on the 12th.
+    // The flag the kiosk's button reads therefore stays false here.
     expect(await guestsOn("2026-07-12")).toMatchObject({
       isArriving: false,
       isDeparting: true,
+      isFinalDeparture: false,
     });
     // The gap day: nobody at all, and therefore no booking card either.
     expect(await guestsOn("2026-07-13")).toBeNull();
     expect(await guestsOn("2026-07-14")).toMatchObject({
       isArriving: true,
       isDeparting: false,
+      isFinalDeparture: false,
     });
+    // The FINAL departure morning: both flags, and the button appears.
     expect(await guestsOn("2026-07-15")).toMatchObject({
       isArriving: false,
       isDeparting: true,
+      isFinalDeparture: true,
     });
   });
 });
