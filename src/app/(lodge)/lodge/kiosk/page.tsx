@@ -31,7 +31,6 @@ interface Guest {
 interface BookingGroup {
   bookingId: string;
   memberName: string;
-  expectedArrivalTime: string | null;
   // #1422: a booking held by a pending admin review is shown but blocked from
   // check-in — arrival is disabled here and the server rejects it too.
   blockedFromCheckin?: boolean;
@@ -125,13 +124,6 @@ function displayDate(dateStr: string): string {
   // the club-time formatter cannot roll it back a day for a viewer outside
   // New Zealand.
   return LONG_WEEKDAY_DATE.format(parseDateOnly(dateStr));
-}
-
-function formatArrivalTime(time: string): string {
-  const [hours, minutes] = time.split(":").map(Number);
-  const suffix = hours >= 12 ? "PM" : "AM";
-  const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
-  return `${displayHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
 }
 
 export default function KioskPage() {
@@ -843,16 +835,6 @@ export default function KioskPage() {
                             <p className="text-sm text-kiosk-muted-fg">
                               Booked by {booking.memberName}
                             </p>
-                            {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                              <span className="text-sm text-kiosk-accent font-medium">
-                                Arriving {formatArrivalTime(booking.expectedArrivalTime)}
-                              </span>
-                            )}
-                            {!booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                              <span className="text-sm text-kiosk-muted-fg">
-                                Arrival time: Not specified
-                              </span>
-                            )}
                           </div>
                           {booking.blockedFromCheckin && (
                             <p className="mb-2 inline-block rounded-lg border border-kiosk-danger-border bg-kiosk-danger-bg px-3 py-1 text-sm font-semibold text-kiosk-danger-fg">

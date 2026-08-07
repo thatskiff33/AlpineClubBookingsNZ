@@ -146,7 +146,6 @@ export async function GET(
       return {
         bookingId: b.id,
         memberName: `${b.member.firstName} ${b.member.lastName}`,
-        expectedArrivalTime: b.expectedArrivalTime,
         // #1422: flag (don't hide) a booking blocked by a pending admin review.
         // The kiosk shows a "see Booking Officer" note and disables its arrival
         // toggle; the arrive/depart endpoints still reject it server-side.

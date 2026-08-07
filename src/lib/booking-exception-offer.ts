@@ -230,8 +230,6 @@ export interface NewBookingExceptionExtras {
   appliedCreditCents: number;
   /** A requested room, when the club offers room requests. */
   requestedRoomId: string | null;
-  /** An expected arrival time, when the member gave one. */
-  expectedArrivalTime: string | null;
   /** Free-text notes for the club. */
   notes: string | null;
   /** True when the member chose internet banking over card. */
@@ -272,9 +270,6 @@ export function newBookingExceptionOmittedChanges(
   }
   if (extras.appliedCreditCents > 0) omitted.push("using account credit");
   if (extras.requestedRoomId !== null) omitted.push("the room you asked for");
-  if (extras.expectedArrivalTime !== null) {
-    omitted.push("your expected arrival time");
-  }
   if (extras.notes !== null) omitted.push("your note to the club");
   if (extras.internetBankingChosen) {
     omitted.push("paying by internet banking");

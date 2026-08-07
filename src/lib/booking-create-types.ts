@@ -58,7 +58,6 @@ interface BaseInput {
   // Work party (working bee) event the booker is attending. Mutually
   // exclusive with promoCodeStr; resolves to the event's internal promo.
   workPartyEventId?: string;
-  expectedArrivalTime?: string;
   requestedRoomId?: string;
   // "Only book if my guests can come": cancel the whole booking instead of the
   // default partial bump when non-member guests lose capacity.

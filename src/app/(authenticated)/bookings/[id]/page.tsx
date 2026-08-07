@@ -31,7 +31,6 @@ import { getWithheldBookingEmailSummary } from "@/lib/booking-email-suppression"
 import { bookingHasLiveWaitlistOffer } from "@/lib/booking-no-emails-service";
 import { ScrollToHash } from "@/components/scroll-to-hash";
 import { SectionNav, type SectionNavItem } from "@/components/section-nav";
-import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
@@ -169,7 +168,6 @@ const BOOKING_SECTIONS: SectionNavItem[] = [
   { id: "consent", label: "Consent" },
   { id: "non-member-guests", label: "Non-member Guests" },
   { id: "group", label: "Group Booking" },
-  { id: "arrival", label: "Arrival Time" },
   { id: "room-request", label: "Room Request" },
   /*
    * Admin-only (#2252). Unlike every other candidate here, this one is NOT left
@@ -613,7 +611,6 @@ export default async function BookingDetailPage({
     !isDeleted &&
     (isAdmin || !stayHasStarted) &&
     ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
-  const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
   const modules = await loadEffectiveModuleFlags();
   const bookingMessages = await loadPublicBookingMessages();
   const showRequestedRoom =
@@ -1770,21 +1767,6 @@ export default async function BookingDetailPage({
                 </div>
               );
             })}
-          </CardContent>
-        </Card>
-      )}
-
-      {showArrivalTime && (
-        <Card id="arrival" className="scroll-mt-20">
-          <CardHeader>
-            <CardTitle>Expected Arrival Time</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ArrivalTimeEditor
-              bookingId={booking.id}
-              initialTime={booking.expectedArrivalTime}
-              canEdit={(canManageBooking || canAdminEditBookings) && editPolicy.mode === "future"}
-            />
           </CardContent>
         </Card>
       )}

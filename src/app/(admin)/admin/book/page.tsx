@@ -22,7 +22,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { LodgeSelect, useLodgeOptions } from "@/components/lodge-select";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
-import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
 import {
   AdminViewOnlySectionBanner,
@@ -114,7 +113,6 @@ export default function AdminBookPage() {
   // the create route hard-400s a party above the resolved value (#1767).
   const [resolvedCapacity, setResolvedCapacity] = useState(lodgeCapacity);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
-  const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
@@ -417,7 +415,6 @@ export default function AdminBookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
-        expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId: lodgeId ?? undefined,
         forMemberId: selectedMember!.id,
@@ -496,7 +493,6 @@ export default function AdminBookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
-        expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         lodgeId: lodgeId ?? undefined,
         draft: true,
@@ -989,10 +985,6 @@ export default function AdminBookPage() {
                   />
                 </div>
               )}
-              <div className="space-y-2">
-                <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
-                <TimePicker value={expectedArrivalTime} onChange={setExpectedArrivalTime} />
-              </div>
               <PromoCodeInput
                 checkIn={checkIn!}
                 checkOut={checkOut!}

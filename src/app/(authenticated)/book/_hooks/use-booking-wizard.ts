@@ -247,7 +247,6 @@ export function useBookingWizard() {
   // Issue #713 — per-guest non-contiguous night grid.
   const [multiDateRangesEnabled, setMultiDateRangesEnabled] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
-  const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
   // "Only book if my guests can come" — opt into whole-booking cancellation
   // instead of the default partial bump for non-member guests.
@@ -1120,7 +1119,6 @@ export function useBookingWizard() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
         cancelIfGuestsBumped:
           guests.some((g) => !g.isMember) && cancelIfGuestsBumped
@@ -1241,7 +1239,6 @@ export function useBookingWizard() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
         cancelIfGuestsBumped:
           guests.some((g) => !g.isMember) && cancelIfGuestsBumped
@@ -1296,7 +1293,6 @@ export function useBookingWizard() {
         promoCode: appliedPromo?.code || undefined,
         promoGuestIndexes: appliedPromo?.selectedGuestIndexes,
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
-        expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
         cancelIfGuestsBumped:
           guests.some((g) => !g.isMember) && cancelIfGuestsBumped
@@ -1572,8 +1568,6 @@ export function useBookingWizard() {
     handleMultiDateRangesEnabledChange,
     appliedPromo,
     setAppliedPromo,
-    expectedArrivalTime,
-    setExpectedArrivalTime,
     requestedRoomId,
     setRequestedRoomId,
     cancelIfGuestsBumped,

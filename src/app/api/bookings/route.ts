@@ -138,7 +138,6 @@ const createBookingSchema = z.object({
   workPartyEventId: z.string().min(1).optional(),
   draft: z.boolean().optional(),
   waitlist: z.boolean().optional(),
-  expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
   requestedRoomId: z.string().min(1).optional(),
   // Lodge the booking is for (multi-lodge phase 8). Optional so existing
   // single-lodge clients keep working; omitted resolves to the default lodge.
@@ -342,7 +341,6 @@ export async function POST(request: NextRequest) {
     workPartyEventId,
     draft,
     waitlist,
-    expectedArrivalTime,
     requestedRoomId,
     cancelIfGuestsBumped,
     memberReviewJustification,
@@ -950,7 +948,6 @@ export async function POST(request: NextRequest) {
         promoCodeStr,
         promoGuestIndexes,
         workPartyEventId,
-        expectedArrivalTime,
         requestedRoomId,
         cancelIfGuestsBumped,
         // #2265 — the draft branch used to omit this field entirely, so a
@@ -1117,7 +1114,6 @@ export async function POST(request: NextRequest) {
       promoCodeStr,
       promoGuestIndexes,
       workPartyEventId,
-      expectedArrivalTime,
       requestedRoomId,
       cancelIfGuestsBumped,
       applyCreditCents: parsed.data.applyCreditCents,
@@ -1170,7 +1166,6 @@ export async function POST(request: NextRequest) {
         promoCodeStr,
         promoGuestIndexes,
         workPartyEventId,
-        expectedArrivalTime,
         requestedRoomId,
         groupDiscount,
         // #2543 — see the draft branch above.

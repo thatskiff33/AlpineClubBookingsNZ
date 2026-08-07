@@ -53,8 +53,6 @@ export default function BookPage() {
     handleMultiDateRangesEnabledChange,
     appliedPromo,
     setAppliedPromo,
-    expectedArrivalTime,
-    setExpectedArrivalTime,
     requestedRoomId,
     setRequestedRoomId,
     cancelIfGuestsBumped,
@@ -586,8 +584,6 @@ export default function BookPage() {
           requiresAdminReviewLocal={requiresAdminReviewLocal}
           memberReviewJustification={memberReviewJustification}
           setMemberReviewJustification={setMemberReviewJustification}
-          expectedArrivalTime={expectedArrivalTime}
-          setExpectedArrivalTime={setExpectedArrivalTime}
           roomRequestEnabled={roomRequestEnabled}
           roomOptions={roomOptions}
           requestedRoomId={requestedRoomId}

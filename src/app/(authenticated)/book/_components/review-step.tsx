@@ -31,7 +31,6 @@ import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { formatNZWeekdayDate } from "@/lib/nzst-date";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
-import { TimePicker } from "@/components/time-picker";
 import {
   RequestOfficerApprovalCard,
   type ExceptionRequestSubmitResult,
@@ -98,8 +97,6 @@ export function ReviewStep({
   requiresAdminReviewLocal,
   memberReviewJustification,
   setMemberReviewJustification,
-  expectedArrivalTime,
-  setExpectedArrivalTime,
   roomRequestEnabled,
   roomOptions,
   requestedRoomId,
@@ -165,8 +162,6 @@ export function ReviewStep({
   requiresAdminReviewLocal: boolean;
   memberReviewJustification: string;
   setMemberReviewJustification: (value: string) => void;
-  expectedArrivalTime: string | null;
-  setExpectedArrivalTime: (value: string | null) => void;
   roomRequestEnabled: boolean;
   roomOptions: RoomOption[];
   requestedRoomId: string | null;
@@ -294,7 +289,6 @@ export function ReviewStep({
     workPartyDiscountApplied: Boolean(appliedPromo?.workPartyEvent),
     appliedCreditCents,
     requestedRoomId: requestedRoomId || null,
-    expectedArrivalTime: expectedArrivalTime || null,
     notes: notes.trim() ? notes : null,
     internetBankingChosen: paymentMethod === "internet_banking",
     // Only meaningful while a provisional hold is actually on the cards; the
@@ -638,13 +632,6 @@ export function ReviewStep({
               />
             </div>
           )}
-          <div className="space-y-2">
-            <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
-            <TimePicker
-              value={expectedArrivalTime}
-              onChange={setExpectedArrivalTime}
-            />
-          </div>
           {roomRequestEnabled && roomOptions.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="requested-room">Preferred room (optional)</Label>

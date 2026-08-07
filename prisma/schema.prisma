@@ -1664,7 +1664,14 @@ model Booking {
   organiserSettled          Boolean            @default(false)
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
-  expectedArrivalTime       String?            @db.VarChar(5)
+  // `expectedArrivalTime` (String? @db.VarChar(5)) was here. #2621 retired the
+  // expected-arrival-time entry under the motel-stay model (epic #2629,
+  // decisions D-M1/D-M2): presence is derived from the booked nights alone —
+  // midday NZ on the arrival date to midday NZ on the departure date — so the
+  // club collects no travel times at all. The column AND the times already
+  // entered were dropped in the same release by
+  // 20260808000000_contract_drop_booking_expected_arrival_time. Do not
+  // reintroduce the field; talking to the hut leader is the replacement.
   requestedRoomId           String?
   preArrivalReminderSentAt  DateTime?
   createdById               String? // Admin who created this booking on behalf of the member

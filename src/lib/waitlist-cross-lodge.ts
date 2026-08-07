@@ -707,7 +707,6 @@ export async function confirmCrossLodgeWaitlistOffer(
       checkOut: entry.checkOut,
       guests,
       notes: entry.notes ?? undefined,
-      expectedArrivalTime: entry.expectedArrivalTime ?? undefined,
       cancelIfGuestsBumped: entry.cancelIfGuestsBumped,
       memberReviewJustification: entry.memberReviewJustification ?? undefined,
       lodgeId: offeredLodgeId,

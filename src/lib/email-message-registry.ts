@@ -1471,6 +1471,12 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "entityType",
   "errorMessage",
   "errorType",
+  // #2621: both survive here PERMANENTLY as compatibility tokens. The
+  // expected-arrival-time entry is retired, so neither appears in a shipped
+  // default any more and both render empty on every send — but a club that
+  // customised its pre-arrival template may still hold either, and dropping
+  // them from the approved list is the #2269 save-time failure. See
+  // EXTRA_TEMPLATE_TOKENS["pre-arrival-reminder"] above.
   "expectedArrivalNote",
   "expectedArrivalTime",
   "expiresAt",

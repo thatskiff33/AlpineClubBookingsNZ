@@ -199,7 +199,6 @@ export async function copyBookingToDraft({
     checkOut: newCheckOut,
     guests,
     notes: source.notes ?? undefined,
-    expectedArrivalTime: source.expectedArrivalTime ?? undefined,
   });
 
   // AFTER the draft's transaction has committed. Awaited so a copy that could not

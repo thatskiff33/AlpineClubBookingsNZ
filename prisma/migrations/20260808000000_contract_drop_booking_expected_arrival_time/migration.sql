@@ -1,0 +1,88 @@
+-- #2621 (epic #2629) — CONTRACT migration: physically DROP
+-- "Booking"."expectedArrivalTime", and the entered arrival times with it.
+--
+-- Background. The column was created by
+-- 20260408060000_add_expected_arrival_time as `VARCHAR(5)` NULL and re-created
+-- defensively by 20260408060000_fix_schema_drift in the same release. It held an
+-- optional HH:mm expected arrival time a member could type on the booking wizard
+-- or on their booking page. It was DISPLAY-ONLY for its whole life: nothing in
+-- capacity, pricing, allocation, roster eligibility, presence or any report ever
+-- read it. Its three surfaces were the booking-detail card, the kiosk "Arriving
+-- HH:mm" chip, and the "Expected arrival" line in the pre-arrival reminder
+-- email.
+--
+-- OWNER DECISIONS D-M1 and D-M2 (epic #2629, 8 Aug 2026). Under the motel-stay
+-- model a guest is present from just after midday NZ on their arrival date to
+-- just before midday NZ on their departure date, derived from the booked nights
+-- alone. The club therefore collects no travel times at all, and a guest who
+-- wants to leave early liaises with the hut leader. D-M1 retires the entry;
+-- D-M2 drops the column AND the data in the SAME release rather than leaving a
+-- dormant nullable column behind a later gate. The reversible alternative was
+-- put to the owner once, in review, and the decision stands — so this migration
+-- is deliberately irreversible with respect to the VALUES. See rollback.sql,
+-- which says so in plain words.
+--
+-- previous_expand_release. 20260807000000_add_deletion_approval_in_progress.
+-- That is the migration immediately before this one, NOT a runtime half this
+-- contracts against: no such release exists. The RUNTIME half — removing the
+-- write route, the create-pipeline field, both wizards, the booking card, the
+-- kiosk chip and the email line — ships in THIS SAME commit and has never been
+-- deployed on its own, so there is no drained colour that has stopped naming the
+-- column. This is the shape 20260803030000_contract_drop_family_group_member_role
+-- documented: when `previous_expand_release` has nothing truthful to name, name
+-- the adjacent migration and put the real precondition in the ledger row's
+-- lock_impact_plan. The honest declaration that follows is
+-- `old_code_compatible=windowed`, and the ledger says exactly that.
+--
+-- WHAT BREAKS ON THE OLD COLOUR, and why `windowed` rather than `yes`. Prisma's
+-- generated client SELECTs every scalar column of a model on any find that does
+-- not narrow itself with `select:`, so the previous release's client names
+-- "expectedArrivalTime" in ordinary reads of "Booking" — the booking detail page,
+-- the member bookings list, the lodge guests route, the pre-arrival reminder
+-- cron and the booking-create paths all issue such reads. The moment this DROP
+-- commits, every one of them raises Postgres 42703 / Prisma P2022 on the old
+-- colour. There is no ordering of statements that keeps both colours working,
+-- and "Booking" is the hottest table in the product, so the incompatibility is
+-- immediate and total rather than confined to one screen. That is precisely
+-- what the `windowed` value exists to say.
+--
+-- THE WINDOW. Traffic removed, the old web colour AND every worker/cron/queue
+-- process stopped, no old database connection left, a fresh verified backup
+-- taken immediately before migrating, then this migration under
+-- ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 with a recorded override reason and
+-- BLUE_GREEN_OLD_APP_AND_WORKERS_STOPPED=1 set only after the old runtime is
+-- confirmed stopped. Full ordered sequence in
+-- docs/PRODUCTION_UPGRADE_RUNBOOK.md -> "Windowed migration deploy sequence";
+-- summarised in DEPLOYMENT.md -> "Windowed migrations" and in
+-- docs/BLUE_GREEN_MIGRATION_SAFETY.tsv.
+--
+-- DATA SAFETY, stated plainly. NO DML: this migration reads and rewrites no
+-- rows. It DESTROYS every expected arrival time a member ever entered, and
+-- PostgreSQL cannot un-drop a column, so those values are unrecoverable from the
+-- migrated database. That is the decided outcome, not an oversight. Nothing
+-- reads them — no capacity, pricing, roster, allocation, invoice or report
+-- figure moves across this migration, and no member-facing number changes — so
+-- the loss is of the entries themselves and of nothing derived from them. An
+-- operator who wants the values kept for the record must take them BEFORE
+-- migrating; the pre-migration checks in the runbook are where that belongs, and
+-- the verified backup taken in the same window is the other copy. rollback.sql
+-- restores the empty column and refuses to pretend the times come back with it.
+--
+-- LOCK IMPACT. "Booking" is on the deploy guard's HOT_TABLE_SQL_REGEX, so the
+-- ledger's lock_impact_plan is a gate requirement here and not merely
+-- documentation. `DROP COLUMN` is metadata-only on PostgreSQL — the attribute is
+-- marked dropped in pg_attribute and NO table rewrite happens — so this takes
+-- one brief ACCESS EXCLUSIVE lock on "Booking" and returns, regardless of row
+-- count. The column carries no index, no constraint, no default, no foreign key
+-- and no trigger of its own, so nothing else is rebuilt. No session-clock DML
+-- and no provider call is involved. With the application stopped for the window
+-- there is no live transaction for the lock to queue behind; let the deploy
+-- guard stop on lock timeout regardless.
+
+-- The retired column goes, and the entered times go with it (owner decision
+-- D-M2). Nothing in this release reads, writes or CAN name it: the field is gone
+-- from prisma/schema.prisma in this same commit, so the generated client has no
+-- `expectedArrivalTime` on Booking and there is no call shape that emits SQL
+-- naming the column.
+ALTER TABLE "Booking"
+  DROP COLUMN "expectedArrivalTime";
