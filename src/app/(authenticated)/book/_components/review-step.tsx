@@ -641,6 +641,7 @@ export function ReviewStep({
           <div className="space-y-2">
             <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
             <TimePicker
+              id="arrival-time"
               value={expectedArrivalTime}
               onChange={setExpectedArrivalTime}
             />

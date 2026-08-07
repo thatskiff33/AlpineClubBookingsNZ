@@ -183,6 +183,27 @@ rather than as a mystery. And the guarantee is a property of the admin screens,
 not of the write routes — a script or integration calling the API directly with
 `bookings:edit` can still submit an unchanged body and get an entry.
 
+### Expected arrival time entries (#2621)
+
+From this release, setting or clearing a booking's **expected arrival time**
+records an entry: `booking.expected_arrival_time.set` or
+`booking.expected_arrival_time.cleared`, both under the **Booking** category.
+Before this release neither wrote anything at all, so there is no history for
+changes made earlier — an absence of entries for an older booking means the
+field was never audited, not that nobody changed it.
+
+Two things the entry tells you that the field itself cannot. The **member the
+entry is about** is the booking's owner, not whoever pressed the button, because
+a Full Administrator or Booking Officer may set the time on any member's booking;
+the entry also says whether it was that member's own edit or someone acting on
+their behalf. And the **cleared** entry carries the time it removed, since
+clearing overwrites the only copy — so the entry is the only way to find out what
+a booking's arrival time used to say.
+
+Both are written after the change is saved, so a refused change — a time outside
+the allowed values, a booking already past its check-in date, or a caller without
+permission — records nothing.
+
 ### Member-guest entries (#2308 / #2388)
 
 The "+ Add Member Guest" feature writes four `privacy`-category actions. Two of

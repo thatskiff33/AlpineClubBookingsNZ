@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+import {
+  expectedArrivalTimeSchema,
+  isExpectedArrivalTime,
+} from "@/lib/arrival-time";
+
 // ---------------------------------------------------------------------------
 // Mock Prisma
 // ---------------------------------------------------------------------------
@@ -742,14 +747,40 @@ describe("#31: Expected Arrival Time", () => {
 
 describe("#31: Booking creation schema accepts expectedArrivalTime", () => {
   it("createBookingSchema allows optional expectedArrivalTime field", async () => {
-    // The Zod schema in bookings/route.ts should accept the field
-    // We test this indirectly by verifying the regex pattern
-    const pattern = /^([01]\d|2[0-3]):[0-5]0$/;
-    expect(pattern.test("14:00")).toBe(true);
-    expect(pattern.test("06:30")).toBe(true);
-    expect(pattern.test("23:00")).toBe(true);
-    expect(pattern.test("14:15")).toBe(false);
-    expect(pattern.test("24:00")).toBe(false);
+    /*
+      #2621: this used to re-implement the pattern instead of importing it, and
+      the copy carried the same `[0-5]0` bug as both routes — so the test agreed
+      with the defect and could never catch it. It now asserts against the ONE
+      exported pattern the routes validate with. The cases below deliberately
+      include `:10`, `:20`, `:40` and `:50`: the old regex accepted all four
+      while the message beside it said "30-minute increments", and `14:15` (the
+      only rejection this test used to make) passed under both, which is exactly
+      why a copied assertion proved nothing.
+    */
+    expect(isExpectedArrivalTime("14:00")).toBe(true);
+    expect(isExpectedArrivalTime("06:30")).toBe(true);
+    expect(isExpectedArrivalTime("23:00")).toBe(true);
+    expect(isExpectedArrivalTime("00:00")).toBe(true);
+    expect(isExpectedArrivalTime("14:15")).toBe(false);
+    expect(isExpectedArrivalTime("24:00")).toBe(false);
+    for (const offStep of ["14:10", "14:20", "14:40", "14:50"]) {
+      expect(isExpectedArrivalTime(offStep)).toBe(false);
+    }
+  });
+
+  it("validates the same set at both writers, from one definition", async () => {
+    // The rule reached two endpoints through two literals before #2621. Both now
+    // parse through `expectedArrivalTimeSchema`, so a change cannot land on one
+    // and miss the other; these assert the schema itself, not a copy of it.
+    expect(expectedArrivalTimeSchema.safeParse("17:30").success).toBe(true);
+    expect(expectedArrivalTimeSchema.safeParse("17:20").success).toBe(false);
+    const failed = expectedArrivalTimeSchema.safeParse("17:20");
+    expect(failed.success).toBe(false);
+    if (!failed.success) {
+      // The message has to name the real rule; "30-minute increments" beside a
+      // regex that accepted six minute values is how this survived.
+      expect(failed.error.issues[0]?.message).toContain("hour or half hour");
+    }
   });
 });
 

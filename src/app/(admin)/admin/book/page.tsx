@@ -991,7 +991,11 @@ export default function AdminBookPage() {
               )}
               <div className="space-y-2">
                 <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
-                <TimePicker value={expectedArrivalTime} onChange={setExpectedArrivalTime} />
+                <TimePicker
+                  id="arrival-time"
+                  value={expectedArrivalTime}
+                  onChange={setExpectedArrivalTime}
+                />
               </div>
               <PromoCodeInput
                 checkIn={checkIn!}

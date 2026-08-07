@@ -6,12 +6,16 @@ import { z } from "zod";
 import { getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { expectedArrivalTimeSchema } from "@/lib/arrival-time";
+import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit";
 
-// Matches HH:mm with 30-min increments (00 or 30)
+// HH:mm on the hour or half hour. The rule itself lives in `@/lib/arrival-time`
+// (#2621) because it used to be written out here, in the booking-create route and
+// a third time in a test — all three as `[0-5]0`, which also accepted :10, :20,
+// :40 and :50 while claiming otherwise.
 const arrivalTimeSchema = z.object({
-  expectedArrivalTime: z
-    .string()
-    .regex(/^([01]\d|2[0-3]):[0-5]0$/, "Must be HH:mm with 30-minute increments"),
+  expectedArrivalTime: expectedArrivalTimeSchema,
 });
 
 /**
@@ -91,6 +95,30 @@ export async function PUT(
     select: { id: true, expectedArrivalTime: true },
   });
 
+  // #2621: this writer recorded nothing. A booking officer may set the time on
+  // ANY member's booking (#1313 option A2), so without a row there was no way to
+  // tell an owner's own edit from an officer's, or to answer "who changed this"
+  // at all. Categorised `booking` like every other booking write beside it, and
+  // written after the update so a failed write records nothing.
+  logAudit({
+    action: "booking.expected_arrival_time.set",
+    memberId: session.user.id,
+    targetId: id,
+    subjectMemberId: booking.memberId,
+    entityType: "Booking",
+    entityId: id,
+    category: "booking",
+    outcome: "success",
+    summary: "Expected arrival time set on a booking",
+    metadata: {
+      expectedArrivalTime: updated.expectedArrivalTime,
+      // Names the authority used, because owner and officer are different facts
+      // about the same row and the ids alone do not distinguish them.
+      onBehalf: booking.memberId !== session.user.id,
+    },
+    ipAddress: getClientIp(req),
+  });
+
   return NextResponse.json(updated);
 }
 
@@ -99,7 +127,7 @@ export async function PUT(
  * Clear the expected arrival time.
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -116,12 +144,21 @@ export async function DELETE(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    select: { memberId: true, checkIn: true, status: true },
+    // `expectedArrivalTime` is selected for the audit row below: the clear
+    // destroys it, so this read is the only chance to record what was there.
+    select: {
+      memberId: true,
+      checkIn: true,
+      status: true,
+      expectedArrivalTime: true,
+    },
   });
 
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
+
+  const previousExpectedArrivalTime = booking.expectedArrivalTime;
 
   // Issue #1313 (option A2): owner, Full Admin, or Booking Officer
   // (bookings:edit) may set/clear the expected arrival time on any booking.
@@ -152,6 +189,26 @@ export async function DELETE(
     where: { id },
     data: { expectedArrivalTime: null },
     select: { id: true, expectedArrivalTime: true },
+  });
+
+  // #2621: the clear recorded nothing either — and it is the more consequential
+  // of the two, because it destroys the previous value. The row below is the only
+  // record that a time was ever set, so it carries what was cleared.
+  logAudit({
+    action: "booking.expected_arrival_time.cleared",
+    memberId: session.user.id,
+    targetId: id,
+    subjectMemberId: booking.memberId,
+    entityType: "Booking",
+    entityId: id,
+    category: "booking",
+    outcome: "success",
+    summary: "Expected arrival time cleared on a booking",
+    metadata: {
+      clearedExpectedArrivalTime: previousExpectedArrivalTime,
+      onBehalf: booking.memberId !== session.user.id,
+    },
+    ipAddress: getClientIp(req),
   });
 
   return NextResponse.json(updated);

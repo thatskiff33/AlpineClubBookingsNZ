@@ -68,15 +68,26 @@ export const AUDIT_CENSUS_TOTALS = {
    * so it correlates to the booking. (#2627 and #2623 landed in the same window and
    * both claimed 419; the pin has to count BOTH, which is exactly what this file
    * exists to catch.)
+   *
+   * 420 -> 422 (#2621): both expected-arrival-time writers now record what they
+   * did. They recorded NOTHING before, and since #1313 option A2 a Booking Officer
+   * may set or clear the time on any member's booking — so the field had two
+   * possible authors and no way to tell them apart, or to answer "who changed
+   * this" at all. `booking.expected_arrival_time.set` and
+   * `.cleared` both use fire-and-forget `logAudit` after the update commits (this
+   * route holds no transaction), are categorised `booking` at the site, and carry
+   * `entityType`/`entityId` so they correlate to the booking. The clear also
+   * carries the value it destroyed, because nothing else keeps it.
    */
-  writeSites: 420,
+  writeSites: 422,
   /** Of those, sites whose event object carries no `category` key. */
   uncategorised: 82,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
   bySink: {
     // 238 -> 239 (#2623): the waitlist-confirm recovery marker, fire-and-forget
     // outside every transaction because its own failure must not mask the strand.
-    logAudit: { total: 239, uncategorised: 69 },
+    // 239 -> 241 (#2621): the two expected-arrival-time writers, above.
+    logAudit: { total: 241, uncategorised: 69 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     createAuditLog: { total: 102, uncategorised: 11 },
     createStructuredAuditLog: { total: 8, uncategorised: 0 },
@@ -97,7 +108,11 @@ export const AUDIT_CENSUS_TOTALS = {
    */
   categoryValues: {
     account: 15,
-    booking: 80,
+    // 80 -> 82 (#2621): the two expected-arrival-time rows, above. `booking` is
+    // the category every other booking write on this route family already uses,
+    // and a correlation read of it needs `support` plus `bookings` — which the
+    // booking officers who can set this field already hold. No new reader.
+    booking: 82,
     payment: 16,
     family: 27,
     admin: 117,

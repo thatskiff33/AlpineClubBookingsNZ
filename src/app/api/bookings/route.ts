@@ -95,6 +95,7 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { expectedArrivalTimeSchema } from "@/lib/arrival-time";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { aggregatePolicyExceptionViolations } from "@/lib/booking-policy-exceptions";
 import {
@@ -138,7 +139,7 @@ const createBookingSchema = z.object({
   workPartyEventId: z.string().min(1).optional(),
   draft: z.boolean().optional(),
   waitlist: z.boolean().optional(),
-  expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
+  expectedArrivalTime: expectedArrivalTimeSchema.optional(),
   requestedRoomId: z.string().min(1).optional(),
   // Lodge the booking is for (multi-lodge phase 8). Optional so existing
   // single-lodge clients keep working; omitted resolves to the default lodge.
