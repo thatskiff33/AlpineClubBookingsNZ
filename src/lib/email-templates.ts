@@ -1384,7 +1384,6 @@ export function preArrivalReminderTemplate(params: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  expectedArrivalTime?: string | null;
   lodgeTravelNote: string;
   doorCode?: string | null;
   // #2350: extra still owing on this booking after an upward change, when the
@@ -1392,23 +1391,19 @@ export function preArrivalReminderTemplate(params: {
   // ordinary case, which renders exactly as before.
   outstandingAdditionalAmountCents?: number;
 }): string {
+  // #2621 removed the conditional "Expected arrival" row: the entry it read is
+  // retired, so the table is now the same three rows on every send.
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: formatNZDate(params.checkIn) },
     { label: "Check-out", value: formatNZDate(params.checkOut) },
     { label: "Guests", value: String(params.guestCount) },
   ];
 
-  if (params.expectedArrivalTime) {
-    rows.push({
-      label: "Expected arrival",
-      value: escapeHtml(params.expectedArrivalTime),
-    });
-  }
-
   return layout(`
     ${heading("Upcoming Lodge Stay")}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", your lodge stay is coming up.")}
     ${infoTable(rows)}
+    ${paragraph("You are on the chore roster on the morning you check out, so please talk to the hut leader beforehand if you plan to leave early.")}
     ${outstandingAdditionalPaymentNote(params.outstandingAdditionalAmountCents)}
     ${arrivalInstructionsSection({
       travelNote: params.lodgeTravelNote,

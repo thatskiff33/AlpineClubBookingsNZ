@@ -175,7 +175,35 @@ export const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, strin
     "guestFirstName",
     "guestLastName",
   ],
-  "pre-arrival-reminder": ["doorCode", "expectedArrivalTime"],
+  // #2621 retires the expected-arrival-time entry: the column, the input and the
+  // "Expected arrival" line all go, and BOTH arrival tokens are now supplied
+  // permanently empty. Both are listed here ON PURPOSE, and neither may be
+  // removed — this is the #2269 incident's exact mechanism.
+  //
+  // `allowedTokens` (see EMAIL_TEMPLATE_DEFINITIONS below) is assembled partly
+  // from `extractTokensFromDefaults`, i.e. from the tokens scraped out of the
+  // CURRENT default subject and body. {{expectedArrivalNote}} was allowed ONLY
+  // because it sat in the shipped default body, and #2621 takes it out of that
+  // body. Without this entry `allowedTokens` would silently drop it, every
+  // stored override still containing it would raise `disallowed_token`,
+  // `validateEmailTemplateContent` would return `valid: false`, and
+  // `PUT /api/admin/email-templates` would answer 400 "Invalid email template" —
+  // offering "Restore Default" as the only remedy, which destroys exactly the
+  // club wording the compatibility exists to protect. That is #2269 verbatim.
+  // {{expectedArrivalNote}} is the token a customising club overwhelmingly
+  // holds, because it is the one the shipped default carried.
+  //
+  // sendPreArrivalReminderEmail still SUPPLIES both keys as "" (see
+  // src/lib/email/booking.ts), so an override referencing either keeps
+  // validating, keeps re-saving and renders nothing for it. Their preview
+  // samples are "" for the same reason, and {{expectedArrivalNote}} is declared
+  // in EMPTYABLE_OVERRIDE_TOKENS so guard 4 still warns about a dangling label
+  // in front of it.
+  "pre-arrival-reminder": [
+    "doorCode",
+    "expectedArrivalTime",
+    "expectedArrivalNote",
+  ],
   "chore-roster": ["choreName", "choreDescription", "choreLink"],
   "membership-application-rejected": ["adminNotes"],
   "child-request-rejected": ["reason"],
@@ -963,7 +991,10 @@ export function sampleValue(token: string): string {
   // preview shows what a member reads (and shows nothing extra when a club has
   // no door code — the live send renders this token empty).
   if (token === "doorCodeNote") return "Door code: 1234";
-  if (token === "expectedArrivalTime") return "16:30";
+  // #2621: the expected-arrival-time entry is retired, so this token is now
+  // supplied permanently empty on every send. The preview has to say the same
+  // thing, or the editor advertises an arrival line that can never render.
+  if (token === "expectedArrivalTime") return "";
   // ---------------------------------------------------------------------
   // #2307 (epic #2305, MG2) — the member-guest emails.
   //
@@ -1035,7 +1066,10 @@ export function sampleValue(token: string): string {
   // sender composes, so the admin editor shows the shape a member will read
   // and a value that is absent previews as nothing at all rather than as a
   // dangling label. ({{doorCodeNote}} is previewed above, with #2267.)
-  if (token === "expectedArrivalNote") return "Expected arrival: 16:30\n";
+  // #2621: permanently empty for the same reason as {{expectedArrivalTime}}
+  // above — the entry it composed a line from no longer exists, so the live
+  // send emits "" on every booking and the preview must too.
+  if (token === "expectedArrivalNote") return "";
   // Shared by checkin-reminder and chore-roster. The chore-roster body
   // already writes its own lead-in line, so the preview is the chore lines
   // alone; the check-in reminder's real value prefixes its own heading.

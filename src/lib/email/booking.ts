@@ -996,7 +996,6 @@ export async function sendPreArrivalReminderEmail(params: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
-  expectedArrivalTime?: string | null;
   // Booking's lodge (multi-lodge phase 8): the email carries this lodge's
   // name, travel note, and door code. Omitted/null resolves the club's
   // default lodge — including its real door code, so always thread the
@@ -1025,17 +1024,22 @@ export async function sendPreArrivalReminderEmail(params: {
       checkIn: formatNZDate(params.checkIn),
       checkOut: formatNZDate(params.checkOut),
       guestCount: params.guestCount,
-      expectedArrivalTime: params.expectedArrivalTime ?? "",
+      // #2621 — BOTH arrival tokens are STILL SUPPLIED, permanently as "".
+      // DO NOT DELETE THESE TWO KEYS. The expected-arrival-time entry is
+      // retired and neither token appears in the shipped default body any
+      // more, but a club that customised its pre-arrival template may still
+      // hold either one — {{expectedArrivalNote}} especially, because that is
+      // the token the old default carried. Supplying them keeps such an
+      // override rendering (as nothing, with no dangling label) and, together
+      // with their entries in EXTRA_TEMPLATE_TOKENS, keeps it SAVING: drop
+      // them and the supplied-token approval guard and `allowedTokens` both
+      // stop recognising them, and the club's next save is refused with 400
+      // disallowed_token. That is the #2269 incident, which offers "Restore
+      // Default" as the only remedy and destroys the wording this
+      // compatibility exists to protect.
+      expectedArrivalTime: "",
+      expectedArrivalNote: "",
       doorCode: settings.doorCode ?? "",
-      // #2268: pre-composed optional lines. Both values are nullable, so the
-      // flat body carries only these tokens — a stay with no expected arrival
-      // time, or a lodge with no door code, prints neither a dangling
-      // "Expected arrival:" nor a dangling "Door code:".
-      expectedArrivalNote: composeOptionalEmailLine(
-        "Expected arrival",
-        params.expectedArrivalTime,
-        { trailing: "\n" },
-      ),
       // #2268: identical shape to the booking-confirmed line above — a bare
       // "Door code: 1234", or nothing at all for a lodge with no code.
       doorCodeNote: composeOptionalEmailLine("Door code", settings.doorCode, {

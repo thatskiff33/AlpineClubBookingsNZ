@@ -73,11 +73,9 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
   // whole by the sender and empty whenever nothing is owed, which is the
   // ordinary case — declared here so guard 4 proves the body survives without
   // it (the declaration discipline described above).
-  "pre-arrival-reminder": [
-    "expectedArrivalNote",
-    "doorCodeNote",
-    "outstandingAdditionalNote",
-  ],
+  // #2621 MOVED {{expectedArrivalNote}} out of this list and into
+  // EMPTYABLE_OVERRIDE_TOKENS below. It is not deleted: see the note there.
+  "pre-arrival-reminder": ["doorCodeNote", "outstandingAdditionalNote"],
   // A roster only exists for chores that exist, so the chore block itself is
   // never empty; the completion link is (a roster can be sent without one).
   "chore-roster": ["choreLinkNote"],
@@ -215,6 +213,28 @@ export const EMPTYABLE_OVERRIDE_TOKENS: Record<string, readonly string[]> = {
   // own cannot be shown truthfully), so any override line built around it alone
   // renders a bare label.
   "checkin-reminder": ["guestLastName"],
+  // #2621 adds {{expectedArrivalNote}}, on the {{creditNote}} (#2328) /
+  // {{paymentDueNote}} (#2444) precedent above. It used to be declared in
+  // OPTIONAL_TEMPLATE_TOKENS, because the shipped pre-arrival default carried
+  // it; #2621 retires the expected-arrival-time entry entirely, so the token
+  // leaves the default body and is now supplied `""` on EVERY send rather than
+  // on most of them.
+  //
+  // It could not stay where it was and it must not simply be deleted:
+  //   * guard 5 (`findStaleOptionalTokens`) requires every name declared in
+  //     OPTIONAL_TEMPLATE_TOKENS to appear in the default body it describes, so
+  //     leaving the declaration there fails the build the moment the body loses
+  //     the token;
+  //   * deleting it outright turns guard 4 OFF for it, and a stored override
+  //     reading "Arrival: {{expectedArrivalNote}}" — which now ships a bare
+  //     "Arrival:" to every member, forever — would stop being warned about at
+  //     all. Only a saved override can still hold the token, which is precisely
+  //     the population this table exists to protect.
+  // The three guard-6 properties hold: the key is a registered template, the
+  // token is still supplied for it (EXTRA_TEMPLATE_TOKENS in
+  // src/lib/email-message-registry.ts, which is also what keeps it approved and
+  // gives it a preview sample), and it is no longer in the current default body.
+  "pre-arrival-reminder": ["expectedArrivalNote"],
 };
 
 export function extractTokens(value: string): string[] {

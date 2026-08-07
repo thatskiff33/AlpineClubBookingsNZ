@@ -65,7 +65,7 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   },
   "pre-arrival-reminder": {
     "defaultSubject": "Pre-arrival Information - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Upcoming Lodge Stay\n\nHi {{firstName}}, your lodge stay is coming up.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n{{expectedArrivalNote}}\n{{outstandingAdditionalNote}}\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\n{{doorCodeNote}}\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Upcoming Lodge Stay\n\nHi {{firstName}}, your lodge stay is coming up.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYou are on the chore roster on the morning you check out, so please talk to the hut leader beforehand if you plan to leave early.\n\n{{outstandingAdditionalNote}}\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\n{{doorCodeNote}}\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "additional-payment-reminder": {
     "defaultSubject": "Payment Still Needed - {{CLUB_LODGE_NAME}}",
