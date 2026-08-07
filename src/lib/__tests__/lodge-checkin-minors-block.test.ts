@@ -133,7 +133,6 @@ describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
         id: "booking-blocked",
         checkIn: dateOnly(2026, 6, 10),
         checkOut: dateOnly(2026, 6, 12),
-        expectedArrivalTime: "15:00",
         // Pending admin review => blockedFromCheckin should be true.
         requiresAdminReview: true,
         adminReviewStatus: AdminReviewStatus.PENDING,

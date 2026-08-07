@@ -513,7 +513,6 @@ describe("hut-leader roster wizard reaches the generate step (#2622)", () => {
         id: "booking-1",
         checkIn: day("2026-07-11"),
         checkOut: DATE,
-        expectedArrivalTime: null,
         member: { firstName: "Bev", lastName: "Booker" },
         guests: [
           {
@@ -587,7 +586,6 @@ describe("hut-leader roster wizard reaches the generate step (#2622)", () => {
             id: "booking-1",
             checkIn: day("2026-07-11"),
             checkOut: day("2026-07-15"),
-            expectedArrivalTime: null,
             member: { firstName: "Bev", lastName: "Booker" },
             guests: [loadsNights ? { ...withoutNights, nights } : withoutNights],
           },

@@ -3,10 +3,16 @@ import { NextRequest } from "next/server";
 
 // ---------------------------------------------------------------------------
 // Issue #1313 (owner-approved option A2): the member-facing booking write routes
-// — admin notes, arrival-time, and modify — were widened from owner-or-Full-
-// Admin to ALSO authorize a Booking Officer (bookings:edit). A plain member and
-// a read-only admin (bookings:view only) must still 403; the owner and a Full
-// Admin are unchanged. (Cancel is proven in booking-cancel*.test.ts.)
+// — admin notes and modify — were widened from owner-or-Full-Admin to ALSO
+// authorize a Booking Officer (bookings:edit). A plain member and a read-only
+// admin (bookings:view only) must still 403; the owner and a Full Admin are
+// unchanged. (Cancel is proven in booking-cancel*.test.ts.)
+//
+// #2621 retired the third route this suite used to cover, PUT/DELETE
+// /api/bookings/[id]/arrival-time, along with the expected-arrival-time entry
+// itself. Its A2 coverage retires with it; the identical widening is still
+// proven here for notes and modify, in `assertBookingModifiable` below, and for
+// cancel in booking-cancel*.test.ts, so no authorization class loses its test.
 // ---------------------------------------------------------------------------
 
 const mocks = vi.hoisted(() => ({
@@ -42,7 +48,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { PUT as putNotes } from "@/app/api/bookings/[id]/notes/route";
-import { PUT as putArrivalTime } from "@/app/api/bookings/[id]/arrival-time/route";
 import { PUT as putModify } from "@/app/api/bookings/[id]/modify/route";
 import { assertBookingModifiable } from "@/lib/booking-modify-validation";
 import { ApiError } from "@/lib/api-error";
@@ -123,60 +128,6 @@ describe("PUT /api/bookings/[id]/notes — Booking Officer widening (#1313 A2)",
     expect((await callNotes()).status).toBe(200);
     setSession(FULL_ADMIN);
     expect((await callNotes()).status).toBe(200);
-  });
-});
-
-describe("PUT /api/bookings/[id]/arrival-time — Booking Officer widening (#1313 A2)", () => {
-  beforeEach(() => {
-    mocks.bookingFindUnique.mockResolvedValue({
-      memberId: OWNER_ID,
-      // Far-future check-in so the past-check-in guard never trips.
-      checkIn: new Date("2099-01-01T00:00:00.000Z"),
-      status: "CONFIRMED",
-    });
-    mocks.bookingUpdate.mockResolvedValue({
-      id: "booking-1",
-      expectedArrivalTime: "14:00",
-    });
-  });
-
-  function callArrival() {
-    return putArrivalTime(
-      new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ expectedArrivalTime: "14:00" }),
-      }),
-      { params: Promise.resolve({ id: "booking-1" }) },
-    );
-  }
-
-  it("authorizes a non-owner Booking Officer (no 403)", async () => {
-    setSession(OFFICER);
-    const res = await callArrival();
-    expect(res.status).toBe(200);
-    expect(mocks.bookingUpdate).toHaveBeenCalled();
-  });
-
-  it("still forbids a non-owner plain member", async () => {
-    setSession(NON_OWNER_MEMBER);
-    const res = await callArrival();
-    expect(res.status).toBe(403);
-    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
-  });
-
-  it("still forbids a read-only admin (bookings:view only)", async () => {
-    setSession(READ_ONLY_ADMIN);
-    const res = await callArrival();
-    expect(res.status).toBe(403);
-    expect(mocks.bookingUpdate).not.toHaveBeenCalled();
-  });
-
-  it("leaves the owner and Full Admin unchanged", async () => {
-    setSession(OWNER);
-    expect((await callArrival()).status).toBe(200);
-    setSession(FULL_ADMIN);
-    expect((await callArrival()).status).toBe(200);
   });
 });
 

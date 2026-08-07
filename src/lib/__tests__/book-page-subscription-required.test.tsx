@@ -70,10 +70,6 @@ vi.mock("@/components/promo-code-input", () => ({
   PromoCodeInput: () => null,
 }));
 
-vi.mock("@/components/time-picker", () => ({
-  TimePicker: () => null,
-}));
-
 vi.mock("sonner", () => ({
   toast: { info: vi.fn() },
 }));

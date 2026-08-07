@@ -389,7 +389,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-11T00:00:00.000Z"),
-        expectedArrivalTime: "15:00",
         member: { firstName: "Booking", lastName: "Owner" },
         guests: [
           {
@@ -431,7 +430,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-11T00:00:00.000Z"),
-        expectedArrivalTime: "15:00",
         member: { firstName: "Booking", lastName: "Owner" },
         guests: [
           {
@@ -481,7 +479,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-11T00:00:00.000Z"),
-        expectedArrivalTime: "15:00",
         member: { firstName: "Booking", lastName: "Owner" },
         guests: [
           {
@@ -525,7 +522,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-11T00:00:00.000Z"),
-        expectedArrivalTime: null,
         member: { firstName: "Booking", lastName: "Owner" },
         guests: [
           {
@@ -605,7 +601,6 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         id: "booking-1",
         checkIn: new Date("2026-07-10T00:00:00.000Z"),
         checkOut: new Date("2026-07-15T00:00:00.000Z"),
-        expectedArrivalTime: null,
         member: { firstName: "Booking", lastName: "Owner" },
         guests: [
           {

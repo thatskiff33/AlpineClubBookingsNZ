@@ -387,7 +387,6 @@ describe("email-templates", () => {
         checkIn,
         checkOut,
         guestCount: 2,
-        expectedArrivalTime: "16:30",
         lodgeTravelNote: "Park below the lodge and walk up.",
         doorCode: "9876",
       });
@@ -396,7 +395,13 @@ describe("email-templates", () => {
       expect(html).toContain("Park below the lodge and walk up.");
       expect(html).toContain("Door code");
       expect(html).toContain("9876");
-      expect(html).toContain("16:30");
+      // #2621 retired the expected-arrival-time entry, so the conditional
+      // "Expected arrival" row is gone from this template for good. The
+      // checkout-day chore sentence (owner decision D-M5) took its place.
+      expect(html).not.toContain("Expected arrival");
+      expect(html).toContain(
+        "chore roster on the morning you check out",
+      );
     });
 
     it("omits the door-code field when no code is set", () => {

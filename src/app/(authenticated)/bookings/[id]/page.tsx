@@ -383,7 +383,8 @@ export default async function BookingDetailPage({
   // controls front routes under /api/admin/bookings/* (copy,
   // confirm-pending-guests, admin requested-room) that already authorize on
   // bookings:edit. The member-facing /api/bookings/[id]/* routes (cancel, modify,
-  // notes, arrival-time) are now widened to also accept bookings:edit (this PR),
+  // notes) are now widened to also accept bookings:edit (#1313 A2; the
+  // arrival-time route retired with the field in #2621),
   // so their buttons include canAdminEditBookings and flow through the same
   // admin-on-behalf path as a Full Admin (see actingOnBehalf below) — the button
   // and its backing API widen together, never a button ahead of its route.

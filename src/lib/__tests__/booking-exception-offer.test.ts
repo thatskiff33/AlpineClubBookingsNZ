@@ -324,7 +324,6 @@ describe("new-booking exception omissions", () => {
       workPartyDiscountApplied: false,
       appliedCreditCents: 0,
       requestedRoomId: null,
-      expectedArrivalTime: null,
       notes: null,
       internetBankingChosen: false,
       cancelIfGuestsBumped: false,
@@ -366,7 +365,6 @@ describe("new-booking exception omissions", () => {
   it("names the choices that do not move the price without relabelling the figure", () => {
     const soft = extras({
       requestedRoomId: "room-2",
-      expectedArrivalTime: "18:30",
       notes: "Arriving after dark.",
       internetBankingChosen: true,
       cancelIfGuestsBumped: true,
@@ -375,7 +373,6 @@ describe("new-booking exception omissions", () => {
     const omitted = newBookingExceptionOmittedChanges(soft);
     expect(omitted).toEqual([
       "the room you asked for",
-      "your expected arrival time",
       "your note to the club",
       "paying by internet banking",
       'the "only book if my guests can come" choice',

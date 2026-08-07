@@ -188,7 +188,6 @@ describe("kiosk arrivals list (D-12)", () => {
           id: "booking-1",
           checkIn: dateOnly("2026-07-10"),
           checkOut: dateOnly("2026-07-12"),
-          expectedArrivalTime: "16:00",
           requiresAdminReview: false,
           adminReviewStatus: null,
           member: { firstName: "Ada", lastName: "Booker" },

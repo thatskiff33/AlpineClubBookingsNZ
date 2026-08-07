@@ -129,7 +129,6 @@ function makeSourceBooking(overrides: Record<string, unknown> = {}) {
     checkOut: new Date("2026-08-04T00:00:00.000Z"),
     deletedAt: null,
     notes: "Late arrival",
-    expectedArrivalTime: "19:00",
     member: { id: "member-1", active: true },
     guests: [
       {
@@ -235,7 +234,6 @@ describe("copyBookingToDraft", () => {
         checkIn: new Date("2026-09-10T00:00:00.000Z"),
         checkOut: new Date("2026-09-13T00:00:00.000Z"),
         notes: "Late arrival",
-        expectedArrivalTime: "19:00",
       }),
     );
     const call = mocks.createDraftBooking.mock.calls[0][0];

@@ -10,9 +10,6 @@ import type { GuestData } from "@/components/guest-form";
 import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
 import { formatMissingPaidUpAdultRefusal } from "@/lib/policies/subscription-lockout-pricing";
 
-vi.mock("@/components/time-picker", () => ({
-  TimePicker: () => <div data-testid="time-picker" />,
-}));
 vi.mock("@/components/promo-code-input", () => ({
   PromoCodeInput: () => <div data-testid="promo-code-input" />,
 }));
@@ -94,8 +91,6 @@ function renderReview(
       requiresAdminReviewLocal={false}
       memberReviewJustification=""
       setMemberReviewJustification={vi.fn()}
-      expectedArrivalTime={null}
-      setExpectedArrivalTime={vi.fn()}
       roomRequestEnabled={false}
       roomOptions={[]}
       requestedRoomId={null}
@@ -599,13 +594,11 @@ describe("ReviewStep — the exception-request card (#2562 review)", () => {
     renderReview([memberGuest], undefined, {
       exceptionOffer: offer,
       requestedRoomId: "room-2",
-      expectedArrivalTime: "18:30",
       notes: "Arriving after dark.",
     });
 
     const card = screen.getByTestId("request-officer-approval");
     expect(card).toHaveTextContent(/the room you asked for/);
-    expect(card).toHaveTextContent(/your expected arrival time/);
     expect(card).toHaveTextContent(/your note to the club/);
     // These do not move the price, so the figure keeps its plain label.
     expect(card).toHaveTextContent("Total for this stay:");

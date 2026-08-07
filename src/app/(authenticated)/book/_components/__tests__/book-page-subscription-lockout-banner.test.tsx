@@ -47,7 +47,6 @@ vi.mock("@/components/booking-calendar", () => ({
 vi.mock("@/components/guest-form", () => ({ GuestForm: () => null }));
 
 vi.mock("@/components/promo-code-input", () => ({ PromoCodeInput: () => null }));
-vi.mock("@/components/time-picker", () => ({ TimePicker: () => null }));
 vi.mock("sonner", () => ({ toast: { info: vi.fn() } }));
 
 import BookPage from "@/app/(authenticated)/book/page";

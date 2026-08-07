@@ -196,7 +196,6 @@ export default function AdminBookPage() {
     setNotes("");
     setPriceQuote(null);
     setAppliedPromo(null);
-    setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
     setAllowPastDates(false);
@@ -226,7 +225,6 @@ export default function AdminBookPage() {
     setNotes("");
     setPriceQuote(null);
     setAppliedPromo(null);
-    setExpectedArrivalTime(null);
     setUseCredit(false);
     setError("");
     setFamilyMembers([]);

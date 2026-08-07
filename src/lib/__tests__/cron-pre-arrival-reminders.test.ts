@@ -34,7 +34,6 @@ function booking(overrides: Record<string, unknown> = {}) {
     status: BookingStatus.PAID,
     checkIn: new Date("2026-06-13T00:00:00.000Z"),
     checkOut: new Date("2026-06-15T00:00:00.000Z"),
-    expectedArrivalTime: "16:30",
     member: {
       email: "member@example.org",
       firstName: "Alice",
@@ -99,7 +98,6 @@ describe("sendPreArrivalReminders", () => {
       checkIn: candidate.checkIn,
       checkOut: candidate.checkOut,
       guestCount: 2,
-      expectedArrivalTime: "16:30",
       // #2350: nothing owed on this booking, so the note is not composed.
       outstandingAdditionalAmountCents: 0,
     });

@@ -112,7 +112,6 @@ const baseBooking: Booking = {
   nonMemberHoldUntil: null,
   draftExpiresAt: null,
   notes: null,
-  expectedArrivalTime: null,
   createdById: null,
   requiresAdminReview: false,
   adminReviewReason: null,

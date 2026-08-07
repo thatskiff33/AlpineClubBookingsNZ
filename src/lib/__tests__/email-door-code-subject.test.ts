@@ -182,7 +182,6 @@ describe("sensitive values never reach email subjects, EmailLog, or app logs", (
       checkIn: new Date("2026-07-10T00:00:00.000Z"),
       checkOut: new Date("2026-07-12T00:00:00.000Z"),
       guestCount: 2,
-      expectedArrivalTime: "16:30",
     });
 
     expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);

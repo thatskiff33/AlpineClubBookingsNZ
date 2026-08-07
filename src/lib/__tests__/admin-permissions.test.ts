@@ -189,10 +189,12 @@ describe("booking detail read-only admin-view guard (issue #1289)", () => {
 //   1. the admin-tooling cluster (AdminBookingToolsCard: copy +
 //      confirm-pending-guests; the admin requested-room editor) whose backing
 //      routes live under /api/admin/bookings/* (bookings:edit); AND
-//   2. the four member-facing admin-operational controls — cancel, modify,
-//      admin notes, arrival-time — whose /api/bookings/[id]/* routes were
-//      widened from owner-or-Full-Admin to also accept bookings:edit
-//      (option A2). See bookingManagementAuthorizationRole + the route gates.
+//   2. the member-facing admin-operational controls — cancel, modify and
+//      admin notes — whose /api/bookings/[id]/* routes were widened from
+//      owner-or-Full-Admin to also accept bookings:edit (option A2). See
+//      bookingManagementAuthorizationRole + the route gates. A fourth,
+//      arrival-time, was in this set until #2621 retired the expected-arrival
+//      -time entry and its route outright.
 //
 // Member-PERSONAL payment controls (save-card / complete / draft / additional
 // payment) remain owner-only. These mirror the exact page gates AND pin the
@@ -214,12 +216,11 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
       // Member-personal payment section (save-card / complete / draft /
       // additional payment): owner only.
       showMemberPayment: isBookingOwner,
-      // Member-facing admin-operational controls (cancel, admin notes, modify,
-      // arrival-time). Option A2 widened their APIs, so the page predicates now
-      // admit a Booking Officer alongside the owner and Full Admin.
+      // Member-facing admin-operational controls (cancel, admin notes, modify).
+      // Option A2 widened their APIs, so the page predicates now admit a Booking
+      // Officer alongside the owner and Full Admin. (#2621 removed a fourth,
       canCancel: canManageBooking || canAdminEditBookings,
       canModify: canManageBooking || canAdminEditBookings,
-      canEditArrivalTime: canManageBooking || canAdminEditBookings,
       // A non-owner Full Admin OR Booking Officer acts on-behalf of the member
       // (same suppress-notification / policy framing) for cancel + modify.
       actingOnBehalf: (isAdmin || canAdminEditBookings) && !isBookingOwner,
@@ -252,11 +253,10 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
     expect(identity(["ADMIN_BOOKINGS"], false).showMemberPayment).toBe(false);
   });
 
-  it("grants the widened member-facing controls (cancel/modify/arrival) to a non-owner Booking Officer (option A2)", () => {
+  it("grants the widened member-facing controls (cancel/modify) to a non-owner Booking Officer (option A2)", () => {
     const officer = identity(["ADMIN_BOOKINGS"], false);
     expect(officer.canCancel).toBe(true);
     expect(officer.canModify).toBe(true);
-    expect(officer.canEditArrivalTime).toBe(true);
   });
 
   it("keeps the widened controls available to the booking owner and to a Full Admin", () => {
@@ -266,7 +266,6 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
     ]) {
       expect(subject.canCancel).toBe(true);
       expect(subject.canModify).toBe(true);
-      expect(subject.canEditArrivalTime).toBe(true);
     }
   });
 
@@ -277,7 +276,6 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
     ]) {
       expect(subject.canCancel).toBe(false);
       expect(subject.canModify).toBe(false);
-      expect(subject.canEditArrivalTime).toBe(false);
     }
   });
 
@@ -322,7 +320,7 @@ describe("booking detail write-surface gates (issue #1313 + option A2)", () => {
   });
 
   it("confirms a Booking Officer satisfies the widened member-facing APIs' bookings:edit predicate", () => {
-    // cancel/notes/arrival-time authorize on hasAdminAreaAccess(bookings:edit);
+    // cancel/notes authorize on hasAdminAreaAccess(bookings:edit);
     // modify/quote/change-requests authorize via bookingManagementAuthorizationRole.
     expect(
       hasAdminAreaAccess(

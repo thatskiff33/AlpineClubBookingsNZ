@@ -83,7 +83,6 @@ function sourceBooking() {
     checkIn: new Date("2026-07-01T00:00:00.000Z"),
     checkOut: new Date("2026-07-03T00:00:00.000Z"),
     notes: null,
-    expectedArrivalTime: null,
     member: { id: SOURCE_OWNER, active: true },
     guests: [
       {
