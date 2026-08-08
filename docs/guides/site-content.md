@@ -75,6 +75,7 @@ one of the recognised `SITE_CONTENT_KEYS`.
 | Save is rejected as too long | The content exceeds the `SITE_CONTENT_LIMITS` cap | Shorten the column content |
 | A configuration import left a footer column showing the old content | **Merge** mode skips blank bundle fields, so it cannot clear a column | Re-import in **Overwrite** mode, or clear the column here and save |
 | The edit is saved but the public home page still shows the old text | The home page is cached for up to a minute for logged-out visitors | Wait a minute and reload, or check while signed in — signed-in views are never cached |
+| A footer link points at a page that no longer exists | A page was deleted under **Page Content**; deleting a page never rewrites these sections, though its confirmation does warn when a footer section links the page | Remove or repoint the link here and save |
 
 ## Related links
 

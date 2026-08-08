@@ -69,7 +69,24 @@ export const AUDIT_CENSUS_TOTALS = {
    * both claimed 419; the pin has to count BOTH, which is exactly what this file
    * exists to catch.)
    *
-   * 420 -> 422 (#2621): both expected-arrival-time writers now record what they
+   * 419 -> 420 (#2352 MC-03D): deleting a page-content page writes
+   * `PAGE_CONTENT_DELETED` inside the delete's own transaction, because the row
+   * carries the deleted page's whole `before` snapshot and is the only record of
+   * what was removed. Written with `buildStructuredAuditLogCreateArgs` through
+   * `tx.auditLog.create`, matching the three sibling writes already in that
+   * route rather than introducing a fourth form; categorised `admin` at the
+   * site, so it does not join `UNCATEGORISED_AUDIT_WRITERS` below.
+   *
+   * 420 -> 421 on the MERGE, and this is the gate earning its keep for the second
+   * time in one window. #2623 and this change each measured 419 -> 420 against a
+   * base without the other, so both literals read `420` — byte-identical, which
+   * means git resolved the VALUE silently and only the comments above collided.
+   * The merged tree has both writers, so the honest number is 421. It came from
+   * running the census after the merge; adding the two deltas up would have got
+   * there by luck, and reading either side's literal would have shipped a pin
+   * that was quietly one short.
+   *
+   * 421 -> 423 (#2621): both expected-arrival-time writers now record what they
    * did. They recorded NOTHING before, and since #1313 option A2 a Booking Officer
    * may set or clear the time on any member's booking — so the field had two
    * possible authors and no way to tell them apart, or to answer "who changed
@@ -79,7 +96,7 @@ export const AUDIT_CENSUS_TOTALS = {
    * `entityType`/`entityId` so they correlate to the booking. The clear also
    * carries the value it destroyed, because nothing else keeps it.
    */
-  writeSites: 422,
+  writeSites: 423,
   /** Of those, sites whose event object carries no `category` key. */
   uncategorised: 82,
   /** Per-sink totals, so a shift between forms cannot cancel out in the total. */
@@ -91,7 +108,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 101 -> 102 (#2627): the deletion-approval release, above.
     createAuditLog: { total: 102, uncategorised: 11 },
     createStructuredAuditLog: { total: 8, uncategorised: 0 },
-    "auditLog.create": { total: 71, uncategorised: 2 },
+    // 71 -> 72 (#2352 MC-03D): the page-content deletion, above.
+    "auditLog.create": { total: 72, uncategorised: 2 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -115,7 +133,11 @@ export const AUDIT_CENSUS_TOTALS = {
     booking: 82,
     payment: 16,
     family: 27,
-    admin: 117,
+    // 117 -> 118 (#2352 MC-03D): `PAGE_CONTENT_DELETED`. `admin` is the same
+    // category the three sibling page-content writes already use, and it is
+    // readable with support:view alone — so this widens nobody's access beyond
+    // what the page-content create/update rows beside it already grant.
+    admin: 118,
     security: 16,
     lodge: 16,
     xero: 19,

@@ -322,11 +322,11 @@ const NOTICE = "AdminViewOnlyNotice";
 */
 const FIGURES = {
   /** Every `<ViewOnlyActionButton>` render site in the admin tree. */
-  callSites: 312,
+  callSites: 313,
   /** Those that hand their explanation to a banner, by either rule. */
-  optOuts: 263,
+  optOuts: 264,
   /** `describeReason={false}` — needs a banner in the SAME file. */
-  staticOptOuts: 236,
+  staticOptOuts: 237,
   /** `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch. */
   vouchedOptOuts: 27,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
@@ -1262,6 +1262,20 @@ describe("view-only section banner coverage (#2160)", () => {
                removed site was a same-file static opt-out, so static opt-outs
                move 235 -> 234 and total opt-outs move 262 -> 261. Banner,
                vouch and per-button-explanation counts are unchanged.
+          311  +1  Unrecorded when it landed, reconstructed here from the
+               commit rather than left as a hole in the chain: #2597 ADDED a
+               control — the "Resume approval" button, which finishes a deletion
+               approval that started and did not finish, in
+               `app/(admin)/admin/deletion-requests/deletion-requests-client.tsx`.
+               It is a `describeReason={false}` static opt-out in the same file
+               as that page's own unconditional banner, so callSites
+               310 -> 311, optOuts 261 -> 262 and staticOptOuts 234 -> 235,
+               and nothing else moves. Commit 969b88943
+               re-measured the figures to 311/262/235 and updated every place
+               that publishes them, but added no ledger line: the entry above
+               it reads 310, the figures read 311, and the gap was exactly
+               this. Noticed while measuring the entry below, whose own numbers
+               would otherwise have looked like +2.
           312  +1  #2627 adds "Release approval" to the deletion queue's
                self-service rows — the Full-Admin way out of an approval left
                mid-flight, beside the existing "Resume approval". A static
@@ -1277,6 +1291,24 @@ describe("view-only section banner coverage (#2160)", () => {
                trails the measured total by one; #2637 supplies the correct
                reconstruction of that gap and this note deliberately does not
                guess at it.)
+          313  +1  #2352 MC-03D adds the per-page Delete control to the Page
+               Content cards, beside the Hide/Publish toggle it sits with and
+               under the banner that file already renders. Static opt-outs move
+               236 -> 237 and total opt-outs 263 -> 264; the vouched split,
+               the exceptions and the banner count are untouched, because the
+               control is gated on the same content area the banner states.
+          313      THE COLLISION THIS LEDGER EXISTS FOR, and it fired. This
+               entry was first written as `312`, measured against main at
+               54b282b61 when #2352 was the first of three open PRs off that
+               base — and #2636 (the entry above) reached main first with its own
+               `callSites: 312`. The two literals were byte-identical, so the
+               merge produced no conflict in the FIGURES block at all: only the
+               prose ledger conflicted, and the numbers it guards merged
+               silently wrong. Re-measured on the merged tree at f9bd34bd1 with
+               `vitest run view-only-banner-contract` and set to what the tree
+               reports: 313 / 264 / 237. #2641 will measure 314 / 265 / 238 when
+               it lands, and it must MEASURE that rather than read it here.
+
       */
       // #2259 adds the per-booking "No emails"
       // switch (`booking-no-emails-controls.tsx`), a leaf control dropped into

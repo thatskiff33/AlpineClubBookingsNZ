@@ -710,7 +710,9 @@ test.describe("unpublishing a CMS page", () => {
       return ((await created.json()) as { page: { id: string } }).page.id;
     }
 
-    // 409: a previous run left it behind (there is no delete endpoint). Reuse it.
+    // 409: a previous run left it behind — this case deliberately leaves its
+    // probe HIDDEN rather than deleting it, so the site is as it found it and no
+    // other spec's menu expectations move. Reuse it.
     expect(
       created.status(),
       "the probe page must be creatable or already present",
@@ -765,5 +767,225 @@ test.describe("unpublishing a CMS page", () => {
       // Leave the site as this spec found it.
       await setPublished(request, id, false);
     }
+  });
+});
+
+/**
+ * Deleting a CMS page (#2352 MC-03D).
+ *
+ * The counterpart to the unpublish case above, and the reason it is a separate
+ * one rather than an extra assertion there: unpublish proves the stored copy is
+ * cleared when a page is HIDDEN, and deletion is the lifecycle step that had no
+ * supported writer at all until MC-03D. The failure mode is the same and it is
+ * the whole point of the case — a 200 on the request immediately after the
+ * delete means the stored copy outlived the write, and on a quiet site it would
+ * keep answering for hours, because `revalidate = 300` hands a stale entry to
+ * the requester before regeneration starts rather than blocking on it.
+ *
+ * Deliberately with NO sleep anywhere. A sleep would let the 300-second backstop
+ * take the credit for what the invalidation call is supposed to do.
+ */
+test.describe("deleting a CMS page", () => {
+  test.use({ storageState: storageStatePath(E2E_ADMIN.email) });
+
+  /**
+   * Its own probe, not the unpublish case's: that one is deliberately left behind
+   * hidden, and two specs sharing one row would race whichever ran first.
+   *
+   * `menuTitle` is empty for the same reason it is there — `listWebsiteMenuPages()`
+   * drops a page with no menu title, so the probe never enters the public
+   * navigation and no other spec's expectations move while it exists.
+   */
+  const PROBE_SLUG = "e2e-isr-delete-probe";
+  const PROBE_PATH = `/${PROBE_SLUG}`;
+
+  async function createProbe(request: APIRequestContext): Promise<string> {
+    const created = await request.post("/api/admin/page-content", {
+      data: {
+        slug: PROBE_SLUG,
+        caption: "ISR delete probe",
+        menuTitle: "",
+        title: "ISR delete probe",
+        headerText: "",
+        sortOrder: 9001,
+      },
+    });
+
+    if (created.status() === 201) {
+      return ((await created.json()) as { page: { id: string } }).page.id;
+    }
+
+    // 409: a previous run failed between creating and deleting. Reuse the row so
+    // the case is self-healing rather than blocked.
+    expect(
+      created.status(),
+      "the probe page must be creatable or already present",
+    ).toBe(409);
+
+    const listed = await request.get("/api/admin/page-content");
+    expect(listed.status()).toBe(200);
+    const { pages } = (await listed.json()) as {
+      pages: Array<{ id: string; path: string }>;
+    };
+    const existing = pages.find((candidate) => candidate.path === PROBE_PATH);
+    expect(existing, `${PROBE_PATH} must exist after a 409`).toBeTruthy();
+    return existing!.id;
+  }
+
+  async function deleteProbe(request: APIRequestContext, id: string) {
+    return request.delete("/api/admin/page-content", { data: { id } });
+  }
+
+  test("clears the stored page immediately, and the address stays a 404", async ({
+    request,
+  }) => {
+    const id = await createProbe(request);
+    let deleted = false;
+
+    try {
+      // Published on create, so this both warms the store and shows on-demand
+      // generation for an address that did not exist when the release was built.
+      const warm = await request.get(PROBE_PATH);
+      expect(warm.status(), "the probe must be served before it is deleted").toBe(
+        200,
+      );
+      // A second request to prove the first one STORED something, so the 404
+      // below is a cleared store and not merely a page that was never cached.
+      const warmAgain = await request.get(PROBE_PATH);
+      expect(warmAgain.status()).toBe(200);
+      expect(
+        warmAgain.headers()["x-nextjs-cache"] ?? "",
+        "the probe must be answered from the store before it is deleted",
+      ).toBe("HIT");
+
+      const removed = await deleteProbe(request, id);
+      expect(removed.status(), "the supported delete must succeed").toBe(200);
+      deleted = true;
+      const removedBody = (await removed.json()) as {
+        ok: boolean;
+        referencedBySlugs: string[];
+        referencedByFooterSections: string[];
+        wasBookNowTarget: boolean;
+        publicCacheCleared: boolean;
+      };
+      expect(removedBody.ok).toBe(true);
+      expect(removedBody.referencedBySlugs).toEqual([]);
+      // The footer's admin-authored link lists are scanned too (first review,
+      // finding 3); the starter footer links only built-in pages, so a probe page
+      // is genuinely unreferenced there.
+      expect(removedBody.referencedByFooterSections).toEqual([]);
+      expect(removedBody.wasBookNowTarget).toBe(false);
+      // Against a real server the flush really happened, which is what the 404
+      // below then proves behaviourally. The flag exists so that a flush failure
+      // is reported as "deleted but not flushed" rather than as a failed delete
+      // (finding 5) — here it must be true, or the 404 assertion is testing the
+      // wrong thing.
+      expect(removedBody.publicCacheCleared).toBe(true);
+
+      // The assertion the measurement gate is for. No sleep.
+      expect(
+        (await request.get(PROBE_PATH)).status(),
+        "a deleted page must 404 at once — a 200 here means the stored copy outlived the write",
+      ).toBe(404);
+
+      // What a visitor actually gets on the request after that: the 404 itself is
+      // stored, which is fine for this address because it is inside the
+      // fixed-nonce set and so carries the release nonce.
+      expect((await request.get(PROBE_PATH)).status()).toBe(404);
+
+      // Prefetch-shaped, because reconciliation F1 on this issue was exactly a
+      // prefetch-shaped request defeating the store/nonce path, and a prefetch
+      // served stale skips revalidation entirely.
+      const prefetched = await request.get(PROBE_PATH, {
+        headers: {
+          "Next-Router-Prefetch": "1",
+          Purpose: "prefetch",
+          "Sec-Purpose": "prefetch",
+        },
+      });
+      expect(
+        prefetched.status(),
+        "a prefetch-shaped request must not resurrect the deleted page",
+      ).toBe(404);
+
+      // The row is genuinely gone rather than hidden: it is absent from the
+      // admin list, which reads every row regardless of published state.
+      const listed = await request.get("/api/admin/page-content");
+      expect(listed.status()).toBe(200);
+      const { pages } = (await listed.json()) as {
+        pages: Array<{ path: string }>;
+      };
+      expect(
+        pages.map((page) => page.path),
+        "the deleted row must be absent from the admin list, not merely unpublished",
+      ).not.toContain(PROBE_PATH);
+
+      // Deleting it again is a 404, not a second success — the id is gone.
+      expect((await deleteProbe(request, id)).status()).toBe(404);
+
+      // The slug is free immediately (D-B6): recreating is the operator's repair
+      // path after a mistyped page, and the create writer invalidates too, so a
+      // stored 404 cannot outlive the new page.
+      const recreated = await request.post("/api/admin/page-content", {
+        data: {
+          slug: PROBE_SLUG,
+          caption: "ISR delete probe",
+          menuTitle: "",
+          title: "ISR delete probe",
+          headerText: "",
+          sortOrder: 9001,
+        },
+      });
+      expect(
+        recreated.status(),
+        "a hard delete frees the slug, so re-creating it must succeed",
+      ).toBe(201);
+      const recreatedId = ((await recreated.json()) as {
+        page: { id: string };
+      }).page.id;
+      expect(
+        (await request.get(PROBE_PATH)).status(),
+        "the recreated page must be served at once — the stored 404 must not outlive it",
+      ).toBe(200);
+      expect((await deleteProbe(request, recreatedId)).status()).toBe(200);
+      expect((await request.get(PROBE_PATH)).status()).toBe(404);
+    } finally {
+      // Leave the site as this spec found it, whichever assertion failed.
+      if (!deleted) {
+        await deleteProbe(request, id);
+      }
+      const listed = await request.get("/api/admin/page-content");
+      if (listed.status() === 200) {
+        const { pages } = (await listed.json()) as {
+          pages: Array<{ id: string; path: string }>;
+        };
+        const stray = pages.find((page) => page.path === PROBE_PATH);
+        if (stray) {
+          await deleteProbe(request, stray.id);
+        }
+      }
+    }
+  });
+
+  test("refuses to delete a built-in page the site itself links", async ({
+    request,
+  }) => {
+    // The permission predicate is shared with hiding, so this is the delete-side
+    // proof that the shared rule is actually enforced on the real server: /about
+    // is linked from the footer and read by a code route.
+    const listed = await request.get("/api/admin/page-content");
+    expect(listed.status()).toBe(200);
+    const { pages } = (await listed.json()) as {
+      pages: Array<{ id: string; path: string }>;
+    };
+    const about = pages.find((page) => page.path === "/about");
+    expect(about, "the seeded /about page must exist").toBeTruthy();
+
+    const refused = await request.delete("/api/admin/page-content", {
+      data: { id: about!.id },
+    });
+
+    expect(refused.status()).toBe(422);
+    expect((await request.get("/about")).status()).toBe(200);
   });
 });

@@ -109,6 +109,29 @@ export function canUnpublishPage(slug: string): boolean {
   return !isSystemPageSlug(slug) && !isBuiltinPageSlug(slug);
 }
 
+/**
+ * Which pages may be DELETED outright (#2352 MC-03D, decision D-B3(a)).
+ *
+ * Deliberately one line over {@link canUnpublishPage} rather than a second list
+ * of its own. Deleting a page is strictly more destructive than hiding one, so
+ * the deletable set must never be WIDER than the hideable set — and the only way
+ * to guarantee that as both lists evolve is to have exactly one list. The
+ * alternative considered and rejected (D-B3(b)) was an independently maintained
+ * deletable list, which drifts the first time a slug is added to one and not the
+ * other; D-B3(c), "any page", would let an officer delete the row `/` and `/404`
+ * render from.
+ *
+ * It exists as its own NAMED predicate rather than a direct `canUnpublishPage()`
+ * call at the delete site so that narrowing deletion later (Full Admin only, say,
+ * or "hidden pages only") is a change to this function, not a hunt through
+ * callers — and so a reader of the delete route sees the question being asked.
+ * `__tests__/page-content.test.ts` pins the never-wider-than-hiding property
+ * across every slug either predicate knows about.
+ */
+export function canDeletePage(slug: string): boolean {
+  return canUnpublishPage(slug);
+}
+
 const PAGE_SLUG_PATTERN =
   /^[a-z0-9]+(?:-[a-z0-9]+)*(?:\/[a-z0-9]+(?:-[a-z0-9]+)*)*$/;
 

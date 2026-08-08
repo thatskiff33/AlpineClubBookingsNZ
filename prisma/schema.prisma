@@ -5878,8 +5878,11 @@ model PublicContentSettings {
   // until an admin ticks it back on. When target is
   // PAGE, bookNowPageId names a published PageContent; getBookNowConfig() fails
   // open to the booking flow if the page is missing/unpublished, so the button
-  // is never dead. The FK is SetNull so deleting the target page reverts the
-  // button to the booking flow rather than dangling.
+  // is never dead. The FK is SetNull so an out-of-band delete cannot leave a
+  // dangling id — but SetNull alone would leave the PAIR at PAGE + null, which
+  // the settings PUT refuses to save, so the supported page delete
+  // (app/api/admin/page-content/route.ts DELETE) writes bookNowTarget back to
+  // BOOKING_FLOW in the same transaction (#2352, first review finding 1).
   showBookNow          Boolean       @default(false)
   bookNowTarget        BookNowTarget @default(BOOKING_FLOW)
   bookNowPageId        String?

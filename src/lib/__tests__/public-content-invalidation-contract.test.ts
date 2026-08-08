@@ -6,7 +6,12 @@ const helperWriters: Array<[string, number]> = [
   ["src/app/api/admin/age-tier-settings/route.ts", 1],
   ["src/app/api/admin/lodges/route.ts", 1],
   ["src/app/api/admin/lodges/[id]/route.ts", 1],
-  ["src/app/api/admin/page-content/route.ts", 3],
+  // 3 -> 4 (#2352 MC-03D): POST, PUT, PATCH and now DELETE. The count is
+  // deliberately exact rather than ">= 1" — that is what makes a new writer on
+  // this file a decision someone has to take rather than an omission nobody
+  // notices — so a fifth mutating method must bump it again, and must not be
+  // "fixed" by loosening the assertion.
+  ["src/app/api/admin/page-content/route.ts", 4],
   ["src/app/api/admin/config-transfer/apply/route.ts", 1],
   ["src/app/api/admin/seasons/route.ts", 1],
   ["src/app/api/admin/seasons/[id]/route.ts", 2],
@@ -193,5 +198,89 @@ describe("public content authority invalidation contract", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/app/api/admin/config-transfer/apply/route.ts"), "utf8");
     expect(source).toContain("invalidateAgeTierCache()");
     expect(source).toMatch(/appliedEntities\.includes\("age-tier"\)/);
+  });
+});
+
+/*
+  #2352 MC-03D, second review finding S2 — the CLIENT-side half of the same
+  problem the block above covers on the server.
+
+  Revalidation fixes the public site. It does nothing for the other admin panel
+  already open in the officer's browser: `admin/page-content` renders
+  `PageContentPanel` and `PublicContentSettingsPanel` as siblings with no common
+  client ancestor, the settings panel loads once on mount, and it posts its WHOLE
+  settings object on save. So deleting a page left that panel holding a stale
+  published-page list and — when the delete repointed the Book Now target inside
+  its own transaction — a `bookNowTarget: "PAGE"` with a page id that no longer
+  existed. Every later save in it then failed with 400 "The selected Book Now page
+  is not published." until the officer happened to reload. Deterministic, not a
+  race, and invisible to any server-side assertion.
+
+  Pinned structurally because the failure is the ABSENCE of a wire between two
+  files: both ends must reference the one shared event constant, so renaming or
+  dropping either end fails here rather than in production.
+*/
+describe("page deletion tells the sibling settings panel to re-read (#2352 S2)", () => {
+  const read = (relativePath: string) =>
+    fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
+
+  it("announces the change from the delete's success path", () => {
+    const source = read("src/components/admin/page-content-panel.tsx");
+    expect(source).toMatch(
+      /^import \{ emitPublicContentSettingsChanged \} from "@\/lib\/public-content-settings-events";$/m,
+    );
+
+    /*
+      Line-anchored on horizontal whitespace only, for the same reason the
+      site-style assertion above is: a plain `toContain` also matches the call
+      NAMED in a comment. Proven — commenting the call out left every substring
+      assertion passing, which is precisely the mutation this gate exists to
+      catch. `[^\S\r\n]*` cannot consume `//`, so a commented-out call fails here.
+    */
+    const emitCall = /^[^\S\r\n]*emitPublicContentSettingsChanged\(\);$/m;
+    expect(source).toMatch(emitCall);
+
+    // On the success path, not the failure one: after the toast that reports the
+    // delete, and before that try's own `catch`. Anchored on the toast rather
+    // than on the failure message, because "Failed to delete page" appears twice
+    // in this handler — once on the non-ok response inside the try — so an
+    // indexOf of it would land ahead of the success path and prove nothing.
+    const emitAt = source.search(emitCall);
+    const successToastAt = source.indexOf("toast.success(`Deleted ${page.title}`)");
+    expect(successToastAt).toBeGreaterThan(-1);
+    const catchAt = source.indexOf("} catch (error) {", successToastAt);
+    expect(catchAt).toBeGreaterThan(successToastAt);
+    expect(emitAt).toBeGreaterThan(successToastAt);
+    expect(emitAt).toBeLessThan(catchAt);
+  });
+
+  it("re-reads the settings panel when it hears that event, and unsubscribes", () => {
+    const source = read("src/components/admin/public-content-settings-panel.tsx");
+    expect(source).toMatch(
+      /^import \{ PUBLIC_CONTENT_SETTINGS_CHANGED_EVENT \} from "@\/lib\/public-content-settings-events";$/m,
+    );
+    // Line-anchored for the comment reason given above.
+    expect(source).toMatch(
+      /^[^\S\r\n]*window\.addEventListener\(PUBLIC_CONTENT_SETTINGS_CHANGED_EVENT, load\);$/m,
+    );
+    // A listener added on mount without a matching removal leaks a stale `load`
+    // per remount, so the cleanup is part of the contract rather than tidiness.
+    expect(source).toMatch(
+      /^[^\S\r\n]*window\.removeEventListener\(PUBLIC_CONTENT_SETTINGS_CHANGED_EVENT, load\);$/m,
+    );
+  });
+
+  it("has both ends on the same event name, from the shared module", () => {
+    const events = read("src/lib/public-content-settings-events.ts");
+    expect(events).toContain(
+      'export const PUBLIC_CONTENT_SETTINGS_CHANGED_EVENT =',
+    );
+    // The literal lives in exactly one place: neither panel may hard-code it.
+    for (const panel of [
+      "src/components/admin/page-content-panel.tsx",
+      "src/components/admin/public-content-settings-panel.tsx",
+    ]) {
+      expect(read(panel)).not.toContain('"admin:public-content-settings-changed"');
+    }
   });
 });
