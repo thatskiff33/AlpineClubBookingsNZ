@@ -4370,6 +4370,30 @@ model Lodge {
   newBookingPolicyExceptionRequests NewBookingPolicyExceptionRequest[]
 }
 
+// Registry of EXTERNAL / partner lodges the club recognises (e.g. for the
+// reciprocal "other club member" rate), admin-curated on Admin -> Lodges.
+// Deliberately DISTINCT from the club's own Lodge rows above: an OtherLodge has
+// no slug, no booking capacity, no scoping, and no relations. `bedCapacity`
+// here is INFORMATIONAL only (a fact about the partner lodge) and is never this
+// system's booking capacity — that is derived from Lodge rooms/beds. `name` is
+// unique because it will populate a non-member "which lodge are you a member
+// of" drop-down (follow-up); `active` lets an admin retire a lodge from that
+// future list without deleting its history.
+model OtherLodge {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  location            String?  @db.VarChar(300)
+  bookingOfficerName  String?  @db.VarChar(200)
+  bookingOfficerEmail String?  @db.VarChar(320)
+  bookingOfficerPhone String?  @db.VarChar(50)
+  bedCapacity         Int?
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([active])
+}
+
 model LodgeSettings {
   id                     String   @id @default("default")
   capacity               Int?

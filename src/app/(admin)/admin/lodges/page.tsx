@@ -22,6 +22,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { OtherLodgesPanel } from "./_components/other-lodges-panel";
 
 type LodgeRecord = {
   id: string;
@@ -407,6 +408,8 @@ export default function AdminLodgesPage() {
           )}
         </CardContent>
       </Card>
+
+      <OtherLodgesPanel />
       </div>
     </div>
   );
