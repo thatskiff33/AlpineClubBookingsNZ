@@ -117,7 +117,7 @@ export async function POST(request: Request) {
       actor: { memberId: session.user.id },
       entity: { type: "OtherLodge", id: created.id },
       category: "admin",
-      severity: "informational",
+      severity: "info",
       outcome: "success",
       summary: "Other lodge created",
       metadata: { newOtherLodge: serializeOtherLodge(created) },

@@ -125,7 +125,7 @@ export async function PATCH(
       actor: { memberId: session.user.id },
       entity: { type: "OtherLodge", id: updated.id },
       category: "admin",
-      severity: "informational",
+      severity: "info",
       outcome: "success",
       summary: "Other lodge updated",
       metadata: {
