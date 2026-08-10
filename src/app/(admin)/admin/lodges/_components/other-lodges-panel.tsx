@@ -147,6 +147,12 @@ export function OtherLodgesPanel() {
       setError("Bed capacity must be a whole number.");
       return;
     }
+    // Mirror the server's upper bound so an unrealistic value gets a clear
+    // inline message instead of a generic "Invalid input" from the API.
+    if (capacity !== "" && Number(capacity) > 100_000) {
+      setError("Bed capacity looks too large. Enter a realistic number.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
