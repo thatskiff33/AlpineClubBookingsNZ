@@ -301,7 +301,7 @@ Prefix `INV-MOD`.
 | `INV-MOD-017` | Legacy stamped applications are repaired under the same lock before clamp, cancel, expiry or read |
 | `INV-MOD-018` | Every modification path applies the same lifecycle transitions, whichever endpoint made the change |
 | `INV-MOD-019` | Self-service edits obey the date-window edit policy; an in-progress stay extends future nights only, and minimum stay is then evaluated over the whole contiguous stay |
-| `INV-MOD-025` | An in-progress edit prices the nights a guest holds, not their envelope, sells only the nights it creates, and values each at the price it was sold for, never leaving a guest owing less than nothing; ordinary stays are unchanged and history is not repriced |
+| `INV-MOD-025` | An in-progress edit prices the nights a guest holds, not their envelope, sells only the nights it creates, and values each at the price it was sold for — or, where that cannot be recovered, at the member's own stored per-night average — never leaving a guest owing less than nothing; ordinary stays are unchanged and history is not repriced |
 | `INV-MOD-020` | Minimum stay is the first exception-foundation consumer; only two soft reason codes exist |
 | `INV-MOD-021` | The frozen violation explains a refusal, never authorises one; every member path stops server-side |
 | `INV-MOD-022` | The admin exemption is not one predicate, and is stated per path |

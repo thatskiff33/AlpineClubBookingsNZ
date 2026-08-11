@@ -932,11 +932,14 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
   it("never credits back more than the guest paid when no row records a price", async () => {
     // The population the locked prices cannot reach: a booking created by
     // approving a booking request, which still writes no `BookingGuestNight`
-    // rows at all (#2739). Those nights have no sold price, so the old-price
-    // window values them at TODAY's rate — 2 x HIGH = 18000 against a stored
-    // 2 x LOW = 10000 — and without the ceiling the guest comes off the booking
-    // at -8000, with a negative per-night row for the next edit to read back as
-    // a sold price. The credit stops at what they are carrying.
+    // rows at all (#2739). Those nights have no sold price. Valued at TODAY's
+    // rate — 2 x HIGH = 18000 against a stored 2 x LOW = 10000 — the guest came
+    // off the booking at -8000 before #2744's ceiling, and at exactly zero after
+    // it, because the ceiling had to cut the credit back to their whole stored
+    // total. #2771 values the two nights from that total in the first place: an
+    // even 5000 each, which is the same 10000 here because both nights are given
+    // back, so what this asserts is unchanged and what produces it is not — the
+    // credit is bounded by their own money rather than clamped after the fact.
     h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
 
     const result = await calculateModifiedPricing(
@@ -956,5 +959,32 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
     expect(guest.priceCents).toBe(0);
     expect(guest.priceCents).toBeGreaterThanOrEqual(0);
     expect(guest.perNightCents.every((cents) => cents >= 0)).toBe(true);
+  });
+
+  it("credits a row-less guest their own average for the one night they give back (#2771)", async () => {
+    // The same booking, one night later: the 23rd is slept and only the 24th is
+    // given back, so the ceiling is nowhere near and the two rules disagree in
+    // the open. Two nights bought for 2 x LOW = 10000 with no rows to say which
+    // was which; the club has since raised the rate to HIGH.
+    //
+    // Today's rate credited the whole 9000 for that one night, leaving a member
+    // who had slept the 23rd carrying 1000 for it — the club handing back nearly
+    // everything it had taken for HALF the stay. Their own average is 5000, so
+    // they give back 5000 and keep 5000, which is what they paid a night.
+    h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
+
+    const result = await calculateModifiedPricing(
+      NO_DISCOUNT_TX,
+      removalArgs({ withNightRows: false }),
+    );
+    const guest = result.priceBreakdown.guests[0];
+    const plan = result.inProgressPlan?.proposedExistingGuests[0];
+
+    expect(plan?.oldFuturePriceCents).toBe(LOW);
+    expect(plan?.oldFuturePriceCents).not.toBe(HIGH);
+    expect(plan?.futureDeltaCents).toBe(-LOW);
+    expect(guest.priceCents).toBe(LOW);
+    expect(guest.nightDates).toEqual([D("2026-08-23")]);
+    expect(guest.perNightCents).toEqual([LOW]);
   });
 });

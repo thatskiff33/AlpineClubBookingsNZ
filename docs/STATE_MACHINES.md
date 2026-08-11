@@ -840,9 +840,12 @@ party. Because nobody is back-filled, a removal can leave `Booking.checkOut`
 ahead of the last night anybody holds; that is accepted rather than guarded.
 A night the edit gives back is credited at the price the member paid rather than
 at today's season rate, and the per-night rows written back are each night's real
-rate rather than the guest's average (#2744, `INV-MOD-025`); a guest with no
-recoverable stored price is still valued at today's rate, capped so that no edit
-can credit back more than that guest is carrying.
+rate rather than the guest's average (#2744, `INV-MOD-025`); where no stored
+price is recoverable at all, the night is credited at that guest's own stored
+per-night average instead of at today's rate (#2771), which cannot hand back more
+than they paid however the rates have moved. The cap that used to hold that
+fallback is still there for a credit built from a stored row that outruns the
+guest's stored total.
 For an ordinary stay that runs to the booking's check-out, every number is
 exactly what it was before. Bookings edited before those fixes keep the rows and
 the price they were given — history is not repriced (#2745 carries the decision
