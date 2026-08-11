@@ -703,7 +703,9 @@ describe("#2736/#2743 contiguous stays", () => {
       // DRIFTED from their rows keeps the drift, and that residual is neither
       // invented nor erased here: it is what the pre-#2736 arithmetic left too
       // (`priceCents` is compared against it above, case by case), and what to
-      // do about a total that no longer matches its rows is #2745's decision.
+      // do about a total that no longer matches its rows is #2791's decision.
+      // (NOT #2745 — that closed on a historical audit that found no sparse
+      // guest exists; this shape is created going forward.)
       for (const entry of [
         ...plan.proposedExistingGuests,
         ...plan.proposedAddedGuests,
@@ -2134,7 +2136,7 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // So the floor is `Math.max(…, 0)` and this case is what proves it is load
     // bearing: give the two unpriced nights back and the member is credited
     // NOTHING, not charged 9000 for the privilege. Their stored price is left
-    // exactly as found — not driven deeper, not repaired; #2745 owns repairing
+    // exactly as found — not driven deeper, not repaired; #2791 owns repairing
     // a record that cannot support its own total.
     const rowsOutrunTotal: TestGuest = {
       ...guestFromNights(
@@ -2306,7 +2308,7 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // guest whose stored rows cannot account for their total has their rows
     // written as the EVEN split of it (`composeProposedNightPrices`, unchanged
     // since #2744). So this guest keeps a LOW night and a HIGH one and both are
-    // recorded at 7000. That flattening is pre-existing and is #2745's to fix;
+    // recorded at 7000. That flattening is pre-existing and is #2791's to fix;
     // it is pinned here so a change to what gets persisted cannot pass unseen,
     // and because the number it flattens is now the right one.
     expect(entry.nights.map(key)).toEqual(["2026-08-22", "2026-08-23"]);
@@ -2650,7 +2652,7 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // A guest whose stored total has DRIFTED from their rows keeps the drift.
     // It is not invented and not erased: the pre-#2736 arithmetic left the same
     // residual, and what to do about a total that no longer matches its rows is
-    // an owner decision on #2745.
+    // an owner decision on #2791.
     const drifted: TestGuest = {
       ...settled,
       priceCents: settled.priceCents + 101,
