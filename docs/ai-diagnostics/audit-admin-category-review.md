@@ -551,18 +551,20 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  429
+row-producing sites:  432
 uncategorised:        0
-category values: admin 98, booking 101, xero 34, family 34, payment 35,
+category values: admin 101, booking 101, xero 34, family 34, payment 35,
                  lodge 52, account 19, security 18, privacy 19,
                  communication 14, system 4
 ```
 
-`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
-after #2755 moved the two `bulk-update/route.ts` branches in, against `account`
-20 → 19 and `security` 19 → 18. #2755 moved categories and added no writer;
-#2760 then added the late-capture auto-refund record writer (`payment` 34 → 35),
-which is what took the total from 428 to its current figure above. The 22 moves are pinned **per site**, not only by that
+`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 101
+after #2755 moved the two `bulk-update/route.ts` branches in (against `account`
+20 → 19 and `security` 19 → 18) and #2766's other-lodges admin routes added three
+`admin` writers of their own. #2755 moved categories and added no writer;
+#2760 added the late-capture auto-refund record writer (`payment` 34 → 35) and
+#2766 the three panel writers (`admin` 98 → 101), which together took the total
+from 428 to its current figure above. The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in
 `scripts/audit/audit-writer-census-manifest.ts` records each one, and the census
 contract test measures the tree against it. A distribution cannot see a swap —
