@@ -100,9 +100,11 @@ across the stay envelope, integer cents, remainder on the first night), so
 that fallback now covers only quote-priced bookings — already protected by
 the #1032 edit block — and rows created outside the app. One carve-out, on the
 in-progress edit path only: a night such a guest gives BACK is not valued at
-current rates but at their own stored per-night average, because current rates
-say nothing about what that member was charged (#2771, INV-MOD-025). Nights they
-BUY still price at current rates, here as everywhere.
+current rates but from their own stored booking price, because current rates say
+nothing about what that member was charged (#2771, INV-MOD-025). Current rates
+decide only how that price is SHARED between the nights nothing can price, never
+how much of it there is. Nights they BUY still price at current rates, here as
+everywhere.
 
 ## INV-MOD-006
 
@@ -737,42 +739,76 @@ passes, and which party each counts is the rule:
   So a night with **no recoverable stored price** is credited from the guest's own
   stored total, and never from today's price list — see the rule below.
 
-**A night nobody can price from a row is worth what that member paid on average
+**A night nobody can price from a row is worth what that member paid for it
 (#2771).** Where no sold price is recoverable, the pre-edit window values the
-night at `Math.max(BookingGuest.priceCents, 0)` split evenly across the nights
-that guest holds, in integer cents with the remainder spread one cent at a time
-— the same estimator `composeProposedNightPrices` writes those rows back with,
-and the same evidence `refundCeilingCents` already trusted. Owner's decision of
-10 Aug 2026 on #2771: **D1** the guest's own average, **D2 forward only** — no
-backfill, nothing already charged, refunded, invoiced or credited is recomputed,
-as with #2736, #2744 and #2756. The population is the one the locks cannot reach:
-a booking predating `BookingGuestNight`, one created by approving a request
-(#2739's migration backfilled the 104 guests that existed, but approvals taken
-after it and rows written outside the application still arrive with nothing), and
-a row whose `priceCents` is negative, which is refused as a sold price.
+night from `Math.max(BookingGuest.priceCents, 0)`: what is LEFT of it once the
+guest's own priced rows are taken off, shared between the nights that have nothing
+to recover **in the ratio of today's rates for those nights**, in integer cents
+with the remainder spread one cent at a time over the earliest of them. Owner's
+decision of 10 Aug 2026 on #2771: **D1** the guest's own stored total as the
+evidence, **D2 forward only** — no backfill, nothing already charged, refunded,
+invoiced or credited is recomputed, as with #2736, #2744 and #2756. The population
+is the one the locks cannot reach: a booking predating `BookingGuestNight`, one
+created by approving a request (#2739's migration backfilled the 104 guests that
+existed, but approvals taken after it and rows written outside the application
+still arrive with nothing), and a row whose `priceCents` is negative, which is
+refused as a sold price.
+
+**D1's option text named a FLAT split of the whole total, and the implementation
+departs from it twice, both times after measuring it and both times flagged for
+the owner rather than assumed.** The evidence is the one D1 chose and the bound is
+the one D1 promised; what changed is the arithmetic around it.
+
+- **The residual, not the whole total.** Spreading a mixed guest's whole total
+  over every night double-counts what their priced rows already account for.
+  Measured: four nights, two rows at 12000 and two refused as negative, total
+  26000 — credited 13000 for the two unpriced nights while keeping two nights the
+  same rows value at 24000, which is 37000 accounted for against 26000 taken and
+  3000 MORE than the pre-#2771 answer. The cap cannot catch it, because a partial
+  give-back never reaches the cap.
+- **The ratio of today's rates, not flat.** Rates move when the club edits its
+  rate table, which scales a season's nights together; scale every rate by any
+  factor and the ratio between two nights is unchanged, so `total x rate /
+  rateSum` returns the ORIGINAL per-night price EXACTLY after a rise, after a
+  fall and where nothing has moved. The flat split instead flattened every stay
+  spanning a rate change: a member who paid 5000, 5000 and 9000 was credited 6000
+  apiece, so the club kept 1000 for nights nobody slept, and the 960-case
+  equivalence matrix moved in 25 cases in each of its two unpriced row variants —
+  ordinary contiguous bookings, changed. In the ratio it moves in none.
 
 It replaced today's season rate, which knew nothing about the member's booking
 and was wrong in both directions: after a rate FALL it credited less than they
 paid, and after a rate RISE it credited more than the club had ever charged —
-which is the whole reason `refundCeilingCents` had to exist. The average is
-bounded by construction instead. The slices sum to the guest's stored total, so
-giving back a subset of their nights returns a subset of what they paid and
-giving back all of them returns exactly their total, never a cent more; the
-nights they keep carry the same amount on both sides of the difference. So the
-cap can no longer bind on this population at all, and what it is left holding is
-a credit built from a stored ROW that outruns the total — a total driven down by
-a promo or an adjustment that never touched the rows, and the mixed guest whose
-rows price some nights and say nothing about others.
+which is the whole reason `refundCeilingCents` had to exist. The rule is bounded
+by construction instead. The slices sum to the residual exactly, so a guest's
+rows plus their estimate can never exceed `Math.max(priceCents, 0)`: giving back
+a subset of their nights returns a subset of it and giving back all of them
+returns exactly the price stored against them, never a cent more; the nights they
+keep carry the same amount on both sides of the difference. So the cap can no
+longer bind on any credit built from an estimate, the mixed guest included, and
+what it is left holding is a credit built from a stored ROW that outruns the
+total — a total driven down by a promo or an adjustment that never touched the
+rows.
 
-**The cost, stated because it is real.** The average flattens a stay that spans a
-rate change. A row-less guest giving back a peak night out of a mostly off-peak
-stay is credited their average rather than the peak, so where the rows are
-missing but the rate has NOT moved the member is credited less than today's rate
-would have given them. That is the trade the decision makes — the member's own
-evidence over the club's current price list, in exchange for a credit that can
-never exceed what they paid — and the 960-case matrix measures it: 25 of the 179
-compared edits move in each of its two unpriced row variants, all of them stays
-crossing the 22/23 rate boundary, and none at all in either priced variant.
+**What the bound is a bound on, stated exactly.** `BookingGuest.priceCents` is
+the BOOKING price. A promo adjustment and an applied account credit sit at
+booking level and never touched it, so "never more than they paid" is a bound on
+the club's own record of the sale rather than on cash received. What bounds the
+cash is the settlement layer: `basisAmountCents` is capped at
+`getRemainingRefundableCents` (captured less already refunded) on both branches,
+so no edit can return money that never arrived. That is unchanged by #2771 and
+applies equally to the #2744 stored-row leg.
+
+**The cost that remains.** The ratio is exact under a scaled or unmoved rate
+table; the one shape it gets wrong is a season BOUNDARY that has since moved
+across the stay, where the flat split would happen to be right. That is rarer
+than a rate change, and either rule is bounded by the same stored total. And the
+estimate is not written to a `BookingGuestNight` row as that night's price, but
+it does reach the rows one step on: it moves the guest's TOTAL, and a guest whose
+rows cannot account for their total has their rows written as the even split of
+it (`composeProposedNightPrices`, the pre-existing #2744 fallback). So a row-less
+guest's persisted rows are still flattened — what #2771 owes them is a total that
+is right, and repairing the rows themselves is #2745's.
 
 One error path moves with it, in the safe direction. Because the estimate is a
 lock, this window asks the season table for nothing on behalf of a guest with no
@@ -859,10 +895,13 @@ price lands at worst on zero. It was written for the guest with no recoverable
 price, whose nights the old rule valued at today's rate: after a rate rise that
 credited back more than the club ever charged, which is how a guest who genuinely
 slept at the lodge finished with a negative stored price and negative night rows.
-#2771 took that population out of the cap's reach — their credit is bounded by
-their own stored total by construction — and left it holding the credit that
-outruns the money taken anyway, from a stored row that says more than the total
-does. The cap cannot bind on a guest whose nights cost no more than they paid,
+#2771 took every credit built from an ESTIMATE out of the cap's reach — bounded
+by the guest's own stored total by construction, mixed guests included — and left
+it holding the credit that outruns the money taken anyway, from a stored row that
+says more than the total does. It had to: the cap can only bind on a full
+give-back, because the nights a guest KEEPS carry the same amount on both sides of
+the difference and lift the ceiling with them. The cap cannot bind on a guest
+whose nights cost no more than they paid,
 which is every healthy booking and every case in the contiguous equivalence
 matrix. Symmetrically, a **negative**
 stored `BookingGuestNight.priceCents` is refused as a sold price and treated as
@@ -881,12 +920,15 @@ moved), that same guest with a stored total that has drifted from the rows, rows
 arriving without their price, and no rows at all — and all four take the same
 night sets, windows and capacity ranges through the pre-#2736 arithmetic, landing
 in the same buckets in the same numbers (100 identical / 135 cheaper / 5 refused
-in each). The two PRICED variants agree with it on the money to the cent as well.
-The two unpriced ones differ by exactly one further stated correction, #2771's
-valuation of a night given back, derived per case and counted per variant so it
-cannot hide in a total; the priced variants must be at zero on that count, which
-is what says an ordinary rowed booking's discount-disabled path is untouched.
-Rows arriving without a price is a thinner `select`, not a state the database can
+in each), and all four agree with it on the money to the cent. **#2771 moves no
+case in it**, and that is asserted rather than modelled: every guest in the matrix
+paid exactly today's rates, so the ratio returns each night's own rate and there
+is no correction term of any kind. The flat split D1's wording named DID move 25
+cases in each unpriced variant, which is how it was caught. Since #2771 the matrix
+also compares the persisted per-night amounts by VALUE on the `rows+prices`
+variant — each must be that night's own rate — because length, integer-ness and a
+sum are all blind to a valuation that rewrites what a night is recorded as having
+cost. Rows arriving without a price is a thinner `select`, not a state the database can
 hold (`BookingGuestNight.priceCents` is NOT NULL); it is in the matrix because
 the plan cannot tell it from a guest who was never priced, and
 `in-progress-edit-sold-price-census.test.ts` is what stops a loader producing it.
@@ -908,7 +950,7 @@ rather than a claim, and history is not repriced. **#2771** answered the last of
 them, which #2744 had left standing for the guest its locks could not reach: the
 today's-rate refund survived wherever no sold price was recoverable, and its pin —
 "degrades to today's rate" — was a frozen money shape in exactly the sense this
-paragraph means. It is now the guest's own average, on the same terms again. What is left is the two
+paragraph means. It is now the member's own money, on the same terms again. What is left is the two
 disclosures recorded above, which are about what the officer is shown rather than
 about what anybody is charged.
 
@@ -918,10 +960,12 @@ added leg, so every difference is a member paying **less** or an edit being
 refused. That is measured over the 960-case matrix rather than asserted here
 (400 identical, 540 cheaper, 20 refused, landing identically in each of the four
 stored-price row variants #2744 added — 100/135/5 in every one of them), and it
-is the direction that matters for live bookings. The claim is about the nights
-#2743 stops selling and is measured with #2771's valuation shift taken out, which
-runs in either direction on its own account and only for a guest with no
-recoverable price.
+is the direction that matters for live bookings. Nothing is taken out of that
+measurement: #2771 moves no case in the matrix, so `identical` still means
+identical to the cent. #2771 CAN move a bill against the pre-#2743 answer, in
+either direction, but only for a guest with no recoverable price on a booking
+whose stored total does not match today's rates — which is the whole point of it
+and is what no case in this matrix is.
 
 Against the **pre-#2736** envelope arithmetic the claim needs a scope, and the
 scope is drifted data — a guest whose stored `stayEnd` claims more nights than

@@ -120,10 +120,10 @@ type TestGuest = {
  *
  * `withNightRows: false` drops the rows and leaves only the envelope: a legacy
  * guest from before `BookingGuestNight` existed, or one on a booking created by
- * approving a booking request, which still writes no rows at all (#2739). Every
- * night SET question about that guest must answer exactly as it did before; what
- * a night they GIVE BACK is worth is the one thing #2771 moves for them, and the
- * matrix measures it separately (`unrecoverableCreditShift`).
+ * approving a booking request, which still writes no rows at all (#2739). That
+ * guest must keep behaving exactly as before — money included, because #2771
+ * values a night they give back from their own stored total in the shape of
+ * today's rates, and this guest's total IS today's rates.
  *
  * `withStoredPrices: true` puts the CURRENT season rate on each row, which is
  * every booking where no rate has moved since it was made (#2744). Those guests
@@ -364,65 +364,24 @@ function backfilledNights(
 }
 
 /**
- * The SECOND stated correction, and the only thing #2771 may move: what the
- * guest's own stored per-night average makes each night this edit GIVES BACK
- * worth, less what today's season rate made it worth.
+ * What #2771 may move in this matrix: NOTHING, and that is the assertion rather
+ * than a bucket to absorb it.
  *
- * Derived from the guest as the caller built them — their held nights, their
- * stored total, the prices on their rows — plus the legacy entry's own window
- * dates, so it states the claim rather than re-running the implementation's
- * arithmetic and agreeing with it by construction. The claim, in one sentence:
- * the pre-edit window covers the nights the guest still holds from the edit
- * window on, and the ones their proposed stay no longer covers are credited from
- * their own total instead of from today's price list.
+ * The rule reaches a night with no recoverable sold price, and it values that
+ * night at the guest's own stored total distributed in the SHAPE of today's
+ * rates. Every guest this matrix builds paid exactly today's rates
+ * (`guestFromNights` sets `priceCents = priceNights(sorted)`), so that
+ * distribution returns each night's own rate to the cent — which is what an
+ * ordinary contiguous booking is, and why all four row variants still agree with
+ * the pre-#2736 arithmetic on the money as well as on the night sets.
  *
- * Zero for a guest whose every held night carries a stored price — the two
- * priced variants — because there is nothing unrecoverable to re-value. Zero
- * again for a guest whose stay was uniformly priced, because the average IS the
- * rate then. What is left is the guest with no recoverable price on a stay that
- * spans the 22/23 rate change, which is the population #2771 is for.
- *
- * The ceiling is deliberately not modelled: for a guest with NO recoverable
- * price it can no longer bind at all, because the nights they give back take a
- * subset of the even split of their own total and the nights they keep carry the
- * same amount on both sides of the difference, so the old window can never
- * exceed `max(priceCents, 0) + newFuture`. If a future change made it bind here,
- * these expectations would fail rather than absorb it.
+ * A first implementation of #2771 split the total FLAT instead, which flattened
+ * every stay that spans the 22/23 boundary and moved 25 cases in each of the two
+ * unpriced variants — an ordinary booking's credit, changed, in the direction
+ * that keeps the club's money. That is a regression this matrix exists to catch,
+ * so it is caught here rather than modelled: there is no shift term below, and
+ * if one were ever needed again these expectations would fail loudly.
  */
-function unrecoverableCreditShift(
-  guest: TestGuest,
-  entry: { stayEnd: Date; futureStart: Date },
-  editableFrom: string,
-): number {
-  const held = [...(guest.nights?.map((night) => key(night.stayDate)) ?? [])]
-    .sort()
-    .filter((night, index, all) => all.indexOf(night) === index);
-  const heldNights =
-    held.length > 0
-      ? held
-      : eachDateOnlyInRange(guest.stayStart, guest.stayEnd).map(key);
-  const stored = new Map(
-    (guest.nights ?? [])
-      .filter((night) => typeof night.priceCents === "number")
-      .map((night) => [key(night.stayDate), night.priceCents as number]),
-  );
-  const average = evenSplit(
-    Math.max(guest.priceCents, 0),
-    heldNights.length,
-  );
-  // The window this edit reprices, and the part of it the guest does not keep.
-  const from = key(guest.stayStart) > editableFrom ? key(guest.stayStart) : editableFrom;
-  const givenBack = heldNights.filter(
-    (night) => night >= from && night >= key(entry.stayEnd),
-  );
-  return givenBack.reduce(
-    (sum, night) =>
-      stored.has(night)
-        ? sum
-        : sum + average[heldNights.indexOf(night)] - rateFor(night),
-    0,
-  );
-}
 
 describe("#2736/#2743 contiguous stays", () => {
   // Ordinary stays, one per row: the nights the guest holds, then every edit
@@ -459,11 +418,8 @@ describe("#2736/#2743 contiguous stays", () => {
   ];
 
   // What the guest's stored `BookingGuestNight` rows look like. All four must
-  // agree with the pre-#2736 arithmetic on every night set, every window and
-  // every capacity range, and the two PRICED ones must agree with it on the money
-  // too. The two unpriced ones differ by exactly one stated correction — #2771's
-  // valuation of a night given back, `unrecoverableCreditShift` — and by nothing
-  // else:
+  // agree with the pre-#2736 arithmetic — every night set, every window, every
+  // capacity range and every cent, #2771 included:
   //
   //  - `rows+prices` is the ordinary live booking whose rates have not moved
   //    since it was made, so #2744's locked prices ARE the current rates and
@@ -485,9 +441,10 @@ describe("#2736/#2743 contiguous stays", () => {
   //    happening; this row is what proves the degradation stays safe if it did.
   //  - `envelope` is a guest with no rows at all: pre-`BookingGuestNight`, or a
   //    booking created by approving a request, which still writes none (#2739).
-  //    It and `rows` are the population #2771 reaches, and they must move
-  //    IDENTICALLY: whether the rows exist is invisible to a rule that reads the
-  //    guest's stored total.
+  //    It and `rows` are the population #2771 reaches, and they must still agree
+  //    with the other two to the cent: whether the rows exist is invisible both
+  //    to the night-set rules and to a valuation that reads the guest's own total
+  //    and shapes it by today's rates, which for these guests IS what they paid.
   const ROW_VARIANTS = [
     { label: "rows+prices", withNightRows: true, withStoredPrices: true, driftCents: 0 },
     { label: "drifted", withNightRows: true, withStoredPrices: true, driftCents: 101 },
@@ -498,8 +455,6 @@ describe("#2736/#2743 contiguous stays", () => {
   const cases: Array<{
     name: string;
     variant: string;
-    editableFrom: string;
-    guests: () => TestGuest[];
     input: () => BuildInProgressGuestRangePlanInput;
   }> = [];
   for (const [stayIndex, stay] of STAYS.entries()) {
@@ -507,32 +462,29 @@ describe("#2736/#2743 contiguous stays", () => {
       for (const editableFrom of EDITABLE_FROM) {
         for (const newCheckOut of NEW_CHECK_OUT) {
           for (const removed of [false, true]) {
-            // A second, always-contiguous guest so a removal does not trivially
-            // empty the booking on every row.
-            const guests = (): TestGuest[] => [
-              guestFromNights(
-                stay,
-                "g1",
-                variant.withNightRows,
-                variant.withStoredPrices,
-                variant.driftCents,
-              ),
-              guestFromNights(
-                ["2026-08-20", "2026-08-21", "2026-08-22"],
-                "g2",
-                variant.withNightRows,
-                variant.withStoredPrices,
-                variant.driftCents,
-              ),
-            ];
             cases.push({
               name: `stay#${stayIndex} ${variant.label} from=${editableFrom} to=${newCheckOut} removed=${removed}`,
               variant: variant.label,
-              editableFrom,
-              guests,
               input: () =>
                 planInput({
-                  guests: guests(),
+                  // A second, always-contiguous guest so a removal does not
+                  // trivially empty the booking on every row.
+                  guests: [
+                    guestFromNights(
+                      stay,
+                      "g1",
+                      variant.withNightRows,
+                      variant.withStoredPrices,
+                      variant.driftCents,
+                    ),
+                    guestFromNights(
+                      ["2026-08-20", "2026-08-21", "2026-08-22"],
+                      "g2",
+                      variant.withNightRows,
+                      variant.withStoredPrices,
+                      variant.driftCents,
+                    ),
+                  ],
                   editableFrom,
                   newCheckOut,
                   ...(removed ? { removeGuestIds: ["g1"] } : {}),
@@ -546,28 +498,24 @@ describe("#2736/#2743 contiguous stays", () => {
     }
   }
 
-  it(`differs from the pre-#2736 arithmetic by exactly the back-filled nights and the unrecoverable-credit shift, on all ${cases.length} ordinary edits`, () => {
+  it(`differs from the pre-#2736 arithmetic by exactly the back-filled nights, on all ${cases.length} ordinary edits`, () => {
     expect(cases.length).toBeGreaterThan(600);
     // How the 960 land. Pinned so a later change cannot quietly move cases
     // between buckets.
     //
     // The grid is four row variants (#2744) over the 240 edits below, and the
-    // four MUST land in the same buckets in the same numbers — that is the #2744
-    // half of this matrix: a guest whose rows record what they paid, a guest
-    // whose stored total has drifted from those rows, a guest whose rows arrive
-    // without a price and a guest with no rows at all all take the same NIGHT SET
-    // through the same edit, so "honours what was paid" is separated from
-    // "changes ordinary bookings". Per-variant buckets are counted and compared
-    // as well as totalled, so a change that moved only the priced variants could
-    // not hide inside a total.
+    // four MUST land identically — that is the #2744 half of this matrix: a
+    // guest whose rows record what they paid, a guest whose stored total has
+    // drifted from those rows, a guest whose rows arrive without a price and a
+    // guest with no rows at all all agree with the pre-#2736 arithmetic, so
+    // "honours what was paid" is separated from "changes ordinary bookings".
+    // Per-variant buckets are counted and compared as well as totalled, so a
+    // change that moved only the priced variants could not hide inside a total.
     //
-    // #2771 is the one thing that may differ BETWEEN the variants, and it differs
-    // in the money rather than in the buckets: a night given back by a guest with
-    // no recoverable price is credited from their own stored total, not from
-    // today's rate. It is a second stated correction on top of #2743's, derived
-    // per case by `unrecoverableCreditShift` and counted per variant at the end,
-    // where the two priced variants must be at zero — the discount-disabled path
-    // for an ordinary rowed booking is not what this change touches.
+    // #2771 is held to the same bar and passes it: an unrecoverable night is
+    // valued from the guest's own stored total in the SHAPE of today's rates, and
+    // every guest here paid today's rates, so the two unpriced variants stay cent
+    // for cent on the legacy answer with no correction term of any kind.
     //
     // Read the proportions as a property of THIS matrix, not of the club's
     // diary: three of its four stays deliberately finish before the booking
@@ -586,17 +534,6 @@ describe("#2736/#2743 contiguous stays", () => {
         variant.label,
         { identical: 0, corrected: 0, refused: 0 },
       ]),
-    );
-    // #2771 is counted SEPARATELY from the three buckets above, and deliberately
-    // so. The buckets classify what happened to the NIGHT SET (#2743's
-    // back-fill), which #2771 does not touch — so all four row variants must
-    // still land in them identically, and that assertion is left exactly as it
-    // was. This counter classifies what happened to the VALUATION of a night
-    // given back, which is precisely what #2771 changes and precisely what the
-    // four variants must NOT agree on: it is zero for the two variants whose rows
-    // carry a price, because nothing about them is unrecoverable.
-    const revaluedByVariant = new Map<string, number>(
-      ROW_VARIANTS.map((variant) => [variant.label, 0]),
     );
     const tally = (
       testCase: { variant: string },
@@ -634,29 +571,19 @@ describe("#2736/#2743 contiguous stays", () => {
         (sum, nights) => sum + priceNights(nights),
         0,
       );
-      // #2771's correction, guest by guest, on top of #2743's. It moves the
-      // CREDIT leg only, so it is added to the old-price window and taken out of
-      // everything downstream of it; the new-price window is untouched, which is
-      // the property that says an edit's newly bought nights are not re-valued.
-      const guests = testCase.guests();
-      const revaluation = before.existing.map((entry, index) =>
-        unrecoverableCreditShift(guests[index], entry, testCase.editableFrom),
-      );
-      const revaluationTotalCents = revaluation.reduce((sum, c) => sum + c, 0);
       const expectedExisting = before.existing.map((entry, index) => {
         const withheld = new Set(backfill[index]);
         const withheldCents = priceNights(backfill[index]);
-        const revaluedCents = revaluation[index];
         const nights = entry.nights.filter((night) => !withheld.has(night));
         return {
           id: entry.id,
           stayStart: key(entry.stayStart),
           stayEnd: key(entry.stayEnd),
           futureStart: key(entry.futureStart),
-          priceCents: entry.priceCents - withheldCents - revaluedCents,
-          oldFuturePriceCents: entry.oldFuturePriceCents + revaluedCents,
+          priceCents: entry.priceCents - withheldCents,
+          oldFuturePriceCents: entry.oldFuturePriceCents,
           newFuturePriceCents: entry.newFuturePriceCents - withheldCents,
-          futureDeltaCents: entry.futureDeltaCents - withheldCents - revaluedCents,
+          futureDeltaCents: entry.futureDeltaCents - withheldCents,
           removedFromFuture: entry.removedFromFuture,
           nights,
           futureNights: nights.filter((night) => night >= key(entry.futureStart)),
@@ -688,28 +615,17 @@ describe("#2736/#2743 contiguous stays", () => {
       if (!current.ok) continue;
       const plan = current.value;
 
-      // Counted here, and not before the refusal above: a refused edit compares
-      // no money, so a valuation that would have moved on it moved nothing.
-      if (revaluationTotalCents !== 0) {
-        revaluedByVariant.set(
-          testCase.variant,
-          (revaluedByVariant.get(testCase.variant) ?? 0) + 1,
-        );
-      }
-
       expect(plan.newTotalPriceCents, testCase.name).toBe(
-        before.newTotalPriceCents - withheldTotalCents - revaluationTotalCents,
+        before.newTotalPriceCents - withheldTotalCents,
       );
       expect(plan.newFinalPriceCents, testCase.name).toBe(
-        before.newFinalPriceCents - withheldTotalCents - revaluationTotalCents,
+        before.newFinalPriceCents - withheldTotalCents,
       );
       expect(plan.priceDiffCents, testCase.name).toBe(
-        before.priceDiffCents - withheldTotalCents - revaluationTotalCents,
+        before.priceDiffCents - withheldTotalCents,
       );
       expect(plan.futureExistingDeltaCents, testCase.name).toBe(
-        before.futureExistingDeltaCents -
-          withheldTotalCents -
-          revaluationTotalCents,
+        before.futureExistingDeltaCents - withheldTotalCents,
       );
       expect(plan.futureActiveGuestCount, testCase.name).toBe(expectedActiveCount);
 
@@ -765,12 +681,11 @@ describe("#2736/#2743 contiguous stays", () => {
         corrected += 1;
         tally(testCase, "corrected");
         // The direction is the whole point: an edit can only ever cost the
-        // member LESS than it did, never more. Stated with #2771's shift taken
-        // out, because that is a separate correction running in either direction
-        // — it is the NIGHTS #2743 stops selling whose direction is claimed here.
+        // member LESS than it did, never more. Stated with nothing taken out of
+        // it: #2771 moves no case in this matrix, so there is nothing to take.
         expect(withheldTotalCents, testCase.name).toBeGreaterThan(0);
         expect(plan.priceDiffCents, testCase.name).toBeLessThan(
-          before.priceDiffCents - revaluationTotalCents,
+          before.priceDiffCents,
         );
       }
 
@@ -807,6 +722,24 @@ describe("#2736/#2743 contiguous stays", () => {
           ).toBe(entry.priceCents);
         }
       }
+
+      // And by VALUE, not only by shape. Length, integer-ness and a sum are
+      // blind to a change that rewrites what each night is recorded as having
+      // cost — a flattened valuation writes three 6000s where the club charged
+      // 5000, 5000 and 9000, and every assertion above still passes. On the
+      // variant whose rows account for their total, every persisted amount must
+      // be that night's own rate, on the existing guests and the added one
+      // alike.
+      if (testCase.variant === "rows+prices") {
+        for (const entry of [
+          ...plan.proposedExistingGuests,
+          ...plan.proposedAddedGuests,
+        ]) {
+          expect(entry.perNightCents, testCase.name).toEqual(
+            entry.nights.map((night) => rateFor(key(night))),
+          );
+        }
+      }
     }
 
     // #2744: every row variant lands in exactly the same buckets, in exactly the
@@ -840,30 +773,6 @@ describe("#2736/#2743 contiguous stays", () => {
     });
     expect(identical + corrected + refused).toBe(cases.length);
 
-    // #2771, and the whole of its blast radius on ordinary edits. The rule can
-    // only reach a night with NO recoverable sold price, so:
-    //
-    //  - The two variants whose rows carry a price are at zero. Nothing about
-    //    them is unrecoverable, the discount-disabled path they share with every
-    //    other ordinary booking is untouched, and any movement here would be a
-    //    regression rather than this change.
-    //  - The two unpriced variants are equal to each other and non-zero — they
-    //    differ only in whether the rows exist at all, which is invisible to a
-    //    rule that reads the total.
-    //
-    // 25 of the 179 edits that reach a comparison, and every one of them is a
-    // stay that spans the 22/23 rate change: stay#1 (20-23, paid 24000, average
-    // 6000 against nightly 5000/5000/5000/9000) contributes 18, and stay#2
-    // (22-24, paid 23000, average 7667/7667/7666 against 5000/9000/9000)
-    // contributes 7. The other two stays sit inside one season, where the average
-    // IS the rate and nothing moves — which is also why the second guest, who
-    // holds three low-season nights on every case, never contributes.
-    for (const variant of ROW_VARIANTS) {
-      expect(
-        revaluedByVariant.get(variant.label),
-        `${variant.label} revalued`,
-      ).toBe(variant.withStoredPrices ? 0 : 25);
-    }
   });
 
   it("agrees on an added guest too, whose window this plan still owns", () => {
@@ -970,21 +879,22 @@ describe("#2736 a sparse stay", () => {
     const entry = plan.proposedExistingGuests[0];
 
     expect(entry.nights.map(key)).toEqual(["2026-08-20", "2026-08-22"]);
-    // ONE night is given up — the 24th — and this fixture's rows carry no price,
-    // so since #2771 it is credited at this guest's own per-night average rather
-    // than at today's rate for it. Three nights bought for 19000, so the split is
-    // 6334/6333/6333 and the 24th is the last of them. The night SET claim this
-    // case exists for is the one below it: the 21st and 23rd were never theirs
-    // and are not refunded, whichever rule values the night that was.
-    const average = evenSplit(priceNights(nights), nights.length);
-    expect(entry.futureDeltaCents).toBe(-average[2]);
-    expect(entry.priceCents).toBe(priceNights(nights) - average[2]);
+    // ONE night is given up — the 24th — and it is credited at its own rate.
+    // This fixture's rows carry no price, so #2771 values it from the guest's
+    // stored total: they paid exactly today's rates for the three nights they
+    // hold, so their total in the ratio of those rates gives each night back its
+    // own rate, and the 24th is credited the full HIGH rather than an average.
+    expect(entry.futureDeltaCents).toBe(-priceNights(["2026-08-24"]));
+    expect(entry.priceCents).toBe(priceNights(["2026-08-20", "2026-08-22"]));
     // The envelope answer dropped [23, 25) — the 23rd was never theirs.
     expect(entry.priceCents).not.toBe(
       priceNights(nights) - priceNights(["2026-08-23", "2026-08-24"]),
     );
-    // Nor did it drop a second night's worth by any other route.
-    expect(entry.futureDeltaCents).toBeGreaterThan(-2 * LOW);
+    // And it is not a flat average of the stay either, which would credit 6333
+    // for a night the club charged 9000 for and keep the difference.
+    expect(entry.futureDeltaCents).not.toBe(
+      -evenSplit(priceNights(nights), nights.length)[2],
+    );
   });
 
   it("does not claim a bed on the gap night", () => {
@@ -1088,11 +998,15 @@ describe("#2736 a sparse stay", () => {
     expect(entry.priceCents).not.toBe(2 * LOW);
     expect(entry.priceCents).not.toBe(HIGH);
     // This fixture's rows carry no price, so what the 24th is CREDITED at is
-    // #2771's rule rather than the season table: 14000 paid over two nights,
-    // split 7000/7000.
-    const average = evenSplit(priceNights(nights), nights.length);
-    expect(entry.futureDeltaCents).toBe(-average[1]);
-    expect(entry.priceCents).toBe(priceNights(nights) - average[1]);
+    // #2771's rule rather than a fresh season lookup — and the rule reproduces
+    // the rate exactly, because this guest paid 14000 for a LOW night and a HIGH
+    // one and 14000 in that ratio is 5000 and 9000. A flat average would credit
+    // 7000 for the dearer night and keep 2000 of the member's money.
+    expect(entry.futureDeltaCents).toBe(-HIGH);
+    expect(entry.priceCents).toBe(LOW);
+    expect(entry.futureDeltaCents).not.toBe(
+      -evenSplit(priceNights(nights), nights.length)[1],
+    );
 
     // The same edit on a guest whose rows DO record what each night cost, which
     // is the ordinary live booking: the dearer night is given back at the dearer
@@ -1712,7 +1626,7 @@ describe("#2743 a guest whose stay already ended", () => {
 
 // ---------------------------------------------------------------------------
 // 5. #2744 — a night is worth what it was SOLD for, and the rows say so;
-//    #2771 — and where they do not, it is worth what the MEMBER paid on average.
+//    #2771 — and where they do not, it is worth what the MEMBER paid for it.
 //
 // The plan used to pass no `lockedNightPrices`, so every night it touched was
 // valued at today's season rate: a night given back was credited at whatever it
@@ -1724,13 +1638,17 @@ describe("#2743 a guest whose stay already ended", () => {
 // between the two windows instead of being re-rated.
 //
 // #2771 finishes the credit leg for the guest the rows cannot reach. Where no
-// sold price is recoverable, a night given back is credited at that guest's own
-// stored per-night average — `Math.max(priceCents, 0)` split evenly across the
-// nights they hold — rather than at today's rate, which knew nothing about their
-// booking and was wrong in both rate directions. Owner's decision of 10 Aug 2026
-// on #2771: D1 the average, D2 forward only. It reaches the CREDIT and nothing
-// else: a night the edit buys still costs today's rate, and nothing already
-// charged, refunded or invoiced is recomputed.
+// sold price is recoverable, a night given back is credited from that guest's own
+// stored total — `Math.max(priceCents, 0)`, less whatever their rows already
+// account for, shared between their unpriced nights in the ratio of today's rates
+// — rather than at today's rate itself, which knew nothing about their booking
+// and was wrong in both rate directions. Owner's decision of 10 Aug 2026 on
+// #2771: D1 the guest's own total as the evidence, D2 forward only; the PR that
+// implemented it measured the flat split D1's wording named and replaced it with
+// the ratio, which is exact wherever the rate table has been scaled or has not
+// moved. It reaches the CREDIT and nothing else: a night the edit buys still
+// costs today's rate, and nothing already charged, refunded or invoiced is
+// recomputed.
 // ---------------------------------------------------------------------------
 
 /** A guest whose rows record what each night was actually sold for. */
@@ -1906,8 +1824,8 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // helper, so a row carrying a date-only STRING still lines up with the night
     // it belongs to. If the two key derivations ever drifted apart nothing would
     // throw — the price would simply never match, and every night would quietly
-    // fall into the unrecoverable branch and be credited at the guest's average
-    // instead of at what the row says they paid for that night (#2771).
+    // fall into the unrecoverable branch and be credited from the guest's total
+    // instead of from what the row says they paid for that night (#2771).
     const stringDated: TestGuest = {
       ...guestFromNights(["2026-08-23", "2026-08-24"], "g1"),
       nights: [
@@ -1934,29 +1852,30 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.perNightCents).toEqual([LOW]);
   });
 
-  it("credits an unrecoverable night at the guest's own average, not at today's rate (#2771)", () => {
+  it("credits an unrecoverable night from the guest's own total after a rate RISE, not at today's rate (#2771)", () => {
     // A booking that predates `BookingGuestNight`, or one converted from a
     // request: no rows, so nothing records what each night cost. Their total
     // does, and since #2771 that is what values a night given back — the owner's
     // decision of 10 Aug 2026, D1.
     //
-    // The rate has RISEN here: two nights bought for 2 x LOW, and the second of
-    // them is now HIGH. Today's rate credited the whole HIGH for it and left a
-    // member who had slept one night owing 1000 for it — the club handing back
-    // 9000 against 10000 taken, for one of two nights. Their own average is
-    // 5000, so they keep the 22nd at what they paid for it.
+    // The club's rate has RISEN since this booking was made: two nights inside
+    // ONE season, bought for 2 x LOW on a table that now says HIGH for them.
+    // Today's rate credited the whole HIGH for the night given back — 9000
+    // handed back against 5000 taken for it — and the ceiling did not even bind,
+    // because 9000 is still under the 10000 they are carrying. Their own total,
+    // in the ratio of two equal rates, says 5000, which is what they paid.
     const legacyGuest: TestGuest = {
-      ...guestFromNights(["2026-08-22", "2026-08-23"], "g1", false),
+      ...guestFromNights(["2026-08-23", "2026-08-24"], "g1", false),
       priceCents: 2 * LOW,
     };
     const plan = buildInProgressGuestRangePlan(
       planInput({
         guests: [
           legacyGuest,
-          guestFromNights(["2026-08-22", "2026-08-23"], "g2"),
+          guestFromNights(["2026-08-23", "2026-08-24"], "g2"),
         ],
-        editableFrom: "2026-08-23",
-        newCheckOut: "2026-08-24",
+        editableFrom: "2026-08-24",
+        newCheckOut: "2026-08-25",
         removeGuestIds: ["g1"],
       }),
     );
@@ -1965,8 +1884,8 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.oldFuturePriceCents).toBe(LOW);
     expect(entry.oldFuturePriceCents).not.toBe(HIGH);
     expect(entry.priceCents).toBe(2 * LOW - LOW);
-    // One night kept, and the even split still lands the whole total on it.
-    expect(entry.nights.map(key)).toEqual(["2026-08-22"]);
+    // One night kept, and the split still lands the whole remaining total on it.
+    expect(entry.nights.map(key)).toEqual(["2026-08-23"]);
     expect(entry.perNightCents).toEqual([LOW]);
   });
 
@@ -1976,7 +1895,7 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // 2 x HIGH on a table that now says LOW for them. Today's rate credited the
     // LOW — the member handed a night back and was refunded less than half of
     // what they had paid for it, with nothing in the code to notice. Their own
-    // average is HIGH, so they get HIGH back.
+    // total says HIGH, so they get HIGH back.
     const boughtDear: TestGuest = {
       ...guestFromNights(["2026-08-20", "2026-08-21"], "g1", false),
       priceCents: 2 * HIGH,
@@ -2093,17 +2012,18 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     // Acceptance criterion 1 in the case the locked prices CANNOT reach: a guest
     // with no `BookingGuestNight` rows at all — a booking that predates them, or
     // one created by approving a booking request, which still writes none
-    // (#2739). Three nights bought for 3 x LOW; the last two are now HIGH, and
-    // they are taken off both.
+    // (#2739). Three nights inside ONE season, bought for 3 x LOW on a table
+    // that now says HIGH for every one of them, and the last two are taken off.
     //
     // Before #2744 the credit was 2 x HIGH = 18000 against a stored 15000,
     // leaving the guest at -3000 with negative rows for the next edit to read as
     // a sold price. #2744 clamped it at the 15000 they were carrying, which
-    // zeroed a member who had slept the 22nd. #2771 values the two nights from
-    // their own total instead: 5000 each, so 10000 back and the night they slept
-    // still costs them what they paid for it. The ceiling is not what stops the
-    // over-credit here any more — the valuation cannot reach it.
-    const nights = ["2026-08-22", "2026-08-23", "2026-08-24"];
+    // zeroed a member who had slept the 23rd. #2771 values the two nights from
+    // their own total instead: three equal rates share it three equal ways, so
+    // 5000 each, 10000 back and the night they slept still costs them what they
+    // paid for it. The ceiling is not what stops the over-credit here any more —
+    // the valuation cannot reach it.
+    const nights = ["2026-08-23", "2026-08-24", "2026-08-25"];
     const noPerNightRecord: TestGuest = {
       ...guestFromNights(nights, "g1", false),
       priceCents: 3 * LOW,
@@ -2111,11 +2031,11 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     const plan = buildInProgressGuestRangePlan(
       planInput({
         guests: [noPerNightRecord, guestFromNights(nights, "g2")],
-        editableFrom: "2026-08-23",
-        newCheckOut: "2026-08-25",
+        editableFrom: "2026-08-24",
+        newCheckOut: "2026-08-26",
         removeGuestIds: ["g1"],
-        checkIn: "2026-08-22",
-        checkOut: "2026-08-25",
+        checkIn: "2026-08-23",
+        checkOut: "2026-08-26",
       }),
     );
     const entry = plan.proposedExistingGuests[0];
@@ -2135,47 +2055,195 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
   });
 
-  it("still clamps a guest whose stored ROWS say more than their stored total does", () => {
-    // What `refundCeilingCents` is left holding after #2771, and the reason it
-    // is not retired with it. The estimate is bounded by the guest's own total by
-    // construction, but a stored ROW is not: a total driven down by a promo or an
-    // adjustment that never touched the rows, or — as here — a guest whose rows
-    // price one night and say nothing about the other two, where the row plus the
-    // average of the remainder sums past what was actually taken.
+  it("values a MIXED guest's unrecoverable nights from what their rows leave over, not from their whole total (#2771)", () => {
+    // The shape the first draft of #2771 got wrong, and the reason the estimate
+    // spreads the RESIDUAL rather than the whole stored total. This guest's rows
+    // price two of their four nights; the other two carry a NEGATIVE price, which
+    // is refused as a sold price (see the negative-row case below) and so has
+    // nothing to recover.
     //
-    // 9000 taken; one row claims all of it for the 23rd, and the 24th and 25th
-    // have nothing to recover, so they are estimated at 3000 each. Raw, that
-    // credits 15000 for a guest carrying 9000. The ceiling stops it at 9000 and
-    // they land on nothing owing rather than 6000 in hand.
+    // 26000 taken. The rows already account for 24000 of it, so what is left to
+    // spread over the two unpriced nights is 2000 — 1000 each, both being LOW
+    // nights. Spreading the WHOLE 26000 instead put 6500 on each of them and
+    // credited 13000 for two nights this member's own books value below zero,
+    // while they kept two nights those books value at 24000: 37000 accounted for
+    // against 26000 taken, and 3000 more than the pre-#2771 answer.
+    //
+    // `refundCeilingCents` cannot catch that, and this case is built so it cannot
+    // hide behind the clamp: the guest KEEPS two nights, so the ceiling is
+    // 26000 + whatever those cost, and a credit of 13000 never comes near it.
     const mixed: TestGuest = {
-      ...guestFromNights(["2026-08-23", "2026-08-24", "2026-08-25"], "g1"),
+      ...guestFromNights(
+        ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"],
+        "g1",
+      ),
       nights: [
-        { stayDate: D("2026-08-23"), priceCents: 9000 },
-        { stayDate: D("2026-08-24") },
-        { stayDate: D("2026-08-25") },
+        { stayDate: D("2026-08-19"), priceCents: 12_000 },
+        { stayDate: D("2026-08-20"), priceCents: 12_000 },
+        { stayDate: D("2026-08-21"), priceCents: -500 },
+        { stayDate: D("2026-08-22"), priceCents: -500 },
       ],
-      priceCents: 9000,
+      priceCents: 26_000,
     };
     const plan = buildInProgressGuestRangePlan(
       planInput({
         guests: [
           mixed,
-          guestFromNights(["2026-08-23", "2026-08-24", "2026-08-25"], "g2"),
+          guestFromNights(
+            ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"],
+            "g2",
+          ),
         ],
-        // Opens before their stay, so all three nights are given back.
-        editableFrom: "2026-08-22",
-        newCheckOut: "2026-08-26",
-        removeGuestIds: ["g1"],
-        checkIn: "2026-08-22",
-        checkOut: "2026-08-26",
+        editableFrom: "2026-08-21",
+        newCheckOut: "2026-08-21",
+        checkIn: "2026-08-19",
+        checkOut: "2026-08-23",
       }),
     );
     const entry = plan.proposedExistingGuests[0];
 
-    expect(entry.oldFuturePriceCents).toBe(9000);
-    expect(entry.oldFuturePriceCents).not.toBe(9000 + 2 * 3000);
+    expect(entry.nights.map(key)).toEqual(["2026-08-19", "2026-08-20"]);
+    expect(entry.oldFuturePriceCents).toBe(2_000);
+    // Not their whole total spread four ways, which is the over-credit.
+    expect(entry.oldFuturePriceCents).not.toBe(13_000);
+    // Nor today's rate for the two nights, which is what this leg used to pay.
+    expect(entry.oldFuturePriceCents).not.toBe(2 * LOW);
+    expect(entry.priceCents).toBe(24_000);
+    // Everything the guest is still credited with, plus everything they gave
+    // back, adds up to what the booking says they paid — which is the property
+    // the whole-total split broke and the ceiling could not restore.
+    expect(entry.priceCents + entry.oldFuturePriceCents).toBe(mixed.priceCents);
+  });
+
+  it("keeps the estimate out of the window that PRICES nights, not only out of the rows (#2771)", () => {
+    // The estimate values what an edit takes AWAY, and it must never reach the
+    // post-edit pass, which is what prices everything the edit sells and
+    // everything the guest keeps. A night there costs today's rate; locking it
+    // to a number derived from an old total would quote a price nobody
+    // published, and would make the officer's "removed from future nights" line
+    // and their "new future nights" line both describe a private arithmetic.
+    //
+    // A mixed guest shows both at once. Rows price the 21st and 22nd at LOW; the
+    // 23rd and 24th have nothing to recover, and 20000 taken less the 10000 the
+    // rows already claim leaves 5000 apiece for them — deliberately HALF today's
+    // HIGH, so the two numbers cannot be confused. The edit only EXTENDS, to the
+    // 25th, so nothing is given back and the estimate must not show up anywhere
+    // in the answer.
+    const mixed: TestGuest = {
+      ...guestFromNights(
+        ["2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24"],
+        "g1",
+      ),
+      nights: [
+        { stayDate: D("2026-08-21"), priceCents: LOW },
+        { stayDate: D("2026-08-22"), priceCents: LOW },
+        { stayDate: D("2026-08-23") },
+        { stayDate: D("2026-08-24") },
+      ],
+      priceCents: 20_000,
+    };
+    const plan = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [mixed],
+        editableFrom: "2026-08-23",
+        newCheckOut: "2026-08-26",
+        checkIn: "2026-08-21",
+        checkOut: "2026-08-25",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+
+    // Both legs are today's rate for the two nights kept, plus today's rate for
+    // the one bought. The estimate's 5000 appears in neither.
+    expect(entry.oldFuturePriceCents).toBe(2 * HIGH);
+    expect(entry.newFuturePriceCents).toBe(3 * HIGH);
+    expect(entry.oldFuturePriceCents).not.toBe(2 * 5_000);
+    expect(entry.newFuturePriceCents).not.toBe(2 * 5_000 + HIGH);
+    // And the extension charges exactly the one night it adds (INV-MOD-005).
+    expect(entry.futureDeltaCents).toBe(HIGH);
+    expect(entry.priceCents).toBe(20_000 + HIGH);
+  });
+
+  it("still clamps a guest whose stored ROWS say more than their stored total does", () => {
+    // What `refundCeilingCents` is left holding after #2771, and the reason it
+    // is not retired with it. The estimate is bounded by the guest's own total by
+    // construction — it can only ever spread what the rows have not already
+    // claimed — but a stored ROW is not bounded by anything: a total driven down
+    // by a promo or an adjustment that never touched the rows leaves rows saying
+    // more than was ever taken.
+    //
+    // 9000 taken; the rows claim 9000 for EACH of the two nights. Raw, that
+    // credits 18000 for a guest carrying 9000. The ceiling stops it at 9000 and
+    // they land on nothing owing rather than 9000 in hand.
+    const rowsOutrunTotal: TestGuest = {
+      ...guestWhoPaid({ "2026-08-23": HIGH, "2026-08-24": HIGH }, "g1"),
+      priceCents: HIGH,
+    };
+    const plan = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [
+          rowsOutrunTotal,
+          guestFromNights(["2026-08-23", "2026-08-24"], "g2"),
+        ],
+        // Opens before their stay, so both nights are given back.
+        editableFrom: "2026-08-22",
+        newCheckOut: "2026-08-25",
+        removeGuestIds: ["g1"],
+        checkIn: "2026-08-22",
+        checkOut: "2026-08-25",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+
+    expect(entry.oldFuturePriceCents).toBe(HIGH);
+    expect(entry.oldFuturePriceCents).not.toBe(2 * HIGH);
     expect(entry.priceCents).toBe(0);
     expect(entry.priceCents).toBeGreaterThanOrEqual(0);
+  });
+
+  it("credits a season-spanning unrecoverable stay night by night, and says what it then WRITES BACK (#2771)", () => {
+    // Two claims in one edit, because they are one number apart.
+    //
+    // The CREDIT: a row-less guest who paid today's rates for a stay that spans
+    // the 22/23 boundary gives back the dearest night and is credited that
+    // night's own rate. A flat average of their total would credit 7667 for a
+    // night the club charged 9000 for and keep the difference — which is what
+    // the 960-case matrix caught, 25 cases deep in each unpriced variant.
+    const nights = ["2026-08-22", "2026-08-23", "2026-08-24"];
+    const spanning: TestGuest = {
+      ...guestFromNights(nights, "g1", false),
+      priceCents: priceNights(nights),
+    };
+    const plan = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [spanning, guestFromNights(nights, "g2")],
+        editableFrom: "2026-08-24",
+        newCheckOut: "2026-08-24",
+        removeGuestIds: ["g1"],
+        checkIn: "2026-08-22",
+        checkOut: "2026-08-25",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+
+    expect(entry.oldFuturePriceCents).toBe(HIGH);
+    expect(entry.oldFuturePriceCents).not.toBe(
+      evenSplit(priceNights(nights), nights.length)[2],
+    );
+    expect(entry.priceCents).toBe(LOW + HIGH);
+
+    // The WRITE-BACK, stated rather than left to be discovered. The estimate is
+    // never stored as a night's price, but it moves the guest's TOTAL, and a
+    // guest whose stored rows cannot account for their total has their rows
+    // written as the EVEN split of it (`composeProposedNightPrices`, unchanged
+    // since #2744). So this guest keeps a LOW night and a HIGH one and both are
+    // recorded at 7000. That flattening is pre-existing and is #2745's to fix;
+    // it is pinned here so a change to what gets persisted cannot pass unseen,
+    // and because the number it flattens is now the right one.
+    expect(entry.nights.map(key)).toEqual(["2026-08-22", "2026-08-23"]);
+    expect(entry.perNightCents).toEqual([7_000, 7_000]);
+    expect(entry.perNightCents).not.toEqual([LOW, HIGH]);
+    expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
   });
 
   it("keeps the clamp off every guest whose nights cost no more than they paid", () => {
@@ -2268,8 +2336,8 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     //
     // A negative row is treated as no recoverable price at all, which drops the
     // night into #2771's unrecoverable branch — and for a guest whose total the
-    // same bug drove below zero, `Math.max(priceCents, 0)` makes that branch zero
-    // too, so the night is worth nothing to credit and nothing to charge. The
+    // same bug drove below zero, `Math.max(priceCents, 0)` leaves nothing there to
+    // spread, so the night is worth nothing to credit and nothing to charge. The
     // damaged total is left exactly as it was found: what to do about it is an
     // owner decision with its own audit (#2745), not this edit's to make.
     const damaged: TestGuest = {
@@ -2440,7 +2508,8 @@ type PartyGuest = BuildInProgressGuestRangePlanInput["booking"]["guests"][number
  * is what stops a party-aware discount re-rating it — and a night they GIVE BACK
  * is credited from their own stored total instead (#2771). `paidRateCents` is
  * what that total says they paid a night, which is why it is separate from the
- * rate table.
+ * rate table; where every night of a stay carries the same rate today, the two
+ * rules meet on exactly that number.
  */
 function partyGuest(args: {
   id: string;

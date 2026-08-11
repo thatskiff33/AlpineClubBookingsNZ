@@ -10,10 +10,10 @@ import { toSeasonRateData } from "@/lib/policies/booking-route-decisions";
  *
  * `buildInProgressGuestRangePlan` credits a night given back at the price
  * recorded on its `BookingGuestNight` row, and falls back to the guest's own
- * stored per-night average for a night whose price it cannot see (#2771; a night
- * the edit BUYS still prices at the current season rate, INV-MOD-005). It cannot
- * tell "this night has no stored price" from "this query did not ask for it":
- * both arrive as a row with no `priceCents`, and both take the fallback.
+ * stored total for a night whose price it cannot see (#2771; a night the edit
+ * BUYS still prices at the current season rate, INV-MOD-005). It cannot tell
+ * "this night has no stored price" from "this query did not ask for it": both
+ * arrive as a row with no `priceCents`, and both take the fallback.
  *
  * So the whole money fix rests on two Prisma selects saying
  * `nights: { select: { stayDate: true, priceCents: true } }`, and the failure
@@ -22,9 +22,10 @@ import { toSeasonRateData } from "@/lib/policies/booking-route-decisions";
  * caller holding a bare `Date` still compiles — and no unit test notices,
  * because the plan-level suites build guests by hand and
  * `calculate-modified-pricing-capacity.test.ts` mocks the database. The only
- * symptom is a member being refunded a flat average of their own booking for
- * every night, whatever each one actually cost — which reconciles, sums and
- * looks entirely healthy.
+ * symptom is a member being refunded a share of their own booking total instead
+ * of the price on the row nobody asked for — which reconciles, sums and looks
+ * entirely healthy, and silently discards the discount, promo or hand-set price
+ * that row was carrying.
  *
  * Roughly twenty other sites in the tree load `nights: { select: { stayDate:
  * true } }`, because they only need to know which nights a guest holds. A new

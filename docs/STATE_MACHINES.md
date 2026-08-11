@@ -841,11 +841,14 @@ ahead of the last night anybody holds; that is accepted rather than guarded.
 A night the edit gives back is credited at the price the member paid rather than
 at today's season rate, and the per-night rows written back are each night's real
 rate rather than the guest's average (#2744, `INV-MOD-025`); where no stored
-price is recoverable at all, the night is credited at that guest's own stored
-per-night average instead of at today's rate (#2771), which cannot hand back more
-than they paid however the rates have moved. The cap that used to hold that
-fallback is still there for a credit built from a stored row that outruns the
-guest's stored total.
+price is recoverable at all, the night is credited from that guest's own stored
+total instead of at today's rate (#2771) — what their own rows do not already
+account for, shared between the unpriceable nights in the ratio of today's rates
+for them — which cannot hand back more than the booking says they paid however
+the rates have moved, and returns each night's real price exactly wherever the
+rate table has simply been scaled. The cap that used to hold that fallback is
+still there for a credit built from a stored row that outruns the guest's stored
+total.
 For an ordinary stay that runs to the booking's check-out, every number is
 exactly what it was before. Bookings edited before those fixes keep the rows and
 the price they were given — history is not repriced (#2745 carries the decision
