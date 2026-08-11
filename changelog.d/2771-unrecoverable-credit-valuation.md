@@ -29,6 +29,15 @@
   booking price and the money that actually changed hands, the amount refunded
   is still capped at what was received in the first place.
 
+  One edit an officer used to be refused now goes through. Because these nights
+  no longer need a price from today's rate card, unwinding a stay whose old
+  nights the current rates have nothing to say about — a season since retired, a
+  rate line since removed — no longer stops with "no rate found" and leaves the
+  member unable to get their money back. Where one night of such a stay cannot
+  be priced but the others can, only that night is estimated: it is given a full
+  share, the size of an average night on the stay, and every other night keeps
+  its own value.
+
   One limit, stated plainly: the credit is bounded by the price the booking
   records, which is the club's own record of the sale. Nothing already charged,
   refunded, invoiced or credited is recalculated, and nights an edit BUYS still
