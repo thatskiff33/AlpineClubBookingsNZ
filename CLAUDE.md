@@ -68,6 +68,14 @@ for an interactive Claude Code session:
   the findings + binding owner decisions back into the issue bodies before
   coding. The epic body lists the children in **lanes with a merge order** and
   the cross-lane watchpoints.
+- **Read every issue with `npm run issue -- <n>`**, never `gh issue view` — it
+  prints the body, every comment, and a loud warning when the body still shows
+  unticked options that a comment has already settled. **And when you record a
+  decision, rewrite that issue's body in the same sitting** (decision at the top,
+  options struck through, link to the deciding comment): the body is what people
+  read, so the body must carry the answer. Both rules are binding and both live
+  in full in
+  [`docs/agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md#recording-a-decision-the-body-must-carry-the-answer).
 - **Claim each issue** as you start it: assign the owner and post a CLAIM comment
   per [the convention](docs/agents/ISSUE_WORKFLOW.md#claiming-and-talking-between-lanes).
   Comment again when the reviewed, fixed, CI-green PR is

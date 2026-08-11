@@ -87,6 +87,81 @@ re-derives it from scratch. This has already happened once — #2336 put
 deployment topology into an issue and it had to be scrubbed after the fact,
 which on a public repo never fully undoes it.
 
+## Reading an issue: the thread, not the body
+
+Read an issue with:
+
+```bash
+npm run issue -- 2777        # the number, a #number, or the issue URL
+```
+
+It prints the title, state, labels and assignees, the **full body**, **every
+comment** in order with author and timestamp, a DECISION SUMMARY, and a one-line
+state for each issue the body references. It has **no flag that prints less** —
+that is the feature, not an oversight.
+
+Use it instead of `gh issue view <n>`, which prints the body and stops.
+Comments need `--comments` or `--json comments`, so the short, obvious, default
+command returns the **stale half** — and in this repository the decision is very
+often in a comment written after the body. An agent then reads a list of
+unticked `- [ ] **Recommended** …` options, concludes the question is open, and
+either re-asks the owner something they answered last night or builds the option
+they turned down. #2777 is the canonical case and it is not the first.
+
+The summary calls out one state loudly: **the body still offers unticked options
+and a comment records a decision.** When you see that warning, the body is the
+stale half — read the named comment before you plan anything, brief anybody, or
+put a question to the owner. Detection is pattern-matching over prose, so treat
+it as a smoke alarm rather than a verdict; the full thread is printed either way
+and you still do the reading.
+
+## Recording a decision: the body must carry the answer
+
+**Binding, and it is part of recording the decision, not a follow-up to it.**
+The moment you record an owner or orchestrator decision on an issue — however
+complete the comment you posted is — **rewrite that issue's body in the same
+sitting**: the decision at the top, the option list struck through, a link to the
+deciding comment. The body is what people read, so the body must carry the
+answer. An agent that records a decision and leaves the body presenting a
+settled question as open **has not finished the job**, in the same way that a
+follow-up left as comment prose instead of a filed issue is not filed.
+
+This applies to a decision the owner made in chat, in a popup, or in a comment;
+to an orchestrator decision taken under delegated authority; and to a decision
+that closes only one of several questions — in that case the header says which,
+and the still-open options stay unticked and unstruck.
+
+Use this shape:
+
+```markdown
+> **DECIDED 11 Aug 2026 — the four locker writers stay at `admin`.**
+> Recorded in [this comment](https://github.com/<owner>/<repo>/issues/2777#issuecomment-0000000000).
+> D2 (backfill) is moot: nothing moves. The options below are settled — kept for
+> the record, not for ticking.
+```
+
+…placed as the **first thing in the body**, above the original explainer, with
+the option list struck through and the chosen one marked:
+
+```markdown
+## Decisions
+
+### D1 — where the four locker writers file
+
+- [ ] ~~**Recommended — add a NEW canonical category** for officer-side
+  membership administration.~~
+- [x] **CHOSEN** — Leave them at `admin` and close the question.
+- [ ] ~~`lodge`. Treats a locker as part of the building.~~
+```
+
+Nothing is deleted. Struck-through options stay readable, because the next
+reader's question is usually "was this considered?" and an option quietly
+removed reads as one nobody thought of.
+
+Get the comment's permalink from the thread the reading command above printed —
+every comment is listed with its URL. Then re-run `npm run issue -- <n>` on the
+issue you just edited: if the warning has cleared, the body is true.
+
 ## Claiming, and talking between lanes
 
 `AGENTS.md` and `CLAUDE.md` both tell you to post a CLAIM comment "per repo
@@ -108,7 +183,8 @@ CLAIM: starting on this now. Branch `docs/issue-2691-invariant-ids`.
 Scope: the routing-table row plus the two new sections in this file.
 ```
 
-Before you post it, re-read the **whole issue thread**, not just the body:
+Before you post it, re-read the **whole issue thread** (`npm run issue -- <n>`,
+see "Reading an issue" above), not just the body:
 
 - An in-chat decision is not a claim. A conversation with the owner leaves no
   trace another lane can see.

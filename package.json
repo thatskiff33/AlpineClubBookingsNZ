@@ -32,6 +32,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "knip": "knip",
+    "issue": "node scripts/issue-thread.mjs",
     "pr:check": "node scripts/ci/check-pr-body.mjs",
     "test": "vitest run",
     "test:policy": "vitest run src/lib/policies/__tests__",
