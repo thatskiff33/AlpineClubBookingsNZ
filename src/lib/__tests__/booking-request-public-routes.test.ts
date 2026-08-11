@@ -30,7 +30,13 @@ vi.mock("@/lib/booking-request", async () => {
     // Pass-through default: a provided lodgeId is treated as active, an
     // omitted one resolves to null (default-lodge semantics).
     assertRequestedLodgeActive: vi.fn(async (lodgeId: unknown) => lodgeId ?? null),
+    // Pass-through default: a provided otherLodgeId is treated as existing, an
+    // omitted/blank one resolves to null ("No").
+    assertRequestedOtherLodgeExists: vi.fn(
+      async (otherLodgeId: unknown) => otherLodgeId ?? null,
+    ),
     getPublicBookingRequestLodges: vi.fn(async () => []),
+    getPublicOtherLodges: vi.fn(async () => []),
     resolvePublicRequestLodgeName: vi.fn(async () => null),
   };
 });
@@ -83,7 +89,9 @@ import {
   verifyBookingRequest,
   getBookingRequestSettings,
   getPublicBookingRequestLodges,
+  getPublicOtherLodges,
   assertRequestedLodgeActive,
+  assertRequestedOtherLodgeExists,
   resolvePublicRequestLodgeName,
   calculateIndicativeNonMemberPriceCents,
   BookingRequestError,
@@ -107,7 +115,9 @@ const mockedCreateBookingRequest = vi.mocked(createBookingRequest);
 const mockedVerifyBookingRequest = vi.mocked(verifyBookingRequest);
 const mockedGetSettings = vi.mocked(getBookingRequestSettings);
 const mockedGetPublicLodges = vi.mocked(getPublicBookingRequestLodges);
+const mockedGetPublicOtherLodges = vi.mocked(getPublicOtherLodges);
 const mockedAssertLodgeActive = vi.mocked(assertRequestedLodgeActive);
+const mockedAssertOtherLodgeExists = vi.mocked(assertRequestedOtherLodgeExists);
 const mockedResolveLodgeName = vi.mocked(resolvePublicRequestLodgeName);
 const mockedCalculateIndicative = vi.mocked(calculateIndicativeNonMemberPriceCents);
 const mockedGetPaymentLinkContext = vi.mocked(getPaymentLinkContext);
@@ -340,6 +350,51 @@ describe("POST /api/booking-requests", () => {
     expect(mockedCreateBookingRequest).not.toHaveBeenCalled();
   });
 
+  it("passes a validated otherLodgeId through to createBookingRequest (#2749)", async () => {
+    mockedCreateBookingRequest.mockResolvedValue({ id: "req-ol" } as never);
+
+    const req = jsonRequest("http://localhost/api/booking-requests", {
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      otherLodgeId: "other-1",
+      guests: [VALID_GUEST],
+    });
+
+    const res = await submitBookingRequest(req);
+
+    expect(res.status).toBe(201);
+    expect(mockedAssertOtherLodgeExists).toHaveBeenCalledWith("other-1");
+    expect(mockedCreateBookingRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ otherLodgeId: "other-1" }),
+    );
+  });
+
+  it("returns 400 for an otherLodgeId that names no lodge (#2749)", async () => {
+    mockedAssertOtherLodgeExists.mockRejectedValueOnce(
+      new BookingRequestError("Selected lodge not found", 400),
+    );
+
+    const req = jsonRequest("http://localhost/api/booking-requests", {
+      contactFirstName: "Tara",
+      contactLastName: "Tester",
+      contactEmail: "tara@example.com",
+      checkIn: "2026-08-01",
+      checkOut: "2026-08-03",
+      otherLodgeId: "no-such-other-lodge",
+      guests: [VALID_GUEST],
+    });
+
+    const res = await submitBookingRequest(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body).toEqual({ error: "Selected lodge not found" });
+    expect(mockedCreateBookingRequest).not.toHaveBeenCalled();
+  });
+
   it("maps BookingRequestError to its declared status", async () => {
     mockedCreateBookingRequest.mockRejectedValue(new BookingRequestError("nope", 422));
 
@@ -561,6 +616,7 @@ describe("GET /api/booking-requests/settings", () => {
   it("returns the public pricing visibility flag", async () => {
     mockedGetSettings.mockResolvedValue({ showPricingToNonMembers: true, quoteResponseTtlDays: 14, quoteReminderLeadDays: 3, attendeeConfirmationLeadDays: 14, attendeeConfirmationReminderDays: 3 });
     mockedGetPublicLodges.mockResolvedValueOnce([]);
+    mockedGetPublicOtherLodges.mockResolvedValueOnce([]);
 
     const res = await getBookingRequestSettingsRoute(
       new NextRequest("http://localhost/api/booking-requests/settings")
@@ -575,8 +631,35 @@ describe("GET /api/booking-requests/settings", () => {
       attendeeConfirmationLeadDays: 14,
       attendeeConfirmationReminderDays: 3,
       lodges: [],
+      otherLodges: [],
       schoolGroupSoftCap: 25,
     });
+  });
+
+  it("lists other/partner lodges (id and name) for the drop-down (#2749)", async () => {
+    mockedGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+      attendeeConfirmationLeadDays: 14,
+      attendeeConfirmationReminderDays: 3,
+    });
+    mockedGetPublicLodges.mockResolvedValueOnce([]);
+    mockedGetPublicOtherLodges.mockResolvedValueOnce([
+      { id: "other-1", name: "Aorangi Ski Club" },
+      { id: "other-2", name: "Tongariro Ski Club" },
+    ]);
+
+    const res = await getBookingRequestSettingsRoute(
+      new NextRequest("http://localhost/api/booking-requests/settings")
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.otherLodges).toEqual([
+      { id: "other-1", name: "Aorangi Ski Club" },
+      { id: "other-2", name: "Tongariro Ski Club" },
+    ]);
   });
 
   it("lists active lodges (id and name only) for a multi-lodge club", async () => {

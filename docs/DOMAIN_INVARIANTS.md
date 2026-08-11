@@ -539,8 +539,9 @@ Prefix `INV-ADDPAY`.
 | `INV-ADDPAY-034` | One shared "cancelled or removed" sentence for the surfaces that explain rather than 404 |
 | `INV-ADDPAY-035` | A soft-deleted booking takes no member-guest consent answer, from any role, either arm |
 | `INV-ADDPAY-036` | A modification payment captured on a deleted booking is recorded and queued for a human, never auto-refunded from that path |
-| `INV-ADDPAY-037` | An auto-refunded late BOOKING-CHANGE capture on a cancelled booking leaves a DISMISSED refund task the finance queue shows, grouped by whether the booking was deleted, with two named exceptions and the refund staying automatic |
-| `INV-ADDPAY-038` | That booking-change alert names what happened for both populations, cannot be muted, resolves a real recipient rather than the bootstrap literal, and stays the event's only notification |
+| `INV-ADDPAY-037` | EITHER late-capture path's auto-refund on a cancelled booking leaves a DISMISSED refund task the finance queue shows, grouped by whether the booking was deleted, with two named exceptions and the refund staying automatic — widened from the booking-change path alone by #2773, and the hand-resolved exception kept by #2774 D1, both orchestrator decisions on those issues' Recommended options that the owner has not ruled on (see `INV-ADDPAY-039`) |
+| `INV-ADDPAY-038` | That alert names what happened — which payment, which population — cannot be muted, resolves a real recipient rather than the bootstrap literal, and stays the event's only notification — extended from the booking-change alert alone to both paths by #2773, an orchestrator decision the owner has not ruled on (see `INV-ADDPAY-039`) |
+| `INV-ADDPAY-039` | A late capture an operator has already paid back by hand is never refunded again: the automatic refund is withheld, audited and alerted, and a hand-back landing mid-refund is reported as a possible double payment — an orchestrator decision on #2774's Recommended option that the owner has not ruled on, so never cite it as owner-settled |
 
 ## Analytics And Privacy
 

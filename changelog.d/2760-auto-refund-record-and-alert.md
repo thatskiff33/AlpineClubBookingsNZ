@@ -46,6 +46,6 @@
   anything, and no badge or daily-digest count changed. One consequence worth
   knowing: because these events are no longer filed as payment failures, they no
   longer add to the daily digest's "Payment Failures" number — nothing failed.
-  This covers payments for booking **changes**; a late payment of a booking's
-  original amount is refunded the same way but is not yet recorded or alerted like
-  this (#2773), and #2774 holds the hand-closed ordering above.
+  This covers payments for booking **changes**; the same treatment for a late
+  payment of a booking's original amount, and the hand-back protection, follow in
+  the same release (see the #2773 / #2774 entry).

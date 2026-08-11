@@ -111,7 +111,15 @@ are listed on the booking for you to relay.
 
 2. Open a **Verified** request. Set the **Pricing mode** (Overall total or Per
    guest-night) and enter the price, then **Save quote** and **Send quote** to
-   email the requester a quote link.
+   email the requester a quote link. In **Per guest-night** mode each age-group
+   rate field is **pre-filled from your [Fees](fees.md)** for the season covering
+   the check-in; edit any field before saving. The panel also shows **"Member of
+   another Lodge :"** with the lodge the requester chose on the public form (or
+   **No**). When they named another lodge, the fields pre-fill at your club's
+   **Full-member** rate for each age group instead of the non-member rate (a
+   reciprocal-membership courtesy), with the non-member rate shown underneath for
+   reference. The pre-fill uses the check-in night's rate, so adjust it if a stay
+   crosses a season boundary with different rates.
 3. When the requester accepts (or for a priced general request), click
    **Approve & send payment link** (general) or **Approve & invoice school**
    (school groups) to convert it into a booking. Use **Decline** with an

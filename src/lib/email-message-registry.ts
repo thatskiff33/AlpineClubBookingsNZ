@@ -9,6 +9,9 @@ import {
   bookingPaymentDueNote,
   checkoutDayChoreNote,
   duplicateCaptureRefundOutcomeParagraph,
+  lateCaptureAutoRefundLeadParagraph,
+  lateCaptureHandBackConflictOutcomeParagraph,
+  lateCaptureHandBackConflictSubjectLabel,
   splitGuestPortionOwnBookingLine,
   wholeLodgeGuestNamesUrgencyNote,
 } from "@/lib/email-message-notes";
@@ -26,6 +29,13 @@ export interface EmailTemplateDefinition {
   defaultBody: string;
   allowedTokens: string[];
   requiredTokens: string[];
+  // #2774: tokens an override may not drop from the SUBJECT. Separate from
+  // requiredTokens, which is body-only by design — see
+  // REQUIRED_SUBJECT_TEMPLATE_TOKENS for why one template needs this.
+  requiredSubjectTokens: string[];
+  // #2774: wording an override may not ADD to the subject, because it states a
+  // direction the token already fills in — see FORBIDDEN_SUBJECT_PHRASES.
+  forbiddenSubjectPhrases: string[];
   // #2267: per required token, the other tokens an override may use instead
   // and still satisfy the requirement (see REQUIRED_TOKEN_ALTERNATIVES).
   requiredTokenAlternatives: Record<string, string[]>;
@@ -66,6 +76,13 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // notification preference at all. It REPLACES the generic payment-failure mail
   // this path used to send; it is not a second notification (`INV-ADDPAY-037`).
   "admin-late-capture-auto-refund",
+  // #2774: the sibling notice for the same event class when the capture collides
+  // with a hand-back an operator had already made - either the automatic refund
+  // was withheld to stop a second payment, or it went out anyway inside the
+  // fence's blind window and the member may have been paid twice. Same admin
+  // audience and the same unmuteable sender, and delivery-locked below: this is
+  // the one mail on the path that says money may have left the club twice.
+  "admin-late-capture-hand-back-conflict",
   "admin-pending-deadline",
   "admin-booking-bumped",
   "admin-capacity-warning",
@@ -141,6 +158,13 @@ const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   // owner ruled out. Locked here AND sent off the per-member preference, because
   // those are two separate mute vectors and the decision closed both.
   "admin-late-capture-auto-refund",
+  // #2774 (the orchestrator's call on the Recommended option; the owner has not
+  // ruled — `INV-ADDPAY-039`): the same lock, for a stronger reason.
+  // This alert reports either a refund the system deliberately did NOT send or a
+  // capture that may have been paid back twice; in both directions it is the only
+  // thing that pulls a person to reconcile real money, so it must not be
+  // silenceable club-wide any more than its sibling.
+  "admin-late-capture-hand-back-conflict",
 ]);
 
 const CONTENT_ONLY_DEFAULT_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -494,11 +518,27 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   // tell "the booking was deleted, remake it and charge again" from "the booking
   // was cancelled, this is normal" — the whole reason the owner asked for wording
   // covering both cases.
+  // #2773 adds {{lateCaptureLeadNote}}: BOTH late-capture handlers send this
+  // alert now, and that token is the only thing in the body that says WHICH
+  // payment was captured (the booking's own, or one for a change to it) and what
+  // became of the Xero paperwork - which differs between them. An override that
+  // drops it leaves an operator unable to tell the two apart, and the shipped
+  // default used to assert the booking-change wording for both.
   "admin-late-capture-auto-refund": [
     "memberName",
     "reviewUrl",
     "bookingStateLabel",
     "refundOutcomeNote",
+    "lateCaptureLeadNote",
+  ],
+  // #2774: {{handBackConflictNote}} is the whole message - it is the sentence
+  // that says whether the money went out or was withheld. An override that drops
+  // it turns a reconciliation notice into an unexplained mention of a booking, on
+  // the one alert that may be reporting a double payment.
+  "admin-late-capture-hand-back-conflict": [
+    "memberName",
+    "reviewUrl",
+    "handBackConflictNote",
   ],
   "admin-split-settlement-unpaid": ["memberName", "reviewUrl"],
   // #1993 Part A: terminal notice — memberName identifies the member and
@@ -582,6 +622,91 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
   "hosting-coverage-lost": ["checkIn", "checkOut", "uncoveredNights"],
 };
 
+/**
+ * Tokens an override may not drop from the SUBJECT LINE (#2774).
+ *
+ * WHY THIS TABLE HAS TO EXIST AT ALL, AND WHY IT IS SEPARATE FROM
+ * `REQUIRED_TEMPLATE_TOKENS`. That table is deliberately body-only, and says so:
+ * required tokens are body CONTENT (a door code, a pay link), and a token sitting
+ * in the subject was never allowed to satisfy the requirement. That is right for
+ * content — but it left a real hole for a template whose subject has to state
+ * WHICH WAY something went, because `prepareEmailMessage` replaces the sender's
+ * computed subject with a stored override unconditionally and nothing checked what
+ * the override said.
+ *
+ * The `admin-late-capture-hand-back-conflict` alert is the case that forced it. It
+ * is sent in two opposite directions — a refund the system WITHHELD, or one that
+ * may have paid a member TWICE — and the subject is the triage surface: an operator
+ * who files by subject files a suspected double payment as "nothing to do". With a
+ * direction written into `defaultSubject` as literal text, every double-payment
+ * notice would have arrived titled "Automatic refund withheld" from the moment any
+ * admin pressed Save on the Email Messages form, untouched. The direction therefore
+ * rides in the subject as `{{handBackConflictLabel}}`, and this table is what stops
+ * an admin editing it back out. The body's own `{{handBackConflictNote}}` requirement
+ * is unchanged and independent — the two fields are protected separately because
+ * either one alone can be read as the whole message.
+ *
+ * KEEP THIS TABLE SMALL. A subject token is a poor place for content, so the bar is
+ * the one this entry meets: the mail is sent in more than one direction from ONE
+ * template, and a subject asserting the wrong direction would be read as a
+ * statement about money. Anything less belongs in `REQUIRED_TEMPLATE_TOKENS`.
+ */
+const REQUIRED_SUBJECT_TEMPLATE_TOKENS: Partial<
+  Record<EmailAuditTemplateName, string[]>
+> = {
+  "admin-late-capture-hand-back-conflict": ["handBackConflictLabel"],
+};
+
+/**
+ * Wording an override may not put IN the subject of a template whose subject has to
+ * state which way money went (#2774, second half).
+ *
+ * WHY REQUIRING THE TOKEN WAS NOT ENOUGH. `REQUIRED_SUBJECT_TEMPLATE_TOKENS` above
+ * refuses a subject that DROPS `{{handBackConflictLabel}}`. It says nothing about a
+ * subject that KEEPS it and types a direction beside it — "Automatic refund withheld
+ * - {{handBackConflictLabel}}: {{memberName}}" satisfied every check and renders, on
+ * the double-payment arm, as "Automatic refund withheld - Payment may have been
+ * refunded TWICE - reconcile: Alice Example". The leading words are the ones an inbox
+ * truncates to, so the mail that says money may have gone out twice arrives titled as
+ * one that did not go out at all. Prepending a phrase to a pre-populated subject is an
+ * ordinary admin edit, and the obvious phrase to reach for is the wording of the last
+ * such email they received.
+ *
+ * DERIVED FROM THE LABELS, NOT RE-TYPED. The clauses come from
+ * `lateCaptureHandBackConflictSubjectLabel` itself, split on its em dash, so rewording
+ * an arm moves this table with it and the two cannot drift. Single-word clauses are
+ * dropped ("reconcile" is a topic, not a claim, and an admin may legitimately write
+ * "Reconcile a late capture"), and the two decisive direction WORDS are added back
+ * explicitly because "Refund withheld - {{handBackConflictLabel}}" is the same defect
+ * in fewer words. `email-message-notes.ts` is the single source for both, and
+ * `admin-late-capture-hand-back-conflict-alert.test.ts` pins every phrase here to
+ * exactly one arm, so a phrase that stops being one arm's wording fails there.
+ *
+ * SCOPE, STATED HONESTLY: this catches the shipped wordings and their obvious short
+ * forms, not every possible paraphrase. A free-text subject cannot be made
+ * paraphrase-proof; the guarantee that does not depend on the admin's wording is the
+ * BODY, which states the direction four times over required tokens of its own.
+ */
+const DECISIVE_SUBJECT_DIRECTION_WORDS = ["withheld", "twice"] as const;
+
+function handBackConflictSubjectDirectionPhrases(): string[] {
+  const clauses = [true, false]
+    .map((refundSent) => lateCaptureHandBackConflictSubjectLabel(refundSent))
+    .flatMap((label) => label.split(/\s*[–—]\s*/))
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.split(/\s+/).length > 1);
+  return Array.from(
+    new Set([...clauses, ...DECISIVE_SUBJECT_DIRECTION_WORDS]),
+  );
+}
+
+const FORBIDDEN_SUBJECT_PHRASES: Partial<
+  Record<EmailAuditTemplateName, string[]>
+> = {
+  "admin-late-capture-hand-back-conflict":
+    handBackConflictSubjectDirectionPhrases(),
+};
+
 const TEMPLATE_TRIGGER_METADATA: Partial<
   Record<EmailAuditTemplateName, { triggerSummary: string; frequency: string }>
 > = {
@@ -636,8 +761,12 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     frequency: "On cancellation of a cash-settled booking with a non-zero refund",
   },
   "admin-late-capture-auto-refund": {
+    // #2773: BOTH handlers send this now, so the summary may not say
+    // "booking-change payment" — this is the Email Messages list's one-line
+    // description of when the mail goes out, and naming one of the two payments
+    // would tell an admin the other kind sends nothing.
     triggerSummary:
-      "Stripe captured a booking-change payment after the booking had already been cancelled (deleted or not), so the capture was refunded in full automatically and recorded on the payments board",
+      "Stripe captured a payment after the booking had already been cancelled (deleted or not) - either the booking's own payment or one for a change to it - so the capture was refunded in full automatically and recorded on the payments board",
     // The frequency sentence used to claim "webhook redeliveries do not
     // re-send", and that was not true. The record write is idempotent on the
     // payment intent; this mail is not. A Stripe redelivery re-enters the
@@ -657,6 +786,17 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     // true thing twice; a silence says nothing about money that moved.
     frequency:
       "On each late capture the webhook refunds automatically — rare; once per payment intent per delivery, and a Stripe redelivery of the same event can re-send it",
+  },
+  "admin-late-capture-hand-back-conflict": {
+    triggerSummary:
+      "A late capture on a cancelled booking collided with a hand-back an operator had already recorded as paid: either the automatic refund was withheld so the member is not paid twice (#2774), or it had already gone out and may have paid them twice",
+    // Same honest wording as its sibling above, and for the same reason: the fence
+    // read and the record write are idempotent on the payment intent, this mail is
+    // not, and a Stripe redelivery re-enters the handler whenever the first attempt
+    // failed after the alert. Deduping it would make a redelivery after a FAILED
+    // send silent on money that may have moved twice.
+    frequency:
+      "Only when an operator's hand-back and the automatic refund claim the same capture - rare; once per delivery, and a Stripe redelivery of the same event can re-send it",
   },
   "admin-minors-review": {
     triggerSummary:
@@ -1153,6 +1293,25 @@ export function sampleValue(token: string): string {
   if (token === "refundOutcomeNote") {
     return duplicateCaptureRefundOutcomeParagraph(false);
   }
+  // #2773: previewed as the booking-CHANGE arm, which is what the shipped default
+  // has always rendered and the commoner of the two captures; the primary arm is
+  // the sender's other branch of lateCaptureAutoRefundLeadParagraph.
+  if (token === "lateCaptureLeadNote") {
+    return lateCaptureAutoRefundLeadParagraph("modification");
+  }
+  // #2774: previewed as the WITHHELD arm, matching the shipped default subject.
+  // That is deliberately the arm an operator is likelier to receive - the fence
+  // fires whenever the hand-completion had already committed - and the
+  // refund-went-out-anyway arm is the sender's other branch.
+  if (token === "handBackConflictNote") {
+    return lateCaptureHandBackConflictOutcomeParagraph(false);
+  }
+  // #2774: previewed as the WITHHELD arm to match {{handBackConflictNote}} above,
+  // so the preview reads as one coherent mail rather than a subject and a body that
+  // disagree. The refund-went-out-anyway arm is the sender's other branch.
+  if (token === "handBackConflictLabel") {
+    return lateCaptureHandBackConflictSubjectLabel(false);
+  }
   if (token === "settlementActionNote") {
     return adminSplitSettlementUnpaidLeadParagraph(false);
   }
@@ -1376,6 +1535,8 @@ export const EMAIL_TEMPLATE_DEFINITIONS: EmailTemplateDefinition[] = (
     defaultBody: defaults.defaultBody,
     allowedTokens,
     requiredTokens: REQUIRED_TEMPLATE_TOKENS[key] ?? [],
+    requiredSubjectTokens: REQUIRED_SUBJECT_TEMPLATE_TOKENS[key] ?? [],
+    forbiddenSubjectPhrases: FORBIDDEN_SUBJECT_PHRASES[key] ?? [],
     requiredTokenAlternatives: REQUIRED_TOKEN_ALTERNATIVES[key] ?? {},
     sampleData: Object.fromEntries(
       allowedTokens.map((token) => [
@@ -1652,6 +1813,16 @@ const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "rebookPath",
   "refundAmount",
   "refundOutcomeNote",
+  // #2773 / #2774: pre-composed whole paragraphs, the {{refundOutcomeNote}}
+  // precedent - the flat admin-editable body has no conditional syntax, so the
+  // sender supplies the finished sentence rather than the facts behind it.
+  "lateCaptureLeadNote",
+  "handBackConflictNote",
+  // #2774: the same direction as a SUBJECT-length phrase, so the withheld and
+  // paid-twice arms cannot collapse into one claim when an admin saves the template
+  // — the {{bookingStateLabel}} construction (#2761), plus the subject requirement
+  // in REQUIRED_SUBJECT_TEMPLATE_TOKENS above.
+  "handBackConflictLabel",
   "refundMessage",
   "refundedAmount",
   "remainingAmount",

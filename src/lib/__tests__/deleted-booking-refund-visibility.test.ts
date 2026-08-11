@@ -74,6 +74,8 @@ vi.mock("@/lib/prisma", () => ({
 import {
   AUTOMATIC_CANCELLED_BOOKING_REFUND_NOTE_PREFIX,
   cancelledBookingModificationRefundReason,
+  cancelledBookingPrimaryPaymentRefundReason,
+  deletedBookingPrimaryPaymentRefundReason,
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
   automaticCancelledBookingRefundNote,
   automaticallyRefundedManualRefundTaskFilter,
@@ -119,14 +121,24 @@ function raise() {
   });
 }
 
-/** The webhook's writer: closes an OPEN raise, or writes the row itself. */
-function record(bookingDeleted = true) {
+/**
+ * The webhook's writer: closes an OPEN raise, or writes the row itself.
+ *
+ * `captureKind` defaults to `"modification"`, the kind every ordering in this file
+ * was written against; #2773's primary kind is passed explicitly by the tests
+ * that are about it.
+ */
+function record(
+  bookingDeleted = true,
+  captureKind: "modification" | "primary" = "modification",
+) {
   return recordAutomaticCancelledBookingRefundTask({
     bookingId: BOOKING_ID,
     paymentId: PAYMENT_ID,
     paymentIntentId: INTENT_ID,
     amountCents: AMOUNT_CENTS,
     bookingDeleted,
+    captureKind,
   });
 }
 
@@ -429,7 +441,14 @@ describe("the record is complete: every ordering, both populations (#2760)", () 
 
     const outcome = await record(true);
 
-    expect(outcome).toEqual({ closed: 1, created: false, alreadyRecorded: false });
+    expect(outcome).toEqual({
+      closed: 1,
+      created: false,
+      alreadyRecorded: false,
+      // #2774: null whenever this call closed or created the row - nothing was
+      // already there, so there is no prior status and no double payment to detect.
+      existingStatus: null,
+    });
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("DISMISSED");
     expect(matchesFilter(rows[0])).toBe(true);
@@ -477,6 +496,9 @@ describe("the record is complete: every ordering, both populations (#2760)", () 
       closed: 0,
       created: false,
       alreadyRecorded: "self",
+      // #2774: this writer's own row is DISMISSED, which is not the status that
+      // means an operator paid the member back by hand.
+      existingStatus: "DISMISSED",
     });
     expect(rows).toHaveLength(1);
     expect(rows[0].note).toBe(noteAfterFirst);
@@ -513,6 +535,11 @@ describe("the record is complete: every ordering, both populations (#2760)", () 
       closed: 0,
       created: false,
       alreadyRecorded: "hand-resolved",
+      // #2774 D1: DISMISSED is the carve-out that issue keeps (the orchestrator's
+      // call on its Recommended option, not the owner's) - settled another
+      // way, no allocation written, nobody paid twice. COMPLETED in this field is
+      // what the caller escalates as a suspected double payment.
+      existingStatus: "DISMISSED",
     });
     expect(rows).toHaveLength(1);
     // Untouched: not re-dated, not re-noted, not reopened.
@@ -552,6 +579,67 @@ describe("the record is complete: every ordering, both populations (#2760)", () 
     // The row keeps the sentence that was true when it was written.
     expect(rows[0].reason).toBe(
       cancelledBookingModificationRefundReason(INTENT_ID),
+    );
+  });
+
+  it("records the booking's OWN payment too, with its own sentence (#2773)", async () => {
+    /*
+      #2773. The primary handler refunded the same way and left NO row at all until
+      now, and the sentence it stores has to be its own: the modification sentences
+      open "Booking modification payment ...", which is false about a booking's own
+      payment and is printed verbatim on the finance card.
+
+      On this path there is never an OPEN task to close - nothing in the tree raises
+      one for a primary intent - so the create arm is the only reachable one, which
+      is exactly why "the card is complete" has to be checked here separately rather
+      than inferred from the modification orderings above.
+    */
+    const rows = installTaskStore();
+
+    const deleted = await record(true, "primary");
+
+    expect(deleted.created).toBe(true);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reason).toBe(
+      deletedBookingPrimaryPaymentRefundReason(INTENT_ID),
+    );
+    // And it lands on the card: DISMISSED, no acting member, automatic note prefix.
+    expect(rows[0].status).toBe("DISMISSED");
+    expect(matchesFilter(rows[0])).toBe(true);
+
+    const cancelledRows = installTaskStore();
+    await record(false, "primary");
+    expect(cancelledRows[0].reason).toBe(
+      cancelledBookingPrimaryPaymentRefundReason(INTENT_ID),
+    );
+    expect(matchesFilter(cancelledRows[0])).toBe(true);
+  });
+
+  it("a Stripe redelivery of a primary capture writes no second row (#2773)", async () => {
+    // The lookup matches all four sentences, so the redelivery finds the row this
+    // writer already wrote regardless of kind or population.
+    const rows = installTaskStore();
+
+    await record(true, "primary");
+    const redelivery = await record(true, "primary");
+
+    expect(redelivery.created).toBe(false);
+    expect(redelivery.alreadyRecorded).toBe("self");
+    expect(rows).toHaveLength(1);
+  });
+
+  it("a deletion between two primary deliveries still leaves one row (#2773)", async () => {
+    // The population can change under us; the capture kind cannot. Both are covered
+    // by the same four-sentence lookup.
+    const rows = installTaskStore();
+
+    await record(false, "primary");
+    const second = await record(true, "primary");
+
+    expect(second.created).toBe(false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].reason).toBe(
+      cancelledBookingPrimaryPaymentRefundReason(INTENT_ID),
     );
   });
 

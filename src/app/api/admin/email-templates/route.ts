@@ -248,10 +248,11 @@ export async function GET() {
   //     row from "bracket_annotation, with a banner" to nothing at all, and a
   //     member who still owes $240 would read that their payment succeeded.
   //   invalid_content — the catch-all. `reasons` above names five of the
-  //     validator's nine issue codes (stripped_annotation and dangling_line are
+  //     validator's eleven issue codes (stripped_annotation and dangling_line are
   //     this change's own, not the validator's); a row that trips one of the
-  //     other four (a sensitive token in a subject is the reachable one) cannot
-  //     be re-saved and would otherwise be told nothing at all.
+  //     other six (a sensitive token in a subject is the reachable one, and
+  //     #2774's missing_required_subject_token and forbidden_subject_phrase
+  //     joined it) cannot be re-saved and would otherwise be told nothing at all.
   // Only a SAVED override can have been rewritten by the migration, so a club
   // that has never customised a message pays nothing for this.
   const strippedAnnotationsByTemplate =
@@ -521,6 +522,10 @@ export async function PUT(request: NextRequest) {
         unknownTokens: validation.unknownTokens,
         disallowedTokens: validation.disallowedTokens,
         missingRequiredTokens: validation.missingRequiredTokens,
+        // #2774: both halves of the subject rule travel back named, so the editor can
+        // point at the field rather than only printing the message.
+        missingRequiredSubjectTokens: validation.missingRequiredSubjectTokens,
+        forbiddenSubjectPhrases: validation.forbiddenSubjectPhrases,
         signPrefixedTokens: validation.signPrefixedTokens,
         sensitiveSubjectTokens: validation.sensitiveSubjectTokens,
         unsafeLinks: validation.unsafeLinks,

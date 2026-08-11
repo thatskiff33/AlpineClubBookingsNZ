@@ -13,13 +13,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * text, its template name, its audience requirement and the fact that it supplies
  * the population tokens at all were all unasserted.
  *
+ * #2773 WIDENED WHAT THIS SENDS ABOUT. Both late-capture handlers use it now — a
+ * payment for a booking CHANGE, and the booking's OWN payment — so the copy has to
+ * say which. The two hard-coded sentences #2761 shipped ("a booking-change
+ * payment", "the supplementary Xero invoice for the change") are false about a
+ * primary capture, which has no supplementary invoice at all, so reusing this
+ * sender unchanged would have been the #2761 defect arriving through the back door:
+ * a mail that misdescribes the event.
+ *
  * MUTATION PROOF. Route this sender through `sendToAdmins` and "never goes through
  * the muteable preference path" fails. Restore the generic "Payment Failed"
  * subject and both subject tests fail. Change the template name and the registry
  * would still be green — the assertion below is what catches it. Widen or narrow
  * the audience requirement away from `finance: edit` and "addresses the alert to
  * the people who reconcile the club's money" fails. Drop either population token
- * and the token assertions fail.
+ * and the token assertions fail. Hard-code either capture kind's lead sentence and
+ * "names which payment was captured" fails.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -48,7 +57,10 @@ function captured(): CapturedAlert {
   return args;
 }
 
-async function send(bookingDeleted: boolean) {
+async function send(
+  bookingDeleted: boolean,
+  captureKind: "modification" | "primary" = "modification",
+) {
   await sendAdminLateCaptureAutoRefundAlert({
     memberName: "Alice Example",
     checkIn: new Date("2026-08-01"),
@@ -57,6 +69,7 @@ async function send(bookingDeleted: boolean) {
     paymentIntentId: "pi_additional_late",
     bookingId: "booking-9",
     bookingDeleted,
+    captureKind,
   });
   return captured();
 }
@@ -122,6 +135,35 @@ describe("sendAdminLateCaptureAutoRefundAlert (#2761)", () => {
     // describe a different population from the mail.
     expect(String(cancelled.templateData.refundOutcomeNote)).not.toBe(
       String(deleted.templateData.refundOutcomeNote),
+    );
+  });
+
+  it("names which payment was captured, and its Xero consequence (#2773)", async () => {
+    const modification = await send(true, "modification");
+    expect(String(modification.templateData.lateCaptureLeadNote)).toContain(
+      "paid for a booking change",
+    );
+    expect(String(modification.templateData.lateCaptureLeadNote)).toContain(
+      "supplementary Xero invoice",
+    );
+    expect(modification.html).toContain("A booking-change payment was captured");
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    const primary = await send(true, "primary");
+    // The booking's own payment has no supplementary invoice, so asserting one was
+    // not released would tell an operator something untrue about the accounting.
+    expect(String(primary.templateData.lateCaptureLeadNote)).not.toContain(
+      "supplementary Xero invoice",
+    );
+    expect(String(primary.templateData.lateCaptureLeadNote)).toContain(
+      "payment for the booking itself",
+    );
+    expect(primary.html).toContain("The booking's own payment was captured");
+    expect(primary.html).not.toContain("A booking-change payment was captured");
+    // One source for the hand-built HTML and the token, so a saved default cannot
+    // describe a different capture from the mail.
+    expect(String(primary.templateData.lateCaptureLeadNote)).not.toBe(
+      String(modification.templateData.lateCaptureLeadNote),
     );
   });
 

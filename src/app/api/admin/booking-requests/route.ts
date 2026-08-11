@@ -3,13 +3,19 @@ import { z } from "zod";
 import { BookingRequestStatus } from "@prisma/client";
 import {
   buildBookingRequestListWhere,
+  readBookingRequestGuestsForDisplay,
   serializeBookingRequestForAdmin,
 } from "@/lib/booking-request";
 import { readBookingRequestQuoteOptionsForDisplay } from "@/lib/booking-request-quotes";
+import {
+  resolveSuggestedGuestNightRatesForRequests,
+  type SuggestedGuestNightRates,
+} from "@/lib/booking-request-suggested-rates";
 import { resolveWholeLodgeFlatPricesForRequests } from "@/lib/school-booking-request";
 import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
+import logger from "@/lib/logger";
 
 const statusFilterValues = [
   ...Object.values(BookingRequestStatus),
@@ -46,7 +52,12 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * pageSize,
       // Lodge name for the queue display; null lodgeId means the club's
       // default lodge (pre-multi-lodge rows and single-lodge submissions).
-      include: { lodge: { select: { name: true } } },
+      // otherLodge name (#2749) drives the "Member of another Lodge" line and
+      // the Full-member rate pre-fill in the pricing panel.
+      include: {
+        lodge: { select: { name: true } },
+        otherLodge: { select: { name: true } },
+      },
     }),
     prisma.bookingRequest.count({ where }),
   ]);
@@ -120,6 +131,29 @@ export async function GET(req: NextRequest) {
       }))
   );
 
+  // #2749: suggested per-guest-night rates (non-member + Full-member per tier)
+  // so the pricing panel can pre-fill the rate fields. Batched by lodge; pure
+  // rate resolution after the season load. Advisory only: if the fee/season
+  // lookup fails for any reason it must NOT take down the whole queue (same
+  // tolerance as the malformed-blob handling below, #2342) — degrade to no
+  // pre-fill and let the officer enter rates by hand.
+  let suggestedRatesByRequestId = new Map<string, SuggestedGuestNightRates>();
+  try {
+    suggestedRatesByRequestId = await resolveSuggestedGuestNightRatesForRequests(
+      requests.map((request) => ({
+        id: request.id,
+        lodgeId: request.lodgeId,
+        checkIn: request.checkIn,
+        guests: readBookingRequestGuestsForDisplay(request.guests).guests,
+      })),
+    );
+  } catch (error) {
+    logger.error(
+      { err: error },
+      "Failed to resolve suggested guest-night rates; serving the queue without pre-fill",
+    );
+  }
+
   const data = requests.map((request) => {
     const quote = latestQuoteByRequestId.get(request.id) ?? null;
     // #2342: the third stored blob this page parses per row, and — once the
@@ -166,6 +200,10 @@ export async function GET(req: NextRequest) {
       // offers the "price as whole lodge" toggle when this is non-null.
       wholeLodgeFlatTotalCents:
         wholeLodgeFlatByRequestId.get(request.id) ?? null,
+      // #2749: per-tier non-member + Full-member nightly rates for the pricing
+      // panel's pre-fill.
+      suggestedGuestNightRates:
+        suggestedRatesByRequestId.get(request.id) ?? {},
     };
   });
 

@@ -12,7 +12,6 @@ import { reportWebhookError } from "@/lib/observability-bridge";
 import {
   sendBookingConfirmedEmail,
   sendAdminPaymentFailureAlert,
-  sendAdminLateCaptureAutoRefundAlert,
   sendSetupIntentFailedEmail,
 } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
@@ -20,7 +19,13 @@ import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { queueXeroInvoiceForPaidBooking } from "@/lib/xero-booking-invoice-queue";
 import { deriveBookingAppliedCreditCents } from "@/lib/member-credit";
-import { recordAutomaticCancelledBookingRefundTask } from "@/lib/deleted-booking-modification-payment";
+import { findCompletedHandBackForLateCapture } from "@/lib/deleted-booking-modification-payment";
+import {
+  announceAutomaticLateCaptureRefund,
+  recordAutomaticLateCaptureRefund,
+  reportWithheldLateCaptureRefund,
+  type CancelledBookingLateCapture,
+} from "@/lib/cancelled-booking-late-capture";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
@@ -1210,13 +1215,25 @@ async function alertSupersededGroupSettlementIntent(
  * refund keys (already-completed slices are answered by Stripe, not
  * repeated).
  *
- * TWO BOOKKEEPING SIDE EFFECTS, BOTH NON-BLOCKING AND NEITHER MOVING MONEY
- * (#2760 / #2761, owner decisions 10 Aug 2026). After the refund has returned
- * this handler records the refund as an already-DISMISSED `ManualRefundTask` so
- * the finance card is a complete record of automatic refunds, for a deleted AND a
- * merely cancelled booking; and it sends its own accurate, unmuteable alert
- * instead of the generic payment-failure mail. The refund itself — whether, when,
- * and how much — is unchanged.
+ * TWO BOOKKEEPING SIDE EFFECTS, NEITHER MOVING MONEY (#2760 / #2761, owner
+ * decisions 10 Aug 2026). After the refund has returned this handler records it as
+ * an already-DISMISSED `ManualRefundTask` so the finance card is a complete record
+ * of automatic refunds, for a deleted AND a merely cancelled booking; and it sends
+ * its own accurate, unmuteable alert instead of the generic payment-failure mail.
+ * The refund itself — whether, when, and how much — is unchanged. Both live in
+ * `cancelled-booking-late-capture.ts` since #2773, SHARED with the sibling handler
+ * rather than copied into it.
+ *
+ * ONE THING THAT CAN NOW STOP THE REFUND, AND IT IS NOT A GATE (#2774 D2 — the
+ * orchestrator's call on that issue's Recommended option; the owner has not ruled,
+ * and it is reversible. `INV-ADDPAY-039`'s authority line has the full statement).
+ * If a `ManualRefundTask` for this capture is already
+ * `COMPLETED`, an operator has paid the member back by hand and the ledger holds
+ * their allocation — so Stripe's refund on top of it pays the member TWICE. The
+ * refund is withheld, a `critical` audit row is written and the club is told the
+ * money did NOT go out, so a person reconciles it. This is not the gating
+ * `INV-ADDPAY-037` rules out: that would withhold a refund the member is owed,
+ * whereas this withholds a second copy of one they have already had.
  */
 async function handleCancelledBookingAdditionalPaymentSucceeded(
   booking: {
@@ -1261,6 +1278,55 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
       amountCents: paymentIntent.amount,
       paymentMethodId: getStripePaymentMethodId(paymentIntent),
     });
+  }
+
+  // #2773: one shape carrying everything the fence, the record, the audit rows
+  // and the alert need, so the row and the mail cannot disagree about which
+  // capture this was.
+  const lateCapture: CancelledBookingLateCapture = {
+    bookingId: booking.id,
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+    amountCents: paymentIntent.amount,
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    openingDeletedAt: booking.deletedAt,
+    captureKind: "modification",
+  };
+
+  // #2774 — THE FENCE, and its position is deliberate on both sides. AFTER the
+  // capture is recorded above, because withholding the refund must not also mean
+  // losing the record that Stripe holds the money. BEFORE the refund, because
+  // afterwards no check can help.
+  //
+  // A read failure is NOT caught: refunding twice and never refunding at all are
+  // both bad, so a fence that cannot answer gives neither answer — the rejection
+  // reaches this handler's caller, the webhook answers 500, the processed-event
+  // marker is cleared, and Stripe redelivers against the same idempotent refund
+  // keys. Full reasoning, and the interleaving it does NOT close, on
+  // `findCompletedHandBackForLateCapture`.
+  const blockingHandBack = await findCompletedHandBackForLateCapture({
+    bookingId: booking.id,
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
+  if (blockingHandBack) {
+    // No refund, no record row (the operator's COMPLETED row IS the record of this
+    // capture, and a second row for one capture is the property every lookup on
+    // this path protects), and no `refunded_after_cancellation` audit entry —
+    // nothing was refunded, so claiming it was would put a false money movement in
+    // the club's permanent record. The withheld report writes its own `critical`
+    // entry and sends the event's ONE alert instead, saying the money did not go.
+    //
+    // The Xero corrective credit note is skipped with it: every step below exists
+    // to mirror a refund this handler made, and it made none. The hand-back's own
+    // accounting belongs to `resolveManualRefundTask`.
+    await reportWithheldLateCaptureRefund({
+      capture: lateCapture,
+      handBack: blockingHandBack,
+    });
+    return;
   }
 
   const refundResult = await refundPaymentTransactions({
@@ -1309,72 +1375,21 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // own short transaction holding pg_advisory_xact_lock(1), and no Stripe round
   // trip happens inside it.
   //
-  // `deletedAt` IS RE-READ HERE, NOT TRUSTED FROM THE OPENING READ, for the same
-  // reason the confirm route re-reads it: the booking was loaded before
-  // `refundPaymentTransactions` made a live Stripe round trip, and an admin
-  // deleting the booking inside that window would otherwise store the
-  // "cancelled, still on file" sentence and mail "normally nothing to do" for the
-  // one population whose follow-up the alert exists to state. Deletion is one-way
-  // (`INV-ADDPAY-030`) and has a single writer, so the two reads can only disagree
-  // in one direction — the stale read can only ever under-report a deletion. Only
-  // queried when the opening read saw no deletion, and a failure here must not
-  // take the bookkeeping row down with it, so it falls back to the opening value.
-  let bookingDeleted = Boolean(booking.deletedAt);
-  if (!bookingDeleted) {
-    try {
-      const freshBooking = await prisma.booking.findUnique({
-        where: { id: booking.id },
-        select: { deletedAt: true },
-      });
-      bookingDeleted = Boolean(freshBooking?.deletedAt);
-    } catch (deletedAtErr) {
-      logger.error(
-        {
-          err: deletedAtErr,
-          bookingId: booking.id,
-          paymentIntentId: paymentIntent.id,
-        },
-        "Could not re-read deletedAt after the automatic late-capture refund; recording the population from the opening read"
-      );
-    }
-  }
-
-  try {
-    await recordAutomaticCancelledBookingRefundTask({
-      bookingId: booking.id,
-      paymentId: booking.payment.id,
-      paymentIntentId: paymentIntent.id,
-      amountCents: paymentIntent.amount,
-      bookingDeleted,
-    });
-  } catch (taskErr) {
-    logger.error(
-      { err: taskErr, bookingId: booking.id, paymentIntentId: paymentIntent.id },
-      "Failed to record the automatically refunded late capture on a cancelled booking"
-    );
-    // The webhook still answers 200 (the money is back with the member and a 500
-    // would replay the whole refund path for a bookkeeping row), so Stripe never
-    // redelivers and NOTHING else in the tree ever writes this row. A container
-    // log is not a record: the finance card and `INV-ADDPAY-037` both assert the
-    // record is complete, so a lost row has to be findable on the surface the
-    // card itself names as permanent. `critical` because the gap is silent and
-    // unrecoverable without it.
-    logAudit({
-      action: "booking.payment.auto_refund_record_failed",
-      category: "payment",
-      severity: "critical",
-      outcome: "failure",
-      entityType: "Booking",
-      entityId: booking.id,
-      targetId: booking.id,
-      details: JSON.stringify({
-        paymentIntentId: paymentIntent.id,
-        amountCents: paymentIntent.amount,
-        bookingDeleted,
-        error: taskErr instanceof Error ? taskErr.message : String(taskErr),
-      }),
-    });
-  }
+  // #2773: the record — `deletedAt` re-read after the Stripe round trip, the
+  // already-DISMISSED row written, and a `critical`
+  // `booking.payment.auto_refund_record_failed` audit entry if that write is lost
+  // — is one shared implementation, called from here and from the sibling
+  // primary-payment handler. It is deliberately NOT a copy in each: two
+  // implementations of this rule drifting apart at the next change is the defect
+  // class this repository keeps re-finding. Every "why" is on
+  // `recordAutomaticLateCaptureRefund`.
+  //
+  // AWAITED, unlike the alert below. An un-awaited database write can be killed
+  // when the handler's response is returned, and this row is the only operator
+  // surface the refund appears on. It can never fail the webhook: the money is
+  // already back with the member and a 500 would replay the whole refund path for
+  // a bookkeeping row, so its failure is audited rather than thrown.
+  const recordOutcome = await recordAutomaticLateCaptureRefund(lateCapture);
 
   logAudit({
     action: "booking.payment.refunded_after_cancellation",
@@ -1396,27 +1411,18 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   // and handed straight back, and a subject that misdescribes it gets triaged as
   // noise. Its own template names the money movement AND which population it was
   // (booking already deleted, or cancelled but still on file), so an operator can
-  // recognise and dismiss it at a glance.
+  // recognise and dismiss it at a glance. #2773 added which PAYMENT it was, since
+  // the sibling handler now sends the same mail about the booking's own payment.
   //
   // It is also OFF the muteable `adminPaymentFailure` preference and delivery-
   // locked, because an automatic money movement should not be silenceable and the
-  // recipient set must not be able to be silently empty — see
-  // `sendAdminLateCaptureAutoRefundAlert`. STILL EXACTLY ONE notification for the
-  // event (`INV-ADDPAY-037`): this replaces the previous mail rather than adding
-  // to it. Fire-and-forget with a `.catch` that logs, unchanged: webhooks stay
-  // non-blocking, and the durable record is the row plus the audit entry above.
-  sendAdminLateCaptureAutoRefundAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    amountCents: paymentIntent.amount,
-    paymentIntentId: paymentIntent.id,
-    bookingId: booking.id,
-    // The SAME resolved value the row stored, from the re-read above — so the
-    // subject, the body's follow-up sentence and the card's grouping cannot
-    // disagree about which population this capture belonged to.
-    bookingDeleted,
-  }).catch((err) =>
+  // recipient set must not be able to be silently empty. STILL EXACTLY ONE
+  // notification for the event (`INV-ADDPAY-037`): the shared sender sends the
+  // auto-refund alert OR, on #2774's double-payment detection, the hand-back
+  // conflict alert — never both and never neither. Fire-and-forget with a `.catch`
+  // that logs, unchanged: webhooks stay non-blocking, and the durable records are
+  // the row and the audit entries.
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
     logger.error(
       { err, bookingId: booking.id },
       "Failed to send late additional-capture cancellation alert"
@@ -1457,11 +1463,60 @@ async function handleCancelledBookingAdditionalPaymentSucceeded(
   );
 }
 
+/**
+ * Late Stripe capture of a booking's OWN (PRIMARY) payment on a booking that is
+ * already CANCELLED (#1350). The sibling of
+ * `handleCancelledBookingAdditionalPaymentSucceeded` above: record the capture
+ * truthfully, refund it in full under an idempotent per-intent key, alert the
+ * admins, and skip Xero invoice creation.
+ *
+ * WHAT #2773 CHANGED HERE (the orchestrator's call on that issue's Recommended
+ * option; the owner has not ruled — `INV-ADDPAY-039`'s authority line), and why it
+ * needed a decision at all. #2760/#2761 fixed the booking-CHANGE handler only, and scoped
+ * `INV-ADDPAY-037` / `INV-ADDPAY-038` to it rather than letting them overclaim. So
+ * this handler kept refunding with the same `cancelled_booking_late_capture`
+ * reason and writing the same `booking.payment.refunded_after_cancellation` audit
+ * entry, while leaving **no record an operator could find** and sending the generic
+ * **muteable** "Payment Failed" mail — a subject describing nothing that happened
+ * (a payment was captured late and handed straight back), on a preference any admin
+ * could switch off. It now routes through the same shared machinery as its sibling:
+ * the already-DISMISSED `ManualRefundTask` the finance card lists, and the
+ * unmuteable alert that names the money movement. The two invariants lose their
+ * scoping clause in the same change.
+ *
+ * NOT A NEW READ. `deletedAt` comes from the booking row the dispatch above already
+ * loaded (`findUnique` with `include`), so the population that selects the row's
+ * `reason` sentence and the alert's follow-up costs nothing here; it is re-read once
+ * AFTER the Stripe round trip, inside the shared recorder, for the reason stated
+ * there.
+ *
+ * #2774's FENCE APPLIES HERE TOO, and one thing about it is worth stating plainly
+ * rather than left for a reader to assume: nothing in the tree currently raises an
+ * `OPEN` `ManualRefundTask` for a PRIMARY payment intent — the confirm-modification
+ * -payment route is the only raiser of one of these and it handles modification
+ * intents — so today the fence cannot fire on this path. It is here anyway because
+ * the fence is keyed on the payment intent rather than on the handler, so a reader
+ * of one handler must not conclude the other is unfenced, and a future raiser is
+ * covered by construction. `booking-cancel.ts`'s cash-settlement task sits on the
+ * same booking and payment but carries a different `reason`, so it is correctly
+ * never matched: it settles a different sum.
+ *
+ * A refund failure is deliberately NOT swallowed, as in the sibling handler: the
+ * webhook returns 500, the processed-event marker is cleared, and Stripe's retry
+ * replays the same idempotent refund keys.
+ */
 async function handleCancelledBookingPaymentSucceeded(
   booking: {
     id: string;
     checkIn: Date;
     checkOut: Date;
+    /**
+     * #2773: which population this capture belongs to. A soft-deleted booking is
+     * always CANCELLED (`INV-ADDPAY-030`) so both kinds reach this handler, and the
+     * record and the alert both name which one it was. Read from the same booking
+     * row the dispatch above already loaded — no extra query on the webhook path.
+     */
+    deletedAt: Date | null;
     member: {
       firstName: string;
       lastName: string;
@@ -1496,6 +1551,39 @@ async function handleCancelledBookingPaymentSucceeded(
     reason: "cancelled_booking_late_capture",
   });
 
+  // #2773: the same shape the sibling handler builds, so the record, the audit
+  // rows and the alert all read one description of this capture.
+  const lateCapture: CancelledBookingLateCapture = {
+    bookingId: booking.id,
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+    amountCents: paymentIntent.amount,
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    openingDeletedAt: booking.deletedAt,
+    captureKind: "primary",
+  };
+
+  // #2774 — the same fence as the sibling handler, in the same position: after the
+  // capture is recorded, before the refund, and with a read failure left to
+  // propagate so the webhook answers 500 and Stripe redelivers rather than this
+  // path guessing between paying twice and never paying at all. See the handler
+  // docblock for why it cannot currently fire on a primary intent, and
+  // `findCompletedHandBackForLateCapture` for the interleaving it does not close.
+  const blockingHandBack = await findCompletedHandBackForLateCapture({
+    bookingId: booking.id,
+    paymentId: booking.payment.id,
+    paymentIntentId: paymentIntent.id,
+  });
+  if (blockingHandBack) {
+    await reportWithheldLateCaptureRefund({
+      capture: lateCapture,
+      handBack: blockingHandBack,
+    });
+    return;
+  }
+
   const refundResult = await refundPaymentTransactions({
     paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
@@ -1507,6 +1595,10 @@ async function handleCancelledBookingPaymentSucceeded(
   });
   const refundId = refundResult.refunds[0]?.refundId;
 
+  // #2773: the record this path never had. Awaited, and its failure audited rather
+  // than thrown — see `recordAutomaticLateCaptureRefund`.
+  const recordOutcome = await recordAutomaticLateCaptureRefund(lateCapture);
+
   logAudit({
     action: "booking.payment.refunded_after_cancellation",
     category: "payment",
@@ -1517,18 +1609,21 @@ async function handleCancelledBookingPaymentSucceeded(
       paymentIntentId: paymentIntent.id,
       refundId,
       amountCents: paymentIntent.amount,
+      // #2773: named on this handler too, so the two audit rows are told apart by
+      // the row itself rather than by knowing which handler writes which shape.
+      // The sibling has carried `kind: "modification_additional"` since #1350.
+      kind: "primary",
     }),
   });
 
-  sendAdminPaymentFailureAlert({
-    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    amountCents: paymentIntent.amount,
-    errorMessage:
-      "Stripe captured payment after the booking had already been cancelled. TAC Bookings auto-refunded the payment and skipped Xero invoice creation.",
-    paymentIntentId: paymentIntent.id,
-  }).catch((err) =>
+  // #2773: the same unmuteable alert its sibling sends, in place of the generic
+  // muteable `sendAdminPaymentFailureAlert` this path used to send. Nothing failed
+  // here — a payment was captured late and handed straight back — and that mail's
+  // "Payment Failed" subject both misdescribed the event and could be switched off
+  // per admin in Notification Recipients or club-wide in Delivery Rules, for an
+  // automatic money movement. Still exactly ONE notification for the event
+  // (`INV-ADDPAY-037`): this replaces the previous mail rather than joining it.
+  announceAutomaticLateCaptureRefund(lateCapture, recordOutcome).catch((err) =>
     logger.error({ err, bookingId: booking.id }, "Failed to send late-capture cancellation alert")
   );
 

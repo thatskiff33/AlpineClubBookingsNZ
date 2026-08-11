@@ -2232,9 +2232,38 @@ the other direction — a webhook has Stripe's own delivery timeout over it, and
 handler that sits on a lock for 30s trades a lost row for a lost delivery. The
 caller must answer 200 (the money is already back with the member, and a 500
 replays the whole refund path for a bookkeeping row), so Stripe never
-redelivers: a failure here is unrecoverable, and the caller therefore writes a
+redelivers: a failure here is unrecoverable, and its caller therefore writes a
 `critical` `booking.payment.auto_refund_record_failed` audit row rather than
 only logging. See `INV-ADDPAY-037`.
+
+**TWO CALLERS SINCE #2773, AND THAT CHANGES THE COHORT'S FOOTPRINT RATHER THAN ITS
+SHAPE.** `handleCancelledBookingPaymentSucceeded` — the late-capture handler for a
+booking's OWN payment — now goes through the same writer as its booking-change
+sibling, via the shared epilogue in
+`src/lib/cancelled-booking-late-capture.ts::recordAutomaticLateCaptureRefund`. Same
+key, same budget, same single-key acquisition, no new tier and no new ordering: the
+only difference is that one more Stripe event type can now be the thing waiting on
+`lock(1)`. Both callers make every provider call outside the transaction, and both
+re-read `Booking.deletedAt` outside it.
+
+**AND ONE READ THAT IS DELIBERATELY OUTSIDE EVERY LOCK (#2774,
+`INV-ADDPAY-039`).** Before refunding, both handlers call
+`findCompletedHandBackForLateCapture` — a single unlocked `findFirst` for a
+`COMPLETED` `ManualRefundTask` on this capture, which means an operator has already
+paid the member back by hand and refunding again would pay them twice. It takes no
+lock, and it CANNOT be made to close its own window: `resolveManualRefundTask` (the
+hand-completion) holds no advisory key either, so serialising them would require the
+webhook to hold `lock(1)` across the Stripe refund round trip — the bounded-exception
+rule in this document forbids exactly that. So the fence is documented as a
+**window-narrowing** guard rather than a mutual exclusion: it shrinks the exposure
+from the hours or days the task can sit `OPEN` to the duration of one Stripe call,
+and the residue is detected afterwards by the locked `findFirst` inside
+`recordAutomaticCancelledBookingRefundTask`, which reports
+`existingStatus: COMPLETED` and is escalated to a `critical` audit row and an alert.
+The fence read is NOT wrapped in a catch: a read that cannot answer must not be
+turned into either answer, so the rejection reaches the webhook's outer catch, the
+processed-event marker is cleared and Stripe redelivers against the same idempotent
+refund keys.
 
 Note what `softDeleteCancelledBooking` does NOT do here. It cancels the deleted
 booking's in-flight Stripe PaymentIntents **after** its transaction commits,

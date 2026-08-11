@@ -40,6 +40,12 @@ export default function BookingRequestPage() {
     Array<{ id: string; name: string; capacity: number }>
   >([]);
   const [lodgeId, setLodgeId] = useState("");
+  // Other/partner lodges the requester can say they belong to (#2749). Defaults
+  // to "" — the "No" option — which is left blank for backwards compatibility.
+  const [otherLodges, setOtherLodges] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [otherLodgeId, setOtherLodgeId] = useState("");
   const [showPricing, setShowPricing] = useState<boolean | null>(null);
   const [indicativePriceCents, setIndicativePriceCents] = useState<number | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -53,6 +59,7 @@ export default function BookingRequestPage() {
       .then((data) => {
         setShowPricing(Boolean(data?.showPricingToNonMembers));
         setLodges(Array.isArray(data?.lodges) ? data.lodges : []);
+        setOtherLodges(Array.isArray(data?.otherLodges) ? data.otherLodges : []);
       })
       .catch(() => setShowPricing(false));
   }, []);
@@ -154,6 +161,7 @@ export default function BookingRequestPage() {
           checkIn,
           checkOut,
           lodgeId: lodgeChoiceRequired ? lodgeId : undefined,
+          otherLodgeId: otherLodgeId || undefined,
           guests: validGuests,
           message: message || undefined,
         }),
@@ -302,6 +310,27 @@ export default function BookingRequestPage() {
               />
             </div>
           </div>
+
+          {otherLodges.length > 0 ? (
+            <div className="space-y-1">
+              <Label htmlFor="otherLodgeId">
+                Are you a member of another lodge?
+              </Label>
+              <select
+                id="otherLodgeId"
+                value={otherLodgeId}
+                onChange={(e) => setOtherLodgeId(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+              >
+                <option value="">No</option>
+                {otherLodges.map((lodge) => (
+                  <option key={lodge.id} value={lodge.id}>
+                    {lodge.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
           <div className="space-y-3">
             <div className="flex items-center justify-between">

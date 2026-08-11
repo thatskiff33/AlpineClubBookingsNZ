@@ -1452,8 +1452,8 @@ webhook's own close took the row off the only screen it ever appeared on, so tha
 durable record of an automatic refund was visible only to somebody who thought to
 query the table.
 
-**That card is complete for the booking-change path since #2760, and it used not
-to be.** As #2750 shipped it
+**That card is complete for BOTH late-capture paths since #2760 then #2773, and it
+used not to be.** As #2750 shipped it
 the task had a single creator — the confirm-modification-payment endpoint — so a row
 existed only on the ordering where the member's browser got there before the webhook
 did. Webhook first (the healthy case), a member who closes the tab after paying, and
@@ -1461,23 +1461,47 @@ the interleaved ordering the raise's own refund fence declines all refunded the
 capture and left nothing for the close to claim, and the raise never fired at all
 for a booking that is CANCELLED but not deleted. The webhook now writes the
 DISMISSED row itself when its OPEN-fenced close claims nothing, for both
-populations (`recordAutomaticCancelledBookingRefundTask`, owner decision 10 Aug
-2026) — so every automatic refund of a late BOOKING-CHANGE capture inside the
-card's window is on the card, and the card groups the deleted rows apart from the
-merely cancelled ones so normal operation cannot bury the interesting case. What
-is still bounded is the window, not the record: the row and the
+populations (`recordAutomaticCancelledBookingRefundTask`, #2760 — owner decision
+10 Aug 2026). #2773 then routed the SIBLING handler for a booking's OWN payment,
+`handleCancelledBookingPaymentSucceeded`, through the same writer, so every
+automatic refund of a late capture inside the card's window is on the card — an
+orchestrator decision the owner has not ruled on, reversible, with the authority
+line under `INV-ADDPAY-039`. The two are stated as separate sentences on purpose:
+a real owner decision and an unruled one sitting inside one clause is what made
+this branch's fabricated attribution credible in the first place. The card groups the deleted rows apart from the merely cancelled ones so
+normal operation cannot bury the interesting case. What is still bounded is the
+window, not the record: the row and the
 `booking.payment.refunded_after_cancellation` audit entry are permanent.
 
-**Three things that word "booking-change" and the exceptions in
-`INV-ADDPAY-037` cover, and a reader of this diagram should not assume away.** A
-late capture of a booking's ORIGINAL payment goes through the sibling handler
-`handleCancelledBookingPaymentSucceeded`, which refunds the same way and writes no
-task at all (#2773). An operator who resolves the `OPEN` task by hand before the
+**Both handlers share ONE implementation of the epilogue**
+(`src/lib/cancelled-booking-late-capture.ts`): one record writer, one post-refund
+`deletedAt` re-read, one alert decision. Four `reason` sentences exist, one per
+(capture kind, population), because the sentence is stored on the row and printed on
+the card — calling a booking's own payment a "booking modification payment" would
+print an operator-facing falsehood.
+
+**Two exceptions in `INV-ADDPAY-037` remain, and a reader of this diagram should not
+assume them away.** An operator who resolves the `OPEN` task by hand before the
 refund lands leaves a row that matches neither the close nor the card's filter, so
-that refund reaches no card and is named only at WARN (#2774). And if the record
-write itself fails the handler still answers 200, so the row is lost for good — the
-`critical` `booking.payment.auto_refund_record_failed` audit entry is the only
-place it surfaces.
+that refund reaches no card and is named only at WARN — the carve-out #2774 D1 keeps,
+an orchestrator decision the owner has not ruled on (authority line under
+`INV-ADDPAY-039`). And if the record write itself fails the handler still
+answers 200, so the row is lost for good; the `critical`
+`booking.payment.auto_refund_record_failed` audit entry is the only place it
+surfaces.
+
+**AND SINCE #2774 ONE THING CAN STOP THE REFUND ITSELF (`INV-ADDPAY-039`).** If a
+`ManualRefundTask` for the capture is already `COMPLETED`, an operator has paid the
+member back by hand and `applyLocalRefundAllocation` wrote the allocation — so
+Stripe's refund on top of it pays the member twice. The refund is withheld before it
+is made, a `critical` `booking.payment.late_capture_refund_withheld` row is written
+(`outcome: "blocked"`, never `refunded_after_cancellation`, which would claim a
+refund that did not happen), and the club is alerted that the money did NOT go.
+`DISMISSED` must NOT block: no allocation exists, so blocking would leave the club
+holding the member's captured funds. A hand-completion landing DURING the refund is
+not preventable without holding `pg_advisory_xact_lock(1)` across a Stripe call, so
+it is detected afterwards instead and reported as
+`booking.payment.late_capture_double_refund_suspected`.
 
 #2750 asked whether the #1350 automatic refund should instead be **gated**,
 leaving the task OPEN so a person decides. It was not, and the reasoning is
@@ -1487,8 +1511,12 @@ somebody acts, and it would put a new condition on a Critical webhook money
 path. The club is already emailed the moment it happens —
 `handleCancelledBookingAdditionalPaymentSucceeded` has always mailed an admin alert
 on this path, naming the amount and the auto-refund, and since #2761 that mail has
-its own accurate subject and cannot be muted (`INV-ADDPAY-038`) — so what was
-missing was somewhere to look afterwards, not a notification. The card
+its own accurate subject and cannot be muted (`INV-ADDPAY-038`); since #2773 the
+primary handler sends the same mail instead of the generic muteable "Payment Failed"
+one — so what was missing was somewhere to look afterwards, not a notification.
+Exactly one notification per event still holds across all three outcomes: the
+auto-refund alert, the withheld-refund alert, or the possible-double-payment
+alert, never two of them. The card
 carries no controls — there is no decision left, and "Mark paid back" on such a
 row would write a second refund allocation — and its copy names the one thing an
 operator may still have to do: if the deletion rather than the payment was the
@@ -1510,13 +1538,17 @@ There are THREE creators, and only the first two ever make an OPEN row:
   happened, so it is never raised for money Stripe has already returned.
 - Created **already DISMISSED** by the Stripe webhook when it auto-refunds a late
   capture on a cancelled booking and its OPEN-fenced close claims nothing (#2760,
-  `INV-ADDPAY-037`). Never OPEN — there is no work, and completing such a row
-  throws out of `applyLocalRefundAllocation` — and never `COMPLETED`, which would
-  write a second refund allocation for one refund. Both populations, deleted and
-  merely cancelled, each storing its own `reason` sentence; the lookups match both
-  sentences so a deletion landing between two Stripe deliveries cannot produce two
-  rows. Under the same `pg_advisory_xact_lock(1)` as the raise above, because
-  close-or-create is a find-then-write rather than an atomic fenced update.
+  `INV-ADDPAY-037`), from EITHER late-capture handler since #2773. Never OPEN —
+  there is no work, and completing such a row throws out of
+  `applyLocalRefundAllocation` — and never `COMPLETED`, which would write a second
+  refund allocation for one refund. Both populations and both capture kinds, each
+  storing its own `reason` sentence; every lookup matches all four sentences, so a
+  deletion landing between two Stripe deliveries cannot produce two rows and a
+  future writer cannot key on its own sentence alone. Under the same
+  `pg_advisory_xact_lock(1)` as the raise above, because close-or-create is a
+  find-then-write rather than an atomic fenced update. On the PRIMARY path there is
+  never an `OPEN` row to close — nothing raises one for a primary intent — so the
+  create arm is the only one reachable there.
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
 it deliberately is not a `PaymentRecoveryOperation`. (That dispatcher's final

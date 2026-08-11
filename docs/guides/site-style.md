@@ -100,7 +100,7 @@ permission area.
 | Colours — Support accent | An optional secondary highlight accent | Hex, **optional**; leave unset to omit a support colour |
 | Fixed semantic layer | Success, warning, information, danger/error, and waitlist states | **Not editable** — curated light/dark pairs |
 | Fonts | The public and app font variables | Chosen from the wizard |
-| Raw CSS | Advanced custom CSS overrides | Optional; for advanced users |
+| Raw CSS | Advanced custom CSS overrides | Optional; for advanced users. Ready-to-paste example: the [Whakapapa Conditions panel skin](mountain-conditions.md#appearance-the-whakapapa-conditions-panel-skin-raw-css) |
 | Logo | The public logo image | Uploaded on the Logo step. PNG, JPEG, WebP, or GIF, up to 2MB; shrunk server-side to at most 160px tall and 640px wide (never enlarged) and stored as a cached image. SVG is not accepted |
 
 ## Troubleshooting

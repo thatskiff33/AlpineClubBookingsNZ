@@ -515,7 +515,7 @@ under `admin`, which this tool cannot read; and the audit category is optional, 
 row recorded with **no** category is matched by no diagnostics tool at all. **82**
 production write paths used to record that way, several of them money-adjacent
 (subscription billing, member-credit adjustments, fee configuration); #2676
-classified all 82 at the source, so the census now reads **429 write sites and zero
+classified all 82 at the source, so the census now reads **434 write sites and zero
 uncategorised** and no *new* finance audit row is born invisible to this tool. Rows
 written before that runtime deployed still carry no category, and back-filling them
 is a separate data change that has not run — so for historical events an empty

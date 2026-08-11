@@ -175,6 +175,17 @@ interface PublicBookingRequestData {
   // single-lodge submissions).
   lodgeId: string | null;
   lodgeName: string | null;
+  // #2749: the other/partner lodge the requester said they belong to. Null
+  // otherLodgeId means "No". When set, per-guest-night rates pre-fill at the
+  // Full-member rate instead of the non-member rate.
+  otherLodgeId: string | null;
+  otherLodgeName: string | null;
+  // #2749: suggested per-guest-night rates by age tier (non-member + Full-member
+  // nightly cents), read from the fee config at the stay's check-in night.
+  suggestedGuestNightRates: Record<
+    string,
+    { nonMemberCents: number | null; memberCents: number | null }
+  >;
   // Effective school-group soft cap for this request's lodge, resolved
   // server-side through the same settings path enforcement uses so the queue
   // hint and the actual warning threshold cannot diverge per lodge (#1656).
@@ -548,6 +559,31 @@ export function PublicBookingRequestsPanel({
     return `${requestId}:${optionId}:${ageTier}:${isMember ? "member" : "non-member"}`;
   }
 
+  // #2749: the non-member nightly rate for a tier, as a dollar string ("" if
+  // none). Shown as the reference line under a field pre-filled at the Full-
+  // member rate.
+  function nonMemberRateDollars(
+    request: PublicBookingRequestData,
+    ageTier: string,
+  ) {
+    const cents = request.suggestedGuestNightRates[ageTier]?.nonMemberCents;
+    return cents != null ? (cents / 100).toFixed(2) : "";
+  }
+
+  // #2749: the suggested pre-fill value for a rate field. A member combo, or any
+  // combo when the requester indicated another lodge, uses the Full-member rate;
+  // an ordinary non-member combo uses the non-member rate.
+  function suggestedRateDollars(
+    request: PublicBookingRequestData,
+    combo: { ageTier: string; isMember: boolean },
+  ) {
+    const tierRates = request.suggestedGuestNightRates[combo.ageTier];
+    if (!tierRates) return "";
+    const useMemberRate = combo.isMember || request.otherLodgeId != null;
+    const cents = useMemberRate ? tierRates.memberCents : tierRates.nonMemberCents;
+    return cents != null ? (cents / 100).toFixed(2) : "";
+  }
+
   function activeMemberLinks(request: PublicBookingRequestData): UiMemberLink[] {
     return memberLinks[request.id] ?? request.linkedGuestMembers;
   }
@@ -624,7 +660,11 @@ export function PublicBookingRequestsPanel({
 
         const guestNightRates = pricingCombos(request).map((combo) => {
           const key = rateInputKey(request.id, optionId, combo.ageTier, combo.isMember);
-          const rateCents = dollarsToCents(rateInputs[key] ?? "");
+          // Fall back to the pre-filled suggestion (#2749) so a field the officer
+          // left untouched submits the shown value, not a blank.
+          const rateCents = dollarsToCents(
+            rateInputs[key] ?? suggestedRateDollars(request, combo),
+          );
           if (rateCents == null) {
             throw new Error(
               `Enter a valid ${optionLabel(optionId).toLowerCase()} ${combo.ageTier} ${combo.isMember ? "member" : "non-member"} rate`
@@ -1283,6 +1323,10 @@ export function PublicBookingRequestsPanel({
                       {formatDate(request.checkIn)} to {formatDate(request.checkOut)}
                     </div>
                     <div>
+                      <span className="text-muted-foreground">Nights:</span>{" "}
+                      {nightsBetween(request.checkIn, request.checkOut)}
+                    </div>
+                    <div>
                       <span className="text-muted-foreground">Guests:</span> {request.guests.length}
                     </div>
                     {request.indicativePriceCents != null ? (
@@ -1298,6 +1342,17 @@ export function PublicBookingRequestsPanel({
                       </div>
                     ) : null}
                   </div>
+
+                  {/* Only GENERAL public requests are asked the "other lodge"
+                      question on the form (#2749). */}
+                  {memberWholeLodge || request.type === "SCHOOL" ? null : (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">
+                        Member of another Lodge:
+                      </span>{" "}
+                      {request.otherLodgeName ?? "No"}
+                    </div>
+                  )}
 
                   {request.type === "SCHOOL" && request.teachers.length > 0 ? (
                     <div className="text-sm">
@@ -1638,6 +1693,16 @@ export function PublicBookingRequestsPanel({
                                       combo.ageTier,
                                       combo.isMember
                                     );
+                                    // #2749: pre-fill from the fee config. When
+                                    // the requester named another lodge, a
+                                    // non-member field carries the Full-member
+                                    // rate and shows the non-member rate below.
+                                    const otherLodgeRate =
+                                      request.otherLodgeId != null &&
+                                      !combo.isMember;
+                                    const nonMemberReference = otherLodgeRate
+                                      ? nonMemberRateDollars(request, combo.ageTier)
+                                      : "";
                                     return (
                                       <div key={key} className="space-y-1">
                                         <Label htmlFor={key}>
@@ -1651,7 +1716,10 @@ export function PublicBookingRequestsPanel({
                                           step="0.01"
                                           className="w-32"
                                           disabled={actionsBlocked}
-                                          value={rateInputs[key] ?? ""}
+                                          value={
+                                            rateInputs[key] ??
+                                            suggestedRateDollars(request, combo)
+                                          }
                                           onChange={(event) =>
                                             setRateInputs((prev) => ({
                                               ...prev,
@@ -1659,6 +1727,11 @@ export function PublicBookingRequestsPanel({
                                             }))
                                           }
                                         />
+                                        {otherLodgeRate && nonMemberReference ? (
+                                          <p className="text-xs text-muted-foreground">
+                                            non-member - {nonMemberReference}
+                                          </p>
+                                        ) : null}
                                       </div>
                                     );
                                   })}

@@ -777,8 +777,8 @@ describe("admin email message APIs", () => {
     });
 
     it("says something rather than nothing when a saved copy is unsaveable for some other reason", async () => {
-      // reasons covers five of the validator's nine issue codes. A row that
-      // trips one of the other four cannot be re-saved, and until now nothing
+      // reasons covers five of the validator's ten issue codes. A row that
+      // trips one of the other five cannot be re-saved, and until now nothing
       // in the editor said why. A sensitive token in a subject is the
       // reachable case.
       mocks.emailTemplateOverrideFindMany.mockResolvedValue([

@@ -179,10 +179,17 @@ function AutomaticRefundNoticesCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          A payment for a booking change arrived after the booking had already
-          been cancelled. Stripe returned the money to the member straight away,
-          so there is nothing for you to pay back and nothing to close here. This
-          card is here so somebody sees it happened.
+          {/*
+            #2773 dropped "for a booking change" from this sentence. Both
+            late-capture handlers write these rows now - a payment for a change to
+            a booking, and the booking's own payment - so naming only one of them
+            told an operator the card was narrower than it is. Each row's own
+            reason sentence still says which payment it was.
+          */}
+          A payment arrived after the booking had already been cancelled. Stripe
+          returned the money to the member straight away, so there is nothing for
+          you to pay back and nothing to close here. This card is here so somebody
+          sees it happened.
         </p>
         {/*
           #2760 replaced the "this card does not catch every one" paragraph that
@@ -199,13 +206,25 @@ function AutomaticRefundNoticesCard({
           not put two rows on one capture. A footnote an operator reads in passing
           keeps the claim honest; the old partial-list paragraph told them to
           distrust the whole card, which is how a card stops being read.
-          `INV-ADDPAY-037` carries the reasoning and #2774 the open question.
+          `INV-ADDPAY-037` carries the reasoning; keeping the carve-out rather
+          than writing a second row is #2774 D1, the orchestrator's call on that
+          issue's Recommended option, which the owner has not ruled on
+          (`INV-ADDPAY-039`'s authority line). This copy describes what the code
+          does either way - it makes no claim about who chose it.
+
+          AND #2773 LIFTED THE OTHER QUALIFICATION: this used to say "of a late
+          booking-change payment", because the sibling handler for a booking's OWN
+          payment wrote no row at all. It does now, through the same writer, so the
+          word came out. Do NOT widen this sentence further and do NOT narrow it
+          back: an operator who reads an empty card as proof that no automatic
+          refund happened is worse off than before the card existed, and one told
+          to distrust a complete list stops reading it.
         */}
         <p className="text-sm text-muted-foreground">
-          This is every automatic refund of a late booking-change payment from
-          the last 30 days &mdash; unless somebody had already closed the
-          hand-back task for it by hand, in which case their own record of it is
-          in the booking&apos;s history instead. Older ones are not shown here:
+          This is every automatic refund of a late payment from the last 30 days
+          &mdash; unless somebody had already closed the hand-back task for it by
+          hand, in which case their own record of it is in the
+          booking&apos;s history instead. Older ones are not shown here:
           the permanent record is the booking&apos;s audit log (the{" "}
           <span className="font-mono text-xs">
             booking.payment.refunded_after_cancellation
@@ -244,10 +263,10 @@ function AutomaticRefundNoticesCard({
             </h3>
             <p className="text-sm text-muted-foreground">
               Normally nothing to do. This is the expected outcome when a booking
-              is cancelled while the member is part-way through paying for a
-              change. If the cancellation was the mistake, the same applies as
-              above: the money has gone back, so the booking has to be remade and
-              charged again.
+              is cancelled while the member is part-way through paying for it, or
+              for a change to it. If the cancellation was the mistake, the same
+              applies as above: the money has gone back, so the booking has to be
+              remade and charged again.
             </p>
             <ul className="space-y-3">
               {cancelledNotices.map((notice) => (
@@ -293,8 +312,9 @@ function AutomaticRefundNoticesCard({
  * (which requires a note) closes it without moving anything.
  *
  * TWO CARDS SINCE #2750, and only the first is a queue. The second is the
- * operator surface for a refund nobody authorised: when a modification payment
- * is captured against a booking the club has already cancelled, the Stripe
+ * operator surface for a refund nobody authorised: when a payment is captured
+ * against a booking the club has already cancelled — a payment for a change to it,
+ * or (since #2773) the booking's own payment — the Stripe
  * webhook has refunded it in full since #1350, and #2700 made that leave a
  * `ManualRefundTask` behind — which the webhook then closes itself, because
  * there is genuinely nothing left to pay back by hand. Closing it took it off

@@ -22,6 +22,9 @@ const DB_CAPACITY = 47;
 vi.mock("@/components/club-identity-provider", () => ({
   useClubIdentity: () => ({
     lodgeName: "Test Alpine Lodge",
+    otherLodgeId: null,
+    otherLodgeName: null,
+    suggestedGuestNightRates: {},
     lodgeCapacity: DB_CAPACITY,
   }),
 }));

@@ -107,6 +107,70 @@ export function cancelledBookingModificationRefundReason(
 }
 
 /**
+ * WHICH LATE CAPTURE THIS RECORD IS ABOUT (#2773 — the orchestrator's call on that
+ * issue's Recommended option; the owner has not ruled. `INV-ADDPAY-039`'s authority
+ * line states the provenance in full).
+ *
+ * There are TWO late-capture handlers on a cancelled booking, and until #2773
+ * only one of them recorded anything:
+ *
+ * - `"modification"` — `handleCancelledBookingAdditionalPaymentSucceeded`, a
+ *   payment for a *change* to the booking. The one #2760/#2761 fixed.
+ * - `"primary"` — `handleCancelledBookingPaymentSucceeded`, the booking's OWN
+ *   payment. It refunds with the same `cancelled_booking_late_capture` reason and
+ *   writes the same `booking.payment.refunded_after_cancellation` audit entry, and
+ *   until #2773 it wrote no `ManualRefundTask` at all and sent the generic
+ *   muteable "Payment Failed" mail.
+ *
+ * IT IS NOT COSMETIC. The `reason` is stored on the row and printed on the
+ * finance card, and the modification sentences above open "Booking modification
+ * payment …" — which is simply false about a booking's own payment. So the kind
+ * selects the sentence, exactly as the population already does.
+ */
+export type CancelledBookingLateCaptureKind = "modification" | "primary";
+
+/**
+ * The deleted-population sentence for a late capture of the booking's OWN
+ * payment (#2773).
+ *
+ * NO "decide by hand" CLAUSE, for the same reason
+ * `cancelledBookingModificationRefundReason` has none: only the webhook ever
+ * writes this variant, and only already-`DISMISSED`, so no decision has ever
+ * been taken on one of these rows. Nothing raises an `OPEN` task for a primary
+ * capture — the confirm-modification-payment route is the only raiser and it
+ * handles modification intents — so unlike the #2700 sentence this one is never
+ * read by an operator with work in front of them.
+ *
+ * FROZEN FROM NOW ON, like its siblings. `reason` IS the idempotency key
+ * (`bookingId + paymentId + reason`), so rewording it after a deploy would make
+ * an already-written row unmatchable and let a Stripe redelivery write a SECOND
+ * row for one capture. New populations or kinds get NEW sentences; existing ones
+ * are never edited. See `automaticCancelledBookingRefundTaskReasons`.
+ */
+export function deletedBookingPrimaryPaymentRefundReason(
+  paymentIntentId: string,
+): string {
+  return `The booking's own payment ${paymentIntentId} was captured against a booking the club had already deleted (#2773). Nothing was owed on a deleted booking, so there is no hand-back to make — but if the deletion was itself the mistake, put that right rather than treating this as a refund somebody still owes.`.slice(
+    0,
+    500,
+  );
+}
+
+/**
+ * The cancelled-but-still-on-file sentence for a late capture of the booking's
+ * OWN payment (#2773). Same freeze and the same reasoning as its deleted sibling
+ * above.
+ */
+export function cancelledBookingPrimaryPaymentRefundReason(
+  paymentIntentId: string,
+): string {
+  return `The booking's own payment ${paymentIntentId} was captured against a booking the club had already cancelled (#2773). Nothing was owed on a cancelled booking, so there is no hand-back to make — but if the cancellation was itself the mistake, put that right rather than treating this as a refund somebody still owes.`.slice(
+    0,
+    500,
+  );
+}
+
+/**
  * Every `reason` this record can carry for one payment intent, for the writers
  * that must find a row REGARDLESS of which population produced it (#2760).
  *
@@ -123,6 +187,18 @@ export function cancelledBookingModificationRefundReason(
  * either kind stops it raising a duplicate OPEN task. Its refund fence would
  * also decline that raise — this is deliberate belt and braces on the one path
  * where a duplicate would be an operator asked to hand back money twice.
+ *
+ * NOR MAY IT DEPEND ON THE CAPTURE KIND (#2773), for the identical reason. A
+ * payment intent is either the booking's own or a modification's — the kind is
+ * fixed for the life of the intent and cannot change under us the way `deletedAt`
+ * can — so listing all four sentences buys no new correctness on a healthy
+ * lookup. What it buys is that the key stays a property of the INTENT rather than
+ * of whichever handler happens to be running: every reader here (the raise's
+ * duplicate check, the close's `updateMany`, the record's `findFirst`, and #2774's
+ * hand-back fence) becomes kind-independent by construction, so a future writer
+ * cannot reintroduce the two-rows-for-one-capture defect by keying on its own
+ * sentence alone. It costs one extra `IN` element per lookup on a key that is
+ * already `bookingId + paymentId`-scoped.
  */
 export function automaticCancelledBookingRefundTaskReasons(
   paymentIntentId: string,
@@ -130,7 +206,99 @@ export function automaticCancelledBookingRefundTaskReasons(
   return [
     deletedBookingModificationRefundReason(paymentIntentId),
     cancelledBookingModificationRefundReason(paymentIntentId),
+    deletedBookingPrimaryPaymentRefundReason(paymentIntentId),
+    cancelledBookingPrimaryPaymentRefundReason(paymentIntentId),
   ];
+}
+
+/**
+ * The one row that means an operator has ALREADY handed this capture back by
+ * hand, and therefore that refunding it at Stripe would pay the member TWICE
+ * (#2774 D2 — the fence half. The orchestrator's call on that issue's Recommended
+ * option; the owner has NOT ruled, #2774 says outright that this changes a Critical
+ * money path and needs its own review, and this read is the ONE place to revert if
+ * the answer comes back "Leave it". `INV-ADDPAY-039`'s authority line states the
+ * provenance in full.)
+ *
+ * WHY `COMPLETED` AND NOTHING ELSE. `resolveManualRefundTask` in
+ * `manual-booking-payment.ts` writes `applyLocalRefundAllocation` on — and only
+ * on — the `COMPLETED` resolution. That allocation is the ledger saying the money
+ * went back. So a `COMPLETED` row for this capture means the club has already
+ * paid the member, out of its own pocket, and Stripe's refund on top of it is a
+ * second payment for one capture.
+ *
+ * A `DISMISSED` ROW MUST NOT BLOCK, and getting that backwards is the
+ * symmetrical money bug. `DISMISSED` means "settled another way" — the member
+ * declined it, or it was folded into something else — and it writes NO
+ * allocation. Fencing on it would leave the club holding a member's captured
+ * money with the audit log claiming the matter was closed. An `OPEN` row must not
+ * block either: it is the confirm route's unanswered question, and the refund is
+ * the answer.
+ *
+ * KEYED ON THE AUTOMATIC REASONS, NOT ON `bookingId + paymentId` ALONE, and this
+ * is load-bearing. `booking-cancel.ts` raises its own `ManualRefundTask` on the
+ * same booking and payment when a CASH-settled booking is cancelled, for the
+ * cancellation policy's share of the ORIGINAL payment — a different sum, about
+ * different money. An operator completing that one has not handed this capture
+ * back, and a fence that matched it would refuse to return a member's late
+ * capture on the strength of an unrelated hand-back. The reasons list above
+ * carries the payment intent id, so this matches only rows raised about THIS
+ * capture.
+ *
+ * IT IS NOT A GATE ON THE #1350 REFUND, and the distinction matters because
+ * `INV-ADDPAY-037` forbids gating that refund as a side effect of work in this
+ * area. Gating means withholding a refund the member is owed until somebody
+ * decides. This withholds a SECOND copy of a refund the member has already had, in
+ * cash, from a person. Nothing they are owed is held back.
+ *
+ * NOT WRAPPED IN A CATCH, AND THAT IS THE ANSWER TO "WHICH FAILURE DO YOU
+ * PREFER". Both wrong answers cost real money. Refund-anyway can pay a member
+ * twice. Refuse-anyway can leave the club holding their money for good, because a
+ * webhook that answers 200 is never redelivered. So a read that cannot answer
+ * gives NEITHER answer: the rejection propagates, the handler's outer catch turns
+ * it into a 500, the processed-event marker is cleared, and Stripe redelivers with
+ * backoff. The refund keys are idempotent, so a redelivery that reaches a working
+ * database refunds exactly once. This is the same shape the handlers already use
+ * for a refund that cannot be issued ("deliberately NOT swallowed: the webhook
+ * returns 500"), and it is why the call sits BEFORE the refund rather than beside
+ * it — at that point nothing has moved, so failing is free.
+ *
+ * WHAT IT DOES NOT CLOSE, STATED RATHER THAN IMPLIED. A hand-completion that
+ * commits AFTER this read but before or during the Stripe refund is not caught
+ * here: `resolveManualRefundTask` takes no advisory lock, and closing the window
+ * would mean holding `pg_advisory_xact_lock(1)` across a provider round trip,
+ * which `docs/CONCURRENCY_AND_LOCKING.md` forbids outright. What the fence does is
+ * shrink the exposure from "any time in the hours or days the task sits OPEN" to
+ * "the duration of one Stripe refund call". The residue is DETECTED afterwards
+ * instead: the record writer re-reads the row under the lock and reports
+ * `existingStatus: COMPLETED`, which the caller escalates to a `critical` audit row
+ * and an alert saying the member may have been paid twice.
+ */
+export async function findCompletedHandBackForLateCapture(params: {
+  bookingId: string;
+  paymentId: string;
+  paymentIntentId: string;
+}): Promise<{
+  id: string;
+  amountCents: number;
+  completedAt: Date | null;
+  completedByMemberId: string | null;
+} | null> {
+  const { bookingId, paymentId, paymentIntentId } = params;
+  return prisma.manualRefundTask.findFirst({
+    where: {
+      bookingId,
+      paymentId,
+      reason: { in: automaticCancelledBookingRefundTaskReasons(paymentIntentId) },
+      status: ManualRefundTaskStatus.COMPLETED,
+    },
+    select: {
+      id: true,
+      amountCents: true,
+      completedAt: true,
+      completedByMemberId: true,
+    },
+  });
 }
 
 /**
@@ -413,8 +581,28 @@ export const AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS = 30;
  * `alreadyRecorded: "hand-resolved"` while logging at WARN with the row's status.
  * The card copy, `docs/guides/payments.md` and `INV-ADDPAY-037` all carry that one
  * carve-out explicitly rather than letting an empty card assert something the code
- * cannot. Whether the webhook should write its own row anyway in that state is an
- * owner decision, not this writer's (see #2774).
+ * cannot.
+ *
+ * KEEPING THAT CARVE-OUT IS #2774 D1 — the orchestrator's call on the Recommended
+ * option, and the owner has not ruled, so the alternative (write a second row) stays
+ * open (`INV-ADDPAY-039`'s authority line). Writing a second row was rejected here
+ * for the reason above: one `ManualRefundTask` per capture is the property every
+ * lookup here protects, and two rows for one capture would put the same money on
+ * the hand-back queue and the record card at once.
+ *
+ * WHAT DID CHANGE IS THE `COMPLETED` VARIANT (#2774 D2). A hand-`COMPLETED` row
+ * means an operator paid the member back themselves, so refunding at Stripe as
+ * well pays them twice — the caller now fences on that BEFORE refunding
+ * (`findCompletedHandBackForLateCapture`) and treats a `COMPLETED` row found HERE,
+ * after the refund, as the residual double payment it is: a `critical` audit row
+ * and its own alert. `existingStatus` is returned so the caller can tell that
+ * apart from the ordinary `DISMISSED` carve-out, which is unchanged.
+ *
+ * BOTH LATE-CAPTURE HANDLERS USE THIS WRITER SINCE #2773. It was the
+ * booking-change handler's alone under #2760; `handleCancelledBookingPaymentSucceeded`
+ * (a booking's OWN payment) now routes through it too, with
+ * `captureKind: "primary"` selecting its own `reason` sentence. There is no second
+ * implementation of this record anywhere in the tree, deliberately.
  *
  * BUDGETED FOR LOCK(1) CONTENTION, NOT LEFT ON PRISMA'S DEFAULTS. The advisory
  * wait counts against the interactive-transaction budget, and the default is
@@ -453,6 +641,14 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
    * nothing else — every lookup matches both sentences.
    */
   bookingDeleted: boolean;
+  /**
+   * Which of the two late-capture handlers is recording (#2773). It selects the
+   * row's stored `reason` sentence and nothing else — every lookup matches all
+   * four sentences. Required rather than defaulted: a default is how a new caller
+   * silently stores the wrong sentence, and the sentence is the operator-facing
+   * text on the finance card.
+   */
+  captureKind: CancelledBookingLateCaptureKind;
 }): Promise<{
   closed: number;
   created: boolean;
@@ -463,9 +659,32 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
    * the automatic refund is on no card and the caller must say so.
    */
   alreadyRecorded: false | "self" | "hand-resolved";
+  /**
+   * The status of the row that was already there, on the `"self"` and
+   * `"hand-resolved"` arms, and `null` whenever this call closed or created one.
+   *
+   * IT IS THE CALLER'S DOUBLE-PAYMENT DETECTOR (#2774). `"hand-resolved"` covers
+   * two very different worlds. `DISMISSED` is the documented carve-out: an
+   * operator settled the matter another way, no allocation exists, nothing is
+   * wrong except that the refund reaches no card. `COMPLETED` means an operator
+   * handed the money back themselves — `applyLocalRefundAllocation` ran — and
+   * since the caller has by now already refunded at Stripe, **the member has been
+   * paid twice.** The fence in `cancelled-booking-late-capture.ts` stops that
+   * before the refund whenever the hand-completion had already committed; this
+   * field is what catches the residue, where the completion committed inside the
+   * caller's own Stripe round trip. Distinguishing them is why the status is
+   * returned rather than only logged.
+   */
+  existingStatus: ManualRefundTaskStatus | null;
 }> {
-  const { bookingId, paymentId, paymentIntentId, amountCents, bookingDeleted } =
-    params;
+  const {
+    bookingId,
+    paymentId,
+    paymentIntentId,
+    amountCents,
+    bookingDeleted,
+    captureKind,
+  } = params;
   const reasons = automaticCancelledBookingRefundTaskReasons(paymentIntentId);
   // Same frozen prefix on both arms - it is the card's filter key - and a tail
   // that tells the truth about which arm wrote the row. See the note builder.
@@ -541,9 +760,17 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
           bookingId,
           paymentId,
           amountCents,
-          reason: bookingDeleted
-            ? deletedBookingModificationRefundReason(paymentIntentId)
-            : cancelledBookingModificationRefundReason(paymentIntentId),
+          // #2773: the population picks deleted vs cancelled, the capture kind
+          // picks "booking modification payment" vs "the booking's own payment".
+          // Four sentences, one per (kind, population), each frozen once written.
+          reason:
+            captureKind === "primary"
+              ? bookingDeleted
+                ? deletedBookingPrimaryPaymentRefundReason(paymentIntentId)
+                : cancelledBookingPrimaryPaymentRefundReason(paymentIntentId)
+              : bookingDeleted
+                ? deletedBookingModificationRefundReason(paymentIntentId)
+                : cancelledBookingModificationRefundReason(paymentIntentId),
           // Written EXPLICITLY, against a schema that defaults to OPEN. The
           // owner's rule is that this row is never OPEN, and a default that lives
           // only in the database cannot be asserted — stating it here makes the
@@ -583,6 +810,11 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
   } else if (outcome.alreadyRecorded === "hand-resolved") {
     // WARN, not info: this is the one ordering where the automatic refund reaches
     // no card, so the log line is the only place it is named. See #2774.
+    //
+    // #2774: the COMPLETED variant is not merely invisible, it means the member
+    // has been paid twice — so it is escalated by the caller to a `critical`
+    // audit row and its own alert, and this line stays as the log breadcrumb for
+    // both. `existingStatus` is what tells them apart and is returned below.
     logger.warn(
       {
         bookingId,
@@ -590,6 +822,7 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
         paymentIntentId,
         amountCents,
         bookingDeleted,
+        captureKind,
         existingStatus: outcome.existingStatus,
       },
       "An operator had already closed this refund task by hand, so the automatic refund is recorded on no finance card (#2760)",
@@ -600,5 +833,6 @@ export async function recordAutomaticCancelledBookingRefundTask(params: {
     closed: outcome.closed,
     created: outcome.created,
     alreadyRecorded: outcome.alreadyRecorded,
+    existingStatus: outcome.existingStatus,
   };
 }

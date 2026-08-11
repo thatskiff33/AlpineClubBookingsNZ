@@ -191,10 +191,11 @@ member is told the club will arrange their refund.
 
 ### A refund that happened without you — "Refunded automatically"
 
-Sometimes a member pays for a booking change at the same moment the booking is
-being cancelled — or deleted. The payment goes through against a booking that is on
-its way out, and Stripe hands the money straight back to the member on its own.
-Nobody decided that, and there is nothing for you to pay back.
+Sometimes a member pays at the same moment the booking is being cancelled — or
+deleted. That happens both for a booking's own payment and for a payment for a
+change to it. The payment goes through against a booking that is on its way out, and
+Stripe hands the money straight back to the member on its own. Nobody decided that,
+and there is nothing for you to pay back.
 
 Those refunds appear on this page in a second card, **Refunded automatically —
 nothing to pay back**, above the filters. It lists the member, the amount, the day
@@ -208,9 +209,9 @@ the money went back and the stay, and it covers the last 30 days.
   create, and it is not on this page.
 - **The booking was cancelled and is still on file.** Normally nothing to do. This is
   what you would expect when a booking is cancelled while the member is part-way
-  through paying for a change. The same applies if the cancellation itself was the
-  mistake: the money has gone back, so the booking has to be remade and charged
-  again.
+  through paying for it, or for a change to it. The same applies if the cancellation
+  itself was the mistake: the money has gone back, so the booking has to be remade
+  and charged again.
 
 1. **There are no buttons, and that is on purpose.** The money has already gone
    back to the member. Marking it as paid back would record the same refund twice.
@@ -221,9 +222,10 @@ the money went back and the stay, and it covers the last 30 days.
    own record of it is in the booking's history and the refund is not repeated here,
    because one payment never gets two refund tasks. Older ones live in the booking's
    audit log; a Full Admin can look for a
-   `booking.payment.refunded_after_cancellation` entry. This card is about payments
-   for booking **changes**; a late payment of a booking's original amount is
-   refunded the same way but is not listed here.
+   `booking.payment.refunded_after_cancellation` entry. **Both kinds of payment are
+   listed** — a booking's own payment and a payment for a change to it. Until
+   recently only the second kind appeared, and each row's reason line says which it
+   was.
 3. **You are also emailed at the time.** The subject says what happened — *Payment
    refunded automatically — booking already deleted*, or *… already cancelled* — and
    it cannot be switched off in [Notification Recipients](notification-recipients.md)
@@ -232,6 +234,36 @@ the money went back and the stay, and it covers the last 30 days.
 4. **If it says it could not be loaded, reload.** A line in place of the card means
    the page could not read the record — not that there is nothing to see. The
    hand-back queue above it is unaffected.
+
+### When you have already paid a late capture back yourself
+
+If you click **Mark paid back** on the hand-back task for a late capture and
+Stripe's automatic refund for that same payment arrives afterwards, the system does
+**not** send the money a second time. Marking a task paid back is what records the
+refund in the ledger, so refunding at Stripe on top of it would pay the member twice.
+
+**In practice this only comes up for a payment for a *change* to a booking.** That
+is the only late capture a task is ever raised for and therefore the only one you
+can mark paid back; a booking's own late payment is recorded automatically and
+arrives with no buttons. The check itself runs on both kinds, so nothing depends on
+that staying true.
+
+Instead you are emailed *Automatic refund withheld — already paid back by hand*, and
+the booking's audit log carries a
+`booking.payment.late_capture_refund_withheld` entry. **Check that the hand-back
+really happened and covers the whole amount** — if it did not, the money is still
+sitting at Stripe and has to be refunded from there. Nothing appears on the
+"Refunded automatically" card for these, because no automatic refund was made; your
+own closed task is the record.
+
+There is one timing you cannot be protected from. If you mark the task paid back at
+the exact moment Stripe's refund is going out, the check cannot see your work yet
+and the refund goes as well. You are emailed *Payment may have been refunded TWICE
+— reconcile* and the audit log carries
+`booking.payment.late_capture_double_refund_suspected`. **Assume the member has been
+paid twice until you have checked**: compare the refund on the Stripe payment
+against the hand-back you recorded, and recover the difference if there is one.
+Neither email can be switched off.
 
 There is no **View booking** link on these rows. A deleted booking's page opens only
 for a Full Admin, and a cancelled booking's page needs Bookings access that a
@@ -262,7 +294,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
 | Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
-| Refunded automatically — nothing to pay back | Read-only record of a booking-change payment Stripe returned by itself, because the booking had already been cancelled | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older |
+| Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
 Page size is fixed at 25. **Total Revenue** and **Refunded / Credited** reflect
 the whole filtered set; **Success Rate** is computed from the visible page.

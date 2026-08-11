@@ -2209,6 +2209,14 @@ model BookingRequest {
   // lodge exists, ADR-002).
   lodgeId String?
 
+  // Other/partner lodge the requester indicated they are a member of (#2749,
+  // Other Lodges epic). Null = "No" — the default, left blank for backwards
+  // compatibility with requests made before this field existed. Read at approval
+  // time to apply the reciprocal "other club member" treatment. FK is Restrict
+  // (like lodgeId): an OtherLodge referenced by a request cannot be deleted out
+  // from under an approver.
+  otherLodgeId String?
+
   // Indicative pricing shown on the public form (when enabled) at submit time.
   indicativePriceCents Int?
   // Officer-set price the requester is asked to pay on approval.
@@ -2264,6 +2272,7 @@ model BookingRequest {
   version Int @default(0)
 
   lodge            Lodge?                @relation(fields: [lodgeId], references: [id], onDelete: Restrict)
+  otherLodge       OtherLodge?           @relation(fields: [otherLodgeId], references: [id], onDelete: Restrict)
   requestedByMember Member?              @relation("BookingRequestRequester", fields: [requestedByMemberId], references: [id], onDelete: SetNull)
   convertedBooking Booking?              @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
   heldBooking      Booking?              @relation("BookingRequestHeldBooking", fields: [heldBookingId], references: [id], onDelete: SetNull)
@@ -2279,6 +2288,7 @@ model BookingRequest {
   @@index([reviewedByMemberId])
   @@index([heldBookingId])
   @@index([acceptedQuoteId])
+  @@index([otherLodgeId])
   // #2263: "My requests" reads by member, and the open-request cap counts a
   // member's non-terminal rows — both are (member, status) lookups.
   @@index([requestedByMemberId, status])
@@ -4368,6 +4378,29 @@ model Lodge {
   // reservations cannot be deleted out from under the capacity view.
   policyExceptionReservationNights PolicyExceptionReservationNight[] @relation("PolicyExceptionReservationLodge")
   newBookingPolicyExceptionRequests NewBookingPolicyExceptionRequest[]
+}
+
+// Registry of EXTERNAL / partner lodges the club recognises (e.g. for the
+// reciprocal "other club member" rate), admin-curated on Admin -> Lodges.
+// Deliberately DISTINCT from the club's own Lodge rows above: an OtherLodge has
+// no slug, no booking capacity, no scoping, and no relations. `bedCapacity`
+// here is INFORMATIONAL only (a fact about the partner lodge) and is never this
+// system's booking capacity — that is derived from Lodge rooms/beds. `name` is
+// unique because it will populate a non-member "which lodge are you a member
+// of" drop-down (follow-up). An admin removes a lodge from the list by deleting
+// it (there is no active/inactive state — that was dropped as unneeded).
+model OtherLodge {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  location            String?  @db.VarChar(300)
+  bookingOfficerName  String?  @db.VarChar(200)
+  bookingOfficerEmail String?  @db.VarChar(320)
+  bookingOfficerPhone String?  @db.VarChar(50)
+  bedCapacity         Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  bookingRequests     BookingRequest[]
 }
 
 model LodgeSettings {

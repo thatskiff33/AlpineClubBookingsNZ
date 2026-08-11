@@ -241,8 +241,52 @@ export const AUDIT_CENSUS_TOTALS = {
    * uses it: the block it sits in is already the handler's must-never-throw
    * region, and an audit write that threw would turn a lost row into a replayed
    * refund path.
+   *
+   * 429 -> 431 (#2773 / #2774), and the arithmetic is NOT "+2 new writers" — it is
+   * one writer MOVING and two genuinely new ones, which nets to +2 and is spelt out
+   * because the move renumbers a pinned ordinal (see the two entries at
+   * `handleCancelledBookingAdditionalPaymentSucceeded` below).
+   *
+   * - MOVED: `booking.payment.auto_refund_record_failed` left
+   *   `handleCancelledBookingAdditionalPaymentSucceeded` for
+   *   `cancelled-booking-late-capture.ts::recordAutomaticLateCaptureRefund`. #2773
+   *   routes the SECOND late-capture handler (a booking's own payment) through the
+   *   same record-and-alert machinery, and copying twenty lines of catch-and-audit
+   *   into it is the two-implementations-of-one-rule defect this repository keeps
+   *   re-finding. So the epilogue is shared and the write site moved with it. Net
+   *   zero on the total; not zero on the ordinals.
+   * - NEW: `booking.payment.late_capture_refund_withheld`
+   *   (`reportWithheldLateCaptureRefund`). #2774's fence: a `COMPLETED`
+   *   `ManualRefundTask` means an operator already paid the member back by hand and
+   *   `applyLocalRefundAllocation` recorded it, so Stripe's refund on top of it pays
+   *   the member TWICE. The refund is withheld, and this row is how a person finds
+   *   out. It deliberately is NOT
+   *   `booking.payment.refunded_after_cancellation` — that action is named by the
+   *   finance card as the permanent record of an automatic refund, and no refund
+   *   happened. `severity: "critical"`, `outcome: "blocked"` (a guard refused an
+   *   action; nothing failed).
+   * - NEW: `booking.payment.late_capture_double_refund_suspected`
+   *   (`announceAutomaticLateCaptureRefund`). The residue the fence cannot close: the
+   *   hand-completion committed inside the webhook's own Stripe round trip, so the
+   *   refund went out anyway and the member has probably been paid twice. Closing
+   *   the window would mean holding `pg_advisory_xact_lock(1)` across a provider
+   *   call, which `docs/CONCURRENCY_AND_LOCKING.md` forbids, so the exposure is
+   *   shrunk to one Stripe call and the residue is reported rather than left silent.
+   *   `severity: "critical"`, `outcome: "failure"`.
+   *
+   * Both new rows are `logAudit` for the reason the moved one is: they sit on paths
+   * that must answer the webhook without throwing, and an awaited write that
+   * rejected would replay a refund for the sake of recording something about a
+   * refund. `filesScanned` moved 1895 -> 1901 across the merged tree.
    */
-  writeSites: 429,
+  // 428 -> 429 (#2760): `booking.payment.auto_refund_record_failed`, above.
+  // 429 -> 432 (#2749): the three Other Lodges admin CRUD audit writers
+  // (OTHER_LODGE_CREATED/UPDATED/DELETED), all `auditLog.create`, category
+  // `admin`. Re-measured with `npm run audit:census` on the merged tree (432 TS
+  // sites; the raw `sql.insert` seed row is tracked in `sqlStatements`, not here).
+  // 432 -> 434 (#2773/#2774): the two late-capture writers this branch
+  // adds. Re-measured with `npm run audit:census` on the merged tree.
+  writeSites: 434,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -274,7 +318,12 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the same reasoning applies twice over — it is written FROM a catch
     // block on a path that must answer 200, so an awaited write that rejected
     // would replay a refund for the sake of recording that a record was lost.
-    logAudit: { total: 243, uncategorised: 0 },
+    // 243 -> 245 (#2773 / #2774): the two new late-capture rows above. The moved
+    // one stayed in this sink, so the delta is the two additions and not three.
+    // Both are `logAudit` on the same grounds as the row they sit beside — a
+    // rejected audit write on either path would turn "a person needs to know about
+    // this money" into a replayed refund.
+    logAudit: { total: 245, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -316,7 +365,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // 72 -> 70 (#2581 child 2): the two dependants writes, above.
     // 70 -> 69 (#2581 child 2 review): the age-up handoff write, above. No
     // hand-built `auditLog.create` remains outside a declared wrapper.
-    "auditLog.create": { total: 69, uncategorised: 0 },
+    // 69 -> 72 (#2749): the three Other Lodges admin CRUD writers, above.
+    "auditLog.create": { total: 72, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -391,7 +441,14 @@ export const AUDIT_CENSUS_TOTALS = {
     // refund was not written, which only a finance reader can act on (find the
     // `booking.payment.refunded_after_cancellation` entry beside it and reconcile
     // by hand), and every operator who could act on it already holds `finance`.
-    payment: 35,
+    // 35 -> 37 (#2773 / #2774): `booking.payment.late_capture_refund_withheld` and
+    // `booking.payment.late_capture_double_refund_suspected`. The same gate again,
+    // and here the argument is at its strongest: each row says money either did not
+    // go back or went back twice, and the only person who can settle that is the one
+    // who reconciles the club's money. `support` + `finance` is exactly who the
+    // matching unmuteable alert is addressed to, so the audit trail and the mail
+    // reach the same audience rather than one being visible to a wider set.
+    payment: 37,
     // 27 -> 34 (#2581 child 2): the five family-group writers and the two
     // dependants writers. Both dependants writers also moved off a hand-built
     // Prisma literal and onto the audit boundary in the same change.
@@ -467,7 +524,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // below, with an action-name gate and a surface gate beside it, because this
     // count cannot see a compensating swap and cannot see a FOURTH member-record
     // screen arriving with a different answer. Full rule: `INV-PRIV-012`.
-    admin: 98,
+    // 98 -> 101 (#2749): the three Other Lodges admin CRUD writers. `admin` is
+    // readable with support:view alone, so this widens the weakest-gate set by
+    // three (the derived support:view total moves 120 -> 123) — the officers who
+    // curate the Other Lodges registry, not a new class of reader.
+    admin: 101,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch
@@ -657,14 +718,46 @@ export const APPLIED_AUDIT_CATEGORIES: Readonly<Record<string, string>> = {
   "src/lib/membership-subscription-billing.ts::confirmSubscriptionBillingPreview#0": "payment",
   // #2760 INSERTED A WRITER AHEAD OF THE ONE THAT USED TO BE `#0` HERE, which is
   // the renumbering hazard this file's header warns about: `#0` was
-  // `booking.payment.refunded_after_cancellation` and is now
+  // `booking.payment.refunded_after_cancellation` and became
   // `booking.payment.auto_refund_record_failed`, with the refund row pushed to
-  // `#1`. Both are `payment`, so the identity pin would have passed while
-  // silently meaning something else — BOTH ordinals are listed now so the next
-  // insertion at this symbol has to say so out loud.
+  // `#1`. Both are `payment`, so the identity pin would have passed while silently
+  // meaning something else — which is why #2760 listed BOTH ordinals.
+  //
+  // #2773 MOVED THAT WRITER OUT AGAIN, so `#0` HERE HAS REVERTED TO MEANING
+  // `booking.payment.refunded_after_cancellation` AND `#1` NO LONGER EXISTS. Said
+  // out loud because it is the same hazard in reverse and it is just as silent: the
+  // category never changed, so nothing in this map could have caught it. The writer
+  // now lives at `recordAutomaticLateCaptureRefund` below, shared by BOTH
+  // late-capture handlers — the whole point of #2773 is that there is one
+  // implementation of this record rather than a copy per handler.
   "src/lib/stripe-webhook-service.ts::handleCancelledBookingAdditionalPaymentSucceeded#0": "payment",
-  "src/lib/stripe-webhook-service.ts::handleCancelledBookingAdditionalPaymentSucceeded#1": "payment",
+  // Untouched by #2773, and worth stating because the sibling above moved: this
+  // handler gained NO audit write. Its record failure is audited by the shared
+  // epilogue, not inline, so `#0` still means
+  // `booking.payment.refunded_after_cancellation` exactly as it did before #2760.
   "src/lib/stripe-webhook-service.ts::handleCancelledBookingPaymentSucceeded#0": "payment",
+  /*
+    #2773 / #2774 — the three write sites of the shared late-capture epilogue,
+    pinned on arrival rather than left unlisted.
+
+    They are new rather than #2581 classifications, so nothing forced them into this
+    map. They are here because all three are `payment` — money evidence on a
+    Critical webhook path — and this map is the only place a category drift at a
+    named site fails a test. One site per symbol today, so no ordinal hazard yet;
+    listing them is what makes the NEXT insertion at any of the three say so out
+    loud, which is the lesson the two entries above were bought with.
+
+    None of the three reaches a member self-timeline. That query
+    (`buildMemberVisibleAuditLogWhere` -> `buildMemberAuditLogWhere`) needs the row
+    to carry the member in `subjectMemberId`, `actorMemberId`, `memberId` or
+    `targetId`; all three carry a BOOKING id in `targetId` and no member column at
+    all, and each `details` is a JSON object, which the member projection suppresses
+    entirely. Same shape as the `booking.payment.refunded_after_cancellation` rows
+    above.
+  */
+  "src/lib/cancelled-booking-late-capture.ts::recordAutomaticLateCaptureRefund#0": "payment",
+  "src/lib/cancelled-booking-late-capture.ts::reportWithheldLateCaptureRefund#0": "payment",
+  "src/lib/cancelled-booking-late-capture.ts::announceAutomaticLateCaptureRefund#0": "payment",
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentCanceled#0": "payment",
   "src/lib/stripe-webhook-service.ts::handlePaymentIntentFailed#0": "payment",
   "src/lib/stripe-webhook-service.ts::refundSupersededGroupSettlementIntent#0": "payment",

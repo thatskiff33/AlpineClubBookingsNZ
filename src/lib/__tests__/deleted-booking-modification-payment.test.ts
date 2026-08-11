@@ -153,14 +153,22 @@ function raise() {
  * The webhook's writer. `bookingDeleted` defaults to the deleted population,
  * which is the one #2700 shipped and every pre-#2760 assertion here was written
  * against; the merely-cancelled population passes `false` explicitly.
+ *
+ * `captureKind` defaults to `"modification"` for the same reason: every assertion
+ * in this file predates #2773, which widened the writer to the booking's OWN
+ * payment as well. The primary kind is exercised explicitly where it matters.
  */
-function record(bookingDeleted = true) {
+function record(
+  bookingDeleted = true,
+  captureKind: "modification" | "primary" = "modification",
+) {
   return recordAutomaticCancelledBookingRefundTask({
     bookingId: BOOKING_ID,
     paymentId: PAYMENT_ID,
     paymentIntentId: INTENT_ID,
     amountCents: AMOUNT_CENTS,
     bookingDeleted,
+    captureKind,
   });
 }
 
@@ -381,7 +389,14 @@ describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)",
     // for one refund.
     const outcome = await record();
 
-    expect(outcome).toEqual({ closed: 1, created: false, alreadyRecorded: false });
+    expect(outcome).toEqual({
+      closed: 1,
+      created: false,
+      alreadyRecorded: false,
+      // #2774: null whenever this call closed or created the row - nothing was
+      // already there, so there is no prior status and no double payment to detect.
+      existingStatus: null,
+    });
     const call = mocks.manualRefundTaskUpdateMany.mock.calls[0][0] as {
       data: Record<string, unknown>;
     };
@@ -459,7 +474,12 @@ describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)",
 
     const outcome = await record();
 
-    expect(outcome).toEqual({ closed: 0, created: true, alreadyRecorded: false });
+    expect(outcome).toEqual({
+      closed: 0,
+      created: true,
+      alreadyRecorded: false,
+      existingStatus: null,
+    });
     const created = mocks.manualRefundTaskCreate.mock.calls[0][0] as {
       data: Record<string, unknown>;
     };
@@ -545,6 +565,9 @@ describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)",
       closed: 0,
       created: false,
       alreadyRecorded: "self",
+      // #2774: this writer's own row is DISMISSED, which is not the status that
+      // means an operator paid the member back by hand.
+      existingStatus: "DISMISSED",
     });
     expect(mocks.manualRefundTaskCreate).not.toHaveBeenCalled();
     expect(mocks.logger.warn).not.toHaveBeenCalled();
@@ -576,6 +599,11 @@ describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)",
       closed: 0,
       created: false,
       alreadyRecorded: "hand-resolved",
+      // #2774 D1: DISMISSED is the carve-out that issue keeps (the orchestrator's
+      // call on its Recommended option, not the owner's) - settled another
+      // way, no allocation written, nobody paid twice. COMPLETED in this field is
+      // what the caller escalates as a suspected double payment.
+      existingStatus: "DISMISSED",
     });
     expect(mocks.manualRefundTaskCreate).not.toHaveBeenCalled();
     expect(mocks.logger.warn).toHaveBeenCalledTimes(1);

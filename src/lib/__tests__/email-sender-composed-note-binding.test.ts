@@ -47,6 +47,7 @@ import {
 import {
   sendAdminDuplicateCaptureRefundAlert,
   sendAdminLateCaptureAutoRefundAlert,
+  sendAdminLateCaptureHandBackConflictAlert,
 } from "@/lib/email/admin-alerts-finance";
 import {
   sendBookingBumpedEmail,
@@ -202,6 +203,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       paymentIntentId: "pi_additional_late",
       bookingId: "booking-9",
       bookingDeleted: true,
+      captureKind: "modification",
     });
 
     const deletedData = capturedUnmuteableTemplateData();
@@ -224,6 +226,7 @@ describe("#2320 review — senders supply the composed notes their defaults rend
       paymentIntentId: "pi_additional_late",
       bookingId: "booking-9",
       bookingDeleted: false,
+      captureKind: "modification",
     });
 
     const cancelledData = capturedUnmuteableTemplateData();
@@ -234,6 +237,106 @@ describe("#2320 review — senders supply the composed notes their defaults rend
     expect(cancelledRendered).toContain("had already been CANCELLED");
     expect(cancelledRendered).toContain("there is usually nothing to do");
     expect(cancelledRendered).not.toContain("had already been DELETED");
+  });
+
+  it("admin-late-capture-auto-refund: {{lateCaptureLeadNote}} names the right capture on both kinds", async () => {
+    /*
+      #2773. The shipped default used to hard-code "a booking-change payment" and
+      "the supplementary Xero invoice for the change was not released". Both handlers
+      send this mail now, and neither sentence is true about the booking's OWN
+      payment - which has no supplementary invoice at all - so dropping the supply
+      line here would render the token as "" for every club override AND leave the
+      default asserting the wrong accounting for half the events it reports.
+    */
+    await sendAdminLateCaptureAutoRefundAlert({
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      amountCents: 2500,
+      paymentIntentId: "pi_additional_late",
+      bookingId: "booking-9",
+      bookingDeleted: true,
+      captureKind: "modification",
+    });
+
+    const modificationData = capturedUnmuteableTemplateData();
+    expect(typeof modificationData.lateCaptureLeadNote).toBe("string");
+    expect(String(modificationData.lateCaptureLeadNote).trim()).not.toBe("");
+    const modificationRendered = renderDefaultBody(
+      "admin-late-capture-auto-refund",
+      modificationData,
+    );
+    expect(modificationRendered).toContain("supplementary Xero invoice");
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminLateCaptureAutoRefundAlert({
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      amountCents: 2500,
+      paymentIntentId: "pi_primary_late",
+      bookingId: "booking-9",
+      bookingDeleted: true,
+      captureKind: "primary",
+    });
+
+    const primaryRendered = renderDefaultBody(
+      "admin-late-capture-auto-refund",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(primaryRendered).not.toContain("supplementary Xero invoice");
+    expect(primaryRendered).toContain("payment for the booking itself");
+  });
+
+  it("admin-late-capture-hand-back-conflict: {{handBackConflictNote}} says which way the money went", async () => {
+    /*
+      #2774. The whole message is the direction. A default body that stated one
+      direction would tell an operator the opposite of what happened on the other -
+      either that a withheld refund had gone out, or that a double payment had not.
+    */
+    await sendAdminLateCaptureHandBackConflictAlert({
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      amountCents: 2500,
+      paymentIntentId: "pi_additional_late",
+      bookingId: "booking-9",
+      bookingDeleted: false,
+      captureKind: "modification",
+      handBackAmountCents: 2500,
+      refundSent: false,
+    });
+
+    const withheldData = capturedUnmuteableTemplateData();
+    expect(typeof withheldData.handBackConflictNote).toBe("string");
+    expect(String(withheldData.handBackConflictNote).trim()).not.toBe("");
+    const withheldRendered = renderDefaultBody(
+      "admin-late-capture-hand-back-conflict",
+      withheldData,
+    );
+    expect(withheldRendered).toContain("has NOT been sent back a second time");
+    expect(withheldRendered).not.toContain("may have gone back TWICE");
+
+    mocks.sendUnmuteableAdminAlert.mockClear();
+    await sendAdminLateCaptureHandBackConflictAlert({
+      memberName: "Alice Example",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      amountCents: 2500,
+      paymentIntentId: "pi_additional_late",
+      bookingId: "booking-9",
+      bookingDeleted: false,
+      captureKind: "modification",
+      handBackAmountCents: null,
+      refundSent: true,
+    });
+
+    const sentRendered = renderDefaultBody(
+      "admin-late-capture-hand-back-conflict",
+      capturedUnmuteableTemplateData(),
+    );
+    expect(sentRendered).toContain("may have gone back TWICE");
+    expect(sentRendered).not.toContain("has NOT been sent back a second time");
   });
 
   it("split-guest-portion-cancelled: {{ownBookingNote}} is supplied and renders its reassurance sentence", async () => {

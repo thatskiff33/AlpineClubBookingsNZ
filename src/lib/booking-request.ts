@@ -82,6 +82,7 @@ import {
   lodgeNullTolerantScope,
   lodgeOrderBy,
 } from "@/lib/lodges";
+import { otherLodgeOrderBy } from "@/lib/other-lodges";
 // ONE definition of the open-status list, shared with the member DTO so the
 // Withdraw affordance is derived from the same list this file's WHERE clauses
 // name rather than restating it (#2263 review finding M3).
@@ -395,6 +396,41 @@ export async function getPublicBookingRequestLodges(
 }
 
 /**
+ * The external / partner lodges a requester may say they belong to (#2749).
+ * id + name only — this backs a public form drop-down. Unlike the own-lodge
+ * list this is always returned (even for one entry); the form shows a "No"
+ * default and treats a blank selection as "not a member of another lodge".
+ */
+export async function getPublicOtherLodges(
+  db: Pick<typeof prisma, "otherLodge"> = prisma
+): Promise<Array<{ id: string; name: string }>> {
+  return db.otherLodge.findMany({
+    orderBy: otherLodgeOrderBy(),
+    select: { id: true, name: true },
+  });
+}
+
+/**
+ * Validate an optional requester-supplied "other lodge" selection. A provided
+ * id must name an existing OtherLodge (400 otherwise); an omitted/blank id
+ * returns null, meaning "No — not a member of another lodge".
+ */
+export async function assertRequestedOtherLodgeExists(
+  otherLodgeId: string | null | undefined,
+  db: Pick<typeof prisma, "otherLodge"> = prisma
+): Promise<string | null> {
+  if (!otherLodgeId) return null;
+  const otherLodge = await db.otherLodge.findUnique({
+    where: { id: otherLodgeId },
+    select: { id: true },
+  });
+  if (!otherLodge) {
+    throw new BookingRequestError("Selected lodge not found", 400);
+  }
+  return otherLodge.id;
+}
+
+/**
  * Validate an optional requester-supplied lodge selection. A provided id must
  * name an ACTIVE lodge; an omitted id returns null, which downstream readers
  * treat as the club's default lodge (BookingRequest.lodgeId null semantics).
@@ -572,6 +608,12 @@ interface CreateBookingRequestInput {
    * lodge (BookingRequest.lodgeId null semantics).
    */
   lodgeId?: string | null;
+  /**
+   * Other/partner lodge the requester says they belong to (#2749). Callers must
+   * validate it names an existing OtherLodge (assertRequestedOtherLodgeExists).
+   * Null/omitted means "No" (blank for backwards compatibility).
+   */
+  otherLodgeId?: string | null;
 }
 
 /**
@@ -618,6 +660,7 @@ export async function createBookingRequest(input: CreateBookingRequestInput) {
       message: cleanNullableString(input.message),
       indicativePriceCents,
       lodgeId: requestedLodgeId,
+      otherLodgeId: input.otherLodgeId ?? null,
       verificationTokenHash: tokenHash,
       verificationTokenExpiresAt,
     },
@@ -658,6 +701,7 @@ export async function createBookingRequest(input: CreateBookingRequestInput) {
       indicativePriceCents,
       pricingShown: settings.showPricingToNonMembers,
       lodgeId: requestedLodgeId,
+      otherLodgeId: input.otherLodgeId ?? null,
     },
   });
 
@@ -2704,7 +2748,10 @@ function parseAdminTeachers(raw: unknown) {
 }
 
 export function serializeBookingRequestForAdmin(
-  request: BookingRequest & { lodge?: { name: string } | null }
+  request: BookingRequest & {
+    lodge?: { name: string } | null;
+    otherLodge?: { name: string } | null;
+  }
 ) {
   // #2342: an admin READ never dies on one malformed historical row. This is
   // the single serialiser behind BOTH the queue list
@@ -2730,6 +2777,11 @@ export function serializeBookingRequestForAdmin(
     // included the lodge relation.
     lodgeId: request.lodgeId,
     lodgeName: request.lodge?.name ?? null,
+    // Other/partner lodge the requester said they belong to (#2749). Null
+    // otherLodgeId means "No"; otherLodgeName is present only when the caller
+    // included the otherLodge relation.
+    otherLodgeId: request.otherLodgeId,
+    otherLodgeName: request.otherLodge?.name ?? null,
     // Whole-lodge exclusivity (ADR-001). Emitted so the admin queue can badge
     // it — for SCHOOL rows too, closing a display gap that predates #2263 — and
     // so the member-origin approval branch can be selected at all.

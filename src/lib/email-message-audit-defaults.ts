@@ -282,9 +282,41 @@ const EMAIL_AUDIT_DEFAULTS_BASE = {
   // because it reports an automatic money movement. {{refundOutcomeNote}} carries
   // the sentence that differs between a deleted and a merely cancelled booking, so
   // an override keeps both cases correct without needing conditional syntax.
+  //
+  // #2773: the two hard-coded sentences that said "a booking-change payment" and
+  // "the supplementary Xero invoice for the change" moved into
+  // {{lateCaptureLeadNote}}. BOTH late-capture handlers send this alert now, and
+  // those sentences are false about a booking's OWN payment - which has no
+  // supplementary invoice at all - so leaving them fixed would have shipped a
+  // default body that misdescribed half the events it reports. Safe to rewrite
+  // rather than frozen the way a stored note prefix is: this template is
+  // introduced by the same unreleased work (#2761), so no club can be holding an
+  // override of it yet.
   "admin-late-capture-auto-refund": {
     "defaultSubject": "Payment refunded automatically - booking {{bookingStateLabel}}: {{memberName}}",
-    "defaultBody": "Payment Refunded Automatically\n\nA booking-change payment was captured after the booking had already been cancelled, and it has been refunded in full automatically. There is nothing to pay back.\n\nNothing failed and no money is missing. The member paid for a booking change while the booking was on its way out, so the charge was returned to them as soon as Stripe told us about it. The supplementary Xero invoice for the change was not released.\n\n{{refundOutcomeNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nBooking status when the payment arrived: {{bookingStateLabel}}\nBooking: {{bookingId}}\nStripe PI: {{paymentIntentId}}\n\nView Payments: {{reviewUrl}}"
+    "defaultBody": "Payment Refunded Automatically\n\nA payment was captured after the booking had already been cancelled, and it has been refunded in full automatically. There is nothing to pay back.\n\n{{lateCaptureLeadNote}}\n\n{{refundOutcomeNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount refunded: {{amount}}\nBooking status when the payment arrived: {{bookingStateLabel}}\nBooking: {{bookingId}}\nStripe PI: {{paymentIntentId}}\n\nView Payments: {{reviewUrl}}"
+  },
+  // #2774: the reconciliation notice for a late capture that collided with a
+  // hand-back an operator had already made. Its OWN entry rather than a flag on
+  // admin-late-capture-auto-refund: on this path the money either did not go back
+  // at all or went back twice, so that template's "refunded automatically, nothing
+  // to pay back" heading and body would be false in both directions, and one
+  // editable body cannot be correct about a refund that happened AND one that did
+  // not. Delivery-locked for the same reason as its sibling, and more so - this is
+  // the mail that says money may have left the club twice.
+  // {{handBackConflictNote}} carries the one sentence saying which way the money
+  // went, so an override stays correct on both.
+  // AND {{handBackConflictLabel}} carries the same direction in the SUBJECT, which
+  // is not a nicety: a stored subject override replaces the sender's computed
+  // subject unconditionally, so a default subject with one direction written into it
+  // would title every suspected DOUBLE payment "Automatic refund withheld" the
+  // moment any admin saved this template. Same construction as its sibling's
+  // {{bookingStateLabel}} (#2761), and #2774 additionally makes this one the first
+  // token REQUIRED IN A SUBJECT (REQUIRED_SUBJECT_TEMPLATE_TOKENS), so an admin
+  // cannot type the direction back out either.
+  "admin-late-capture-hand-back-conflict": {
+    "defaultSubject": "{{handBackConflictLabel}}: {{memberName}}",
+    "defaultBody": "Late Capture vs Hand-Back - Reconcile By Hand\n\nA payment captured after the booking was cancelled has collided with a refund an operator had already paid back by hand.\n\n{{handBackConflictNote}}\n\nMember: {{memberName}}\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nAmount captured: {{amount}}\nBooking: {{bookingId}}\nStripe PI: {{paymentIntentId}}\n\nView Payments: {{reviewUrl}}"
   },
   "admin-pending-deadline": {
     "defaultSubject": "{{count}} Pending Booking{{s}} Approaching Deadline",

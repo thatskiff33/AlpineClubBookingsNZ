@@ -322,15 +322,15 @@ const NOTICE = "AdminViewOnlyNotice";
 */
 const FIGURES = {
   /** Every `<ViewOnlyActionButton>` render site in the admin tree. */
-  callSites: 315,
+  callSites: 319,
   /** Those that hand their explanation to a banner, by either rule. */
-  optOuts: 264,
+  optOuts: 268,
   /** `describeReason={false}` — needs a banner in the SAME file. */
   staticOptOuts: 237,
   /** `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch. */
-  vouchedOptOuts: 27,
+  vouchedOptOuts: 31,
   /** …of the vouched: proved at a parent's own JSX render site (#2168). */
-  renderSiteVouchedOptOuts: 22,
+  renderSiteVouchedOptOuts: 26,
   /** …of the vouched: proved through the wizard shell's channel (#2324). */
   shellVouchedOptOuts: 5,
   /** Controls that KEEP the per-button reason, and the files holding them. */
@@ -1372,6 +1372,19 @@ describe("view-only section banner coverage (#2160)", () => {
                member-credit-card reconciles to 51, not 50. Re-measured with
                `npx vitest run view-only-banner-contract`, which reports
                315 / 264 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
+
+          319  +4  #2749 adds the Other Lodges panel on /admin/lodges
+               (`lodges/_components/other-lodges-panel.tsx`): Add, Save, Edit and
+               Delete. The panel is a CHILD of the Lodges page, which renders one
+               lodge-area banner above it and passes `ancestorRendersViewOnlyBanner`
+               at the render site (#2168), so all four are RENDER-SITE VOUCHED
+               opt-outs, not static ones and not exceptions: callSites 315 -> 319,
+               optOuts 264 -> 268, vouchedOptOuts 27 -> 31, and the render-site
+               half of the split 22 -> 26. staticOptOuts, exceptions and the leaf
+               bucket do not move, and bannerComponents stays 84 — the panel owns
+               no banner of its own (the page's covers it). Re-measured with
+               `npx vitest run view-only-banner-contract`, which reports
+               319 / 268 / 237. READ NOTHING FROM THIS COLUMN; run the suite.
 
       */
       // #2259 adds the per-booking "No emails"

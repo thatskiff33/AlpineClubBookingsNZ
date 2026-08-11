@@ -334,6 +334,47 @@ describe("newly-registered hardcoded email templates (#1797)", () => {
     expect(definition.defaultBody).not.toContain("School");
   });
 
+  it("keeps BOTH late-capture alerts admin-audience and delivery-locked (#2761, #2773, #2774)", () => {
+    /*
+      The registry is the second of the two mute vectors. The senders read no
+      per-member notification preference (pinned at the senders), and these entries
+      are what stop an admin disabling them club-wide in Delivery Rules. Both report
+      automatic movements of real money: one says a refund went out on its own, the
+      other says one was withheld — or went out twice. Neither may be silenceable.
+
+      MUTATION PROOF: remove either name from LOCKED_DELIVERY_TEMPLATE_NAMES and this
+      fails, where every sender-level test would still pass.
+    */
+    for (const name of [
+      "admin-late-capture-auto-refund",
+      "admin-late-capture-hand-back-conflict",
+    ] as const) {
+      const definition = getEmailTemplateDefinition(name);
+      if (!definition) throw new Error(`missing ${name}`);
+      expect(definition.audience).toBe("admin");
+      expect(definition.deliveryEditable).toBe(false);
+      expect(getDefaultDeliveryMode(name)).toBe("always");
+    }
+
+    // Two ENTRIES, not one with a flag. The auto-refund body asserts the money went
+    // back and there is nothing to pay back, which is false in both of the
+    // conflict alert's directions — and one editable body cannot be correct about a
+    // refund that happened AND one that did not.
+    const autoRefund = getEmailTemplateDefinition("admin-late-capture-auto-refund");
+    const conflict = getEmailTemplateDefinition(
+      "admin-late-capture-hand-back-conflict",
+    );
+    expect(autoRefund?.defaultBody).toContain("nothing to pay back");
+    expect(conflict?.defaultBody).not.toContain("nothing to pay back");
+    // #2773: the auto-refund body must not hard-code the booking-change wording —
+    // both handlers send it now, and the primary path has no supplementary invoice.
+    expect(autoRefund?.defaultBody).not.toContain("booking-change payment");
+    expect(autoRefund?.defaultBody).not.toContain("supplementary Xero invoice");
+    expect(autoRefund?.requiredTokens).toContain("lateCaptureLeadNote");
+    // #2774: the direction sentence is the whole message on the conflict alert.
+    expect(conflict?.requiredTokens).toContain("handBackConflictNote");
+  });
+
   it("classifies admin-school-manual-invoice as an admin alert but keeps it delivery-locked", () => {
     // It ships via sendToAdmins, so it must classify as an admin alert like its
     // siblings (audience "admin") rather than "member". It stays in

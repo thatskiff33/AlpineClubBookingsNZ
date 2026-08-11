@@ -1,5 +1,6 @@
 import {
   adminLateCaptureAutoRefundTemplate,
+  adminLateCaptureHandBackConflictTemplate,
   adminPaymentFailureTemplate,
   adminDuplicateCaptureRefundTemplate,
   adminManualSettlementConflictTemplate,
@@ -16,7 +17,10 @@ import {
   composeOptionalEmailLine,
   duplicateCaptureRefundOutcomeParagraph,
   lateCaptureAutoRefundBookingStateLabel,
+  lateCaptureAutoRefundLeadParagraph,
   lateCaptureAutoRefundOutcomeParagraph,
+  lateCaptureHandBackConflictOutcomeParagraph,
+  lateCaptureHandBackConflictSubjectLabel,
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 import { formatNZDate } from "../nzst-date";
@@ -121,6 +125,15 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
   paymentIntentId: string;
   bookingId: string;
   bookingDeleted: boolean;
+  /**
+   * #2773: which of the two late-capture handlers sent this. BOTH send this alert
+   * now, and the copy has to say which payment was captured — the booking's own,
+   * or one for a change to it — because the two have different Xero consequences
+   * and #2761's whole point is that this mail must not misdescribe the event.
+   * Required rather than defaulted, so a new caller cannot silently inherit the
+   * booking-change wording.
+   */
+  captureKind: "modification" | "primary";
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/payments`;
@@ -145,10 +158,87 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
       refundOutcomeNote: lateCaptureAutoRefundOutcomeParagraph(
         data.bookingDeleted,
       ),
+      // #2773: and the same for WHICH capture it was, including the Xero
+      // consequence, which differs between the two handlers.
+      lateCaptureLeadNote: lateCaptureAutoRefundLeadParagraph(data.captureKind),
       reviewUrl,
     },
     // The people who reconcile the club's money own this, exactly as they own
     // every other finance alert. This is the audience rule, not a mute.
+    requirement: { area: "finance", level: "edit" },
+  });
+}
+
+/**
+ * #2774 (the orchestrator's call on that issue's Recommended option; the owner has
+ * not ruled — `INV-ADDPAY-039`'s authority line): the alert for a late capture that
+ * collided with a hand-back an operator had already made.
+ *
+ * IT REPORTS A RECONCILIATION, NOT A REFUND, which is why it is not the alert
+ * above. Either the automatic refund was WITHHELD because a `COMPLETED`
+ * `ManualRefundTask` proved an operator had already paid the member back — the
+ * fence, and the money bug it closes is paying the same capture back twice — or it
+ * went out anyway because that completion landed inside the webhook's own Stripe
+ * round trip, in which case the member has probably been paid twice. `refundSent`
+ * selects the direction.
+ *
+ * SAME AUDIENCE, SAME UNMUTEABLE DELIVERY, SAME AUDIENCE REASONING as its sibling
+ * (`INV-ADDPAY-038`): whoever can EDIT finance, through
+ * `sendUnmuteableAdminAlert`, so neither the per-member `adminPaymentFailure`
+ * checkbox nor the club-wide delivery mode can silence it. If anything the case for
+ * locking it is stronger — this is the one mail on the path that says money may
+ * have left the club twice.
+ *
+ * STILL ONE NOTIFICATION PER EVENT (`INV-ADDPAY-037`). This alert REPLACES the
+ * auto-refund alert whenever it fires; the caller in
+ * `cancelled-booking-late-capture.ts` sends exactly one of the two and never both.
+ */
+export async function sendAdminLateCaptureHandBackConflictAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  paymentIntentId: string;
+  bookingId: string;
+  bookingDeleted: boolean;
+  captureKind: "modification" | "primary";
+  handBackAmountCents: number | null;
+  refundSent: boolean;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/payments`;
+  const handBackConflictLabel = lateCaptureHandBackConflictSubjectLabel(
+    data.refundSent,
+  );
+
+  await sendUnmuteableAdminAlert({
+    // Composed from the SAME source as the {{handBackConflictLabel}} token below,
+    // so the sender's subject and an admin's saved override say the same direction.
+    subject: `${handBackConflictLabel}: ${data.memberName}`,
+    html: adminLateCaptureHandBackConflictTemplate({ ...data, reviewUrl }),
+    templateName: "admin-late-capture-hand-back-conflict",
+    templateData: {
+      memberName: data.memberName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      amount: formatMoneyCents(data.amountCents),
+      bookingId: data.bookingId,
+      paymentIntentId: data.paymentIntentId,
+      // THE DIRECTION, IN THE SUBJECT, AS A TOKEN. A stored subject override
+      // replaces the sender's subject unconditionally and a subject token cannot
+      // be made mandatory, so shipping one direction as literal default-subject
+      // text would title every double-payment notice "refund withheld" the moment
+      // any admin saved the template. The {{bookingStateLabel}} precedent (#2761),
+      // applied to the mail that may be reporting money leaving the club twice.
+      handBackConflictLabel,
+      // The one sentence that says which way the money went, composed once and
+      // shared with the hand-built HTML so an admin's saved default cannot state
+      // the opposite of what happened (#2268 convention).
+      handBackConflictNote: lateCaptureHandBackConflictOutcomeParagraph(
+        data.refundSent,
+      ),
+      reviewUrl,
+    },
     requirement: { area: "finance", level: "edit" },
   });
 }

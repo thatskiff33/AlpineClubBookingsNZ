@@ -34,7 +34,10 @@ import {
   bookingBumpedRebookAction,
   bookingPaymentDueNote,
   duplicateCaptureRefundOutcomeParagraph,
+  lateCaptureAutoRefundLeadParagraph,
   lateCaptureAutoRefundOutcomeParagraph,
+  lateCaptureHandBackConflictOutcomeParagraph,
+  lateCapturePaymentLabel,
   splitGuestPortionOwnBookingLine,
   type BookingPaymentDueCredit,
 } from "./email-message-notes";
@@ -1758,8 +1761,20 @@ export function adminLateCaptureAutoRefundTemplate(data: {
   paymentIntentId: string;
   bookingId: string;
   bookingDeleted: boolean;
+  /**
+   * #2773: which capture this was. The copy used to hard-code "a booking-change
+   * payment" and "the supplementary Xero invoice", which are both false about a
+   * booking's OWN payment — so routing the second late-capture handler through
+   * this template unchanged would have misdescribed the event.
+   */
+  captureKind: "modification" | "primary";
   reviewUrl: string;
 }): string {
+  // #2773: sentence-initial, so the shared label is capitalised here and nowhere
+  // else — the label itself stays a bare noun phrase for mid-sentence use.
+  const paymentLabel = lateCapturePaymentLabel(data.captureKind);
+  const capitalisedPaymentLabel =
+    paymentLabel.charAt(0).toUpperCase() + paymentLabel.slice(1);
   return layout(`
     ${heading(
       data.bookingDeleted
@@ -1767,14 +1782,17 @@ export function adminLateCaptureAutoRefundTemplate(data: {
         : "Payment Refunded Automatically — Booking Already Cancelled"
     )}
     ${alertBox(
-      data.bookingDeleted
-        ? "A booking-change payment was captured after the booking had already been deleted. It has been refunded in full automatically — there is nothing to pay back."
-        : "A booking-change payment was captured after the booking had already been cancelled. It has been refunded in full automatically — there is nothing to pay back.",
+      `${capitalisedPaymentLabel} was captured after the booking had already been ${
+        data.bookingDeleted ? "deleted" : "cancelled"
+      }. It has been refunded in full automatically — there is nothing to pay back.`,
       "success"
     )}
-    ${paragraph(
-      "Nothing failed and no money is missing. The member paid for a booking change while the booking was on its way out, so the charge was returned to them as soon as Stripe told us about it. The supplementary Xero invoice for the change was not released."
-    )}
+    ${
+      // The SAME paragraph the {{lateCaptureLeadNote}} token renders, so an
+      // admin's saved default cannot describe a different capture — or a
+      // different Xero consequence — from the mail (#2268 convention, #2773).
+      paragraph(lateCaptureAutoRefundLeadParagraph(data.captureKind))
+    }
     ${
       // The SAME sentence the {{refundOutcomeNote}} token renders in the
       // admin-editable body (#2268 convention): one source, so the hand-built
@@ -1788,6 +1806,108 @@ export function adminLateCaptureAutoRefundTemplate(data: {
       { label: "Check-in", value: formatNZDate(data.checkIn) },
       { label: "Check-out", value: formatNZDate(data.checkOut) },
       { label: "Amount refunded", value: formatCents(data.amountCents) },
+      {
+        label: "Booking status",
+        value: data.bookingDeleted
+          ? "Cancelled and deleted"
+          : "Cancelled, still on file",
+      },
+      { label: "Booking", value: escapeHtml(data.bookingId) },
+      { label: "Stripe PI", value: escapeHtml(data.paymentIntentId) },
+    ])}
+    ${button("View Payments", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+/**
+ * #2774 — the alert for a late capture that collided with a hand-back an operator
+ * had already made. Two directions, one template.
+ *
+ * WHY IT IS NOT `adminLateCaptureAutoRefundTemplate` WITH A FLAG. That template's
+ * heading is "Payment Refunded Automatically" and its alert box says the money has
+ * gone back and there is nothing to pay back. On the withheld arm every one of
+ * those statements is false, and on the double-payment arm "there is nothing to pay
+ * back" is the opposite of the truth. A boolean that has to rewrite the heading,
+ * the alert box, the lead paragraph and the subject is not a variant — it is a
+ * different mail wearing the same registry key, which would also mean one
+ * admin-editable body having to be correct about a refund that happened AND one
+ * that did not. Its own entry, for the same reason `admin-late-capture-auto-refund`
+ * is not a variant of `admin-payment-failure` (`INV-ADDPAY-038`).
+ *
+ * WHY THE TWO DIRECTIONS *DO* SHARE ONE TEMPLATE. They are one situation — an
+ * operator's hand-back and an automatic refund both claiming the same capture — and
+ * the reader's job is the same on both: reconcile this capture against that
+ * hand-back. `refundSent` selects the sentence that says which way the money went,
+ * composed once in `lateCaptureHandBackConflictOutcomeParagraph` and shared with
+ * the `{{handBackConflictNote}}` token. That is the
+ * `adminDuplicateCaptureRefundTemplate` / `refundFailed` precedent applied exactly.
+ *
+ * `warning` on both arms rather than a new `error` colour: the shared `alertBox`
+ * primitive offers info/warning/success, and adding a fourth colour for one
+ * template would change a primitive every other mail depends on to carry a
+ * distinction the heading, the box's own words and the outcome paragraph already
+ * state in full.
+ *
+ * No bearer token and no member address, so this is not sensitive-log material.
+ */
+export function adminLateCaptureHandBackConflictTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  paymentIntentId: string;
+  bookingId: string;
+  bookingDeleted: boolean;
+  captureKind: "modification" | "primary";
+  /**
+   * The amount the operator's own hand-back task recorded, in integer cents, when
+   * it is known. Printed so a reader can see whether the hand-back covered the
+   * whole capture — nothing here refunds a difference. `null` on the
+   * double-payment arm, which is detected from the record writer's outcome after
+   * the refund and does not re-read the row.
+   */
+  handBackAmountCents: number | null;
+  refundSent: boolean;
+  reviewUrl: string;
+}): string {
+  const paymentLabel = lateCapturePaymentLabel(data.captureKind);
+  return layout(`
+    ${heading(
+      data.refundSent
+        ? "Payment May Have Been Refunded Twice — Reconcile By Hand"
+        : "Automatic Refund Withheld — Already Paid Back By Hand"
+    )}
+    ${alertBox(
+      data.refundSent
+        ? `${paymentLabel.charAt(0).toUpperCase() + paymentLabel.slice(1)} was refunded automatically at the same moment an operator recorded paying it back by hand. The member may have been paid twice — please reconcile.`
+        : `${paymentLabel.charAt(0).toUpperCase() + paymentLabel.slice(1)} was captured after the booking had already been ${
+            data.bookingDeleted ? "deleted" : "cancelled"
+          }, and an operator had already paid it back by hand. The automatic refund was NOT sent — please confirm the hand-back.`,
+      "warning"
+    )}
+    ${
+      // The SAME sentence the {{handBackConflictNote}} token renders, so an
+      // admin's saved default cannot tell an operator the money went out when it
+      // did not, or the reverse (#2268 convention).
+      paragraph(lateCaptureHandBackConflictOutcomeParagraph(data.refundSent))
+    }
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Amount captured", value: formatCents(data.amountCents) },
+      ...(data.handBackAmountCents === null
+        ? []
+        : [
+            {
+              label: "Recorded as paid back by hand",
+              value: formatCents(data.handBackAmountCents),
+            },
+          ]),
+      {
+        label: "Automatic refund sent",
+        value: data.refundSent ? "Yes — on top of the hand-back" : "No",
+      },
       {
         label: "Booking status",
         value: data.bookingDeleted

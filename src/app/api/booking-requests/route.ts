@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   assertRequestedLodgeActive,
+  assertRequestedOtherLodgeExists,
   bookingRequestGuestSchema,
   BookingRequestError,
   createBookingRequest,
@@ -32,6 +33,9 @@ const bookingRequestSchema = z.object({
   checkOut: dateOnlyString.transform(parseDateOnly),
   // Lodge the stay is requested at; omitted means the club's default lodge.
   lodgeId: z.string().min(1).optional(),
+  // Other/partner lodge the requester says they belong to (#2749); omitted or
+  // blank means "No". Validated against the OtherLodge registry below.
+  otherLodgeId: z.string().min(1).optional(),
   guests: z.array(bookingRequestGuestSchema).min(1).max(200),
   message: z
     .string()
@@ -76,6 +80,12 @@ export async function POST(request: NextRequest) {
     // means the club's default lodge, stored as null.
     const lodgeId = await assertRequestedLodgeActive(parsed.data.lodgeId);
 
+    // A provided otherLodgeId must name an existing OtherLodge (400 otherwise);
+    // omitted/blank means "No" (stored as null).
+    const otherLodgeId = await assertRequestedOtherLodgeExists(
+      parsed.data.otherLodgeId,
+    );
+
     const lodgeCapacity = lodgeId
       ? await getLodgeCapacity(lodgeId)
       : await getDefaultLodgeCapacity();
@@ -96,6 +106,7 @@ export async function POST(request: NextRequest) {
       guests,
       message: parsed.data.message,
       lodgeId,
+      otherLodgeId,
     });
 
     return NextResponse.json({ success: true }, { status: 201 });

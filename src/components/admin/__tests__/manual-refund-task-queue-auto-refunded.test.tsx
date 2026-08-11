@@ -338,6 +338,16 @@ describe("ManualRefundTaskQueue — automatically refunded late captures (#2750)
     expect(card).toHaveTextContent(
       /booking\.payment\.refunded_after_cancellation/,
     );
+    /*
+      #2773 lifted the OTHER qualification, and this is what stops it coming back.
+      The copy used to read "every automatic refund of a late BOOKING-CHANGE
+      payment", which was honest while the sibling handler for a booking's own
+      payment wrote no row at all. It does now, through the same writer, so naming
+      one of the two handlers would understate what the card holds — and an
+      operator who reads a narrower claim than the truth goes hunting in the audit
+      log for rows that are on the screen in front of them.
+    */
+    expect(card).not.toHaveTextContent(/booking-change payment/i);
   });
 
   it("separates a deleted booking from one that is merely cancelled (#2760)", async () => {

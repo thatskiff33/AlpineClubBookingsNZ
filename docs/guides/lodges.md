@@ -15,6 +15,15 @@ Lodges are a **lodge** permission area: lodge view to read, lodge **edit** to ad
 edit, or deactivate. Member-facing screens only change once a **second active
 lodge** exists — a single-lodge club sees no lodge pickers.
 
+The same page also carries an **Other lodges** panel — a separate registry of
+*other clubs'* lodges the club recognises (name, location, booking officer
+contact, and bed capacity). These are **not** the club's own lodges: they take no
+bookings and have no configuration hub. Their names populate an **"Are you a
+member of another lodge?"** drop-down on the public
+[booking request form](booking-requests.md) (it defaults to **No**); the chosen
+lodge is saved with the request for use when it is reviewed. The panel uses the
+same **lodge edit** permission as the properties above.
+
 ## When you'd use it
 
 - You are bringing a second lodge online and need to create and configure it.
@@ -61,7 +70,18 @@ lodge** exists — a single-lodge club sees no lodge pickers.
    asks you to confirm — deactivating stops new bookings but leaves those in place.
    At least one lodge must stay active.
 
+### Manage other lodges
+
+1. Scroll to the **Other lodges** panel below the lodge properties. Click **Add
+   other lodge**, enter at least a **Name** (the only required field), optionally
+   fill in **Location**, the **booking officer's** name/email/phone, and a
+   **Bed capacity**, then **Save**.
+2. Use **Edit** to change a lodge, or **Delete** to remove it from the list.
+   Names must be unique — a duplicate is rejected with a clear message.
+
 ## Settings reference
+
+### Lodge properties
 
 | Field | What it controls | Default | Notes / constraints |
 | --- | --- | --- | --- |
@@ -71,6 +91,17 @@ lodge** exists — a single-lodge club sees no lodge pickers.
 | Travel note | Directions / arrival notes | — | Optional; appears in booking/pre-arrival emails (up to 2000 chars) |
 | Active | Whether the lodge takes new bookings | on | At least one lodge must stay active; inactive lodges are kept for history |
 | Configure | Opens the per-lodge configuration hub | — | Hub cards: rooms/beds, lockers, seasons & rates, chores. Per-lodge display is a separate section, shown only when the `lobbyDisplay` module is on (off by default) |
+
+### Other lodges
+
+| Field | What it controls | Default | Notes / constraints |
+| --- | --- | --- | --- |
+| Name | The other lodge's display name | — | Required; unique; up to 120 characters |
+| Location | Where the other lodge is | — | Optional; up to 300 characters |
+| Booking officer's name | Contact person at the other lodge | — | Optional; up to 200 characters |
+| Booking officer's email | Contact email | — | Optional; must be a valid email; up to 320 characters |
+| Booking officer's phone | Contact phone | — | Optional; up to 50 characters |
+| Bed capacity | Informational bed count of the other lodge | — | Optional; whole number ≥ 0. Not this system's booking capacity |
 
 ## Troubleshooting
 

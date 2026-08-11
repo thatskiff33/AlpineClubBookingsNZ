@@ -92,8 +92,8 @@ function FacilityGroup({
   emptyLabel: string;
 }) {
   return (
-    <article id={id} className="rounded-md border border-border bg-card p-2">
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+    <article id={id} className="wcx-group rounded-md border border-border bg-card p-2">
+      <h3 className="wcx-group-title text-sm font-semibold text-foreground">{title}</h3>
       {items.length > 0 ? (
         <div
           className={`mt-2 flex flex-wrap gap-2 ${title.replace(/\s+/g, "-").toLowerCase()}-status-container`}
@@ -101,7 +101,7 @@ function FacilityGroup({
           {items.map((item) => (
             <div
               key={`${item.name}-${item.status}`}
-              className={`flex flex-col gap-1 rounded-md border border-border bg-card p-2 ${title.replace(/\s+/g, "-").toLowerCase()}-status-item`}
+              className={`wcx-item flex flex-col gap-1 rounded-md border border-border bg-card p-2 ${title.replace(/\s+/g, "-").toLowerCase()}-status-item`}
             >
               <span
                 className={`text-xs font-medium text-foreground ${title.replace(/\s+/g, "-").toLowerCase()}-status-description`}
@@ -239,7 +239,7 @@ function TrailsKey() {
 
 function TrailCard({ trail }: { trail: WhakapapaTrail }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border bg-card p-2">
+    <div className="wcx-trail flex flex-col gap-1 rounded-md border border-border bg-card p-2">
       <span className="text-xs font-medium text-foreground conditions-trail-name">
         {trail.name || "Unknown"}
       </span>
@@ -317,10 +317,10 @@ function TrailsGroup({ areas }: { areas: WhakapapaTrailArea[] }) {
   return (
     <article
       id="whakapapa-trails"
-      className="mt-3 rounded-md border border-border bg-card p-2"
+      className="wcx-group mt-3 rounded-md border border-border bg-card p-2"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <h3 className="text-sm font-semibold text-foreground">Trails</h3>
+        <h3 className="wcx-group-title text-sm font-semibold text-foreground">Trails</h3>
         <TrailsKey />
       </div>
       {areas.length > 0 ? (
@@ -478,26 +478,119 @@ export function SkifieldWhakapapaWidget() {
       ? "bg-warning-3 text-warning-11"
       : "bg-muted text-muted-foreground";
 
+  // At-a-glance summary (#weather redesign, Option A). Derived, not stored: the
+  // headline facts a visitor scans for — is the road open, how many lifts, snow
+  // base and last 24h — surfaced above the detail. `wcx-*` classes are stable
+  // hooks the site-style Raw CSS skins; each stat is omitted when its data or
+  // section is unavailable so the strip never shows a blank tile.
+  const openLiftCount = data.lifts.filter(
+    (lift) => lift.status.trim().toLowerCase() === "open",
+  ).length;
+  const topConditions = data.conditions[0];
+  const summaryStats: Array<{
+    key: string;
+    label: string;
+    value: string;
+    sub?: string;
+    tone?: "ok" | "accent";
+  }> = [];
+  if (data.visibility.roadStatus && data.roadStatus.status) {
+    summaryStats.push({
+      key: "road",
+      label: data.roadStatus.name || "Road",
+      value: data.roadStatus.status,
+      tone: /open/i.test(data.roadStatus.status) ? "ok" : undefined,
+    });
+  }
+  if (data.visibility.lifts && data.lifts.length > 0) {
+    summaryStats.push({
+      key: "lifts",
+      label: "Lifts open",
+      value: `${openLiftCount} / ${data.lifts.length}`,
+    });
+  }
+  if (data.visibility.conditions && topConditions?.snowBase) {
+    summaryStats.push({
+      key: "base",
+      label: "Snow base",
+      value: topConditions.snowBase,
+      sub: topConditions.name || undefined,
+    });
+  }
+  if (data.visibility.conditions && topConditions?.snowfall24h) {
+    summaryStats.push({
+      key: "24h",
+      label: "Last 24h",
+      value: topConditions.snowfall24h,
+      sub: "Fresh snow",
+      tone: "accent",
+    });
+  }
+
   return (
     <section
       id="conditions"
-      className="rounded-lg border border-border bg-card p-2 shadow-sm sm:p-4"
+      className="wcx-panel rounded-lg border border-border bg-card p-2 shadow-sm sm:p-4"
     >
-      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div className="wcx-head mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">
+          <p className="wcx-eyebrow text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Mt Ruapehu
+          </p>
+          <h2 className="wcx-title text-lg font-semibold text-foreground">
             Whakapapa Conditions
           </h2>
-          <p className="text-xs text-muted-foreground">
+          <p className="wcx-updated text-xs text-muted-foreground">
             Updated: {formattedUpdated}
           </p>
         </div>
-        {stale ? (
-          <span className="inline-flex rounded-full bg-warning-3 px-2 py-1 text-xs font-medium text-warning-11">
-            Showing cached data
-          </span>
-        ) : null}
+        <div className="wcx-head-meta flex items-center gap-2">
+          {stale ? (
+            <span className="inline-flex rounded-full bg-warning-3 px-2 py-1 text-xs font-medium text-warning-11">
+              Showing cached data
+            </span>
+          ) : (
+            <span className="wcx-live inline-flex items-center gap-1.5 text-xs font-medium text-success-11">
+              <span
+                className="wcx-live-dot inline-block h-2 w-2 rounded-full bg-success-11"
+                aria-hidden="true"
+              />
+              Live
+            </span>
+          )}
+        </div>
       </div>
+
+      {summaryStats.length > 0 ? (
+        <div className="wcx-summary mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {summaryStats.map((stat) => (
+            <div
+              key={stat.key}
+              className="wcx-stat rounded-md border border-border bg-card p-2"
+            >
+              <span className="wcx-stat-label block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {stat.label}
+              </span>
+              <span
+                className={`wcx-stat-value block text-base font-semibold ${
+                  stat.tone === "ok"
+                    ? "wcx-tone-ok text-success-11"
+                    : stat.tone === "accent"
+                      ? "wcx-tone-accent text-foreground"
+                      : "text-foreground"
+                }`}
+              >
+                {stat.value}
+              </span>
+              {stat.sub ? (
+                <span className="wcx-stat-sub block text-[11px] text-muted-foreground">
+                  {stat.sub}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {error ? (
         <p className="mb-3 rounded-md border border-warning-6 bg-warning-3 px-3 py-2 text-xs text-warning-11">
@@ -510,9 +603,9 @@ export function SkifieldWhakapapaWidget() {
           {data.visibility.roadStatus ? (
             <article
               id="whakapapa-road-status"
-              className="rounded-md border border-border bg-card p-2"
+              className="wcx-group rounded-md border border-border bg-card p-2"
             >
-              <h3 className="text-sm font-semibold text-foreground">
+              <h3 className="wcx-group-title text-sm font-semibold text-foreground">
                 Road Status
               </h3>
               <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -585,13 +678,13 @@ export function SkifieldWhakapapaWidget() {
       {data.visibility.conditions ? (
         <article
           id="whakapapa-mountain-conditions"
-          className="mt-3 rounded-md border border-border bg-card p-2"
+          className="wcx-group mt-3 rounded-md border border-border bg-card p-2"
         >
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="wcx-group-title text-sm font-semibold text-foreground">
             Mountain Conditions
           </h3>
           <div className="mt-2 overflow-x-auto">
-            <table className="min-w-full text-left text-xs text-muted-foreground">
+            <table className="wcx-conditions-table min-w-full text-left text-xs text-muted-foreground">
               <thead className="text-muted-foreground">
                 <tr>
                   <th className="pb-2 pr-4 font-medium">Location</th>
