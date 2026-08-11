@@ -2115,6 +2115,75 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.priceCents + entry.oldFuturePriceCents).toBe(mixed.priceCents);
   });
 
+  it("never CHARGES a guest for handing a night back, when their rows already claim more than their total (#2771)", () => {
+    // The other end of the residual, and the one the ceiling is the wrong shape
+    // to catch. `refundCeilingCents` is a cap: it cuts a credit that is too BIG.
+    // Nothing above it stops a credit going NEGATIVE, and a negative credit on
+    // the old-price window is a CHARGE — the member pays the club for giving a
+    // night back.
+    //
+    // It is reachable on real data, from two states this file already names.
+    // The rows here are the pre-#2744 damage (a negative price, refused as a
+    // sold price, so those nights have nothing to recover), and the total is
+    // below what the surviving rows claim, which is what a promo or an
+    // adjustment that moved the total and left the rows alone leaves behind.
+    // 15000 stored against a guest whose own rows account for 24000: the
+    // residual is -9000 before it is floored, and -9000 shared between the two
+    // unpriced nights in the ratio of today's rates is -4500 apiece.
+    //
+    // So the floor is `Math.max(…, 0)` and this case is what proves it is load
+    // bearing: give the two unpriced nights back and the member is credited
+    // NOTHING, not charged 9000 for the privilege. Their stored price is left
+    // exactly as found — not driven deeper, not repaired; #2745 owns repairing
+    // a record that cannot support its own total.
+    const rowsOutrunTotal: TestGuest = {
+      ...guestFromNights(
+        ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"],
+        "g1",
+      ),
+      nights: [
+        { stayDate: D("2026-08-19"), priceCents: 12_000 },
+        { stayDate: D("2026-08-20"), priceCents: 12_000 },
+        { stayDate: D("2026-08-21"), priceCents: -500 },
+        { stayDate: D("2026-08-22"), priceCents: -500 },
+      ],
+      priceCents: 15_000,
+    };
+    const plan = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [
+          rowsOutrunTotal,
+          guestFromNights(
+            ["2026-08-19", "2026-08-20", "2026-08-21", "2026-08-22"],
+            "g2",
+          ),
+        ],
+        editableFrom: "2026-08-21",
+        newCheckOut: "2026-08-21",
+        checkIn: "2026-08-19",
+        checkOut: "2026-08-23",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+
+    // The two nights with nothing to recover are the ones given back.
+    expect(entry.nights.map(key)).toEqual(["2026-08-19", "2026-08-20"]);
+    // Credited nothing, and above all NOT the -9000 the unfloored residual
+    // spreads over them.
+    expect(entry.oldFuturePriceCents).toBe(0);
+    expect(entry.oldFuturePriceCents).not.toBe(-9_000);
+    expect(entry.oldFuturePriceCents).toBeGreaterThanOrEqual(0);
+    // Which is the claim in the shape the member feels it: surrendering nights
+    // never bills them. A charge would be a POSITIVE delta here.
+    expect(entry.futureDeltaCents).toBe(0);
+    expect(entry.futureDeltaCents).toBeLessThanOrEqual(0);
+    // And their stored price is left where it was, not lifted by 9000.
+    expect(entry.priceCents).toBe(15_000);
+    expect(entry.priceCents).not.toBe(24_000);
+    expect(entry.perNightCents.every((cents) => cents >= 0)).toBe(true);
+    expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
+  });
+
   it("keeps the estimate out of the window that PRICES nights, not only out of the rows (#2771)", () => {
     // The estimate values what an edit takes AWAY, and it must never reach the
     // post-edit pass, which is what prices everything the edit sells and

@@ -709,6 +709,15 @@ function unrecoverableNightPricesByKey(
   // What the rows already account for, over the nights the guest HOLDS — not
   // over every row loaded, so a stale row for a night they no longer hold cannot
   // eat into the residual.
+  //
+  // Defensive rather than load-bearing TODAY, and the mutation probe says so:
+  // summing every loaded row instead changes nothing any test can see, because
+  // both sides come off the same `guest.nights` array through the same
+  // `getExplicitGuestBedNightKeys` helper, so a stored key is always a held key
+  // and there is no third state to reach. Written this way because that coupling
+  // is a property of two functions rather than a rule anybody has stated, and
+  // the day one of them stops honouring it this line is what keeps the residual
+  // from being eaten by a night nobody holds.
   const storedHeldTotalCents = sumCents(
     heldNightKeys.map((key) => storedNightPriceByKey.get(key) ?? 0)
   );
@@ -1027,6 +1036,11 @@ export function buildInProgressGuestRangePlan(
     // D1 — see the function for the two departures from its wording). Merged in
     // this order so a stored price always overrides an estimate — they are
     // disjoint by construction, and the order says so rather than relying on it.
+    // Provably disjoint, which is why flipping the order is an EQUIVALENT mutant
+    // and no test in the probe can tell the two apart: the estimate is built
+    // only over `heldNightKeys.filter((k) => !storedNightPriceByKey.has(k))`, so
+    // every key it can emit is one the stored map does not hold. The order is
+    // documentation of an invariant, not a tie-break that fires.
     //
     // Held BY the pre-edit window only. The post-edit pass below still takes
     // `storedNightPriceByKey` alone, because an estimate must never price a
