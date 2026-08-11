@@ -762,7 +762,11 @@ refused as a sold price.
 **D1's option text named a FLAT split of the whole total, and the implementation
 departs from it twice, both times after measuring it and both times flagged for
 the owner rather than assumed.** The evidence is the one D1 chose and the bound is
-the one D1 promised; what changed is the arithmetic around it.
+the one D1 promised; what changed is the arithmetic around it. **The second
+departure is NOT ruled on: it is D3 on #2771, and the PR holds in draft until it
+is.** The first argument put to the owner for it rested on a general exactness
+claim that two reviews disproved; that claim is retracted and D3 now carries the
+measured comparison instead.
 
 - **The residual, not the whole total.** Spreading a mixed guest's whole total
   over every night double-counts what their priced rows already account for.
@@ -771,15 +775,19 @@ the one D1 promised; what changed is the arithmetic around it.
   same rows value at 24000, which is 37000 accounted for against 26000 taken and
   3000 MORE than the pre-#2771 answer. The cap cannot catch it, because a partial
   give-back never reaches the cap.
-- **The ratio of today's rates, not flat.** Rates move when the club edits its
-  rate table, which scales a season's nights together; scale every rate by any
-  factor and the ratio between two nights is unchanged, so `total x rate /
-  rateSum` returns the ORIGINAL per-night price EXACTLY after a rise, after a
-  fall and where nothing has moved. The flat split instead flattened every stay
-  spanning a rate change: a member who paid 5000, 5000 and 9000 was credited 6000
-  apiece, so the club kept 1000 for nights nobody slept, and the 960-case
-  equivalence matrix moved in 25 cases in each of its two unpriced row variants —
-  ordinary contiguous bookings, changed. In the ratio it moves in none.
+- **The ratio of today's rates, not flat.** Where every season a stay spans was
+  scaled by the SAME factor, the ratio between two nights is unchanged, so
+  `total x rate / rateSum` returns the ORIGINAL per-night price EXACTLY after a
+  uniform rise, after a uniform fall and where nothing has moved. The flat split
+  instead flattened every stay spanning a rate change: a member who paid 5000,
+  5000 and 9000 was credited 6000 apiece, so the club kept 1000 for nights nobody
+  slept, and the 960-case equivalence matrix moved in 25 cases in each of its two
+  unpriced row variants — ordinary contiguous bookings, changed. In the ratio it
+  moves in none. **This is NOT a general exactness claim, and an earlier draft of
+  this page made one.** Where the rate change is not uniform across the seasons a
+  stay spans, the ratio is wrong — see "The cost that remains" below for the real
+  failure set, the measured comparison against today's rate, and why neither rule
+  dominates the other.
 
 It replaced today's season rate, which knew nothing about the member's booking
 and was wrong in both directions: after a rate FALL it credited less than they
