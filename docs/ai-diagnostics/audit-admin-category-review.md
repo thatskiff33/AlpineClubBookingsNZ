@@ -12,7 +12,8 @@ to look like the absence of a decision.
 way.** #2755 unified the three writers of *an officer editing somebody else's
 member record* on `admin` by moving the two bulk-screen branches IN, rather than
 moving the member-page writer out into a member-visible category. Eight of the
-nine remain held. `admin` therefore reads 98 sites now, not 96, and the rule that
+nine remain held. `admin` therefore reads 101 sites now, not 96 (#2755's two
+moves in, then #2766's three other-lodges writers), and the rule that
 came out of it is `INV-PRIV-012` — which is also where the fifteen lodge-gated
 sites and the unresolved `lockers` group are now recorded, instead of only in the
 open-question section at the foot of this page.
