@@ -817,6 +817,32 @@ longer price — a retired season, a removed tier/rate-type row — now succeeds
 where it used to be refused with "No rate found". A night the edit REPRICES is
 unaffected and still throws there.
 
+**And when the ratio itself has a hole, the degradation is PER NIGHT.** Reading
+the shape off today's rate table means asking the table about nights the guest
+already holds, which on a booking already under way are often in the PAST — so
+"today's table cannot price this night at all" is not exotic on this leg, it is
+the likeliest failure it meets. Three rules, and each is the member's money:
+
+- **It does not refuse the edit.** The lookup returns nothing rather than
+  throwing, so an officer can still unwind a stay whose old nights the current
+  table has forgotten. Refusing would leave the member unable to get their money
+  back at all.
+- **The unpriceable night does not take a ZERO slice.** A zero weight would hand
+  its share to the guest's other nights, so giving THAT night back would credit
+  nothing and the club would keep money for a night somebody slept. It takes the
+  MEAN of the rates that did resolve — a full share, drawn from the club's own
+  table rather than invented.
+- **The nights the table CAN price are not flattened.** Degrading the whole guest
+  to an even split because ONE night lost its rate would reintroduce exactly the
+  flattening the ratio was chosen to remove, on a stay where most of the evidence
+  survives, and would under-credit a dear night given back on its own. Every
+  night the table prices keeps its own rate as its weight.
+
+Only where NO night resolves is there no shape at all, and there the even split
+of the member's own money is the only answer left. The bound is identical in all
+three branches: the slices sum to the residual exactly however the weights fall,
+so the shape moves and the bound never does.
+
 **A night the guest KEEPS is valued from the post-edit pass in BOTH windows**, and
 that is the property that makes a party-aware discount safe on live bookings, not
 a detail of it. It cancels to nothing across the difference exactly as the locked
@@ -886,7 +912,7 @@ total lands on exactly zero, and a guest whose total has drifted keeps the drift
 neither invented nor erased. The degradation is deliberate and is the same one
 INV-MOD-005 already names for a legacy guest: with no stored price there is
 nothing to recover, so a night that guest BUYS is valued at today's rate and a
-night they give BACK at their own average (#2771, above).
+night they give BACK from their own stored booking price (#2771, above).
 
 **No edit leaves a guest owing less than nothing (#2744).** The credit on the
 old-price window is capped at what the guest is actually carrying — their stored

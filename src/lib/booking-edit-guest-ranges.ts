@@ -587,7 +587,10 @@ function distributeByWeightCents(
  * the club HANDS BACK for a night nobody can price from a row.
  *
  * **Two departures from the expression D1 wrote down, both measured after it was
- * taken and both flagged for the owner on the PR rather than assumed.** D1's
+ * taken, both put to the owner on the issue and on the PR rather than assumed,
+ * and NEITHER RULED ON YET.** Nobody has decided that the residual or the ratio
+ * is what the club wants; the owner decided the EVIDENCE and this branch chose
+ * the arithmetic, which is a deviation and is reversible. D1's
  * option text named a flat `distributeEvenlyCents` over the whole stored total.
  * Implemented and then measured, that expression failed the two properties the
  * option was chosen for, so this function keeps the evidence D1 chose and fixes
@@ -757,14 +760,15 @@ function unrecoverableNightPricesByKey(
     resolved.length > 0
       ? Math.floor(sumCents(resolved) / resolved.length)
       : 0;
-  const weights =
-    resolved.length === rates.length
-      ? // Every night priced: the exact rates, so this branch — every healthy
-        // booking, and every case in the 960-case equivalence matrix — is the
-        // same arithmetic on the same numbers it was before the fallback
-        // existed, and cannot move.
-        resolved
-      : rates.map(() => 0); // MUTANT: whole-guest flat
+  // Per NIGHT, and that is the whole point of the branch. Every night the table
+  // can still price keeps its OWN rate as its weight; only the night that lost
+  // its rate takes the stand-in. Where every night prices — every healthy
+  // booking, and every case in the 960-case equivalence matrix — these weights
+  // are `resolved` itself, element for element, so that population is the same
+  // arithmetic on the same numbers it was before this fallback existed and
+  // cannot move. Where NOTHING resolves the stand-in is zero, every weight is
+  // zero, and the distribution below falls to the even split.
+  const weights = rates.map((rate) => rate ?? meanResolvedWeight);
 
   // Where NOTHING resolves, `weights` is all zeroes and `distributeByWeightCents`
   // takes the even split: with no shape at all, the member's own money spread
@@ -927,8 +931,14 @@ function composeProposedNightPrices(args: {
  * this edit gives such a guest BACK is credited from `Math.max(guest.priceCents,
  * 0)` — what is left of it once their own rows are taken off, shared between
  * their unpriced nights in the ratio of today's rates — rather than at today's
- * rate itself: the owner's decision of 10 Aug 2026 on #2771 (D1), forward only
- * (D2). Today's rate knew nothing about their booking and was wrong in both
+ * rate itself. **Attribute that precisely.** The owner's decision of 10 Aug 2026
+ * on #2771 is what chose the EVIDENCE: D1, the guest's own stored total in place
+ * of today's rate, and D2, forward only. Taking the RESIDUAL rather than the
+ * whole total, and sharing it in the RATIO rather than flat, are this branch's
+ * two departures from D1's wording — measured after the decision was taken, put
+ * to the owner on the issue and on the PR, and NOT yet ruled on. They are
+ * reversible; see the fallback function for what each one is worth. Today's rate
+ * knew nothing about their booking and was wrong in both
  * directions, under-crediting after a rate fall and over-crediting after a rate
  * rise; their own total is wrong in neither, and taking the ratio from the rate
  * table returns each night's real price exactly wherever the table has simply
@@ -1287,8 +1297,11 @@ export function buildInProgressGuestRangePlan(
   //    their own stored total instead: `unrecoverableNightPricesByKey`, what is
   //    left of `Math.max(guest.priceCents, 0)` once their rows are taken off,
   //    shared between the nights that have nothing to recover in the ratio of
-  //    today's rates (owner's decision of 10 Aug 2026, D1). Their own money, so
-  //    the credit can never exceed the price stored against them, and no party
+  //    today's rates. The owner's decision of 10 Aug 2026 (D1) chose the stored
+  //    total over today's rate; the residual and the ratio are this branch's own
+  //    departures from its wording, flagged and not yet ruled on. Their own
+  //    money, so the credit can never exceed the price stored against them, and
+  //    no party
   //    and no config is consulted for it — which is why passing the discount
   //    config here would still be wrong and why this leg still gets none.
   //
