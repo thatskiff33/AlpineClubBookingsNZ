@@ -2246,6 +2246,131 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
   });
 
+  it("gives back a night today's table cannot price at all, and degrades only THAT night (#2771)", () => {
+    // The failure mode this leg is most likely to actually meet. The nights it
+    // values are nights the guest already HOLDS, and on a booking already under
+    // way — a COMPLETED one especially — some of them are in the past, which is
+    // exactly where the current table is likeliest to have nothing to say: a
+    // night between two seasons, a season since retired, a rate row since
+    // removed. Here nothing covers the 21st at all, so `findRateForNight`
+    // returns null for it and for it alone.
+    //
+    // Three claims, and each is a way the edit could go wrong for the member:
+    //  1. it is not REFUSED — the officer can still unwind the stay;
+    //  2. the unpriceable night does not take a ZERO slice while the others
+    //     absorb its share, which would have the club keep money for a night
+    //     somebody did sleep;
+    //  3. the two nights the table CAN price are not FLATTENED to the average
+    //     just because a third night is unpriceable — that is the same
+    //     flattening #2771 exists to remove, and here it would credit 7000 for a
+    //     night the club charged 9000 for.
+    const GAPPED: SeasonRateData[] = [
+      {
+        seasonId: "s-low",
+        startDate: D("2026-08-01"),
+        endDate: D("2026-08-20"),
+        rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: LOW },
+        ],
+      },
+      // Nothing at all covers 2026-08-21.
+      {
+        seasonId: "s-high",
+        startDate: D("2026-08-22"),
+        endDate: D("2026-09-30"),
+        rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: HIGH },
+        ],
+      },
+    ];
+    // Contiguous, so the envelope this row-less guest falls back to is exactly
+    // these three nights.
+    const nights = ["2026-08-20", "2026-08-21", "2026-08-22"];
+    const MEAN_OF_RESOLVED = (LOW + HIGH) / 2; // 7000 — the stand-in weight
+    const paidCents = LOW + MEAN_OF_RESOLVED + HIGH;
+    const acrossTheGap: TestGuest = {
+      ...guestFromNights(nights, "g1", false),
+      priceCents: paidCents,
+    };
+    const built = run(() =>
+      buildInProgressGuestRangePlan({
+        ...planInput({
+          guests: [acrossTheGap, guestWhoPaid({ "2026-08-22": HIGH }, "g2")],
+          editableFrom: "2026-08-22",
+          newCheckOut: "2026-08-23",
+          removeGuestIds: ["g1"],
+          checkIn: "2026-08-20",
+          checkOut: "2026-08-23",
+        }),
+        seasons: GAPPED,
+      }),
+    );
+
+    // 1. Not refused. A rate the table cannot supply for a night nobody is
+    //    re-selling must never become "No season rate found for the requested
+    //    dates" — the member would be unable to get their money back at all.
+    expect(built.ok, built.ok ? "" : built.error).toBe(true);
+    if (!built.ok) return;
+    const entry = built.value.proposedExistingGuests[0];
+
+    // 3. The night given back is the 22nd, and it is credited its OWN rate.
+    expect(entry.oldFuturePriceCents).toBe(HIGH);
+    expect(entry.oldFuturePriceCents).not.toBe(
+      evenSplit(paidCents, nights.length)[2],
+    );
+    // 2. The 21st kept a full share — the mean of the rates that did resolve —
+    //    rather than nothing, so what is left against the guest once the 22nd
+    //    goes back is the 20th at LOW plus the 21st at that mean.
+    expect(entry.priceCents).toBe(LOW + MEAN_OF_RESOLVED);
+    expect(entry.priceCents).toBe(paidCents - HIGH);
+    // And the bound is untouched by any of it: the shape moved, the total did
+    // not, and it is still every cent of the member's own money.
+    expect(entry.oldFuturePriceCents + entry.priceCents).toBe(paidCents);
+  });
+
+  it("splits evenly when NO night they hold can be priced, and still never exceeds their own total (#2771)", () => {
+    // The other end of the same degradation: not one unpriceable night among
+    // several, but a guest every one of whose nights the table has forgotten.
+    // There is no shape to read at all, so the even split of their own money is
+    // the only defensible answer left — and it is still their own money, so
+    // giving every night back returns precisely the price stored against them
+    // and not a cent more.
+    const paidCents = 12_000;
+    const forgotten: TestGuest = {
+      ...guestFromNights(["2026-07-30", "2026-07-31"], "g1", false),
+      priceCents: paidCents,
+    };
+    const built = run(() =>
+      buildInProgressGuestRangePlan(
+        planInput({
+          guests: [
+            forgotten,
+            guestWhoPaid({ "2026-08-22": LOW, "2026-08-23": HIGH }, "g2"),
+          ],
+          editableFrom: "2026-07-30",
+          newCheckOut: "2026-08-24",
+          removeGuestIds: ["g1"],
+          checkIn: "2026-07-30",
+          checkOut: "2026-08-24",
+        }),
+      ),
+    );
+
+    expect(built.ok, built.ok ? "" : built.error).toBe(true);
+    if (!built.ok) return;
+    const entry = built.value.proposedExistingGuests[0];
+
+    // Both nights go back, so the credit is exactly what the booking holds
+    // against them — the bound the ratio and the even split share.
+    expect(entry.oldFuturePriceCents).toBe(paidCents);
+    expect(entry.priceCents).toBe(0);
+    expect(entry.priceCents).toBeGreaterThanOrEqual(0);
+    // The guest the table CAN price is untouched by their neighbour's
+    // degradation: no flattening leaks across guests.
+    const unaffected = built.value.proposedExistingGuests[1];
+    expect(unaffected.priceCents).toBe(LOW + HIGH);
+  });
+
   it("keeps the clamp off every guest whose nights cost no more than they paid", () => {
     // The ceiling is a floor under the money, not a change to the arithmetic. A
     // guest whose stored rows record what they paid is credited exactly those

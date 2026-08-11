@@ -99,7 +99,23 @@ vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/pricing", () => ({
+// A PARTIAL mock, deliberately. This suite stubs the pricing ENGINE — it hands
+// `calculateBookingPrice` canned answers so the money assertions below are about
+// the modify path and not about the rate table. `@/lib/pricing` is a barrel over
+// `@/lib/policies/pricing`, so replacing the whole module also removed every pure
+// helper that reads a `SeasonRateData[]` the caller already holds, and vitest
+// turns any later access into a thrown "No export is defined on the mock".
+//
+// That is how #2771 broke two cases here: the in-progress planner started asking
+// `findRateForNight` for the SHAPE of an unrecoverable night's value, the throw
+// came back out of `buildInProgressGuestRangePlan`, and the modify route turned
+// it into a flat `400 No season rate found for the requested dates` — a green
+// production path failing only because the double was incomplete. Spreading the
+// real module keeps the one stub this suite actually wants and lets those pure
+// helpers run against the season fixture in `makeTx`, so importing another one
+// can never fake a refusal again.
+vi.mock("@/lib/pricing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pricing")>()),
   calculateBookingPrice: mockCalculateBookingPrice,
 }));
 

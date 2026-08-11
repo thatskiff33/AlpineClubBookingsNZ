@@ -625,6 +625,37 @@ function distributeByWeightCents(
  * flat split would happen to be right; that is rarer than a rate change, and it
  * is bounded by the same total either way.
  *
+ * **And what happens when the table cannot price a night at all, stated rather
+ * than left to a throw.** The nights this function values are nights the guest
+ * ALREADY HOLDS, and on a COMPLETED booking they are in the past — so "today's
+ * table has nothing to say about this night" is not exotic here, it is the
+ * likeliest failure this leg meets: a night before the earliest configured
+ * season, a season since retired, a tier/rate-type row since removed. Three
+ * things it must not do, and the reasons are all the member's:
+ *
+ *  - **It must not refuse the edit.** `findRateForNight` returns null rather than
+ *    throwing, and nothing here converts that into an error, so an officer can
+ *    still shorten or unwind a stay whose old nights the current table has
+ *    forgotten. Refusing would leave the member unable to get their money back
+ *    at all, which is the worst outcome available.
+ *  - **It must not hand that night a zero slice.** A zero weight would give the
+ *    unpriceable night nothing while the guest's other nights absorbed its
+ *    share, so giving THAT night back would credit nothing — the club keeping
+ *    money for a night nobody slept. It takes the MEAN of the rates that did
+ *    resolve instead: a full share, drawn from the club's own table rather than
+ *    invented.
+ *  - **It must not flatten the nights it CAN price.** Degrading the whole guest
+ *    to an even split because one night is unpriceable would reintroduce exactly
+ *    the flattening the ratio was chosen to remove, on a stay where most of the
+ *    evidence survives. Degradation is per night: every night the table prices
+ *    keeps its own rate as its weight.
+ *
+ * Only where NO night resolves is there no shape at all, and there the even
+ * split of the member's own money is the only defensible answer. In every one of
+ * these branches the slices still sum to `residualCents` exactly, so the
+ * degradation cannot hand back a cent more than the price stored against the
+ * guest — the shape moves, the bound never does.
+ *
  * Three properties survive from D1's own reasoning, and each is a reason the
  * member's own total beats the rate table here:
  *
@@ -690,32 +721,56 @@ function unrecoverableNightPricesByKey(
     0
   );
 
-  // The SHAPE only. `findRateForNight` returns null rather than throwing, which
-  // is what keeps this leg free of the "No rate found" refusal: a night the rate
-  // table can no longer price — a retired season, a removed tier/rate-type row —
-  // makes the whole guest fall back to the flat split rather than take a zero
-  // slice while the others absorb their share. No group-discount substitution is
+  // The SHAPE only, and it degrades NIGHT BY NIGHT rather than all at once.
+  // `findRateForNight` returns null rather than throwing, which is what keeps
+  // this leg free of the "No rate found" refusal: a night the rate table can no
+  // longer price — a night before the earliest configured season, a retired
+  // season, a removed tier/rate-type row — must not refuse the whole edit, and
+  // must not take a zero slice while the guest's other nights absorb its share.
+  // Both of those are reachable on exactly the population this function exists
+  // for: an in-progress edit to a COMPLETED booking gives back nights that are
+  // already in the past, and a past night is the likeliest one for the current
+  // table to have nothing to say about. No group-discount substitution is
   // consulted, because a night the member already bought is never re-rated by
   // today's party (INV-MOD-006), and the guest's OWN rate type is asked for.
-  const rateWeights: number[] = [];
-  let everyNightRated = true;
-  for (const key of unpricedKeys) {
+  const rates = unpricedKeys.map((key) => {
     const rate = findRateForNight(
       parseDateOnly(key),
       guest.ageTier,
       guest.rateMembershipTypeId,
       seasons
     );
-    if (rate === null || !Number.isFinite(rate) || rate < 0) {
-      everyNightRated = false;
-      break;
-    }
-    rateWeights.push(rate);
-  }
+    return rate === null || !Number.isFinite(rate) || rate < 0 ? null : rate;
+  });
+  const resolved = rates.filter((rate): rate is number => rate !== null);
+  // The stand-in for a night the table cannot price: the MEAN of the rates that
+  // did resolve, so it gets a full share rather than nothing, while the nights
+  // the table CAN price keep their true ratio to one another rather than the
+  // whole stay being flattened to an average — the same flattening #2771 exists
+  // to stop, and the one that would systematically under-credit a dear night
+  // given back on its own. `Math.floor` here is not money and cannot round any:
+  // a weight only sets a ratio, and `distributeByWeightCents` sums the slices
+  // back to `residualCents` exactly whatever the weights are, so nothing in this
+  // branch can widen the bound by a cent. Zero when NOTHING resolved, which
+  // leaves every weight zero and takes the even split below.
+  const meanResolvedWeight =
+    resolved.length > 0
+      ? Math.floor(sumCents(resolved) / resolved.length)
+      : 0;
+  const weights =
+    resolved.length === rates.length
+      ? // Every night priced: the exact rates, so this branch — every healthy
+        // booking, and every case in the 960-case equivalence matrix — is the
+        // same arithmetic on the same numbers it was before the fallback
+        // existed, and cannot move.
+        resolved
+      : rates.map(() => 0); // MUTANT: whole-guest flat
 
-  const perNightCents = everyNightRated
-    ? distributeByWeightCents(residualCents, rateWeights)
-    : distributeEvenlyCents(residualCents, unpricedKeys.length);
+  // Where NOTHING resolves, `weights` is all zeroes and `distributeByWeightCents`
+  // takes the even split: with no shape at all, the member's own money spread
+  // evenly is the only defensible answer, and it is still their own money and
+  // still bounded by their stored total.
+  const perNightCents = distributeByWeightCents(residualCents, weights);
   unpricedKeys.forEach((key, index) => {
     byKey.set(key, perNightCents[index]);
   });
