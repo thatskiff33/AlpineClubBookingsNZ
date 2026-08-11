@@ -273,7 +273,9 @@ function dateOnlyKey(value: Date): string {
  * total values it — and for a guest whose total the same bug drove below zero
  * there is nothing left, so no credit and no charge. Nothing already stored is
  * rewritten: what those rows should become is a separate, audited decision on
- * #2745.
+ * **#2791**. (Not #2745, which is CLOSED — its audit asked a different question,
+ * counted sparse stays, found none, and says in its own closing comment that it
+ * does not cover this. #2791 owns the rows themselves.)
  */
 function storedNightPricesByKey(
   guest: Pick<ExistingBookingEditGuest, "nights">
@@ -617,16 +619,54 @@ function distributeByWeightCents(
  *    ordinary contiguous booking, changed. In the ratio, the same guest is
  *    credited 5000, 5000 and 9000, and the matrix does not move at all.
  *
- * Why the ratio is right where the flat split is not: rates move when the club
- * edits its rate table, which scales a season's nights together. Scale every
- * rate by any factor and the ratio between two nights is unchanged, so
- * `total x rate / rateSum` returns the ORIGINAL per-night price exactly — after
- * a rise and after a fall alike, which is what D1 asked for and what today's
- * rate could not do in either direction. It is exact, not approximate, whenever
- * the rate table has been scaled or has not moved at all. The one shape it gets
- * wrong is a season BOUNDARY that has since moved across the stay, where the
- * flat split would happen to be right; that is rarer than a rate change, and it
- * is bounded by the same total either way.
+ * Why the ratio beats the flat split, and EXACTLY where it stops being exact.
+ * `total x rate / rateSum` returns the ORIGINAL per-night price when, and only
+ * when, today's rate vector is PROPORTIONAL to what the member actually paid per
+ * night. Scale every rate the stay touches by the same factor and the ratio
+ * between two nights is unchanged, so it is exact after a UNIFORM rise and after
+ * a UNIFORM fall alike — which is what D1 asked for and what today's rate could
+ * not do in either direction — and exact where nothing has moved at all, which
+ * is every guest in the 960-case equivalence matrix.
+ *
+ * **It is wrong whenever the RELATIVE prices of two of the guest's nights have
+ * changed**, and the ordinary way that happens is not what an earlier draft of
+ * this comment named. Re-rate ONE season and leave another alone — the commonest
+ * rate edit a club makes, with no season boundary moved at all — and a stay
+ * spanning both is mis-split. Measured on this branch and pinned by
+ * "OVER-CREDITS a partial give-back when ONE season was re-rated and another was
+ * not": a row-less guest who paid 15000 for the 22nd and 5000 for the 23rd, on a
+ * table that has since dropped the earlier season to 5000 and left the later one
+ * alone, is credited 10000 for giving back the 23rd — twice what that night cost,
+ * in a case where today's rate happened to be exact. A season boundary that has
+ * since moved breaks it too. That is the rarer shape, not the only one.
+ *
+ * Three things about the error, each measured rather than argued:
+ *
+ *  - **It is two-sided.** The same non-proportionality under-credits as readily
+ *    as it over-credits, depending which way the re-rated season sits against the
+ *    stay. It is not a rule that errs toward the member.
+ *  - **It is bounded per GUEST, never per NIGHT.** The slices sum to the residual
+ *    exactly, so a guest's nights can be mis-split against one another but their
+ *    stored total can never be exceeded. `refundCeilingCents` adds nothing to
+ *    that: a kept night raises the ceiling alongside the credit, so only a FULL
+ *    give-back can make it bind (see it for the proof). Nothing catches a partial
+ *    give-back, which is why the bound is the arithmetic's own or nothing.
+ *  - **It is still a large net improvement on what it replaces.** Over 4450
+ *    randomised give-back edits on row-less guests, with both rates AND both
+ *    season boundaries free to move between booking time and today, this rule
+ *    over-credits 1335 (3448250c) and under-credits 1295 (3370883c); today's
+ *    rate, which it replaces, over-credits 1891 (4888000c) and under-credits
+ *    1840 (10777500c). Total misallocation 6819133c against 15665500c — 44% of
+ *    it. In 525 of those cases this rule over-credits where today's rate did not,
+ *    so it is not a strict improvement case by case, only in aggregate.
+ *
+ * Neither rule dominates the other. A FLAT split is exact in the mirror case —
+ * the member's real per-night prices were uniform and today's card is the skewed
+ * one — so the choice between them is a judgement about fairness between a
+ * guest's own nights, not a formality. That is why the ratio is put to the owner
+ * as an unruled deviation from D1 rather than presented as the obvious answer,
+ * and why the comparison put to them carries the numbers above rather than an
+ * exactness claim.
  *
  * **And what happens when the table cannot price a night at all, stated rather
  * than left to a throw.** The nights this function values are nights the guest
@@ -721,13 +761,24 @@ function unrecoverableNightPricesByKey(
   const storedHeldTotalCents = sumCents(
     heldNightKeys.map((key) => storedNightPriceByKey.get(key) ?? 0)
   );
-  // `Math.max(…, 0)` twice, for the same reason `refundCeilingCents` uses it
-  // once: a guest whose stored price is ALREADY below zero was damaged by an
-  // edit made before #2744, and a guest whose rows already claim more than their
-  // total has nothing left to spread. Their unpriced nights are worth nothing to
-  // credit rather than something negative — a negative estimate would invert the
-  // edit and CHARGE them for giving a night back. Repairing either state is
-  // #2745's decision, not this one's.
+  // The OUTER `Math.max(…, 0)` is the load-bearing one, and it fires on a real
+  // guest: rows that already claim more than the total leave nothing to spread,
+  // and without it the estimate would go negative, invert the edit and CHARGE
+  // the member for giving a night back. A test pins exactly that
+  // ("never CHARGES a guest for handing a night back…").
+  //
+  // The INNER one — on `guest.priceCents` — is belt and braces and cannot change
+  // an answer today: a total below zero minus a non-negative stored sum is
+  // already negative, so the outer clamp lands on 0 either way. It is written
+  // anyway to match `refundCeilingCents`, which uses the same expression where it
+  // IS load-bearing, so the two read as one rule rather than two; it is stated as
+  // redundant here rather than dressed up as a guard, because a comment claiming
+  // a line does work it cannot do is how the next reader gets misled.
+  //
+  // Either way the state itself is left as found: a guest damaged by an edit made
+  // before #2744 is neither driven deeper nor repaired. Repairing them is
+  // **#2791**'s decision, not this one's (#2745 is closed, and its audit did not
+  // cover this).
   const residualCents = Math.max(
     Math.max(guest.priceCents, 0) - storedHeldTotalCents,
     0
@@ -818,7 +869,10 @@ function unrecoverableNightPricesByKey(
  * guest whose rows account for their total lands on exactly zero there, so the
  * empty list is the whole of it; a guest whose total has drifted from their rows
  * keeps the drift, which this rule neither invents nor erases (it is what the
- * pre-#2736 arithmetic left too, and #2745 owns what to do about it).
+ * pre-#2736 arithmetic left too, and **#2791** owns what to do about it —
+ * including the half of it that is not cosmetic: a guest whose total is below
+ * zero comes out of here holding NO nights and a non-zero `priceCents`, which is
+ * a phantom balance for Xero to rebuild invoice lines from).
  *
  * The future part sums to its own total by construction, so the real rates can
  * be written only when the stored past prices account EXACTLY for the rest —
@@ -843,11 +897,26 @@ function unrecoverableNightPricesByKey(
  * `totalCents`, through the credit on the old-price window, and for exactly the
  * guest it applies to (rows that cannot account for their total) this function
  * takes the even-split branch of that total. So a row-less guest's persisted
- * rows are the flat average of a total the estimate helped decide. That
- * flattening is pre-existing — it is the branch #2744 left alone — and correcting
- * it is #2745's, along with everything else about a record that does not support
- * its own total. What #2771 owes it is a total that is right, which is why the
- * estimate is shaped by today's rates rather than spread flat.
+ * rows are the flat average of a total the estimate helped decide.
+ *
+ * **Which makes #2771's correction ONE-SHOT, and that is the part worth saying
+ * out loud.** After that first edit the guest is no longer row-less: the flat
+ * average is now their stored per-night price, and every LATER edit credits the
+ * average rather than the shape #2771 worked out. Pinned end to end by
+ * "re-reads its OWN flattened write-back as the sold price on the NEXT edit" — a
+ * guest holding a 5000 night and a 9000 night is written back as 7000/7000, and
+ * the second edit credits 7000 for the night that cost 9000. Money is conserved
+ * either way (integer cents, summing back exactly); what is wrong is the record
+ * of WHICH night carried which part of it.
+ *
+ * That flattening is pre-existing — it is the branch #2744 left alone — and
+ * correcting it is **#2791**'s, along with everything else about a record that
+ * does not support its own total. It is not a residual #2771 could have absorbed:
+ * passing the estimate in here does not help, because the equality gate below
+ * compares stored past prices against a future leg priced at TODAY's rates while
+ * the total is the member's own money, and the two cannot both be honoured. What
+ * #2771 owes these rows is a total that is right, which is why the estimate is
+ * shaped by today's rates rather than spread flat.
  */
 function composeProposedNightPrices(args: {
   pastNightKeys: readonly string[];
@@ -970,7 +1039,7 @@ function composeProposedNightPrices(args: {
  * healthy booking and every case in the contiguous equivalence matrix. Guests
  * ALREADY below zero from an edit made before these changes are left exactly as
  * found — not driven deeper, not repaired; that correction is an owner decision
- * with its own audit, on #2745.
+ * with its own audit, on **#2791**.
  */
 export function buildInProgressGuestRangePlan(
   input: BuildInProgressGuestRangePlanInput
@@ -1472,7 +1541,7 @@ export function buildInProgressGuestRangePlan(
     // change, and their ceiling is 0 — no further credit — so this edit cannot
     // drive them deeper. It does not lift them back to zero either. Correcting
     // what the old arithmetic already wrote is an owner decision with its own
-    // audit, tracked on #2745; refusing to make it worse is not.
+    // audit, tracked on **#2791**; refusing to make it worse is not.
     const refundCeilingCents =
       Math.max(guest.priceCents, 0) + newFuturePriceCents;
     const oldFuturePriceCents = Math.min(

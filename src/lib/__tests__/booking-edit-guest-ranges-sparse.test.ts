@@ -2440,6 +2440,159 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(unaffected.priceCents).toBe(LOW + HIGH);
   });
 
+  it("OVER-CREDITS a partial give-back when ONE season was re-rated and another was not (#2771, stated limit)", () => {
+    // The shape the ratio genuinely gets wrong, recorded rather than left to be
+    // discovered — and it is NOT the moved season boundary the first draft of
+    // this branch named as the only one. Here both seasons keep their original
+    // dates to the day; the club simply dropped ONE season's rate and left the
+    // other alone, which is the most ordinary rate edit there is.
+    //
+    // `total x rate / rateSum` returns the ORIGINAL per-night price only when
+    // today's rate vector is proportional to what the member actually paid per
+    // night. A uniform scaling preserves that; re-rating one season of a
+    // season-spanning stay destroys it, and the error is real money.
+    const RERATED: SeasonRateData[] = [
+      {
+        // Was 3 x LOW when this member booked; the club has since dropped it.
+        seasonId: "s-low",
+        startDate: D("2026-08-01"),
+        endDate: D("2026-08-22"),
+        rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: LOW },
+        ],
+      },
+      {
+        // Never moved, and its dates never moved either.
+        seasonId: "s-high",
+        startDate: D("2026-08-23"),
+        endDate: D("2026-09-30"),
+        rates: [
+          { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: LOW },
+        ],
+      },
+    ];
+    const PAID_EARLY = 3 * LOW; // 15000, the 22nd, on the season since re-rated
+    const PAID_LATE = LOW; //      5000, the 23rd, on the season that never moved
+    const paidCents = PAID_EARLY + PAID_LATE;
+    const spanning: TestGuest = {
+      ...guestFromNights(["2026-08-22", "2026-08-23"], "g1", false),
+      priceCents: paidCents,
+    };
+    const built = run(() =>
+      buildInProgressGuestRangePlan({
+        ...planInput({
+          guests: [spanning, guestFromNights(["2026-08-22", "2026-08-23"], "g2")],
+          // The 22nd is behind the window and kept; only the 23rd goes back.
+          editableFrom: "2026-08-23",
+          newCheckOut: "2026-08-24",
+          removeGuestIds: ["g1"],
+          checkIn: "2026-08-22",
+          checkOut: "2026-08-24",
+        }),
+        seasons: RERATED,
+      }),
+    );
+
+    expect(built.ok, built.ok ? "" : built.error).toBe(true);
+    if (!built.ok) return;
+    const entry = built.value.proposedExistingGuests[0];
+
+    // Both nights now price at LOW, so the ratio is 1:1 and the member's own
+    // total splits down the middle: 10000 credited for a night bought at 5000.
+    expect(entry.oldFuturePriceCents).toBe(paidCents / 2);
+    expect(entry.oldFuturePriceCents).not.toBe(PAID_LATE);
+    expect(entry.oldFuturePriceCents).toBe(2 * PAID_LATE);
+
+    // And this is the one shape where today's rate — what `main` still does and
+    // what #2771 replaces — was EXACT, so the ratio is worse here, not better.
+    // Pinned by value so the trade-off cannot be quietly restated as one-sided.
+    const todaysRateForTheNightGivenBack = LOW;
+    expect(todaysRateForTheNightGivenBack).toBe(PAID_LATE);
+
+    // The ceiling cannot catch it. It is `max(priceCents, 0) + newFuture`, and
+    // the night they KEEP raises it alongside the credit, so a partial give-back
+    // never reaches it — the clamp is provably idle here.
+    const refundCeilingCents = paidCents + entry.newFuturePriceCents;
+    expect(refundCeilingCents).toBe(paidCents);
+    expect(entry.oldFuturePriceCents).toBeLessThan(refundCeilingCents);
+
+    // What DOES still hold, and is the honest half of the claim: the error is a
+    // misallocation between the guest's own nights, never a credit that outruns
+    // their stored total. They are left holding 10000 against a night the club
+    // charged 15000 for — short by 5000 — but not a cent left the total.
+    expect(entry.priceCents).toBe(paidCents - entry.oldFuturePriceCents);
+    expect(entry.priceCents).toBe(PAID_EARLY - 2 * PAID_LATE + PAID_LATE);
+    expect(entry.priceCents).toBeGreaterThanOrEqual(0);
+    expect(entry.oldFuturePriceCents + entry.priceCents).toBe(paidCents);
+  });
+
+  it("re-reads its OWN flattened write-back as the sold price on the NEXT edit (#2771, stated limit)", () => {
+    // #2771's correction is ONE-SHOT for the guest it targets, and this proves
+    // it end to end rather than asserting it. The first edit values the given-
+    // back night from the member's own total in the shape of today's rates —
+    // right — but `composeProposedNightPrices` then writes the remaining total
+    // back as an EVEN split, because a guest whose rows cannot account for their
+    // total has no other defensible distribution. Those rows are what
+    // `syncGuestNights` persists and what `storedNightPricesByKey` reads next
+    // time, so after one edit the guest is no longer row-less and the average is
+    // now the authoritative "what they paid".
+    const nights = ["2026-08-22", "2026-08-23", "2026-08-24"];
+    const spanning: TestGuest = {
+      ...guestFromNights(nights, "g1", false),
+      priceCents: priceNights(nights),
+    };
+    const first = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [spanning, guestFromNights(nights, "g2")],
+        editableFrom: "2026-08-24",
+        newCheckOut: "2026-08-24",
+        removeGuestIds: ["g1"],
+        checkIn: "2026-08-22",
+        checkOut: "2026-08-25",
+      }),
+    );
+    const afterFirst = first.proposedExistingGuests[0];
+    // The 22nd cost LOW and the 23rd cost HIGH; both are recorded at their mean.
+    expect(afterFirst.perNightCents).toEqual([7_000, 7_000]);
+
+    // Now the SAME guest, carrying exactly the rows the first edit just wrote,
+    // built from that plan's own output rather than from numbers typed here.
+    const afterWriteBack: TestGuest = {
+      ...guestFromNights(["2026-08-22", "2026-08-23"], "g1"),
+      nights: afterFirst.nights.map((night, index) => ({
+        stayDate: night,
+        priceCents: afterFirst.perNightCents[index],
+      })),
+      priceCents: afterFirst.priceCents,
+    };
+    const second = buildInProgressGuestRangePlan(
+      planInput({
+        guests: [
+          afterWriteBack,
+          guestFromNights(["2026-08-22", "2026-08-23"], "g2"),
+        ],
+        editableFrom: "2026-08-23",
+        newCheckOut: "2026-08-23",
+        removeGuestIds: ["g1"],
+        checkIn: "2026-08-22",
+        checkOut: "2026-08-24",
+      }),
+    );
+    const afterSecond = second.proposedExistingGuests[0];
+
+    // The 23rd genuinely cost HIGH. The second edit credits the flattened row —
+    // the average — because that is now the only record of the sale there is.
+    expect(afterSecond.oldFuturePriceCents).toBe(7_000);
+    expect(afterSecond.oldFuturePriceCents).not.toBe(HIGH);
+    // Still bounded, still integer, still summing back: the record is wrong in
+    // its SHAPE, and the money is conserved across the two edits either way.
+    expect(afterSecond.priceCents).toBe(afterFirst.priceCents - 7_000);
+    expect(afterSecond.priceCents).toBeGreaterThanOrEqual(0);
+    expect(
+      afterSecond.perNightCents.reduce((a, b) => a + b, 0),
+    ).toBe(afterSecond.priceCents);
+  });
+
   it("keeps the clamp off every guest whose nights cost no more than they paid", () => {
     // The ceiling is a floor under the money, not a change to the arithmetic. A
     // guest whose stored rows record what they paid is credited exactly those

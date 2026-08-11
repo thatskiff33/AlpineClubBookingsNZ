@@ -18,6 +18,19 @@
   club has since put its rates up or down across the board, the amount returned
   is what was taken, not what the same night would cost today.
 
+  **Where it is still an estimate, and it is worth being plain about this.**
+  Sharing the money out by today's proportions gives back exactly what was paid
+  only where the club has moved its rates *evenly* — every season by the same
+  amount, or none at all. If the club changed one season's rate and left another
+  alone, and the member's stay spanned both, the split between their own nights
+  comes out wrong: one of their nights is credited too much and the other too
+  little. Measured across thousands of simulated edits, this rule misallocates
+  less than half of what the old today's-rate rule did — but it is not right
+  every time, and in some cases the old rule happened to be right where this one
+  is not. What never moves is the total: the money can be shared out wrongly
+  between a member's own nights, but the club can never hand back more than the
+  booking says that member paid.
+
   Give back every night and the club returns exactly the price the booking
   holds against that member, never a cent more. That also means the safety net
   which used to cut an over-large credit back — sometimes wiping out a member's
@@ -37,6 +50,16 @@
   be priced but the others can, only that night is estimated: it is given a full
   share, the size of an average night on the stay, and every other night keeps
   its own value.
+
+  **This correction lasts for one edit.** When an edit finishes, the system
+  writes a price against each night the member still holds — and for exactly
+  these older bookings it has nothing better to write than an even share of the
+  corrected total. Those averages then become what the booking says each night
+  was sold for, so a SECOND edit on the same booking credits the average rather
+  than the shape this change worked out. Nobody loses money to it — the amounts
+  always add back up to the member's own total — but it means the record itself
+  is still not an honest price list. Making it one is a separate decision,
+  tracked and waiting: see issue #2791.
 
   One limit, stated plainly: the credit is bounded by the price the booking
   records, which is the club's own record of the sale. Nothing already charged,

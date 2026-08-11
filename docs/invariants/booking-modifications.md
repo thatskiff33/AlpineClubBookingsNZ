@@ -566,10 +566,15 @@ A booking already edited under the envelope arithmetic — or under the
 today's-rate refund and averaged per-night rows this rule also corrects — keeps
 the rows and the price it was given; this rule binds edits from here on, and any
 correction to a member who was charged or refunded wrongly is an owner decision
-and a separate, audited adjustment. **#2745** carries that decision with its
-options; it was filed for the gap-night exposure and the #2744 over-refund is
-recorded on it as a second, wider one, because that error needed no gap in the
-stay to happen — only a season rate that had moved.
+and a separate, audited adjustment. **#2745 answered the gap-night half of that
+and is CLOSED** (10 Aug 2026): a read-only audit of the live database found zero
+guests with a gap in their stay, so the pre-#2736 envelope arithmetic never had a
+sparse stay to get wrong and no member is owed anything for it. That audit says
+in its own closing comment that it does **not** cover the rest of the family —
+#2743's re-admission and #2744's refund at today's rate need no gap to happen —
+and the counts it was asked for (negative guest totals, negative night rows,
+averaged rows across a season boundary) were never run. **#2791** carries that
+remainder.
 
 **An edit sells only the nights it creates** (#2743). A night may be added to an
 existing guest only when the edit moves the booking's check-out, and only past
@@ -799,16 +804,53 @@ cash is the settlement layer: `basisAmountCents` is capped at
 so no edit can return money that never arrived. That is unchanged by #2771 and
 applies equally to the #2744 stored-row leg.
 
-**The cost that remains.** The ratio is exact under a scaled or unmoved rate
-table; the one shape it gets wrong is a season BOUNDARY that has since moved
-across the stay, where the flat split would happen to be right. That is rarer
-than a rate change, and either rule is bounded by the same stored total. And the
-estimate is not written to a `BookingGuestNight` row as that night's price, but
-it does reach the rows one step on: it moves the guest's TOTAL, and a guest whose
-rows cannot account for their total has their rows written as the even split of
-it (`composeProposedNightPrices`, the pre-existing #2744 fallback). So a row-less
-guest's persisted rows are still flattened — what #2771 owes them is a total that
-is right, and repairing the rows themselves is #2745's.
+**The cost that remains, stated at its real width.** The ratio reproduces the
+original per-night prices exactly when today's rate vector is PROPORTIONAL to
+what the member actually paid — that is, where every season the stay spans was
+scaled by the SAME factor, or nothing moved at all (every guest in the
+equivalence matrix). It is **wrong whenever the relative prices of two of the
+guest's nights have changed**, and the common way that happens is a rate edit
+applied to ONE season and not another, with no boundary moved — the most ordinary
+rate change a club makes, not a rare one. A season boundary that has since moved
+breaks it too; that is the rarer shape, not the only one.
+
+Three properties of that error, measured rather than argued, because the choice
+between this rule and the flat split D1's wording named turns on them:
+
+- It is **two-sided**: the same non-proportionality under-credits as readily as it
+  over-credits. It does not err toward the member.
+- It is bounded **per guest, never per night**. The slices sum to the residual
+  exactly, so a guest's own nights can be mis-split against one another but their
+  stored total can never be exceeded. `refundCeilingCents` adds nothing: a kept
+  night raises the ceiling alongside the credit, so **only a full give-back can
+  make the cap bind** and nothing catches a partial one.
+- It is nevertheless a **large net improvement** on the today's-rate rule it
+  replaces. Over 4,450 randomised give-back edits on row-less guests, with both
+  rates and both season boundaries free to move between booking time and today,
+  the ratio over-credits 1,335 cases (3,448,250c) and under-credits 1,295
+  (3,370,883c); today's rate over-credits 1,891 (4,888,000c) and under-credits
+  1,840 (10,777,500c) — 44% of the total misallocation. In 525 of those cases the
+  ratio over-credits where today's rate did not, so it wins in aggregate and not
+  case by case.
+
+Neither rule dominates: a flat split is exact in the mirror case, where the real
+per-night prices were uniform and today's card is the skewed one. This is a
+judgement about fairness between a guest's own nights, which is why the ratio is
+recorded as an unruled deviation from D1 rather than as the settled answer.
+
+**And the correction is one-shot.** The estimate is not written to a
+`BookingGuestNight` row as that night's price, but it reaches the rows one step
+on: it moves the guest's TOTAL, and a guest whose rows cannot account for their
+total has their rows written as the even split of it
+(`composeProposedNightPrices`, the pre-existing #2744 fallback). So a row-less
+guest's persisted rows are still flattened — and **those flattened rows become
+the next edit's sold price**. After one edit the guest is no longer row-less and
+is indistinguishable from a guest whose rows are honest: a 5,000 night and a
+9,000 night written back as 7,000/7,000 mean the second edit credits 7,000 for
+the night that cost 9,000. Money is conserved throughout (integer cents, summing
+back exactly); what is wrong is the record of which night carried which part of
+it. What #2771 owes those rows is a total that is right, and repairing the rows
+themselves is **#2791**'s.
 
 One error path moves with it, in the safe direction. Because the estimate is a
 lock, this window asks the season table for nothing on behalf of a guest with no
@@ -936,8 +978,9 @@ could write negative rows, and honouring one would invert the edit so that givin
 a night back CHARGED the member. **History is not repriced by either rule.** A
 guest already below zero is left exactly as found — not driven deeper, not
 repaired — because correcting what the old arithmetic wrote is an owner decision
-with its own audit. **#2745** carries it, and its scope includes rows that are
-negative, not only rows that are averaged.
+with its own audit. **#2791** carries it (not #2745, which is closed on the
+sparse-stay audit), and its scope includes rows that are negative and totals that
+are below zero, not only rows that are averaged.
 
 The **contiguous equivalence** above survives this, and is still proven rather
 than asserted: the matrix runs every ordinary edit four ways — rows carrying

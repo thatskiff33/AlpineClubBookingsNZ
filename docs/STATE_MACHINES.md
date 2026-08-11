@@ -845,14 +845,20 @@ price is recoverable at all, the night is credited from that guest's own stored
 total instead of at today's rate (#2771) — what their own rows do not already
 account for, shared between the unpriceable nights in the ratio of today's rates
 for them — which cannot hand back more than the booking says they paid however
-the rates have moved, and returns each night's real price exactly wherever the
-rate table has simply been scaled. The cap that used to hold that fallback is
-still there for a credit built from a stored row that outruns the guest's stored
-total.
+the rates have moved, and returns each night's real price exactly wherever every
+season the stay spans was scaled by the same factor or nothing moved. It does not
+where the RELATIVE prices of two of the guest's nights have changed — one season
+re-rated and another left alone, or a boundary since moved — and there the error
+is two-sided and bounded per guest rather than per night, because a kept night
+lifts the cap alongside the credit so only a full give-back can make it bind. The
+cap that used to hold that fallback is still there for a credit built from a
+stored row that outruns the guest's stored total.
 For an ordinary stay that runs to the booking's check-out, every number is
 exactly what it was before. Bookings edited before those fixes keep the rows and
-the price they were given — history is not repriced (#2745 carries the decision
-about whether anything is done about them). Two edits are newly refused, both
+the price they were given — history is not repriced (#2745 audited that on
+10 Aug 2026 and found no affected booking; #2791 carries what that audit did not
+cover, including the flattened write-back that makes the #2771 correction last
+only until the next edit). Two edits are newly refused, both
 because the booking would be left with NOBODY in the future window: a check-out
 pulled back past the last night any remaining guest still holds, and a save on a
 booking whose check-out is still ahead but whose guests have all finished their
