@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
+import type { ReactNode } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IntegrationWizard } from "../integration-wizard";
 import type { WizardStepConfig } from "../types";
@@ -75,6 +77,24 @@ function renderWizard(context: Ctx) {
   );
 }
 
+/**
+ * Wait for the wizard to open on `bodyText`, then let the shell settle.
+ *
+ * The commit that paints an interactive wizard and the effect that settles its
+ * resume step are two separate React steps, and `waitFor` can return between
+ * them (#2781). Every case below that clicks after opening means to exercise
+ * ordinary navigation, so flush the pending effect first instead of leaving that
+ * order to chance — clicking BEFORE the shell settles has its own test.
+ */
+async function openedAt(bodyText: string) {
+  await screen.findByText(bodyText);
+  // One macrotask turn inside act(): React's pending passive effects run, then
+  // act flushes whatever they queued.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 describe("IntegrationWizard gating (#2080)", () => {
   it("starts a FIRST run at step one even when it verifies trivially", async () => {
     // Step A is an always-verified instructions step; without a persisted
@@ -98,7 +118,7 @@ describe("IntegrationWizard gating (#2080)", () => {
     const { rerender } = renderWizard({ bReady: false, cReady: false });
 
     // Fresh run opens on A; B is reachable (A verified) — walk forward to it.
-    await waitFor(() => screen.getByText("Step A body"));
+    await openedAt("Step A body");
     fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => {
       expect(screen.getByText("Step B body")).toBeTruthy();
@@ -214,7 +234,7 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
     // Fresh run opens on A; walk to the optional step B, which is gated
     // (Continue is not offered on an unpassed non-last step) but offers
     // the shell's provider-labelled skip action.
-    await waitFor(() => screen.getByText("Step A body"));
+    await openedAt("Step A body");
     fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => {
       expect(screen.getByText("Step B body")).toBeTruthy();
@@ -234,7 +254,7 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
 
   it("clears the skipped (amber) state once the step later verifies", async () => {
     const { rerender } = renderOptional({ bVerified: false });
-    await waitFor(() => screen.getByText("Step A body"));
+    await openedAt("Step A body");
     fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => screen.getByText("Step B body"));
     fireEvent.click(screen.getByRole("button", { name: "Skip B for now" }));
@@ -261,7 +281,7 @@ describe("IntegrationWizard optional-step skip (#2080 UX-F1)", () => {
   it("never offers a skip action for a required unverified step", async () => {
     // Reuse the standard steps() where B is required + unverified.
     renderWizard({ bReady: false, cReady: false });
-    await waitFor(() => screen.getByText("Step A body"));
+    await openedAt("Step A body");
     fireEvent.click(screen.getByRole("button", { name: /Step B/ }));
     await waitFor(() => screen.getByText("Step B body"));
     expect(screen.queryByRole("button", { name: /skip/i })).toBeNull();
@@ -272,7 +292,7 @@ describe("IntegrationWizard focus management (#2080 UX-F3)", () => {
   it("does not steal focus on the initial resume render", async () => {
     mockedProgress = { currentStepId: "c" };
     renderOptional({ bVerified: true });
-    await waitFor(() => screen.getByText("Step C body"));
+    await openedAt("Step C body");
     // Focus was not yanked to the step container on mount.
     expect((document.activeElement as HTMLElement)?.tagName).not.toBe(
       undefined,
@@ -283,7 +303,7 @@ describe("IntegrationWizard focus management (#2080 UX-F3)", () => {
   it("moves focus to the new step container on a step change", async () => {
     mockedProgress = { currentStepId: "c" };
     renderOptional({ bVerified: true });
-    await waitFor(() => screen.getByText("Step C body"));
+    await openedAt("Step C body");
 
     // Jump to Step A via its (reachable) stepper button.
     fireEvent.click(screen.getByRole("button", { name: /Step A/ }));
@@ -293,6 +313,326 @@ describe("IntegrationWizard focus management (#2080 UX-F3)", () => {
       expect(active?.getAttribute("tabindex")).toBe("-1");
       expect(active?.textContent).toContain("Step A body");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #2781 — a step the operator clicked before the shell settled must survive.
+//
+// The defect was a race, so this does NOT race it. The order is pinned:
+//
+//  - the cursor GET is held open, so the test decides exactly when the saved
+//    progress resolves;
+//  - the click is dispatched from the step body's own mount effect. React
+//    flushes a child's effects BEFORE its parent's, so the navigation is
+//    guaranteed to land in the window between the wizard painting a clickable
+//    stepper and the shell's initialisation effect running.
+//
+// That window is NOT "while `wizard-progress` is in flight" — the shell renders
+// a spinner until `cursor.loaded`, so no stepper button exists to click. It is
+// the React turn AFTER the GET resolves: `loaded`, `persistedStepId` and
+// `acknowledged` batch into one commit, that commit paints an interactive
+// stepper, and the init effect placing the cursor is flushed after it. So the
+// window's length is main-thread scheduling, not network latency — which is
+// exactly why it fired under contended CI load and never locally.
+//
+// This ordering failed three times in CI and was written off as a flake each
+// time (#2738, #2775 twice). Nothing here depends on timing: revert the fix and
+// it fails every run.
+// ---------------------------------------------------------------------------
+
+/**
+ * A one-shot permit. The click must happen exactly once even if the step body
+ * remounts — without the fix the wizard snaps back to step one and remounts it,
+ * and a second click would then land after initialisation and hide the defect.
+ */
+function clickPermit() {
+  let taken = false;
+  return {
+    get taken() {
+      return taken;
+    },
+    take() {
+      if (taken) return false;
+      taken = true;
+      return true;
+    },
+  };
+}
+
+/** Clicks a stepper button once, from inside a step body's mount effect. */
+function ClickStepOnMount({
+  label,
+  permit,
+  children,
+}: {
+  label: RegExp;
+  permit: { take: () => boolean };
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!permit.take()) return;
+    // A native dispatch rather than fireEvent: this runs while React is already
+    // flushing effects, and the point is to queue the operator's navigation
+    // there, not to open a nested act() scope around it.
+    screen.getByRole("button", { name: label }).click();
+  }, [label, permit]);
+  return <>{children}</>;
+}
+
+describe("IntegrationWizard cursor race (#2781)", () => {
+  function racingSteps(permit: {
+    take: () => boolean;
+  }): WizardStepConfig<Ctx>[] {
+    return [
+      {
+        id: "a",
+        title: "Step A",
+        isVerified: () => true,
+        render: () => (
+          <ClickStepOnMount label={/Step B/} permit={permit}>
+            <div>Step A body</div>
+          </ClickStepOnMount>
+        ),
+      },
+      {
+        id: "b",
+        title: "Step B",
+        isVerified: (ctx) => ctx.bReady,
+        render: () => <div>Step B body</div>,
+      },
+      {
+        id: "c",
+        title: "Step C",
+        isVerified: (ctx) => ctx.cReady,
+        render: () => <div>Step C body</div>,
+      },
+    ];
+  }
+
+  /**
+   * Hold the cursor GET open. The returned function releases it and flushes the
+   * render + effects it triggers, so the whole race happens inside one await.
+   */
+  function deferCursorLoad() {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    global.fetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if ((init?.method ?? "GET") === "GET") {
+          await gate;
+          return {
+            ok: true,
+            json: async () => ({ wizardId: "test", progress: mockedProgress }),
+          } as Response;
+        }
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      },
+    ) as unknown as typeof fetch;
+    return async () => {
+      await act(async () => {
+        release?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    };
+  }
+
+  function renderRacing(
+    permit: { take: () => boolean },
+    initialStepId?: string,
+  ) {
+    return render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={racingSteps(permit)}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+        initialStepId={initialStepId}
+      />,
+    );
+  }
+
+  // The premise every explanation of this defect rests on, pinned so the
+  // explanations cannot drift back to the wrong one. The window is NOT "the GET
+  // is in flight": while it is, there is no stepper at all, so there is nothing
+  // to click. Make the stepper render during loading and this fails — which is
+  // the signal to revisit the changelog, `docs/guides/display.md` and
+  // `docs/xero/ARCHITECTURE.md`, because the window they describe would change.
+  it("shows NO clickable stepper at all while the cursor GET is in flight", async () => {
+    const releaseCursor = deferCursorLoad();
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={steps()}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+
+    // Not "step B is unreachable" — no step button exists in any state, not
+    // even the always-reachable first one, and no step body has rendered.
+    expect(screen.queryByRole("button", { name: /Step A/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Step B/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Step C/ })).toBeNull();
+    expect(screen.queryByText("Step A body")).toBeNull();
+
+    await releaseCursor();
+
+    // The stepper only becomes clickable once the saved position has arrived,
+    // so the race window can only open after that.
+    expect(screen.getByRole("button", { name: /Step A/ })).toBeTruthy();
+    expect(screen.getByText("Step A body")).toBeTruthy();
+  });
+
+  it("keeps a step clicked before a FIRST-RUN cursor is applied", async () => {
+    const releaseCursor = deferCursorLoad();
+    const clicked = clickPermit();
+    renderRacing(clicked);
+
+    // Nothing to click yet: the wizard is still waiting on the saved cursor.
+    expect(screen.queryByRole("button", { name: /Step B/ })).toBeNull();
+
+    await releaseCursor();
+
+    // The click really did land before the shell settled...
+    expect(clicked.taken).toBe(true);
+    // ...and it was not discarded: no snap back to step one.
+    expect(screen.getByText("Step B body")).toBeTruthy();
+    expect(screen.queryByText("Step A body")).toBeNull();
+    // The shell agrees, not just the body.
+    expect(screen.getByText("Step 2 of 3")).toBeTruthy();
+    // Focus followed the click, exactly as it does for any other stepper click.
+    // This is the one case where the operator's own placement is the FIRST one
+    // the focus effect ever sees, so it is the only test that pins the
+    // `owner === "operator"` arm of that first-observation branch: a resume
+    // first-observation must stay silent (see "does not steal focus on the
+    // initial resume render"), but this one must not.
+    const active = document.activeElement as HTMLElement | null;
+    expect(active?.getAttribute("tabindex")).toBe("-1");
+    expect(active?.textContent).toContain("Step B body");
+  });
+
+  // Clicking the step you are ALREADY on is how an operator says "stay here",
+  // and before initialisation it is the only thing standing between them and a
+  // persisted cursor that moves them. So `goTo` must claim ownership even when
+  // the index does not change: add an `if (clamped === index) return;` fast path
+  // and this fails, because the resume then still wins.
+  it("keeps the ALREADY-ACTIVE step when that is what the operator clicked", async () => {
+    mockedProgress = { currentStepId: "b" };
+    const releaseCursor = deferCursorLoad();
+    const clicked = clickPermit();
+    // Step A is the pre-initialisation index, and Step A is what gets clicked.
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={[
+          {
+            id: "a",
+            title: "Step A",
+            isVerified: () => true,
+            render: () => (
+              <ClickStepOnMount label={/Step A/} permit={clicked}>
+                <div>Step A body</div>
+              </ClickStepOnMount>
+            ),
+          },
+          ...steps().slice(1),
+        ]}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+
+    await releaseCursor();
+
+    expect(clicked.taken).toBe(true);
+    // The persisted cursor says "b"; the operator said "a" first, so a wins.
+    expect(screen.getByText("Step A body")).toBeTruthy();
+    expect(screen.queryByText("Step B body")).toBeNull();
+    expect(screen.getByText("Step 1 of 3")).toBeTruthy();
+  });
+
+  it("keeps a step clicked before a PERSISTED cursor is applied", async () => {
+    mockedProgress = { currentStepId: "a" };
+    const releaseCursor = deferCursorLoad();
+    const clicked = clickPermit();
+    renderRacing(clicked);
+
+    await releaseCursor();
+
+    expect(clicked.taken).toBe(true);
+    expect(screen.getByText("Step B body")).toBeTruthy();
+    expect(screen.queryByText("Step A body")).toBeNull();
+  });
+
+  it("keeps a step clicked before a ?step= DEEP LINK is applied", async () => {
+    const releaseCursor = deferCursorLoad();
+    const clicked = clickPermit();
+    renderRacing(clicked, "a");
+
+    await releaseCursor();
+
+    expect(clicked.taken).toBe(true);
+    expect(screen.getByText("Step B body")).toBeTruthy();
+  });
+
+  it("still resumes a deep link, clamped, when nobody clicks first", async () => {
+    // Same held-open cursor, no click: the deep link to the gated step C is
+    // clamped back to the furthest reachable step (B), exactly as before.
+    const releaseCursor = deferCursorLoad();
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={steps()}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+        initialStepId="c"
+      />,
+    );
+
+    await releaseCursor();
+
+    expect(screen.getByText("Step B body")).toBeTruthy();
+    expect(screen.queryByText("Step C body")).toBeNull();
+  });
+
+  it("still opens a first run on step one when nobody clicks first", async () => {
+    const releaseCursor = deferCursorLoad();
+    render(
+      <IntegrationWizard<Ctx>
+        wizardId="test"
+        title="Test wizard"
+        steps={steps()}
+        context={{ bReady: false, cReady: false }}
+        contextLoading={false}
+        onRefresh={() => {}}
+        canEdit={true}
+        viewOnlyBanner={<>view only</>}
+      />,
+    );
+
+    await releaseCursor();
+
+    // Step A verifies trivially, but a first run must still see it (#2080).
+    expect(screen.getByText("Step A body")).toBeTruthy();
   });
 });
 

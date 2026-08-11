@@ -131,6 +131,8 @@ export type DiagnosticsBlocker =
   | "budget_not_set"
   /** `AI_DIAGNOSTICS_DATABASE_URL` is not set (AID-5, #2374). */
   | "database_not_configured"
+  /** The role is safe but one or more release-declared SELECT grants are absent. */
+  | "database_grants_missing"
   /**
    * The credential is set but is not a usable least-privilege role: malformed,
    * pointing at the application's own role, unreachable, or the server reports it
@@ -192,6 +194,8 @@ export async function getDiagnosticsReadiness(modules: {
     if (monthlyBudgetCents <= 0) blockers.push("budget_not_set");
     if (database.state === "not_configured") {
       blockers.push("database_not_configured");
+    } else if (database.state === "under_provisioned") {
+      blockers.push("database_grants_missing");
     } else if (database.state !== "verified") {
       blockers.push("database_role_unsafe");
     }

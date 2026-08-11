@@ -42,9 +42,12 @@
  *   CONCURRENCY_RACE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55442/concurrency_race_1881 \
  *     npx vitest run src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts
  */
+import { readFileSync } from "node:fs";
+
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { realElapsedMs } from "./helpers/clock";
+import { collectStatementColumnReads } from "./helpers/diagnostics-statement-reads";
 
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
@@ -74,6 +77,10 @@ const GROUP_LIKE_ROLE = "aid5_probe_group_like";
  * reach the case where the sweep silently strips nothing.
  */
 const DEPLOYER_ROLE = "aid5_probe_deployer";
+
+function quoteTestRoleIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
 
 /** PostgreSQL SQLSTATEs this suite asserts on. */
 const INSUFFICIENT_PRIVILEGE = "42501";
@@ -131,6 +138,37 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
   ])("rejects unsafe target %s", (url) => {
     expect(() => assertSafePrivilegeProofDbUrl(url)).toThrow();
   });
+
+  it("keeps known-password role cleanup explicit and fail-closed", () => {
+    const source = readFileSync(import.meta.filename, "utf8");
+    const cleanupStart = source.lastIndexOf("    afterAll(async () => {");
+    expect(cleanupStart).toBeGreaterThan(0);
+    const cleanupSource = source.slice(cleanupStart);
+    const closePool = cleanupSource.indexOf(
+      'cleanupStep("close diagnostics pool"',
+    );
+    const terminate = cleanupSource.indexOf("pg_catalog.pg_terminate_backend");
+    const revokeMemberships = cleanupSource.indexOf(
+      "pg_catalog.pg_auth_members edge",
+    );
+    const dropOwned = cleanupSource.indexOf(
+      "DROP OWNED BY ${quoteTestRoleIdentifier(role)}",
+    );
+    const dropRole = cleanupSource.indexOf(
+      "DROP ROLE ${quoteTestRoleIdentifier(role)}",
+    );
+    const proveAbsent = cleanupSource.indexOf("still exists after DROP ROLE");
+
+    expect(closePool).toBeGreaterThan(0);
+    expect(terminate).toBeGreaterThan(closePool);
+    expect(revokeMemberships).toBeGreaterThan(terminate);
+    expect(dropOwned).toBeGreaterThan(revokeMemberships);
+    expect(dropRole).toBeGreaterThan(dropOwned);
+    expect(proveAbsent).toBeGreaterThan(dropRole);
+    expect(cleanupSource).toContain(
+      "AI Diagnostics real-PostgreSQL cleanup failed",
+    );
+  });
 });
 
 (RUN ? describe : describe.skip)(
@@ -153,6 +191,17 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
     let roleUrl: string;
     let databaseName: string;
     let adminRole: string;
+    /**
+     * Whether PUBLIC held TEMPORARY on the scratch database BEFORE this suite ran.
+     *
+     * Recorded rather than assumed, because the cleanup below used to
+     * unconditionally `GRANT TEMPORARY ... TO PUBLIC` on the way out. On a database
+     * where PUBLIC did not have it, that hands back a privilege the operator had
+     * deliberately removed — a test tidying up by widening the thing this very
+     * suite exists to prove is narrow. `null` means the state was never observed
+     * (the suite failed before it could ask), and the cleanup then changes nothing.
+     */
+    let publicHadTemporaryBefore: boolean | null = null;
 
     /**
      * Run one statement as the restricted role and return the SQLSTATE, or null
@@ -196,6 +245,18 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
     }
 
     async function provision(): Promise<void> {
+      /**
+       * OBSERVE PUBLIC's TEMPORARY grant BEFORE the provisioner revokes it, so the
+       * cleanup can restore exactly what existed rather than granting it back
+       * unconditionally. Recorded once: `provision()` runs more than once in this
+       * suite, and the state that matters is the one before the FIRST revoke.
+       */
+      if (publicHadTemporaryBefore === null) {
+        const before = await admin.query(
+          `SELECT pg_catalog.has_database_privilege('public', current_database(), 'TEMPORARY') AS temp`,
+        );
+        publicHadTemporaryBefore = before.rows[0]?.temp === true;
+      }
       const statements = buildAiDiagnosticsRoleSql({
         roleName: TEST_ROLE,
         password: TEST_ROLE_PASSWORD,
@@ -266,6 +327,7 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       const parsed = new URL(RACE_DB_URL);
       databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
       adminRole = decodeURIComponent(parsed.username);
+      publicHadTemporaryBefore = null;
 
       ({ Client: PgClientCtor } = await import("pg"));
       ({ buildAiDiagnosticsRoleSql, FORBIDDEN_PREDEFINED_ROLES, SELECT_GRANTS } =
@@ -324,37 +386,169 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
     }, 120_000);
 
     afterAll(async () => {
+      const cleanupErrors: string[] = [];
+      const cleanupStep = async (
+        label: string,
+        action: () => Promise<unknown>,
+      ): Promise<void> => {
+        try {
+          await action();
+        } catch (err) {
+          cleanupErrors.push(
+            `${label}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      };
+
+      // Close the restricted pool FIRST. A checked-out known-password session is a
+      // dependency of the role and makes DROP ROLE fail; a client timeout is not a
+      // substitute for actually closing it.
       if (typeof closeDiagnosticsDatabase === "function") {
-        await closeDiagnosticsDatabase().catch(() => {});
+        await cleanupStep("close diagnostics pool", closeDiagnosticsDatabase);
       }
+
+      // Release any transaction/SET ROLE state on the suite client, then close it.
+      // Cleanup uses a new superuser connection so a failed test cannot leave this
+      // client aborted or impersonating one of the roles it must remove.
       if (typeof admin !== "undefined") {
+        await cleanupStep("rollback suite admin transaction", async () => {
+          await admin.query("ROLLBACK");
+        });
+        await cleanupStep("reset suite admin role", async () => {
+          await admin.query("RESET ROLE");
+        });
+        await cleanupStep("close suite admin connection", async () => {
+          await admin.end();
+        });
+      }
+
+      let cleanupAdmin: PgClient | undefined;
+      if (typeof PgClientCtor !== "undefined") {
+        await cleanupStep("open isolated cleanup connection", async () => {
+          assertSafePrivilegeProofDbUrl(RACE_DB_URL);
+          cleanupAdmin = new PgClientCtor({ connectionString: RACE_DB_URL });
+          await cleanupAdmin.connect();
+        });
+      }
+
+      if (cleanupAdmin) {
+        const removeRole = async (role: string): Promise<void> => {
+          const roleExists = await cleanupAdmin!.query(
+            `SELECT EXISTS (
+               SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1
+             ) AS present`,
+            [role],
+          );
+          if (!roleExists.rows[0]?.present) return;
+
+          // No session may retain the known password while cleanup proceeds.
+          await cleanupAdmin!.query(
+            `SELECT pg_catalog.pg_terminate_backend(pid)
+             FROM pg_catalog.pg_stat_activity
+             WHERE usename = $1 AND pid <> pg_catalog.pg_backend_pid()`,
+            [role],
+          );
+
+          // Remove memberships in BOTH directions and name the original grantor.
+          // PostgreSQL records one row per grantor; a bare REVOKE can otherwise
+          // report success while another grantor's membership survives.
+          const memberships = await cleanupAdmin!.query(
+            `SELECT granted.rolname AS granted_role,
+                    member.rolname  AS member_role,
+                    grantor.rolname AS grantor_role
+             FROM pg_catalog.pg_auth_members edge
+             JOIN pg_catalog.pg_roles granted ON granted.oid = edge.roleid
+             JOIN pg_catalog.pg_roles member  ON member.oid  = edge.member
+             JOIN pg_catalog.pg_roles grantor ON grantor.oid = edge.grantor
+             WHERE granted.rolname = $1 OR member.rolname = $1`,
+            [role],
+          );
+          for (const edge of memberships.rows) {
+            await cleanupAdmin!.query(
+              `REVOKE ${quoteTestRoleIdentifier(String(edge.granted_role))} ` +
+                `FROM ${quoteTestRoleIdentifier(String(edge.member_role))} ` +
+                `GRANTED BY ${quoteTestRoleIdentifier(String(edge.grantor_role))}`,
+            );
+          }
+
+          const membershipResidue = await cleanupAdmin!.query(
+            `SELECT count(*)::int AS remaining
+             FROM pg_catalog.pg_auth_members edge
+             JOIN pg_catalog.pg_roles granted ON granted.oid = edge.roleid
+             JOIN pg_catalog.pg_roles member  ON member.oid  = edge.member
+             WHERE granted.rolname = $1 OR member.rolname = $1`,
+            [role],
+          );
+          if (membershipResidue.rows[0]?.remaining !== 0) {
+            throw new Error(`${role} still has role-membership dependencies`);
+          }
+
+          // Required even when the role owns no object today: this drops its
+          // grants/dependencies in the scratch database before the cluster role.
+          await cleanupAdmin!.query(
+            `DROP OWNED BY ${quoteTestRoleIdentifier(role)}`,
+          );
+          await cleanupAdmin!.query(`DROP ROLE ${quoteTestRoleIdentifier(role)}`);
+
+          const absent = await cleanupAdmin!.query(
+            `SELECT NOT EXISTS (
+               SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1
+             ) AS absent`,
+            [role],
+          );
+          if (!absent.rows[0]?.absent) {
+            throw new Error(`${role} still exists after DROP ROLE`);
+          }
+        };
+
         for (const table of [GRANTED_TABLE, WRITABLE_TABLE, UNGRANTED_TABLE]) {
-          await admin
-            .query(`DROP TABLE IF EXISTS public.${table}`)
-            .catch(() => {});
+          await cleanupStep(`drop scratch table ${table}`, async () => {
+            await cleanupAdmin!.query(`DROP TABLE IF EXISTS public.${table}`);
+          });
         }
-        // Leave the database's PUBLIC TEMP grant as the provisioning left it for
-        // the app role, but hand it back to PUBLIC so a later suite on this
-        // shared throwaway database is unaffected by this one.
-        await admin
-          .query(`GRANT TEMPORARY ON DATABASE "${databaseName}" TO PUBLIC`)
-          .catch(() => {});
-        await admin
-          .query(`REVOKE ALL ON SCHEMA public FROM "${TEST_ROLE}"`)
-          .catch(() => {});
-        // Belt for the membership cases: if one of them failed part-way these roles
-        // would otherwise survive the run and be granted again on the next one.
+        // Leave the shared scratch database's PUBLIC TEMP grant EXACTLY as it was
+        // before this suite, so later isolated suites are not coupled to our
+        // provisioner — and so a database where PUBLIC deliberately does NOT hold
+        // TEMPORARY does not have it handed back by a test. Restoring
+        // unconditionally was the defect: the one privilege this suite proves the
+        // provisioner revokes is the one the cleanup would re-grant to everybody.
+        if (databaseName && publicHadTemporaryBefore === true) {
+          await cleanupStep("restore PUBLIC TEMPORARY", async () => {
+            await cleanupAdmin!.query(
+              `GRANT TEMPORARY ON DATABASE ${quoteTestRoleIdentifier(databaseName)} TO PUBLIC`,
+            );
+          });
+        } else if (databaseName && publicHadTemporaryBefore === false) {
+          await cleanupStep("leave PUBLIC TEMPORARY revoked", async () => {
+            // Nothing to do, and saying so is the point: the state we found is the
+            // state we leave. Asserted rather than assumed, because a silent
+            // no-op here and a silent GRANT look identical in a cleanup log.
+            const after = await cleanupAdmin!.query(
+              `SELECT pg_catalog.has_database_privilege('public', current_database(), 'TEMPORARY') AS temp`,
+            );
+            if (after.rows[0]?.temp === true) {
+              throw new Error(
+                "cleanup left PUBLIC holding TEMPORARY on a database that did not have it",
+              );
+            }
+          });
+        }
+
+        // Main role first while every possible membership grantor still exists.
+        // This is the known-password role; failure to remove it fails the suite.
+        await cleanupStep(`remove ${TEST_ROLE}`, () => removeRole(TEST_ROLE));
         for (const role of [APP_LIKE_ROLE, GROUP_LIKE_ROLE, DEPLOYER_ROLE]) {
-          await admin.query(`DROP OWNED BY "${role}"`).catch(() => {});
-          await admin.query(`DROP ROLE IF EXISTS "${role}"`).catch(() => {});
+          await cleanupStep(`remove ${role}`, () => removeRole(role));
         }
-        await admin
-          .query(`REVOKE "${adminRole}" FROM "${TEST_ROLE}"`)
-          .catch(() => {});
-        await admin
-          .query(`DROP ROLE IF EXISTS "${TEST_ROLE}"`)
-          .catch(() => {});
-        await admin.end().catch(() => {});
+        await cleanupStep("close isolated cleanup connection", async () => {
+          await cleanupAdmin!.end();
+        });
+      }
+
+      if (cleanupErrors.length > 0) {
+        throw new Error(
+          `AI Diagnostics real-PostgreSQL cleanup failed:\n${cleanupErrors.join("\n")}`,
+        );
       }
     }, 120_000);
 
@@ -522,6 +716,72 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       // instruments and — on `Member` — every piece of member PII this platform
       // holds. The tools project none of them, and as this role PostgreSQL itself
       // refuses to return them.
+      /**
+       * WHAT THIS ASSERTION IS REALLY FOR, restated because it was nearly weakened
+       * into a formality.
+       *
+       * It used to require that EVERY column-granted relation withhold at least one
+       * column. That was never the property; it was a PROXY for "the grant is
+       * column-scoped rather than whole-table", chosen because a relation with
+       * something withheld gives the 42501 loop below something to prove. The proxy
+       * breaks on a relation that is simply small: `FamilyGroupMember` has exactly
+       * four columns — `id`, `familyGroupId`, `memberId`, `joinedAt` — and
+       * `member_family_state` reads all four (the join key, the co-member key, the
+       * evidence reference and the joined-at instant). There is no fifth to withhold;
+       * notably the relation has NO `role` column, one having been physically dropped
+       * by `20260803030000_contract_drop_family_group_member_role`. Narrowing that
+       * grant would break the statement, so the proxy — not the grant — is what was
+       * wrong, and it is REPLACED here rather than relaxed.
+       *
+       * WHAT REPLACES IT IS THE PROPERTY ITSELF, IN BOTH DIRECTIONS, asserted against
+       * PostgreSQL's own answer and the SHIPPED statements:
+       *
+       *   this role may read a column  IF AND ONLY IF  some registered
+       *   `select_only_sql` statement reads that column.
+       *
+       * The forward half ("every column a statement reads is granted") is the one a
+       * missing grant breaks at runtime with 42501. The reverse half ("every granted
+       * column is read by some statement") is the one that was PROMISED by AID-6C's
+       * docblock and never implemented — `finance-pack.test.ts` built the set and
+       * never asserted on it — behind which the seven granted-but-unread columns
+       * named in `provision-role.ts` survived two releases, two of which stopped
+       * being harmless the moment AID-6B granted `Booking`.
+       * `provision-role.test.ts` asserts both against the DECLARATION
+       * on every pull request; this asserts both against the SERVER, so neither half
+       * of the claim rests on the other file having run. Both use one shared resolver
+       * (`./helpers/diagnostics-statement-reads`) so they cannot drift into answering
+       * different questions.
+       *
+       * That makes "granted in full" self-justifying rather than exempt: a relation
+       * can only reach zero withheld columns if a statement reads every one of them.
+       * The enumeration below is still required, and is asserted as an exact SET
+       * EQUALITY after the loop — so a SECOND relation becoming fully granted fails
+       * by name and has to have its argument written down, and an enumerated relation
+       * that grows a withheld column fails too. "The census expected zero withheld
+       * columns" and "the census silently found zero" stay different outcomes, which
+       * is the failure mode the hard-coded column list this loop already replaced
+       * once had, and the one an exemption list would quietly re-introduce.
+       */
+      const GRANTED_IN_FULL = ["FamilyGroupMember"];
+
+      /**
+       * Every `Relation.column` any registered SELECT-only statement reads. Taken
+       * from the REGISTRY loaded in `beforeAll`, not from a fixture: the credential
+       * is one credential, so the union across every pack is the only set a
+       * per-column grant can be justified against.
+       */
+      const statementReads = collectStatementColumnReads(
+        DIAGNOSTICS_TOOLS.flatMap((entry) =>
+          entry.source === "select_only_sql" ? [entry.sql] : [],
+        ),
+      );
+      // Non-vacuous: an empty or tiny read set would make the reverse direction
+      // below pass by finding nothing rather than by the grant being justified.
+      expect(statementReads.size).toBeGreaterThan(100);
+
+      /** Relations PostgreSQL reports as having nothing withheld, as measured. */
+      const measuredGrantedInFull: string[] = [];
+
       for (const grant of SELECT_GRANTS) {
         if (grant.columns === undefined) continue;
         const declared = new Set<string>(grant.columns);
@@ -536,14 +796,47 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
             WHERE n.nspname = $2 AND c.relname = $3`,
           [TEST_ROLE, grant.schema, grant.relation],
         );
-        // A real relation with more columns than the allowlist names, so neither half
-        // of the assertion below is vacuous.
-        expect(columns.rows.length).toBeGreaterThan(declared.size);
+        // The relation is real and the query found its attributes. Without this a
+        // renamed relation returns zero rows and every per-column assertion below
+        // iterates nothing — the exact shape of vacuous pass this test exists to
+        // refuse.
+        expect(
+          columns.rows.length,
+          `${grant.relation} has no attributes — is it still in the schema?`,
+        ).toBeGreaterThan(0);
+
+        // Every DECLARED column exists on the relation. A typo in the allowlist
+        // grants nothing, so the tool that needs it fails with 42703 in front of an
+        // operator; here it is a named failure instead.
+        const attributes = new Set(
+          columns.rows.map((row) => String(row.name)),
+        );
+        expect(
+          [...declared].filter((column) => !attributes.has(column)).sort(),
+          `${grant.relation} declares columns that do not exist on it`,
+        ).toEqual([]);
+
+        // THE BOTH-DIRECTIONS PROPERTY, column by column, as the SERVER answers it.
+        //
+        // Two independent equalities per column, not one: PostgreSQL agrees with the
+        // ALLOWLIST (so provisioning did what it declared), and PostgreSQL agrees
+        // with the STATEMENTS (so the allowlist has no reach nobody argued for).
+        // Asserting only the first would make this a test of `buildAiDiagnosticsRoleSql`
+        // against its own input; asserting only the second would not catch a grant
+        // that drifted from the declaration it is reviewed as.
         for (const row of columns.rows) {
+          const name = String(row.name);
+          const pair = `${grant.relation}.${name}`;
           expect(
             row.readable,
-            `${grant.relation}.${row.name} readable=${row.readable}`,
-          ).toBe(declared.has(String(row.name)));
+            `${pair} readable=${row.readable}, declared=${declared.has(name)}`,
+          ).toBe(declared.has(name));
+          expect(
+            row.readable,
+            row.readable
+              ? `${pair} is readable by the diagnostics role and NO registered statement reads it — reach nobody argued for`
+              : `${pair} is read by a registered statement and the role may not read it — that statement fails with 42501 in production`,
+          ).toBe(statementReads.has(pair));
         }
 
         // Table-level SELECT is ABSENT, which is exactly why the runtime self-check
@@ -581,10 +874,9 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
         const withheldColumns = columns.rows
           .map((row) => String(row.name))
           .filter((name) => !declared.has(name));
-        expect(
-          withheldColumns.length,
-          `${grant.relation} declares every column, so this proves nothing`,
-        ).toBeGreaterThan(0);
+        if (withheldColumns.length === 0) {
+          measuredGrantedInFull.push(grant.relation);
+        }
         for (const withheld of withheldColumns) {
           expect(
             await sqlStateAsRole(
@@ -594,14 +886,44 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
           ).toBe("42501");
         }
         // `SELECT *` is refused too — it expands to every column, including the
-        // withheld ones, so a tool that lost its projection could not fall back to it.
+        // withheld ones, so a tool that lost its projection could not fall back to
+        // it. On a relation with nothing withheld there is nothing for the expansion
+        // to reach, so it succeeds; the polarity is taken from what the server just
+        // reported rather than from the enumeration, because an unconditional 42501
+        // here would be asserting a boundary that does not exist and would fail for
+        // the right reason at the wrong relation. Which relations may legitimately be
+        // in that state is what the set equality after the loop decides.
         expect(
           await sqlStateAsRole(
             `SELECT * FROM ${grant.schema}."${grant.relation}" LIMIT 1`,
           ),
-        ).toBe("42501");
+          `${grant.relation}: SELECT *`,
+        ).toBe(withheldColumns.length === 0 ? null : "42501");
       }
-    });
+
+      // THE ENUMERATION, AS AN EXACT SET EQUALITY — the tripwire that stops
+      // "granted in full" becoming a quiet exemption one relation at a time.
+      //
+      // A relation newly granted in full fails here by name, and the only way to
+      // make it pass is to add it above with the argument for why the relation has
+      // no column left to withhold. An enumerated relation that GAINS a withheld
+      // column fails too, which is the right signal: a new column appeared on a
+      // relation this credential holds entirely, and somebody has to decide whether
+      // it should be granted. Neither direction can be satisfied by loosening a
+      // comparison, and the per-column equality above has already proved that every
+      // column of a fully granted relation is one a shipped statement reads.
+      expect(
+        measuredGrantedInFull.sort(),
+        "a relation is granted in FULL: add it to GRANTED_IN_FULL with the argument for why it has no column left to withhold, or withhold one",
+      ).toEqual([...GRANTED_IN_FULL].sort());
+      // The timeout is EXPLICIT because this test's cost is proportional to the
+      // schema, not to the code: it opens a fresh connection as the restricted role
+      // for every withheld column of every granted relation — hundreds of round
+      // trips, and one more every time a migration adds a column to a relation the
+      // allowlist names. Vitest's 5s default was already marginal before AID-6B
+      // added twelve relations, which makes it a flake waiting for a slow runner
+      // rather than a bound anybody chose.
+    }, 120_000);
 
     it("re-provisioning REVOKES a hand-widened column grant", async () => {
       // The narrowing direction. PostgreSQL's REVOKE reference states that revoking a
@@ -641,28 +963,58 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       const grant = SELECT_GRANTS.find((entry) => entry.columns !== undefined);
       if (!grant?.columns) return;
       const target = `${grant.schema}."${grant.relation}"`;
-      const declaredColumns = grant.columns
-        .map((column) => `"${column}"`)
-        .join(", ");
 
       await withDeclaredGrantsOnly(async () => {
-        await admin.query(`GRANT SELECT ON ${target} TO "${TEST_ROLE}"`);
-        await closeDiagnosticsDatabase();
         try {
+          await admin.query(`GRANT SELECT ON ${target} TO "${TEST_ROLE}"`);
+          await closeDiagnosticsDatabase();
           const handle = await getDiagnosticsDatabase();
           expect(handle.ok).toBe(false);
           if (!handle.ok) {
             expect(handle.reason).toBe("database_role_unsafe");
             expect(handle.report?.undeclaredReadableRelations).toBe(0);
             expect(handle.report?.undeclaredReadableColumns).toBeGreaterThan(0);
+            expect(
+              handle.report?.tableWideSelectOnColumnRestrictedRelations,
+            ).toBe(1);
           }
         } finally {
-          await admin.query(
-            `REVOKE ALL PRIVILEGES ON ${target} FROM "${TEST_ROLE}"`,
-          );
-          await admin.query(
-            `GRANT SELECT (${declaredColumns}) ON ${target} TO "${TEST_ROLE}"`,
-          );
+          // Restore from the reviewed declaration even when GRANT, pool close or
+          // an assertion fails midway; no hand-maintained inverse may leak drift.
+          await provision();
+          await closeDiagnosticsDatabase();
+        }
+      });
+    });
+
+    it("REFUSES table-wide SELECT when a column declaration currently names every column", async () => {
+      const grant = SELECT_GRANTS.find(
+        (entry) => entry.relation === "FamilyGroupMember",
+      );
+      expect(grant?.columns).toBeDefined();
+      if (!grant?.columns) return;
+      const target = `${grant.schema}."${grant.relation}"`;
+
+      await withDeclaredGrantsOnly(async () => {
+        try {
+          await admin.query(`GRANT SELECT ON ${target} TO "${TEST_ROLE}"`);
+          await closeDiagnosticsDatabase();
+          const handle = await getDiagnosticsDatabase();
+          expect(handle.ok).toBe(false);
+          if (handle.ok) return;
+
+          expect(handle.reason).toBe("database_role_unsafe");
+          expect(handle.report?.undeclaredReadableRelations).toBe(0);
+          // FamilyGroupMember currently has no withheld physical column, so the
+          // old undeclared-column detector is intentionally silent here.
+          expect(handle.report?.undeclaredReadableColumns).toBe(0);
+          expect(handle.report?.missingReadableRelations).toBe(0);
+          expect(handle.report?.missingReadableColumns).toBe(0);
+          expect(
+            handle.report?.tableWideSelectOnColumnRestrictedRelations,
+          ).toBe(1);
+        } finally {
+          await provision();
           await closeDiagnosticsDatabase();
         }
       });
@@ -790,14 +1142,43 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
       // Relations that carry the domain's own personal and free-text data and that
       // NO tool pack has argued for. `Member` and `Payment` used to be on this list
       // and legitimately left it in AID-6C (#2377) — but by COLUMN, so they are
-      // covered by the column-level case below rather than dropped. `Booking` and
-      // `MemberCredit` are the finance-adjacent relations AID-6C deliberately did
-      // NOT grant: the booking's own money is read through a `server_owned` entry
-      // and the credit ledger through the authoritative credit helpers, so the
-      // SELECT-only role never needs either.
-      ["Booking", `SELECT count(*) FROM public."Booking"`],
+      // covered by the column-level case below rather than dropped.
+      //
+      // `Booking` AND `BookingGuest` LEFT THIS LIST IN AID-6B (#2376), the same way
+      // and for the same reason: both are now granted BY COLUMN under
+      // `bookings:view`, and PostgreSQL permits `count(*)` for a role holding SELECT
+      // on ANY column of a relation — so leaving them here would have been a
+      // table-shaped assertion failing for a reason that has nothing to do with the
+      // boundary that actually matters. Their per-column boundary is asserted in
+      // "reads ONLY the declared columns of a column-granted relation" above, which
+      // derives every un-declared column from `pg_attribute` and requires 42501 for
+      // each, and in the withheld-column case below.
+      //
+      // WHAT REPLACES THEM has to be relations AID-6B looked at and DECLINED, or the
+      // case degrades into naming tables nobody was ever tempted by:
+      //  - `MemberCredit`: the credit ledger, read through the authoritative credit
+      //    helpers. Unchanged from AID-6C.
+      //  - `FamilyGroupJoinRequest`: #2376 reads family STRUCTURE through
+      //    `FamilyGroupMember`, and deliberately grants nothing on the REQUEST
+      //    relation, which carries the requester's free text and children's dates of
+      //    birth. `member_family_state` is the entry that would have used it.
+      //  - `MemberInduction`: `member_eligibility_state` reports an induction state,
+      //    and reads it through the application's own connection in a `server_owned`
+      //    entry rather than by granting the relation — so the SELECT-only credential
+      //    must still be refused it.
+      //  - `MembershipCancellationRequest`: named by `member_record_audit_history`'s
+      //    subject map as an audit ENTITY TYPE. That is a predicate on `AuditLog`,
+      //    not a read of the relation, and this asserts the difference.
       ["MemberCredit", `SELECT count(*) FROM public."MemberCredit"`],
-      ["BookingGuest", `SELECT count(*) FROM public."BookingGuest"`],
+      [
+        "FamilyGroupJoinRequest",
+        `SELECT count(*) FROM public."FamilyGroupJoinRequest"`,
+      ],
+      ["MemberInduction", `SELECT count(*) FROM public."MemberInduction"`],
+      [
+        "MembershipCancellationRequest",
+        `SELECT count(*) FROM public."MembershipCancellationRequest"`,
+      ],
     ])("cannot read the un-granted table %s", async (_label, sql) => {
       const code = await sqlStateAsRole(sql);
       expect(code).toBe(INSUFFICIENT_PRIVILEGE);
@@ -840,7 +1221,89 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
             "userAgent",
           ],
         ],
-        ["Member", "xeroContactId", ["email", "firstName", "lastName", "phoneNumber"]],
+        // `Member`'s withheld set is REWRITTEN BY AID-6B (#2376), not shortened.
+        //
+        // `email`, `firstName`, `lastName` and `phoneNumber` were here, and #2376's
+        // owner decision grants all four: the first three as evidence about a member
+        // an operator has already selected, and `phoneNumber` (with `phoneAreaCode`)
+        // ONLY so the mobile search has a predicate — no entry projects a phone
+        // number, and `member_diagnostic_summary` reports `hasPhone` instead.
+        //
+        // What replaces them is the class the grant may NEVER reach, named rather
+        // than sampled: the two credentials the erasure test compares inside
+        // PostgreSQL and never loads, the federated identity, the date of birth
+        // (age-based eligibility in this platform is decided on `ageTier`, which IS
+        // granted, so the date is not needed), the address, the two lifecycle free-
+        // text reasons, the operator's private comments, and the two authorization
+        // columns — because a credential that could read `role` or
+        // `financeAccessLevel` could enumerate who to attack.
+        [
+          "Member",
+          "xeroContactId",
+          [
+            "passwordHash",
+            "totpSecret",
+            "googleSub",
+            "dateOfBirth",
+            "streetAddressLine1",
+            "cancelledReason",
+            "archivedReason",
+            "comments",
+            "role",
+            "financeAccessLevel",
+          ],
+        ],
+        // AID-6B's own widest new relations, pinned the same way. `Booking` and
+        // `BookingGuest` are granted by column, so what a reviewer should be able to
+        // find by name is the free text and the actor ids beside the columns that
+        // ARE granted.
+        [
+          "Booking",
+          "status",
+          [
+            "notes",
+            "adminReviewReason",
+            "adminReviewNotes",
+            "memberReviewJustification",
+            "adultMemberHostingReview",
+            "deletedReason",
+            "deletedById",
+            "adminReviewedById",
+            "adultMemberHostingReviewedById",
+          ],
+        ],
+        [
+          "BookingGuest",
+          "ageTier",
+          // NOT `consentRespondedByMemberId`: that column IS granted — the consent
+          // sub-state entry reads it — and this pin listing it as withheld was the
+          // same stale copy review finding [5] caught in the docblock, surfacing
+          // here on the suite's first real-PostgreSQL execution. `arrivedAt` is the
+          // deliberately-dropped column the allowlist's own comment records.
+          ["rateMembershipTypeId", "arrivedAt"],
+        ],
+        [
+          "BookingChangeRequest",
+          "status",
+          [
+            "requestedChanges",
+            "proposalSnapshot",
+            "frozenEvidence",
+            "reason",
+            "adminNotes",
+            "memberMessage",
+            "lastConflictReason",
+            "internalNotes",
+            "reviewedByMemberId",
+          ],
+        ],
+        [
+          "MemberSubscription",
+          "status",
+          ["manualPaymentNote", "manuallyMarkedPaidByMemberId"],
+        ],
+        ["BedAllocation", "stayDate", ["approvedByMemberId"]],
+        ["LodgeRoom", "name", ["notes"]],
         [
           "Payment",
           "status",
@@ -880,7 +1343,10 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
           ).toBe(INSUFFICIENT_PRIVILEGE);
         }
       }
-    });
+      // Explicit for the same reason as the derived loop above: fifteen relations
+      // times a connection per named column is ~80 round trips, which the 5s
+      // default only just covers on a fast runner.
+    }, 120_000);
 
     it("cannot read a table created after provisioning (no default privileges)", async () => {
       const code = await sqlStateAsRole(
@@ -950,6 +1416,85 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
         const handle = await getDiagnosticsDatabase();
         expect(handle.ok).toBe(true);
         if (handle.ok) expect(handle.roleName).toBe(TEST_ROLE);
+      });
+    });
+
+    it("REFUSES an under-provisioned declared column through the real runtime check", async () => {
+      await withDeclaredGrantsOnly(async () => {
+        try {
+          await admin.query(
+            `REVOKE SELECT ("createdAt") ON public."AuditLog" FROM "${TEST_ROLE}"`,
+          );
+          await closeDiagnosticsDatabase();
+          const handle = await getDiagnosticsDatabase();
+          expect(handle.ok).toBe(false);
+          if (handle.ok) return;
+
+          expect(handle.reason).toBe("database_grants_missing");
+          expect(handle.report?.missingReadableColumns).toBe(1);
+          expect(handle.report?.missingReadableRelations).toBe(0);
+          expect(handle.report?.undeclaredReadableRelations).toBe(0);
+          expect(handle.report?.undeclaredReadableColumns).toBe(0);
+        } finally {
+          // Restore the exact shipped declaration before the next test. This is
+          // deliberately provisioning, not a hand-written inverse, so the recovery
+          // path is proven against the same reviewed allowlist as deployment.
+          await provision();
+          await closeDiagnosticsDatabase();
+        }
+      });
+    });
+
+    it("REFUSES a one-column grant for a declared whole relation", async () => {
+      await withDeclaredGrantsOnly(async () => {
+        // No shipped relation currently uses the whole-relation form. Exercise that
+        // supported declaration shape against PostgreSQL anyway: a future entry must
+        // require table SELECT, not pass merely because one arbitrary column is
+        // readable. Mutating the imported array is a scoped test seam; it is restored
+        // in `finally` before any other assertion can observe it.
+        const mutableSelectGrants = SELECT_GRANTS as unknown as Array<{
+          schema: string;
+          relation: string;
+          columns?: readonly string[];
+        }>;
+        const wholeRelationGrant = {
+          schema: "public",
+          relation: GRANTED_TABLE,
+        };
+        mutableSelectGrants.push(wholeRelationGrant);
+        try {
+          await admin.query(
+            `GRANT SELECT (id) ON public.${GRANTED_TABLE} TO "${TEST_ROLE}"`,
+          );
+          await closeDiagnosticsDatabase();
+          expect(
+            await sqlStateAsRole(`SELECT id FROM public.${GRANTED_TABLE}`),
+          ).toBeNull();
+          expect(
+            await sqlStateAsRole(`SELECT note FROM public.${GRANTED_TABLE}`),
+          ).toBe(INSUFFICIENT_PRIVILEGE);
+
+          const handle = await getDiagnosticsDatabase();
+          expect(handle.ok).toBe(false);
+          if (handle.ok) return;
+
+          expect(handle.reason).toBe("database_grants_missing");
+          expect(handle.report?.missingReadableRelations).toBe(1);
+          expect(handle.report?.missingReadableColumns).toBe(0);
+          expect(handle.report?.undeclaredReadableRelations).toBe(0);
+          expect(handle.report?.undeclaredReadableColumns).toBe(0);
+        } finally {
+          // Remove the process-global declaration first. Even a failed cleanup SQL
+          // statement must not leave later tests believing the scratch table ships.
+          const index = mutableSelectGrants.indexOf(wholeRelationGrant);
+          if (index >= 0) mutableSelectGrants.splice(index, 1);
+          await admin
+            .query(
+              `REVOKE ALL PRIVILEGES ON public.${GRANTED_TABLE} FROM "${TEST_ROLE}"`,
+            )
+            .catch(() => {});
+          await closeDiagnosticsDatabase();
+        }
       });
     });
 
@@ -1462,6 +2007,63 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
         subject: "payment",
         recordId: "clz0000000abcdefghijklmno",
       },
+      // AID-6B (#2376). All thirteen, because all thirteen refuse `{}` — and without a
+      // row here the loop below does not merely SKIP an entry, it throws on the
+      // first one it reaches and never executes a single AID-6B statement against a
+      // real server. That is the failure this file exists to prevent: the thirteen
+      // statements read fifteen relations by column, and an ungranted column
+      // among them is a 42501 that passes every mock in the repository.
+      //
+      // The SEARCH arms are chosen for what they exercise on the server rather than
+      // for brevity. `booking_search` uses the `lodge_nights` arm because it is the
+      // only one that binds a date and an interval and evaluates the half-open
+      // overlap — `checkIn < ($5::date + $6 * INTERVAL '1 day') AND checkOut > $5` —
+      // which is a construct that has to PARSE and type-check under real
+      // PostgreSQL, not just read correctly. `member_search` uses `name_prefix`
+      // because it is the only predicate in the whole pack that is not `=`:
+      // `pg_catalog.starts_with`, whose schema qualification is load-bearing and
+      // whose existence a mock cannot prove.
+      "diagnostics.booking_search": {
+        kind: "lodge_nights",
+        lodgeId: "clz0000000abcdefghijklmno",
+        nightFrom: "2026-08-08",
+        window: "30d",
+      },
+      "diagnostics.member_search": { kind: "name_prefix", namePrefix: "smi" },
+      "diagnostics.booking_diagnostic_summary": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.booking_linked_state": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.booking_party_state": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.booking_bed_allocation_state": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.booking_exception_request_state": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.booking_record_audit_history": {
+        bookingId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.member_diagnostic_summary": {
+        memberId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.member_subscription_state": {
+        memberId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.member_family_state": {
+        memberId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.member_booking_summary": {
+        memberId: "clz0000000abcdefghijklmno",
+      },
+      "diagnostics.member_record_audit_history": {
+        subject: "member",
+        recordId: "clz0000000abcdefghijklmno",
+      },
     };
 
     it("runs EVERY registered SELECT-only entry, with its real parameters and grants", async () => {
@@ -1480,9 +2082,24 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
         const sqlEntries = DIAGNOSTICS_TOOLS.filter(
           (entry) => entry.source === "select_only_sql",
         );
-        // The probe, AID-6A's five correlation entries and AID-6C's nine finance
-        // entries, so this is not vacuous.
+        // The probe, AID-6A's five correlation entries, AID-6C's nine finance
+        // entries and AID-6B's thirteen, so this is not vacuous.
         expect(sqlEntries.length).toBeGreaterThan(1);
+
+        // THE CENSUS, ASSERTED BEFORE THE LOOP RATHER THAN DISCOVERED INSIDE IT.
+        // An entry with no argument row does not skip: `parseArgs({})` fails, the
+        // assertion inside the loop throws, and every entry after it — however many
+        // — is never executed against the server at all. That is how thirteen
+        // statements reached a review with their real-database proof silently not
+        // running. Naming the gap up front turns "expected false to be true" into a
+        // sentence that says which entry and what to do about it.
+        const unarguable = sqlEntries
+          .filter((entry) => !entry.parseArgs(REALDB_ENTRY_ARGS[entry.id] ?? {}).ok)
+          .map((entry) => entry.id);
+        expect(
+          unarguable,
+          "add a REALDB_ENTRY_ARGS row for each of these, or their statements are never proved against a real PostgreSQL",
+        ).toEqual([]);
 
         for (const entry of sqlEntries) {
           if (entry.source !== "select_only_sql") continue;
@@ -1515,6 +2132,63 @@ describe("diagnostics privilege proof DB safety guard (#2374)", () => {
           }
         }
       });
+    });
+
+    it("runs the real member-search mobile arm against punctuated stored fragments", async () => {
+      const memberId = "aid6b_mobile_probe_member";
+      const email = "aid6b-mobile-probe@example.invalid";
+      await admin.query(`DELETE FROM public."Member" WHERE "id" = $1`, [memberId]);
+      await admin.query(
+        `INSERT INTO public."Member"
+           ("id", "email", "passwordHash", "firstName", "lastName",
+            "phoneCountryCode", "phoneAreaCode", "phoneNumber",
+            "createdAt", "updatedAt")
+         VALUES ($1, $2, 'not-a-login-hash', 'Mobile', 'Probe',
+                 '+64 ', ' 27-', '422 4115', pg_catalog.now(), pg_catalog.now())`,
+        [memberId, email],
+      );
+
+      try {
+        await withDeclaredGrantsOnly(async () => {
+          const handle = await getDiagnosticsDatabase();
+          expect(handle.ok).toBe(true);
+          if (!handle.ok) return;
+
+          const entry = DIAGNOSTICS_TOOLS.find(
+            (candidate) => candidate.id === "diagnostics.member_search",
+          );
+          expect(entry?.source).toBe("select_only_sql");
+          if (!entry || entry.source !== "select_only_sql") return;
+
+          const binding = entry.parseArgs({
+            kind: "mobile",
+            mobile: "+64 27-422 4115",
+          });
+          expect(binding.ok).toBe(true);
+          if (!binding.ok || binding.source !== "select_only_sql") return;
+          expect(binding.params[4]).toBe("64274224115");
+
+          const result = await runDiagnosticsReadOnlyQuery(
+            {
+              sql: entry.sql,
+              params: binding.params,
+              rowLimit: entry.rowLimit,
+              toolId: entry.id,
+            },
+            handle.pool,
+          );
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+          expect(result.rows).toHaveLength(1);
+          const projected = entry.project(result.rows[0]);
+          expect(projected).toMatchObject({ memberRef: memberId });
+          expect(projected).not.toHaveProperty("phoneCountryCode");
+          expect(projected).not.toHaveProperty("phoneAreaCode");
+          expect(projected).not.toHaveProperty("phoneNumber");
+        });
+      } finally {
+        await admin.query(`DELETE FROM public."Member" WHERE "id" = $1`, [memberId]);
+      }
     });
 
     it("correlates a REAL audit row and returns none of the withheld values", async () => {

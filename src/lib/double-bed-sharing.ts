@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import {
   canonicalPartnerPair,
   PARTNER_LINK_CONFIRMED,
+  PARTNER_LINK_PENDING,
 } from "@/lib/member-partner-link-shared";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 
@@ -9,6 +10,69 @@ import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 // callers hold differently-Omitted transaction clients (e.g. capacity.ts's,
 // #1745), and all this module needs are these two delegates.
 type DoubleBedSharingDb = Pick<typeof prisma, "member" | "memberPartnerLink">;
+
+export type DoubleBedSharingEvidenceCode =
+  | "live_bed_missing"
+  | "not_double_bed"
+  | "single_occupant"
+  | "corrupt_occupant_cardinality"
+  | "ineligible_guest_not_member"
+  | "ineligible_same_member"
+  | "ineligible_member_missing"
+  | "ineligible_member_inactive"
+  | "ineligible_not_adult"
+  | "eligible_confirmed_partners"
+  | "ineligible_partner_link_pending"
+  | "ineligible_partner_link_absent"
+  | "ineligible_partner_link_unrecognised";
+
+export interface DoubleBedSharingFacts {
+  bedType: string | null;
+  otherOccupantCount: number;
+  memberIdA: string | null;
+  memberIdB: string | null;
+  memberAExists: boolean;
+  memberBExists: boolean;
+  memberAActive: boolean | null;
+  memberBActive: boolean | null;
+  memberAAgeTier: string | null;
+  memberBAgeTier: string | null;
+  partnerLinkStatus: string | null;
+}
+
+/**
+ * Pure form of the canonical sharing rule, suitable for read-only evidence.
+ * The async predicates below delegate their final verdict here so diagnostics,
+ * placement and capacity cannot drift into separate definitions.
+ */
+export function classifyDoubleBedSharingFacts(
+  facts: DoubleBedSharingFacts,
+): DoubleBedSharingEvidenceCode {
+  if (facts.bedType === null) return "live_bed_missing";
+  if (facts.bedType !== "DOUBLE") return "not_double_bed";
+  if (facts.otherOccupantCount === 0) return "single_occupant";
+  if (facts.otherOccupantCount !== 1) return "corrupt_occupant_cardinality";
+  if (!facts.memberIdA || !facts.memberIdB) return "ineligible_guest_not_member";
+  if (facts.memberIdA === facts.memberIdB) return "ineligible_same_member";
+  if (!facts.memberAExists || !facts.memberBExists) {
+    return "ineligible_member_missing";
+  }
+  if (facts.memberAActive !== true || facts.memberBActive !== true) {
+    return "ineligible_member_inactive";
+  }
+  if (facts.memberAAgeTier !== "ADULT" || facts.memberBAgeTier !== "ADULT") {
+    return "ineligible_not_adult";
+  }
+  if (facts.partnerLinkStatus === PARTNER_LINK_CONFIRMED) {
+    return "eligible_confirmed_partners";
+  }
+  if (facts.partnerLinkStatus === PARTNER_LINK_PENDING) {
+    return "ineligible_partner_link_pending";
+  }
+  return facts.partnerLinkStatus === null
+    ? "ineligible_partner_link_absent"
+    : "ineligible_partner_link_unrecognised";
+}
 
 /**
  * Whether two members may share one DOUBLE bed for a night (#1701).
@@ -168,14 +232,27 @@ export async function mayShareDoubleBed(
 
   const members = await db.member.findMany({
     where: { id: { in: [memberIdA, memberIdB] } },
-    select: { ageTier: true, active: true },
+    select: { id: true, ageTier: true, active: true },
   });
-
-  // Both ids must resolve to distinct, existing members.
-  if (members.length !== 2) return false;
-
-  // Only two active adults may share a double.
-  if (!members.every((member) => member.ageTier === "ADULT" && member.active)) {
+  const memberA = members.find((member) => member.id === memberIdA);
+  const memberB = members.find((member) => member.id === memberIdB);
+  const baseFacts: DoubleBedSharingFacts = {
+    bedType: "DOUBLE",
+    otherOccupantCount: 1,
+    memberIdA,
+    memberIdB,
+    memberAExists: Boolean(memberA),
+    memberBExists: Boolean(memberB),
+    memberAActive: memberA?.active ?? null,
+    memberBActive: memberB?.active ?? null,
+    memberAAgeTier: memberA?.ageTier ?? null,
+    memberBAgeTier: memberB?.ageTier ?? null,
+    partnerLinkStatus: null,
+  };
+  if (
+    classifyDoubleBedSharingFacts(baseFacts) !==
+    "ineligible_partner_link_absent"
+  ) {
     return false;
   }
 
@@ -185,7 +262,12 @@ export async function mayShareDoubleBed(
     where: { memberAId_memberBId: canonicalPartnerPair(memberIdA, memberIdB) },
     select: { status: true },
   });
-  return link?.status === PARTNER_LINK_CONFIRMED;
+  return (
+    classifyDoubleBedSharingFacts({
+      ...baseFacts,
+      partnerLinkStatus: link?.status ?? null,
+    }) === "eligible_confirmed_partners"
+  );
 }
 
 /**

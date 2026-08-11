@@ -213,9 +213,14 @@ jobs:
         run: npm run db:generate
 
       # Fails fast on type errors (app + test projects) before the slower
-      # test suite and next build steps.
+      # test suite and next build steps. tsc's heap crossed the Node default
+      # (~4 GB) when the AID-6B pack landed (#2679) — the same run needs 8 GB
+      # locally — so the ceiling is raised here rather than letting the gate
+      # die of OOM (exit 134) instead of reporting type errors.
       - name: Typecheck
         run: npm run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
 
       # Blocking dead-code gate: fails the PR if any unused file, export, or
       # dependency is introduced. Config and carve-outs live in knip.jsonc.

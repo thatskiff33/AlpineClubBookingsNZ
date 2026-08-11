@@ -1,7 +1,10 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { APP_CURRENCY, APP_LOCALE } from "@/config/operational";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import {
+  getFinancialYearEndMonth,
+  getSeasonYearForYearEndMonth,
+} from "@/lib/financial-year";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -23,8 +26,5 @@ export function formatCents(cents: number): string {
  * current calendar year, otherwise the previous one.
  */
 export function getSeasonYear(date: Date = new Date()): number {
-  const startMonth = getSeasonStartMonth(); // 1-12
-  const month = date.getMonth() + 1; // 1-12
-  const year = date.getFullYear();
-  return month >= startMonth ? year : year - 1;
+  return getSeasonYearForYearEndMonth(date, getFinancialYearEndMonth());
 }

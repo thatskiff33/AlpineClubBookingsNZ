@@ -1,4 +1,6 @@
-import type { AgeTier } from "@prisma/client";
+import type { AgeTier, PrismaClient } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
 import {
   getAgeTierSettings,
   type AgeTierSettingData,
@@ -6,10 +8,20 @@ import {
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import {
   loadMembershipLockoutSettings,
+  loadMembershipLockoutSettingsStrict,
   type SubscriptionLockoutMode,
 } from "@/lib/membership-lockout-settings";
-import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import {
+  loadEffectiveModuleFlags,
+  loadEffectiveModuleFlagsStrict,
+} from "@/lib/module-settings";
 import { requiresPaidSubscriptionForAgeTier as requiresPaidSubscriptionForAgeTierRule } from "@/lib/policies/subscription";
+
+/** The two relations the strict mode read needs; a transaction client satisfies it. */
+export type StrictLockoutModeDb = Pick<
+  PrismaClient,
+  "clubModuleSettings" | "membershipLockoutSettings"
+>;
 
 export function requiresPaidSubscriptionForAgeTier(
   ageTier: AgeTier | null | undefined,
@@ -108,6 +120,38 @@ async function readSubscriptionLockoutPolicy(): Promise<{
  */
 export async function peekSubscriptionLockoutMode(): Promise<SubscriptionLockoutMode> {
   return (await readSubscriptionLockoutPolicy()).mode;
+}
+
+/**
+ * THE SAME MODE, WITH NO SWALLOWED FAILURE ANYWHERE UNDER IT — for evidence.
+ *
+ * `peekSubscriptionLockoutMode` reads through two functions that each turn a
+ * database failure into a safe-looking default: `loadEffectiveModuleFlags` returns
+ * "every optional module off", and `loadPersistedMembershipLockoutSettings` returns
+ * null for any error at all. Composed, a single transient failure on a cold cache
+ * yields `NO_BLOCK` — "the club does not block unfinancial members" — which is a
+ * confident answer about the club's policy that nobody observed.
+ *
+ * For AI Diagnostics that is the difference between an explanation and a fabricated
+ * one: the lockout mode is the qualifier on every subscription finding the pack
+ * makes. This composes the STRICT readers instead, so a failure propagates and the
+ * tool reports `evidence_unavailable` (`INV-LOCKOUT-009`..`INV-LOCKOUT-011`).
+ *
+ * It does NOT reseed the financial-year cache, exactly as the peek does not: a
+ * read-only evidence path must not change what other requests in this process
+ * compute, and the reseed can reach Xero.
+ */
+export async function peekSubscriptionLockoutModeStrict(
+  /**
+   * A caller inside a bounded read-only transaction MUST pass it, so both rows are
+   * read under that transaction's snapshot and its statement timeout rather than on
+   * a second connection outside both.
+   */
+  db: StrictLockoutModeDb = prisma,
+): Promise<SubscriptionLockoutMode> {
+  const flags = await loadEffectiveModuleFlagsStrict(db);
+  if (!flags.xeroIntegration) return "NO_BLOCK";
+  return (await loadMembershipLockoutSettingsStrict(db)).mode;
 }
 
 /**

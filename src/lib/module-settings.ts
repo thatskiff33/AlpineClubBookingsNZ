@@ -1,4 +1,4 @@
-import type { ClubModuleSettings } from "@prisma/client";
+import type { ClubModuleSettings, PrismaClient } from "@prisma/client";
 import {
   CLUB_MODULE_SETTINGS_COLUMN_SELECT,
   DEFAULT_MODULE_SETTINGS,
@@ -195,6 +195,41 @@ const DISABLED_MODULE_FLAGS: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, false]),
 ) as FeatureFlags;
 
+/**
+ * THE SAME FLAGS, WITHOUT THE FALLBACK — for evidence, not for product paths.
+ *
+ * `loadEffectiveModuleFlags` below logs a failed read and returns
+ * `DISABLED_MODULE_FLAGS`, which is the right product behaviour: a module whose
+ * settings cannot be read is treated as off, and a club sees a smaller
+ * application rather than an error.
+ *
+ * IT IS WRONG FOR AN EVIDENCE PATH. "Xero is off" is a real answer this platform
+ * gives, and it is the answer that makes the subscription lockout `NO_BLOCK` — so a
+ * transient database failure turns an enforcing club's diagnostic into a confident
+ * "nothing is blocking this member", with no marker that anything failed. The
+ * absence of an answer must be reported as an absence (`evidence_unavailable`),
+ * never as the safest-looking answer.
+ *
+ * A genuinely ABSENT settings row still resolves through
+ * `normalizeClubModuleSettings(null)`, because that is the platform's documented
+ * default for a club that has never saved the panel — an observation, not a
+ * fallback.
+ */
+export async function loadEffectiveModuleFlagsStrict(
+  db: Pick<PrismaClient, "clubModuleSettings"> = prisma,
+): Promise<FeatureFlags> {
+  const record = await db.clubModuleSettings.findUnique({
+    where: { id: CLUB_MODULE_SETTINGS_ID },
+    select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
+  });
+  return getEffectiveModuleFlags(normalizeClubModuleSettings(record));
+}
+
+/**
+ * Read the club's module flags, treating any failure as "optional modules off".
+ *
+ * An EVIDENCE caller must use `loadEffectiveModuleFlagsStrict` above instead.
+ */
 export async function loadEffectiveModuleFlags(): Promise<FeatureFlags> {
   try {
     const record = await prisma.clubModuleSettings.findUnique({

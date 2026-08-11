@@ -24,9 +24,27 @@
  *    authoritative booking-finance calculation behind `finance:view` AND
  *    `bookings:view`. It reads only STORED evidence — no tool in it contacts
  *    Stripe, Xero or a bank.
+ *  - the AID-6B booking/membership pack (`packs/booking-search.ts`,
+ *    `packs/booking-records.ts`, `packs/membership-records.ts`,
+ *    `packs/booking-state.ts`): bounded booking and member selection, per-record
+ *    booking evidence (party and stay ranges, exception requests, audit history)
+ *    behind `bookings:view`, per-record membership evidence (identity,
+ *    subscription rows, family and dependent links, audit history) behind
+ *    `membership:view`, and three combined entries. AID-6B permission split: 7
+ *    booking-only, 6 membership-only, 3 combined.
  *
- * Still to come in its own child, with its own permission review and its own table
- * grant: AID-6B (#2376, booking/membership/induction/bed allocation).
+ *    `booking_bed_allocation_state` is combined: it requires `bookings:view` and
+ *    `membership:view` because its double-bed verdict reads live membership and
+ *    partner-link facts for both occupants. The other combined entries are a
+ *    member's booking involvement and the authoritative booking blocker. The
+ *    three `server_owned` answers are booking blockers (`bookings` AND
+ *    `membership`), per-night capacity (`bookings`), and member eligibility
+ *    (`membership`).
+ *
+ * Still to come in their own children: AID-7 (#2378, the permission-aware
+ * Diagnostics UI and conversation surface, which also owns ADR-004's
+ * per-invocation opt-in for any entry declaring `surfacesPersonalData`) and #2379
+ * (release hardening and final security testing).
  *
  * ADDING A TOOL (the checklist a reviewer should hold you to):
  *  1. `requiredAreas` names the area(s) that already govern this data in the
@@ -61,6 +79,10 @@
 import { z } from "zod";
 
 import { defineDiagnosticsTool, type DiagnosticsToolEntry } from "./define";
+import { DIAGNOSTICS_AID6B_BOOKING_RECORD_TOOLS } from "./packs/booking-records";
+import { DIAGNOSTICS_AID6B_SEARCH_TOOLS } from "./packs/booking-search";
+import { DIAGNOSTICS_AID6B_STATE_TOOLS } from "./packs/booking-state";
+import { DIAGNOSTICS_AID6B_MEMBERSHIP_RECORD_TOOLS } from "./packs/membership-records";
 import { DIAGNOSTICS_FINANCE_RECORD_TOOLS } from "./packs/finance-records";
 import { DIAGNOSTICS_FINANCE_SEARCH_TOOLS } from "./packs/finance-search";
 import { DIAGNOSTICS_FINANCE_STATE_TOOLS } from "./packs/finance-state";
@@ -143,6 +165,10 @@ export const DIAGNOSTICS_TOOLS: readonly DiagnosticsToolEntry[] = [
   ...DIAGNOSTICS_FINANCE_SEARCH_TOOLS,
   ...DIAGNOSTICS_FINANCE_RECORD_TOOLS,
   ...DIAGNOSTICS_FINANCE_STATE_TOOLS,
+  ...DIAGNOSTICS_AID6B_SEARCH_TOOLS,
+  ...DIAGNOSTICS_AID6B_BOOKING_RECORD_TOOLS,
+  ...DIAGNOSTICS_AID6B_MEMBERSHIP_RECORD_TOOLS,
+  ...DIAGNOSTICS_AID6B_STATE_TOOLS,
 ];
 
 /** Lookup by id. Returns `undefined` for an unknown key — never a default tool. */

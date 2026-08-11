@@ -161,6 +161,8 @@ export type DiagnosticsToolFailureReason =
   | "database_not_configured"
   /** The connected role is NOT the least-privilege shape ADR-007 requires. */
   | "database_role_unsafe"
+  /** The role is otherwise safe but lacks one or more declared SELECT grants. */
+  | "database_grants_missing"
   /** The read failed, or the statement timeout cancelled it. */
   | "query_failed"
   /**
@@ -187,6 +189,27 @@ export type DiagnosticsToolFailureReason =
    */
   | "internal_error";
 
+/**
+ * What an audit row records in place of `argsHash` when the ACCEPTED arguments
+ * are LOW-ENTROPY enough that an unkeyed digest of them would be REVERSIBLE.
+ *
+ * ADR-004 §4 permits "a stable, NON-REVERSIBLE hash of a query key" and forbids
+ * recording "raw tool arguments" or "unrestricted personal identifiers (a
+ * member's name, email …)". An unkeyed SHA-256 over a three-character surname
+ * prefix, a six-to-fifteen digit phone number or a guessable email address is not
+ * non-reversible in any useful sense: the candidate space is small enough that a
+ * reader of the audit metadata can enumerate it offline and match the digest, so
+ * the hash IS the argument with extra steps.
+ *
+ * It is a distinct value rather than `null` because the two facts differ and a
+ * reader of a durable row must be able to tell them apart: `null` means the
+ * arguments never parsed (there is no canonical form of input we refused), and
+ * this sentinel means the arguments parsed, ran, and were deliberately not
+ * digested. Neither is ever a 64-character hex digest, so a consumer can classify
+ * the field on shape alone.
+ */
+export const DIAGNOSTICS_ARGS_HASH_REDACTED = "low_entropy_args_redacted";
+
 /** A projected scalar. Deliberately not `unknown`: a tool returns flat scalars. */
 export type DiagnosticsToolFieldValue = string | number | boolean | null;
 
@@ -211,6 +234,11 @@ export interface DiagnosticsToolAudit {
    * themselves. Null when the arguments never parsed (there is no canonical form
    * of input we refused to understand, and hashing the raw input would put
    * operator-supplied text into a durable row).
+   *
+   * `DIAGNOSTICS_ARGS_HASH_REDACTED` when the accepted arguments carry a
+   * low-entropy term the entry declared (see `lowEntropyArgKeys` in `define.ts`):
+   * the digest would be recoverable by offline enumeration, which ADR-004 §4 does
+   * not permit a durable row to carry.
    */
   argsHash: string | null;
   /** sha256 of the canonical JSON of the projected rows. Null when none were produced. */
@@ -305,6 +333,8 @@ export const DIAGNOSTICS_TOOL_FAILURE_MESSAGES: Record<
     "The read-only diagnostics database credential is not configured, so no tool was run.",
   database_role_unsafe:
     "The diagnostics database credential does not have the restricted, read-only privileges this feature requires, so no tool was run.",
+  database_grants_missing:
+    "The diagnostics database credential is missing one or more required read-only grants, so no tool was run.",
   query_failed:
     "That diagnostics read did not complete (it may have taken too long), so no results are available.",
   evidence_unavailable:

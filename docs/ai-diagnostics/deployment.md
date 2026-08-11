@@ -65,8 +65,10 @@ every tool call unless the answer is the least-privilege shape ADR-007 requires:
 - no `TEMPORARY` or `CREATE` on the database, and no `CREATE` on schema `public`;
 - no `INSERT`, `UPDATE`, `DELETE` or `TRUNCATE` on any relation in `public`, at table
   or column level;
-- no `SELECT` on any relation in `public` that the declared allowlist does not name —
-  which in this release is **every** relation, since the allowlist is empty;
+- no `SELECT` on any relation in `public` that the declared 26-relation allowlist
+  does not name, no undeclared column on a named relation, and no table-wide
+  `SELECT` on any column-restricted declaration — even when that declaration
+  currently names every physical column;
 - no membership in **any** other role — not a shortlist of dangerous ones, a total of
   zero. A member of any role is one `SET ROLE` away from that role's privileges, and
   because this role is `NOINHERIT` the membership shows up in nothing else the server
@@ -243,41 +245,185 @@ The script also does not create the database, the app role, or any view.
 
 The allowlist lives in `SELECT_GRANTS` (`src/lib/diagnostics/tools/provision-role.ts`),
 in public code, so "which relations — and which columns of them — can Diagnostics
-read" is answerable by reading one file. As of AID-6C (#2377) it names **thirteen**
-relations, and **every one of them is granted by column, never wholesale**:
+read" is answerable by reading one file. As of AID-6B (#2376) it names
+**twenty-six** relations and **243 columns**, and **every one of them is granted by
+column, never wholesale**:
 
 | Relation | Granted | Read by |
 | --- | --- | --- |
-| `public."AuditLog"` | **columns only**: `id`, `action`, `category`, `severity`, `outcome`, `entityType`, `entityId`, `requestId`, `createdAt` | the five audit-correlation tools ([tool-pack-support.md](tool-pack-support.md)) and the finance audit-history tool ([tool-pack-finance.md](tool-pack-finance.md)) |
+| `public."AuditLog"` | **9 columns**: `id`, `action`, `category`, `severity`, `outcome`, `entityType`, `entityId`, `requestId`, `createdAt` | the five audit-correlation tools ([tool-pack-support.md](tool-pack-support.md)), the finance audit-history tool ([tool-pack-finance.md](tool-pack-finance.md)), and the booking and membership audit-history tools ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
 | `public."Payment"` | 22 columns | the finance searches, the payment summary, the refund state ([tool-pack-finance.md](tool-pack-finance.md)) |
-| `public."PaymentTransaction"` | 13 columns | the reference search, the attempt ledger |
-| `public."PaymentRefund"` | 12 columns | the reference search, the refund state |
-| `public."PaymentRecoveryOperation"` | 11 columns | the attempt ledger, the refund state |
-| `public."ManualRefundTask"` | 7 columns | the refund state |
+| `public."PaymentTransaction"` | 12 columns | the reference search, the attempt ledger |
+| `public."PaymentRefund"` | 10 columns | the reference search, the refund state |
+| `public."PaymentRecoveryOperation"` | 10 columns | the attempt ledger, the refund state |
+| `public."ManualRefundTask"` | 6 columns | the refund state |
 | `public."RefundRequest"` | 7 columns | the refund state |
 | `public."ProcessedWebhookEvent"` | 6 columns (its surrogate `id` is deliberately not granted) | the webhook timeline |
 | `public."WebhookLog"` | 7 columns | the webhook timeline |
-| `public."XeroInboundEvent"` | 10 columns | the webhook timeline |
+| `public."XeroInboundEvent"` | 9 columns | the webhook timeline |
 | `public."XeroObjectLink"` | 10 columns | the Xero invoice and contact linkage tools |
-| `public."XeroSyncOperation"` | 18 columns | the Xero invoice and contact linkage tools |
-| `public."Member"` | **two columns**: `id`, `xeroContactId` | the Xero contact linkage tool only |
+| `public."XeroSyncOperation"` | 17 columns | the Xero invoice and contact linkage tools |
+| `public."Member"` | **23 columns** — widened by AID-6B from the two AID-6C granted. `email` is projected by one entry and is a search predicate; `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are predicates only and are projected by nothing | the Xero contact linkage tool, the member search, the member summary, the family relationships ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Booking"` | 25 columns | the booking search, the booking summary, a member's booking involvement ([tool-pack-booking-membership.md](tool-pack-booking-membership.md)) |
+| `public."Lodge"` | **2 columns**: `id`, `name` | the booking search, a member's booking involvement |
+| `public."BookingGuest"` | 15 columns (a guest's given and family name included; consent responder and expiry are classifier inputs only) | booking party state, guest counts, member-booking involvement and double-sharing evidence |
+| `public."MemberPartnerLink"` | 3 columns: canonical pair ids and status | the canonical double-bed-sharing verdict; raw pair ids are not projected |
+| `public."BookingGuestNight"` | **2 columns**: `bookingGuestId`, `stayDate` | the booking party state's per-night footprint |
+| `public."BedAllocation"` | 8 columns (`approvedByMemberId` is deliberately not granted) | the bed allocation state |
+| `public."LodgeRoom"` | **2 columns**: `id`, `name` (`notes` is not granted) | the bed allocation state |
+| `public."LodgeBed"` | 4 columns | the bed allocation state |
+| `public."BookingChangeRequest"` | 16 columns (no free text, no raw JSON, no reviewing officer) | the booking change and exception request state |
+| `public."PolicyExceptionReservationNight"` | **1 column**: `changeRequestId` — the narrowest grant in the file | the booking change and exception request state |
+| `public."MemberSubscription"` | 11 columns (`manualPaymentNote` is **not** granted) | the member subscription state |
+| `public."FamilyGroupMember"` | **4 explicitly named columns** — all current columns, but not a table-wide grant; the relation has no `role` column | the member family relationships |
+| `public."FamilyGroup"` | **2 columns**: `id`, `name` | the member family relationships |
+
+The table above explains why each relation is present. The following block is the
+canonical exact column declaration for operators and reviewers. It is intentionally
+machine-readable: the provisioning test parses it and compares every relation and
+column in both directions with `SELECT_GRANTS`, so replacing one column with another
+while keeping the same count fails CI.
+
+<!-- ai-diagnostics-exact-grants:start -->
+```text
+public."AuditLog": id, action, category, severity, outcome, entityType, entityId, requestId, createdAt
+public."Payment": id, bookingId, status, source, amountCents, refundedAmountCents, changeFeeCents, additionalAmountCents, creditAppliedCents, additionalPaymentStatus, reference, stripePaymentIntentId, additionalPaymentIntentId, xeroInvoiceId, xeroInvoiceNumber, xeroRefundCreditNoteId, internetBankingHoldSlots, internetBankingHoldUntil, internetBankingHoldReleasedAt, manuallyMarkedPaidAt, createdAt, updatedAt
+public."PaymentTransaction": id, paymentId, kind, source, status, amountCents, refundedAmountCents, reference, stripePaymentIntentId, xeroInvoiceNumber, createdAt, updatedAt
+public."PaymentRefund": id, paymentId, status, amountCents, currency, stripeRefundId, stripeChargeId, xeroRefundCreditNoteId, stripeCreatedAt, createdAt
+public."PaymentRecoveryOperation": id, type, status, paymentId, amountCents, attempts, idempotencyKey, succeededAt, createdAt, updatedAt
+public."ManualRefundTask": id, paymentId, amountCents, status, completedAt, createdAt
+public."RefundRequest": id, bookingId, status, requestedAmountCents, approvedAmountCents, reviewedAt, createdAt
+public."ProcessedWebhookEvent": eventId, source, eventType, status, processingStartedAt, processedAt
+public."WebhookLog": id, source, eventType, eventId, status, durationMs, createdAt
+public."XeroInboundEvent": id, eventCategory, eventType, resourceId, correlationKey, status, eventCreatedAt, processedAt, createdAt
+public."XeroObjectLink": id, localModel, localId, xeroObjectType, xeroObjectId, xeroObjectNumber, role, active, createdAt, updatedAt
+public."XeroSyncOperation": id, direction, operationType, localModel, localId, status, attemptCount, replayable, lastErrorCode, xeroObjectType, xeroObjectId, xeroObjectNumber, manuallyResolvedAt, startedAt, completedAt, createdAt, updatedAt
+public."Member": id, email, firstName, lastName, ageTier, active, canLogin, cancelledAt, archivedAt, joinedDate, lifeMemberDate, requiresInduction, hutLeaderEligible, parentMemberId, secondaryParentId, familyGroupId, billingFamilyGroupId, phoneAreaCode, phoneNumber, phoneCountryCode, xeroContactId, createdAt, updatedAt
+public."Booking": id, memberId, lodgeId, status, checkIn, checkOut, totalPriceCents, discountCents, promoAdjustmentCents, finalPriceCents, creditElectionCents, hasNonMembers, nonMemberHoldUntil, parentBookingId, draftExpiresAt, requiresAdminReview, adminReviewStatus, adultMemberHostingReviewStatus, waitlistPosition, wholeLodgeHold, adminCapacityHoldAt, capacityOverriddenAt, deletedAt, createdAt, updatedAt
+public."Lodge": id, name
+public."BookingGuest": id, bookingId, firstName, lastName, ageTier, isMember, memberId, stayStart, stayEnd, priceCents, consentStatus, consentRequestedAt, consentRespondedAt, consentRespondedByMemberId, consentExpiresAt
+public."MemberPartnerLink": memberAId, memberBId, status
+public."BookingGuestNight": bookingGuestId, stayDate
+public."BedAllocation": id, bookingId, bookingGuestId, roomId, bedId, stayDate, bedType, isSecondOccupant
+public."LodgeRoom": id, name
+public."LodgeBed": id, roomId, name, bedType
+public."BookingChangeRequest": id, bookingId, kind, status, requestedByMemberId, aggregateCapacityMode, attemptCount, conflictCount, lastConflictAt, holdExpiresAt, reviewedAt, cancelledAt, supersededByRequestId, linkedModificationId, createdAt, updatedAt
+public."PolicyExceptionReservationNight": changeRequestId
+public."MemberSubscription": id, memberId, seasonYear, status, xeroInvoiceId, xeroInvoiceNumber, paidAt, manuallyMarkedPaidAt, voidGeneration, createdAt, updatedAt
+public."FamilyGroupMember": id, familyGroupId, memberId, joinedAt
+public."FamilyGroup": id, name
+```
+<!-- ai-diagnostics-exact-grants:end -->
 
 Every other relation in the schema is unreadable — including `IntegrationCredential`
-(encrypted provider secrets) and `XeroToken`, which stores **plaintext** Xero OAuth
-access and refresh tokens. Both are permanently out of scope under ADR-007 §1 and no
-tool pack may grant them.
+(encrypted provider secrets), `XeroToken`, which stores **plaintext** Xero OAuth
+access and refresh tokens, and `FamilyGroupJoinRequest`, which carries requester
+free text and children's dates of birth. The first two are permanently out of scope
+under ADR-007 §1 and no tool pack may grant them.
 
-So is every other **column** of the thirteen. The grants are by column, so as the
-diagnostics role `SELECT "ipAddress" FROM "AuditLog"`, `SELECT "email" FROM "Member"`,
+So is every other **column** of the twenty-six. The grants are by column, so as the
+diagnostics role `SELECT "ipAddress" FROM "AuditLog"`,
+`SELECT "dateOfBirth" FROM "Member"`, `SELECT "notes" FROM "Booking"`,
+`SELECT "internalNotes" FROM "BookingChangeRequest"`,
 `SELECT "payload" FROM "XeroInboundEvent"` and `SELECT *` from any of them are all
-refused by PostgreSQL with `42501`. The operator CLI prints the declared grants,
-columns and all, on every run and on `--dry-run`.
+refused by PostgreSQL with `42501`. That is also why **no presence boolean is
+projected over an ungranted column**: a column privilege covers every reference to
+the column, `notes IS NOT NULL` included, so a `hasNotes` flag would have made every
+booking note readable in a `psql` session opened with this credential.
 
-**Upgrading to the AID-6C release is a two-step operation: deploy, then re-run
-`npm run diagnostics:provision-role`.** Until it is re-run, readiness reports
-`over_privileged` — because the *previous* release's grants no longer match the
-declared allowlist — and every SQL-backed tool refuses. That is ADR-007's deliberate
-friction, and it is the same step AID-6A required.
+**Seven columns LEFT the allowlist in the AID-6B release, and none of them was an
+AID-6B column.** `PaymentTransaction."xeroInvoiceId"`,
+`PaymentRefund."paymentTransactionId"`, `PaymentRefund."stripePaymentIntentId"`,
+`PaymentRecoveryOperation."bookingId"`, `ManualRefundTask."bookingId"`,
+`XeroInboundEvent."source"` and `XeroSyncOperation."entityType"` were granted by
+AID-6C and read by no statement in any pack. Two of them stopped being harmless in
+this very release: the two `"bookingId"` grants were opaque identifiers while
+`Booking` was ungranted, and AID-6B grants `Booking`, so leaving them would have
+handed this credential a join from a refund task onto a booking's dates, prices and
+owner that no tool performs.
+
+They survived two releases because the check that was supposed to catch them never
+ran — the finance pack's suite built a correctly-keyed set of granted columns and
+never passed it to an assertion. `provision-role.test.ts` now reconciles the
+allowlist against **every registered statement in both directions**, with
+`alias -> relation` resolved per statement, and pins the census (twenty-six
+relations, 243 columns) so this page and the pack pages cannot drift from it again.
+
+**And the same property is now proved a second time against PostgreSQL itself.**
+The real-database suite
+(`src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts`, run by the
+Migration drift check) asks the server, column by column, whether the provisioned
+role may read it, and requires that answer to match *both* the allowlist *and* the
+statements: **this credential may read a column if and only if a registered
+statement reads that column.** The forward half is what a missing grant breaks at
+runtime with `42501`; the reverse half is the one that catches reach nobody argued
+for. Both suites share one `alias -> relation` resolver
+(`src/lib/__tests__/helpers/diagnostics-statement-reads.ts`) so the declaration-side
+and server-side halves cannot drift into answering different questions.
+
+One consequence is worth stating because it replaced a weaker check. The suite used
+to require that every granted relation withhold at least one column — a *proxy* for
+"granted by column, not wholesale". That proxy is wrong for a relation that is
+simply small: `FamilyGroupMember` has four columns and the family-relationships
+statement reads all four, so there is nothing left to withhold and narrowing the
+grant would break the tool. Relations in that state are now **enumerated** in the
+suite with the argument for each, and the enumeration is asserted as an exact set —
+so a *second* relation becoming fully granted fails by name, while the
+if-and-only-if check above independently proves that every column of a fully granted
+relation is one a shipped statement actually reads.
+
+The operator CLI prints the declared grants, columns and all, on every run and on
+`--dry-run`.
+
+**Upgrading to the AID-6B release is a two-step operation: deploy, then re-run
+`npm run diagnostics:provision-role`.** This release adds thirteen relations and
+widens `Member` from two columns to twenty-three, so until it is re-run the
+*previous* release's grants no longer match the declared allowlist and **every
+SQL-backed tool refuses, by design**.
+
+Which state readiness reports in the meantime depends on the stale role, and the
+precedence is worth knowing before an operator reads it as a smaller problem than it
+is. `under_provisioned` is reported **only** when the stale role is otherwise
+exactly safe — every privilege it holds is one this release still declares, and the
+only difference is grants that are absent. If the stale role also holds anything the
+new declaration does *not* include, **excess privilege takes precedence and the state
+is `over_privileged`**, because a role that can read more than the allowlist declares
+is the more serious of the two facts and must not be reported as merely
+incomplete. `checkDiagnosticsDatabaseReadiness` derives that ordering structurally:
+it reports missing grants only when zeroing them would make the privilege report
+safe.
+
+**THIS IS THE EXPECTED STATE of an un-reprovisioned AID-6B deploy: for THIS release the answer is `over_privileged`, on the path essentially every
+deployment is on.** AID-6B does not only add: it REMOVES seven columns AID-6C
+granted — `PaymentTransaction."xeroInvoiceId"`, `PaymentRefund."paymentTransactionId"`,
+`PaymentRefund."stripePaymentIntentId"`, `PaymentRecoveryOperation."bookingId"`,
+`ManualRefundTask."bookingId"`, `XeroInboundEvent."source"` and
+`XeroSyncOperation."entityType"` — forced by the no-exemption "reads every column it
+grants" test. A role provisioned for AID-6C therefore holds seven columns the new
+declaration omits, so zeroing the missing-grant counters does not make it safe and
+the state is `over_privileged`. `under_provisioned` is reported only from an AID-6A
+role, whose nine `AuditLog` columns this release leaves untouched and which is
+therefore a strict subset. Neither state is an incident: both refuse every SQL-backed
+tool, fail closed. Escalate as privilege drift only if the state is still
+`over_privileged` AFTER re-provisioning. That is
+ADR-007's deliberate friction, and it is the same step AID-6A and AID-6C each
+required. The three `server_owned` entries in AID-6B do not read through this
+credential and are unaffected, so a deployment that has not been re-provisioned can
+still be misread as partly working: check readiness rather than a single tool.
+
+**THE ONLY PRODUCTION CHANGE THIS RELEASE MAKES IS THE GRANT, and it is worth
+stating plainly rather than leaving it to be inferred.** `invokeDiagnosticsTool`
+has no production call site: there is no `/admin/ai-diagnostics` page and nothing
+in the shipped runtime calls a tool. The pack therefore ships **dormant** — every
+entry is registered, reviewed and tested, and none of them can be reached by an
+operator until #2378 builds the surface. What *does* change on deploy is the
+database credential: after `npm run diagnostics:provision-role`, `ai_diagnostics_ro`
+holds SELECT on thirteen new relations and on a `Member` widened from two columns to
+twenty-three, none of which any tool can use yet. The credential's blast radius
+therefore grows one release ahead of the feature. That is defensible and it is
+ADR-007's own trade — the friction requires the grant to ship with the tool it
+belongs to, not with the page — but it means the grant, and not the pack, is what a
+production incident in this release could touch.
 
 ### Adding a relation grant later
 
@@ -289,7 +435,7 @@ ADR-007's deliberate friction is exactly this — a new relation becoming readab
 Diagnostics is a visible, reviewed, operator action, not a side effect.
 
 **Until you re-run it, the new tools will not work**: readiness reports
-`over_privileged` (the role can read less than the allowlist declares, or more) and
+`under_provisioned` (the role is safe but can read less than the allowlist declares) and
 the affected tool calls are refused. That is the intended failure, not a bug.
 
 Re-provisioning also **narrows**. PostgreSQL's `REVOKE` reference states that revoking
@@ -314,7 +460,8 @@ every restriction at the same time.
 | `not_configured` | `AI_DIAGNOSTICS_DATABASE_URL` is not set. Nothing was contacted. | Provision the role and set the variable. |
 | `misconfigured` | Set, but unusable as configured: not a valid `postgres://` URL, no username, it names the **same role** as `DATABASE_URL`, or it carries one of the refused query parameters above. | Fix the connection string; it must be the dedicated role, with no overriding parameters. |
 | `unverified` | Set, but the server could not be asked — unreachable host, bad password, connection limit, or no answer inside the probe deadline. The role is **not** trusted. | Fix connectivity or credentials, then re-check. |
-| `over_privileged` | Reachable, and the server's answer is not acceptable: the role holds a privilege ADR-007 forbids, can read a relation — or a **column** of a column-restricted relation — that the allowlist does not declare, or is not even the role the connection string names. | Re-run the provisioning script and investigate how it drifted. After a release that added a grant, this is simply the re-provision step not yet run. If the role name in the string does not match `current_user`, fix the string. |
+| `under_provisioned` | Reachable and otherwise safe, but missing at least one declared relation or column grant. | Re-run `npm run diagnostics:provision-role`, then re-check readiness. |
+| `over_privileged` | Reachable, and the role holds a privilege ADR-007 forbids, can read an undeclared relation or column, or is not the configured role. | Re-run provisioning and investigate privilege drift. If the role name does not match `current_user`, fix the string. |
 | `verified` | The server itself confirmed the named role is a non-superuser that can only `SELECT`, and only from the declared allowlist. | Nothing. |
 
 The response never contains the connection string, the password, or the role name.

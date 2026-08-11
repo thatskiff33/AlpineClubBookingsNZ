@@ -250,7 +250,7 @@ sites that passed no category** when #2581 opened: 69 through `logAudit`, 11 thr
 `createStructuredAuditLog`. Those same 82 were still uncategorised on `main`
 immediately before this change, out of **426** write sites in total.
 
-**All 82 have now been classified at the source.** The census reads **427 write sites and
+**All 82 have now been classified at the source.** The census reads **429 write sites and
 zero uncategorised**, so no *new* audit row is born invisible to these five entries. What
 each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 (`scripts/audit/audit-writer-census-manifest.ts`), and the contract test compares that
@@ -282,7 +282,7 @@ What the census still uniquely catches is the writer the compiler cannot see —
 reverted.
 
 **Scope the two compile-time and runtime layers honestly**: they cover writes that go
-through `src/lib/audit.ts`, which is every one of the 427 sites in the tree. A write that
+through `src/lib/audit.ts`, which is every one of the 429 sites in the tree. A write that
 never reaches the helper — hand-built Prisma, raw SQL, a migration — is outside them by
 construction, which is what the census is for, and the census is a heuristic AST walk
 rather than a proof.
@@ -478,7 +478,7 @@ re-provisioning, and finding it refused.
 
 **Upgrading to this release is a two-step operation: deploy, then re-run
 `npm run diagnostics:provision-role`.** Until it is re-run, readiness reports
-`over_privileged` or the correlation tools fail with a privilege error — the
+`under_provisioned` or the correlation tools fail with a privilege error — the
 deliberate friction ADR-007 asks for.
 
 ## Bounds
@@ -611,7 +611,7 @@ instruction to obey.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Every correlation tool fails; readiness says `over_privileged` | The release added a grant and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
+| Every correlation tool fails; readiness says `under_provisioned` | The release added a grant and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
 | Readiness says `not_configured` for the database role | `AI_DIAGNOSTICS_DATABASE_URL` is unset | Provision the role and set the variable ([deployment.md](deployment.md)) |
 | `diagnostics.readiness` answers, but no other tool will run | The diagnostics credential is the blocker | Read the `databaseRoleState` and `blockerCodes` this tool returns; that is what it is for |
 | A correlation tool returns nothing for a request id you can see in the admin audit log | The event is older than the window | Re-ask with a wider window, up to `7d` |

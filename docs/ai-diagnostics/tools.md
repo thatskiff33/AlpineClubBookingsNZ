@@ -70,20 +70,48 @@ authoritative booking-finance calculation behind `finance:view` **and**
 `bookings:view`. It reads **stored evidence only** — no tool in it contacts Stripe,
 Xero or a bank. Full reference: [tool-pack-finance.md](tool-pack-finance.md).
 
-The remaining domain tools arrive in their own child so they get their own
-permission review and their own table grants: AID-6B (#2376,
-booking/membership/induction/bed allocation).
+AID-6B (#2376) has added the **booking and membership pack**. AID-6B permission
+split: 7 booking-only, 6 membership-only, 3 combined. The combined entries are a
+member's booking summary, authoritative booking block state, and booking
+bed-allocation state. `booking_bed_allocation_state` is combined: it requires
+`bookings:view` and `membership:view` because its double-bed verdict reads live
+membership and partner-link facts for both occupants. The three `server_owned`
+entries return the application's own authoritative answers — why a booking is
+blocked (`bookings:view` **and** `membership:view`), per-night capacity
+(`bookings:view`), and a member's eligibility standing (`membership:view`). **No
+entry in it requires `support:view`.** Full reference:
+[tool-pack-booking-membership.md](tool-pack-booking-membership.md).
 
-The `SELECT` grant allowlist therefore names **thirteen** relations today, and every
-one of them is granted **by column, never wholesale**: `public."AuditLog"` (nine
-columns) plus the twelve finance relations AID-6C argues for one at a time, of which
-`public."Member"` is the narrowest — `id` and `xeroContactId`, and nothing else.
-Everything else in the schema is unreadable by the diagnostics role, including
-`IntegrationCredential` (encrypted provider secrets) and `XeroToken` (**plaintext**
-OAuth access and refresh tokens), both permanently out of scope under ADR-007 §1.
-And so is every other column of the thirteen: the grants are by column, so
-`SELECT "ipAddress" FROM "AuditLog"`, `SELECT "email" FROM "Member"` and
+The `SELECT` grant allowlist therefore names **twenty-six** relations today, and
+every one of them is granted **by column, never wholesale**: `public."AuditLog"`
+(nine columns), the twelve finance relations AID-6C argues for one at a time, and
+the thirteen booking and membership relations AID-6B argues for one at a time — of
+which `public."PolicyExceptionReservationNight"` is now the narrowest, at a single
+column. `public."Member"` is the one entry two packs share: AID-6C granted `id` and
+`xeroContactId` for the Xero contact linkage, and AID-6B **widens** it to
+**twenty-three columns in total** — identity and membership lifecycle, plus
+`email`, plus **all three** predicate-only phone parts (`phoneCountryCode`,
+`phoneAreaCode` and `phoneNumber`) — argued column by column on
+the grant itself and in the pack doc. Read the phone parts carefully: `SELECT` on
+`phoneNumber` **is** granted, because `member_search`'s mobile arm needs it as a
+predicate and a PostgreSQL column privilege covers every reference to a column. What
+withholds a member's number is the projection, not the server — no entry in either
+pack returns one, and the member summary reports only whether a number is on file.
+That is a code-enforced guarantee rather than a server-enforced one, which is
+exactly the distinction this page exists to state. Everything else in the schema is unreadable
+by the diagnostics role, including `IntegrationCredential` (encrypted provider
+secrets) and `XeroToken` (**plaintext** OAuth access and refresh tokens), both
+permanently out of scope under ADR-007 §1. And so is every other column of the
+twenty-six: the grants are by column, so `SELECT "ipAddress" FROM "AuditLog"`,
+`SELECT "dateOfBirth" FROM "Member"`, `SELECT "notes" FROM "Booking"` and
 `SELECT "payload" FROM "XeroInboundEvent"` are each refused by PostgreSQL itself.
+
+**A presence boolean is not a cheaper grant, and that is the finding from AID-6B
+every later pack inherits.** PostgreSQL's column privilege covers *every* reference
+to a column, `notes IS NOT NULL` included, so a `hasNotes` flag costs exactly the
+same grant as returning the note — which would break the property this allowlist
+exists to state. Six presence booleans and one predicate-only grant were dropped
+from AID-6B for that reason alone.
 
 ## Two evidence sources, one gate chain
 
@@ -129,7 +157,7 @@ typed result carrying **no rows**.
 | 3 | **Authorize** | the caller's freshly re-read matrix lacks `view` on **any** area the tool declares, or their account is locked out |
 | 4 | **Arguments** | the entry's `.strict()` schema rejects them, or they carry a reserved key |
 | 5 | **Metering** | AID-2's metering circuit breaker is open |
-| 6 | **Credential** | (`select_only_sql` only) the dedicated role is absent, malformed, carries a connection parameter that would redirect it, is the app's own role, is unverifiable, or is over-privileged |
+| 6 | **Credential** | (`select_only_sql` only) the dedicated role is absent, malformed, carries a connection parameter that would redirect it, is the app's own role, is unverifiable, under-provisioned, or over-privileged (including table-wide SELECT on a column declaration) |
 | 7 | **Read** | the entry's parameters do not match the `$n` its SQL references, the statement fails, or the statement timeout cancels it — or, for a `server_owned` entry, its source refuses or misses its deadline |
 | 8 | **Project** | the projection returns anything that is not a flat scalar, or too many fields |
 | 9 | **Size** | the projected result exceeds the tool's byte ceiling — a **refusal**, never a silent trim |
@@ -381,7 +409,7 @@ Every reason returns no rows and carries a plain-English operator sentence that
 never echoes caller input: `unknown_tool`, `invalid_args`,
 `call_budget_exhausted`, `metering_unavailable`, `actor_unresolved`,
 `actor_blocked`, `actor_read_failed`, `permission_denied`,
-`database_not_configured`, `database_role_unsafe`, `query_failed`,
+`database_not_configured`, `database_role_unsafe`, `database_grants_missing`, `query_failed`,
 `evidence_unavailable`, `result_too_large`, `redaction_failed`,
 `audit_unavailable`, `internal_error`.
 
@@ -452,6 +480,16 @@ The checklist a reviewer should hold you to:
    `not_found` — "there is no evidence of this to report" — which is a claim about the
    whole domain rather than about the slice the entry read. The scope sentence is
    server-owned, comes from the registry, and renders above the rows.
+
+   **The scope COMPETES WITH THE ROWS for the block's 8,000 characters**, so it is
+   the wrong home for anything identical on every result. AID-6B put a
+   3,101-character code catalogue in one entry's scope and the empty block came to
+   7,545 of 8,000 — not enough room for the entry's own single row, so the renderer
+   dropped the evidence under a header still claiming one row. Static text belongs
+   in the `description`, which reaches the model once with the tool definition and
+   stays in context; the scope carries what has to be adjacent to *these* rows. The
+   "stays honest about its rows" contract in `registry.test.ts` is what catches the
+   mistake.
 10. Measure `rowLimit` and `byteLimit`; do not estimate them. Add the entry's widest
     realistic **raw row** to `EXAMPLE_RAW_ROWS` in `registry.test.ts`, which then
     serialises `rowLimit` rows of your own projected shape and fails if your
@@ -484,14 +522,18 @@ against a real PostgreSQL, connects as that role, and proves:
   the role is `NOINHERIT` and the `'USAGE'` predicate reports a hand-granted
   membership as absent;
 - it can read nothing on the migrated schema outside the declared allowlist, and on
-  the one column-granted relation it can read **only** the declared columns — every
-  other column, and `SELECT *`, are refused with `42501` — and although PUBLIC leaves
-  it able to EXECUTE the schema's routines, none of them is `SECURITY DEFINER`;
+  a column-granted relation it can read **only** the declared columns — every other
+  column, and `SELECT *`, are refused with `42501`. **All twenty-six allowlisted
+  relations are column-granted**, not one of them: the sentence used to say "the one
+  column-granted relation" from the release when `AuditLog` was the only entry, and
+  wholesale grants have not existed here since. Although PUBLIC leaves the role able
+  to EXECUTE the schema's routines, none of them is `SECURITY DEFINER`;
 - re-provisioning **revokes** a hand-widened column grant, so an allowlist entry can
   be narrowed in a later release and not merely widened;
 - the self-check refuses the role when a column grant widens to the whole relation —
-  the case where the relation-level count stays at zero because the relation is
-  declared;
+  both where extra columns make the undeclared-column count non-zero and on
+  `FamilyGroupMember`, whose explicit declaration currently names every column and
+  therefore needs the separate table-wide-select gate;
 - it can execute no overload of `pg_read_file`, `pg_read_binary_file`, `pg_ls_dir`,
   `pg_stat_file`, `lo_import` or `lo_export`;
 - `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` fail with insufficient privilege
@@ -548,6 +590,11 @@ failing.
   selection, per-record payment/refund/webhook/Xero evidence, the authoritative
   booking-finance calculation, the twelve relation grants, and the questions this
   platform stores no evidence for.
+- [Booking and membership tool pack (AID-6B)](tool-pack-booking-membership.md) —
+  bounded booking and member selection, per-record party/bed/exception/subscription/
+  family evidence, the authoritative block-state, capacity and eligibility
+  calculations, the thirteen further relation grants plus the widened `Member`, the
+  presence-boolean finding, and the questions this schema cannot answer.
 - [Deployment and operator guide](deployment.md) — provisioning the role, rotating
   the password, and what readiness reports.
 - [Page context](page-context.md) — the other evidence channel (AID-4).

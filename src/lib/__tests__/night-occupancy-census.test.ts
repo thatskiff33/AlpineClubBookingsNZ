@@ -170,6 +170,10 @@ const NON_OCCUPANCY_READERS: Array<{
     why: "prose reference only, in the request-conversion explanation",
   },
   {
+    file: "src/lib/diagnostics/tools/packs/booking-search.ts",
+    why: "prose reference only (#2679): the lodge-nights arm's docblock names the half-open overlap convention it matches; the statement itself is deliberately lifecycle-independent discovery and counts no beds — effective occupancy belongs to booking_capacity_by_night",
+  },
+  {
     file: "src/lib/seasonal-membership-assignments.ts",
     why: "lists a member's own capacity-holding bookings for the season roll-over; no bed count",
   },

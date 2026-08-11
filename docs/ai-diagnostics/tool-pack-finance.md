@@ -512,10 +512,14 @@ does not own. If a category is reclassified, the tool follows without an edit.
 It therefore inherits AID-6A's two disclosures, and repeats both in its scope line:
 an administrator's change to payment or internet-banking **settings** is recorded
 under `admin`, which this tool cannot read; and the audit category is optional, so a
-row recorded with **no** category is matched by no diagnostics tool at all — **82**
-production write paths still record that way, several of them money-adjacent
-(subscription billing, member-credit adjustments, fee configuration). An empty
-result is never evidence that nothing happened; the honest answer is that no
+row recorded with **no** category is matched by no diagnostics tool at all. **82**
+production write paths used to record that way, several of them money-adjacent
+(subscription billing, member-credit adjustments, fee configuration); #2676
+classified all 82 at the source, so the census now reads **429 write sites and zero
+uncategorised** and no *new* finance audit row is born invisible to this tool. Rows
+written before that runtime deployed still carry no category, and back-filling them
+is a separate data change that has not run — so for historical events an empty
+result is still never evidence that nothing happened; the honest answer is that no
 categorised finance audit event matched, and Admin > Audit Log lists the
 uncategorised rows too.
 
@@ -581,7 +585,7 @@ extend the test.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| Every finance tool fails; readiness says `over_privileged` | This release added twelve relation grants and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
+| Every finance tool fails; readiness says `under_provisioned` | This release added twelve relation grants and provisioning has not been re-run | `npm run diagnostics:provision-role`, then re-check readiness |
 | A Finance Officer is told no diagnostics tool is available | Their access role has `finance` but the module or the diagnostics credential is not set up | `diagnostics.readiness` (needs `support:view`) reports the blocker |
 | `booking_finance_state` is refused but the other finance tools work | The caller lacks `bookings:view` | The denial names the missing area; the per-payment tools still answer |
 | `xero_contact_linkage` is refused | The caller lacks `membership:view` | Same — it is the only member-keyed entry |

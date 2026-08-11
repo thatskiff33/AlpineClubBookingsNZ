@@ -49,6 +49,7 @@ import { z } from "zod";
 import type { AdminPermissionArea } from "@/lib/admin-permissions";
 
 import {
+  DIAGNOSTICS_ARGS_HASH_REDACTED,
   DIAGNOSTICS_TOOL_BOUNDS,
   DIAGNOSTICS_TOOL_ID_PATTERN,
   type DiagnosticsToolRow,
@@ -108,6 +109,36 @@ interface DiagnosticsToolSpecBase<TArgs> {
   byteLimit: number;
   /** True when a projected field can identify a person (ADR-004 §1 opt-in). */
   surfacesPersonalData: boolean;
+  /**
+   * Argument keys whose ACCEPTED value is LOW-ENTROPY — a value an offline reader
+   * of the audit metadata could enumerate and match against an unkeyed digest.
+   * When a parsed argument object carries any of them, the audit row records
+   * `DIAGNOSTICS_ARGS_HASH_REDACTED` instead of `sha256(canonical args)`.
+   *
+   * WHY PER-KEY RATHER THAN PER-ENTRY. `member_search` is one entry with four
+   * arms, and only three of them are enumerable: a name PREFIX is three letters, a
+   * mobile is six to fifteen digits, and an email address is guessable from a name
+   * and a domain, while `recordId` is a cuid with no candidate space worth walking.
+   * `booking_search` splits the same way — an eight-character reference derived
+   * from a cuid TIMESTAMP block and a lodge-night triple are both walkable, while
+   * its two `recordId` arms are not. Redacting a whole entry would throw away the
+   * digests that have audit value — "the same admin looked this same member up
+   * twice" — to protect the arms that do not, so the declaration names the KEYS and
+   * the redaction is decided per invocation from the arguments that were actually
+   * accepted.
+   *
+   * A KEY WITH A SCHEMA `.default()` MUST NEVER BE DECLARED. Zod materialises a
+   * defaulted key on every accepted object, so declaring one redacts every arm of
+   * the entry including the high-entropy ones. `booking_search.window` is the live
+   * case and the pack's contract test pins that it is not declared.
+   *
+   * IT IS NOT A KEYED HASH, deliberately. An HMAC would preserve correlation for
+   * the low-entropy arms, but it would also introduce a secret whose rotation
+   * silently breaks correlation across the rotation boundary and whose leak
+   * retro-actively reverses every row ever written — a durable liability bought for
+   * a nice-to-have. Omission has no key to leak.
+   */
+  lowEntropyArgKeys?: readonly string[];
   /**
    * Server-owned sentence naming WHAT this entry searched, rendered into the
    * evidence block above the rows (AID-6A, #2375).
@@ -191,6 +222,8 @@ interface DiagnosticsToolEntryBase {
   rowLimit: number;
   byteLimit: number;
   surfacesPersonalData: boolean;
+  /** See the spec field: keys whose accepted value must not reach a durable digest. */
+  lowEntropyArgKeys?: readonly string[];
   evidenceScope?: string;
 }
 
@@ -329,6 +362,7 @@ export function defineDiagnosticsTool<TArgs>(
     rowLimit: spec.rowLimit,
     byteLimit: spec.byteLimit,
     surfacesPersonalData: spec.surfacesPersonalData,
+    lowEntropyArgKeys: spec.lowEntropyArgKeys,
     evidenceScope: spec.evidenceScope,
   };
 
@@ -375,6 +409,39 @@ export function defineDiagnosticsTool<TArgs>(
       };
     },
   };
+}
+
+/**
+ * The durable `argsHash` for one invocation: the digest, or the redaction
+ * sentinel when the ACCEPTED arguments carry a key the entry declared
+ * low-entropy (ADR-004 §4 — a durable hash must be NON-REVERSIBLE).
+ *
+ * IT LIVES HERE, BESIDE THE DECLARATION, so the decision cannot drift from the
+ * field that drives it, and `invoke.ts` has one call rather than a condition it
+ * could later evaluate on the wrong side of a branch.
+ *
+ * PRESENCE, NOT TRUTHINESS. The test is `key in args` — an explicitly supplied
+ * empty or falsy term still went through the schema and still narrows the
+ * candidate space, so redaction must not depend on the VALUE. A non-object
+ * argument (no entry has one today) redacts as well: a bare string argument is
+ * the low-entropy case by construction, so the fail-closed answer is the safe
+ * default rather than "no keys found, hash it".
+ */
+export function diagnosticsAuditArgsHash(
+  entry: Pick<DiagnosticsToolEntry, "lowEntropyArgKeys">,
+  args: unknown,
+  digest: (args: unknown) => string,
+): string {
+  const lowEntropyKeys = entry.lowEntropyArgKeys ?? [];
+  if (lowEntropyKeys.length === 0) return digest(args);
+  if (typeof args !== "object" || args === null) {
+    return DIAGNOSTICS_ARGS_HASH_REDACTED;
+  }
+  const present = Object.getOwnPropertyNames(args);
+  const carriesLowEntropyTerm = lowEntropyKeys.some((key) =>
+    present.includes(key),
+  );
+  return carriesLowEntropyTerm ? DIAGNOSTICS_ARGS_HASH_REDACTED : digest(args);
 }
 
 /**

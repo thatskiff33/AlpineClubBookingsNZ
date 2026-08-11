@@ -194,6 +194,7 @@ const EVIDENCE_STATE_FOR_FAILURE: Record<
   permission_denied: "permission_denied",
   database_not_configured: "not_configured",
   database_role_unsafe: "not_ready",
+  database_grants_missing: "not_ready",
   query_failed: "tool_failed",
   evidence_unavailable: "evidence_unavailable",
   result_too_large: "limit_exceeded",

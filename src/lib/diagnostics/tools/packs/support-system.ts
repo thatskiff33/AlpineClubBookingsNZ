@@ -83,8 +83,12 @@ export const DIAGNOSTICS_BACKGROUND_JOB_HEALTH_TOOL_ID =
  * `needs_reentry` means one is stored but fails GCM after an auth-secret rotation.
  *
  * `database_role_state` is the server's own verdict on the SELECT-only role
- * (`not_configured` / `misconfigured` / `unverified` / `over_privileged` /
- * `verified`). Deliberately the state only: the underlying privilege report names
+ * (`not_configured` / `misconfigured` / `unverified` / `under_provisioned` /
+ * `over_privileged` / `verified`). `under_provisioned` means ONLY that declared
+ * grants are absent and nothing else is wrong; a role that is short of grants AND
+ * holds a privilege the allowlist no longer declares reports `over_privileged`,
+ * because excess privilege is the more serious fact and must not read as merely
+ * incomplete. Deliberately the state only: the underlying privilege report names
  * roles and counts relations, and the readiness contract withholds that from the
  * admin API for good reason. This channel is not the looser of the two.
  */

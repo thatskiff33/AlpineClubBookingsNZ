@@ -58,6 +58,34 @@ export interface SubscriptionSettlementDb {
   };
 }
 
+/**
+ * HOW THE AGE-TIER RULE IS READ, when the caller will not accept the cached
+ * reader's fallback (#2376 AI Diagnostics).
+ *
+ * `getAgeTierSettings` below is the default and stays the default: it serves a
+ * five-minute in-memory cache and CATCHES every database error to return
+ * `AGE_TIER_DEFAULTS`. For a product path that is right — a booking screen with the
+ * platform's documented tiers beats a booking screen with an error — and every
+ * writer that reaches this module gets exactly that behaviour, unchanged.
+ *
+ * IT IS WRONG FOR EVIDENCE, and the failure is quiet in the worst way. The per-tier
+ * `subscriptionRequiredForBooking` flag decides whether a named member owes a
+ * subscription, so a swallowed read turns a club that exempts a tier into a club
+ * that does not, and hands a diagnostic a confident financial accusation nobody
+ * observed. An evidence caller therefore passes its own reader —
+ * `getAgeTierSettingsStrict` bound to its read-only transaction — which REJECTS on a
+ * failed read (so the caller reports evidence unavailable), distinguishes a genuinely
+ * empty table from an unreadable one, touches no shared cache, and puts this read
+ * under the same snapshot and statement timeout as every other read on its graph.
+ *
+ * A reader rather than a pre-read array on purpose: the settlement batch is reached
+ * only inside `NON_MEMBER_PRICING` and only for a non-empty member set, so a caller
+ * that handed over DATA would have to read the settings on every invocation
+ * including the ones that consult no tier rule — paying for a read the rule does not
+ * need and, worse, failing closed on evidence nothing was going to use.
+ */
+export type AgeTierSettingsReader = () => Promise<AgeTierSettingData[]>;
+
 export interface MemberSubscriptionSettlement {
   /** The season gate says this member owes a paid subscription. */
   subscriptionRequired: boolean;
@@ -153,6 +181,13 @@ export async function loadMemberSubscriptionSettlements(
       string,
       MembershipTypeSubscriptionBehavior
     >;
+    /**
+     * How to read the club's age-tier rule. Omitted by every product caller, which
+     * gets the cached, fallback-serving reader exactly as before; supplied by an
+     * EVIDENCE caller, which cannot accept a swallowed database failure becoming the
+     * club's own tier policy. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
   },
 ): Promise<Map<string, MemberSubscriptionSettlement>> {
   const memberIds = [
@@ -165,7 +200,10 @@ export async function loadMemberSubscriptionSettlements(
   const settlements = new Map<string, MemberSubscriptionSettlement>();
   if (memberIds.length === 0) return settlements;
 
-  const ageTierSettings = await getAgeTierSettings();
+  // The default is the cached product reader, called exactly where and as it was
+  // called before, so a writer's behaviour is byte-identical.
+  const ageTierSettings = await (params.readAgeTierSettings ??
+    getAgeTierSettings)();
   const [subscriptions, members] = await Promise.all([
     db.memberSubscription.findMany({
       where: { memberId: { in: memberIds }, seasonYear: params.seasonYear },

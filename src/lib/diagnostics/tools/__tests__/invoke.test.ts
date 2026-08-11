@@ -439,7 +439,11 @@ describe("invokeDiagnosticsTool — every gate fails closed (#2374)", () => {
     expect(getDatabaseMock).not.toHaveBeenCalled();
   });
 
-  it.each(["database_not_configured", "database_role_unsafe"] as const)(
+  it.each([
+    "database_not_configured",
+    "database_role_unsafe",
+    "database_grants_missing",
+  ] as const)(
     "refuses when the credential is %s",
     async (reason) => {
       getDatabaseMock.mockResolvedValue({ ok: false, reason });
@@ -503,14 +507,22 @@ describe("invokeDiagnosticsTool — every gate fails closed (#2374)", () => {
           reason: "database_not_configured",
         }),
     ],
-    [
-      "database_role_unsafe",
+      [
+        "database_role_unsafe",
       () =>
         getDatabaseMock.mockResolvedValue({
           ok: false,
           reason: "database_role_unsafe",
         }),
-    ],
+      ],
+      [
+        "database_grants_missing",
+        () =>
+          getDatabaseMock.mockResolvedValue({
+            ok: false,
+            reason: "database_grants_missing",
+          }),
+      ],
     [
       "query_failed",
       () =>

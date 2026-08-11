@@ -73,10 +73,12 @@ import {
   type HostingParticipant,
   type ResolvedAdultMemberHostingPolicy,
 } from "@/lib/policies/adult-member-hosting";
+import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   loadUnpaidSubscriptionMemberIds,
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
+import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import { getSeasonYear } from "@/lib/utils";
 
 /**
@@ -118,7 +120,7 @@ import { getSeasonYear } from "@/lib/utils";
  * quietly could not read them would silently restore the unpaid member as a
  * host — a rule that is off when nobody notices is worse than no rule.
  */
-export type AdultMemberHostingReviewDb = Pick<
+export type AdultMemberHostingReadDb = Pick<
   PrismaClient,
   | "booking"
   | "adultMemberHostingPolicy"
@@ -127,6 +129,10 @@ export type AdultMemberHostingReviewDb = Pick<
   | "memberSubscription"
   | "seasonalMembershipAssignment"
   | "membershipType"
+>;
+
+export type AdultMemberHostingReviewDb = AdultMemberHostingReadDb & Pick<
+  PrismaClient,
   // #2576: the same-owner coverage machinery. The incident and the queue row are
   // written INSIDE the caller's transaction alongside the change that caused them
   // (§8), and the audit row with them, so they are part of the required shape
@@ -341,12 +347,38 @@ function hostingSiblingWhere(
 
 async function loadSiblingHosts(
   booking: LoadedHostingBooking,
-  db: AdultMemberHostingReviewDb,
+  db: AdultMemberHostingReadDb,
+  /**
+   * A DETERMINISTIC CEILING, supplied only by a read-only evidence caller.
+   *
+   * This read is deliberately unbounded for a WRITER: the hosting answer it
+   * computes has to see every sibling that could cover a night, and silently
+   * truncating it would change the rule. A diagnostic has a different obligation --
+   * it must either answer or say it could not -- and it also has the widest fan-out
+   * in either tool pack, because each sibling arrives with its guests and their
+   * night rows. So an evidence caller passes a ceiling and gets `ceiling + 1` rows
+   * back, which makes "there were more than I may read" a distinguishable fact
+   * rather than a quietly short list.
+   *
+   * Omitted by every writer, whose behaviour is therefore byte-identical.
+   */
+  siblingCeiling?: number,
 ): Promise<{ participants: HostingParticipant[]; siblingIds: string[] }> {
   const siblings = (await db.booking.findMany({
     where: hostingSiblingWhere(booking),
     select: BOOKING_HOSTING_SELECT,
+    ...(siblingCeiling === undefined
+      ? {}
+      : {
+          // A total order, so a bound that binds binds reproducibly rather than
+          // returning any N of the matching rows.
+          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
+          take: siblingCeiling + 1,
+        }),
   })) as LoadedHostingBooking[];
+  if (siblingCeiling !== undefined && siblings.length > siblingCeiling) {
+    throw new HostingSiblingCeilingExceededError(siblingCeiling);
+  }
 
   return {
     participants: siblings
@@ -466,6 +498,26 @@ async function loadSameBookingOwnerHosts(
   >,
   db: Pick<AdultMemberHostingReviewDb, "booking">,
   excludeBookingIds: readonly string[],
+  /**
+   * A DETERMINISTIC CEILING, supplied only by a read-only evidence caller — the
+   * same distinction `loadSiblingHosts` draws, for the same reason, on the OTHER
+   * host population.
+   *
+   * The writer's `SAME_OWNER_COVERAGE_SOURCE_LIMIT` truncates, and the docblock on
+   * that constant argues correctly that truncating is safe FOR A WRITER: fewer
+   * hosts are seen, so a night reads as uncovered and the booking is flagged or
+   * refused rather than quietly allowed. That argument INVERTS for evidence. A
+   * diagnostic that misses the sibling carrying the covering adult reports
+   * `policy_adult_member_hosting` as a LIVE BLOCKER on a booking that is actually
+   * covered — a fabricated finding, which is the opposite of safe — and because the
+   * writer's read carries no `orderBy`, two invocations could disagree about the
+   * same booking with nothing on the row to say so.
+   *
+   * So an evidence caller passes a ceiling, gets a total order and `ceiling + 1`
+   * rows, and gets a REFUSAL when the bound binds. Omitted by every writer, whose
+   * read is byte-identical to before.
+   */
+  sameOwnerSourceCeiling?: number,
 ): Promise<HostingParticipant[]> {
   const where = sameBookingOwnerCoverageSourceWhere(booking);
   const sources = (await db.booking.findMany({
@@ -473,7 +525,17 @@ async function loadSameBookingOwnerHosts(
       excludeBookingIds.length > 0
         ? { ...where, id: { not: booking.id, notIn: [...excludeBookingIds] } }
         : where,
-    take: SAME_OWNER_COVERAGE_SOURCE_LIMIT,
+    take:
+      sameOwnerSourceCeiling === undefined
+        ? SAME_OWNER_COVERAGE_SOURCE_LIMIT
+        : sameOwnerSourceCeiling + 1,
+    ...(sameOwnerSourceCeiling === undefined
+      ? {}
+      : {
+          // A total order, so a bound that binds binds reproducibly rather than
+          // returning any N of the matching rows.
+          orderBy: [{ checkIn: "asc" as const }, { id: "asc" as const }],
+        }),
     select: {
       id: true,
       guests: {
@@ -483,6 +545,12 @@ async function loadSameBookingOwnerHosts(
       },
     },
   })) as Array<{ id: string; guests: LoadedHostingBooking["guests"] }>;
+  if (
+    sameOwnerSourceCeiling !== undefined &&
+    sources.length > sameOwnerSourceCeiling
+  ) {
+    throw new HostingSameOwnerSourceCeilingExceededError(sameOwnerSourceCeiling);
+  }
 
   return sources
     .filter((source) => Array.isArray(source.guests))
@@ -492,6 +560,43 @@ async function loadSameBookingOwnerHosts(
         hostScope: "SAME_BOOKING_OWNER" as const,
       })),
     );
+}
+
+/**
+ * Raised when an evidence caller's sibling ceiling binds.
+ *
+ * A NAMED ERROR rather than a truncated list, because the two readings are
+ * different answers: a short list says "these are the hosts", and this says "I
+ * cannot tell you". Only a caller that passed a ceiling can see it.
+ */
+export class HostingSiblingCeilingExceededError extends Error {
+  constructor(ceiling: number) {
+    super(
+      `Adult-member hosting evidence: more than ${ceiling} sibling bookings could cover these nights; refusing an inconclusive answer`,
+    );
+    this.name = "HostingSiblingCeilingExceededError";
+  }
+}
+
+/**
+ * The same refusal for the OTHER host population, and a separate class rather than
+ * a shared one.
+ *
+ * The two populations are different questions with different remedies: a bound
+ * sibling read means a #738 split family has grown implausibly wide, and a bound
+ * same-owner read means one member holds more than the ceiling of active bookings
+ * at ONE lodge overlapping ONE stay. An operator handed "I cannot tell you" needs to
+ * know which, and a single message naming both would name the wrong one half the
+ * time. It is the same reason the writer keeps `SAME_OWNER_COVERAGE_SOURCE_LIMIT`
+ * and `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` apart at the same number.
+ */
+export class HostingSameOwnerSourceCeilingExceededError extends Error {
+  constructor(ceiling: number) {
+    super(
+      `Adult-member hosting evidence: more than ${ceiling} same-owner bookings at this lodge could cover these nights; refusing an inconclusive answer`,
+    );
+    this.name = "HostingSameOwnerSourceCeilingExceededError";
+  }
 }
 
 /**
@@ -528,10 +633,41 @@ async function loadHostingSiblingIds(
  * `db` follows the same composition rule as `validateMinimumStay`: a caller
  * already inside `prisma.$transaction` MUST pass its own `tx`.
  */
-export async function evaluateBookingAdultMemberHosting(
+async function evaluateLoadedBookingAdultMemberHosting(
   booking: LoadedHostingBooking,
-  db: AdultMemberHostingReviewDb,
-  failFastCoverageOwner = false,
+  db: AdultMemberHostingReadDb,
+  acquireCoverageOwnerLock: (() => Promise<void>) | null,
+  /**
+   * The season the subscription bridge judges settlement in, when the caller has
+   * already resolved it authoritatively. Omitted by every writer, which runs
+   * behind a gated request that has seeded the financial-year cache; supplied by
+   * read-only evidence callers, which cannot. See
+   * `evaluatePersistedBookingAdultMemberHostingReadOnly`.
+   */
+  seasonYear?: number,
+  /**
+   * The club's lockout mode, when the caller has read it authoritatively. Same
+   * reason as `seasonYear`: the bridge otherwise peeks it through readers that turn
+   * a database failure into `NO_BLOCK`, so an evidence caller would report a
+   * fabricated hosting answer for an enforcing club after one transient failure.
+   */
+  subscriptionLockoutMode?: SubscriptionLockoutMode,
+  /** See `loadSiblingHosts`; supplied only by a read-only evidence caller. */
+  siblingCeiling?: number,
+  /**
+   * See `loadSameBookingOwnerHosts`. The OTHER host population, with its own
+   * ceiling because it is a different population — a wide split family and a member
+   * holding many bookings at one lodge are different data problems.
+   */
+  sameOwnerSourceCeiling?: number,
+  /**
+   * How the #2543 subscription bridge reads the club's age-tier rule. Omitted by
+   * every writer, which takes the cached reader that falls back to
+   * `AGE_TIER_DEFAULTS`; supplied by a read-only evidence caller, whose strict
+   * reader rejects a failed read rather than judging a named member's hosting
+   * qualification against a tier rule nobody observed. See `AgeTierSettingsReader`.
+   */
+  readAgeTierSettings?: AgeTierSettingsReader,
 ): Promise<{
   violation: AdultMemberHostingPolicyExceptionViolation | null;
   resolved: ResolvedAdultMemberHostingPolicy;
@@ -565,33 +701,129 @@ export async function evaluateBookingAdultMemberHosting(
   // the #2569 upgrade a no-op on cost as well as on answers.
   let participants: HostingParticipant[] = [];
   if (hostingModeIsActive(resolved.mode)) {
-    const siblings = await loadSiblingHosts(booking, db);
+    const siblings = await loadSiblingHosts(booking, db, siblingCeiling);
     // §9: hold the per-owner key before reading another booking as cover, so a
     // concurrent removal of that cover cannot interleave with this evaluation.
     // Re-entrant, so a caller that already took it (the settle step) pays nothing.
-    if (resolved.hostScopes.sameBookingOwner) {
-      if (failFastCoverageOwner) {
-        if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
-          throw new HostingCoverageParticipantRetryError();
-        }
-      } else {
-        await lockHostingCoverageOwner(db, booking.memberId);
-      }
+    if (resolved.hostScopes.sameBookingOwner && acquireCoverageOwnerLock) {
+      await acquireCoverageOwnerLock();
     }
     participants = await withSubscriptionSettlement(
       [
         ...toHostingParticipants(booking),
         ...siblings.participants,
         ...(resolved.hostScopes.sameBookingOwner
-          ? await loadSameBookingOwnerHosts(booking, db, siblings.siblingIds)
+          ? await loadSameBookingOwnerHosts(
+              booking,
+              db,
+              siblings.siblingIds,
+              sameOwnerSourceCeiling,
+            )
           : []),
       ],
       db,
-      getSeasonYear(booking.checkIn),
+      seasonYear ?? getSeasonYear(booking.checkIn),
+      subscriptionLockoutMode,
+      readAgeTierSettings,
     );
   }
   const violation = evaluateAdultMemberHostingWithPolicy(participants, resolved);
   return { violation, resolved };
+}
+
+/**
+ * Evaluate a booking already loaded by a mutation path.
+ *
+ * This is the lock-owning form used by reconcilers. Read-only consumers must use
+ * `evaluatePersistedBookingAdultMemberHostingReadOnly` below instead of acquiring
+ * an advisory lock merely to inspect current evidence.
+ */
+export async function evaluateBookingAdultMemberHosting(
+  booking: LoadedHostingBooking,
+  db: AdultMemberHostingReviewDb,
+  failFastCoverageOwner = false,
+): Promise<{
+  violation: AdultMemberHostingPolicyExceptionViolation | null;
+  resolved: ResolvedAdultMemberHostingPolicy;
+}> {
+  return evaluateLoadedBookingAdultMemberHosting(booking, db, async () => {
+    if (!failFastCoverageOwner) {
+      await lockHostingCoverageOwner(db, booking.memberId);
+      return;
+    }
+    if (!(await tryLockHostingCoverageOwner(db, booking.memberId))) {
+      throw new HostingCoverageParticipantRetryError();
+    }
+  });
+}
+
+/**
+ * Pure read-only persisted-booking evaluation for evidence surfaces.
+ *
+ * This is not a second hosting rule. It loads the exact canonical persisted
+ * snapshot and delegates to the same participant construction, split-sibling
+ * borrow, same-owner exclusion, subscription bridge and pure policy evaluator as
+ * the lock-owning reconciler above. It deliberately takes no advisory lock: a
+ * diagnostic read may span READ COMMITTED instants and must report that limitation,
+ * but it must never join a writer lock cohort or mutate database state.
+ *
+ * `seasonYear` EXISTS BECAUSE THIS FORM HAS NO GATED REQUEST BEHIND IT. The
+ * subscription bridge (#2543) judges settlement in a membership season, and the
+ * season comes from `getSeasonYear`, which reads the process-level financial-year
+ * cache in `financial-year.ts`. Writers reach this rule through routes that have
+ * already called `refreshFinancialYearConfig`; a read-only evidence caller has
+ * not, so on a cold process the cache is still the March default and a club with
+ * any other year-end month would have its hosts judged against a season row that
+ * is not theirs — silently, and in whichever direction the calendar happens to
+ * fall. Such a caller resolves the year-end month from STORED state, refuses when
+ * it cannot be resolved without a provider call, and passes the season here.
+ */
+export async function evaluatePersistedBookingAdultMemberHostingReadOnly(
+  bookingId: string,
+  db: AdultMemberHostingReadDb = prisma,
+  options?: {
+    seasonYear?: number;
+    subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /**
+     * A deterministic ceiling on the sibling fan-out. An evidence caller passes one
+     * because it must either answer or report that it could not; a writer must not,
+     * because truncating that read would change the hosting rule.
+     */
+    siblingCeiling?: number;
+    /**
+     * The same, for the SAME-OWNER coverage sources. Separate from
+     * `siblingCeiling` because the populations are separate: the writer's own read
+     * TRUNCATES at 25 with no order, which errs towards flagging for a writer and
+     * towards a FABRICATED blocker for evidence.
+     */
+    sameOwnerSourceCeiling?: number;
+    /**
+     * How the subscription bridge reads the age-tier rule. Same split as
+     * `seasonYear` and `subscriptionLockoutMode`: this form has no gated request
+     * behind it, so it cannot accept a reader that answers a failed database read
+     * with the platform's default tiers. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
+  },
+): Promise<{
+  violation: AdultMemberHostingPolicyExceptionViolation | null;
+  resolved: ResolvedAdultMemberHostingPolicy;
+} | null> {
+  const booking = (await db.booking.findUnique({
+    where: { id: bookingId },
+    select: BOOKING_HOSTING_SELECT,
+  })) as LoadedHostingBooking | null;
+  if (!booking) return null;
+  return evaluateLoadedBookingAdultMemberHosting(
+    booking,
+    db,
+    null,
+    options?.seasonYear,
+    options?.subscriptionLockoutMode,
+    options?.siblingCeiling,
+    options?.sameOwnerSourceCeiling,
+    options?.readAgeTierSettings,
+  );
 }
 
 
@@ -657,10 +889,14 @@ async function withSubscriptionSettlement(
   participants: HostingParticipant[],
   db: SubscriptionLockoutDb,
   seasonYear: number,
+  mode?: SubscriptionLockoutMode,
+  readAgeTierSettings?: AgeTierSettingsReader,
 ): Promise<HostingParticipant[]> {
   const unpaid = await loadUnpaidSubscriptionMemberIds(db, {
     memberIds: participants.map((participant) => participant.member?.id),
     seasonYear,
+    mode,
+    ...(readAgeTierSettings ? { readAgeTierSettings } : {}),
   });
   if (unpaid.size === 0) return participants;
   return participants.map((participant) => {

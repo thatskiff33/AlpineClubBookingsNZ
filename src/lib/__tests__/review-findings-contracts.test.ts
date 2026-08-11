@@ -496,6 +496,38 @@ describe("review finding source/schema contracts", () => {
         "src/lib/booking-member-night-conflict-messages.ts",
         "message builder; takes conflicts, never calls the guard on a party",
       ],
+      [
+        "src/lib/diagnostics/tools/packs/booking-evidence.ts",
+        // AID-6B (#2376), and the classification is deliberate rather than a
+        // convenience. Three reasons, each independently sufficient:
+        //
+        // 1. ADMIN-ONLY, and doubly so. The one entry that reaches this call,
+        //    diagnostics.booking_block_state, requires BOTH `bookings:view` AND
+        //    `membership:view`. `member-guest-add-policy.ts`'s own docblock states
+        //    the doctrine in as many words — "ADMIN AND ON-BEHALF PATHS ARE
+        //    EXEMPT… an officer is entitled to the detail" — and this is the same
+        //    entitlement `link-conflicts/route.ts` is exempt on.
+        //
+        // 2. MARKING WOULD BLIND THE DIAGNOSTIC ON THE EXACT BOOKINGS IT EXISTS
+        //    TO EXPLAIN. The marker does not redact a conflict row; it makes the
+        //    guard THROW `memberGuestCrossFamilyRefusal` instead of returning one.
+        //    This source awaits the guard inside a `Promise.all` and refuses the
+        //    whole row rather than returning a partial one, so a marked party
+        //    would turn every booking carrying a cross-family person-night clash
+        //    into `evidence_unavailable` — the one answer an officer investigating
+        //    "why is this booking blocked" cannot use.
+        //
+        // 3. NOTHING THE MARKER PROTECTS IS PROJECTED. The guard's row carries
+        //    `memberName`, `conflictingNights` and the counterpart booking; this
+        //    source reads `conflicts.length` and nothing else, and the registry
+        //    projection emits a single integer, `memberNightConflictCount`. The
+        //    call also passes the least-privileged actor it can — the booking's
+        //    OWN owner with `actorRole: "USER"`, never the administrator running
+        //    the diagnostic — so the guard never attaches its admin-gated fields
+        //    in the first place. A contract test in the pack's own suite pins
+        //    that the projection carries a count and no conflict detail.
+        "read-only admin diagnostic requiring bookings:view AND membership:view; projects the conflict COUNT only, calls the guard as the booking's own owner with actorRole USER, and marking would make the guard throw a neutral refusal instead of answering — blinding the tool on exactly the bookings it exists to explain",
+      ],
     ]);
 
     const callers = personNightGuardCallers();

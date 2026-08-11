@@ -83,16 +83,27 @@ export function IntegrationWizard<Ctx>({
   const maxReachable = firstUnpassed === -1 ? steps.length - 1 : firstUnpassed;
   const allPassed = firstUnpassed === -1;
 
-  const [index, setIndex] = useState(0);
-  const initialisedRef = useRef(false);
-  // Flips true once the resume target is set, so focus-on-step-change (below)
-  // can arm WITHOUT stealing focus on the initial resume render.
-  const [ready, setReady] = useState(false);
+  // The step cursor, tagged with WHO placed it. The tag is what keeps the resume
+  // initialisation below safe: that effect can only run after an await (the
+  // wizard-progress GET), and React flushes it in a LATER step than the commit
+  // that painted a clickable stepper — so an operator can move the cursor before
+  // it ever runs. It therefore stands down when the tag says the operator got
+  // there first, instead of dragging them back to the resume step and discarding
+  // their click (#2781).
+  const [step, setStep] = useState<{
+    index: number;
+    /** "default" until the cursor has been placed deliberately. */
+    owner: "default" | "resume" | "operator";
+  }>({ index: 0, owner: "default" });
+  const index = step.index;
+  // True once the cursor has been placed — by the resume initialisation or by
+  // the operator themselves — so focus-on-step-change (below) can arm WITHOUT
+  // stealing focus on the initial resume render.
+  const ready = step.owner !== "default";
 
   // Initialise the cursor ONCE, after both the persisted cursor and the provider
   // context have loaded, so the resume target is clamped against real gating.
   useEffect(() => {
-    if (initialisedRef.current) return;
     if (contextLoading || !cursor.loaded) return;
     const target = initialStepId ?? cursor.persistedStepId;
     // First-run default is the FIRST step, not the furthest reachable one: an
@@ -109,9 +120,15 @@ export function IntegrationWizard<Ctx>({
       Math.max(desired === -1 ? fallback : desired, 0),
       maxReachable,
     );
-    setIndex(start);
-    initialisedRef.current = true;
-    setReady(true);
+    // A functional update, deliberately: it sees the very latest tag, including
+    // an operator click that landed in this same batch, so a late resume can
+    // never overwrite one (#2781). It is also what makes this run-once — every
+    // later re-run finds a placed cursor and returns it unchanged.
+    setStep((previous) =>
+      previous.owner === "default"
+        ? { index: start, owner: "resume" }
+        : previous,
+    );
   }, [
     contextLoading,
     cursor.loaded,
@@ -124,10 +141,13 @@ export function IntegrationWizard<Ctx>({
   // If the context regresses (e.g. a credential Replace re-arms verification and
   // shrinks the reachable range), clamp the current step back into range.
   useEffect(() => {
-    if (initialisedRef.current && index > maxReachable) {
-      setIndex(maxReachable);
-    }
-  }, [index, maxReachable]);
+    if (!ready) return;
+    setStep((previous) =>
+      previous.index > maxReachable
+        ? { ...previous, index: maxReachable }
+        : previous,
+    );
+  }, [ready, index, maxReachable]);
 
   // Focus management (a11y): on a step change, move focus to the new step's
   // container so keyboard and screen-reader users are taken to the fresh content
@@ -138,20 +158,32 @@ export function IntegrationWizard<Ctx>({
   const lastFocusedIndexRef = useRef<number | null>(null);
   useEffect(() => {
     if (!ready) return;
-    if (lastFocusedIndexRef.current === null) {
-      // First observation after the resume target settles — adopt it silently.
-      lastFocusedIndexRef.current = index;
+    const previous = lastFocusedIndexRef.current;
+    lastFocusedIndexRef.current = step.index;
+    if (previous === null) {
+      // First observation once the cursor is placed. A resume render adopts it
+      // silently; a first placement the OPERATOR made still moves focus, because
+      // their click can be the first thing this effect ever sees when it beat
+      // the resume initialisation (#2781).
+      if (step.owner !== "operator") return;
+    } else if (previous === step.index) {
       return;
     }
-    if (lastFocusedIndexRef.current !== index) {
-      lastFocusedIndexRef.current = index;
-      stepContainerRef.current?.focus();
-    }
-  }, [index, ready]);
+    stepContainerRef.current?.focus();
+  }, [step, ready]);
 
   function goTo(next: number) {
     const clamped = Math.min(Math.max(next, 0), maxReachable);
-    setIndex(clamped);
+    // The operator owns the cursor from here on, so a resume initialisation
+    // that has not run yet stands down rather than undoing this (#2781).
+    //
+    // Deliberately unconditional: do NOT skip this when `clamped === index`.
+    // Clicking the step you are already on is exactly how an operator says
+    // "stay here", and before initialisation that click is the only thing that
+    // stops a persisted cursor moving them elsewhere. Bailing out to save the
+    // one wasted render would re-open #2781 for that click. (`cursor.persist`
+    // already dedupes the POST, so the waste is a render, not a request.)
+    setStep({ index: clamped, owner: "operator" });
     cursor.persist(steps[clamped].id, cursor.acknowledged);
   }
 
@@ -167,7 +199,7 @@ export function IntegrationWizard<Ctx>({
     // flips the wizard into its complete state in place.
     const nextIndex = Math.min(index + 1, steps.length - 1);
     cursor.persist(steps[nextIndex].id, nextAcknowledged);
-    setIndex(nextIndex);
+    setStep({ index: nextIndex, owner: "operator" });
   }
 
   // Banner frame rendered in EVERY branch (the live-region-position rule,

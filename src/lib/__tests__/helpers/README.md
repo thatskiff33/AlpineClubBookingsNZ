@@ -100,6 +100,29 @@ Imported from its own module rather than the barrel above, like `clock.ts`: it
 pulls in `@testing-library/react`, which has no business being loaded by the
 node-environment suites that use the barrel for factories and Prisma mocks.
 
+## Diagnostics statement column reads
+
+```ts
+import {
+  collectStatementColumnReads,
+  statementColumnReads,
+} from "@/lib/__tests__/helpers/diagnostics-statement-reads";
+```
+
+Resolves every `alias."column"` reference in an AI Diagnostics `select_only_sql`
+statement to a `Relation.column` pair, with `alias -> relation` bound **per
+statement** (the same short alias means a different relation in different
+statements).
+
+It exists so the two suites that reconcile the SELECT-only grant allowlist against
+the statements answer the *same* question:
+`src/lib/diagnostics/tools/__tests__/provision-role.test.ts` compares the reads
+against the declaration on every pull request, and
+`src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts` compares them
+against what PostgreSQL will actually hand the provisioned role. Two copies of the
+parser would let those halves drift apart while both stayed green. Import it
+directly rather than through the barrel, like `clock.ts`.
+
 ## Conventions
 
 - Helpers must not import anything from `src/app/...` so they stay

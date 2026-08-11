@@ -97,10 +97,23 @@ function fakeDb(options: FakeDbOptions = {}) {
       findMany: vi.fn().mockResolvedValue(partnerGuestRows),
     },
     member: {
-      findMany: vi.fn().mockResolvedValue([
-        { id: SHARER, ageTier: "ADULT", active: membersActive },
-        { id: PARTNER, ageTier: "ADULT", active: membersActive },
-      ]),
+      // Query-faithful, not fixed rows: mayShareDoubleBed (#2679) now resolves
+      // each queried id explicitly, which real Prisma's `id: { in: [...] }`
+      // always satisfied — a double returning two unrelated ids no longer can.
+      findMany: vi
+        .fn()
+        .mockImplementation(
+          (args?: { where?: { id?: { in?: string[] } } }) => {
+            const ids = args?.where?.id?.in ?? [SHARER, PARTNER];
+            return Promise.resolve(
+              [...new Set(ids)].map((id) => ({
+                id,
+                ageTier: "ADULT",
+                active: membersActive,
+              })),
+            );
+          },
+        ),
     },
     memberPartnerLink: {
       findUnique: vi

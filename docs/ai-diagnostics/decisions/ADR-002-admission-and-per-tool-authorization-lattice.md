@@ -97,13 +97,22 @@ the area that already governs its data in the admin route lattice
 | Tool pack / child | Evidence it reads | Required (fresh) permission |
 | --- | --- | --- |
 | Config & readiness, sanitized correlation (AID-6A, #2375) | module flags, readiness/health, sanitized audit/error correlation | `support:view` |
-| Booking & bed-allocation tools (AID-6B, #2376) | bookings, public requests, waitlist, bed allocation | `bookings:view` |
-| Membership & induction tools (AID-6B, #2376) | members, applications, family links, inductions | `membership:view` |
+| Booking search, booking summary/link/party/request/audit evidence, per-night capacity (AID-6B, #2376) | bookings, party and stay ranges, change and policy-exception requests, booking audit history, the authoritative capacity calculation | `bookings:view` |
+| Booking bed-allocation and double-bed-sharing state (AID-6B, #2376) | the selected booking's allocations plus the live membership and confirmed partner-link facts for both occupants | `bookings:view` **and** `membership:view` |
+| Member search, per-member evidence, member eligibility (AID-6B, #2376) | members, subscription rows by season, family-group and parent/dependent links, membership audit history, the authoritative eligibility calculation | `membership:view` |
+| A member's booking involvement (AID-6B, #2376) | which member, joined to the bookings they own or are a guest on | `membership:view` **and** `bookings:view` |
+| Authoritative booking block state (AID-6B, #2376) | the booking's status, nights, capacity, review and exception state combined with the membership facts the hosting and paid-up-adult rules read | `bookings:view` **and** `membership:view` |
 | Finance & Xero-linkage tools (AID-6C, #2377) | payments, attempts, refunds, webhook receipts, Xero invoice linkage, finance audit history | `finance:view` |
 | Member↔Xero contact linkage (AID-6C, #2377) | a member's Xero contact link and its sync operations | `finance:view` **and** `membership:view` |
 | Authoritative booking-finance state (AID-6C, #2377) | the booking's own price and status combined with its payment, credit and refund position | `finance:view` **and** `bookings:view` |
 | (any lodge-operations tool, if added) | hut leaders, rosters, chores, rooms/beds, lodge settings | `lodge:view` |
 | (any content tool, if added) | page content, banners, site chrome | `content:view` |
+
+**AID-6B permission split: 7 booking-only, 6 membership-only, 3 combined.**
+`booking_bed_allocation_state` is combined: it requires `bookings:view` and
+`membership:view`. The second area is required because its double-bed verdict reads
+live membership and partner-link facts for both occupants, including an occupant
+from another booking.
 
 The deployed-knowledge bundle (#2372) and typed page context (#2373) are
 evidence *classes* (ADR-003), not domain tools; the knowledge bundle is deployed

@@ -908,6 +908,31 @@ describe("consent columns have exactly one writer", () => {
       // shape; every write it makes is to `BedAllocation`.
       "src/lib/bed-allocation-move.ts":
         "the reviewed move digest reads each guest's stored consent state, and the conflict pass refuses a guest who is not operationally present",
+      // #2376's AI-diagnostics booking pack. Three files, all READERS, none of
+      // which composes a consent shape or writes a consent column.
+      //
+      // `booking-records.ts` is the only one that reads the columns as data: its
+      // `booking_party_state` statement folds four of the five into ONE derived
+      // `consent_sub_state` label from a closed server-owned vocabulary, so a
+      // model is told "awaiting_target" rather than being handed a raw status it
+      // would have to interpret. `consentRespondedByMemberId` is deliberately NOT
+      // among them and is not granted — it names the person who answered, which is
+      // the one consent fact this pack has no business reporting.
+      //
+      // `booking-evidence.ts` names the columns only inside a Prisma `select` on
+      // the application's own connection, for the same operational-presence rule
+      // the placement paths apply. `provision-role.ts` names them because the
+      // SELECT-only role's grant is BY COLUMN and a column the statement reads has
+      // to appear in the grant — naming it there is what makes the boundary
+      // enforceable by PostgreSQL rather than by convention.
+      "src/lib/diagnostics/tools/packs/booking-records.ts":
+        "AID-6B: derives one closed consent sub-state label for booking_party_state; writes nothing",
+      "src/lib/diagnostics/tools/packs/booking-evidence.ts":
+        "AID-6B: reads stored consent state to decide whether a guest is operationally present; writes nothing",
+      "src/lib/diagnostics/tools/packs/membership-records.ts":
+        "AID-6B: member_booking_summary computes memberOperationallyPresent in SQL from the platform's own consent predicate (consentStatus IS NULL OR = 'CONFIRMED'); writes nothing",
+      "src/lib/diagnostics/tools/provision-role.ts":
+        "AID-6B: the SELECT-only role's column grant, which must name every column the statements read",
     };
 
     const mentions = productionFilesUnder("src")

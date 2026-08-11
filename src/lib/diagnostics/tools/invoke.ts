@@ -61,6 +61,7 @@ import { recordDiagnosticsToolAudit } from "./audit";
 import { authorizeDiagnosticsToolCall } from "./authorize";
 import { getDiagnosticsDatabase, runDiagnosticsReadOnlyQuery } from "./database";
 import {
+  diagnosticsAuditArgsHash,
   isValidDiagnosticsToolId,
   type DiagnosticsToolEntry,
   type DiagnosticsToolRawRow,
@@ -481,7 +482,13 @@ export async function invokeDiagnosticsTool(
         roundIndex,
       });
     }
-    const argsHash = sha256Hex(canonicalStringify(binding.args));
+    //    The hash is REDACTED rather than computed when the entry declares the
+    //    accepted key low-entropy: `member_search`'s name-prefix, mobile and email
+    //    arms are all enumerable offline, so an unkeyed digest of them in a durable
+    //    row is the argument itself with extra steps (ADR-004 §4).
+    const argsHash = diagnosticsAuditArgsHash(tool, binding.args, (accepted) =>
+      sha256Hex(canonicalStringify(accepted)),
+    );
     faultArgsHash = argsHash;
 
     // 5. METERING. Can't-record ⇒ don't-read (ADR-005 §5), the same rule AID-2

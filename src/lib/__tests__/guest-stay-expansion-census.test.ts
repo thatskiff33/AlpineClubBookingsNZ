@@ -185,6 +185,17 @@ const EXPANSION_SITES = [
   // `booking-edit-guest-ranges.ts` does not replace it: the plan now calls the
   // canonical `expandStayEnvelopeToNightKeys`, which is what a routed caller
   // looks like (INV-DATE-020) and is deliberately not a census site.
+  //
+  // Nor does `src/lib/diagnostics/tools/packs/booking-evidence.ts`, and it is worth
+  // recording why, because it is this census's stated residue caught in the wild.
+  // That module shipped a hand-rolled `Date.UTC`/day-millisecond loop feeding two
+  // registry entries' night sets: correct night for night, and INVISIBLE here — no
+  // `eachDateOnlyInRange` call to match. #2679's review found it by reading, not by
+  // running this file. It now calls `getExplicitGuestBedNightKeys` then
+  // `expandStayEnvelopeToNightKeys`, so it is a routed caller like the plan above,
+  // and `booking-membership-pack.test.ts` bans the day-loop shape inside it by
+  // source assertion — which is the shape of guard this census cannot provide and
+  // the reason the residue paragraph in the header is not merely theoretical.
 ] as const;
 
 describe("guest stay expansion census (#2628)", () => {

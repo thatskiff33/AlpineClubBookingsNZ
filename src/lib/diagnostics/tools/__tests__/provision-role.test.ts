@@ -6,7 +6,12 @@
  * (`src/lib/__tests__/ai-diagnostics-select-only-role.realdb.test.ts`) then shows
  * the server agrees.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
+import { statementColumnReads } from "@/lib/__tests__/helpers/diagnostics-statement-reads";
 
 import {
   buildAiDiagnosticsRoleSql,
@@ -18,6 +23,7 @@ import {
   SELECT_GRANTS,
   SUPPORTED_IDENTIFIER_DESCRIPTION,
 } from "../provision-role";
+import { DIAGNOSTICS_TOOLS } from "../registry";
 
 const base = {
   roleName: "ai_diagnostics_ro",
@@ -27,6 +33,56 @@ const base = {
   statementTimeoutMs: 5_000,
   connectionLimit: 6,
 };
+
+const REPO_ROOT = join(import.meta.dirname, "..", "..", "..", "..", "..");
+
+function documentedGrantCount(document: string, relation: string): number | null {
+  const rows = document
+    .split(/\r?\n/)
+    .filter((candidate) => candidate.trimStart().startsWith("|"))
+    .filter((candidate) => {
+      const relationCell = candidate.split("|")[1]?.trim();
+      return (
+        relationCell === `\`${relation}\`` ||
+        relationCell === `\`public."${relation}"\``
+      );
+    });
+  if (rows.length !== 1) {
+    throw new Error(
+      `expected exactly one grant-table row for ${relation}, found ${rows.length}`,
+    );
+  }
+  const grantedCell = rows[0]?.split("|")[2];
+  const match = grantedCell?.match(/(\d+)\s+(?:explicitly named\s+)?columns?\b/i);
+  return match ? Number(match[1]) : null;
+}
+
+function documentedExactGrantSets(document: string): Record<string, string[]> {
+  const start = "<!-- ai-diagnostics-exact-grants:start -->";
+  const end = "<!-- ai-diagnostics-exact-grants:end -->";
+  const startIndex = document.indexOf(start);
+  const endIndex = document.indexOf(end);
+  if (startIndex < 0 || endIndex <= startIndex) {
+    throw new Error("deployment guide has no canonical exact-grant block");
+  }
+
+  const block = document.slice(startIndex + start.length, endIndex);
+  const documented: Record<string, string[]> = {};
+  for (const line of block.split(/\r?\n/)) {
+    const match = line.match(/^public\."([A-Za-z]+)":\s+(.+)$/);
+    if (!match) continue;
+    const [, relation, columnText] = match;
+    if (documented[relation]) {
+      throw new Error(`deployment guide declares ${relation} more than once`);
+    }
+    const columns = columnText.split(",").map((column) => column.trim());
+    if (columns.some((column) => column.length === 0)) {
+      throw new Error(`deployment guide declares an empty ${relation} column`);
+    }
+    documented[relation] = [...columns].sort();
+  }
+  return documented;
+}
 
 function sql(overrides: Partial<typeof base> = {}): string {
   return buildAiDiagnosticsRoleSql({ ...base, ...overrides }).join("\n");
@@ -473,5 +529,373 @@ describe("provisioning SQL quoting refuses hostile input rather than escaping it
   it("keeps a quote-bearing password inside its literal", () => {
     const text = sql({ password: "pa'ss" });
     expect(text).toContain("PASSWORD 'pa''ss'");
+  });
+});
+
+/**
+ * THE GRANT ALLOWLIST AND THE STATEMENTS, RECONCILED IN BOTH DIRECTIONS.
+ *
+ * This is the control that makes the SELECT-only role's claim checkable, and it
+ * lives here rather than in a pack's own suite because the role is ONE credential
+ * shared by every pack: a column granted for AID-6C is readable by an AID-6B
+ * statement and vice versa, so a per-pack census can only ever prove a per-pack
+ * half of the property.
+ *
+ * WHY IT IS BEING WRITTEN NOW. AID-6C's `finance-pack.test.ts` docblock promised
+ * exactly this — "in BOTH directions… a granted column no statement uses is reach
+ * this pack did not argue for" — and the reverse direction was never implemented.
+ * `finance-pack.test.ts` built a correctly-keyed `grantedColumns` set and then
+ * never passed it to an `expect()`: an unused local that made the docblock look
+ * implemented while nothing could fail. Seven granted-but-unread columns survived
+ * two releases behind it, and #2376's own grant review is what found them.
+ *
+ * THE FORWARD DIRECTION IS ALSO STRICTER HERE than the one it replaces. The
+ * surviving check in `finance-pack.test.ts` flattened every relation's columns
+ * into one un-keyed set, so a column granted on `Payment` satisfied a read of the
+ * same-named column on `MemberSubscription`; and its column pattern captured
+ * `[A-Za-z]+`, so a column name carrying a digit or an underscore was invisible to
+ * it. This resolves `alias -> relation` PER STATEMENT and compares
+ * `Relation.column` pairs.
+ */
+describe("the SELECT-only grant allowlist matches what the statements read", () => {
+  const sqlEntries = DIAGNOSTICS_TOOLS.filter(
+    (entry): entry is Extract<typeof entry, { source: "select_only_sql" }> =>
+      entry.source === "select_only_sql",
+  );
+
+  /**
+   * The resolver is SHARED with the real-PostgreSQL proof
+   * (`src/lib/__tests__/helpers/diagnostics-statement-reads.ts`) rather than
+   * declared here, because that suite now asserts the same property from the
+   * server's side — a column is readable by the provisioned role if and only if a
+   * registered statement reads it. Two copies of this parser would let the
+   * declaration-side and server-side halves of that property drift apart while
+   * both stayed green.
+   */
+  const columnReads = statementColumnReads;
+
+  /**
+   * The ONLY references allowed to resolve to no base relation: output labels of a
+   * derived table, which are not columns of anything and cannot need a grant.
+   *
+   * Declared rather than ignored. An alias this test cannot resolve is exactly what
+   * an ungranted read would look like, so a new one has to be named here — and the
+   * three below are named with the statement that produces them, because `n` is
+   * ALSO a real alias for `PolicyExceptionReservationNight` in a different
+   * statement and a global exemption would have hidden a genuine gap there.
+   */
+  const DERIVED_TABLE_LABELS: Record<string, readonly string[]> = {
+    // `booking_party_state`'s CROSS JOIN LATERAL, which computes a guest's night
+    // envelope; these three are its own output labels.
+    "diagnostics.booking_party_state": [
+      'n."night_count"',
+      'n."first_night"',
+      'n."last_night"',
+    ],
+    // `booking_bed_allocation_state`'s LATERAL aggregate identifies and counts
+    // another occupant without exposing the aggregate as a base-relation grant.
+    "diagnostics.booking_bed_allocation_state": [
+      'co."other_guest_ref"',
+      'co."other_occupant_count"',
+    ],
+  };
+
+  const grantedPairs = new Set(
+    SELECT_GRANTS.flatMap((grant) =>
+      (grant.columns ?? []).map((column) => `${grant.relation}.${column}`),
+    ),
+  );
+
+  it("resolves every column reference to a base relation or a declared label", () => {
+    for (const entry of sqlEntries) {
+      const { unattributed } = columnReads(entry.sql);
+      expect(
+        [...unattributed].sort(),
+        `${entry.id} references aliases this test cannot attribute to a relation`,
+      ).toEqual([...(DERIVED_TABLE_LABELS[entry.id] ?? [])].sort());
+    }
+  });
+
+  it("grants every column some statement READS — the 42501 direction", () => {
+    // An ungranted column is refused by PostgreSQL at runtime and passes every
+    // mock, so this is the direction that decides whether the tool works at all.
+    const missing: string[] = [];
+    for (const entry of sqlEntries) {
+      for (const pair of columnReads(entry.sql).reads) {
+        if (!grantedPairs.has(pair)) missing.push(`${entry.id} reads ${pair}`);
+      }
+    }
+    expect(missing.sort()).toEqual([]);
+  });
+
+  it("reads every column it GRANTS — the unreviewed-reach direction", () => {
+    // The direction that was promised and never implemented. A granted column no
+    // statement names is reach nobody argued for, and it does not stay harmless:
+    // `PaymentRecoveryOperation."bookingId"` and `ManualRefundTask."bookingId"`
+    // were opaque cuids while `Booking` was ungranted, and became a join onto a
+    // booking's dates, prices and owner the moment AID-6B granted `Booking`.
+    //
+    // There is deliberately NO exemption map. A column that no statement reads has
+    // no argument for being granted yet, and "yet" is what an exemption list turns
+    // into a permanent widening.
+    const read = new Set<string>();
+    for (const entry of sqlEntries) {
+      for (const pair of columnReads(entry.sql).reads) read.add(pair);
+    }
+    const unread = [...grantedPairs].filter((pair) => !read.has(pair)).sort();
+    expect(unread).toEqual([]);
+  });
+
+  /**
+   * NO STATEMENT MAY QUALIFY A SQL CONSTRUCT AS IF IT WERE A FUNCTION.
+   *
+   * Over EVERY registered statement, not just one pack's, because the mistake is a
+   * property of the "qualify everything with `pg_catalog.`" rule rather than of any
+   * pack that follows it.
+   *
+   * The rule is right and load-bearing — `database.ts` pins `search_path` so that
+   * the statements deciding which records an operator can reach cannot depend on
+   * schema-resolution order — but it is a rule about FUNCTIONS. The names below are
+   * grammar: PostgreSQL's parser turns them into expression nodes and there is no
+   * `pg_proc` row to qualify, so `pg_catalog.coalesce(a, b)` is a request for a
+   * function that does not exist and fails to plan with SQLSTATE 42883.
+   *
+   * AID-6B shipped exactly that in the member search's mobile arm. It passed every
+   * unit test in this repository, because a mock never plans anything; the opt-in
+   * real-PostgreSQL suite caught it on the first run in which an AID-6B statement
+   * was executed against a server. This assertion is the cheap version of that
+   * proof, and it runs on every pull request rather than only where a database is
+   * available.
+   */
+  const SQL_CONSTRUCTS_THAT_LOOK_LIKE_FUNCTIONS = [
+    "coalesce",
+    "nullif",
+    "greatest",
+    "least",
+    "cast",
+    "extract",
+    "overlay",
+    "position",
+    "trim",
+    "collation",
+  ];
+
+  it.each(SQL_CONSTRUCTS_THAT_LOOK_LIKE_FUNCTIONS)(
+    "never writes pg_catalog.%s — it is grammar, not a catalogued function",
+    (construct) => {
+      for (const entry of sqlEntries) {
+        expect(
+          entry.sql.toLowerCase().includes(`pg_catalog.${construct}(`),
+          `${entry.id} qualifies ${construct.toUpperCase()} as a function; PostgreSQL refuses that with 42883`,
+        ).toBe(false);
+      }
+    },
+  );
+
+  /**
+   * THE SIZE OF THE ALLOWLIST, PINNED.
+   *
+   * Not a ceiling and not a preference — a census, in the same spirit as
+   * `AUDIT_CENSUS_TOTALS`. Two documents quote these figures as the reach of the
+   * credential (`docs/ai-diagnostics/deployment.md` and
+   * `docs/ai-diagnostics/tool-pack-booking-membership.md`), and both were stale by
+   * four before #2376 re-measured them: an earlier revision of AID-6B trimmed four
+   * granted-but-unread columns and the prose kept saying 248.
+   *
+   * A pull request that widens or narrows the grant has to change this number and
+   * the two documents in the same commit, which is the only mechanism that has ever
+   * kept them together.
+   */
+  it("grants exactly the census the deployment and pack documents quote", () => {
+    expect(SELECT_GRANTS.length).toBe(26);
+    expect(
+      SELECT_GRANTS.reduce((total, grant) => total + (grant.columns?.length ?? 0), 0),
+      "update docs/ai-diagnostics/deployment.md and tool-pack-booking-membership.md in the same commit",
+    ).toBe(243);
+  });
+
+  it("pins the documented column census for every relation, not only the total", () => {
+    const expected = {
+      AuditLog: 9,
+      Payment: 22,
+      PaymentTransaction: 12,
+      PaymentRefund: 10,
+      PaymentRecoveryOperation: 10,
+      ManualRefundTask: 6,
+      RefundRequest: 7,
+      ProcessedWebhookEvent: 6,
+      WebhookLog: 7,
+      XeroInboundEvent: 9,
+      XeroObjectLink: 10,
+      XeroSyncOperation: 17,
+      Member: 23,
+      Booking: 25,
+      Lodge: 2,
+      BookingGuest: 15,
+      MemberPartnerLink: 3,
+      BookingGuestNight: 2,
+      BedAllocation: 8,
+      LodgeRoom: 2,
+      LodgeBed: 4,
+      BookingChangeRequest: 16,
+      PolicyExceptionReservationNight: 1,
+      MemberSubscription: 11,
+      FamilyGroupMember: 4,
+      FamilyGroup: 2,
+    } as const;
+    expect(
+      Object.fromEntries(
+        SELECT_GRANTS.map((grant) => [grant.relation, grant.columns?.length ?? 0]),
+      ),
+      "update both grant tables in deployment.md and tool-pack-booking-membership.md",
+    ).toEqual(expected);
+
+    const packDoc = readFileSync(
+      join(REPO_ROOT, "docs", "ai-diagnostics", "tool-pack-booking-membership.md"),
+      "utf8",
+    );
+    const deploymentDoc = readFileSync(
+      join(REPO_ROOT, "docs", "ai-diagnostics", "deployment.md"),
+      "utf8",
+    );
+    for (const [relation, count] of Object.entries(expected)) {
+      expect(documentedGrantCount(packDoc, relation), `${relation} pack count`).toBe(
+        count,
+      );
+      expect(
+        documentedGrantCount(deploymentDoc, relation),
+        `${relation} deployment count`,
+      ).toBe(count);
+    }
+  });
+
+  it("names this release's readiness answer, and the columns that make it that answer", () => {
+    // THE FINDING. Both documents state the precedence rule correctly — excess
+    // privilege beats missing grants — but the operator troubleshooting table
+    // promised `under_provisioned` after the AID-6B deploy, and that is wrong for
+    // the path essentially every deployment is on.
+    //
+    // AID-6B does not only ADD. It REMOVES seven columns AID-6C granted, forced by
+    // this branch's own no-exemption "reads every column it grants" test. So during
+    // the documented window a role provisioned for AID-6C holds seven columns the new
+    // declaration omits: `isDiagnosticsRolePrivilegeSafe` requires
+    // `undeclaredReadableColumns === 0`, `onlyMissingGrants` re-tests safety with only
+    // the two missing-grant counters zeroed — and the seven extras survive that
+    // zeroing, which is that gate's whole design — so the reason is
+    // `database_role_unsafe` and readiness maps it to `over_privileged`.
+    //
+    // The runtime is CORRECT in both states: each refuses every SQL-backed tool, fail
+    // closed. The defect was remediation guidance — an operator whose tools had all
+    // failed read `over_privileged` on screen, found no row for it, read the state as
+    // documented ("holds a privilege ADR-007 forbids ... or is not even the role the
+    // connection string names") and escalated a suspected credential-tampering
+    // incident on a Critical security surface, instead of running the provisioner
+    // sitting on the row they were told did not apply.
+    const REMOVED_BY_THIS_RELEASE: ReadonlyArray<readonly [string, string]> = [
+      ["PaymentTransaction", "xeroInvoiceId"],
+      ["PaymentRefund", "paymentTransactionId"],
+      ["PaymentRefund", "stripePaymentIntentId"],
+      ["PaymentRecoveryOperation", "bookingId"],
+      ["ManualRefundTask", "bookingId"],
+      ["XeroInboundEvent", "source"],
+      ["XeroSyncOperation", "entityType"],
+    ];
+    const packDoc = readFileSync(
+      join(REPO_ROOT, "docs", "ai-diagnostics", "tool-pack-booking-membership.md"),
+      "utf8",
+    );
+    const deploymentDoc = readFileSync(
+      join(REPO_ROOT, "docs", "ai-diagnostics", "deployment.md"),
+      "utf8",
+    );
+
+    // 1. The removals are REAL: each relation is still declared and no longer grants
+    //    that column. If a future change grants one back, this release's answer stops
+    //    being `over_privileged` and the guidance below stops being true.
+    for (const [relation, column] of REMOVED_BY_THIS_RELEASE) {
+      const grant = SELECT_GRANTS.find((entry) => entry.relation === relation);
+      expect(grant, `${relation} is no longer declared at all`).toBeDefined();
+      expect(
+        grant?.columns ?? [],
+        `${relation}."${column}" is granted again; the deploy-window readiness state is no longer over_privileged`,
+      ).not.toContain(column);
+    }
+
+    // 2. Both documents name the answer AND the reason, so neither can be read as the
+    //    smaller problem and neither drifts from the other.
+    for (const [name, raw] of [
+      ["tool-pack-booking-membership.md", packDoc],
+      ["deployment.md", deploymentDoc],
+    ] as const) {
+      // Whitespace-collapsed, because prose wraps: the phrase below spans a line
+      // break in one of the two documents and a raw substring match would pass on
+      // one page and fail on the other for a reason that is not about the content.
+      const document = raw.replace(/\s+/g, " ");
+      expect(document, `${name} does not name over_privileged`).toContain(
+        "`over_privileged`",
+      );
+      // AND THE EXPECTED-STATE MARKER IS ON THE RIGHT ROW. Merely naming
+      // `over_privileged` somewhere is not enough — the previous wording named it in
+      // the precedence paragraph while the operator table still promised
+      // `under_provisioned`, which is the whole defect.
+      expect(
+        document,
+        `${name} attributes the deploy-window state to under_provisioned`,
+      ).not.toContain("`under_provisioned` | **THIS IS THE EXPECTED STATE");
+      expect(
+        document,
+        `${name} does not say the removals are what make it that state`,
+      ).toContain("REMOVES seven columns AID-6C granted");
+      expect(
+        document,
+        `${name} does not tell the operator when to escalate instead`,
+      ).toMatch(/still `over_privileged` after re-provisioning/i);
+      // And each names every removed column, so the list cannot rot against the
+      // allowlist assertion above.
+      for (const [relation, column] of REMOVED_BY_THIS_RELEASE) {
+        expect(
+          document,
+          `${name} does not name ${relation}."${column}"`,
+        ).toContain(`${relation}."${column}"`);
+      }
+    }
+  });
+
+  it("publishes the exact grant sets bidirectionally, so a same-count swap fails", () => {
+    const deploymentDoc = readFileSync(
+      join(REPO_ROOT, "docs", "ai-diagnostics", "deployment.md"),
+      "utf8",
+    );
+    const documented = documentedExactGrantSets(deploymentDoc);
+    const declared = Object.fromEntries(
+      SELECT_GRANTS.map((grant) => {
+        if (!grant.columns) {
+          throw new Error(
+            `SELECT_GRANTS.${grant.relation} is table-wide; exact docs require columns`,
+          );
+        }
+        return [grant.relation, [...grant.columns].sort()];
+      }),
+    );
+
+    // Object equality is deliberately BOTH directions: a missing source column,
+    // an undocumented grant, an extra documented relation, and a one-for-one
+    // column substitution all fail with the relation named.
+    expect(documented).toEqual(declared);
+  });
+
+  it("grants no relation that no statement reads, and reads none it does not grant", () => {
+    const grantedRelations = new Set(SELECT_GRANTS.map((grant) => grant.relation));
+    const readRelations = new Set(
+      sqlEntries.flatMap((entry) =>
+        [...entry.sql.matchAll(/public\."([A-Za-z]+)"/g)].map((match) => match[1]),
+      ),
+    );
+    expect([...readRelations].filter((r) => !grantedRelations.has(r)).sort()).toEqual(
+      [],
+    );
+    expect([...grantedRelations].filter((r) => !readRelations.has(r)).sort()).toEqual(
+      [],
+    );
   });
 });

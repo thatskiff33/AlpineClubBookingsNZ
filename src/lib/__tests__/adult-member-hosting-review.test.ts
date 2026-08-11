@@ -11,7 +11,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+/**
+ * ONE export replaced: #2543's subscription bridge.
+ *
+ * Everything else in `subscription-lockout-enforcement` stays genuine. The bridge
+ * is stubbed to "nobody is unpaid", which is byte-identical to what the real one
+ * returns in this environment — it short-circuits outside `NON_MEMBER_PRICING` and
+ * this suite has no lockout-settings row — with the difference that the SEASON it
+ * is asked about becomes observable. That season is the whole subject of the
+ * `seasonYear` tests at the end of this file, and it is otherwise invisible: the
+ * bridge is the only thing in the hosting rule that uses it.
+ */
+const subscriptionBridge = vi.hoisted(() => ({
+  loadUnpaidSubscriptionMemberIds: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/subscription-lockout-enforcement", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/subscription-lockout-enforcement")
+  >()),
+  loadUnpaidSubscriptionMemberIds:
+    subscriptionBridge.loadUnpaidSubscriptionMemberIds,
+}));
+
 import {
+  evaluatePersistedBookingAdultMemberHostingReadOnly,
   evaluateProposedAdultMemberHosting,
   reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
@@ -423,6 +446,50 @@ describe("hosting review reconciliation (#2364)", () => {
       reconcileAdultMemberHostingReview("booking-1", confirmed.db),
     ).resolves.toMatchObject({ action: "none" });
     expect(confirmed.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("persisted read-only hosting evidence (#2376)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("uses the split parent's accepted adult member as child-booking coverage", async () => {
+    const child = bookingRow({
+      id: "child-1",
+      parentBookingId: "parent-1",
+      guests: [guest("child-guest", ["2026-07-04"])],
+    });
+    const parent = bookingRow({
+      id: "parent-1",
+      guests: [guest("parent-adult", ["2026-07-04"], member())],
+    });
+    const { db, update } = makeDb(child, [CLUB_ON], [parent]);
+
+    await expect(
+      evaluatePersistedBookingAdultMemberHostingReadOnly("child-1", db),
+    ).resolves.toMatchObject({ violation: null });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("does not let a PENDING adult-member guest cover the persisted booking", async () => {
+    const { db, update } = makeDb(
+      bookingRow({
+        guests: [
+          guest("non-member", ["2026-07-04"]),
+          guest("pending-adult", ["2026-07-04"], member(), "PENDING"),
+        ],
+      }),
+      [CLUB_ON],
+    );
+
+    const result = await evaluatePersistedBookingAdultMemberHostingReadOnly(
+      "booking-1",
+      db,
+    );
+    expect(result?.violation).toMatchObject({
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      affectedNights: ["2026-07-04"],
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
@@ -980,5 +1047,109 @@ describe("pre-persist evaluation for the create path (#2364)", () => {
       },
     );
     expect(violation!.affectedNights).toEqual(["2026-07-05"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The season the subscription bridge is asked about (#2376).
+// ---------------------------------------------------------------------------
+
+describe("the read-only form's season basis (#2376)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    subscriptionBridge.loadUnpaidSubscriptionMemberIds.mockResolvedValue(
+      new Set<string>(),
+    );
+  });
+
+  /** The season the bridge was actually asked about. */
+  function seasonAsked(): unknown {
+    const call = subscriptionBridge.loadUnpaidSubscriptionMemberIds.mock
+      .calls[0] as unknown as [unknown, { seasonYear?: number }] | undefined;
+    return call?.[1]?.seasonYear;
+  }
+
+  it("derives the season from the check-in night when no caller supplies one", async () => {
+    // Unchanged behaviour for every writer: they reach this rule through a gated
+    // request that has already seeded the process-level financial-year cache, so
+    // `getSeasonYear(checkIn)` is correct for them. The fixture's check-in is
+    // 4 July 2026, which is season 2026 on the default 31-March year-end.
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);
+    expect(seasonAsked()).toBe(2026);
+  });
+
+  it("leaves the sibling read UNBOUNDED when no ceiling is supplied", async () => {
+    // Byte-identical for every writer, and deliberately so: the hosting answer has
+    // to see every sibling that could cover a night, so a silent `take` here would
+    // change the rule rather than the answer's confidence.
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);
+    const args = db.booking.findMany.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(args.take).toBeUndefined();
+    expect(args.orderBy).toBeUndefined();
+  });
+
+  it("bounds the sibling read to ceiling + 1 when a ceiling IS supplied", async () => {
+    // `+ 1` so "there were more than I may read" is a distinguishable fact rather
+    // than a quietly short list, and a total order so a bound that binds binds
+    // reproducibly.
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db, {
+      siblingCeiling: 3,
+    });
+    const args = db.booking.findMany.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(args.take).toBe(4);
+    expect(args.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
+  });
+
+  it("REFUSES rather than truncating when the ceiling binds", async () => {
+    // A short host list and "I cannot tell you" are different answers, and the first
+    // one reads as authoritative. Four siblings against a ceiling of three.
+    const siblings = [1, 2, 3, 4].map((index) =>
+      bookingRow({ id: `sibling-${index}`, parentBookingId: "booking-1" }),
+    );
+    const { db } = makeDb(bookingRow(), [CLUB_ON], siblings);
+    await expect(
+      evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db, {
+        siblingCeiling: 3,
+      }),
+    ).rejects.toThrow(/refusing an inconclusive answer/);
+  });
+
+  it("passes the caller's lockout mode to the bridge instead of letting it peek", async () => {
+    // The bridge otherwise reads the mode through functions that swallow a database
+    // failure into NO_BLOCK, so an evidence caller would report a fabricated hosting
+    // answer for an enforcing club after one transient failure.
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db, {
+      subscriptionLockoutMode: "NON_MEMBER_PRICING",
+    });
+    const call = subscriptionBridge.loadUnpaidSubscriptionMemberIds.mock
+      .calls[0] as unknown as [unknown, { mode?: string }] | undefined;
+    expect(call?.[1]?.mode).toBe("NON_MEMBER_PRICING");
+  });
+
+  it("leaves the mode absent when no caller supplies one, so the bridge peeks as before", async () => {
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);
+    const call = subscriptionBridge.loadUnpaidSubscriptionMemberIds.mock
+      .calls[0] as unknown as [unknown, { mode?: string }] | undefined;
+    expect(call?.[1]?.mode).toBeUndefined();
+  });
+
+  it("uses the season the caller resolved, when it resolved one", async () => {
+    // THE SEAM #2376 NEEDS. A read-only evidence caller has no gated request
+    // behind it, so nothing has seeded that cache and a club whose financial year
+    // does not end in March would have its hosts judged against another season's
+    // `MemberSubscription` rows. AI Diagnostics resolves the year-end month from
+    // stored state, refuses when it cannot, and passes the season here — and the
+    // number below is deliberately one no derivation from this fixture produces,
+    // so a dropped parameter cannot pass by coincidence.
+    const { db } = makeDb(bookingRow(), [CLUB_ON]);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db, {
+      seasonYear: 2029,
+    });
+    expect(seasonAsked()).toBe(2029);
   });
 });

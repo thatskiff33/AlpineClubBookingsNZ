@@ -1,3 +1,5 @@
+import type { PrismaClient } from "@prisma/client";
+
 import { DEFAULT_MEMBERSHIP_LOCKOUT_SETTINGS } from "@/config/club-settings-defaults";
 import { prisma } from "@/lib/prisma";
 
@@ -150,5 +152,31 @@ export async function loadPersistedMembershipLockoutSettings(): Promise<Persiste
 export async function loadMembershipLockoutSettings(): Promise<MembershipLockoutSettings> {
   return normalizeMembershipLockoutSettings(
     await loadPersistedMembershipLockoutSettings(),
+  );
+}
+
+/**
+ * THE SAME SETTINGS, WITHOUT THE FALLBACK — for evidence, not for product paths.
+ *
+ * `loadPersistedMembershipLockoutSettings` above treats EVERY database error as the
+ * migration-era missing table and returns null, which the normalizer then turns into
+ * the documented defaults. That is right for a product path during a deploy.
+ *
+ * IT IS WRONG FOR AN EVIDENCE PATH: the default mode is `HARD_BLOCK`'s opposite
+ * number in whichever direction the club is not configured, and a diagnostic that
+ * reports a club's lockout mode from a failed read has invented the most important
+ * qualifier on its own answer. A rejected read propagates here so the caller can
+ * report `evidence_unavailable`.
+ *
+ * A genuinely ABSENT singleton row still normalizes to the documented defaults,
+ * which is what actually governs a club that has never saved the panel.
+ */
+export async function loadMembershipLockoutSettingsStrict(
+  db: Pick<PrismaClient, "membershipLockoutSettings"> = prisma,
+): Promise<MembershipLockoutSettings> {
+  return normalizeMembershipLockoutSettings(
+    await db.membershipLockoutSettings.findUnique({
+      where: { id: MEMBERSHIP_LOCKOUT_SETTINGS_ID },
+    }),
   );
 }

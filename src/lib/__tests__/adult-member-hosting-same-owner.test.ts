@@ -26,7 +26,9 @@ vi.mock("@/lib/member-subscription-eligibility", () => ({
 }));
 
 import {
+  HostingSameOwnerSourceCeilingExceededError,
   evaluateBookingAdultMemberHosting,
+  evaluatePersistedBookingAdultMemberHostingReadOnly,
   enqueueHostingCoverageReevaluationForMember,
   reconcileSameOwnerCoverageIncident,
   reconcileAdultMemberHostingReviewWithSiblings,
@@ -367,6 +369,38 @@ async function uncoveredNights(rows: FakeBooking[], policies?: unknown[]) {
   );
   return violation?.affectedNights ?? [];
 }
+
+describe("persisted read-only same-owner evidence (#2376)", () => {
+  it("cannot use this booking itself as SAME_BOOKING_OWNER cover", async () => {
+    const rows = [
+      booking({
+        guests: [
+          guestRow("kid", ["2026-07-03"]),
+          guestRow("adult", ["2026-07-03"], memberRow()),
+        ],
+      }),
+    ];
+    const { db } = makeStore(rows, {
+      policies: [
+        policyRow({
+          hostScopeSameBooking: false,
+          hostScopeSameBookingOwner: true,
+        }),
+      ],
+    });
+
+    const result = await evaluatePersistedBookingAdultMemberHostingReadOnly(
+      "b-main",
+      db,
+    );
+    expect(result?.violation).toMatchObject({
+      reasonCode: "ADULT_MEMBER_HOSTING_REQUIRED",
+      affectedNights: ["2026-07-03"],
+    });
+    // Read-only evidence does not join the per-owner advisory-lock cohort.
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+  });
+});
 
 describe("the relationship is the exact Booking.memberId and nothing else (#2576 §1)", () => {
   it("names only the owner, the lodge, the lifecycle and the dates", () => {
@@ -2226,6 +2260,126 @@ describe("the participant fence is not taken for a rule the club is not using (#
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the SOURCE read gets an evidence ceiling of its own (#2376)", () => {
+  /**
+   * The finding this closes. The sibling fan-out was given a deterministic
+   * refusing ceiling for evidence callers, and this read — the OTHER host
+   * population — was left on the writer's unordered `take: 25`.
+   *
+   * The writer's own docblock argues correctly that truncating is safe for a
+   * WRITER: fewer hosts means a night reads as uncovered, so the booking is flagged
+   * or refused rather than quietly allowed. That direction INVERTS for evidence. A
+   * diagnostic that misses the booking carrying the covering adult reports
+   * `policy_adult_member_hosting` as a live blocker on a booking that is actually
+   * covered — a fabricated finding — while `booking-evidence.ts` promises in as
+   * many words that it "refuses rather than truncating". And with no `orderBy`,
+   * two invocations of the same diagnostic could disagree with nothing on the row
+   * to say which 25 each one saw.
+   */
+  const SAME_OWNER_SCOPE_ONLY = [
+    policyRow({ hostScopeSameBooking: false, hostScopeSameBookingOwner: true }),
+  ];
+
+  /** The stay under test, plus `count` same-owner bookings that could cover it. */
+  function makeSameOwnerStore(count: number) {
+    const sources = Array.from({ length: count }, (_unused, index) =>
+      booking({
+        id: `b-source-${String(index).padStart(2, "0")}`,
+        guests: [
+          guestRow(
+            `adult-${index}`,
+            ["2026-07-03", "2026-07-04"],
+            memberRow({ id: `member-adult-${index}` }),
+          ),
+        ],
+      }),
+    );
+    return makeStore(
+      [
+        booking({ id: "b-main", guests: [guestRow("kid", ["2026-07-03"])] }),
+        ...sources,
+      ],
+      { policies: SAME_OWNER_SCOPE_ONLY },
+    );
+  }
+
+  /** The SOURCE read, told apart by its member-linked guest narrowing. */
+  function sourceReadArgs(db: {
+    booking: { findMany: { mock: { calls: [Record<string, unknown>][] } } };
+  }): Record<string, unknown> | undefined {
+    return db.booking.findMany.mock.calls
+      .map(([args]) => args)
+      .find(
+        (args) =>
+          (args as { select?: { guests?: { where?: unknown } } }).select?.guests
+            ?.where !== undefined,
+      );
+  }
+
+  it("leaves the writer's read exactly as it was when no ceiling is supplied", async () => {
+    // Byte-identical for every writer, including the deliberate absence of an
+    // order: its truncation fails towards the rule, so reproducibility buys it
+    // nothing and the sibling fix took the same care.
+    const { db } = makeSameOwnerStore(1);
+    await reconcileAdultMemberHostingReviewWithSiblings("b-main", db);
+    const args = sourceReadArgs(db);
+    expect(args?.take).toBe(25);
+    expect(args?.orderBy).toBeUndefined();
+  });
+
+  it("bounds the source read to ceiling + 1, in a total order, for an evidence caller", async () => {
+    // `+ 1` so "there were more than I may read" is a distinguishable fact rather
+    // than a quietly short list, and the order so a bound that binds binds
+    // reproducibly.
+    const { db } = makeSameOwnerStore(2);
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("b-main", db, {
+      sameOwnerSourceCeiling: 3,
+    });
+    const args = sourceReadArgs(db);
+    expect(args?.take).toBe(4);
+    expect(args?.orderBy).toEqual([{ checkIn: "asc" }, { id: "asc" }]);
+  });
+
+  it("REFUSES rather than truncating when the source ceiling binds", async () => {
+    // Four sources against a ceiling of three. A short host list and "I cannot tell
+    // you" are different answers, and only the second one is honest here.
+    const { db } = makeSameOwnerStore(4);
+    await expect(
+      evaluatePersistedBookingAdultMemberHostingReadOnly("b-main", db, {
+        sameOwnerSourceCeiling: 3,
+      }),
+    ).rejects.toThrow(/same-owner bookings at this lodge/);
+  });
+
+  it("names the population that bound, not just that something did", async () => {
+    // A shared error class would name the wrong population half the time, and the
+    // two remedies differ: a bound sibling read means a split family has grown
+    // implausibly wide, this one means one member holds more than the ceiling of
+    // active bookings at ONE lodge over ONE window.
+    const { db } = makeSameOwnerStore(4);
+    const error = await evaluatePersistedBookingAdultMemberHostingReadOnly(
+      "b-main",
+      db,
+      { sameOwnerSourceCeiling: 3 },
+    ).catch((caught: unknown) => caught as Error);
+    expect(error).toBeInstanceOf(HostingSameOwnerSourceCeilingExceededError);
+    expect((error as Error).message).not.toContain("sibling bookings could cover");
+  });
+
+  it("still answers, unrefused, when the population sits inside the ceiling", async () => {
+    // Non-vacuous: the ceiling must not turn an ordinary account into a refusal.
+    // Three sources, ceiling three, and the covering adult is found — the booking's
+    // own non-member child is covered on its single night.
+    const { db } = makeSameOwnerStore(3);
+    const result = await evaluatePersistedBookingAdultMemberHostingReadOnly(
+      "b-main",
+      db,
+      { sameOwnerSourceCeiling: 3 },
+    );
+    expect(result?.violation).toBeNull();
   });
 });
 

@@ -188,12 +188,50 @@ export interface AiDiagnosticsSelectGrant {
  *    both refused. This is the narrowest grant in the file and the one to scrutinise
  *    hardest on any future edit.
  *
+ * AID-6B (#2376) adds THIRTEEN MORE relations, all BY COLUMN, and WIDENS `Member`.
+ * The widening is the most scrutinised change this file has had, and the argument
+ * for every column of it is on the `Member` entry itself below; the thirteen are
+ * `Booking`, `Lodge`, `BookingGuest`, `MemberPartnerLink`, `BookingGuestNight`, `BedAllocation`,
+ * `LodgeRoom`, `LodgeBed`, `BookingChangeRequest`,
+ * `PolicyExceptionReservationNight`, `MemberSubscription`, `FamilyGroupMember` and
+ * `FamilyGroup`, each argued on its own entry and in
+ * `docs/ai-diagnostics/tool-pack-booking-membership.md`.
+ *
+ * THE FINDING FROM THAT PACK THAT EVERY FUTURE PACK SHOULD INHERIT: a PRESENCE
+ * BOOLEAN IS NOT A CHEAPER GRANT. PostgreSQL's column privilege covers every
+ * reference to a column, `notes IS NOT NULL` included, so a `hasNotes` flag costs
+ * exactly the same grant as returning the note — and this file's whole claim is that
+ * a withheld column is refused by the server (42501) rather than merely unprojected.
+ * Six presence booleans over free text and raw JSON were dropped from AID-6B for
+ * that reason rather than for any field-count one, and `MemberSubscription.`
+ * `"manualPaymentNote"` was removed from this allowlist during review on the same
+ * grounds. The one place the pattern IS used is where the classification it enables
+ * exists nowhere else — `PaymentRecoveryOperation."idempotencyKey"`, and
+ * `Payment."xeroInvoiceId"`-style presence tests over columns another pack already
+ * projects under its own permission.
+ *
  * And one column added to an existing entry: `AuditLog."entityId"`, for
  * `finance_record_audit_history`. AID-6A withheld it explicitly and recorded that
  * per-record evidence was AID-6B/6C work "under their own area permission and their
  * own privacy review". This is that review: `entityId` is used as a PREDICATE
  * against an id the caller already holds, is never projected, and the three
  * member-identifying columns beside it stay ungranted.
+ *
+ * AND SEVEN COLUMNS REMOVED FROM THE PRE-EXISTING FINANCE GRANTS, none of them
+ * AID-6B's: `PaymentTransaction."xeroInvoiceId"`,
+ * `PaymentRefund."paymentTransactionId"`, `PaymentRefund."stripePaymentIntentId"`,
+ * `PaymentRecoveryOperation."bookingId"`, `ManualRefundTask."bookingId"`,
+ * `XeroInboundEvent."source"` and `XeroSyncOperation."entityType"`. No statement in
+ * any pack reads one of them under its own relation's alias, so each was reach
+ * nobody argued for — and two of them stopped being harmless in this very release:
+ * the two `"bookingId"` grants were opaque cuids while `Booking` was ungranted, and
+ * AID-6B grants `Booking`, so leaving them would have handed this credential a join
+ * from a refund task straight onto a booking's dates, prices and owner that no tool
+ * performs. They survived two releases because the test that was supposed to catch
+ * them never ran: `finance-pack.test.ts` built a correctly-keyed set of granted
+ * columns and never passed it to an assertion. `provision-role.test.ts` now
+ * reconciles this allowlist against every registered statement in BOTH directions,
+ * with `alias -> relation` resolved per statement.
  */
 export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
   {
@@ -254,7 +292,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
       "refundedAmountCents",
       "reference",
       "stripePaymentIntentId",
-      "xeroInvoiceId",
       "xeroInvoiceNumber",
       "createdAt",
       "updatedAt",
@@ -266,13 +303,11 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
     columns: [
       "id",
       "paymentId",
-      "paymentTransactionId",
       "status",
       "amountCents",
       "currency",
       "stripeRefundId",
       "stripeChargeId",
-      "stripePaymentIntentId",
       "xeroRefundCreditNoteId",
       "stripeCreatedAt",
       "createdAt",
@@ -285,7 +320,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
       "id",
       "type",
       "status",
-      "bookingId",
       "paymentId",
       "amountCents",
       "attempts",
@@ -302,7 +336,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
     relation: "ManualRefundTask",
     columns: [
       "id",
-      "bookingId",
       "paymentId",
       "amountCents",
       "status",
@@ -350,7 +383,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
     relation: "XeroInboundEvent",
     columns: [
       "id",
-      "source",
       "eventCategory",
       "eventType",
       "resourceId",
@@ -383,7 +415,6 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
     columns: [
       "id",
       "direction",
-      "entityType",
       "operationType",
       "localModel",
       "localId",
@@ -404,9 +435,343 @@ export const SELECT_GRANTS: readonly AiDiagnosticsSelectGrant[] = [
   {
     schema: "public",
     relation: "Member",
-    // TWO columns. Every other column of `Member` — name, email, phone, address,
-    // date of birth, membership state, credentials — stays refused by the server.
-    columns: ["id", "xeroContactId"],
+    /**
+     * AID-6B (#2376) WIDENS THIS FROM THE TWO COLUMNS AID-6C GRANTED, and this file's
+     * own header calls it "the narrowest grant in the file and the one to scrutinise
+     * hardest on any future edit". This is that edit, so here is the argument.
+     *
+     * #2376's owner decision authorises a member's NAME, EMAIL ADDRESS and CONTACT
+     * DETAILS as evidence for an EXPLICITLY SELECTED record under `membership:view` —
+     * the same permission that already governs Admin > Members, where the same
+     * officer reads the same fields on a screen, in bulk, with a CSV export. What it
+     * buys is a diagnostic that can name the member instead of quoting a cuid.
+     *
+     * FOUR SEARCH COLUMNS NEED AN EXPLICIT PROJECTION ACCOUNTING. Granting a
+     * predicate column still makes it readable to the role, so each is named here:
+     *  - `email` is the `member_search` email PREDICATE (an operator pastes in an
+     *    address they already hold) and the erasure test's input. It IS projected,
+     *    once, by `member_diagnostic_summary`, for one selected member.
+     *  - `phoneCountryCode`, `phoneAreaCode` and `phoneNumber` are the
+     *    `member_search` mobile PREDICATE and NOTHING ELSE. No entry in either pack
+     *    returns a phone number: the summary reports only whether one is on file.
+     *    A diagnostic never needs to read a number back to an operator who has the
+     *    member's admin page one click away.
+     *
+     * WHAT STAYS REFUSED BY THE SERVER (42501), not by a projection's good
+     * intentions, and each class for its own reason:
+     *  - CREDENTIALS: `passwordHash`, `totpSecret`, `googleSub`. The password hash IS
+     *    compared by `member_eligibility_state`'s erasure test — inside PostgreSQL,
+     *    as a `count` on an equality against the server-written sentinel, on the
+     *    APPLICATION connection, which is a `server_owned` read this grant does not
+     *    govern. No SQL entry names it and this credential cannot read it.
+     *  - SECURITY POSTURE: every `twoFactor*` column, `forcePasswordChange`,
+     *    `passwordChangedAt`, `lastLoginAt`, `emailVerified`. `twoFactorEnabled` and
+     *    `twoFactorLockedUntil` are INDEXED, so a leak there is also efficiently
+     *    queryable — "list every administrator without two-factor" is the query this
+     *    omission refuses.
+     *  - THE BIRTH DATE: `dateOfBirth`. Age-based eligibility in this platform is
+     *    decided on `ageTier` — `AgeTierSetting` keys the subscription rule on it,
+     *    `BookingGuest` stores it, `participantQualifiesAsHost` reads it — so the
+     *    tier is the authoritative fact and the date is not needed to report
+     *    eligibility. `admin-family-group-member-search.ts` sets the same precedent,
+     *    returning a calculated age label and never the date.
+     *  - THE BODY AND THE ADDRESS: `gender`, `title`, `occupation`, every `street*`
+     *    and `postal*` column, `photoImageId`/`photoUpdatedAt`/
+     *    `photoUpdatedByMemberId`.
+     *  - FREE TEXT: `comments` (`@db.Text`), `cancelledReason`, `archivedReason`.
+     *  - AUTHORISATION STATE: `role`, `financeAccessLevel`, `postLoginLanding`.
+     *  - PLUMBING WHOSE ABSENCE IS NOT A GAP: `inheritParentEmail`,
+     *    `inheritEmailFromId`, `lodgeScreenPhoneOptIn`, `detailsConfirmedAt`,
+     *    `detailsConfirmedByMemberId`, `onboardingConfirmedAt`,
+     *    `profileCompletedAt`, `cancelledViaRequestId`,
+     *    `archivedViaLifecycleActionRequestId`, `hutLeaderEligibleAt`,
+     *    No other phone field.
+     */
+    columns: [
+      "id",
+      "email",
+      "firstName",
+      "lastName",
+      "ageTier",
+      "active",
+      "canLogin",
+      "cancelledAt",
+      "archivedAt",
+      "joinedDate",
+      "lifeMemberDate",
+      "requiresInduction",
+      "hutLeaderEligible",
+      "parentMemberId",
+      "secondaryParentId",
+      "familyGroupId",
+      "billingFamilyGroupId",
+      // Predicate-only: the `member_search` mobile arm. Never projected.
+      "phoneAreaCode",
+      "phoneNumber",
+      "phoneCountryCode",
+      "xeroContactId",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  // -------------------------------------------------------------------------
+  // AID-6B (#2376): the booking and membership relations. See the file header
+  // and `docs/ai-diagnostics/tool-pack-booking-membership.md` for the entry that
+  // argues each one.
+  // -------------------------------------------------------------------------
+  {
+    schema: "public",
+    relation: "Booking",
+    /**
+     * The pack's booking spine: searched by `booking_search` and returned in full by
+     * `booking_diagnostic_summary`.
+     *
+     * NO FREE TEXT AND NO ACTOR. `notes`, `adminReviewReason`, `adminReviewNotes`,
+     * `memberReviewJustification`, `adultMemberHostingReviewReason` and
+     * `deletedReason` are member or officer free text; `adultMemberHostingReview` is
+     * a raw JSON policy snapshot; and every `*ById`/`*ByMemberId` column names a
+     * person. None is granted.
+     *
+     * NOT EVEN FOR A PRESENCE BOOLEAN, which is the finding worth carrying forward
+     * from this pack: PostgreSQL's column privilege covers EVERY reference to a
+     * column, `notes IS NOT NULL` included. So a `hasNotes` flag cannot be had
+     * without making every booking note in the club readable to anybody holding this
+     * credential in a `psql` session — and a boolean is not worth trading that
+     * property for. The six presence booleans #2376's plan asked for were dropped
+     * for exactly this reason, not for a field-count one.
+     */
+    columns: [
+      "id",
+      "memberId",
+      "lodgeId",
+      "status",
+      "checkIn",
+      "checkOut",
+      "totalPriceCents",
+      "discountCents",
+      "promoAdjustmentCents",
+      "finalPriceCents",
+      "creditElectionCents",
+      "hasNonMembers",
+      "nonMemberHoldUntil",
+      "parentBookingId",
+      "draftExpiresAt",
+      "requiresAdminReview",
+      "adminReviewStatus",
+      "adultMemberHostingReviewStatus",
+      "waitlistPosition",
+      "wholeLodgeHold",
+      "adminCapacityHoldAt",
+      "capacityOverriddenAt",
+      "deletedAt",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
+    schema: "public",
+    relation: "Lodge",
+    // TWO columns, for the lodge NAME beside a booking. Everything else about a
+    // lodge — its capacity numbers, its settings, its instructions, its door codes —
+    // is lodge configuration this pack has no question for.
+    columns: ["id", "name"],
+  },
+  {
+    schema: "public",
+    relation: "BookingGuest",
+    /**
+     * The party, for `booking_party_state`, plus the guest COUNT on
+     * `booking_diagnostic_summary` and the GUEST leg of `member_booking_summary`.
+     *
+     * A GUEST'S NAME IS GRANTED, and it is booking evidence rather than membership
+     * evidence: `bookings:view` already governs the admin booking page, which lists
+     * exactly these names. All five consent discriminator columns are read and
+     * NEVER projected; the canonical classifier folds them into one stable code.
+     *
+     * The responder id is compared only to the target id, and expiry only by
+     * presence; neither raw value is projected. NOT GRANTED:
+     * `rateMembershipTypeId` (a pricing snapshot, not evidence about the guest),
+     * `arrivedAt`, `departedAt` and `createdAt`.
+     *
+     * Some columns were granted in an earlier revision and are not now; the
+     * reason is worth recording because it is a property of this allowlist rather
+     * than an oversight: `arrivedAt` here, `BedAllocation."source"` and
+     * `LodgeBed."active"` on their own entries were dropped from the
+     * projections when their entries' byte ceilings were measured against the real
+     * serialiser — and a grant whose column no statement reads is reach nobody
+     * reviewed. The pack's contract test asserts the allowlist in BOTH directions for
+     * exactly this (`provision-role.test.ts`, "the SELECT-only grant allowlist
+     * matches what the statements read"), so a projection trim that leaves its grant
+     * behind fails.
+     */
+    columns: [
+      "id",
+      "bookingId",
+      "firstName",
+      "lastName",
+      "ageTier",
+      "isMember",
+      "memberId",
+      "stayStart",
+      "stayEnd",
+      "priceCents",
+      "consentStatus",
+      "consentRequestedAt",
+      "consentRespondedAt",
+      "consentRespondedByMemberId",
+      "consentExpiresAt",
+    ],
+  },
+  {
+    schema: "public",
+    relation: "MemberPartnerLink",
+    // Predicate-only input to the canonical double-bed sharing classifier. The
+    // pair ids and status are never projected; the tool emits one stable verdict.
+    columns: ["memberAId", "memberBId", "status"],
+  },
+  {
+    schema: "public",
+    relation: "BookingGuestNight",
+    // TWO columns, for `booking_party_state`'s per-night footprint. A guest may stay
+    // NON-CONTIGUOUS nights inside one booking, so these rows — not the
+    // `stayStart`/`stayEnd` envelope — are the authoritative presence, and the
+    // envelope alone would invent nights the guest is not staying. The per-night
+    // price is not granted: the booking's money is on the summary.
+    columns: ["bookingGuestId", "stayDate"],
+  },
+  {
+    schema: "public",
+    relation: "BedAllocation",
+    // `booking_bed_allocation_state`. `bedType` is the DENORMALISED copy the partial
+    // unique index actually enforces on, and it is COMPARED against `LodgeBed`'s live
+    // one so a divergence between the two is visible rather than hidden.
+    // `approvedByMemberId` names the officer who placed the guest and is not granted;
+    // `source`, `approvedAt`, `createdAt` and `updatedAt` are not read.
+    columns: [
+      "id",
+      "bookingId",
+      "bookingGuestId",
+      "roomId",
+      "bedId",
+      "stayDate",
+      "bedType",
+      "isSecondOccupant",
+    ],
+  },
+  {
+    schema: "public",
+    relation: "LodgeRoom",
+    // TWO columns, for the room label on an allocation row. `notes` is officer free
+    // text and is not granted.
+    columns: ["id", "name"],
+  },
+  {
+    schema: "public",
+    relation: "LodgeBed",
+    // The bed label and its live type — enough to say "Bunk 3, a DOUBLE" about an
+    // allocation, and enough to compare the live type against the denormalised copy
+    // on the allocation row. `bunkGroup` is a free label, `active` is not read, and
+    // neither is granted.
+    columns: ["id", "roomId", "name", "bedType"],
+  },
+  {
+    schema: "public",
+    relation: "BookingChangeRequest",
+    /**
+     * `booking_exception_request_state`: the locked-period and policy-exception
+     * requests against one booking.
+     *
+     * NOT GRANTED, and this is the relation with the most free text in the pack:
+     * `requestedChanges`, `proposalSnapshot` and `frozenEvidence` (raw JSON);
+     * `reason`, `adminNotes`, `memberMessage` and `lastConflictReason` (member and
+     * officer free text); `internalNotes`, which the schema marks NEVER
+     * member-visible and which is therefore the single column on this relation it
+     * would be worst to leak; `reviewedByMemberId` (names the officer who decided);
+     * and `proposalHash`, `openStateKey` and `version` (machine tokens no operator
+     * can act on).
+     */
+    columns: [
+      "id",
+      "bookingId",
+      "kind",
+      "status",
+      "requestedByMemberId",
+      "aggregateCapacityMode",
+      "attemptCount",
+      "conflictCount",
+      "lastConflictAt",
+      "holdExpiresAt",
+      "reviewedAt",
+      "cancelledAt",
+      "supersededByRequestId",
+      "linkedModificationId",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
+    schema: "public",
+    relation: "PolicyExceptionReservationNight",
+    /**
+     * ONE column, and it is the narrowest grant in this pack. A row exists IFF the
+     * request is CURRENTLY holding that night's beds — there is deliberately no
+     * "active" flag — so counting these rows is the ONLY reliable test of whether an
+     * open exception request is holding capacity. The schema warns in as many words
+     * against inferring it from `holdExpiresAt IS NOT NULL`, because a row written
+     * before that column existed can be holding beds with a NULL deadline.
+     *
+     * `night` and `beds` are NOT granted: the entry reports how many nights are held,
+     * never which or how many beds. The lodge-wide picture is
+     * `booking_capacity_by_night`'s job, and its figures already include these
+     * reservations.
+     */
+    columns: ["changeRequestId"],
+  },
+  {
+    schema: "public",
+    relation: "MemberSubscription",
+    // `member_subscription_state`. `xeroInvoiceId` is granted as a PRESENCE test only
+    // — the id itself is finance evidence with a finance tool of its own.
+    // `manualPaymentNote` is NOT granted: it is a `VarChar(500)` operator note, #2376
+    // refuses operator free text, and a column privilege that exists only to power a
+    // boolean still makes every note in the club readable. `manuallyMarkedPaidAt`
+    // carries the diagnostically useful half. `xeroOnlineInvoiceUrl` and
+    // `manuallyMarkedPaidByMemberId` are not granted either.
+    columns: [
+      "id",
+      "memberId",
+      "seasonYear",
+      "status",
+      "xeroInvoiceId",
+      "xeroInvoiceNumber",
+      "paidAt",
+      "manuallyMarkedPaidAt",
+      "voidGeneration",
+      "createdAt",
+      "updatedAt",
+    ],
+  },
+  {
+    schema: "public",
+    relation: "FamilyGroupMember",
+    // `member_family_state`. These four named columns happen to be the whole current
+    // relation, but this remains a COLUMN grant: the runtime explicitly refuses a
+    // table-wide SELECT so a future schema column cannot become readable by drift.
+    // The current relation has NO `role` column. One was physically dropped by migration
+    // `20260803030000_contract_drop_family_group_member_role`, because family-group
+    // membership carries no rank and every adult login co-member of a group is equal.
+    // A diagnostic reporting a "role in the family group" would be reporting a field
+    // that does not exist.
+    columns: ["id", "familyGroupId", "memberId", "joinedAt"],
+  },
+  {
+    schema: "public",
+    relation: "FamilyGroup",
+    // TWO columns, for the group's name beside a co-member. The name is
+    // member-supplied text and is stripped and bounded on the way out. Nothing on
+    // `FamilyGroupJoinRequest` is granted at all: it carries requester free text and
+    // children's dates of birth.
+    columns: ["id", "name"],
   },
 ];
 

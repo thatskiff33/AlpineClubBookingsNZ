@@ -55,6 +55,17 @@ export function getSeasonStartMonth(): number {
   return (getFinancialYearEndMonth() % 12) + 1;
 }
 
+/** Pure season derivation for callers that already hold an authoritative month. */
+export function getSeasonYearForYearEndMonth(
+  date: Date,
+  yearEndMonth: number,
+): number {
+  const startMonth = (normalizeYearEndMonth(yearEndMonth) % 12) + 1;
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear();
+  return month >= startMonth ? year : year - 1;
+}
+
 // test seam
 /** Test-only override. Pair with a reset to DEFAULT in a beforeEach. */
 export function __setFinancialYearEndMonthForTesting(month: number): void {

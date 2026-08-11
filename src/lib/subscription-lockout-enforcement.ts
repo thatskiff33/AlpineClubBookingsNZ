@@ -32,6 +32,7 @@ import {
   loadMemberSubscriptionSettlements,
   subscriptionIsSettled,
   subscriptionIsUnpaid,
+  type AgeTierSettingsReader,
   type MemberSubscriptionSettlement,
 } from "@/lib/subscription-lockout-facts";
 import { getSeasonYear } from "@/lib/utils";
@@ -455,6 +456,14 @@ export async function evaluateNonMemberPricingRequirements(
      * exactly the party-only one.
      */
     bookingOwnerMemberId?: string | null;
+    /**
+     * How the club's age-tier rule is read for the settlement batch below. Omitted
+     * by every write path, which takes the cached product reader unchanged;
+     * supplied by a read-only EVIDENCE caller, whose strict reader rejects a failed
+     * settings read instead of letting `AGE_TIER_DEFAULTS` stand in for the club's
+     * own tier policy. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
   },
 ): Promise<NonMemberPricingRequirements | null> {
   const mode = input.mode ?? (await peekSubscriptionLockoutMode());
@@ -516,6 +525,9 @@ export async function evaluateNonMemberPricingRequirements(
         policy.subscriptionBehavior,
       ]),
     ),
+    ...(input.readAgeTierSettings
+      ? { readAgeTierSettings: input.readAgeTierSettings }
+      : {}),
   });
 
   const settlementFor = (
@@ -674,11 +686,53 @@ export async function evaluateProposedPaidUpAdultPresence(
      * modification (the live booking's own owner does).
      */
     bookingOwnerMemberId?: string | null;
+    /**
+     * The membership season these nights fall in, when the caller has already
+     * resolved it AUTHORITATIVELY.
+     *
+     * Omit it and the season comes from `getSeasonYear`, which reads the
+     * process-level financial-year cache in `financial-year.ts`. Every product
+     * caller of this function is a booking write behind a gated request that has
+     * seeded that cache, so omitting it is correct for them and this parameter
+     * changes nothing about their answer.
+     *
+     * A READ-ONLY EVIDENCE caller cannot rely on that. Nothing on a diagnostics
+     * path calls `refreshFinancialYearConfig`, so on a cold process the cache is
+     * still the March default and a club with any other year-end month would be
+     * judged in the WRONG SEASON — reporting a paid-up member as unfinancial
+     * (or the reverse) from a season row that is not theirs. Such a caller
+     * resolves the year-end month from stored state itself, refuses when it
+     * cannot, and passes the season here so the answer never depends on whatever
+     * happened to warm the cache. Same shape and same reason as
+     * `resolveMembershipTypePolicy`'s own `seasonYear` input.
+     */
+    seasonYear?: number;
+    /**
+     * The club's lockout mode, when the caller has already read it.
+     *
+     * Omitted, `evaluateNonMemberPricingRequirements` peeks it -- through readers
+     * that swallow a database failure into "every optional module off", i.e. into
+     * `NO_BLOCK`. For a booking write that is a safe direction to fail. For a
+     * read-only EVIDENCE caller it is a fabricated answer about the club's own
+     * policy, and the mode is the qualifier on every subscription finding such a
+     * caller reports, so it reads the mode strictly itself and passes it here.
+     */
+    mode?: SubscriptionLockoutMode;
+    /**
+     * How the age-tier rule is read. Same split as `mode` and `seasonYear`: a
+     * writer takes the cached reader, an evidence caller passes a strict one bound
+     * to its own transaction. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
   },
 ): Promise<PaidUpAdultMemberPolicyExceptionViolation | null> {
   const requirements = await evaluateNonMemberPricingRequirements(db, {
+    mode: input.mode,
+    ...(input.readAgeTierSettings
+      ? { readAgeTierSettings: input.readAgeTierSettings }
+      : {}),
     lodgeId: input.lodgeId,
-    seasonYear: getSeasonYear(input.checkIn),
+    seasonYear: input.seasonYear ?? getSeasonYear(input.checkIn),
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     bookingOwnerMemberId: input.bookingOwnerMemberId ?? null,
@@ -706,6 +760,8 @@ export async function loadUnpaidSubscriptionMemberIds(
     memberIds: ReadonlyArray<string | null | undefined>;
     seasonYear: number;
     mode?: SubscriptionLockoutMode;
+    /** See `AgeTierSettingsReader`; supplied only by a read-only evidence caller. */
+    readAgeTierSettings?: AgeTierSettingsReader;
   },
 ): Promise<ReadonlySet<string>> {
   const empty: ReadonlySet<string> = new Set<string>();
@@ -734,6 +790,9 @@ export async function loadUnpaidSubscriptionMemberIds(
         policy.subscriptionBehavior,
       ]),
     ),
+    ...(params.readAgeTierSettings
+      ? { readAgeTierSettings: params.readAgeTierSettings }
+      : {}),
   });
 
   const unpaid = new Set<string>();

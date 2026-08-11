@@ -777,3 +777,112 @@ describe("Age tier contiguity validation rules", () => {
     expect(hasGap).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// getAgeTierSettingsStrict — the EVIDENCE reader (#2376)
+// ---------------------------------------------------------------------------
+
+describe("getAgeTierSettingsStrict", () => {
+  beforeEach(() => {
+    invalidateAgeTierCache();
+    vi.resetModules();
+  });
+
+  it("PROPAGATES a failed read instead of returning the defaults", async () => {
+    // The whole reason it exists. `getAgeTierSettings` above answers a failed read
+    // with `AGE_TIER_DEFAULTS`, which is right for a booking screen and wrong for
+    // evidence: AI Diagnostics reports whether a member's tier owes a season
+    // subscription, and on a cold cache a transient failure would make the DEFAULT
+    // rule look like the club's own configured one — a confident, wrong, actionable
+    // finding with a fresh observed-at beside it.
+    vi.doMock("../prisma", () => ({
+      prisma: {
+        ageTierSetting: {
+          findMany: vi.fn().mockRejectedValue(new Error("DB unavailable")),
+        },
+      },
+    }));
+    const { getAgeTierSettingsStrict } = await import("../age-tier");
+    await expect(getAgeTierSettingsStrict()).rejects.toThrow("DB unavailable");
+  });
+
+  it("returns the documented defaults for a genuinely EMPTY table", async () => {
+    // The other half of the distinction, and it is not a fallback: a club that has
+    // configured no tiers is governed by the platform's documented defaults, so
+    // reporting them is an observation.
+    vi.doMock("../prisma", () => ({
+      prisma: { ageTierSetting: { findMany: vi.fn().mockResolvedValue([]) } },
+    }));
+    const { getAgeTierSettingsStrict, AGE_TIER_DEFAULTS: defaults } = await import(
+      "../age-tier"
+    );
+    await expect(getAgeTierSettingsStrict()).resolves.toEqual(defaults);
+  });
+
+  it("returns the club's OWN stored rule when there is one", async () => {
+    vi.doMock("../prisma", () => ({
+      prisma: {
+        ageTierSetting: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              tier: "CHILD",
+              minAge: 0,
+              maxAge: 17,
+              label: "Child",
+              subscriptionRequiredForBooking: false,
+              familyGroupRequestCreateMemberAllowed: false,
+              sortOrder: 1,
+            },
+            {
+              tier: "ADULT",
+              minAge: 18,
+              maxAge: null,
+              label: "Adult",
+              subscriptionRequiredForBooking: true,
+              familyGroupRequestCreateMemberAllowed: true,
+              sortOrder: 2,
+            },
+          ]),
+        },
+      },
+    }));
+    const { getAgeTierSettingsStrict } = await import("../age-tier");
+    const result = await getAgeTierSettingsStrict();
+    expect(result.map((row) => row.tier)).toEqual(["CHILD", "ADULT"]);
+    expect(
+      result.find((row) => row.tier === "CHILD")?.subscriptionRequiredForBooking,
+    ).toBe(false);
+  });
+
+  it("neither reads nor writes the shared five-minute cache", async () => {
+    // Not reading it stops a five-minute-old row being reported as freshly
+    // observed; not writing it stops a diagnostics read changing what every other
+    // request in the process computes.
+    const findMany = vi.fn().mockResolvedValue([]);
+    vi.doMock("../prisma", () => ({ prisma: { ageTierSetting: { findMany } } }));
+    const { getAgeTierSettingsStrict } = await import("../age-tier");
+    await getAgeTierSettingsStrict();
+    await getAgeTierSettingsStrict();
+    // Twice, not once: a cached second call would be the stale-evidence bug.
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it("names ONLY the consumed columns, exactly as the cached reader does (#2130)", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    vi.doMock("../prisma", () => ({ prisma: { ageTierSetting: { findMany } } }));
+    const { getAgeTierSettingsStrict } = await import("../age-tier");
+    await getAgeTierSettingsStrict();
+    const select = findMany.mock.calls[0]?.[0]?.select as Record<string, boolean>;
+    expect(Object.keys(select).sort()).toEqual([
+      "familyGroupRequestCreateMemberAllowed",
+      "label",
+      "maxAge",
+      "minAge",
+      "sortOrder",
+      "subscriptionRequiredForBooking",
+      "tier",
+    ]);
+    expect(Object.keys(select)).not.toContain("xeroContactGroupId");
+    expect(Object.keys(select)).not.toContain("xeroContactGroupName");
+  });
+});

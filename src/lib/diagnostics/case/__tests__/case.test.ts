@@ -158,6 +158,9 @@ describe("evidence states (#2375)", () => {
     expect(evidenceStateForToolResult(failure("database_role_unsafe"))).toBe(
       "not_ready",
     );
+    expect(evidenceStateForToolResult(failure("database_grants_missing"))).toBe(
+      "not_ready",
+    );
   });
 
   it("distinguishes an empty result, a truncated one and a full one", () => {

@@ -24,8 +24,8 @@
  * deleting its manifest entry in the same diff, and adding one means adding an
  * entry a reviewer will see.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -73,6 +73,119 @@ function census() {
 
 function ids(sites: readonly AuditWriteSite[]): string[] {
   return sites.map((site) => site.id).sort();
+}
+
+type CurrentCensusClaim = {
+  file: string;
+  writeSites: number;
+  /**
+   * `null` for a claim whose wording states the SITE TOTAL and nothing about
+   * uncategorised sites — "the site total is unchanged at N", "every one of the N
+   * places does it". Those copies drift on the total exactly like the others, and
+   * requiring them to mention a second number they never mention would either
+   * leave them unpinned or invent an assertion the page did not make.
+   */
+  uncategorised: number | null;
+};
+
+function currentAuditCensusClaims(): CurrentCensusClaim[] {
+  const repoRoot = process.cwd();
+  const sourceFiles: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__tests__") walk(path);
+      } else if (entry.name.endsWith(".md") || entry.name.endsWith(".ts")) {
+        sourceFiles.push(path);
+      }
+    }
+  };
+  walk(resolve(repoRoot, "docs"));
+  walk(resolve(repoRoot, "src", "lib", "diagnostics", "tools", "packs"));
+
+  const patterns: readonly {
+    pattern: RegExp;
+    implicitUncategorised?: number;
+    /** The wording states the site total only; see `CurrentCensusClaim`. */
+    totalOnly?: boolean;
+  }[] = [
+    {
+      pattern:
+        /\b(\d+)\s+row-producing\s+production\s+audit\s+write\s+sites\b[^.]{0,120}?\b(zero|\d+)\b[^.]{0,50}\b(?:record no category|uncategorised)\b/giu,
+    },
+    {
+      pattern:
+        /\b(?:the\s+)?census(?:\s+now)?\s+reads\s+(\d+)\s+(?:row-producing\s+)?(?:production\s+)?(?:audit\s+)?write\s+sites\s+and\s+(zero|\d+)\s+uncategorised\b/giu,
+    },
+    {
+      pattern:
+        /\bcurrent\s+exact-head\s+production\s+writers\s+have\s+(\d+)\s+row-producing\s+sites\s+and\s+(zero|\d+)\s+uncategorised\s+sites\b/giu,
+    },
+    {
+      pattern:
+        /\b(?:the\s+)?exact-head\s+census\s+has\s+(\d+)\s+row-producing\s+current\s+production\s+writer\s+sites\s+and\s+(zero|\d+)\s+uncategorised\s+sites\b/giu,
+    },
+    {
+      pattern: /\ball\s+(\d+)\s+now\s+record\s+a\s+category\b/giu,
+      implicitUncategorised: 0,
+    },
+    /*
+      THE FOUR COPIES THE FIVE PATTERNS ABOVE COULD NOT SEE (#2679's review).
+
+      Twelve current-fact copies of the total exist; those patterns matched eight,
+      and the inventory pinned exactly the eight that matched — so a stale UNMATCHED
+      copy was invisible to the assertion as well as to the discovery, which is how
+      8/12 could ship under the name "every". That is the #2677 shape this file's own
+      manifest ledger records in as many words: "a figure that no test reads WILL
+      drift". This branch had already had to hand-fix two of the four, both of which
+      said 427 on `origin/main`, precisely because nothing read them.
+
+      Three new wordings, kept as separate patterns rather than folded into the
+      others, because each is a genuinely different sentence shape and a loosened
+      shared regex is how a HISTORICAL statement starts matching.
+    */
+    {
+      // The fenced `npm run audit:census` paste on the category-review page. Its
+      // DISTRIBUTION is compared against the manifest by its own test below.
+      pattern: /\brow-producing\s+sites:\s+(\d+)\s+uncategorised:\s+(zero|\d+)\b/giu,
+    },
+    {
+      // "The site total is unchanged at N" — a total-only claim.
+      pattern: /\bsite\s+total\s+is\s+unchanged\s+at\s+(\d+)\b/giu,
+      totalOnly: true,
+    },
+    {
+      // "every one of the N sites in the tree" and "every one of the N places does
+      // it" — the two prose forms that assert the total as a completeness claim.
+      pattern: /\bevery\s+one\s+of\s+the\s+(\d+)\s+(?:sites|places)\b/giu,
+      totalOnly: true,
+    },
+  ];
+
+  const claims: CurrentCensusClaim[] = [];
+  for (const sourceFile of sourceFiles) {
+    const contents = readFileSync(sourceFile, "utf8")
+      .replaceAll("**", "")
+      .replace(/\s+\*\s+/g, " ")
+      .replace(/\s+/g, " ");
+    for (const { pattern, implicitUncategorised, totalOnly } of patterns) {
+      for (const match of contents.matchAll(pattern)) {
+        const uncategorised = match[2];
+        claims.push({
+          file: relative(repoRoot, sourceFile).replaceAll("\\", "/"),
+          writeSites: Number(match[1]),
+          uncategorised: totalOnly
+            ? null
+            : (implicitUncategorised ??
+              (uncategorised?.toLowerCase() === "zero"
+                ? 0
+                : Number(uncategorised))),
+        });
+      }
+    }
+  }
+  return claims.sort((left, right) => left.file.localeCompare(right.file));
 }
 
 describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
@@ -134,6 +247,114 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
         "here means the writer is raw migration SQL or a .mjs script (neither of " +
         "which the compiler sees), or the type mandate has been reverted.",
     ).toEqual(Object.keys(UNCATEGORISED_AUDIT_WRITERS).sort());
+  });
+
+  it("discovers and pins every runtime or document current-census claim", () => {
+    /*
+      Current totals occur in operator docs, model-facing runtime scope, and a
+      runtime source contract. The old hand-maintained four-document list missed
+      the second booking-guide occurrence and both runtime occurrences. Discover
+      the reviewed wording instead, pin the occurrence inventory, and compare every
+      value with the manifest.
+
+      Changing a number, deleting/rewording a claim so it escapes the parser, or
+      adding a new current-fact copy all fail visibly. Historical statements such
+      as "82 were still uncategorised when #2581 opened" deliberately do not match:
+      they remain true and are not current-fact copies.
+
+      "EVERY" IS NOW TRUE, AND WAS NOT WHEN THIS TEST WAS NAMED. #2679's review
+      counted twelve current-fact copies against five patterns that matched eight —
+      and because the inventory below pins exactly what the patterns FIND, the four
+      unmatched copies were invisible to the assertion as well as to the discovery.
+      Three more wordings close them; the count is asserted by kind below so a future
+      regex change cannot quietly retire a shape, and the pasted distribution on the
+      category-review page has its own test because a between-category move leaves
+      every total untouched.
+    */
+    const totals = AUDIT_CENSUS_TOTALS;
+    const claims = currentAuditCensusClaims();
+    expect(
+      claims.map((claim) => claim.file),
+      "The inventory of runtime/docs current audit-census claims changed. Keep " +
+        "the wording recognisable, and review every new or removed copy here.",
+    ).toEqual([
+      // The fenced `audit:census` paste. It was unmatched by the five original
+      // patterns, and an unmatched copy was invisible to this inventory as well —
+      // which is how 8/12 could look like "every". The "site total is unchanged
+      // at N" sentence that used to sit beside it became a historical statement
+      // when #2760's new payment writer made it untrue (the paste block above it
+      // carries the current figure), so it is deliberately unmatched now.
+      "docs/ai-diagnostics/audit-admin-category-review.md",
+      "docs/ai-diagnostics/tool-pack-booking-membership.md",
+      "docs/ai-diagnostics/tool-pack-booking-membership.md",
+      "docs/ai-diagnostics/tool-pack-finance.md",
+      "docs/ai-diagnostics/tool-pack-support.md",
+      // "every one of the N sites in the tree".
+      "docs/ai-diagnostics/tool-pack-support.md",
+      "docs/guides/audit-log.md",
+      // "every one of the N places does it".
+      "docs/guides/audit-log.md",
+      "src/lib/diagnostics/tools/packs/booking-records.ts",
+      "src/lib/diagnostics/tools/packs/finance-records.ts",
+      "src/lib/diagnostics/tools/packs/support-correlation.ts",
+    ]);
+    expect(
+      claims,
+      "A runtime or document current-fact copy is stale. Re-run `npm run " +
+        "audit:census`, then update every discovered claim in the same commit.",
+    ).toEqual(
+      claims.map(({ file, uncategorised }) => ({
+        file,
+        writeSites: totals.writeSites,
+        // A total-only claim asserts the site count and nothing else; see
+        // `CurrentCensusClaim`. It is still pinned on the number that drifts.
+        uncategorised: uncategorised === null ? null : totals.uncategorised,
+      })),
+    );
+    // Non-vacuous in both directions: the eleven claims must include at least one
+    // of each kind, or a future regex change could quietly retire a whole shape.
+    // (Twelve became eleven when #2760's new writer made the "site total is
+    // unchanged at N" sentence historical; the paste block still pins that page.)
+    expect(claims.filter((claim) => claim.uncategorised === null).length).toBe(2);
+    expect(claims.filter((claim) => claim.uncategorised !== null).length).toBe(9);
+  });
+
+  it("pins the pasted census DISTRIBUTION, not only its total", () => {
+    /*
+      The fenced `npm run audit:census` output on the category-review page states
+      the eleven per-category counts as well as the total, and nothing read either.
+      A pass that moves a writer between two categories leaves the total untouched —
+      #2755 did exactly that — so a total-only pin would leave that block asserting
+      a stale distribution indefinitely, on the page whose stated job is being the
+      reviewed record of which category each writer records.
+
+      Parsed out of the page rather than duplicated here: the manifest is the one
+      declaration and this asserts the page agrees with it.
+    */
+    const page = readFileSync(
+      resolve(process.cwd(), "docs", "ai-diagnostics", "audit-admin-category-review.md"),
+      "utf8",
+    );
+    const block = page.match(/category values:([\s\S]*?)```/);
+    expect(block, "the category-review page has no pasted census distribution").not
+      .toBeNull();
+    const pasted = Object.fromEntries(
+      (block?.[1] ?? "")
+        .replace(/\s+/g, " ")
+        .split(",")
+        .map((pair) => pair.trim())
+        .filter((pair) => pair.length > 0)
+        .map((pair) => {
+          const parts = pair.split(" ");
+          return [parts[0], Number(parts[1])] as const;
+        }),
+    );
+    expect(
+      pasted,
+      "The pasted census distribution on docs/ai-diagnostics/audit-admin-category-review.md " +
+        "disagrees with AUDIT_CENSUS_TOTALS.categoryValues. Re-run `npm run audit:census` " +
+        "and paste the new block.",
+    ).toEqual(AUDIT_CENSUS_TOTALS.categoryValues);
   });
 
   it("keeps every classification #2581 applied exactly where it was reviewed", () => {

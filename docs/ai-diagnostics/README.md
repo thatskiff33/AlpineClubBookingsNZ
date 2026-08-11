@@ -32,9 +32,10 @@ operator setup in [deployment.md](deployment.md). **AID-6A (#2375) has since lan
 the [support tool pack](tool-pack-support.md)** — deployment, configuration and
 readiness evidence behind `support:view`, bounded sanitized audit correlation behind
 `support:view` **and** the affected domain's own `area:view`, one column-restricted
-`AuditLog` grant, and the shared evidence-state and diagnostic-case contracts the
-remaining packs plug into. Those are AID-6B (#2376, booking/membership) and AID-6C
-(#2377, finance/Xero).
+`AuditLog` grant, and the shared evidence-state and diagnostic-case contracts.
+**AID-6B (#2376) and AID-6C (#2377) are now delivered too:** the booking and
+membership pack and the finance/Xero pack are documented below. The product
+shell/answer workflow remains a later implementation child.
 
 ## Governance: these contracts are binding
 
@@ -84,15 +85,31 @@ admission, AND across cross-area tools, fail-closed) in
 | Tool pack / child | Required (fresh) permission |
 | --- | --- |
 | Config/readiness + sanitized correlation (AID-6A, #2375) | `support:view` |
-| Booking & bed-allocation tools (AID-6B, #2376) | `bookings:view` |
-| Membership & induction tools (AID-6B, #2376) | `membership:view` |
+| Booking search, booking summary/link/party/request/audit evidence, per-night capacity (AID-6B, #2376) | `bookings:view` |
+| Booking bed-allocation and double-bed-sharing state (AID-6B, #2376) | `bookings:view` **and** `membership:view` |
+| Member search, per-member evidence, member eligibility (AID-6B, #2376) | `membership:view` |
+| A member's booking involvement (AID-6B, #2376) | `membership:view` **and** `bookings:view` |
+| Authoritative booking block state (AID-6B, #2376) | `bookings:view` **and** `membership:view` |
 | Finance & Xero-linkage tools (AID-6C, #2377) | `finance:view` |
 | Member↔Xero contact linkage (AID-6C, #2377) | `finance:view` **and** `membership:view` |
 | Authoritative booking-finance state (AID-6C, #2377) | `finance:view` **and** `bookings:view` |
 
+**AID-6B permission split: 7 booking-only, 6 membership-only, 3 combined.**
+`booking_bed_allocation_state` is combined: it requires `bookings:view` and
+`membership:view` because its double-bed verdict reads live membership and partner
+facts for both occupants.
+
 AID-6C is delivered: see [tool-pack-finance.md](tool-pack-finance.md) for its ten
 entries, the twelve relation grants they argue for, and the finance questions this
 platform stores no evidence to answer.
+
+AID-6B is delivered: see
+[tool-pack-booking-membership.md](tool-pack-booking-membership.md) for its sixteen
+entries, thirteen further relation grants plus the widened `Member`, and the
+booking and membership questions this schema cannot answer — including the member
+number it does not store. **No entry in that pack requires `support:view`**.
+Single-area tools stay available under their own area; the three cross-domain
+entries require both of their named domain permissions.
 
 ## Architecture decision records
 
@@ -405,7 +422,9 @@ accepted; those become positional parameters and nothing else.
   own permission review and its own table grant.
 - **Readiness now verifies the role.** `GET /api/admin/ai-diagnostics/readiness`
   reports a `databaseState` of `not_configured`, `misconfigured`, `unverified`,
-  `over_privileged`, or `verified`, and anything but `verified` blocks readiness.
+  `over_privileged`, `under_provisioned`, or `verified`, and anything but
+  `verified` blocks readiness. Missing declared grants are reported separately
+  from excess privilege so the re-provision action is explicit.
   It never returns the connection string, the password, or the role name.
 
 ### Privilege proof
@@ -422,6 +441,90 @@ credential**; and that a long query is cancelled at the statement timeout. It is
 off by default (opt-in `RUN_CONCURRENCY_RACE_TESTS=1`, loopback-only high-port
 dedicated database) and its CI step, environment, and ordering are pinned by
 `review-findings-contracts.test.ts` so the proof cannot be silently unplugged.
+
+## Delivered capability: the booking and membership tool pack (AID-6B, #2376)
+
+AID-6B adds the third tool pack on the SELECT-only substrate: **bounded booking and
+member selection, per-record booking and membership evidence, and three of the
+application's own authoritative calculations.** Sixteen entries. Full reference:
+[`tool-pack-booking-membership.md`](tool-pack-booking-membership.md).
+
+- **Selection comes first.** Two searches are the only way in, and fourteen of the
+  sixteen entries take an exact record id. `{}` parses for none of them, there is
+  no listing tool, no paging and no `COUNT`, and every predicate is an equality
+  except one member-name prefix, which uses `starts_with` over a literal prefix —
+  there is no `LIKE`, no regex and no wildcard character anywhere in the pack.
+- **Its own areas, and nothing borrowed.** AID-6B permission split: 7 booking-only,
+  6 membership-only, 3 combined. The combined entries are a member's booking
+  summary, authoritative booking block state, and booking bed-allocation state.
+  `booking_bed_allocation_state` is combined: it requires `bookings:view` and
+  `membership:view` because the double-bed verdict reads live member and partner
+  facts for both occupants. **None requires `support:view`** — #2376's owner
+  decision — and no argument can move a call between permission sets, because
+  `requiredAreas` is fixed on the entry and authorization runs before argument
+  parsing.
+- **Three authoritative answers rather than a second reading of the columns.**
+  `booking_block_state`, `booking_capacity_by_night` and `member_eligibility_state`
+  run the platform's own soft-policy evaluator, review-reason derivation, capacity
+  engine, member-night conflict scan, edit-window classifier, lifecycle resolver,
+  subscription-settlement rule and adult-member-host predicate. **Two of the three**
+  — `booking_block_state` and `member_eligibility_state` — return stable codes in an
+  argued priority order, and every code's operator sentence travels to the model
+  inside the entry's own **description**, with the scope repeating that the
+  description holds the exact meanings and that they must not be paraphrased.
+  That placement is deliberate and it is also a MEASURED constraint rather than a
+  preference: a description is always sent with the tool definition while
+  `evidenceScope` is attached to a RESULT, so a model has to have the meanings in
+  order to decide whether to ask for the tool at all — and the scope is spent out of
+  the same 8,000-character rendered evidence block the rows need. AID-6B put a
+  3,101-character catalogue in one scope and the empty block came to 7,545 of 8,000;
+  `tools.md` → "Adding an entry" records the measurement and the ceiling test that
+  now bounds it. `booking_capacity_by_night` deliberately has **no** code catalogue:
+  it is a per-night measurement, not a diagnosis, so there is no priority-ordered
+  list to place anywhere. Do not give a new multi-row entry a static catalogue in its
+  scope on the strength of this bullet.
+
+  All three run their whole read graph inside one `REPEATABLE READ` read-only
+  transaction, so the facts on a row are consistent with each other;
+  `observedAtUtc` is still assembly completion rather than the snapshot's own
+  timestamp, and their scopes require a rerun before action or a definitive
+  conclusion. "Whole read graph" includes the settings reads a canonical rule
+  consults on its own way to a verdict: the one collaborator that took no client —
+  the cached age-tier reader inside `loadMemberSubscriptionSettlements` — now takes
+  a reader instead, and the pack passes a strict one bound to its transaction. The
+  pack doc records why an unthreaded settings read is not a small caveat but a
+  fabricated finding about a named member.
+- **Thirteen more relation grants, plus the widened `Member`.** The allowlist now
+  names **twenty-six** relations, all by column. `Member` goes from two columns to
+  twenty-three — the most scrutinised change the allowlist has had — while the birth
+  date, the address, the credentials, the two-factor state and every free-text
+  column stay refused by PostgreSQL itself. The runtime refuses missing declared
+  grants as under-provisioned and rejects table-wide SELECT on every column
+  declaration as over-privileged, even when it would expose no extra column today.
+- **A presence boolean is not a cheaper grant.** A column privilege covers every
+  reference to the column, `notes IS NOT NULL` included, so six presence booleans
+  and one predicate-only grant were dropped rather than trade the property that a
+  withheld column is refused by the server.
+- **NZ date-only lodge nights throughout.** No date in the pack is ever converted,
+  given a time, or compared against `now()`: a date argument travels as text and is
+  cast `::date`, and `to_char` on a `date` column is timezone-independent by
+  construction.
+- **What it cannot answer is documented as loudly as what it can.** There is no
+  member number in this schema, induction gates no booking path in this release, a
+  new-booking exception request has no booking id to be found by, `FamilyGroupMember`
+  has no role column, bed allocation is not capacity, a booking's money is the
+  finance pack's, and an empty audit result is not evidence that nothing happened.
+
+### ADR-004's per-invocation opt-in is declared, not enforced
+
+Fourteen of the sixteen entries set `surfacesPersonalData: true` truthfully, but
+**nothing in the shipped code implements a per-invocation operator consent**. The
+flag records that a row can identify a person; it does not gate the entry, and it
+must not be described as a control. Implementing the opt-in is a prerequisite
+recorded on AID-7 (#2378). What actually bounds the pack today is the fresh AND-ed
+area check, the exact-identifier argument shapes, the fixed projections, the column
+grants, the row/byte/field ceilings, the 16-call-per-session ceiling and the audit
+row.
 
 ## Maintenance rules
 

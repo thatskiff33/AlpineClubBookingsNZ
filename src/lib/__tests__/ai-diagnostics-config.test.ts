@@ -156,6 +156,17 @@ describe("getDiagnosticsReadiness — fail-closed gate", () => {
     expect(r.blockers).toContain("database_role_unsafe");
   });
 
+  it("reports a missing-grants blocker for an under-provisioned role", async () => {
+    mocks.checkDiagnosticsDatabaseReadiness.mockResolvedValue({
+      state: "under_provisioned",
+      roleName: null,
+    });
+    const r = await getDiagnosticsReadiness({ aiDiagnostics: true });
+    expect(r.ready).toBe(false);
+    expect(r.blockers).toContain("database_grants_missing");
+    expect(r.blockers).not.toContain("database_role_unsafe");
+  });
+
   it("never reports a role name on the readiness response (metadata only)", async () => {
     // The role name is deployment configuration, but a readiness response is JSON
     // an admin browser receives — nothing about the credential belongs in it

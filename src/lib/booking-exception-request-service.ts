@@ -7,6 +7,8 @@ import { getStayNights } from "@/lib/policies/pricing";
 import { validateMinimumStay } from "@/lib/booking-policies";
 import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-review";
 import { evaluateProposedPaidUpAdultPresence } from "@/lib/subscription-lockout-enforcement";
+import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
+import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { computeMemberGuestBoundary } from "@/lib/booking-guests";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -712,6 +714,75 @@ export async function evaluateProposalPartyViolations(
     bookingId?: string | null;
   },
 ): Promise<PolicyExceptionViolation[]> {
+  return evaluatePartyViolations(db, lodgeId, party, presence, true);
+}
+
+/**
+ * Evaluate the non-hosting soft policies for a party already persisted on one
+ * booking. Hosting is deliberately absent here: persisted hosting evidence must
+ * use `evaluatePersistedBookingAdultMemberHostingReadOnly`, whose canonical
+ * snapshot includes sparse nights, operational consent, split siblings and
+ * same-owner exclusions that a proposal cannot represent.
+ */
+export async function evaluatePersistedBookingNonHostingPolicyViolations(
+  db: PolicyEvaluationDb,
+  lodgeId: string,
+  party: ProposalParty,
+  presence: { requestedByMemberId?: string | null; bookingId: string },
+  options?: {
+    /**
+     * The membership season these nights fall in, resolved authoritatively by the
+     * caller. See the same parameter on `evaluateProposedPaidUpAdultPresence` for
+     * why a read-only evidence caller must resolve it rather than letting the
+     * paid-up-adult rule read the process-level financial-year cache: nothing on a
+     * diagnostics path seeds that cache, so a club whose year-end month is not
+     * March would have its party judged in the wrong season. Omitted by every
+     * product caller, whose gated request has already seeded it.
+     */
+    seasonYear?: number;
+    /**
+     * The club's subscription-lockout mode, read authoritatively by the caller. Same
+     * reason as `seasonYear`: left to itself the paid-up-adult rule peeks it through
+     * readers that turn a database failure into `NO_BLOCK`, which is a safe
+     * direction for a booking write and a fabricated answer for evidence.
+     */
+    subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /**
+     * How the paid-up-adult rule reads the club's age-tier settings. Same split and
+     * the same reason as the two above: left to itself the rule reads them through
+     * the CACHED reader, which swallows a database failure into `AGE_TIER_DEFAULTS`
+     * — the platform's own tier rule standing in for the club's, with nothing
+     * marking the answer as unobserved. A read-only evidence caller passes a strict
+     * reader bound to its transaction; every product caller omits it and is
+     * unchanged. See `AgeTierSettingsReader`.
+     */
+    readAgeTierSettings?: AgeTierSettingsReader;
+  },
+): Promise<PolicyExceptionViolation[]> {
+  return evaluatePartyViolations(
+    db,
+    lodgeId,
+    party,
+    presence,
+    false,
+    options?.seasonYear,
+    options?.subscriptionLockoutMode,
+    options?.readAgeTierSettings,
+  );
+}
+
+async function evaluatePartyViolations(
+  db: PolicyEvaluationDb,
+  lodgeId: string,
+  party: ProposalParty,
+  presence:
+    | { requestedByMemberId?: string | null; bookingId?: string | null }
+    | undefined,
+  includeProposedHosting: boolean,
+  seasonYear?: number,
+  subscriptionLockoutMode?: SubscriptionLockoutMode,
+  readAgeTierSettings?: AgeTierSettingsReader,
+): Promise<PolicyExceptionViolation[]> {
   const checkIn = parseDateOnly(party.checkIn);
   const checkOut = parseDateOnly(party.checkOut);
 
@@ -723,18 +794,20 @@ export async function evaluateProposalPartyViolations(
   }
 
   const bookingOwnerMemberId = await resolveProposalBookingOwner(db, presence);
-  const hosting = await evaluateProposedAdultMemberHosting(db, {
-    bookingOwnerMemberId,
-    lodgeId,
-    checkIn,
-    checkOut,
-    guests: party.guests.map((guest) => ({
-      firstName: guest.firstName,
-      lastName: guest.lastName,
-      memberId: guest.memberId,
-      nights: guest.nights,
-    })),
-  });
+  const hosting = includeProposedHosting
+    ? await evaluateProposedAdultMemberHosting(db, {
+        bookingOwnerMemberId,
+        lodgeId,
+        checkIn,
+        checkOut,
+        guests: party.guests.map((guest) => ({
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          memberId: guest.memberId,
+          nights: guest.nights,
+        })),
+      })
+    : null;
   if (hosting) {
     violations.push(hosting);
   }
@@ -760,6 +833,9 @@ export async function evaluateProposalPartyViolations(
       ...guest,
       operationallyPresent: operationallyPresentFor(guest.memberId),
     })),
+    seasonYear,
+    mode: subscriptionLockoutMode,
+    ...(readAgeTierSettings ? { readAgeTierSettings } : {}),
   });
   if (paidUpAdult) {
     violations.push(paidUpAdult);

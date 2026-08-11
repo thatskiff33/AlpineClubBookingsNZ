@@ -587,7 +587,13 @@ export async function POST(
       logAudit({
         action: "member.deletion_rejected",
         // `privacy`, matching the four categorised deletion writers already in
-        // this route (#2581). Read with `support:view` plus `membership:view`.
+        // this route (#2581). `privacy` is in the MEMBERSHIP correlation domain,
+        // so the row is readable two ways and they are not the same permission:
+        // AI Diagnostics' membership CORRELATION entry needs `support:view` plus
+        // `membership:view` (a domain-wide window of recent events), while its
+        // record-scoped membership audit history needs `membership:view` alone
+        // (one exact record id, fewer columns) — see
+        // `aid6bRecordAuditReaderAreas`. Admin > Audit Log is unaffected.
         // `entityId` deliberately repeats `targetId`, so the subject the Admin
         // timeline resolves is byte-identical to today — the entity fields add
         // a type to the correlation projection, they do not move the row.
