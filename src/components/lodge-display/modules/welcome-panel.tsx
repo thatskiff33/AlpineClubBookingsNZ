@@ -1,6 +1,7 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { DisplayPanelOptions } from "./module-options";
-import { DISPLAY_SHORT_WEEKDAY } from "./status-helpers";
+import { countClubNights, requireCalendarDate } from "@/lib/club-time";
+import { shortDay } from "./status-helpers";
 
 // The rotating welcome panel (fork issues #30/#58; visual reference:
 // docs/lobby-display/mockups/approved/whole-lodge-rotating.html panel B): a
@@ -10,11 +11,8 @@ import { DISPLAY_SHORT_WEEKDAY } from "./status-helpers";
 // lodge generally when no group holds it.
 
 function shortDate(date: string): string {
-  // Same terse column-head shape as every other display module, from the one
-  // shared constant, and handed over at UTC midnight rather than parsed in the
-  // browser's own zone (#2264) — see `status-helpers.shortDay`.
-  const day = new Date(`${date}T00:00:00Z`);
-  return `${DISPLAY_SHORT_WEEKDAY.format(day)} ${day.getUTCDate()}`;
+  // The one shared column-head shape (`status-helpers.shortDay`).
+  return shortDay(date);
 }
 
 /**
@@ -32,9 +30,16 @@ function nightsHeld(row: {
   nights?: readonly string[];
 }): number {
   if (row.nights) return Math.max(1, row.nights.length);
-  const a = new Date(`${row.stayStart}T00:00:00Z`).getTime();
-  const b = new Date(`${row.stayEnd}T00:00:00Z`).getTime();
-  return Math.max(1, Math.round((b - a) / 86_400_000));
+  // Integer calendar arithmetic (CT-2, #2990). The elapsed-milliseconds
+  // subtraction this replaces needed a `Math.round` to survive a DST-affected
+  // span; a calendar night count has no such span to round away.
+  return Math.max(
+    1,
+    countClubNights(
+      requireCalendarDate(row.stayStart),
+      requireCalendarDate(row.stayEnd),
+    ),
+  );
 }
 
 export function WelcomePanel({

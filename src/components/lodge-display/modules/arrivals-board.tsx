@@ -11,7 +11,7 @@ import {
   intOption,
   type DisplayPanelOptions,
 } from "./module-options";
-import { DISPLAY_SHORT_WEEKDAY, shiftDateOnly } from "./status-helpers";
+import { displayWeekday, shiftDateOnly, shortDay } from "./status-helpers";
 import { formatArrivalTime } from "@/lib/arrival-time";
 
 // The everyday bar board (fork issues #30/#56; visual reference:
@@ -209,14 +209,6 @@ export function windowDatesOf(state: DisplayState): string[] {
   return state.occupancy.map((day) => day.date);
 }
 
-function shortDay(date: string): string {
-  // Same terse column-head shape as every other display module, from the one
-  // shared constant, and handed over at UTC midnight rather than parsed in the
-  // browser's own zone (#2264) — see `status-helpers.shortDay`.
-  const day = new Date(`${date}T00:00:00Z`);
-  return `${DISPLAY_SHORT_WEEKDAY.format(day)} ${day.getUTCDate()}`;
-}
-
 function formatDayHeading(date: string, index: number): string {
   return index === 0 ? `Tonight · ${shortDay(date)}` : shortDay(date);
 }
@@ -231,7 +223,7 @@ function formatDayHeading(date: string, index: number): string {
  */
 export function barMeta(segment: BarSegment): string {
   const since = segment.startsBeforeWindow
-    ? `since ${DISPLAY_SHORT_WEEKDAY.format(new Date(`${segment.stayStart}T00:00:00Z`))} → `
+    ? `since ${displayWeekday(segment.stayStart)} → `
     : "";
   return `${since}out ${shortDay(segment.stayEnd)}${segment.endsAfterWindow ? " →" : ""}`;
 }

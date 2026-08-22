@@ -14,21 +14,21 @@ const NO_BARE_TO_LOCALE_DATE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleDateString']",
   message:
-    "INV-DATE-015: Use formatNZDate/formatNZDateTime/formatNZLongDate/formatNZWeekdayDate/formatNZMonthYear from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264).",
+    "INV-DATE-015: Render through @/lib/club-time (CT-2, #2990). Holding a lodge night, a birthday or any other CALENDAR DAY? formatClubDate / formatClubLongDate / formatClubWeekdayDate / formatClubMonthYear, which take no timezone because a calendar day has none. Holding a real INSTANT such as createdAt? formatClubInstantDate / formatClubInstantDateTime and their siblings, with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264). @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
 };
 
 const NO_BARE_TO_LOCALE_TIME_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleTimeString']",
   message:
-    "INV-DATE-015: Use formatNZTime/formatNZDateTime from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264).",
+    "INV-DATE-015: Use formatClubInstantTime / formatClubInstantDateTime from @/lib/club-time (CT-2, #2990), with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264). @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
 };
 
 const NO_BARE_TO_LOCALE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleString']",
   message:
-    "INV-DATE-015: Use formatNZDateTime/formatNZDate from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason.",
+    "INV-DATE-015: Use formatClubInstantDateTime / formatClubInstantDate from @/lib/club-time (CT-2, #2990) for an instant, or formatClubDate for a calendar day, which takes no timezone at all. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason. @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
 };
 
 // #2289 — the two shapes of raw SQL that can lie about their own result.
@@ -463,10 +463,10 @@ const RAW_SQL_RESTRICTIONS = [
 // a template literal — which was live in three files, and which no arm of this
 // rule could see until it was added.
 const DATE_TRUNCATION_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Use formatDateOnly / formatMonthOnly from @/lib/date-only for a DATE-ONLY value (a `@db.Date` column, whose UTC midnight IS the NZ calendar day — INV-DATE-010) — and formatDateOnlyForTimeZone for a real instant such as `createdAt`, whose UTC day is the PREVIOUS New Zealand day all morning (#2697). Asking for today? todayDateOnlyForTimeZone() / getTodayDateOnly().";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are the compatibility adapters CT-6 retires.";
 
 const DATE_SPLIT_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? formatDateOnly (a date-only value — INV-DATE-010) or formatDateOnlyForTimeZone (a real instant) from @/lib/date-only. Holding a value already serialised to a string? dateOnlyFromIsoString.";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? @/lib/club-time (CT-2, #2990): calendarDateOfDateOnlyInstant for a `@db.Date` value (INV-DATE-010) or clubCalendarDateOf(instant, zone) for a real instant. Holding a value already serialised to a string? parseCalendarDate, or dateOnlyFromIsoString from the @/lib/date-only adapter.";
 
 // The ISO producers, spelled both ways a member access can reach them:
 // `d.toISOString()` reads `callee.property.name`, `d["toISOString"]()` reads
@@ -633,7 +633,7 @@ const NO_UNZONED_INTL_DATE_TIME_FORMAT = {
   selector:
     'NewExpression[callee.object.name="Intl"][callee.property.name="DateTimeFormat"]:not(:has(Property[key.name="timeZone"]))',
   message:
-    "INV-DATE-015: An Intl.DateTimeFormat with no `timeZone` renders in the VIEWER's zone, which is the whole defect the toLocaleDateString ban exists for (#2264) — and `en-CA` numeric is `yyyy-MM-dd`, so an unpinned one is a date-only encoding taken from the reader's calendar rather than the club's. Pass `timeZone: APP_TIME_ZONE` from @/config/operational, or use the helpers in @/lib/nzst-date. A formatter that really must follow the reader's clock passes `timeZone: undefined` explicitly.",
+    "INV-DATE-015: An Intl.DateTimeFormat with no `timeZone` renders in the VIEWER's zone, which is the whole defect the toLocaleDateString ban exists for (#2264) — and `en-CA` numeric is `yyyy-MM-dd`, so an unpinned one is a date-only encoding taken from the reader's calendar rather than the club's. Since CT-2 (#2990) no call site should be building one at all: use a named house shape from @/lib/club-time, which owns the only formatter factory in the tree and memoises it by zone. A formatter that really must follow the reader's clock passes `timeZone: undefined` explicitly.",
 };
 
 const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
@@ -1003,14 +1003,23 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // The rendering helper, and the one documented format exclusion.
+    // The one documented format exclusion left.
     // Flat config replaces a rule's whole option list rather than merging it, so
     // this block re-states the mandatory restrictions (#2289, #2684) instead of
-    // switching `no-restricted-syntax` off outright: neither file contains raw
-    // SQL or a hand-written date truncation, and the exemption they need is from
-    // the toLocale* DATE-RENDERING rules only. Same reasoning in the
+    // switching `no-restricted-syntax` off outright: the file contains no raw
+    // SQL and no hand-written date truncation, and the exemption it needs is
+    // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
     // Number-formatting block below.
-    files: ["src/lib/nzst-date.ts", "src/lib/email-templates/chores.ts"],
+    //
+    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE and no longer is (CT-2,
+    // #2990). It held the six frozen `Intl.DateTimeFormat` constants the club's
+    // rendering seam was built from; it now delegates every one of them to
+    // `@/lib/club-time`, so it neither formats nor needs an exemption, and
+    // taking it off this list is what stops a future edit quietly putting a
+    // hand-rolled `toLocale*` back into the seam. The census in
+    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the
+    // other half: it refuses an `Intl.DateTimeFormat` in either adapter.
+    files: ["src/lib/email-templates/chores.ts"],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(),
     },

@@ -1,101 +1,81 @@
+/**
+ * Date-only values, and the club-day boundaries derived from them.
+ *
+ * PARTLY A COMPATIBILITY ADAPTER over `@/lib/club-time` since CT-2 (#2990).
+ * Every function here that takes or implies a TIMEZONE now delegates to the
+ * kernel; the pure UTC-encoding helpers below (`formatDateOnly` and friends)
+ * still live here, because this module is the sanctioned home for the date-only
+ * encoding (#2684, `INV-DATE-019`) and the kernel deliberately holds a calendar
+ * day as text rather than as a `Date`. Retired by CT-6 (#2991).
+ *
+ * ONE BEHAVIOUR CHANGE, and it is a bug fix. `startOfDateOnlyForTimeZone`
+ * resolved a wall time by applying the zone offset twice, which lands BEFORE the
+ * transition when the requested midnight does not exist — so for a club whose
+ * clocks spring forward at midnight it returned an instant on the PREVIOUS
+ * calendar day. Swept across all 418 zones this runtime knows for 2015-2036, the
+ * old algorithm named the wrong day in eleven of them (Havana, Santiago, Sao
+ * Paulo, Asuncion, Cuiaba, Campo Grande, Coyhaique, Punta Arenas, Scoresbysund,
+ * Palmer, the Azores) and differed from the kernel's answer in sixteen. For
+ * `Pacific/Auckland`, `Pacific/Chatham`, `UTC` and `America/Denver` the two
+ * agree on **every day** of that twenty-one-year span, so this deployment sees
+ * no change at all — see `club-day-boundaries.test.ts`.
+ *
+ * `endOfDateOnlyForTimeZone` keeps its INCLUSIVE "one millisecond before the
+ * next day" shape, unchanged, because fifty-eight call sites depend on it. The
+ * kernel's own boundary is half-open (`endOfClubDayExclusive`) and new code
+ * should use that.
+ */
+
 import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  clubCalendarDateOf,
+  clubToday,
+  dateOnlyInstantOf,
+  endOfClubDayExclusive,
+  isCalendarDate,
+  parseCalendarDate,
+  startOfClubDay,
+  unvalidatedLegacyClubTimeZone,
+} from "@/lib/club-time";
 
-const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-function buildDateOnly(dateStr: string): Date {
-  return new Date(`${dateStr}T00:00:00.000Z`);
-}
+/** See `unvalidatedLegacyClubTimeZone` for why the legacy zone is not validated. */
+const legacyZone = (timeZone: string) => unvalidatedLegacyClubTimeZone(timeZone);
 
 export function isDateOnlyString(dateStr: string): boolean {
-  if (!DATE_ONLY_REGEX.test(dateStr)) {
-    return false;
-  }
-
-  const parsed = buildDateOnly(dateStr);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === dateStr;
+  return isCalendarDate(dateStr);
 }
 
 export function parseDateOnly(dateStr: string): Date {
-  return isDateOnlyString(dateStr) ? buildDateOnly(dateStr) : new Date(NaN);
+  const date = parseCalendarDate(dateStr);
+  return date === null ? new Date(NaN) : dateOnlyInstantOf(date);
 }
 
-function getDateParts(dateStr: string) {
-  if (!isDateOnlyString(dateStr)) {
-    return null;
-  }
-
-  const [year, month, day] = dateStr.split("-").map(Number);
-  return { year, month, day };
-}
-
-function getTimeZoneOffsetMs(date: Date, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts = formatter.formatToParts(date);
-  const readPart = (type: string) => {
-    const value = parts.find((part) => part.type === type)?.value;
-    return value ? Number(value) : NaN;
-  };
-  const asUtc = Date.UTC(
-    readPart("year"),
-    readPart("month") - 1,
-    readPart("day"),
-    readPart("hour"),
-    readPart("minute"),
-    readPart("second")
-  );
-
-  return asUtc - date.getTime();
-}
-
-function zonedDateOnlyTimeToUtc(
-  dateStr: string,
-  timeZone: string,
-  hours = 0,
-  minutes = 0,
-  seconds = 0,
-  milliseconds = 0
-): Date {
-  const parts = getDateParts(dateStr);
-  if (!parts) return new Date(NaN);
-
-  const localAsUtc = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    hours,
-    minutes,
-    seconds,
-    milliseconds
-  );
-  let result = new Date(localAsUtc - getTimeZoneOffsetMs(new Date(localAsUtc), timeZone));
-  result = new Date(localAsUtc - getTimeZoneOffsetMs(result, timeZone));
-  return result;
-}
-
+/**
+ * The first instant of a club calendar day. Delegates to `startOfClubDay`, which
+ * is defined as "the first instant that exists on that day" rather than
+ * "midnight" — see the module doc for the nineteen zones where those differ.
+ */
 export function startOfDateOnlyForTimeZone(
   dateStr: string,
   timeZone = APP_TIME_ZONE
 ): Date {
-  return zonedDateOnlyTimeToUtc(dateStr, timeZone);
+  const date = parseCalendarDate(dateStr);
+  if (date === null) return new Date(NaN);
+  return startOfClubDay(date, legacyZone(timeZone));
 }
 
+/**
+ * The last instant of a club calendar day, INCLUSIVE — the millisecond before
+ * the next day begins. New code wants the kernel's half-open
+ * `endOfClubDayExclusive` instead.
+ */
 export function endOfDateOnlyForTimeZone(
   dateStr: string,
   timeZone = APP_TIME_ZONE
 ): Date {
-  const nextDate = addDaysDateOnly(parseDateOnly(dateStr), 1);
-  if (Number.isNaN(nextDate.getTime())) return new Date(NaN);
-  const nextStart = startOfDateOnlyForTimeZone(formatDateOnly(nextDate), timeZone);
-  return new Date(nextStart.getTime() - 1);
+  const date = parseCalendarDate(dateStr);
+  if (date === null) return new Date(NaN);
+  return new Date(endOfClubDayExclusive(date, legacyZone(timeZone)).getTime() - 1);
 }
 
 /**
@@ -180,40 +160,18 @@ export function formatCalendarDayOnly(
   return `${year}-${month}-${dayOfMonth}`;
 }
 
-// Intl.DateTimeFormat construction costs ~0.1ms; the capacity, pricing, and
-// finance loops call this once per (booking, night) pair, so a fresh formatter
-// per call dominated those paths. Instances are stateless for formatToParts,
-// so one per time zone is shared safely.
-const dateOnlyFormatterCache = new Map<string, Intl.DateTimeFormat>();
-
-function getDateOnlyFormatter(timeZone: string): Intl.DateTimeFormat {
-  let formatter = dateOnlyFormatterCache.get(timeZone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-    dateOnlyFormatterCache.set(timeZone, formatter);
-  }
-  return formatter;
-}
-
+/**
+ * The club calendar day a real instant falls on. Delegates to the kernel's
+ * `clubCalendarDateOf`, whose formatter memo is the same zone-keyed map this
+ * function used to own — kept for the same measured reason: `Intl` construction
+ * costs about 42 microseconds against 0.76 memoised, and the capacity, pricing
+ * and finance loops call this once per (booking, night) pair.
+ */
 export function formatDateOnlyForTimeZone(
   date: Date,
   timeZone = APP_TIME_ZONE
 ): string {
-  const parts = getDateOnlyFormatter(timeZone).formatToParts(date);
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    throw new Error(`Unable to derive date-only value for timezone ${timeZone}`);
-  }
-
-  return `${year}-${month}-${day}`;
+  return clubCalendarDateOf(date, legacyZone(timeZone));
 }
 
 // Returns "now" as a yyyy-MM-dd string in the given time zone. Admin default
@@ -222,7 +180,7 @@ export function formatDateOnlyForTimeZone(
 // post-midnight activity for operators (or CI) whose clock trails NZ. Deriving
 // the default in the club time zone keeps the seed and the interpretation aligned.
 export function todayDateOnlyForTimeZone(timeZone = APP_TIME_ZONE): string {
-  return formatDateOnlyForTimeZone(new Date(), timeZone);
+  return clubToday(legacyZone(timeZone));
 }
 
 export function normalizeDateOnlyForTimeZone(
@@ -321,27 +279,7 @@ export function eachDateOnlyInRange(startInclusive: Date, endExclusive: Date): D
   return dates;
 }
 
+/** Today's club calendar day as a date-only `Date`. INV-DATE-019. */
 export function getTodayDateOnly(timeZone = APP_TIME_ZONE): Date {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const parts = formatter.formatToParts(new Date());
-  const year = parts.find((part) => part.type === "year")?.value;
-  const month = parts.find((part) => part.type === "month")?.value;
-  const day = parts.find((part) => part.type === "day")?.value;
-
-  if (!year || !month || !day) {
-    throw new Error(`Unable to derive current date for timezone ${timeZone}`);
-  }
-
-  const today = parseDateOnly(`${year}-${month}-${day}`);
-  if (Number.isNaN(today.getTime())) {
-    throw new Error(`Unable to derive current date for timezone ${timeZone}`);
-  }
-
-  return today;
+  return dateOnlyInstantOf(clubToday(legacyZone(timeZone)));
 }

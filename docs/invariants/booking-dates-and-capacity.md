@@ -460,6 +460,38 @@ derivation).
   by side (`Booking.draftExpiresAt` and `CalendarEvent.startsAt` against
   `Booking.checkIn`/`checkOut`) and names which is which.
 
+### INV-DATE-025
+
+- **A club-local wall time is not guaranteed to exist, and may exist twice.**
+  Deriving an instant from "this date at this clock time in the club's zone" has
+  two failure modes that a single offset lookup cannot see, and both are the
+  DST transition itself rather than an edge case invented for a test.
+- **The kernel resolves it with THREE probes, not two.** Measured across all 418
+  zones this runtime knows, on every transition-adjacent day from 2015 to 2036:
+  local midnight is **skipped in 19 zones** and **ambiguous in 8**. The
+  two-probe correction the legacy helper used names the **wrong calendar day in
+  11** of them — Havana, Santiago, São Paulo, Asunción, Cuiabá, Campo Grande,
+  Coyhaique, Punta Arenas, Scoresbysund, Palmer, Azores — and differs from the
+  correct answer in 16. It is also blind to an ambiguity when both probes land
+  the same side of the transition: on `Asia/Amman`, 2015-10-30 midnight occurs at
+  21:00Z **and again** at 22:00Z, the old code returns the later, and "the start
+  of 30 October" silently loses its own first hour. Probing a day before, at, and
+  a day after — and reading every candidate back — is what closes both.
+- **The policy is explicit at the call site, on two independent axes.** A
+  *skipped* wall time defaults to `reject`, because nothing asks on purpose for a
+  moment that never happened; a day-boundary caller opts into
+  `nextExistingInstant` so a booking screen can never fail to render. An
+  *ambiguous* wall time defaults to `earliest`, because a job scheduled at 01:30
+  on a fall-back day should run once, at the first 01:30 — refusing there would
+  break a legitimate schedule.
+- **Noon is measurably safe, and that is an argument for the stay boundary rather
+  than a happy accident.** In the same sweep — 418 zones, 2015 to 2036 — local
+  noon is **never skipped and never ambiguous**. So the noon-to-noon stay window
+  of `INV-DATE-002` can derive both endpoints without a policy at all, on any
+  zone a club could configure under `INV-CONFIG-002`. Midnight could not.
+- Decided on #2990 (CT-2) under epic #2988; the measurements are that issue's,
+  re-runnable from the sweep it records.
+
 ### INV-DATE-024
 
 - **`Member.dateOfBirth` is a CALENDAR DAY, stored at UTC midnight.** The column
@@ -509,7 +541,10 @@ derivation).
 - **When a server asks for "today", it asks the club's calendar.**
   `todayDateOnlyForTimeZone()` returns it as a `yyyy-MM-dd` string and
   `getTodayDateOnly()` as a date-only `Date`; both live in
-  `src/lib/date-only.ts` and both work on the server and in the browser. Never
+  `src/lib/date-only.ts` and both work on the server and in the browser. Since
+  CT-2 (#2990) both are adapters over `clubToday()` in `@/lib/club-time`, which
+  is where new code should ask; the answer is unchanged and the signatures are
+  preserved. Never
   `new Date().toISOString().slice(0, 10)` (or `.substring(0, 10)`, or
   `.split("T")[0]`) — that is the **UTC** day, which is still *yesterday* in New
   Zealand for roughly the first half of every NZ day. #2682 fixed fifteen sites
@@ -693,6 +728,17 @@ derivation).
   `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant
   instead. That, not an `eslint-disable`, is the escape hatch, and there are no
   disables in the tree.
+- **Since CT-2 (#2990) the seam is `@/lib/club-time`, and `nzst-date.ts` is an
+  adapter over it.** New code formats through the kernel: a CALENDAR DATE takes
+  no zone argument at all (16 April 2026 is a Thursday everywhere, and the
+  kernel pins `timeZone: "UTC"` over the UTC-midnight encoding so the projection
+  is provably the identity), while an INSTANT takes the club zone explicitly.
+  The six legacy helpers keep their signatures and delegate, so no call site has
+  changed and none is wrong; CT-6 (#2991) retires them. The lint arms above are
+  unchanged in what they MATCH — deliberately, so none of the ~400 unmigrated
+  call sites newly fails — and changed only in where their message sends you.
+  `nzst-date.ts` has itself left the `toLocale*` exemption block, because it no
+  longer formats anything.
 - **Where the zone those formatters pin comes from is now a different
   invariant.** Since CT-1 (#2989) the club's timezone is the persisted
   `ClubTimeSettings.timeZone`, read through `getClubTimeZone()` — `INV-CONFIG-002`

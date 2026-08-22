@@ -1,68 +1,73 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+/**
+ * COMPATIBILITY ADAPTER over `@/lib/club-time`. Retired by CT-6 (#2991).
+ *
+ * These six helpers were the club's one rendering seam (`INV-DATE-015`) and they
+ * still are — but the formatting itself now lives in the kernel, and each
+ * function here is one line that supplies the zone.
+ *
+ * ## What the delegation does and does not change
+ *
+ * It single-sources the FORMATTING LOGIC: there is no longer a second set of
+ * frozen `Intl.DateTimeFormat` constants that could drift from the kernel's
+ * shapes, and `house-shape-equivalence.test.ts` pins the two together.
+ *
+ * It changes **no caller's zone authority.** Every function below still passes
+ * `APP_TIME_ZONE` — `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` —
+ * so after CT-2 all 132 modules importing this file read the environment exactly
+ * as they did before. Moving a call site onto the persisted club timezone is
+ * per-call-site work and belongs to CT-4 and CT-5.
+ *
+ * **No test on this deployment can tell the difference**, and that is worth
+ * stating plainly rather than leaving for someone to discover: `TZ` is
+ * `Pacific/Auckland` here and the persisted zone is `Pacific/Auckland`, and
+ * `club-time-zone-env-agreement.test.ts` deliberately pins the two together
+ * while both exist. A claim that CT-2 "moves the application onto the persisted
+ * zone" would be false and green.
+ *
+ * ## New code does not import this file
+ *
+ * A server module reads the zone with `clubTime()` from `@/lib/club-time/server`
+ * and formats through the binding; a client module receives the identifier as
+ * data and calls `bindClubTime`. Holding a lodge night rather than a moment? It
+ * is a `CalendarDate` and wants `formatClubDate`, which takes no zone at all.
+ *
+ * ## History kept, because it explains the shapes
+ *
+ * #2264 added the last four shapes because the repo kept hand-rolling them, and
+ * a hand-rolled call is exactly where the club's zone gets forgotten: three
+ * sites were rendering in the VIEWER's zone (the lobby clock, the events-calendar
+ * time and the lodge-display date line), so an operator or a TV browser outside
+ * New Zealand showed the wrong time.
+ *
+ * The NZST "today"/"tomorrow" helpers were removed in #1878: they built
+ * `new Date(`${y}-${m}-${d}T00:00:00`)` with no timezone suffix, so the string
+ * parsed in the server's LOCAL zone and, under the production
+ * `TZ=Pacific/Auckland` pin, serialized as the previous UTC day in every Prisma
+ * `@db.Date` comparison. Cron jobs that need the club's calendar date use
+ * `getTodayDateOnly()` / `addDaysDateOnly()` from `@/lib/date-only`, or
+ * `clubToday()` from the kernel.
+ */
 
-const NZ_TIME_ZONE = APP_TIME_ZONE;
+import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  formatClubInstantDate,
+  formatClubInstantDateTime,
+  formatClubInstantLongDate,
+  formatClubInstantMonthYear,
+  formatClubInstantTime,
+  formatClubInstantWeekdayDate,
+  unvalidatedLegacyClubTimeZone,
+} from "@/lib/club-time";
 
-const NZ_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  dateStyle: "medium",
-});
-
-const NZ_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-// #2264 — four further shapes, added because the repo kept hand-rolling them.
-// Before this, `nzst-date` offered only the two `dateStyle` shapes above, so
-// every screen that legitimately wanted a bare time, a month heading, a
-// weekday-bearing date or the long spelled-out date had to call
-// `toLocaleTimeString`/`toLocaleDateString` itself — and a hand-rolled call is
-// exactly where the club's time zone gets forgotten. Three such sites were
-// rendering in the VIEWER's zone (the lobby clock, the events-calendar time,
-// and the lodge-display date line), so an operator or a TV browser outside New
-// Zealand showed the wrong time.
-//
-// Each helper below pins BOTH the locale and the zone, so a caller cannot
-// reintroduce that bug. A screen whose format is none of these six keeps its
-// own module-level `Intl.DateTimeFormat` constant pinned the same way — that,
-// not an eslint-disable, is the escape hatch (see `eslint.config.mjs`).
-
-// The long, spelled-out month form. Owner decision (#2264, 2 Aug 2026): the
-// member-facing surfaces that used to render this — the booking messages and
-// emails a member receives, the lodge/hut-leader "last updated" stamps, and the
-// generated report cover — keep reading "16 April 2026", NOT the "16 Apr 2026"
-// house medium. Admin and internal surfaces stay on `formatNZDate`.
-const NZ_LONG_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  dateStyle: "long",
-});
-
-const NZ_TIME_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  timeStyle: "short",
-});
-
-const NZ_MONTH_YEAR_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  month: "long",
-  year: "numeric",
-});
-
-const NZ_WEEKDAY_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: NZ_TIME_ZONE,
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+/** See `unvalidatedLegacyClubTimeZone` for why this is not validated. */
+const LEGACY_CLUB_ZONE = unvalidatedLegacyClubTimeZone(APP_TIME_ZONE);
 
 export function formatNZDate(date: Date): string {
-  return NZ_DATE_FORMATTER.format(date);
+  return formatClubInstantDate(date, LEGACY_CLUB_ZONE);
 }
 
 export function formatNZDateTime(date: Date): string {
-  return NZ_DATE_TIME_FORMATTER.format(date);
+  return formatClubInstantDateTime(date, LEGACY_CLUB_ZONE);
 }
 
 /**
@@ -70,20 +75,20 @@ export function formatNZDateTime(date: Date): string {
  * member-facing surfaces the owner asked to keep it on (#2264): booking
  * messages and the emails built from them, the lodge/hut-leader instruction
  * "last updated" stamps, and the generated report cover. Everything admin-side
- * or internal uses `formatNZDate`.
+ * or internal uses `formatNZDate`. INV-DATE-016.
  */
 export function formatNZLongDate(date: Date): string {
-  return NZ_LONG_DATE_FORMATTER.format(date);
+  return formatClubInstantLongDate(date, LEGACY_CLUB_ZONE);
 }
 
 /** Time of day only, in club time — "11:30 am". No date, no seconds. */
 export function formatNZTime(date: Date): string {
-  return NZ_TIME_FORMATTER.format(date);
+  return formatClubInstantTime(date, LEGACY_CLUB_ZONE);
 }
 
 /** Month heading in club time — "April 2026". */
 export function formatNZMonthYear(date: Date): string {
-  return NZ_MONTH_YEAR_FORMATTER.format(date);
+  return formatClubInstantMonthYear(date, LEGACY_CLUB_ZONE);
 }
 
 /**
@@ -91,13 +96,5 @@ export function formatNZMonthYear(date: Date): string {
  * day of the week is the thing being scanned (arrivals, stays, rosters).
  */
 export function formatNZWeekdayDate(date: Date): string {
-  return NZ_WEEKDAY_DATE_FORMATTER.format(date);
+  return formatClubInstantWeekdayDate(date, LEGACY_CLUB_ZONE);
 }
-
-// The NZST "today"/"tomorrow" helpers were removed (issue #1878): they built
-// `new Date(`${y}-${m}-${d}T00:00:00`)` — no timezone suffix, so the string
-// parsed in the server's LOCAL zone and, under the production
-// TZ=Pacific/Auckland pin, serialized as the previous UTC day in every Prisma
-// @db.Date comparison. Cron jobs that need the NZ calendar date must use
-// getTodayDateOnly()/addDaysDateOnly() from "@/lib/date-only", which pin the
-// NZ calendar date to UTC midnight.
