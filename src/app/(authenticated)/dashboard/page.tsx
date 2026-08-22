@@ -27,6 +27,8 @@ import {
   ClipboardCheck,
   ChevronRight,
   Wrench,
+  MessageSquare,
+  Users,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
@@ -738,6 +740,52 @@ export default async function DashboardPage() {
                   ))}
                 </ul>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Message board tile. Gated on the same module as the board itself:
+            /message-board is feature-routed on `commsPortal`, so an ungated
+            tile would be a button to a blocked route. */}
+        {modules.commsPortal && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Message Board
+              </CardTitle>
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">Message Everyone</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Send a message for everyone in the lodge.
+              </p>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/message-board">Open Message Board</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Kiosk tile. `/lodge` is feature-routed on `kiosk`, hence the gate.
+            Deliberately NOT gated on kiosk access tier: a member with no tier
+            gets the read-only lodge view rather than a refusal, which is the
+            "who is in the lodge" this card offers. */}
+        {modules.kiosk && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Lodge Kiosk</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">Who is in the lodge</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                The lodge kiosk will show you who is arriving and leaving the
+                lodge.
+              </p>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/lodge/kiosk">Open Kiosk</Link>
+              </Button>
             </CardContent>
           </Card>
         )}
