@@ -24,6 +24,7 @@ import {
   Stethoscope,
   Activity,
   Mail,
+  MessageSquare,
   Newspaper,
   UserCheck,
   Trash2,
@@ -318,6 +319,19 @@ const navSections: NavSection[] = [
         label: "Communications",
         icon: Mail,
         keywords: ["email", "newsletter", "bulk message", "broadcast"],
+      },
+      {
+        href: "/admin/message-board",
+        label: "Message Board",
+        icon: MessageSquare,
+        keywords: [
+          "message board",
+          "posts",
+          "member posts",
+          "moderation",
+          "hide post",
+          "remove post",
+        ],
       },
       {
         href: "/admin/notices",
