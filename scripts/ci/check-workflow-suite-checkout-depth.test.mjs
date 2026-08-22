@@ -476,20 +476,43 @@ describe("this repository", () => {
     ).toContain("full-suite");
   });
 
-  it("leaves the realdb jobs, which run targeted files and check out shallow, passing", () => {
+  it("leaves the realdb jobs, which run targeted files, passing — and only ONE of them still checks out shallow", () => {
     const jobs = parseWorkflowYaml(
       readFileSync(path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8"),
     ).jobs;
 
-    for (const jobId of ["migration-drift", "data-migration-verification"]) {
-      const job = jobs[jobId];
-      const checkout = job.steps.find((step) =>
-        String(step.uses ?? "").startsWith("actions/checkout"),
-      );
-      // These jobs are correct as they stand: shallow, and no git anywhere.
-      expect(checkout.with?.["fetch-depth"]).toBeUndefined();
+    const checkoutOf = (job) =>
+      job.steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout"));
 
-      const invocations = job.steps
+    /*
+      This assertion used to cover both jobs with one loop and one reason:
+      "correct as they stand: shallow, and no git anywhere". Half of that stopped
+      being true in #3002.
+
+      `migration-drift` now runs a ledger-coverage check that resolves a MERGE
+      BASE to find the migrations a change adds, so it shells out to git against
+      this repository's own commits — which is the same reason this whole gate
+      exists, arriving at a job that previously had none. It therefore needs
+      `fetch-depth: 0`, and the danger of leaving it shallow is the sharper
+      version of #2909's: `git merge-base` on a depth-1 clone does not fail, it
+      returns HEAD, so the added-migration set comes back EMPTY and the check
+      passes over the very pair it exists to catch. The check refuses a shallow
+      clone outright for that reason; the full checkout is what stops it refusing
+      on every run.
+
+      `data-migration-verification` still touches no git and stays shallow.
+    */
+    // Compared numerically: this file's small YAML reader returns scalars as
+    // strings, so `toBe(0)` would pin the reader rather than the workflow.
+    expect(
+      Number(checkoutOf(jobs["migration-drift"]).with?.["fetch-depth"]),
+    ).toBe(0);
+    expect(
+      checkoutOf(jobs["data-migration-verification"]).with?.["fetch-depth"],
+    ).toBeUndefined();
+
+    for (const jobId of ["migration-drift", "data-migration-verification"]) {
+      const invocations = jobs[jobId].steps
         .filter((step) => typeof step.run === "string")
         .flatMap((step) => classifyRunScript(step.run));
       expect(invocations.length).toBeGreaterThan(0);

@@ -12,12 +12,25 @@ name: CI
 #   public maintenance baseline.
 
 on:
+  # `epic/**` is here for the integration-branch model (#3002): an epic's
+  # children target `epic/<issue>-<slug>` rather than `main`, so without this
+  # they would get no CI at all and the only substitute was a throwaway probe
+  # pull request against `main` — which tests the commit OUTSIDE its stack and
+  # so can pass while the stacked integration is broken. `push` is included as
+  # well so the integration branch is re-checked after each child merges into
+  # it, rather than surfacing breakage at the epic's final merge.
+  #
+  # This widens WHEN the existing jobs run and adds no new status context, so
+  # `main`'s branch protection is untouched. See
+  # docs/agents/ISSUE_WORKFLOW.md -> "An epic reaches `main` as ONE merge".
   pull_request:
     branches:
       - main
+      - "epic/**"
   push:
     branches:
       - main
+      - "epic/**"
 
 permissions:
   contents: read
@@ -510,10 +523,24 @@ jobs:
       # everything earlier in it through.
       #
       # A base the checkout cannot reach — an all-zero `before` from a
-      # ref-creating push, or a commit orphaned by a force-push — FAILS here
-      # rather than passing with no evidence, the same way `npm run pr:check`
-      # treats an unresolvable base. Both are blocked on `main` by branch
-      # protection, so a red gate is the right answer if either ever appears.
+      # ref-creating push, or a commit orphaned by a force-push — FAILS in the
+      # ratchet rather than passing with no evidence, the same way
+      # `npm run pr:check` treats an unresolvable base.
+      #
+      # THAT IS WHY `github.event.created == false` IS IN THE EXPRESSION, and it
+      # is not decoration. This comment used to say both cases were "blocked on
+      # `main` by branch protection, so a red gate is the right answer if either
+      # ever appears" — true while `push` only ever meant `main`. #3002 added
+      # `push: branches: [epic/**]` above, and an epic branch is CREATED
+      # routinely, once per epic. A ref-creating push carries
+      # `before = 0000…`, the ratchet correctly refuses it, and `verify` would
+      # be red on the first push of every epic branch — a gate failing on an
+      # event that is entirely normal, which is how a gate gets ignored and then
+      # deleted. On a creating push the branch is judged against `origin/main`
+      # instead, which for a branch just cut from main is the same comparison a
+      # pull request would make. The `Check migration safety ledger coverage`
+      # step below carries the identical guard for the identical reason; keep
+      # the two in step.
       #
       # `fetch-depth: 0` on this job's checkout is load-bearing for a quieter
       # reason than it used to say here: a shallow clone does NOT fail: it
@@ -526,7 +553,7 @@ jobs:
       # behind the slower gates.
       - name: File-size budget ratchet
         env:
-          BUDGET_BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
+          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false) && github.event.before || 'origin/main' }}
         run: npm run quality:budget -- --base "$BUDGET_BASE"
 
       - name: Generate Prisma client
@@ -623,13 +650,37 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # #3002: the ledger coverage check now also compares against a BASE REF
+          # to find the migrations this change adds, and it refuses a shallow
+          # clone rather than working from one. That refusal is deliberate and it
+          # is the same trap the file-size ratchet records: on a depth-1 clone
+          # `git merge-base` does not error, it hands back HEAD — so the
+          # added-migration set would come back empty and the gate would pass
+          # over the very pair it exists to catch.
+          fetch-depth: 0
 
       # Fails fast (no database or npm install needed) if any migration matching
-      # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, or
-      # if a new migration reuses an existing timestamp prefix. Catches finding
-      # F8 (#1359) at PR time instead of at a fork's production deploy.
+      # the blue/green hot-table/breaking regexes lacks a safety-ledger entry, if
+      # a new migration reuses an existing timestamp prefix, or — since #3002 —
+      # if a migration this change adds is a CONTRACT whose `previous_expand_release`
+      # names an expand this change also adds. Catches finding F8 (#1359) at PR
+      # time instead of at a fork's production deploy.
+      #
+      # THE BASE REF IS WHAT GIVES CHECK 4 ITS EPIC-WIDE REACH. On a pull request
+      # the default `origin/main` is right in a way worth stating: for a child
+      # targeting `epic/<n>`, the merge base of `origin/main` and that child's
+      # head is the epic's BRANCH POINT, so the added set is the whole epic so far
+      # plus this child — which means a child adding a contract for an expand an
+      # EARLIER child added is caught at child-PR time rather than only at
+      # `epic -> main`. On a push the event's `before` is the honest base, except
+      # for a ref-CREATING push, whose `before` is all zeroes and which the gate
+      # refuses; `github.event.created == false` is what keeps that off, and it
+      # matters now that `epic/**` branches are created routinely.
       - name: Check migration safety ledger coverage
-        run: bash scripts/check-migration-safety-coverage.sh
+        env:
+          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false) && github.event.before || 'origin/main' }}
+        run: bash scripts/check-migration-safety-coverage.sh --base "$MIGRATION_SAFETY_BASE"
 
       # #2418: a data-REWRITING migration (backfill, repair, value transform)
       # must ship a verification fixture that the data-migration-verification
