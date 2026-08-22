@@ -141,6 +141,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-013` | Compare date columns only against date-only values, never a raw clock |
 | `INV-DATE-024` | `Member.dateOfBirth` is a calendar day at UTC midnight; never a local-midnight parse, never an instant comparison |
 | `INV-DATE-025` | A club-local wall time may not exist or may exist twice; three probes resolve it, and noon is measurably never either |
+| `INV-DATE-026` | A calendar-day column is `@db.Date`, and a Prisma bound against one must be UTC midnight or it narrows to the previous day |
 | `INV-DATE-019` | Ask the club's calendar for "today", never the UTC clock |
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, carried end to end |
 | `INV-DATE-015` | Rendering has one seam, `nzst-date.ts`; bare `toLocale*` is lint-blocked |

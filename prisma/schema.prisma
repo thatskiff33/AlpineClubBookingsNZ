@@ -511,7 +511,7 @@ model Member {
   firstName               String
   lastName                String
   gender                  Gender?
-  dateOfBirth             DateTime?
+  dateOfBirth             DateTime? @db.Date
   // Free-text occupation. Optional, adult-only, and admin-toggleable via
   // MemberFieldsSettings.showOccupation.
   occupation              String?
@@ -567,10 +567,10 @@ model Member {
   detailsConfirmedAt                  DateTime?
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
-  joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
+  joinedDate                          DateTime? @db.Date // Membership start date, sourced from Xero first invoice
   // Historical life-membership date retained for existing records. Seasonal
   // membership type changes are managed through SeasonalMembershipAssignment.
-  lifeMemberDate                      DateTime?
+  lifeMemberDate                      DateTime? @db.Date
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   hutLeaderEligible                   Boolean            @default(false)
   hutLeaderEligibleAt                 DateTime?
@@ -927,7 +927,7 @@ model MemberApplication {
   applicantFirstName    String
   applicantLastName     String
   applicantEmail        String
-  applicantDateOfBirth  DateTime?
+  applicantDateOfBirth  DateTime? @db.Date
   applicantPhone        String?
   applicantAddress      Json?
   familyMembers         Json?
@@ -2127,7 +2127,7 @@ model GroupBooking {
   joinCode           String                  @unique
   paymentMode        GroupBookingPaymentMode
   status             GroupBookingStatus      @default(OPEN)
-  joinDeadline       DateTime?
+  joinDeadline       DateTime?               @db.Date
   maxJoiners         Int?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
@@ -2952,10 +2952,10 @@ model PromoCode {
   maxUniqueMembersTotal        Int? // Hard cap on distinct members who can ever redeem (null = unlimited)
   maxUsesPerMember             Int? // Cap on how many bookings one member can apply this code to (null = unlimited, 1 = single-use)
   currentRedemptions           Int               @default(0)
-  validFrom                    DateTime?
-  validUntil                   DateTime?
-  bookingStartFrom             DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  bookingStartUntil            DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  validFrom                    DateTime?         @db.Date
+  validUntil                   DateTime?         @db.Date
+  bookingStartFrom             DateTime?         @db.Date // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil            DateTime?         @db.Date // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
   membersOnly                  Boolean           @default(false) // Booker must be a member
   memberGuestsOnly             Boolean           @default(false) // Promo only applies to guest rows flagged as members
   assignedMembersOnlyOwnNights Boolean           @default(true) // Assigned members can only apply the promo to their own linked guest nights
@@ -5740,12 +5740,12 @@ model FamilyGroupJoinRequest {
   // For CHILD_REQUEST: child details submitted by parent
   childFirstName   String?
   childLastName    String?
-  childDateOfBirth DateTime?
+  childDateOfBirth DateTime? @db.Date
 
   // For ADULT_REQUEST: non-login adult details submitted by a family adult
   requestedFirstName   String?
   requestedLastName    String?
-  requestedDateOfBirth DateTime?
+  requestedDateOfBirth DateTime? @db.Date
   requestedEmail       String?
 
   // Set by admin when approving CHILD_REQUEST — links to existing member
@@ -6473,6 +6473,16 @@ model MembershipNominationSettings {
   minimumMembershipMonths Int       @default(12)
   minimumNights           Int       @default(6)
   requiredSignOffs        Int       @default(2)
+  // NOT `@db.Date`, and that is a decision rather than an oversight (#2872,
+  // CT-3). This column is MIXED: the admin panel sends a calendar day from an
+  // `<input type="date">`, but `api/admin/membership-nomination-settings`
+  // stamps `new Date()` — a real instant — the first time the gate is enabled
+  // with the cutoff box left empty, which the panel's own help text presents as
+  // ordinary use. A column with a clock writer is exactly what excluded
+  // `MemberInduction.inductionDate` from the same migration. Narrowing it would
+  // also make that migration's fail-closed preflight RAISE on any club that has
+  // already enabled the gate that way. See "WHAT IS DELIBERATELY NOT HERE" in
+  // prisma/migrations/20260825010000_narrow_calendar_date_columns/migration.sql.
   gateEffectiveFrom       DateTime?
   updatedByMemberId       String?
   createdAt               DateTime  @default(now())

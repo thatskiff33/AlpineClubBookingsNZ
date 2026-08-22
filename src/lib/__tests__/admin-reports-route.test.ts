@@ -188,6 +188,49 @@ describe("admin reports route", () => {
     expect(mockPrisma.booking.findMany).toHaveBeenCalledTimes(1);
   }, 15_000);
 
+  it("counts new members from the two CALENDAR DAYS, not the club-day instants (#2872)", async () => {
+    // `Member.joinedDate` became `DateTime @db.Date` in CT-3, and
+    // `@prisma/adapter-pg` narrows a bound `Date` for such a column to its UTC
+    // calendar date, throwing the time away. This route used to hand that filter
+    // `startOfDateOnlyForTimeZone(from)` — club midnight, which under the club's
+    // own Pacific/Auckland zone is 12:00 on the PREVIOUS UTC day — so after the
+    // migration the lower bound would have narrowed to the day BEFORE the window
+    // and counted a member who joined the day before the report as a new joiner.
+    //
+    // `Member.createdAt` in the very same OR is a real instant and must keep the
+    // club-day moments, so the two arms are asserted together: one window, two
+    // kinds of column, two encodings (INV-DATE-013).
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-04-08&to=2026-04-10"),
+    );
+    expect(response.status).toBe(200);
+
+    const newMemberQuery = mockPrisma.member.count.mock.calls.at(-1)![0];
+    expect(
+      newMemberQuery.where.OR[0],
+      "INV-DATE-010: the joinedDate arm must bind the two calendar days. A " +
+        "club-midnight instant here narrows to the previous UTC day and the " +
+        "new-member count starts a day early.",
+    ).toEqual({
+      joinedDate: { gte: day("2026-04-08"), lte: day("2026-04-10") },
+    });
+    expect(
+      newMemberQuery.where.OR[1],
+      "INV-DATE-019: the createdAt arm is a real instant and must keep the " +
+        "club day's first and last MOMENT — 12:00Z on 7 April to 11:59:59.999Z " +
+        "on 10 April under the Pacific/Auckland pin this suite sets.",
+    ).toEqual({
+      joinedDate: null,
+      createdAt: {
+        gte: new Date("2026-04-07T12:00:00.000Z"),
+        lte: new Date("2026-04-10T11:59:59.999Z"),
+      },
+    });
+  });
+
   it("enumerates inclusive NZ date-only occupancy nights without a DST day shift", async () => {
     mockPrisma.booking.findMany.mockResolvedValue([
       reportBooking({

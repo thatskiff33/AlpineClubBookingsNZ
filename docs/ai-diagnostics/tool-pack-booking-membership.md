@@ -923,13 +923,14 @@ model reads as "there is no problem" — is the failure mode the whole
   `cancellation_request` — were each verified at a write site recording a
   membership-domain category.
 
-- **`Member."joinedDate"` and `"lifeMemberDate"` are not date-only columns.** Both
-  are naive `DateTime` timestamps, not the `@db.Date` lodge nights the rest of this
-  pack handles. The day reported is therefore the **UTC calendar day of a stored
-  instant**, and it can differ by one from the New Zealand day an admin screen
-  renders. Both are reported as calendar days because that is what they mean to an
-  officer, and `member_diagnostic_summary`'s scope line states plainly that they
-  are days taken from stored timestamps rather than lodge nights.
+- **`Member."joinedDate"` and `"lifeMemberDate"` are `@db.Date` columns**, as of
+  #2872, and so are `"dateOfBirth"` and the application and family-request dates
+  of birth beside them. Before that they were naive `DateTime` timestamps and the
+  day this pack reported was the UTC calendar day of a stored instant, which
+  could differ by one from the day an admin screen rendered. That gap is closed:
+  the column now holds a day, and the day it holds is the day reported. The pack
+  needed no query change, because `dateOnly()` is `to_char(col, 'YYYY-MM-DD')`,
+  which reads identically on a `date` and on a `timestamp` and converts no zone.
 
 Four further limits are worth stating in the same breath, because each is a place
 a model could otherwise narrate an absence as an answer:
@@ -1030,9 +1031,10 @@ The property holds by construction rather than by care, in four places:
   shipping a full ISO instant into a field a model would read as a moment and
   narrate with a time the booking does not have.
 
-The exception is stated rather than hidden: `Member."joinedDate"` and
-`"lifeMemberDate"` are naive timestamps, so their reported day is a UTC calendar
-day — see "What this pack cannot answer" above.
+There is no longer an exception to state here: since #2872
+`Member."joinedDate"` and `"lifeMemberDate"` are `@db.Date` columns holding a
+calendar day, so the day reported is the day stored — see "What this pack cannot
+answer" above for what that changed.
 
 ## Blockers and eligibility codes, in priority order
 

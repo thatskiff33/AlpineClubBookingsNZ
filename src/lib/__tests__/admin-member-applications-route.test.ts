@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
+import { withTimeZoneAsync } from "./helpers/timezone";
+
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
@@ -171,13 +173,29 @@ describe("GET /api/admin/member-applications", () => {
     );
   });
 
-  it("serialises applicantDateOfBirth as an NZ date-only string, not a full ISO datetime (#1931 HIGH-2)", async () => {
+  it("serialises applicantDateOfBirth as the stored calendar day, from any club zone (#1931 HIGH-2, #2872)", async () => {
     // The approval panel passes this value verbatim into the joining-fee
     // preview endpoint, whose schema is a strict /^\d{4}-\d{2}-\d{2}$/ — a full
     // ISO datetime would 400 and the preview/prefill would silently never fire.
-    // Cover both plausible storage shapes: UTC midnight and NZ midnight
-    // (1990-05-14T12:00:00Z is 1990-05-15 00:00 in Pacific/Auckland, where a
-    // naive .toISOString().slice(0, 10) would yield the WRONG day, 05-14).
+    //
+    // #2872 CHANGED WHAT THIS TEST HAS TO PROVE, so read the history before
+    // reading the assertions. `MemberApplication.applicantDateOfBirth` used to
+    // be a bare `DateTime`, so the route read it through the club-zone formatter
+    // to be robust against a value stored at NZ midnight as well as at UTC
+    // midnight, and this test carried a fixture of each. CT-3 narrowed the
+    // column to `@db.Date`: PostgreSQL now holds a calendar day with no time in
+    // it, Prisma hands every such value back at UTC midnight, and the migration
+    // refuses to run at all if any stored row carries a time. The NZ-midnight
+    // fixture therefore describes a state the database can no longer be in.
+    //
+    // The claim worth making instead is the one the club-zone formatter got
+    // WRONG. A calendar day takes no timezone, and reading a UTC-midnight
+    // encoding through a club zone BEHIND UTC returns the previous day — so
+    // this asserts the day is the stored day whichever zone the club keeps.
+    // Both fixtures are UTC midnight because that is the only shape the column
+    // can hold; what separates the two formatters is the ZONE, which is why the
+    // second read is taken under `America/Denver` (INV-DATE-010, and
+    // INV-CONFIG-001: the product is not a New Zealand product).
     const base = {
       applicantFirstName: "Pat",
       applicantLastName: "Applicant",
@@ -198,25 +216,60 @@ describe("GET /api/admin/member-applications", () => {
       createdAt: new Date("2026-06-01T00:00:00.000Z"),
       updatedAt: new Date("2026-06-01T00:00:00.000Z"),
     };
-    mocks.memberApplicationFindMany.mockResolvedValue([
+    const rows = [
       { ...base, id: "app-utc", applicantDateOfBirth: new Date("1990-05-15T00:00:00.000Z") },
-      { ...base, id: "app-nz", applicantDateOfBirth: new Date("1990-05-14T12:00:00.000Z") },
-    ]);
-    mocks.memberApplicationCount.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
+      // New Year's Day, the value a westward projection sends into the previous
+      // YEAR rather than merely the previous day.
+      { ...base, id: "app-newyear", applicantDateOfBirth: new Date("2001-01-01T00:00:00.000Z") },
+    ];
 
-    const response = await GET(
-      new NextRequest("http://localhost/api/admin/member-applications")
-    );
+    // RE-IMPORTED UNDER THE ZONE, NOT MERELY CALLED UNDER IT, and this is the
+    // whole reason the assertion has teeth. `formatDateOnlyForTimeZone` defaults
+    // to `APP_TIME_ZONE`, which `src/config/operational.ts` reads from
+    // `process.env.TZ` ONCE at module load — so setting the zone at call time
+    // changes nothing, and a first version of this test passed against the very
+    // formatter it exists to reject. `vi.resetModules()` plus a dynamic import
+    // is what makes the route re-evaluate the constant, the same pattern
+    // `api/chores/roster/[date]/print` uses for the same reason (#2478).
+    async function readDatesOfBirth() {
+      vi.resetModules();
+      const { GET: RouteGET } = await import(
+        "@/app/api/admin/member-applications/route"
+      );
+      mocks.memberApplicationFindMany.mockResolvedValue(rows);
+      mocks.memberApplicationCount.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
 
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    const dobById = new Map(
-      body.applications.map((app: { id: string; applicantDateOfBirth: string }) => [
-        app.id,
-        app.applicantDateOfBirth,
-      ]),
+      const response = await RouteGET(
+        new NextRequest("http://localhost/api/admin/member-applications")
+      );
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      return new Map(
+        body.applications.map((app: { id: string; applicantDateOfBirth: string }) => [
+          app.id,
+          app.applicantDateOfBirth,
+        ]),
+      );
+    }
+
+    const hostRead = await withTimeZoneAsync("Pacific/Auckland", () =>
+      readDatesOfBirth(),
     );
-    expect(dobById.get("app-utc")).toBe("1990-05-15");
-    expect(dobById.get("app-nz")).toBe("1990-05-15");
+    expect(hostRead.get("app-utc")).toBe("1990-05-15");
+    expect(hostRead.get("app-newyear")).toBe("2001-01-01");
+
+    // The same rows, read by a club that keeps a zone BEHIND UTC. Truncation
+    // answers the stored day; the club-zone formatter this route used to call
+    // would answer 1990-05-14 and 2000-12-31 here.
+    const denverRead = await withTimeZoneAsync("America/Denver", () =>
+      readDatesOfBirth(),
+    );
+    expect(
+      denverRead.get("app-utc"),
+      "INV-DATE-010: a calendar day takes no timezone. If this moves, the " +
+        "route is projecting a stored day through a zone again and every club " +
+        "behind UTC reads every date of birth one day early.",
+    ).toBe("1990-05-15");
+    expect(denverRead.get("app-newyear")).toBe("2001-01-01");
   });
 });
