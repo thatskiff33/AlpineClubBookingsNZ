@@ -356,31 +356,34 @@ async function main() {
   // seed-created row and a boot-healed row hold byte-identical values by
   // construction rather than by two files agreeing to call the same resolver the
   // same way, which is what drifted before (#2989 review). Read its docblock for
-  // why `TZ=GB` records Europe/London and why `TZ=UTC` records NOTHING: `UTC` is
-  // no place, so every candidate zone would be a guess, and a create-only write
-  // is never revisited.
+  // why `TZ=GB` records Europe/London, and for why `TZ=UTC` records
+  // Pacific/Auckland while saying so out loud (owner decision, 23 Aug 2026):
+  // `UTC` is no place, so there was nothing to preserve and the club may be up to
+  // thirteen hours from the zone it has just been given.
   const clubTimeZoneBackfill = decideClubTimeZoneBackfill();
-  if (clubTimeZoneBackfill.record) {
-    await prisma.clubTimeSettings.upsert({
-      where: { id: CLUB_TIME_SETTINGS_ID },
-      update: {},
-      create: {
-        id: CLUB_TIME_SETTINGS_ID,
-        timeZone: clubTimeZoneBackfill.timeZone,
-        // The seed has no admin session, like the boot backfill.
-        updatedByMemberId: null,
-      },
-    });
+  await prisma.clubTimeSettings.upsert({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    update: {},
+    create: {
+      id: CLUB_TIME_SETTINGS_ID,
+      timeZone: clubTimeZoneBackfill.timeZone,
+      // The seed has no admin session, like the boot backfill.
+      updatedByMemberId: null,
+    },
+  });
+  if (clubTimeZoneBackfill.kind === "defaulted") {
     console.log(
-      `Club time settings seeded (create-only): ${clubTimeZoneBackfill.timeZone}`,
+      `Club time settings seeded (create-only) as ` +
+        `${clubTimeZoneBackfill.timeZone} BY DEFAULT: TZ / NEXT_PUBLIC_TZ is ` +
+        `"${clubTimeZoneBackfill.raw}", which is not a named place such as ` +
+        `Pacific/Auckland, so there was nothing to preserve. If this club is ` +
+        `somewhere else, set the club's timezone at /admin/club-time (or run ` +
+        `npm run setup); the setup checklist reports it as a warning until ` +
+        `somebody confirms it.`,
     );
   } else {
     console.log(
-      `Club time settings NOT seeded: TZ / NEXT_PUBLIC_TZ is ` +
-        `"${clubTimeZoneBackfill.raw}", which is not a named place such as ` +
-        `Pacific/Auckland. Set the club's timezone at /admin/club-time (or run ` +
-        `npm run setup); the setup checklist reports it as not configured until ` +
-        `then.`,
+      `Club time settings seeded (create-only): ${clubTimeZoneBackfill.timeZone}`,
     );
   }
 

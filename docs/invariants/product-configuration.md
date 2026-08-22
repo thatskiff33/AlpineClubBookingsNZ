@@ -96,9 +96,14 @@ home for that explanation and is not repeated here.
   `NZ-CHAT` to `Pacific/Chatham`). Applying the input rule there substitutes the
   New Zealand default and moves the club, which is the defect two review lenses
   found independently on #2989. Where the environment names **no** place — `UTC`,
-  `Etc/GMT` offsets, `SystemV/*` — nothing is recorded at all, because every
-  candidate would be a guess, and the unconfigured state is then visible on the
-  setup checklist per `INV-CONFIG-001`.
+  `Etc/GMT` offsets, `SystemV/*` — there is nothing to preserve, and the
+  distribution default is recorded (owner decision, 23 Aug 2026: default rather
+  than block setup). **A default recorded in place of an unknowable value is
+  announced, not assumed**: the backfill warns at boot naming the raw value, and
+  the setup checklist reports that state as a warning rather than as a
+  configured zone, so the one club this could be wrong for is told. That is
+  `INV-CONFIG-001`'s visibility rule applied to a state that is configured but
+  guessed, rather than to one that is merely absent.
 - **Changing it afterwards is guarded maintenance, and it rewrites nothing.**
   Full Admin only, explicitly confirmed, and audited with the actor and the
   before/after zone and no other payload. No stored instant moves and no

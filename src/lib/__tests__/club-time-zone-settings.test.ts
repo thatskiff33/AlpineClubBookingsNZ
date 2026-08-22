@@ -216,6 +216,35 @@ describe("resolveClubTimeZoneWithSource", () => {
     expect(resolved.persisted).toBeNull();
   });
 
+  it.each([
+    ["GB", "Europe/London"],
+    ["NZ-CHAT", "Pacific/Chatham"],
+    ["EST5EDT", "America/New_York"],
+  ])(
+    "reports 'environment', not 'default', when TZ=%s is a legacy alias for %s",
+    async (raw, expected) => {
+      /*
+        #2989 fix round, finding F1a. The VALUE came from `resolveClubTimeZone`,
+        whose environment leg preserves; the SOURCE beside it asked the strict
+        operator-input validator the same question and got the opposite answer.
+        On any deployment whose `TZ` is one of the thirty-six legacy spellings
+        the pair contradicted itself, and the maintenance panel — the one screen
+        whose whole job is to explain provenance — rendered "Europe/London —
+        Default: nothing has been recorded and the server says nothing either".
+        Three false claims, and no hint that the next restart would record
+        Europe/London.
+      */
+      process.env.TZ = raw;
+      findUnique.mockResolvedValue(null);
+
+      const resolved = await resolveClubTimeZoneWithSource();
+
+      expect(resolved.timeZone).toBe(expected);
+      expect(resolved.source).toBe("environment");
+      expect(resolved.persisted).toBeNull();
+    },
+  );
+
   it("reports 'default' when neither the database nor the environment answers", async () => {
     process.env.TZ = "NZT";
     findUnique.mockResolvedValue(null);

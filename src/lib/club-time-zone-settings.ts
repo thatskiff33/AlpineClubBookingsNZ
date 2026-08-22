@@ -32,6 +32,7 @@ import "server-only";
 import {
   CLUB_TIME_SETTINGS_ID,
   normaliseClubTimeZone,
+  normaliseClubTimeZoneForPreservation,
   resolveClubTimeZone,
 } from "@/lib/club-time-zone";
 import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
@@ -47,8 +48,19 @@ import { prisma } from "@/lib/prisma";
  */
 export { CLUB_TIME_SETTINGS_ID };
 
-/** The Prisma projection every read of this row uses. */
-const CLUB_TIME_SETTINGS_SELECT = {
+/**
+ * The Prisma projection EVERY read and write of this row uses — the reader
+ * below, the admin route's `findUnique` and its `upsert`.
+ *
+ * One spelling, exported from the canonical reader, because a second identical
+ * copy is the same silent-drift hazard as a second `"default"` literal (#2989
+ * fix round). `club-time-zone-admin-state.ts` had declared its own byte-identical
+ * copy and exported it under this name; nothing would have failed if the two had
+ * come to differ by a column — the route would simply have returned a payload
+ * missing a field the panel reads, or audited a `before` value it had not
+ * selected.
+ */
+export const CLUB_TIME_SETTINGS_SELECT = {
   timeZone: true,
   updatedByMemberId: true,
   updatedAt: true,
@@ -154,13 +166,25 @@ export async function resolveClubTimeZoneWithSource(): Promise<ResolvedClubTimeZ
     records it on the next restart" tells the reader to do something that cannot
     work. Saying so explicitly lets the panel and the setup checklist give the one
     instruction that does: set the timezone again.
+
+    EACH LEG IS JUDGED BY THE RULE THAT PRODUCED IT (#2989 fix round). The
+    persisted leg uses the strict validator, exactly as `resolveClubTimeZone`
+    does; the environment leg uses the PRESERVATION rule, exactly as
+    `resolveClubTimeZone` does. Asking the strict validator about the environment
+    — which is what this ternary did — made the answer disagree with the value
+    beside it on any deployment whose `TZ` is one of the thirty-six legacy
+    aliases: with `TZ=GB` and no row, `timeZone` was `Europe/London` and `source`
+    was `default`, so the maintenance panel said "Europe/London — Default:
+    nothing has been recorded and the server says nothing either". Three false
+    claims in one sentence, and no hint that the next restart would record
+    Europe/London.
   */
   const source: ClubTimeZoneSource =
     normaliseClubTimeZone(persisted?.timeZone) !== null
       ? "persisted"
       : persisted
         ? "persisted-unusable"
-        : normaliseClubTimeZone(environmentSeed) !== null
+        : normaliseClubTimeZoneForPreservation(environmentSeed) !== null
           ? "environment"
           : "default";
   return { timeZone, source, persisted };

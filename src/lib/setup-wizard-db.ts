@@ -1,10 +1,10 @@
 import type { AgeTier } from "@prisma/client";
 import {
   CLUB_TIME_SETTINGS_ID,
-  CLUB_TIME_ZONE_FALLBACK,
   normaliseClubTimeZone,
+  resolveClubTimeZone,
 } from "@/lib/club-time-zone";
-import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
+import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 import { EMAIL_MESSAGE_SETTINGS_ID } from "@/lib/email-message-settings";
 import { prisma } from "@/lib/prisma";
 
@@ -247,13 +247,19 @@ export async function readWizardConfigState(
   // environment answer, with the documented New Zealand default as the last
   // resort.
   //
-  // The environment leg goes through the PRESERVATION rule, exactly as the boot
-  // backfill and the seed do (#2989 review). A deployment running on `TZ=GB` has
-  // been keeping Europe/London time for years, so Europe/London is what the
-  // operator must be offered; offering Pacific/Auckland — which is what running
-  // the operator-input validator over `GB` produces — would move the club the
-  // moment they pressed Enter on a default they had every reason to trust. Where
-  // the environment names no place at all (`TZ=UTC`) there is nothing to
+  // That is `resolveClubTimeZone` — the canonical rule — and it is CALLED rather
+  // than restated here (#2989 fix round). This used to hand-roll the same three
+  // steps, which was behaviourally identical the day it was written and is
+  // exactly how two descriptions of one rule come to disagree; the file already
+  // pays that lesson's price twice over in the comments above.
+  //
+  // What the shared rule buys, spelled out because it is easy to lose: its
+  // environment leg goes through the PRESERVATION normaliser, so a deployment
+  // running on `TZ=GB` has kept Europe/London time for years and Europe/London is
+  // what the operator is offered. Offering Pacific/Auckland — which is what
+  // running the operator-input validator over `GB` produces — would move the club
+  // the moment they pressed Enter on a default they had every reason to trust.
+  // Where the environment names no place at all (`TZ=UTC`) there is nothing to
   // preserve, so the documented default is offered and the operator is the one
   // who confirms it. That is not the silent substitution the backfill had to
   // avoid: here the value is on screen and a person is answering for it.
@@ -264,14 +270,10 @@ export async function readWizardConfigState(
   // boot of an empty install, so treating it as configuration would make a
   // genuinely fresh database announce "the database already holds club
   // configuration" and demand an overwrite confirmation.
-  const environmentSeed = classifyEnvironmentClubTimeZoneSeed();
-  const timeZone =
-    normaliseClubTimeZone(
-      typeof clubTime?.timeZone === "string" ? clubTime.timeZone : null,
-    ) ??
-    (environmentSeed.kind === "preserved"
-      ? environmentSeed.timeZone
-      : CLUB_TIME_ZONE_FALLBACK);
+  const timeZone = resolveClubTimeZone(
+    typeof clubTime?.timeZone === "string" ? clubTime.timeZone : null,
+    readEnvironmentClubTimeZoneSeed(),
+  );
 
   return {
     hasClubIdentity: Boolean(trimOptional(identity?.name)),

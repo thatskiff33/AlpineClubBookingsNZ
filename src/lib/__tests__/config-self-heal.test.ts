@@ -37,6 +37,7 @@ import {
   type RegisteredSelfHealStep,
   type SelfHealDb,
 } from "@/lib/config-self-heal";
+import { clubTimeZoneSelfHealStepDefinition } from "@/lib/config-self-heal-steps";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // The effective config Facebook link (the test config, club.example.json, sets
@@ -1694,12 +1695,14 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
   });
 
   it.each(["UTC", "Etc/GMT-12", "SystemV/EST5", "NZT"])(
-    "records NOTHING when TZ=%s names no place, and says so",
+    "records the default when TZ=%s names no place, and warns that it did",
     async (raw) => {
-      // There is no place whose civil time is UTC, so every candidate zone is a
-      // guess — and a create-if-absent write is never revisited, so the guess
-      // would be permanent. The honest state is "not configured", which leaves
-      // the setup checklist blocked and asks the operator.
+      // Owner decision, 23 Aug 2026 (#2989). There is no place whose civil time
+      // is UTC, so nothing could be preserved — but recording nothing left the
+      // setting empty and blocked setup, so the documented default is written
+      // instead. What must NOT happen is that it is written quietly: this club
+      // may just have been moved up to thirteen hours, and from CT-2 onward the
+      // recorded value drives every displayed time.
       pinEnvironmentZone(raw);
       const { rows, db } = makeClubTimeDb();
 
@@ -1710,41 +1713,57 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
         provenance: "primary",
       });
 
-      expect(rows.size).toBe(0);
-      expect(
-        (db as unknown as { clubTimeSettings: { upsert: ReturnType<typeof vi.fn> } })
-          .clubTimeSettings.upsert,
-      ).not.toHaveBeenCalled();
-      // Reported already-present, NOT healed — the same log-honesty short-circuit
-      // `lodgeCapacitySelfHealStep` uses for a 0-bed config, so the runner never
-      // records a phantom "healed" for a write that did not happen.
-      expect(summary.healed).toBe(0);
+      expect(rows.get("default")).toEqual({
+        id: "default",
+        timeZone: CLUB_TIME_ZONE_FALLBACK,
+        updatedByMemberId: null,
+      });
+      expect(summary.healed).toBe(1);
       expect(summary.failed).toBe(0);
       expect(summary.results[0]).toMatchObject({
         name: "club-time-zone",
-        outcome: "already-present",
+        outcome: "healed",
       });
-      // And a warning names the offending value, on every boot until it is fixed.
+      // The warning names BOTH the value that could not be used and the value
+      // written in its place — either alone leaves the reader unable to tell
+      // what their site is now doing.
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           step: "club-time-zone",
           environmentTimeZone: raw,
+          clubTimeZone: CLUB_TIME_ZONE_FALLBACK,
         }),
         expect.stringContaining(raw),
       );
       const message = String(mockLogger.warn.mock.calls[0]?.[1]);
-      // It says nothing was recorded, and says who has to act. It names
-      // Pacific/Auckland only as an EXAMPLE of a place, so the assertion is on
-      // what it claims rather than on which strings appear.
-      expect(message).toMatch(/recorded NO club timezone/i);
-      expect(message).toMatch(/must choose/i);
+      expect(message).toContain(CLUB_TIME_ZONE_FALLBACK);
+      expect(message).toMatch(/by default/i);
       expect(message).toContain("/admin/club-time");
     },
   );
 
+  it("does NOT warn when the environment names a place, however oddly it spells it", async () => {
+    // The premise for the assertion above: the warning is about DEFAULTING, not
+    // about the environment being unusual. Without this leg a reader could not
+    // tell a real discriminator from a step that warns on every boot it writes.
+    pinEnvironmentZone("GB");
+    const { rows, db } = makeClubTimeDb();
+
+    await runConfigSelfHeal({
+      db,
+      steps: [clubTimeZoneSelfHealStep],
+      log: silentLog,
+      provenance: "primary",
+    });
+
+    expect(rows.get("default")).toMatchObject({ timeZone: "Europe/London" });
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
   it("does NOT warn a club that has already chosen its timezone, whatever TZ says", async () => {
-    // The presence check runs FIRST. A configured club seeing "an administrator
-    // must choose the club's timezone" on every boot would be both alarming and
+    // The presence check runs FIRST and answers from the row alone, so the
+    // defaulting warning can only ever mean "this value was just invented".
+    // A configured club seeing it on every boot would be both alarming and
     // untrue.
     pinEnvironmentZone("UTC");
     const { rows, db } = makeClubTimeDb({ timeZone: "Australia/Sydney" });
@@ -1785,14 +1804,27 @@ describe("clubTimeZoneSelfHealStep — the upgrade keeps the zone already in use
     }
   });
 
-  it("writes nothing when the write is forced with no value to record", async () => {
-    // Belt and braces for the NOT NULL column: `isPresent` short-circuits the
-    // unusable case, and the write refuses it too, so a future refactor of the
-    // presence check cannot put a guess in the column.
+  it("records the default when the write is forced under an unusable TZ", async () => {
+    // Driving `heal` directly bypasses the presence check, so this is the write
+    // path on its own: it records the documented default rather than nothing,
+    // which is the decision, and it never leaves a NOT NULL column unwritten.
     pinEnvironmentZone("UTC");
     const { rows, db } = makeClubTimeDb();
 
     await clubTimeZoneSelfHealStep.heal(db);
+
+    expect(rows.get("default")).toMatchObject({
+      timeZone: CLUB_TIME_ZONE_FALLBACK,
+    });
+  });
+
+  it("still writes nothing if a future refactor hands the write an empty value", async () => {
+    // Belt and braces for the NOT NULL column. `currentValue` cannot produce
+    // this today — every branch returns a validated zone — so the guard is
+    // exercised directly rather than left as an untested claim.
+    const { rows, db } = makeClubTimeDb();
+
+    await clubTimeZoneSelfHealStepDefinition.write(db, "");
 
     expect(rows.size).toBe(0);
   });

@@ -89,6 +89,22 @@ function saveButton() {
   return screen.getByRole("button", { name: /Save time zone/ });
 }
 
+/**
+ * The zones the selector is offering, read straight off the `<select>`.
+ *
+ * NOT `getAllByRole("option")`, and the difference is measurable rather than
+ * stylistic (#2989 fix round). The unfiltered list holds 418 options, and the
+ * role query runs jsdom's accessibility check — a `getComputedStyle` walk up
+ * each element's ancestors — over every one of them, twice per assertion. That
+ * is what took the filter test below past the 5000 ms default timeout under
+ * parallel load while it passed in about a second on its own. A `<select>`'s
+ * `options` collection is the same set by construction, so nothing is weakened.
+ */
+function zoneOptions(): string[] {
+  const select = screen.getByLabelText("Time zone") as HTMLSelectElement;
+  return [...select.options].map((option) => option.textContent ?? "");
+}
+
 describe("ClubTimeZonePanel", () => {
   it("renders the zone the server supplied, and asks the server for it", async () => {
     await renderPanel();
@@ -206,7 +222,7 @@ describe("ClubTimeZonePanel", () => {
       target: { value: "reykjavik" },
     });
 
-    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    const options = zoneOptions();
     expect(options).toContain("Pacific/Auckland");
     expect(options).toContain("Atlantic/Reykjavik");
     expect(
@@ -385,14 +401,14 @@ describe("ClubTimeZonePanel", () => {
     await renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /Change time zone/ }));
 
-    const before = screen.getAllByRole("option").length;
+    const before = zoneOptions().length;
     expect(before).toBeGreaterThan(300);
 
     fireEvent.change(screen.getByLabelText("Find a time zone"), {
       target: { value: "auckland" },
     });
 
-    const after = screen.getAllByRole("option").map((o) => o.textContent);
+    const after = zoneOptions();
     expect(after).toContain("Pacific/Auckland");
     expect(after.length).toBeLessThan(before);
   });

@@ -7,12 +7,12 @@ import {
 } from "@/lib/audit";
 import { normaliseClubTimeZone } from "@/lib/club-time-zone";
 import {
-  CLUB_TIME_SETTINGS_SELECT,
   stateFromResolved,
   stateFromRow,
 } from "@/lib/club-time-zone-admin-state";
 import {
   CLUB_TIME_SETTINGS_ID,
+  CLUB_TIME_SETTINGS_SELECT,
   resolveClubTimeZoneWithSource,
 } from "@/lib/club-time-zone-settings";
 import logger from "@/lib/logger";
@@ -65,6 +65,15 @@ import { requireAdmin } from "@/lib/session-guards";
  * P2002 joins them here and only here: on a one-row singleton whose id is a
  * constant, a primary-key collision can only be this upsert's create arm losing
  * a race with another administrator recording the zone for the first time.
+ *
+ * That reasoning rests on a fact worth stating rather than leaving implicit,
+ * because it is what a future schema change would silently break: the ONLY other
+ * table this transaction writes is `AuditLog`, whose primary key is a `cuid`
+ * generated per row and which carries no other unique constraint, and the audit
+ * builder emits a flat `data` payload with no nested creates. So no P2002 can
+ * originate there today. Add a unique index to `AuditLog` and a duplicate-audit
+ * bug starts being answered "try again shortly" — a retryable 503 for something
+ * retrying cannot fix — so this set must be revisited if that ever changes.
  */
 const TRANSACTION_CONTENTION_CODES = new Set(["P2002", "P2028", "P2034"]);
 

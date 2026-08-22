@@ -388,6 +388,50 @@ describe("resolveClubTimeZone — persisted beats environment beats default", ()
     expect(resolveClubTimeZone("", "Australia/Sydney")).toBe("Australia/Sydney");
   });
 
+  it.each([
+    ["GB", "Europe/London"],
+    ["NZ-CHAT", "Pacific/Chatham"],
+    ["EST5EDT", "America/New_York"],
+    ["NZ", "Pacific/Auckland"],
+    ["Japan", "Asia/Tokyo"],
+  ])(
+    "PRESERVES the environment leg: TZ=%s resolves to %s, not the default",
+    (raw, expected) => {
+      /*
+        THE ENVIRONMENT LEG USES THE PRESERVATION RULE, AND THIS IS THE ONLY
+        THING THAT SAYS SO (#2989 fix round, finding F3).
+
+        Every other case in this describe passes an environment value that both
+        normalisers answer identically — a canonical zone, or something they both
+        refuse — so all of them stay green if that leg reverts to
+        `normaliseClubTimeZone`. These five are the ones that discriminate: the
+        strict validator refuses each of them outright and this function would
+        then return `Pacific/Auckland`, while the deployment carries on keeping
+        London, Chatham or Tokyo time and the boot backfill is about to record
+        exactly that. A reader that disagrees with the writer inside the
+        one-boot window between `prisma migrate deploy` and the first start is
+        the class this whole pair of normalisers exists to close.
+      */
+      expect(resolveClubTimeZone(null, raw)).toBe(expected);
+      // The premise: the strict validator really does refuse these, so the
+      // assertion above cannot be satisfied by both rules agreeing.
+      expect(normaliseClubTimeZone(raw)).toBeNull();
+      expect(normaliseClubTimeZoneForPreservation(raw)).toBe(expected);
+    },
+  );
+
+  it("keeps the persisted leg STRICT while the environment leg preserves", () => {
+    // The two legs must not converge on one rule in either direction. A stored
+    // `GB` came through the operator-input validator when it was written, so one
+    // that fails now is corrupt and the reader falls through — to the
+    // environment, which for the same spelling is preserved.
+    expect(resolveClubTimeZone("GB", "Australia/Sydney")).toBe(
+      "Australia/Sydney",
+    );
+    expect(resolveClubTimeZone("GB", "GB")).toBe("Europe/London");
+    expect(resolveClubTimeZone("GB", null)).toBe(CLUB_TIME_ZONE_FALLBACK);
+  });
+
   it("falls through to the environment seed when the persisted value is unusable", () => {
     // The only ways to get an invalid persisted value are database surgery and
     // an ICU that no longer knows the zone. Treating it as absent keeps the app

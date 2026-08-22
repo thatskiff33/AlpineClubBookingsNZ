@@ -51,6 +51,16 @@ import { recordAudit } from "@/lib/audit";
 // ruleid: acb-client-server-boundary
 import { getXeroClient } from "@/lib/xero";
 
+// The club-timezone environment seed (#2989). It reads `process.env.TZ` and is
+// deliberately NOT marked `server-only`, because two of its callers are `tsx`
+// entrypoints a `server-only` import would abort — so this rule and the census
+// test are the only things keeping it off the browser graph. Next inlines
+// `NEXT_PUBLIC_*` into the bundle, so a client component importing it would
+// answer from the BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running
+// server: two authorities for one club's civil time (INV-CONFIG-002).
+// ruleid: acb-client-server-boundary
+import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
+
 // RE-EXPORTS. `export … from …` evaluates the module and puts it in the bundle
 // exactly as an import does, while reading like harmless barrel plumbing. All
 // three of these walked straight through the first version of the rule.
@@ -93,6 +103,12 @@ import { useAuthState } from "@/lib/auth-client-state";
 import { pathToRegexp } from "path-to-regexp";
 // ok: acb-client-server-boundary
 import { cryptoRandomId } from "@/lib/crypto-random-id";
+// The pure half of the club-timezone pair: validation and the selector's zone
+// list, no `process.env` read anywhere in it. The admin panel imports it, so
+// reporting it would be a false positive — and the two names differ only by a
+// suffix, which is exactly the pair an anchored alternation has to tell apart.
+// ok: acb-client-server-boundary
+import { listSelectableClubTimeZones } from "@/lib/club-time-zone";
 
 export function Fixture() {
   const [n] = useState(0);
@@ -103,6 +119,8 @@ export function Fixture() {
       {String(describePrismaError)} {String(useAuthState)} {String(createHmac)}
       {String(hostname)} {String(request)} {String(Readable)} {String(recordAudit)}
       {String(getXeroClient)} {String(pathToRegexp)} {String(cryptoRandomId)}
+      {String(classifyEnvironmentClubTimeZoneSeed)}
+      {String(listSelectableClubTimeZones)}
       {String({} as PrismaClient)} {String({} as Session)} {String({} as Adapter)}
     </Button>
   );

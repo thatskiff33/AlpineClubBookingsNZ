@@ -129,22 +129,35 @@ Three outcomes on that first start, and it is worth knowing which one you get:
 - **Neither variable is set** — `Pacific/Auckland` is recorded, the generic New
   Zealand default.
 - **Your `TZ` names no place** — `UTC`, `Etc/UTC` (a common container default),
-  `Etc/GMT-12`. Then **nothing is recorded**, deliberately: no place on earth has
-  "UTC" as its civil time, so anything the upgrade picked would be a guess. The
-  setup checklist reports the step as *blocked* and names the value it could not
-  use, and a Full Administrator chooses the club's zone at `/admin/club-time`.
-  Displayed times are unaffected in the meantime.
+  `Etc/GMT-12`. No place on earth has "UTC" as its civil time, so there is nothing
+  to preserve. **`Pacific/Auckland` is recorded** (owner decision, 23 Aug 2026:
+  default rather than block), and because that is a guess rather than a
+  preservation it is not done quietly — a warning is logged at startup naming
+  what your `TZ` said, and the setup checklist reports the step as a **warning**
+  asking a Full Administrator to confirm the zone at `/admin/club-time`.
+  **If your club is not in New Zealand, this is the case to check.** Displayed
+  times are unaffected in the meantime, but from the release that completes this
+  work the recorded zone is what members see.
 
 **Between `prisma migrate deploy` and that first start** the setting is empty, and
-the application falls back to exactly the same environment value it used before —
-so the draining old colour and the new colour agree on the club's time throughout
-the deploy. The old colour does not know the table exists.
+displayed times keep coming from `TZ` exactly as before — so the draining old
+colour and the new colour agree on the club's time throughout the deploy. The old
+colour does not know the table exists. (Strictly, the new reader answers
+`Pacific/Auckland` in that window for a `TZ` that names no place, which is the
+third case above; nothing displays from that reader yet, so nobody sees it.)
 
-**The post-upgrade action.** Open `/admin/setup` after cutover and confirm the
-**Club Time Zone** step reads *complete* and names the zone you expect. If it
-still says the zone has not been recorded, the app has not restarted since the
-migration — restart it, or run `npm run config:self-heal`, which does the same
-backfill without a restart.
+**The post-upgrade action.** Open `/admin/setup` after cutover and read the
+**Club Time Zone** step.
+
+- ***Complete***, naming the zone you expect — done, nothing to do.
+- A ***warning*** saying the zone could not be confirmed from your environment —
+  that is the third case above: your `TZ` named no place, `Pacific/Auckland` was
+  recorded, and the checklist is asking you to confirm it. **If your club is not
+  in New Zealand this is the one to act on**; set the real zone at
+  `/admin/club-time`. If `Pacific/Auckland` is right, acknowledge the step.
+- Saying the zone has **not been recorded** — the app has not restarted since the
+  migration. Restart it, or run `npm run config:self-heal`, which does the same
+  backfill without a restart.
 
 **Do not remove `TZ` yet, and this is the one thing that can bite you.** It is
 becoming a seed rather than the authority, but it still drives displayed times
