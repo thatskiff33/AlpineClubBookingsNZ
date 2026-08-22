@@ -499,11 +499,6 @@ export default async function DashboardPage() {
           has no visible notices. */}
       {modules.memberNotices && <RecentNewsCard memberId={memberId} />}
 
-      {/* Club message board (commsPortal module). Like the news card above it
-          renders nothing when the board is empty, so a club that has not
-          started using it sees no empty shell. */}
-      {modules.commsPortal && <MessageBoardCard memberId={memberId} />}
-
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <SummaryLinkCard
@@ -936,6 +931,11 @@ export default async function DashboardPage() {
           )}
         </Card>
       </div>
+
+      {/* Club message board (commsPortal module). Last on the page, below the
+          booking lists. Renders nothing when the board is empty, so a club
+          that has not started using it sees no empty shell. */}
+      {modules.commsPortal && <MessageBoardCard memberId={memberId} />}
     </div>
   );
 }
