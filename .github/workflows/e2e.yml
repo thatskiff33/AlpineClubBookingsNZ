@@ -10,12 +10,25 @@ name: E2E
 # *test-mode* keys (sk_test_… / pk_test_…). Never store live keys there.
 
 on:
+  # `epic/**` is here for the integration-branch model (#3002): an epic's
+  # children target `epic/<issue>-<slug>` rather than `main`, so without this
+  # they would get no CI at all and the only substitute was a throwaway probe
+  # pull request against `main` — which tests the commit OUTSIDE its stack and
+  # so can pass while the stacked integration is broken. `push` is included as
+  # well so the integration branch is re-checked after each child merges into
+  # it, rather than surfacing breakage at the epic's final merge.
+  #
+  # This widens WHEN the existing jobs run and adds no new status context, so
+  # `main`'s branch protection is untouched. See
+  # docs/agents/ISSUE_WORKFLOW.md -> "An epic reaches `main` as ONE merge".
   pull_request:
     branches:
       - main
+      - "epic/**"
   push:
     branches:
       - main
+      - "epic/**"
 
 permissions:
   contents: read

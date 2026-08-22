@@ -1989,6 +1989,17 @@ function tryResolveCommit(repoRoot, ref) {
   }
 }
 
+/**
+ * An all-zero object id. GitHub sends this as a push event's `before` when the
+ * ref did not exist beforehand, and git never resolves it to a commit. The
+ * 64-zero form is the same thing in a sha256 repository. Mirrors `isNullSha` in
+ * `scripts/lib/file-size-base.ts`, which the file-size ratchet uses for the
+ * identical field.
+ */
+function isNullSha(sha) {
+  return /^0{40}$/.test(sha) || /^0{64}$/.test(sha);
+}
+
 /** Resolve a required baseline ref, failing instead of silently weakening scope. */
 function resolveRequiredCommit(repoRoot, ref, source) {
   const resolved = tryResolveCommit(repoRoot, ref);
@@ -2012,10 +2023,28 @@ function tryMergeBase(repoRoot, left, right) {
 }
 
 /**
+ * The branch point of `head` against whichever spelling of main this checkout
+ * has, or null when it has neither. Shared by the epic-branch push path and the
+ * local feature-branch fallback, which want the same commit for the same
+ * reason: it is the last point at which the branch and main agreed, so it is
+ * the set of ids the branch is answerable for retaining.
+ */
+function mergeBaseAgainstMain(repoRoot, head) {
+  for (const candidate of ["origin/main", "main"]) {
+    if (!tryResolveCommit(repoRoot, candidate)) continue;
+    const mergeBase = tryMergeBase(repoRoot, head, candidate);
+    if (mergeBase) return mergeBase;
+  }
+  return null;
+}
+
+/**
  * Pick the revision whose already-merged ids the current tree must retain.
  *
- * Pull requests compare with the immutable base SHA from their event. Main
- * pushes compare with the event's immutable pre-push SHA. Local feature
+ * Pull requests compare with the immutable base SHA from their event. Pushes to
+ * `main` and to an `epic/**` integration branch (#3002) compare with the event's
+ * immutable pre-push SHA — except the push that CREATES an epic branch, which
+ * carries no such SHA and compares with the branch point instead. Local feature
  * branches compare with their merge-base against `origin/main` (or `main`).
  * Every event/explicit ref fails closed when missing; `HEAD^1` is not a safe
  * feature-branch fallback because it may be a feature commit made after a
@@ -2054,22 +2083,62 @@ export function resolveInvariantBaselineRef(repoRoot, env = process.env) {
   if (eventName === "push") {
     const isMainRef =
       env.GITHUB_REF === "refs/heads/main" || env.GITHUB_REF_NAME === "main";
-    if (!isMainRef) {
+    // `epic/**` integration branches (#3002). An epic's children merge into one
+    // and the branch reaches `main` as a single merge, so `ci.yml` triggers on
+    // pushes to it as well — which makes this path reachable for the first time.
+    // WIDENED PRECISELY, and the refusal below is not a leftover: for any OTHER
+    // ref the invariant-retention baseline genuinely means nothing. A push to
+    // `feature/x` has no relationship to `PUSH_BASE_SHA` that this check can
+    // interpret, so it still fails closed rather than measuring against a
+    // baseline it cannot justify.
+    const isEpicRef =
+      env.GITHUB_REF?.trim().startsWith("refs/heads/epic/") === true ||
+      env.GITHUB_REF_NAME?.trim().startsWith("epic/") === true;
+    if (!isMainRef && !isEpicRef) {
       throw new Error(
-        "Invariant push baselines are supported only for pushes to main; refusing " +
-          "to interpret PUSH_BASE_SHA for a different ref",
+        "Invariant push baselines are supported only for pushes to main or an " +
+          "epic/** integration branch; refusing to interpret PUSH_BASE_SHA for a " +
+          "different ref",
       );
     }
+    const pushLabel = isMainRef ? "main-push" : "epic-branch-push";
     if (explicit) {
       throw new Error(
-        "DOC_INDEX_BASE_REF cannot be set for a main-push event; PUSH_BASE_SHA is " +
+        `DOC_INDEX_BASE_REF cannot be set for a ${pushLabel} event; PUSH_BASE_SHA is ` +
           "authoritative and an inherited diagnostic override must not replace it",
       );
     }
+    // A ref-CREATING push carries an all-zero `before`, and epic branches are
+    // created routinely now. `main` cannot be created by a push (branch
+    // protection blocks creating and deleting it), so an all-zero there is a
+    // fact about the event that this check must not paper over — it fails.
+    // On an epic branch it is ordinary, and the branch point against `main` is
+    // the honest baseline: it is where the branch and main last agreed, which
+    // is exactly the set of ids the branch is answerable for retaining. Failing
+    // instead would redden `verify` on every epic branch's first push, which is
+    // the same defect this widening exists to remove.
+    if (isEpicRef && (!pushBase || isNullSha(pushBase))) {
+      const branchPoint = mergeBaseAgainstMain(repoRoot, head);
+      if (!branchPoint) {
+        throw new Error(
+          "This push created the epic branch, so its event carries no 'before' " +
+            "commit, and neither origin/main nor main is present to take a branch " +
+            "point from. Fetch origin/main (actions/checkout with fetch-depth: 0)",
+        );
+      }
+      return branchPoint;
+    }
     if (!pushBase) {
       throw new Error(
-        "PUSH_BASE_SHA is required for a main-push invariant baseline; HEAD^1 can " +
+        `PUSH_BASE_SHA is required for a ${pushLabel} invariant baseline; HEAD^1 can ` +
           "postdate a deletion when one push contains several commits",
+      );
+    }
+    if (isNullSha(pushBase)) {
+      throw new Error(
+        `PUSH_BASE_SHA is the all-zero object id, which is how a push event says the ` +
+          `ref did not exist before the push. ${env.GITHUB_REF_NAME ?? "This ref"} ` +
+          "cannot be created by a push, so this is not a baseline that can be trusted",
       );
     }
     return resolveRequiredCommit(repoRoot, pushBase, "PUSH_BASE_SHA");
@@ -2083,6 +2152,14 @@ export function resolveInvariantBaselineRef(repoRoot, env = process.env) {
     // would make `verify` — a required check — fail on every run with the message
     // below. If you add a trigger, add its baseline in the same PR. Relevant
     // because #2686 put branch protection on `main`.
+    //
+    // #3002 is the worked example of exactly that, and of the near miss: adding
+    // `push: branches: [epic/**]` to ci.yml did not add an EVENT, it widened an
+    // existing one, so it slipped past the sentence above and made the
+    // ref-specific refusal in the `push` branch reachable instead — same
+    // outcome, `verify` red on every epic-branch push. WIDENING A TRIGGER'S REF
+    // FILTER COUNTS. Give the new refs a baseline in the same PR, and keep
+    // refusing the ones that still have no meaningful one.
     throw new Error(
       `Unsupported GitHub event ${eventName}; refusing to infer an invariant ` +
         "baseline from environment fields that belong to another event shape",
@@ -2139,11 +2216,8 @@ export function resolveInvariantBaselineRef(repoRoot, env = process.env) {
     return resolveRequiredCommit(repoRoot, explicit, "DOC_INDEX_BASE_REF");
   }
 
-  for (const candidate of ["origin/main", "main"]) {
-    if (!tryResolveCommit(repoRoot, candidate)) continue;
-    const mergeBase = tryMergeBase(repoRoot, head, candidate);
-    if (mergeBase) return mergeBase;
-  }
+  const mergeBase = mergeBaseAgainstMain(repoRoot, head);
+  if (mergeBase) return mergeBase;
 
   throw new Error(
     "Cannot resolve an invariant-id baseline. Fetch origin/main or set " +

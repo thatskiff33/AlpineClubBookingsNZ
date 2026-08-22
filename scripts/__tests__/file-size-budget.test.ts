@@ -201,14 +201,50 @@ describe("blocking CI wiring", () => {
     // `before` — the previous PR head — so keying on the field instead of on
     // the event would judge only the newest push to a branch and let everything
     // earlier in it through.
+    //
+    // `github.event.created == false` is the other load-bearing half, and it is
+    // newer (#3002). A ref-CREATING push carries `before = 0000…`, which this
+    // gate refuses outright — correctly, there is no "before" to measure. That
+    // was harmless while `push` only meant `main`, which cannot be created;
+    // #3002 put `push: branches: [epic/**]` on this workflow and an epic branch
+    // is created once per epic, so without the guard `verify` is red on the
+    // first push of every epic branch.
     const workflow = readFileSync(
       path.join(REPO_ROOT, ".github/workflows/ci.yml"),
       "utf8",
     );
     const verify = verifyJobSource(workflow);
     expect(verify).toContain(
-      "BUDGET_BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}",
+      "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false)" +
+        " && github.event.before || 'origin/main' }}",
     );
+  });
+
+  it("routes a ref-creating push around the base it would refuse", () => {
+    // The guard above, asserted as behaviour rather than as a string: the two
+    // steps that compute a base from a push event must both key on
+    // `github.event.created`, or the branch-creating push of every epic branch
+    // reddens a required check. Named together on purpose — the migration
+    // ledger step got the guard first and the ratchet did not, and a rule only
+    // one of two identical expressions follows is a rule that drifts back.
+    //
+    // Scoped to `*_BASE`, which is a REF handed to a `--base` flag and where
+    // `origin/main` is the sensible substitute. `PUSH_BASE_SHA` is deliberately
+    // outside it: that one is an immutable event SHA, `origin/main` would be a
+    // wrong answer rather than a fallback, and
+    // scripts/ci/check-doc-index-integrity.mjs reads the all-zero itself and
+    // takes the branch point.
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    const pushDerivedBases = workflow.match(/^ +[A-Z_]+_BASE: \$\{\{ .*github\.event\.before.*$/gm) ?? [];
+    expect(pushDerivedBases.length).toBeGreaterThanOrEqual(2);
+    for (const line of pushDerivedBases) {
+      expect(line, `${line.trim()} must skip the all-zero base of a ref-creating push`).toContain(
+        "github.event.created == false",
+      );
+    }
   });
 
   it("checks out full history in that job, which the computed comparison needs", () => {

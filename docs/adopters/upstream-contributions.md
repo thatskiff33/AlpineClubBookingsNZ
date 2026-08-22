@@ -98,6 +98,45 @@ setting upstream.
 
 ## Keeping the two in step
 
+### Pull RELEASE TAGS, not `main`
+
+**This is the one thing on this page most likely to cost you an outage, so it is
+first.** `main` is a trunk: several lanes merge into it every day, and at any
+moment it holds work that is finished but not released, and occasionally work
+that is deliberately dormant until a later change switches it on. It is not a
+release, and nothing promises that an arbitrary `main` commit is a coherent
+product.
+
+So a fork tracks **released tags**, one at a time —
+[`../UPGRADING.md`](../UPGRADING.md)'s first principle, which also explains why
+skipping a release skips its post-upgrade actions:
+
+```bash
+git fetch upstream --tags
+git merge v0.13.2          # a tag, not upstream/main
+```
+
+Pulling `upstream/main` instead exposes you to every in-flight lane in the
+repository. Two shapes are worth knowing about, because neither looks like a
+problem at the moment you pull:
+
+- **A dormant feature.** A change may deliberately ship inert, doing nothing
+  until a later change consumes it. Pulled on its own it is harmless; pulled
+  together with half of what consumes it, it is not.
+- **A multi-part change.** Large work lands as an epic, and since #3002 an
+  epic reaches `main` as a **single merge** from its own integration branch
+  precisely so that a fork pulling `main` cannot catch it half-built. That
+  protects you from epics. It does not protect you from anything else on the
+  trunk — only pulling tags does that.
+
+If you must track `main` — to test an unreleased fix, say — do it on a staging
+deployment, never the one members use, and read
+[`../../CHANGELOG.md`](../../CHANGELOG.md)'s `## Unreleased` section plus
+[`../BLUE_GREEN_MIGRATION_SAFETY.tsv`](../BLUE_GREEN_MIGRATION_SAFETY.tsv) for
+what you are taking on.
+
+### Validation gates
+
 Both repositories should run the same core validation gates:
 
 ```bash

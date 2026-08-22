@@ -136,7 +136,8 @@ id and need the file it lives in.
 ## Change Discipline
 
 - One GitHub Issue equals one branch and one PR unless the issue explicitly says
-  otherwise.
+  otherwise. **An epic's children target its integration branch, never `main`**
+  (#3002); that branch's pull request into `main` is the epic's one gated merge.
 - Work only inside the issue scope. Stop and ask for human review if the code or
   docs contradict the issue.
 - **This repository is the generic product, not one club's site.** Each deployed
@@ -642,14 +643,13 @@ handed an epic-with-children or asked to run several related issues at once.
   lets installs reuse downloaded packages without sharing generated Prisma
   state. Run the complete Windows runtime/dependency preflight in
   `docs/agents/CODEX_WORKFLOW.md` before delegating validation.
-- Within a lane, **stack** dependent issues: cut each branch from its parent
-  branch and set the PR's **base to the parent branch**; GitHub retargets to
-  `main` as parents merge. State the base branch + merge order in every PR body.
-- Independent issues in a lane branch straight off `main`.
-- Note: repo CI only triggers on PRs based on `main`. For a **stacked** PR
-  (base = a feature branch), open a short-lived **draft "CI probe" PR of the
-  same commit against `main`**, record its result on the real PR, and close it —
-  this is the only way to get true CI signal before the parent merges.
+- Epic children target `epic/<issue>-<slug>`; it reaches `main` as one merge, so
+  no fork pulling `main` catches an epic half-built. Rule, merge authority, costs
+  and the inert-child exception (which the epic body must claim):
+  [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) → "An epic reaches
+  `main` as ONE merge". CI runs on `epic/**`.
+- Non-epic issues branch off `main`. Within a lane, stack dependent issues on the
+  parent branch and state the base + merge order in the PR body.
 - Before removing a merged worktree, inspect its `node_modules` entry. A legacy
   junction must be verified and unlinked non-recursively before `git worktree
   remove`; otherwise Windows cleanup can traverse the junction and erase its

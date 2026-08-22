@@ -38,6 +38,148 @@ Do not bundle unrelated fixes, opportunistic refactors, or adjacent review
 findings into the same PR. If a separate defect is found, document it as a new
 finding or follow-up issue.
 
+### An epic reaches `main` as ONE merge, from an integration branch
+
+**A child of an epic does not open its pull request against `main`.** Each epic
+gets an integration branch, `epic/<issue>-<slug>`; its children target that
+branch; and the branch reaches `main` as a single merge once the epic is
+complete. Owner decision, 23 Aug 2026.
+
+The reason is downstream forks. They pull `main` rather than upgrading
+tag-to-tag as [`UPGRADING.md`](../UPGRADING.md) asks, so a half-built epic on
+`main` reaches them mid-build — and an epic is the one unit of work whose
+intermediate states are routinely incoherent to a user, because a later child
+is what switches the product onto what an earlier one built.
+
+**The narrow exception, which must be written in the epic body or it does not
+apply:** a child that is genuinely *inert* — it changes nothing a member or
+operator sees, and later children depend on its API — may merge to `main`
+directly. Epic #2988's CT-1 (#2989) is the worked example: it recorded the club
+timezone while the previous environment variable still drove every displayed
+time, so a fork pulling `main` got a dormant subsystem and no behaviour change.
+Inert means *measurably* inert, not "small".
+
+**Merge authority.** A child merging into the integration branch needs review
+and green CI, and the orchestrator may merge it: nothing has reached `main`, a
+fork or production. The **`epic/… ` → `main`** pull request is the single gated
+merge, and it needs an explicit owner approval comment whatever the children
+touched — the risk gate in `AGENTS.md` applies to the union of the epic, not to
+each child separately.
+
+**That last pull request is an INTEGRATION review, not a re-review.** Each child
+was already reviewed into the branch by the normal adversarial lenses at its own
+small size. The epic pull request carries the conflict resolutions, the migration
+sequencing, the deploy rehearsal below, and a link to each child's review
+evidence.
+
+#### What this costs, and what to do about each
+
+Written down here once, because every one of these has to be handled by whoever
+runs the next epic.
+
+- **CI.** `ci.yml` and `e2e.yml` trigger on `epic/**` as well as `main`, for both
+  `pull_request` and `push`, so a child gets the real nine checks on the commit
+  that will actually merge, and the integration branch is re-checked after each
+  child lands. Before that trigger existed the workaround was a throwaway draft
+  probe pull request of the same commit against `main` — keep that in mind for a
+  fork whose workflows predate it, and note why it was only ever second best: a
+  probe tests the commit *outside* its stack, so it can pass while the stacked
+  integration is broken.
+- **Drift.** Merge `origin/main` into the integration branch regularly — a merge
+  commit, never a force-push. A branch that only reconciles at the end reconciles
+  once, badly; this repository has twice shipped a *wrong* value out of a
+  hand-resolved long-lived conflict (#2979's ceiling, and the `CHANGELOG.md`
+  churn that #2452 ended).
+- **Every migration in the epic lands in ONE deploy.** So **no child may pair an
+  expand with its own contract.** A contract half waits for a release *after* the
+  epic merges, because `previous_expand_release` has to name something that has
+  actually drained. Each migration still needs its own ledger row, and each must
+  be old-code compatible against the **pre-epic** release rather than merely
+  against its sibling. See
+  [`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md).
+- **Rehearse the deploy on the epic pull request, and paste the transcript into
+  it.** `npm run db:rehearse-epic -- --database-url <throwaway>` applies the base
+  ref's migrations, then the epic's, then reads every model with a client
+  generated from the **base ref's** schema. That is how the two `windowed` drops
+  were verified rather than asserted, and with a whole epic's migrations arriving
+  at once it is the only way to prove the claim. The transcript is part of the
+  epic pull request's evidence, alongside the per-child review links — an
+  unrehearsed epic merge is asserting old-code compatibility for a set of
+  migrations no one has run together. What a green run does *not* prove is in
+  [`BLUE_GREEN_MIGRATION_POLICY.md`](../BLUE_GREEN_MIGRATION_POLICY.md) →
+  "Rehearsing an epic's deploy"; read it before quoting the result.
+  The expand/contract half of this rule is enforced by
+  `check-migration-safety-coverage.sh` rather than left to care.
+- **Migration prefixes.** Reserve one per child in the epic body up front, so
+  queued children cannot collide, and re-run the duplicate-prefix check on every
+  merge into the branch rather than only at pull-request time.
+- **Branch protection does not reach an integration branch** unless somebody with
+  admin adds it. An agent session cannot: the machine account holds `push`, not
+  `admin`, and that endpoint's 404 means "not permitted", never "not protected".
+- **`npm run pr:check` needs `--base`, and silently misjudges a child without
+  it.** It defaults to `origin/main`, so on a child of an epic it sees every
+  earlier child's diff as well: CT-2 (#3004) was judged against 101 changed files
+  rather than its own 35, and refused for want of a concurrency declaration
+  covering a schema and a migration it never touched. Run
+  `npm run pr:check -- <body-file> --base origin/epic/<issue>-<slug>`. Both gates
+  decide what they ask for from the diff, so the wrong base asks the wrong
+  question — and it fails in the safe direction only by luck.
+- **Nothing in the epic ships until all of it ships.** Inherent, not an
+  oversight. The levers are keeping epics small and using the inert-child
+  exception for foundations.
+
+#### Protecting an integration branch — one-off setup, and the order matters
+
+An `epic/**` branch is **not** covered by `main`'s protection. Somebody with
+`admin` adds it once and it covers every future epic. An agent session cannot:
+the machine account holds `push`, and that endpoint's `404` means "not
+permitted", never "not protected" — confirm by asking it about `main`, which *is*
+protected and returns the identical `404` to a non-admin.
+
+**Do it AFTER the workflow triggers include `epic/**`, never before.** Required
+checks that have never reported on a branch sit on *"Expected — waiting for
+status"* forever, so protecting first blocks every epic pull request until the
+trigger change lands. This is the same three-step order `AGENTS.md` → "Completion
+and Merge" gives for adding any required context: merge the workflow change, then
+add the protection, then rebase anything already open.
+
+Use **classic branch protection**, not a ruleset. Rulesets never appear at the
+branch-protection endpoint, so one can be edited to no effect while appearing to
+work — this repository already carries a disabled ruleset that does nothing, and
+`main` is protected the classic way, so matching it keeps both readable from the
+same command.
+
+Pattern `epic/**`, and the settings that matter, as applied on 23 Aug 2026:
+
+```json
+{
+  "checks": ["verify", "Migration drift check", "Data migration verification",
+             "Static analysis gate", "Playwright E2E", "E2E multi-lodge",
+             "Secret scan (gitleaks)", "Image security gate (Trivy CRITICAL)",
+             "Dependency audit"],
+  "strict": false,          // requiring up-to-date serialises every child
+  "enforce_admins": false,  // matches main; an owner can unblock themselves
+  "deletions": true,        // or the branch cannot be deleted after the epic merges
+  "force_pushes": false
+}
+```
+
+Verify with `gh api repos/<owner>/<repo>/branches/epic%2F<branch>/protection`
+(note the `%2F`), and check `rules/branches/<branch>` returns `[]` to confirm no
+ruleset is quietly involved. A non-admin can still confirm the *pattern* matches
+with `gh api repos/<owner>/<repo>/branches/epic%2F<branch> --jq .protected`,
+which needs only read access — that is the check most worth running, because a
+mismatched pattern is the likeliest mistake and it reports `false`.
+
+**Two consequences of that configuration, both load-bearing.** Required status
+checks gate **pushes**, not only merges, so nothing lands on an integration branch
+without the nine checks — which is why the daily sync opens a pull request from
+`main` rather than pushing a merge commit it has just created. And
+`required_pull_request_reviews` is deliberately absent (`main` has it with a count
+of `0`, meaning a pull request is required and an approval is not); on an
+integration branch the pull request arrives from the workflow model rather than
+from enforcement, and the owner's gate is the `epic → main` merge.
+
 ## Risk And Attendance
 
 High and critical issues are not suitable for unattended coding runs. They can
