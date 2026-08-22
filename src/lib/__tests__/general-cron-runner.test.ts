@@ -196,7 +196,13 @@ describe("general cron runner", () => {
     // same window (#2550's placeholder guest-name reminders and #2553's hold
     // reaper), and this literal is where a merge that keeps both branches' job
     // registrations but only one branch's count shows up.
-    expect(recordCronRun).toHaveBeenCalledTimes(10);
+    expect(recordCronRun).toHaveBeenCalledTimes(11);
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: "club-post-retention",
+        status: "SUCCESS",
+      })
+    );
     expect(recordCronRun).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "additional-payment-reminders",

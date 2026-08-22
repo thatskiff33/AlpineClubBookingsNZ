@@ -210,10 +210,3 @@ export async function createClubPost(input: {
 
   return post;
 }
-
-/** How many posts are visible, for the dashboard card's empty check. */
-export function countVisibleClubPosts(): Promise<number> {
-  return prisma.clubPost.count({
-    where: { hiddenAt: null, removedAt: null },
-  });
-}

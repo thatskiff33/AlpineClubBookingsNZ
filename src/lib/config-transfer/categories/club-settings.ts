@@ -246,6 +246,18 @@ export const SINGLETONS: SingletonSpec[] = [
       // which is excluded from config transfer for exactly that reason, so a
       // target's public door stays closed regardless of what this flag imports.
       "maintenanceReports",
+      // commsPortal SHOULD-TRAVEL (#2993, epic #2992): "does this club run a
+      // member message board?" is a plain capability decision like memberNotices
+      // or maintenanceReports -- no credential, no per-install auth choice.
+      //
+      // Importing `true` does NOT enter the target into any outward data-sharing
+      // arrangement, which is the one reason this flag might have looked like
+      // alpineCentralServer above. Cross-club sharing rides on THAT module and
+      // its per-install encrypted ServerNZ key, neither of which travels, so a
+      // target that imports commsPortal gets a board its own members post to and
+      // nothing leaves the building. The retention window that deletes posts is
+      // equally non-travelling -- see ClubPostSettings in MODEL_LEVEL_EXCLUSIONS.
+      "commsPortal",
     ],
     excluded: {
       multiLodge:
@@ -320,6 +332,7 @@ export const SINGLETONS: SingletonSpec[] = [
       lobbyDisplay: { required: true },
       aiAssistant: { required: true },
       memberGuests: { required: true },
+      commsPortal: { required: true },
     },
     select: CLUB_MODULE_SETTINGS_COLUMN_SELECT,
     defaults: () => DEFAULT_MODULE_SETTINGS,

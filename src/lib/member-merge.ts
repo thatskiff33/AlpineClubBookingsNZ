@@ -150,7 +150,7 @@ function spec(
 }
 
 /**
- * The authoritative classification of all 80 Member FK-owning relations. The
+ * The authoritative classification of every Member FK-owning relation. The
  * DMMF/schema completeness test (member-merge-dmmf.test.ts) fails CI if the
  * schema grows a Member relation that is missing here (or if a key here no
  * longer exists in the schema), so a new relation cannot silently escape merge
@@ -381,6 +381,26 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("NoticeReadReceipt", "member", "memberId", "resolve", {
     note: "@@unique(noticeId,memberId); keep master's receipt on collision",
   }),
+
+  // --- Club message board (#2993, epic #2992) ---
+  // Authorship: nullable SetNull, no member unique -- the surviving person keeps
+  // their posts, mirroring Notice.createdBy above. The denormalised authorName
+  // on the row is deliberately NOT rewritten: it is what the board displayed at
+  // the time, and a merge is not a licence to restate who said something.
+  spec("ClubPost", "author", "authorMemberId", "move"),
+  // Reports: @@unique(postId,reporterMemberId), so if BOTH members reported the
+  // same post a naive move collides. Keep the master's report and drop the
+  // loser's, via the generic keyed resolver.
+  //
+  // ClubPost.reportCount is a cached count of non-dismissed reports, recomputed
+  // on report and dismissal rather than incremented. Dropping a duplicate here
+  // does not trigger that recompute, so a post can sit one report over its true
+  // distinct-reporter count until the next report or dismissal touches it. That
+  // is a moderation signal reading slightly high on an already-visible post, not
+  // a gate anyone passes through, and an admin can unhide.
+  spec("ClubPostReport", "reporter", "reporterMemberId", "resolve", {
+    note: "@@unique(postId,reporterMemberId); keep master's report on collision",
+  }),
 ];
 
 /**
@@ -429,6 +449,12 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "FamilyGroupJoinRequest.reviewedBy",
   "DeletionRequest.reviewedBy",
   "MembershipSubscriptionBillingSettings.updatedByMemberId",
+  // #2999: the club message board's settings-audit column -- who last changed
+  // the retention window. Identical in kind to the billing-settings column above
+  // and MemberGuestSettings.updatedByMemberId below: a bare scalar with no
+  // @relation, kept pointing at the loser as the immutable answer to "who set
+  // this", which is the person who set it, not whoever absorbed their record.
+  "ClubPostSettings.updatedByMemberId",
   "MembershipSubscriptionChargeCoverage.memberId",
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",
@@ -2086,6 +2112,7 @@ const GENERIC_KEYED_RESOLVERS: readonly {
   { spec: "MemberInductionAssignedSigner.member", delegate: "memberInductionAssignedSigner", memberColumn: "memberId", keys: [["inductionId"]] },
   { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
   { spec: "NoticeReadReceipt.member", delegate: "noticeReadReceipt", memberColumn: "memberId", keys: [["noticeId"]] },
+  { spec: "ClubPostReport.reporter", delegate: "clubPostReport", memberColumn: "reporterMemberId", keys: [["postId"]] },
 ];
 
 /**

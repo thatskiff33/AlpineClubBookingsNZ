@@ -20,11 +20,6 @@ export const CLUB_POST_SETTINGS_ID = "default";
  */
 export const STALE_CLEANUP_CLAIM_MS = 30 * 60 * 1000;
 
-// Re-exported so server-side callers have one obvious place to reach for it.
-// The list itself lives in a module with no imports, because the client
-// component that renders it must not reach anything that imports prisma.
-export { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
-
 export interface ClubPostSettingsValues {
   retentionDays: number;
   lastCleanupAt: string | null;
