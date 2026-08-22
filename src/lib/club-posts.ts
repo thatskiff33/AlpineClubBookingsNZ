@@ -210,3 +210,16 @@ export async function createClubPost(input: {
 
   return post;
 }
+
+/**
+ * How many visible posts were made on or after `since`.
+ *
+ * Uses the SAME visibility predicate as the member board itself. A hidden or
+ * removed post is not something the member can go and read, so counting it
+ * would put a number on the dashboard that the board cannot account for.
+ */
+export function countClubPostsSince(since: Date): Promise<number> {
+  return prisma.clubPost.count({
+    where: { hiddenAt: null, removedAt: null, postedAt: { gte: since } },
+  });
+}

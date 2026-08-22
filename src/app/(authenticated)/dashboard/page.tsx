@@ -53,6 +53,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
 import { RecentNewsCard } from "@/components/recent-news-card";
 import { MessageBoardCard } from "@/components/message-board-card";
+import { countClubPostsSince } from "@/lib/club-posts";
 import {
   buildHrefWithReturnTo,
   buildProfilePathWithReturnTo,
@@ -411,6 +412,21 @@ export default async function DashboardPage() {
 
   const modules = await loadEffectiveModuleFlags();
 
+  // Headline for the message board tile.
+  //
+  // Skipped -- query included -- when the board module is off, following the
+  // events card below: the dashboard must not read for a surface it is not
+  // going to show.
+  //
+  // Seven CLUB days, stepped over the date-only value rather than derived from
+  // the process's own zone (INV-DATE-019), so every viewer is told about the
+  // same seven days no matter where they are reading from.
+  const recentPostCount = modules.commsPortal
+    ? await countClubPostsSince(
+        startOfDateOnlyForTimeZone(formatDateOnly(addDaysDateOnly(today, -7))),
+      )
+    : 0;
+
   // Upcoming club events for the next two weeks (Events card → /calendar).
   //
   // Skipped entirely — query included — when the club has the eventsCalendar
@@ -751,10 +767,9 @@ export default async function DashboardPage() {
               <MessageSquare className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-lg font-semibold">Message Everyone</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Send a message for everyone in the lodge.
-              </p>
+              <div className="text-lg font-semibold">
+                {recentPostCount} new message{recentPostCount === 1 ? "" : "s"}
+              </div>
               <Button asChild size="sm" variant="outline" className="mt-4 w-full">
                 <Link href="/message-board">Open Message Board</Link>
               </Button>
