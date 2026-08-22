@@ -41,21 +41,28 @@ import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
  * renderer is told which one it holds. The classification below is proved from
  * `prisma/schema.prisma` plus every write path, never from the field name.
  *
- * NONE of the merged Member date columns is `@db.Date` — they are all bare
- * `DateTime?`. The column type therefore settles nothing on this screen and the
- * writers are what decide, which is why each row below cites one.
+ * SINCE #2872 THE SCHEMA AGREES, AND THAT IS WORTH NOTING. All three calendar
+ * days below are now `DateTime? @db.Date`: the database holds them as a `date`
+ * with no time in it, so the column type settles what the writers used to have
+ * to prove on their own. The writer evidence stays on each row anyway, because
+ * it is what the migration was decided on and because a column type cannot tell
+ * you that `parseXeroCompanyNumberDate` once stored some rows a day early. The
+ * two instants below stay bare `DateTime`, which is the whole distinction this
+ * module exists to render.
  *
- * THIS IS NOT A SECOND OPINION ON THOSE COLUMNS. #2684's guard already keeps a
+ * THIS IS NOT A SECOND OPINION ON THOSE COLUMNS. #2684's guard keeps the
  * reviewed record of which bare-`DateTime` columns hold a calendar day
  * (`DATE_ONLY_IN_DATETIME_COLUMN`, in
  * `src/lib/__tests__/support/date-only-reviewed-fields.ts`), and all three of
- * the calendar days below were on it before #2860. The guard cannot reach this
- * screen — its scanner classifies a site by the field name written in the
- * argument, and here the values arrive as `unknown` with the field as a runtime
- * string — so the judgement has to be restated where the renderer can act on
- * it. `member-merge-field-kinds.test.ts` binds the two lists together: a
- * `calendarDay` here that is absent from that record, or an `instant` here that
- * appears on it, fails. Neither list can move without the other.
+ * the calendar days below were on it from #2860 until #2872 narrowed the
+ * columns and emptied it. The guard cannot reach this screen — its scanner
+ * classifies a site by the field name written in the argument, and here the
+ * values arrive as `unknown` with the field as a runtime string — so the
+ * judgement has to be restated where the renderer can act on it.
+ * `member-merge-field-kinds.test.ts` binds this list to BOTH that reviewed
+ * record and the schema's own `@db.Date` columns: a `calendarDay` here that
+ * neither settles, or an `instant` here that either one does, fails. None of the
+ * three can move without the others.
  */
 export type MergeFieldValueKind = "calendarDay" | "instant" | "plain";
 
@@ -72,7 +79,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // --- FILL_IF_BLANK_FIELDS ------------------------------------------------
   title: "plain", // `Title?` enum (schema.prisma:510)
   gender: "plain", // `Gender?` enum (schema.prisma:513)
-  // `DateTime?` (schema.prisma:514) but a calendar day in every writer: the
+  // `DateTime? @db.Date` (schema.prisma:514) since #2872, and a calendar day in
+  // every writer before that: the
   // admin services validate `^\d{4}-\d{2}-\d{2}$` and hand it to `new Date`,
   // which is UTC midnight (admin-member-detail-service.ts:1197,
   // admin-members-service.ts:1432); the member-facing routes call
@@ -88,7 +96,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // what is stored, and #2859 fixes what is stored.
   dateOfBirth: "calendarDay",
   occupation: "plain", // `String?` (schema.prisma:517)
-  // `DateTime?` (schema.prisma:573). Same calendar-day writers as `joinedDate`:
+  // `DateTime? @db.Date` (schema.prisma:573) since #2872. Same calendar-day
+  // writers as `joinedDate`:
   // `^\d{4}-\d{2}-\d{2}$` -> `new Date` (admin-members-service.ts:1465,
   // admin-member-detail-service.ts:1173) and `parseDateOnly` on import. It is
   // never stamped from a clock, and no other writer exists in src/, scripts/ or
@@ -135,7 +144,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // completion side effect (induction.ts:147), whose `completedAt` is
   // `new Date()` (induction.ts:222,284). A true instant.
   hutLeaderEligibleAt: "instant",
-  // `DateTime?` (schema.prisma:570). Admin-editable through a date input,
+  // `DateTime? @db.Date` (schema.prisma:570) since #2872. Admin-editable through
+  // a date input,
   // validated `^\d{4}-\d{2}-\d{2}$` and parsed to UTC midnight
   // (admin-member-detail-service.ts:1161, admin-members-service.ts:1458);
   // `parseDateOnly` on CSV import; and on the Xero backfill it is the first

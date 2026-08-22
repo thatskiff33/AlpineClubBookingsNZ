@@ -66,13 +66,18 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const fromDate = startOfDateOnlyForTimeZone(parsed.data.from);
-  const toDate = endOfDateOnlyForTimeZone(parsed.data.to);
-  const occupancyFromDate = parseDateOnly(parsed.data.from);
-  const occupancyToDate = parseDateOnly(parsed.data.to);
+  // ONE REPORT WINDOW, TWO ENCODINGS, BECAUSE THE COLUMNS ARE TWO KINDS OF THING
+  // (INV-DATE-013). The `*Instant` pair is the first and last MOMENT of the
+  // club's days, for real-instant columns. The `*Day` pair is the two CALENDAR
+  // DAYS, for `@db.Date` columns — the adapter narrows such a bound to its UTC
+  // date, so a club-midnight instant would land a day early there.
+  const fromInstant = startOfDateOnlyForTimeZone(parsed.data.from);
+  const toInstant = endOfDateOnlyForTimeZone(parsed.data.to);
+  const fromDay = parseDateOnly(parsed.data.from);
+  const toDay = parseDateOnly(parsed.data.to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
 
-  if (toDate <= fromDate) {
+  if (toInstant <= fromInstant) {
     return NextResponse.json({ error: "to must be after from" }, { status: 400 });
   }
 
@@ -110,8 +115,8 @@ export async function GET(request: NextRequest) {
           ...bookingLodgeWhere,
           // Selected report dates are inclusive; booking lodge nights are the
           // half-open [checkIn, checkOut) range.
-          checkIn: { lte: occupancyToDate },
-          checkOut: { gt: occupancyFromDate },
+          checkIn: { lte: toDay },
+          checkOut: { gt: fromDay },
           status: { in: [...REPORT_BOOKING_STATUSES] },
         },
         include: {
@@ -170,10 +175,13 @@ export async function GET(request: NextRequest) {
         where: {
           active: true,
           OR: [
-            { joinedDate: { gte: fromDate, lte: toDate } },
+            // `joinedDate` is `@db.Date` (#2872) so it takes the two DAYS,
+            // inclusive at both ends — what the instant pair meant before the
+            // column was narrowed. `createdAt` is an instant and keeps them.
+            { joinedDate: { gte: fromDay, lte: toDay } },
             {
               joinedDate: null,
-              createdAt: { gte: fromDate, lte: toDate },
+              createdAt: { gte: fromInstant, lte: toInstant },
             },
           ],
         },
@@ -182,8 +190,8 @@ export async function GET(request: NextRequest) {
 
     // 1. Occupancy by date
     const days = eachDateOnlyInRange(
-      occupancyFromDate,
-      addDaysDateOnly(occupancyToDate, 1),
+      fromDay,
+      addDaysDateOnly(toDay, 1),
     );
 
     // Custodian occupancy (#2286) is deliberately EXCLUDED here. Utilisation
@@ -211,19 +219,19 @@ export async function GET(request: NextRequest) {
     });
 
     // 2. Revenue by dynamic granularity
-    const revenueSeries = buildRevenueSeries(bookings, occupancyFromDate, occupancyToDate);
+    const revenueSeries = buildRevenueSeries(bookings, fromDay, toDay);
 
     // 3. Booking trends by overlapped stay week. A booking spanning several
     // nights is counted once in each touched week, never once per night.
     const trendData = buildBookingTrendSeries(
       bookings,
-      occupancyFromDate,
-      occupancyToDate,
+      fromDay,
+      toDay,
     );
 
     // 4. Distinct guest rows that stay at least one selected night.
     const { totalGuests, memberGuests, nonMemberGuests } =
-      summarizeOverlappingGuests(bookings, occupancyFromDate, occupancyToDate);
+      summarizeOverlappingGuests(bookings, fromDay, toDay);
 
     // 5. Summary stats. Booked revenue is the selected stay-night slice; the
     // allocator divided the WHOLE price first, preserving every integer cent.

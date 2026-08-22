@@ -6,6 +6,7 @@ import {
   getSeasonStartDate,
 } from "./age-tier";
 import { getSeasonYear } from "./utils";
+import { dateOnlyFromParts } from "./date-only";
 import {
   sendAgeUpInvitationEmail,
   sendAgeUpParentEmailHandoffEmail,
@@ -342,8 +343,29 @@ export async function checkAgeUpMembers(): Promise<{
   // is the safe direction: this query only proposes candidates, and
   // `computeAgeTierWithSettings` below is the authority that promotes or skips
   // each one.
-  const cutoffWindowEnd = new Date(cutoffDate);
-  cutoffWindowEnd.setDate(cutoffWindowEnd.getDate() + 1);
+  //
+  // #2872 (CT-3): THE BOUND IS THE CALENDAR DAY, NOT LOCAL MIDNIGHT ON IT.
+  // `Member.dateOfBirth` is now `DateTime @db.Date`, and `@prisma/adapter-pg`
+  // narrows a bound `Date` for such a column to its UTC calendar date and throws
+  // the time away (`formatDate` in `mapArg`; pinned by
+  // `prisma-date-column-binding.test.ts`). A local-midnight instant east of UTC
+  // is 11:00 or 12:00 on the PREVIOUS UTC day, so binding one here would narrow
+  // to the day BEFORE and drop the member born on exactly the season-start
+  // anniversary — reopening the #2859 off-by-one the widening above exists to
+  // close, on the one boundary that decides a tier and therefore a price.
+  //
+  // The calendar parts are still read with the host-local getters, which is
+  // deliberate: `getSeasonStartDate` and `computeAge` are host-local too, so
+  // taking the day this way keeps every side of the comparison on the same
+  // reading. It is also behaviour-identical against the OLD column type — a
+  // stored date of birth is UTC midnight, so `< 2008-04-02T00:00:00Z` admits all
+  // of 1 April 2008 either way — which is what makes this safe to land beside
+  // the migration rather than after it.
+  const cutoffWindowEnd = dateOnlyFromParts(
+    cutoffDate.getFullYear(),
+    cutoffDate.getMonth(),
+    cutoffDate.getDate() + 1,
+  );
 
   const candidates = await prisma.member.findMany({
     where: {
