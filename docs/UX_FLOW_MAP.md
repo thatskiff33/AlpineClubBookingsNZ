@@ -830,9 +830,18 @@ One member-written board, club-local for now.
 - **Sharing** — a **Share with all clubs** tickbox is rendered, unchecked and
   disabled, with a note saying it is not available yet. It is present now so the
   composer does not grow a control out of nowhere when a later child enables it.
-- **Moderation** — none yet. The reader already filters `hiddenAt`/`removedAt`,
-  so the moderation child cannot forget to, and members can neither edit nor
-  delete their own posts.
+- **Moderation** — `/admin/message-board` (**Admin → Members → Message Board**,
+  `membership` area, #2998) has two tabs: **All posts** and **Hidden**, with
+  search over content and author. Per-post: **Hide** (reversible, content kept),
+  **Edit text** (the ORIGINAL goes into the audit row, since after the write it
+  exists nowhere else), and **Remove** (blanks the content permanently — the row
+  survives to carry the removal, the words do not). There is deliberately no
+  Flagged tab: nothing writes `reportCount` until reporting lands, and a tab
+  that can only ever be empty reads as "no problems" rather than "not built".
+  Every control is a `ViewOnlyActionButton` with `describeReason={false}` under
+  one `AdminViewOnlySectionBanner`, in a frame that renders in every state.
+  Members still cannot edit or delete their own posts; every request reaches an
+  admin.
 - **Audit** — one `communication` row per post, carrying the length rather than
   the body. That category is member-visible, so the author sees "you posted" on
   their own timeline; the body is deliberately not copied, since a second copy

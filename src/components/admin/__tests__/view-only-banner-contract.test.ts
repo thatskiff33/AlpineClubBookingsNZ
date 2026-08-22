@@ -333,12 +333,25 @@ const FIGURES = {
    * add eleven gated controls. Main's three and this branch's eleven are
    * DISJOINT, so the merged figure is 338 — MEASURED by re-running this census
    * on the merged tree, never by adding one branch's delta to the other's total.
+   *
+   * 338 -> 342 (#2998): the club message board's moderation queue adds four
+   * gated controls — Hide/Show, Edit text, Save text and Remove. MEASURED by
+   * re-running this census, not by adding four to the previous figure.
    */
-  callSites: 338,
-  /** Those that hand their explanation to a banner, by either rule. */
-  optOuts: 285,
-  /** `describeReason={false}` — needs a banner in the SAME file. */
-  staticOptOuts: 251,
+  callSites: 342,
+  /**
+   * Those that hand their explanation to a banner, by either rule.
+   *
+   * 285 -> 289 (#2998): all four of the moderation queue's controls opt out.
+   */
+  optOuts: 289,
+  /**
+   * `describeReason={false}` — needs a banner in the SAME file.
+   *
+   * 251 -> 255 (#2998): the queue's banner and its four buttons are in one
+   * file, so they are static rather than vouched.
+   */
+  staticOptOuts: 255,
   /**
    * `describeReason={!ancestorRendersViewOnlyBanner}` — needs a vouch.
    *
@@ -366,8 +379,11 @@ const FIGURES = {
    *
    * 85 -> 89 (#2780 merged with main): the four maintenance-report admin
    * surfaces each head their section with one. Measured, not added up.
+   *
+   * 89 -> 90 (#2998): the club message board's moderation queue heads its
+   * section with one banner.
    */
-  bannerComponents: 89,
+  bannerComponents: 90,
   /**
    * Admin files that render an `AdminViewOnlyNotice` and NO
    * `ViewOnlyActionButton` — the first of the three cases in which the older

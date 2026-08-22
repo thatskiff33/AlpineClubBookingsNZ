@@ -267,7 +267,12 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     // Only the member surfaces are listed here. The admin moderation screens
     // arrive in a later child and add their own prefixes to this same rule.
     flag: "commsPortal",
-    prefixes: ["/message-board", "/api/club-posts"],
+    prefixes: [
+      "/message-board",
+      "/api/club-posts",
+      "/admin/message-board",
+      "/api/admin/club-posts",
+    ],
   },
   {
     // Alpine Central Server (ServerNZ). Admin -> Modules is the master switch,
