@@ -52,8 +52,10 @@ declare const clubTimeZoneBrand: unique symbol;
  * plain string comparison.
  *
  * This is the canonical wire identity the epic's domain contract settles on.
- * Build one with {@link parseCalendarDate} or {@link requireCalendarDate}; there
- * is no other legal way to obtain the brand.
+ * The year runs from 0001 to 9999, and the arithmetic is held to it: every
+ * operation that would leave the range throws rather than minting a brand that
+ * fails its own validator. Build one with {@link parseCalendarDate} or
+ * {@link requireCalendarDate}; there is no other legal way to obtain the brand.
  */
 export type CalendarDate = string & { readonly [calendarDateBrand]: true };
 
@@ -80,12 +82,23 @@ export interface ClubWallTime {
   readonly millisecond: number;
 }
 
-/** A wall-clock time of day, with no date and no zone attached. */
+/**
+ * A wall-clock time of day, with no date and no zone attached.
+ *
+ * Every field is a whole number in range and every derivation VALIDATES that
+ * (`boundaries.ts`), because `setUTCHours` rolls: `{ hour: 24 }` — the natural
+ * spelling of "the end of the day" — used to come back as midnight on the
+ * following day, or to throw an error saying the clocks had jumped over it. For
+ * the end of a day use `endOfClubDayExclusive`.
+ */
 export interface ClubTimeOfDay {
   /** 0-23. */
   readonly hour: number;
+  /** 0-59. */
   readonly minute?: number;
+  /** 0-59. */
   readonly second?: number;
+  /** 0-999. */
   readonly millisecond?: number;
 }
 
@@ -96,9 +109,14 @@ export interface ClubTimeOfDay {
  * - `reject` (the default) throws {@link SkippedClubWallTimeError}, naming the
  *   date, the time and the zone. Nothing asked for a moment that never happened
  *   on purpose, so saying so is how the author finds out.
- * - `nextExistingInstant` returns the moment the clock jumped TO. That is the
- *   right answer for a day boundary — "the first instant of this club day" — and
- *   it is what {@link startOfClubDay} asks for.
+ * - `nextExistingInstant` returns THE MOMENT THE CLOCK JUMPED TO — the
+ *   transition instant itself, not the request slid forward by the size of the
+ *   gap, which is what a `Temporal`-style "compatible" disambiguation would give
+ *   and which is later than the transition for any reading inside the gap rather
+ *   than at its start. That is the right answer for a day boundary — "the first
+ *   instant of this club day" — and it is what {@link startOfClubDay} asks for.
+ *   `boundaries.ts` explains how it is found and names the two historical dates
+ *   on which the two answers have ever differed for a day boundary.
  *
  * Measured across all 418 zones this runtime knows, 2015-2036: local midnight is
  * skipped in 19 of them (Havana, Santiago, Sao Paulo, Cairo, Beirut, Tehran,

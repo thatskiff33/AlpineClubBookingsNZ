@@ -15,9 +15,11 @@
  *
  * ## The output is byte-identical to what shipped before
  *
- * `house-shape-equivalence.test.ts` pins every shape against `nzst-date`'s own
- * output for `Pacific/Auckland`, and against the lodge-display constants these
- * replace. The calendar-date half reaches the same strings by a different route
+ * `__tests__/house-shapes.test.ts` pins every shape against the frozen
+ * `Intl.DateTimeFormat` constants `nzst-date` used to hold — written out by hand
+ * there, because delegation means importing `nzst-date` would compare the kernel
+ * with itself — and against the lodge-display constants these replace, over a
+ * 400-day sweep. The calendar-date half reaches the same strings by a different route
  * — see `formatCalendarDateShape` in `./intl` for why a UTC-pinned formatter
  * over a UTC-midnight encoding is an identity rather than a projection.
  *
@@ -75,12 +77,12 @@ export function formatClubWeekdayDay(date: CalendarDate): string {
   return `${formatClubWeekday(date)} ${calendarDateParts(date).day}`;
 }
 
-/** "Thu 16 Apr" — the lobby wall's short date, deliberately without a year. */
+/** "Thu, 16 Apr" — the lobby wall's short date, deliberately without a year. */
 export function formatClubWeekdayDayMonth(date: CalendarDate): string {
   return formatCalendarDateShape("weekdayDayMonth", date);
 }
 
-/** "Thursday 16 April" — the lobby wall's long date, deliberately without a year. */
+/** "Thursday, 16 April" — the lobby wall's long date, deliberately without a year. */
 export function formatClubLongWeekdayDayMonth(date: CalendarDate): string {
   return formatCalendarDateShape("longWeekdayDayMonth", date);
 }

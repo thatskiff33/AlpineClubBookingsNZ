@@ -103,7 +103,6 @@ export { bindClubTime, type BoundClubTime } from "./bound";
 
 export {
   asClubTimeZone,
-  preservedClubTimeZone,
   requireClubTimeZone,
   unvalidatedLegacyClubTimeZone,
 } from "./zone";

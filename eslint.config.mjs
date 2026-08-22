@@ -639,6 +639,23 @@ const NO_UNZONED_INTL_DATE_TIME_FORMAT = {
 const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
 
 /**
+ * The three `toLocale*` DATE-RENDERING arms (#2256, #2264), as a NAMED array
+ * rather than three literals repeated in four blocks.
+ *
+ * A block lifts these by omitting them, which is invisible: nothing distinguishes
+ * "this block does not need the rendering arms" from "somebody dropped them".
+ * Named here, `DATE_GUARD_ARMS.rendering` lets `date-only-encoding-guard.test.ts`
+ * assert that a given path still resolves to all three — which is what pins
+ * `src/lib/nzst-date.ts` losing its exemption in CT-2 (#2990), a removal no test
+ * could see before.
+ */
+const DATE_RENDERING_RESTRICTIONS = [
+  NO_BARE_TO_LOCALE_DATE_STRING,
+  NO_BARE_TO_LOCALE_TIME_STRING,
+  NO_BARE_TO_LOCALE_STRING,
+];
+
+/**
  * The date arm families as bare selector strings, for
  * `date-only-encoding-guard.test.ts` — the mirror of `MONEY_GUARD_ARMS` below.
  *
@@ -651,6 +668,7 @@ const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
 export const DATE_GUARD_ARMS = {
   encoding: DATE_ONLY_ENCODING_RESTRICTIONS.map((entry) => entry.selector),
   zonedFormatter: ZONED_FORMATTER_RESTRICTIONS.map((entry) => entry.selector),
+  rendering: DATE_RENDERING_RESTRICTIONS.map((entry) => entry.selector),
 };
 
 // ---------------------------------------------------------------------------
@@ -943,11 +961,7 @@ const eslintConfig = defineConfig([
     //     an `off` block for `e2e/**`.
     files: ["src/**/*.{ts,tsx}"],
     rules: {
-      "no-restricted-syntax": srcRestrictedSyntax(
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
-      ),
+      "no-restricted-syntax": srcRestrictedSyntax(...DATE_RENDERING_RESTRICTIONS),
     },
   },
   {
@@ -1096,9 +1110,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         MONEY_CENTS_RESTRICTIONS,
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
+        ...DATE_RENDERING_RESTRICTIONS,
         ...MONEY_MODULE_RESTRICTIONS,
       ),
     },
@@ -1112,9 +1124,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         MONEY_CENTS_RESTRICTIONS,
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
+        ...DATE_RENDERING_RESTRICTIONS,
       ),
     },
   },

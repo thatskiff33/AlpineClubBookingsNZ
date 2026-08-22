@@ -45,9 +45,45 @@
  *
  * - **Skipped** (nothing valid): the clocks jumped over that reading. Default is
  *   to throw {@link SkippedClubWallTimeError}; a day boundary asks for
- *   `nextExistingInstant` instead.
+ *   `nextExistingInstant` instead, which BISECTS for the transition instant —
+ *   see below.
  * - **Ambiguous** (two valid): the clocks went back over it. Default is the
  *   earliest occurrence.
+ *
+ * ## Why the skipped answer is bisected rather than computed
+ *
+ * The obvious answer for a skipped reading is the request shifted forward by the
+ * size of the gap (`wall - offsetBefore`), which is what `Temporal`'s
+ * `compatible` disambiguation does. It is right when the request is the FIRST
+ * skipped reading and late by the distance into the gap otherwise, and this
+ * kernel's consumers need "the moment the clock jumped to" rather than "the
+ * request, slid along". Measured on Node 24.15.0:
+ *
+ * | request                             | shifted   | transition | out by  |
+ * | ----------------------------------- | --------- | ---------- | ------- |
+ * | `America/Havana` 2026-03-08 00:00    | 05:00Z    | 05:00Z     | 0       |
+ * | `America/Havana` 2026-03-08 00:30    | 05:30Z    | 05:00Z     | 30 min  |
+ * | `America/Toronto` 1919-03-31 00:00   | 05:00Z    | 04:30Z     | 30 min  |
+ * | `Pacific/Apia` 2011-12-30 12:00      | 22:00Z    | 10:00Z     | 12 h    |
+ *
+ * The Toronto row is the one that matters, because there the gap SPANS midnight
+ * (23:30 on the 30th jumps to 00:30 on the 31st): the shifted answer reads 01:00
+ * on 31 March, so `startOfClubDay` was not the first instant of its own day and
+ * the half-hour from 00:30 to 01:00 was counted into 30 March. `America/Nassau`
+ * has the identical transition and they are the ONLY two occurrences in the
+ * whole 418-zone, 2015-2036 sweep — zero of them inside it, so nothing shipping
+ * today is affected. It is fixed rather than documented because a day partition
+ * that is right "except for these two dates" is a partition somebody has to
+ * remember, and CT-1 makes any IANA zone selectable over any historical range.
+ *
+ * The bisection costs about thirty `formatToParts` reads and runs ONLY on a
+ * reading that does not exist — never for `Pacific/Auckland`, and never at noon
+ * in any zone.
+ *
+ * THE ONE THING IT STILL CANNOT DO. When a zone skips a WHOLE CALENDAR DAY —
+ * `Pacific/Apia` crossing the date line on 2011-12-30 — no instant reads as that
+ * day at all, so `startOfClubDay` returns the transition instant, whose club
+ * date is the following day. There is no better answer; the day does not exist.
  *
  * Measured across all 418 zones, 2015-2036: local midnight is skipped in 19
  * zones and ambiguous in 8. **Local NOON is neither, in any zone, on any day.**
@@ -62,7 +98,8 @@
  * ranges partition the timeline with no gap and no overlap. Verified over all
  * 418 zones for every transition-adjacent day 2015-2036, and over every single
  * day of that span for Pacific/Auckland, Pacific/Chatham, UTC and
- * America/Denver: zero failures.
+ * America/Denver: zero failures. The one exception is a day the zone does not
+ * have at all, named at the end of the previous section.
  */
 
 import { addCalendarDays } from "./calendar-date";
@@ -77,6 +114,16 @@ import {
 } from "./types";
 
 const MS_PER_DAY = 86_400_000;
+
+/**
+ * How far either side of the requested reading the transition search may look.
+ *
+ * Every real UTC offset is inside +/-16 hours, and a date-line change moves the
+ * clock by at most about a day, so two days each way brackets any gap this can
+ * be asked about while staying narrow enough that a NEIGHBOURING transition
+ * cannot get inside the bracket and break the search's monotonicity.
+ */
+const TRANSITION_SEARCH_WINDOW_MS = 2 * MS_PER_DAY;
 
 /** The club day's own midnight — the reading, not the instant. */
 const MIDNIGHT: ClubTimeOfDay = { hour: 0 };
@@ -99,11 +146,127 @@ interface WallTimeResolution {
   readonly nextExisting: Instant;
 }
 
+/**
+ * A wall-clock reading is four whole numbers in range, and nothing else.
+ *
+ * `setUTCHours` ROLLS, so without this an `{ hour: 24 }` — the natural spelling
+ * of "the end of the day" — silently became midnight on the FOLLOWING day under
+ * `nextExistingInstant`, and under the default policy threw
+ * {@link SkippedClubWallTimeError}, whose message says the clocks jumped forward
+ * over the reading. Neither is true and the second actively misleads, so a
+ * programmer error is named as one. `{ hour: -1 }`, `{ minute: 90 }` and
+ * `{ hour: 12.5 }` all behaved the same way.
+ */
+function requireClubTimeOfDay(time: ClubTimeOfDay): void {
+  const fields: [keyof ClubTimeOfDay, number, number][] = [
+    ["hour", time.hour, 23],
+    ["minute", time.minute ?? 0, 59],
+    ["second", time.second ?? 0, 59],
+    ["millisecond", time.millisecond ?? 0, 999],
+  ];
+  for (const [name, value, max] of fields) {
+    if (!Number.isInteger(value) || value < 0 || value > max) {
+      throw new RangeError(
+        `A club wall-clock time needs a whole ${String(name)} from 0 to ${max}: got ${String(value)}. ` +
+          "A time of day is a reading on a clock, not an offset — for the end of a day use " +
+          "endOfClubDayExclusive, which is the first instant of the NEXT day.",
+      );
+    }
+  }
+}
+
+/**
+ * The first instant whose club reading is strictly LATER than the requested one
+ * — the moment the clock jumped to, for a reading that never happens.
+ *
+ * Bisection rather than arithmetic, because the answer is a fact about the
+ * zone's transition table and nothing about the offsets on either side of the
+ * gap locates it. Returns `null` when the window does not bracket a transition,
+ * which leaves the caller on its previous answer rather than on a worse one.
+ */
+function findTransitionAfter(
+  wallAsUtc: number,
+  target: string,
+  zone: ClubTimeZone,
+): Instant | null {
+  const readsLater = (candidate: number): boolean | null => {
+    const key = readingKeyOrNull(new Date(candidate), zone);
+    return key === null ? null : key > target;
+  };
+  let low = wallAsUtc - TRANSITION_SEARCH_WINDOW_MS;
+  let high = wallAsUtc + TRANSITION_SEARCH_WINDOW_MS;
+  if (readsLater(low) !== false || readsLater(high) !== true) return null;
+  while (high - low > 1) {
+    const middle = low + Math.floor((high - low) / 2);
+    const later = readsLater(middle);
+    if (later === null) return null;
+    if (later) high = middle;
+    else low = middle;
+  }
+  return new Date(high);
+}
+
+/**
+ * A club reading as one sortable string, to the SECOND — or `null` for an
+ * instant the projection refuses.
+ *
+ * Seconds because that is all `Intl` reports; a transition lands on a whole
+ * minute in every zone this runtime knows, so the bisection above still
+ * converges on the exact millisecond of the jump.
+ *
+ * NULL RATHER THAN A THROW, because every reader here is a PROBE. Resolving a
+ * wall time reads instants a day either side of the request and the transition
+ * search reads two, so a question about the very first or very last day the
+ * kernel can name reaches past its own range — and an internal probe stepping
+ * out of bounds must not turn a legitimate query into an error.
+ * `endOfDateOnlyForTimeZone("9999-12-30")` is exactly that: a perfectly ordinary
+ * day whose successor's probe lands in the year 10000.
+ */
+function readingKeyOrNull(instant: Instant, zone: ClubTimeZone): string | null {
+  const read = readingOrNull(instant, zone);
+  return read === null
+    ? null
+    : wallKey(read.date, read.hour, read.minute, read.second);
+}
+
+function readingOrNull(
+  instant: Instant,
+  zone: ClubTimeZone,
+): ReturnType<typeof clubWallTimeOf> | null {
+  try {
+    return clubWallTimeOf(instant, zone);
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
+/** {@link clubZoneOffsetMs} for a probe, `null` where the projection refuses. */
+function probeOffsetMs(instant: Instant, zone: ClubTimeZone): number | null {
+  try {
+    return clubZoneOffsetMs(instant, zone);
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
+  }
+}
+
+function wallKey(
+  date: string,
+  hour: number,
+  minute: number,
+  second: number,
+): string {
+  const two = (value: number) => String(value).padStart(2, "0");
+  return `${date} ${two(hour)}:${two(minute)}:${two(second)}`;
+}
+
 function resolveClubWallTime(
   date: CalendarDate,
   time: ClubTimeOfDay,
   zone: ClubTimeZone,
 ): WallTimeResolution {
+  requireClubTimeOfDay(time);
   const hour = time.hour;
   const minute = time.minute ?? 0;
   const second = time.second ?? 0;
@@ -120,15 +283,19 @@ function resolveClubWallTime(
   wall.setUTCHours(hour, minute, second, millisecond);
   const wallAsUtc = wall.getTime();
 
-  const candidates = [...new Set(
-    [wallAsUtc - MS_PER_DAY, wallAsUtc, wallAsUtc + MS_PER_DAY].map(
-      (probe) => wallAsUtc - clubZoneOffsetMs(new Date(probe), zone),
+  const candidates = [
+    ...new Set(
+      [wallAsUtc - MS_PER_DAY, wallAsUtc, wallAsUtc + MS_PER_DAY]
+        .map((probe) => probeOffsetMs(new Date(probe), zone))
+        .filter((offset): offset is number => offset !== null)
+        .map((offset) => wallAsUtc - offset),
     ),
-  )].sort((left, right) => left - right);
+  ].sort((left, right) => left - right);
 
   const valid = candidates.filter((candidate) => {
-    const read = clubWallTimeOf(new Date(candidate), zone);
+    const read = readingOrNull(new Date(candidate), zone);
     return (
+      read !== null &&
       read.date === date &&
       read.hour === hour &&
       read.minute === minute &&
@@ -137,11 +304,17 @@ function resolveClubWallTime(
   });
 
   if (valid.length === 0) {
-    // Every candidate landed outside the requested reading, so the reading does
-    // not exist. The moment the clock jumped to is the LATEST candidate: it is
-    // the one computed with the offset in force BEFORE the jump, which for a
-    // reading at the very start of the gap is the transition instant itself.
-    const nextExisting = new Date(candidates[candidates.length - 1] ?? wallAsUtc);
+    /*
+      Every candidate landed outside the requested reading, so the reading does
+      not exist and the answer is the instant the clock jumped to. The LATEST
+      candidate is the request slid forward by the size of the gap, which is the
+      transition only when the request is the gap's first skipped reading — so it
+      is the fallback, and the bisection above is the answer. See the module doc
+      for the measured difference and the two dates it has ever mattered on.
+    */
+    const nextExisting =
+      findTransitionAfter(wallAsUtc, wallKey(date, hour, minute, second), zone) ??
+      new Date(candidates[candidates.length - 1] ?? wallAsUtc);
     return {
       kind: "skipped",
       earliest: nextExisting,
@@ -196,6 +369,11 @@ export function instantForClubWallTime(
  * Use this as the inclusive lower bound of a day-scoped query. Its upper bound
  * is {@link endOfClubDayExclusive}, which is the same function on the next day,
  * so the two never leave a gap and never overlap.
+ *
+ * When midnight is skipped the answer is the transition instant, which really is
+ * the day's first instant even when the gap started the evening BEFORE — see the
+ * module doc. The single case it cannot satisfy is a calendar day the zone skips
+ * entirely, where no instant reads as that day at all.
  */
 export function startOfClubDay(
   date: CalendarDate,
@@ -230,7 +408,10 @@ export function endOfClubDayExclusive(
  * `nextExistingInstant` rather than `reject`, so a booking screen can never fail
  * to render because of a DST rule. It is belt and braces: local noon is neither
  * skipped nor ambiguous in any of the 418 zones this runtime knows, on any day
- * from 2015 to 2036.
+ * from 2015 to 2036. Where a zone HAS skipped noon — a date-line change that
+ * removes a whole calendar day, `Pacific/Apia` in 2011 — the answer is the
+ * transition instant rather than the following day's noon, which is as close to
+ * right as a day that never happened allows.
  */
 export function noonOfClubDay(
   date: CalendarDate,

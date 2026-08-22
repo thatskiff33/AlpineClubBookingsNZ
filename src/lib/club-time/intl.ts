@@ -24,6 +24,18 @@
  * The pattern is not invented here: `dateOnlyFormatterCache` in
  * `src/lib/date-only.ts` is the same map, added for the same measured reason.
  *
+ * THAT TABLE IS ABOUT THE MEMO AND NOTHING ELSE. It says what a lookup costs
+ * against a frozen constant; it says nothing about how many FIELDS the formatter
+ * behind the lookup is asked for, which turned out to matter more. Deriving a
+ * club calendar day through the six-field parts formatter and discarding five of
+ * them measured 6.34 us against the 3.34 us of the `date-only.ts` helper it
+ * replaces — 1.90x, at 45 non-test call sites in the capacity, pricing and
+ * finance loops. A three-field formatter of its own, reading the part VALUES as
+ * strings instead of round-tripping them through `Number`, brings it to 3.35 us:
+ * 1.18x, and the 18% buys the range validation the old helper never did.
+ * Interleaved A/B/A, 300 000 iterations, `process.hrtime.bigint()`, Node
+ * 24.15.0. {@link clubZoneDateString} is that path.
+ *
  * NO EVICTION, DELIBERATELY. One installation is one club and one zone, so the
  * map holds one entry per shape (a dozen) plus whatever a test pins. Adding an
  * LRU here would be complexity guarding against nothing.
@@ -63,9 +75,9 @@ export const HOUSE_SHAPES = {
   },
   /** "Thu" */
   weekday: { weekday: "short" },
-  /** "Thu 16 Apr" */
+  /** "Thu, 16 Apr" */
   weekdayDayMonth: { weekday: "short", day: "numeric", month: "short" },
-  /** "Thursday 16 April" */
+  /** "Thursday, 16 April" */
   longWeekdayDayMonth: { weekday: "long", day: "numeric", month: "long" },
 } as const satisfies Record<string, Intl.DateTimeFormatOptions>;
 
@@ -82,7 +94,13 @@ const PARTS_OPTIONS: Intl.DateTimeFormatOptions = {
   second: "2-digit",
 };
 
-/** The calendar-day shape used to decode a `@db.Date`, never for display. */
+/**
+ * The DAY-ONLY projection shape, never for display.
+ *
+ * Three fields rather than {@link PARTS_OPTIONS}' six, because "which club day
+ * is this moment on?" is the hottest question the kernel is asked and the other
+ * five parts were built and thrown away. See the module doc for the measurement.
+ */
 const DATE_PARTS_OPTIONS: Intl.DateTimeFormatOptions = {
   year: "numeric",
   month: "2-digit",
@@ -90,6 +108,32 @@ const DATE_PARTS_OPTIONS: Intl.DateTimeFormatOptions = {
 };
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * `Intl` DESCRIBES A YEAR THROUGH A CALENDAR, and without an `era` part it
+ * renders the proleptic year 0 as "1" and year -1 as "2" — so an instant before
+ * the common era projects into a plausible, wrong, CE-looking date rather than
+ * an error. The kernel's `CalendarDate` starts at year 1 for the same reason, so
+ * an instant outside 0001-9999 has no answer here and says so.
+ *
+ * One millisecond of honesty about the edges: this checks the UTC year, and a
+ * zone offset can move the reading by up to sixteen hours, so on the very first
+ * and very last UTC day of the range the projected day can still fall outside
+ * it. In the late direction that composes a five-digit year, which
+ * `requireCalendarDate` refuses; in the early direction — the first UTC day of
+ * year 1, read in a zone west of Greenwich — it reads as year 1 rather than
+ * year 0. No club has data there, and the guard is one integer comparison.
+ */
+function requireDescribableInstant(instant: Date, timeZone: string): void {
+  const year = instant.getUTCFullYear();
+  if (!Number.isFinite(year) || year < 1 || year > 9999) {
+    throw new RangeError(
+      `Cannot project ${instant.toISOString()} into ${timeZone}: the club-time kernel describes ` +
+        "the years 0001 to 9999, and outside them Intl reports a year through an era this " +
+        "kernel does not read — silently naming a common-era day for a moment that is not on one.",
+    );
+  }
+}
 
 /**
  * The ONE `new Intl.DateTimeFormat` in the kernel.
@@ -163,6 +207,7 @@ function readNumber(parts: Intl.DateTimeFormatPart[], type: string): number {
 
 /** The wall-clock parts an instant has in `timeZone`, as numbers. */
 export function clubZoneParts(instant: Date, timeZone: string): ZoneParts {
+  requireDescribableInstant(instant, timeZone);
   const parts = formatterFor(
     `parts|${timeZone}`,
     "en-US",
@@ -179,22 +224,62 @@ export function clubZoneParts(instant: Date, timeZone: string): ZoneParts {
   };
 }
 
-/** The `YYYY-MM-DD` a `@db.Date` value encodes, read in UTC. */
+/**
+ * The `YYYY-MM-DD` a `@db.Date` value encodes, read in UTC.
+ *
+ * NO FORMATTER, DELIBERATELY, even though this module owns the only one. `Intl`
+ * describes a year through a CALENDAR, and without an `era` part it renders the
+ * proleptic year 0 as "1" (1 BC) — so a value at `0000-05-01T00:00:00Z` came
+ * back as `"0001-05-01"`, one year out and silent about it. `getUTC*` reads the
+ * field itself: UTC has no calendar to interpret, no eras and no transitions, so
+ * this is the decoding rather than a projection of it, and a year the
+ * `CalendarDate` range cannot hold now composes an out-of-range string that
+ * `requireCalendarDate` refuses out loud.
+ */
 export function utcDateOnlyString(value: Date): string {
-  const parts = formatterFor(
-    "utc-date-only",
-    "en-US",
-    "UTC",
-    DATE_PARTS_OPTIONS,
-  ).formatToParts(value);
   return composeDateString(
-    readNumber(parts, "year"),
-    readNumber(parts, "month"),
-    readNumber(parts, "day"),
+    value.getUTCFullYear(),
+    value.getUTCMonth() + 1,
+    value.getUTCDate(),
   );
 }
 
-/** `YYYY-MM-DD` from numeric parts. The kernel's only date-string assembly. */
+/**
+ * The `YYYY-MM-DD` an instant reads as in `timeZone` — the kernel's hot path.
+ *
+ * Reads the part VALUES as the strings `Intl` already produced rather than
+ * parsing each to a number and printing it again, and pads only the year, which
+ * `year: "numeric"` leaves unpadded below 1000. The result is validated by the
+ * caller ({@link clubCalendarDateOf}), so an unpadded or over-long year is a
+ * refusal rather than a malformed brand.
+ */
+export function clubZoneDateString(instant: Date, timeZone: string): string {
+  requireDescribableInstant(instant, timeZone);
+  const parts = formatterFor(
+    `date-parts|${timeZone}`,
+    "en-US",
+    timeZone,
+    DATE_PARTS_OPTIONS,
+  ).formatToParts(instant);
+  let year = "";
+  let month = "";
+  let day = "";
+  for (const part of parts) {
+    if (part.type === "year") year = part.value;
+    else if (part.type === "month") month = part.value;
+    else if (part.type === "day") day = part.value;
+  }
+  if (!year || !month || !day) {
+    throw new Error(
+      `Intl.DateTimeFormat produced no year/month/day for ${timeZone}; the runtime cannot describe this instant.`,
+    );
+  }
+  return `${year.padStart(4, "0")}-${month}-${day}`;
+}
+
+/** `YYYY-MM-DD` from numeric parts. Pads, and therefore never truncates: an
+ * out-of-range year composes an out-of-range string, which the callers hand to
+ * `requireCalendarDate`. */
 export function composeDateString(
   year: number,
   month: number,

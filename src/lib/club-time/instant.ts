@@ -24,8 +24,13 @@
  * one.
  */
 
-import { requireCalendarDate } from "./calendar-date";
-import { clubZoneParts, composeDateString, utcDateOnlyString } from "./intl";
+import { isCalendarDate, requireCalendarDate } from "./calendar-date";
+import {
+  clubZoneDateString,
+  clubZoneParts,
+  composeDateString,
+  utcDateOnlyString,
+} from "./intl";
 import type { CalendarDate, ClubTimeZone, ClubWallTime, Instant } from "./types";
 
 const MS_PER_SECOND = 1000;
@@ -50,14 +55,23 @@ export function isInstant(value: unknown): value is Instant {
  * external system sending a local time must say which zone it meant, and the
  * kernel refuses to guess. A caller that genuinely holds a club wall-clock time
  * uses `instantForClubWallTime` instead, which says so.
+ *
+ * IT DOES NOT ROLL AN IMPOSSIBLE DATE EITHER, for the same reason
+ * `parseCalendarDate` does not: JavaScript reads `"2026-02-30T00:00:00Z"` as
+ * 2 March, so a provider's typo or off-by-one becomes a real, plausible,
+ * WRONG moment two days later with nothing to notice. The calendar half of the
+ * string is checked before the value is accepted, so the two parsers agree about
+ * what a date is.
  */
 export function parseInstant(value: string | number | Date): Instant | null {
   if (value instanceof Date) return isInstant(value) ? value : null;
   if (typeof value === "number") {
     return Number.isFinite(value) ? new Date(value) : null;
   }
-  if (!OFFSET_BEARING_ISO.test(value.trim())) return null;
-  const parsed = new Date(value.trim());
+  const trimmed = value.trim();
+  if (!OFFSET_BEARING_ISO.test(trimmed)) return null;
+  if (!isCalendarDate(trimmed.slice(0, 10))) return null;
+  const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
@@ -67,7 +81,8 @@ export function requireInstant(value: string | number | Date): Instant {
   if (instant === null) {
     throw new Error(
       `Not an instant: ${JSON.stringify(value)}. An ISO string must carry Z or a UTC offset — ` +
-        "without one it names a wall-clock reading in whichever zone happens to be reading it.",
+        "without one it names a wall-clock reading in whichever zone happens to be reading it — " +
+        "and its calendar date must be a day that exists, never one this parser rolls forward.",
     );
   }
   return instant;
@@ -119,7 +134,10 @@ export function clubCalendarDateOf(
   instant: Instant,
   zone: ClubTimeZone,
 ): CalendarDate {
-  return clubWallTimeOf(instant, zone).date;
+  // Its own three-field projection rather than `clubWallTimeOf`, which builds
+  // the hour, minute and second this discards. 45 non-test call sites sit in the
+  // capacity, pricing and finance loops; `intl.ts` carries the measurement.
+  return requireCalendarDate(clubZoneDateString(instant, zone));
 }
 
 /**
@@ -146,6 +164,10 @@ export function dateOnlyInstantOf(date: CalendarDate): Instant {
  *
  * Hand it a real `DateTime` and you get that column's UTC day, which is the
  * `INV-DATE-019` defect. Use {@link clubCalendarDateOf} for a moment.
+ *
+ * Throws for a value whose UTC year is outside the `CalendarDate` range, which
+ * is what a `@db.Date` holding something other than a club calendar day looks
+ * like from here.
  */
 export function calendarDateOfDateOnlyInstant(value: Instant): CalendarDate {
   return requireCalendarDate(utcDateOnlyString(value));

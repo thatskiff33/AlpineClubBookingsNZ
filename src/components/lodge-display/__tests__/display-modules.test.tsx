@@ -615,6 +615,52 @@ describe("OccupancyGrid / WelcomePanel (whole-lodge treatment, AC3/AC5)", () => 
     expect(container.querySelectorAll(".display-week-day").length).toBe(3);
   });
 
+  it("prints each variant's own date SHAPE, not merely a date (CT-2, #2990)", () => {
+    /*
+      The two blockout variants deliberately use different house shapes: the
+      wall-sized statement spells the day out ("Monday, 13 April") and the board
+      strip abbreviates it ("Mon, 13 Apr"), and both drop the YEAR because a
+      lobby screen only ever names days inside the current stay window.
+
+      Nothing asserted WHICH shape each one picked. Swapping
+      `formatClubWeekdayDayMonth` for `formatClubWeekdayDate` in
+      `occupancy-grid.tsx` — a year back on the wall, on every blockout — left
+      the whole suite green. The wiring is byte-correct today; this is what keeps
+      it that way, and it is also the only place the kernel's two year-less
+      shapes are exercised through a real render.
+    */
+    const statement = render(<OccupancyGrid state={blockoutState} />);
+    expect(statement.container.textContent).toContain(
+      "Monday, 13 April → Wednesday, 15 April",
+    );
+    expect(statement.container.textContent).not.toContain("2026");
+    statement.unmount();
+
+    const board = render(
+      <OccupancyGrid
+        state={state({
+          rooms: [
+            { id: "room-1", name: "A - Kea" },
+            { id: "room-2", name: "B - Tui" },
+          ],
+          bookings: [
+            row({
+              wholeLodge: true,
+              label: "Harakeke College",
+              guests: null,
+              guestCount: 14,
+              stayEnd: "2026-04-15",
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(board.container.textContent).toContain(
+      "Mon, 13 Apr → Wed, 15 Apr · reopens Wed",
+    );
+    expect(board.container.textContent).not.toContain("2026");
+  });
+
   it("variant=statement forces the summary + week strip even when rooms exist (B1b)", () => {
     const withRooms = state({
       rooms: [

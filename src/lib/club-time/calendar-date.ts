@@ -18,22 +18,54 @@
  * THE ARITHMETIC IS INTEGER CIVIL-CALENDAR ARITHMETIC, not `Date` arithmetic.
  * Howard Hinnant's `days_from_civil`/`civil_from_days` pair converts a
  * proleptic-Gregorian (year, month, day) to and from a day number, exactly, with
- * no epoch object in the middle. `calendar-date-agrees-with-utc.test.ts` pins
- * every day of a multi-century span against `Date.UTC` so the two can never
- * disagree; the reason not to simply USE `Date.UTC` is that a module holding a
+ * no epoch object in the middle. `__tests__/calendar-date.test.ts` pins every
+ * day of a multi-century span against `Date.UTC` so the two can never disagree; the reason not to simply USE `Date.UTC` is that a module holding a
  * `Date` is a module somebody eventually formats, and the census above is what
  * stops that.
  *
- * FOUR-DIGIT YEARS ONLY. `parseCalendarDate` requires exactly four digits, which
- * is what makes plain string comparison a correct chronological comparison and
- * what keeps every value round-trippable through JSON, a URL and a `date`
- * column. A club with a booking in the year 10000 has a different problem.
+ * FOUR-DIGIT YEARS ONLY, AND THE ARITHMETIC IS HELD TO IT. `parseCalendarDate`
+ * requires exactly four digits, which is what makes plain string comparison a
+ * correct chronological comparison and what keeps every value round-trippable
+ * through JSON, a URL and a `date` column. A club with a booking in the year
+ * 10000 has a different problem.
+ *
+ * That is only true if NOTHING can mint a brand outside the range, and the first
+ * version of this module could: `compose` padded with `padStart(4, "0")`, which
+ * lengthens and never truncates, so `addCalendarDays("9999-12-31", 1)` returned
+ * a branded `"10000-01-01"`, `addCalendarDays(date, NaN)` a branded
+ * `"0NaN-NaN-NaN"`, and `compareCalendarDates("10000-01-01", "2026-01-01")` the
+ * WRONG ORDER — the one property the brand exists to promise. It was reachable
+ * from a screen: `/admin/audit-log?to=9999-12-31` runs that value through
+ * `endOfDateOnlyForTimeZone`, whose upper bound became an instant in the year
+ * 999, so the log came back EMPTY while the filter still said "to 9999-12-31".
+ *
+ * So the range is a guard rather than a convention. Every value this module
+ * produces is between `0001-01-01` and `9999-12-31`, every step is a whole
+ * number of days or months, and anything else throws a `RangeError` naming what
+ * it was asked for. `calendar-date.test.ts` mutates `compose`'s pad width to
+ * prove the guard is the thing catching it.
+ *
+ * WHY THE FLOOR IS YEAR 1 AND NOT YEAR 0. `0000` is a legal ISO 8601 year (1 BC
+ * in the proleptic Gregorian calendar), and the integer arithmetic below handles
+ * it perfectly well — but `Intl` cannot describe it without an era, so a
+ * year-zero value round-tripped through a projection came back as `0001-...`,
+ * silently one year out. Refusing year 0 outright costs nothing and gives the
+ * projections in `intl.ts` one range to refuse rather than an era to interpret.
  */
 
 import type { CalendarDate } from "./types";
 
 /** Exactly `YYYY-MM-DD`. Anything else — `2026-4-6`, `20260406`, a suffix. */
 const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The first and last years a `CalendarDate` can name. See the module doc.
+ *
+ * Module-private on purpose: the range is a property of the type, enforced here,
+ * not a number other modules should be branching on.
+ */
+const MIN_CALENDAR_YEAR = 1;
+const MAX_CALENDAR_YEAR = 9999;
 
 const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -97,8 +129,47 @@ function pad(value: number, width: number): string {
   return String(value).padStart(width, "0");
 }
 
+/**
+ * THE ONLY PLACE A `CalendarDate` BRAND IS MINTED FROM PARTS, and therefore the
+ * one place the four-digit range can be enforced once for every caller.
+ *
+ * `pad` lengthens and cannot truncate, so without this check a year of 10000, a
+ * negative year or a `NaN` produced a string that carried the brand and failed
+ * `isCalendarDate`. Throwing is deliberate: returning `null` instead would make
+ * `addCalendarDays` and every one of its callers nullable in order to describe
+ * an input no correct caller passes, and this module already throws for exactly
+ * that class in {@link calendarDateFromParts}.
+ */
 function compose(year: number, month: number, day: number): CalendarDate {
+  if (
+    !Number.isInteger(year) ||
+    year < MIN_CALENDAR_YEAR ||
+    year > MAX_CALENDAR_YEAR
+  ) {
+    throw new RangeError(
+      `A club calendar date runs from ${pad(MIN_CALENDAR_YEAR, 4)}-01-01 to ` +
+        `${pad(MAX_CALENDAR_YEAR, 4)}-12-31; this step landed on year ${String(year)}. ` +
+        "Four-digit years are what make plain string comparison chronological, so a value " +
+        "outside that range cannot be a club calendar date at all.",
+    );
+  }
   return `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}` as CalendarDate;
+}
+
+/**
+ * A calendar step is a WHOLE number of days or months.
+ *
+ * `NaN`, `Infinity` and `0.5` all used to flow through the civil arithmetic and
+ * out the other side as a branded string — `"0NaN-NaN-NaN"`, `"2026-01-1.5"`.
+ * They are programmer errors rather than data, so they are named where they
+ * arrive instead of being discovered three modules later.
+ */
+function requireWholeStep(steps: number, unit: "days" | "months"): void {
+  if (!Number.isInteger(steps)) {
+    throw new RangeError(
+      `A calendar step must be a whole number of ${unit}: got ${String(steps)}.`,
+    );
+  }
 }
 
 /** True when `value` is a well-formed calendar day that really exists. */
@@ -109,7 +180,13 @@ export function isCalendarDate(value: unknown): value is CalendarDate {
   const year = Number(value.slice(0, 4));
   const month = Number(value.slice(5, 7));
   const day = Number(value.slice(8, 10));
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysInCalendarMonth(year, month);
+  return (
+    year >= MIN_CALENDAR_YEAR &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInCalendarMonth(year, month)
+  );
 }
 
 /**
@@ -148,15 +225,16 @@ export function calendarDateFromParts(
     !Number.isInteger(year) ||
     !Number.isInteger(month) ||
     !Number.isInteger(day) ||
-    year < 0 ||
-    year > 9999 ||
+    year < MIN_CALENDAR_YEAR ||
+    year > MAX_CALENDAR_YEAR ||
     month < 1 ||
     month > 12 ||
     day < 1 ||
     day > daysInCalendarMonth(year, month)
   ) {
     throw new Error(
-      `Not a club calendar date: year=${year} month=${month} day=${day}. Months are 1-12 and the day must exist in that month.`,
+      `Not a club calendar date: year=${year} month=${month} day=${day}. Years are ` +
+        `${MIN_CALENDAR_YEAR}-${MAX_CALENDAR_YEAR}, months are 1-12, and the day must exist in that month.`,
     );
   }
   return compose(year, month, day);
@@ -180,8 +258,15 @@ export function calendarMonthOf(date: CalendarDate): string {
   return date.slice(0, 7);
 }
 
-/** Whole calendar days later (or earlier, for a negative `days`). */
+/**
+ * Whole calendar days later (or earlier, for a negative `days`).
+ *
+ * Throws a `RangeError` for a fractional or non-finite step, and for a step that
+ * would leave the four-digit year range — `addCalendarDays("9999-12-31", 1)` has
+ * no answer this type can hold. See the module doc for why that is a throw.
+ */
 export function addCalendarDays(date: CalendarDate, days: number): CalendarDate {
+  requireWholeStep(days, "days");
   const { year, month, day } = calendarDateParts(date);
   const moved = civilFromDays(daysFromCivil(year, month, day) + days);
   return compose(moved.year, moved.month, moved.day);
@@ -194,11 +279,15 @@ export function addCalendarDays(date: CalendarDate, days: number): CalendarDate 
  * days (31 Jan -> 28 Feb -> 28 Jan), which matches `addMonthsDateOnly`'s
  * long-standing behaviour; a caller stepping back and forth keeps its own
  * anchor.
+ *
+ * Throws a `RangeError` for a fractional or non-finite step, and for one that
+ * would leave the four-digit year range, exactly as {@link addCalendarDays} does.
  */
 export function addCalendarMonths(
   date: CalendarDate,
   months: number,
 ): CalendarDate {
+  requireWholeStep(months, "months");
   const { year, month, day } = calendarDateParts(date);
   const zeroBased = year * 12 + (month - 1) + months;
   const targetYear = Math.floor(zeroBased / 12);

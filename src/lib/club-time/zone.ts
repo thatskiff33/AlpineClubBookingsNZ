@@ -8,12 +8,15 @@
  * carries the answer into the type system, so a function that needs the club's
  * civil-time authority cannot be handed a bare `process.env.TZ`, a browser's
  * `resolvedOptions().timeZone`, or a hopeful string literal.
+ *
+ * CT-1's SECOND normaliser, `normaliseClubTimeZoneForPreservation`, is
+ * deliberately NOT wrapped here. It exists for the environment reader and the
+ * self-heal step, both of which work in raw strings and neither of which wants a
+ * branded value; a branded wrapper with no caller is an export nobody needed,
+ * and adding one when a lane does need it is a three-line function.
  */
 
-import {
-  normaliseClubTimeZone,
-  normaliseClubTimeZoneForPreservation,
-} from "@/lib/club-time-zone";
+import { normaliseClubTimeZone } from "@/lib/club-time-zone";
 
 import type { ClubTimeZone } from "./types";
 
@@ -42,19 +45,6 @@ export function requireClubTimeZone(
   return zone;
 }
 
-/**
- * The zone a deployment is ALREADY effectively running on, preserved rather than
- * approved. CT-1's second normaliser: it probes before judging, so the
- * thirty-six legacy `TZ` spellings that canonicalise to a real location (`GB` ->
- * `Europe/London`, `NZ-CHAT` -> `Pacific/Chatham`) survive instead of being
- * replaced by the New Zealand default. `null` for a value that names no place at
- * all (`UTC`, `Etc/GMT-12`), where there is nothing to preserve.
- */
-export function preservedClubTimeZone(
-  value: string | null | undefined,
-): ClubTimeZone | null {
-  return normaliseClubTimeZoneForPreservation(value) as ClubTimeZone | null;
-}
 
 /**
  * THE COMPATIBILITY SEAM, AND THE ONLY PLACE THAT BRANDS WITHOUT VALIDATING.

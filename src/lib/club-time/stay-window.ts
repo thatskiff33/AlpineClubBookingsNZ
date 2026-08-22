@@ -7,7 +7,8 @@
  * occupancy and presence remain the half-open lodge-night range
  * `[checkIn, checkOut)` expanded to nights — `INV-DATE-002`, `INV-DATE-003`,
  * `INV-DATE-020` — and nothing here changes, replaces or is substituted for any
- * of that. `stay-window-is-not-occupancy.test.ts` is a census that keeps it so.
+ * of that. The "stay window is not an occupancy decision" case in
+ * `__tests__/club-time-kernel-census.test.ts` is what keeps it so.
  *
  * What this adds is the epic's "if an actual arrival or departure INSTANT is
  * needed, derive 12:00 club-local on each endpoint using named-zone/DST rules".

@@ -27,6 +27,22 @@ describe("what counts as a club calendar date", () => {
     expect(isCalendarDate("2026-04-16")).toBe(true);
     expect(isCalendarDate("2028-02-29")).toBe(true);
     expect(isCalendarDate("0001-01-01")).toBe(true);
+    expect(isCalendarDate("9999-12-31")).toBe(true);
+  });
+
+  it("refuses year 0000, which Intl cannot describe without an era", () => {
+    /*
+      `0000` is a legal ISO 8601 year — 1 BC in the proleptic Gregorian calendar
+      — and the integer arithmetic here handles it perfectly well. `Intl` does
+      not: with no `era` part it renders proleptic year 0 as "1", so a year-zero
+      value round-tripped through a projection came back as `0001-...`, one year
+      out and silent about it. The floor removes the whole BC class rather than
+      patching each projection that meets it.
+    */
+    expect(isCalendarDate("0000-01-01")).toBe(false);
+    expect(parseCalendarDate("0000-05-01")).toBeNull();
+    expect(() => calendarDateFromParts(0, 5, 1)).toThrow(/year=0/);
+    expect(() => addCalendarDays(cd("0001-01-01"), -1)).toThrow(RangeError);
   });
 
   it("refuses every shape that is not exactly YYYY-MM-DD", () => {
@@ -64,9 +80,83 @@ describe("what counts as a club calendar date", () => {
   it("names the offending value when it throws", () => {
     expect(() => requireCalendarDate("2026-02-30")).toThrow(/2026-02-30/);
     expect(() => calendarDateFromParts(2026, 2, 30)).toThrow(/day=30/);
+    expect(() => calendarDateFromParts(10_000, 1, 1)).toThrow(/year=10000/);
     // Months are 1-12, NOT the 0-based Date.getMonth() convention.
     expect(() => calendarDateFromParts(2026, 0, 1)).toThrow(/month=0/);
     expect(calendarDateFromParts(2026, 1, 1)).toBe("2026-01-01");
+  });
+});
+
+describe("the arithmetic can never mint a value outside the type's range", () => {
+  /*
+    MUTATION THAT MUST FAIL THIS BLOCK: change `compose`'s year `pad(year, 4)` to
+    `pad(year, 2)` in `calendar-date.ts`.
+
+    `padStart` lengthens and never truncates, so before this guard every case
+    below returned a value that CARRIED THE BRAND and failed `isCalendarDate`:
+    `"10000-01-01"`, `"00-1-12-31"`, `"0NaN-NaN-NaN"`, `"2026-01-1.5"`. Because
+    the brand is what `compareCalendarDates` relies on, a five-digit year also
+    sorted BEFORE every four-digit one — `compareCalendarDates("10000-01-01",
+    "2026-01-01")` was -1, the exact property the type exists to promise.
+
+    It was reachable from a screen. `/admin/audit-log?to=9999-12-31` validates
+    `to` with a bare `YYYY-MM-DD` regex and hands it to
+    `endOfDateOnlyForTimeZone`, which steps to the next day: the upper bound
+    became an instant in the year 999, so the audit log came back EMPTY while the
+    filter still read "to 9999-12-31".
+  */
+  it.each([
+    ["one day past the last representable day", () => addCalendarDays(cd("9999-12-31"), 1)],
+    ["one day before the first", () => addCalendarDays(cd("0001-01-01"), -1)],
+    ["a whole year past the end", () => addCalendarMonths(cd("9999-06-01"), 12)],
+    ["a month before the start", () => addCalendarMonths(cd("0001-01-15"), -1)],
+    ["a NaN day step", () => addCalendarDays(cd("2026-01-01"), Number.NaN)],
+    ["an infinite day step", () => addCalendarDays(cd("2026-01-01"), Number.POSITIVE_INFINITY)],
+    ["a fractional day step", () => addCalendarDays(cd("2026-01-01"), 0.5)],
+    ["a fractional month step", () => addCalendarMonths(cd("2026-01-01"), 1.5)],
+    ["a NaN month step", () => addCalendarMonths(cd("2026-01-01"), Number.NaN)],
+    ["a step far past the end", () => addCalendarDays(cd("2026-01-01"), 4_000_000)],
+  ])("refuses %s", (_label, step) => {
+    expect(step).toThrow(RangeError);
+  });
+
+  it("still answers at both ends of the range", () => {
+    expect(addCalendarDays(cd("9999-12-30"), 1)).toBe("9999-12-31");
+    expect(addCalendarDays(cd("0001-01-02"), -1)).toBe("0001-01-01");
+    expect(addCalendarMonths(cd("9999-11-30"), 1)).toBe("9999-12-30");
+  });
+
+  it("hands back only values that pass its own validator", () => {
+    /*
+      The property behind every case above, said once: whatever this module
+      produces, `isCalendarDate` accepts. A brand that fails its own validator is
+      the defect, not the malformed strings themselves.
+    */
+    let date = cd("9999-12-01");
+    for (let step = 0; step < 31; step += 1) {
+      expect(isCalendarDate(date), date).toBe(true);
+      if (date === "9999-12-31") break;
+      date = addCalendarDays(date, 1);
+    }
+    for (const months of [-11, -1, 0, 1, 11]) {
+      const moved = addCalendarMonths(cd("2026-01-31"), months);
+      expect(isCalendarDate(moved), `${months}`).toBe(true);
+    }
+  });
+
+  it("keeps plain string comparison chronological, which is what the range buys", () => {
+    const days = [
+      cd("0001-01-01"),
+      cd("1970-01-01"),
+      cd("2026-04-16"),
+      cd("9999-12-31"),
+    ];
+    for (let index = 1; index < days.length; index += 1) {
+      expect(
+        compareCalendarDates(days[index - 1]!, days[index]!),
+        `${days[index - 1]} < ${days[index]}`,
+      ).toBe(-1);
+    }
   });
 });
 

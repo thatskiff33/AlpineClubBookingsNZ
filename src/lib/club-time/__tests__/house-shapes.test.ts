@@ -23,14 +23,6 @@ import {
   formatClubWeekdayDayMonth,
 } from "../format";
 import { requireClubTimeZone } from "../zone";
-import {
-  formatNZDate,
-  formatNZDateTime,
-  formatNZLongDate,
-  formatNZMonthYear,
-  formatNZTime,
-  formatNZWeekdayDate,
-} from "@/lib/nzst-date";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 
 const cd = requireCalendarDate;
@@ -43,21 +35,76 @@ const DENVER = requireClubTimeZone("America/Denver");
 const INSTANT = new Date("2026-04-16T02:30:00.000Z");
 
 describe("the six shapes are byte-identical to the helpers they replace", () => {
-  it("matches nzst-date for the same instant", () => {
-    expect(formatClubInstantDate(INSTANT, AUCKLAND)).toBe(formatNZDate(INSTANT));
-    expect(formatClubInstantDateTime(INSTANT, AUCKLAND)).toBe(
-      formatNZDateTime(INSTANT),
-    );
-    expect(formatClubInstantLongDate(INSTANT, AUCKLAND)).toBe(
-      formatNZLongDate(INSTANT),
-    );
-    expect(formatClubInstantTime(INSTANT, AUCKLAND)).toBe(formatNZTime(INSTANT));
-    expect(formatClubInstantMonthYear(INSTANT, AUCKLAND)).toBe(
-      formatNZMonthYear(INSTANT),
-    );
-    expect(formatClubInstantWeekdayDate(INSTANT, AUCKLAND)).toBe(
-      formatNZWeekdayDate(INSTANT),
-    );
+  it("matches the frozen formatters nzst-date used to hold, on 400 instants", () => {
+    /*
+      THE OLD SPELLING IS WRITTEN OUT BY HAND, and that is the whole point of the
+      case. `nzst-date.ts` now DELEGATES to these functions, so
+      `formatNZDate(x) === formatClubInstantDate(x, zone)` compares the kernel
+      with itself and asserts nothing at all — it was the strongest-looking
+      evidence in this file and it was a tautology. These are the six frozen
+      `Intl.DateTimeFormat` constants that module held before CT-2 (#2990),
+      transcribed from `git show` of the pre-delegation file, so the comparison
+      is against what actually shipped.
+
+      Six shapes over 400 consecutive days, both sides of both New Zealand
+      transitions, at a time of day that differs between the club's zone and UTC.
+      The lodge-display half of the file does the same thing for its three
+      shapes, and for the same reason.
+    */
+    const zoned = (options: Intl.DateTimeFormatOptions) =>
+      new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, ...options });
+    const oldDate = zoned({ dateStyle: "medium" });
+    const oldDateTime = zoned({ dateStyle: "medium", timeStyle: "short" });
+    const oldLongDate = zoned({ dateStyle: "long" });
+    const oldTime = zoned({ timeStyle: "short" });
+    const oldMonthYear = zoned({ month: "long", year: "numeric" });
+    const oldWeekdayDate = zoned({
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+
+    let day = cd("2026-01-01");
+    for (let step = 0; step < 400; step += 1) {
+      // 02:30Z is 14:30 or 15:30 in Auckland and the PREVIOUS evening in Denver,
+      // so a lost zone argument moves the date as well as the time.
+      const instant = new Date(`${day}T02:30:00.000Z`);
+      const at = `${day} 02:30Z`;
+      expect(formatClubInstantDate(instant, AUCKLAND), at).toBe(
+        oldDate.format(instant),
+      );
+      expect(formatClubInstantDateTime(instant, AUCKLAND), at).toBe(
+        oldDateTime.format(instant),
+      );
+      expect(formatClubInstantLongDate(instant, AUCKLAND), at).toBe(
+        oldLongDate.format(instant),
+      );
+      expect(formatClubInstantTime(instant, AUCKLAND), at).toBe(
+        oldTime.format(instant),
+      );
+      expect(formatClubInstantMonthYear(instant, AUCKLAND), at).toBe(
+        oldMonthYear.format(instant),
+      );
+      expect(formatClubInstantWeekdayDate(instant, AUCKLAND), at).toBe(
+        oldWeekdayDate.format(instant),
+      );
+      day = addCalendarDays(day, 1);
+    }
+  });
+
+  it("the frozen comparison is not vacuous: the six shapes really differ", () => {
+    // A sweep of six equalities passes perfectly if the six shapes are the same
+    // shape. They are not, and this is what says so.
+    const rendered = new Set([
+      formatClubInstantDate(INSTANT, AUCKLAND),
+      formatClubInstantDateTime(INSTANT, AUCKLAND),
+      formatClubInstantLongDate(INSTANT, AUCKLAND),
+      formatClubInstantTime(INSTANT, AUCKLAND),
+      formatClubInstantMonthYear(INSTANT, AUCKLAND),
+      formatClubInstantWeekdayDate(INSTANT, AUCKLAND),
+    ]);
+    expect(rendered.size).toBe(6);
   });
 
   it("renders the shapes this repository has always rendered", () => {

@@ -117,7 +117,6 @@
     "src/lib/club-time/server.ts": ["files", "exports", "types"],
     "src/lib/club-time/index.ts": ["exports", "types"],
     "src/lib/club-time/bound.ts": ["exports", "types"],
-    "src/lib/club-time/zone.ts": ["exports"],
     // #1138 booking-modify split: this file's header comment states it is
     // "now a pure barrel" so "everything importable from @/lib/booking-modify
     // is unchanged" — a deliberate backward-compat contract. Several flagged

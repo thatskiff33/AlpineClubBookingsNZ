@@ -36,9 +36,29 @@ const DENVER = tz("America/Denver");
 const HAVANA = tz("America/Havana");
 const AMMAN = tz("Asia/Amman");
 const LORD_HOWE = tz("Australia/Lord_Howe");
+const SANTIAGO = tz("America/Santiago");
+const TORONTO = tz("America/Toronto");
+const NASSAU = tz("America/Nassau");
+const APIA = tz("Pacific/Apia");
 
-/** Every club zone this suite crosses with both host zones. */
-const CLUB_ZONES = [AUCKLAND, CHATHAM, DENVER, HAVANA, AMMAN, LORD_HOWE];
+/**
+ * Every club zone this suite crosses with both host zones.
+ *
+ * `America/Santiago` earns its place: it is the only one here that discriminates
+ * the DAY-AFTER probe. Amman discriminates the day-before one, and until
+ * Santiago was added the list contained no zone at all that could tell three
+ * probes from two — so "three probes, not two" was half-tested. See the case
+ * below for the measurement.
+ */
+const CLUB_ZONES = [
+  AUCKLAND,
+  CHATHAM,
+  DENVER,
+  HAVANA,
+  AMMAN,
+  LORD_HOWE,
+  SANTIAGO,
+];
 const HOST_ZONES = ["UTC", "America/Los_Angeles"];
 
 describe("a club day starts at the first instant that exists on it", () => {
@@ -75,6 +95,129 @@ describe("a club day starts at the first instant that exists on it", () => {
     expect(start.toISOString()).toBe("2015-10-29T21:00:00.000Z");
     expect(clubCalendarDateOf(new Date(start.getTime() - 1), AMMAN)).toBe(
       "2015-10-29",
+    );
+  });
+
+  it("needs the DAY-AFTER probe, not just the day before (#2990)", () => {
+    /*
+      MUTATION THAT MUST FAIL THIS CASE: delete `wallAsUtc + MS_PER_DAY` from the
+      probe list in `resolveClubWallTime`.
+
+      Chile ended DST at 00:00 on 15 May 2016, winding back to 23:00 on the 14th,
+      so midnight on the 15th never happens at -03 and DOES happen an hour later
+      at -04. Both of the other two probes sit before the transition and offer
+      03:00Z, which reads 23:00 on the FOURTEENTH — the wrong calendar day — and
+      the resolver, finding nothing valid, would hand that back as a skipped
+      reading. Only the day-after probe sees the -04 offset.
+
+      Swept over all 418 zones this runtime knows for 2015-2036, dropping that
+      probe changes 168 `startOfClubDay` resolutions across 12 zones, always to
+      the wrong day: Asuncion, Campo Grande, Ciudad Juarez, Coyhaique, Cuiaba,
+      Godthab, Punta Arenas, Santiago, Sao Paulo, Scoresbysund, Palmer and
+      Easter.
+    */
+    const start = startOfClubDay(cd("2016-05-15"), SANTIAGO);
+    expect(start.toISOString()).toBe("2016-05-15T04:00:00.000Z");
+    expect(clubWallTimeOf(start, SANTIAGO)).toMatchObject({
+      date: "2016-05-15",
+      hour: 0,
+      minute: 0,
+    });
+    // The two-probe answer, named so the case cannot pass by agreeing with it.
+    expect(start.toISOString()).not.toBe("2016-05-15T03:00:00.000Z");
+    expect(clubCalendarDateOf(new Date("2016-05-15T03:00:00.000Z"), SANTIAGO)).toBe(
+      "2016-05-14",
+    );
+  });
+
+  it("starts the day at the TRANSITION when the gap spans midnight (#2990)", () => {
+    /*
+      Toronto and Nassau both jumped from 23:30 on 30 March 1919 to 00:30 on the
+      31st, so midnight on the 31st is inside a gap that began the previous
+      evening. Resolving a skipped reading by sliding the request forward by the
+      size of the gap — the `Temporal` "compatible" rule, and what this kernel
+      did first — lands on 01:00, half an hour after the day really began, and
+      the half-hour from 00:30 to 01:00 was counted into 30 March instead.
+
+      These two dates are the ONLY occurrences in the whole 418-zone, 2015-2036
+      sweep, and there are none inside it, so nothing shipping today changes.
+      The property is asserted anyway, because a day partition that is correct
+      "except for two dates" is one somebody has to remember.
+    */
+    for (const zone of [TORONTO, NASSAU]) {
+      const start = startOfClubDay(cd("1919-03-31"), zone);
+      expect(start.toISOString(), String(zone)).toBe("1919-03-31T04:30:00.000Z");
+      expect(clubWallTimeOf(start, zone), String(zone)).toMatchObject({
+        date: "1919-03-31",
+        hour: 0,
+        minute: 30,
+      });
+      // The slid-forward answer, named so the case cannot pass by agreeing with it.
+      expect(start.toISOString(), String(zone)).not.toBe(
+        "1919-03-31T05:00:00.000Z",
+      );
+      // And the day really does start there: the millisecond before is the 30th.
+      expect(
+        clubCalendarDateOf(new Date(start.getTime() - 1), zone),
+        String(zone),
+      ).toBe("1919-03-30");
+      expect(endOfClubDayExclusive(cd("1919-03-30"), zone).getTime()).toBe(
+        start.getTime(),
+      );
+    }
+  });
+
+  it("gives the transition instant for a day the zone SKIPS ENTIRELY", () => {
+    /*
+      Samoa crossed the date line on 30 December 2011: the clock went from
+      23:59:59 on the 29th (-10) straight to 00:00 on the 31st (+14), so no
+      instant reads as 30 December at all and no answer can be the first instant
+      of that day. The honest answer is the moment the clock jumped, which is
+      what both boundary helpers now give; the slid-forward rule returned NOON ON
+      THE 31st for `noonOfClubDay`, a full day out and silent about it. Stated
+      here as a limit rather than a fix, because the day does not exist.
+    */
+    const jumped = new Date("2011-12-30T10:00:00.000Z");
+    expect(startOfClubDay(cd("2011-12-30"), APIA).toISOString()).toBe(
+      jumped.toISOString(),
+    );
+    expect(noonOfClubDay(cd("2011-12-30"), APIA).toISOString()).toBe(
+      jumped.toISOString(),
+    );
+    expect(clubWallTimeOf(jumped, APIA)).toMatchObject({
+      date: "2011-12-31",
+      hour: 0,
+      minute: 0,
+    });
+    expect(clubCalendarDateOf(new Date(jumped.getTime() - 1), APIA)).toBe(
+      "2011-12-29",
+    );
+  });
+
+  it("answers at the very edge of the calendar-date range", () => {
+    /*
+      Resolving a wall time PROBES a day either side of the request, so a
+      question about the first or last day the kernel can name reaches past its
+      own range. An internal probe stepping out of bounds must not turn a
+      legitimate query into an error, so an undescribable probe is dropped and
+      the remaining ones answer.
+
+      The exclusive END of the last day is a different thing and genuinely has no
+      answer — it is the year 10000 — so that one throws, and
+      `endOfDateOnlyForTimeZone` turns it back into the Invalid Date its
+      fifty-eight legacy call sites have always had for an unanswerable input.
+    */
+    expect(startOfClubDay(cd("9999-12-31"), AUCKLAND).toISOString()).toBe(
+      "9999-12-30T11:00:00.000Z",
+    );
+    expect(endOfClubDayExclusive(cd("9999-12-30"), AUCKLAND).toISOString()).toBe(
+      "9999-12-30T11:00:00.000Z",
+    );
+    expect(() => endOfClubDayExclusive(cd("9999-12-31"), AUCKLAND)).toThrow(
+      RangeError,
+    );
+    expect(startOfClubDay(cd("0001-01-02"), DENVER).toISOString()).toBe(
+      "0001-01-02T06:59:56.000Z",
     );
   });
 
@@ -207,18 +350,108 @@ describe("a wall-clock time that does not exist", () => {
     expect(skipped.timeZone).toBe("Pacific/Auckland");
   });
 
-  it("resolves to the next moment that does exist when asked to", () => {
+  it("resolves to THE MOMENT THE CLOCK JUMPED TO, not the request slid forward", () => {
+    /*
+      NZDT begins at 02:00 on 27 September 2026, so 02:30 is half an hour inside
+      the gap. Two answers are defensible and they are not the same instant:
+
+        - the transition itself, 14:00Z, which reads 03:00 — "the next moment
+          that exists", which is what the policy is called and what a day
+          boundary needs;
+        - the request slid forward by the size of the gap, 14:30Z, reading 03:30
+          — `Temporal`'s "compatible" disambiguation, which preserves the
+          minutes into the gap.
+
+      This kernel takes the first, because its two consumers are day boundaries
+      and `startOfClubDay` is otherwise not the first instant of its own day when
+      a gap spans midnight (see the Toronto case above). The second is asserted
+      NEGATIVELY so this cannot pass under the rule it replaced.
+    */
     const moved = instantForClubWallTime(
       cd("2026-09-27"),
       { hour: 2, minute: 30 },
       AUCKLAND,
       { skipped: "nextExistingInstant" },
     );
-    // NZDT begins at 02:00, so 02:30 is inside the gap; the clock reads 03:30.
+    expect(moved.toISOString()).toBe("2026-09-26T14:00:00.000Z");
     expect(clubWallTimeOf(moved, AUCKLAND)).toMatchObject({
       date: "2026-09-27",
       hour: 3,
-      minute: 30,
+      minute: 0,
+    });
+    expect(moved.toISOString()).not.toBe("2026-09-26T14:30:00.000Z");
+    // Every reading inside the gap resolves to the same transition instant.
+    for (const minute of [1, 15, 30, 59]) {
+      expect(
+        instantForClubWallTime(cd("2026-09-27"), { hour: 2, minute }, AUCKLAND, {
+          skipped: "nextExistingInstant",
+        }).toISOString(),
+        `02:${minute}`,
+      ).toBe("2026-09-26T14:00:00.000Z");
+    }
+  });
+});
+
+describe("a wall-clock reading is four whole numbers in range", () => {
+  /*
+    `setUTCHours` ROLLS. `{ hour: 24 }` is the natural spelling of "the end of
+    the day", and before this guard it either threw a SkippedClubWallTimeError
+    saying the clocks had jumped forward over the reading — which never happened
+    — or, under `nextExistingInstant`, silently returned midnight on the
+    following day. Both answers were wrong and the first actively misled.
+  */
+  it.each([
+    ["hour 24", { hour: 24 }],
+    ["hour -1", { hour: -1 }],
+    ["a fractional hour", { hour: 12.5 }],
+    ["minute 90", { hour: 0, minute: 90 }],
+    ["second 60", { hour: 0, second: 60 }],
+    ["millisecond 1000", { hour: 0, millisecond: 1000 }],
+    ["NaN", { hour: Number.NaN }],
+  ])("refuses %s under every policy", (_label, time) => {
+    for (const policy of [
+      undefined,
+      { skipped: "nextExistingInstant" as const },
+    ]) {
+      expect(() =>
+        instantForClubWallTime(cd("2026-07-01"), time, AUCKLAND, policy),
+      ).toThrow(RangeError);
+    }
+    // And specifically NOT the DST error, which would name a cause that is not
+    // the cause.
+    let thrown: unknown = null;
+    try {
+      instantForClubWallTime(cd("2026-07-01"), time, AUCKLAND);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).not.toBeInstanceOf(SkippedClubWallTimeError);
+  });
+
+  it("still accepts every real reading of a day", () => {
+    for (const hour of [0, 1, 12, 23]) {
+      expect(
+        clubWallTimeOf(
+          instantForClubWallTime(cd("2026-07-01"), { hour }, AUCKLAND),
+          AUCKLAND,
+        ).hour,
+      ).toBe(hour);
+    }
+    expect(
+      clubWallTimeOf(
+        instantForClubWallTime(
+          cd("2026-07-01"),
+          { hour: 23, minute: 59, second: 59, millisecond: 999 },
+          AUCKLAND,
+        ),
+        AUCKLAND,
+      ),
+    ).toEqual({
+      date: "2026-07-01",
+      hour: 23,
+      minute: 59,
+      second: 59,
+      millisecond: 999,
     });
   });
 });

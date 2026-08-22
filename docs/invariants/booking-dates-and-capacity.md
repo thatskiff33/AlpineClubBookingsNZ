@@ -484,11 +484,21 @@ derivation).
   *ambiguous* wall time defaults to `earliest`, because a job scheduled at 01:30
   on a fall-back day should run once, at the first 01:30 — refusing there would
   break a legitimate schedule.
-- **Noon is measurably safe, and that is an argument for the stay boundary rather
-  than a happy accident.** In the same sweep — 418 zones, 2015 to 2036 — local
-  noon is **never skipped and never ambiguous**. So the noon-to-noon stay window
-  of `INV-DATE-002` can derive both endpoints without a policy at all, on any
-  zone a club could configure under `INV-CONFIG-002`. Midnight could not.
+- **Noon is measurably safer than midnight, and that is an argument for the stay
+  boundary rather than a happy accident — but it is not a guarantee, and the
+  first draft of this bullet over-claimed it.** In the sweep above — 418 zones,
+  2015 to 2036 — local noon is **never skipped and never ambiguous**, where
+  midnight is skipped in 19 zones and ambiguous in 8. Over a wider 1900–2100
+  window noon *is* skipped in 16 zones, and while eleven of those are pre-1968
+  local-mean-time one-offs, **five are date-line moves and the most recent was
+  2011**: Apia and Fakaofo (2011-12-30), Kiritimati and Enderbury (1994-12-31),
+  Kwajalein (1993-08-21). A country moving across the date line skips a whole
+  calendar day, noon included. Four such moves in twenty years is a live class,
+  not a museum piece.
+- So the honest rule is: **the noon-to-noon stay window needs no policy on any
+  zone any club runs today, and `noonOfClubDay` still carries one** — because the
+  case that would defeat it is a whole-day skip, and a booking screen must render
+  rather than throw. Do not read "noon is safe" as "noon cannot be skipped".
 - Decided on #2990 (CT-2) under epic #2988; the measurements are that issue's,
   re-runnable from the sweep it records.
 

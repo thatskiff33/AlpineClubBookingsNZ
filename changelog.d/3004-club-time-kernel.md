@@ -18,7 +18,9 @@
   behaviour was checked against every one of the 418 time zones the platform
   knows, on every clock-change day from 2015 to 2036.
 
-  One happy result of that survey is worth recording: **midday never goes missing
-  in any time zone**, on any day, anywhere — which is why lodge stays run midday
-  to midday rather than midnight to midnight, and why that choice is safe for a
-  club in any country.
+  One result of that survey is worth recording: **midday never goes missing in any
+  time zone a club runs in today**, which is why lodge stays run midday to midday
+  rather than midnight to midnight, and why that choice is safe for a club in any
+  country. It is not a law of nature — a country moving across the date line
+  skips a whole day, midday included, as Samoa did on 30 December 2011 — and the
+  platform now handles that case rather than assuming it cannot happen.

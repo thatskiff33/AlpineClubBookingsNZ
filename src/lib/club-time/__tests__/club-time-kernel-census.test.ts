@@ -136,16 +136,32 @@ describe("a calendar date can never be reached by a timezone", () => {
 });
 
 describe("the kernel reads one clock, in one named place", () => {
-  it("has exactly one argument-less `new Date()`, in clock.ts", () => {
+  it("has exactly one host-clock read, in clock.ts", () => {
+    /*
+      BOTH SPELLINGS. The guard used to match `new Date()` only, which left
+      `Date.now()` — the same ambient read, one character shorter, and the one a
+      performance-minded edit reaches for — completely invisible to it. A census
+      that names one of two spellings reads as complete and is not.
+    */
     const sites = kernelFiles.flatMap((file) =>
-      [...file.text.matchAll(/new Date\(\s*\)/g)].map(() => file.rel),
+      [...file.text.matchAll(/new Date\(\s*\)|Date\.now\(/g)].map(() => file.rel),
     );
     expect(
       sites,
       "The clock seam exists so that 'no business-day decision reads the host clock " +
-        "directly' is a property a census can check. A second `new Date()` anywhere in " +
-        "src/lib/club-time/** is an ambient clock read; take a ClubClock instead.",
+        "directly' is a property a census can check. A second `new Date()` or a " +
+        "`Date.now()` anywhere in src/lib/club-time/** is an ambient clock read; take a " +
+        "ClubClock instead.",
     ).toEqual(["src/lib/club-time/clock.ts"]);
+  });
+
+  it("would see a Date.now() if one appeared", () => {
+    // The guard above passes over an empty match list, so the pattern itself is
+    // exercised on a string that is not the tree.
+    const pattern = /new Date\(\s*\)|Date\.now\(/g;
+    expect("const t = Date.now();".match(pattern)).toEqual(["Date.now("]);
+    expect("const t = new Date();".match(pattern)).toEqual(["new Date()"]);
+    expect('new Date("2026-07-01T00:00:00Z")'.match(pattern)).toBeNull();
   });
 });
 
@@ -323,30 +339,43 @@ describe("the stay window is not an occupancy decision", () => {
       blind. Adding `stayWindow` to `booking-guest-stay-ranges.ts` ITSELF passed
       a census that only looked for files mentioning both the function and the
       expander's module name — the expander does not import itself. So the
-      occupancy modules are named and checked directly as well.
+      occupancy modules are checked directly as well.
+
+      THE OCCUPANCY SET IS DISCOVERED, NOT LISTED, and that is the second fix
+      here. A hand-written list said `booking-guest-stay-ranges.ts` and nothing
+      else, while the rules it protects are enforced in at least seven modules —
+      exactly the blind spot the paragraph above describes, one layer up. The
+      rule is now mechanical: a module that CITES `INV-DATE-003` or
+      `INV-DATE-020` is a module that decides occupancy, so it is one this
+      function must never reach. The citations already exist because
+      `docs:indexcheck` requires them to resolve, which makes them a better key
+      than a list somebody has to remember to extend.
     */
-    const OCCUPANCY_MODULES = ["src/lib/booking-guest-stay-ranges.ts"];
+    const OCCUPANCY_INVARIANTS = /INV-DATE-003|INV-DATE-020/;
+    const occupancyModules = walk(path.join(ROOT, "src"))
+      .map((file) => ({ rel: rel(file), raw: readFileSync(file, "utf8") }))
+      // The kernel's own two modules cite them to say they are NOT that.
+      .filter((file) => !file.rel.startsWith("src/lib/club-time/"))
+      .filter((file) => OCCUPANCY_INVARIANTS.test(file.raw));
+    expect(
+      occupancyModules.map((file) => file.rel),
+      "No module outside the kernel cites INV-DATE-003 or INV-DATE-020, so the check " +
+        "below would pass over an empty list. Either the ids moved or the walk is broken.",
+    ).toContain("src/lib/booking-guest-stay-ranges.ts");
+    expect(occupancyModules.length).toBeGreaterThanOrEqual(5);
+
     const alsoExpandsNights = usesStayWindow
       .filter((file) => file.text.includes("booking-guest-stay-ranges"))
       .map((file) => file.rel);
-    const occupancyItself = OCCUPANCY_MODULES.filter((module) => {
-      const source = withoutComments(
-        readFileSync(path.join(ROOT, module), "utf8"),
-      );
-      return /\bstayWindow\b/.test(source);
-    });
+    const occupancyItself = occupancyModules
+      .filter((file) => /\bstayWindow\b/.test(withoutComments(file.raw)))
+      .map((file) => file.rel);
     expect(
       [...alsoExpandsNights, ...occupancyItself].sort(),
       "INV-DATE-002/INV-DATE-003: `stayWindow` derives the midday arrival and departure " +
         "INSTANTS. It is not, and must never become, the way a bed, a night or a presence " +
         "is decided — those stay on the date-only half-open [checkIn, checkOut) range.",
     ).toEqual([]);
-    // And the named modules really exist, so the second check is not vacuous.
-    for (const occupancyModule of OCCUPANCY_MODULES) {
-      expect(
-        readFileSync(path.join(ROOT, occupancyModule), "utf8").length,
-      ).toBeGreaterThan(0);
-    }
   });
 });
 

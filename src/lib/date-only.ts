@@ -68,6 +68,17 @@ export function startOfDateOnlyForTimeZone(
  * The last instant of a club calendar day, INCLUSIVE — the millisecond before
  * the next day begins. New code wants the kernel's half-open
  * `endOfClubDayExclusive` instead.
+ *
+ * `new Date(NaN)` FOR A DAY THE KERNEL CANNOT ANSWER, which is this adapter's
+ * long-standing contract for an input it cannot interpret and is what every one
+ * of its fifty-eight call sites already behaves correctly against. There is
+ * exactly one such day: `9999-12-31`, whose exclusive end lies in the year
+ * 10000 and so has no `CalendarDate`, where the kernel throws a `RangeError`
+ * (see the four-digit-year guard in `club-time/calendar-date.ts`). Before CT-2
+ * that input produced an Invalid Date too, so this restores the old behaviour rather than
+ * inventing one: the value reaches Prisma, which refuses to serialise it, and
+ * the operator gets a failed query instead of a filter that silently matched
+ * nothing.
  */
 export function endOfDateOnlyForTimeZone(
   dateStr: string,
@@ -75,7 +86,14 @@ export function endOfDateOnlyForTimeZone(
 ): Date {
   const date = parseCalendarDate(dateStr);
   if (date === null) return new Date(NaN);
-  return new Date(endOfClubDayExclusive(date, legacyZone(timeZone)).getTime() - 1);
+  try {
+    return new Date(
+      endOfClubDayExclusive(date, legacyZone(timeZone)).getTime() - 1
+    );
+  } catch (error) {
+    if (error instanceof RangeError) return new Date(NaN);
+    throw error;
+  }
 }
 
 /**

@@ -9,7 +9,8 @@
  *
  * It single-sources the FORMATTING LOGIC: there is no longer a second set of
  * frozen `Intl.DateTimeFormat` constants that could drift from the kernel's
- * shapes, and `house-shape-equivalence.test.ts` pins the two together.
+ * shapes, and `club-time/__tests__/house-shapes.test.ts` pins the kernel's output
+ * against the constants this file used to hold, written out by hand there.
  *
  * It changes **no caller's zone authority.** Every function below still passes
  * `APP_TIME_ZONE` — `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` —
