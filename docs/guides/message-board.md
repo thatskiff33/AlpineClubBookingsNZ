@@ -68,6 +68,24 @@ member to repost, and keep edits to obvious corrections.
 
 Use **Hide** unless you actually want the words gone.
 
+### Set how long posts are kept
+
+1. On the same screen, find the **Retention** card.
+2. Click **Edit**, choose a period, and click **Save**. **Cancel** puts it back.
+3. Before you save, the card tells you how many posts on the board are already
+   older than the period you have chosen — those are the ones that would go.
+
+The default is **Keep everything**, and nothing is deleted automatically until
+you change it.
+
+Once a period is set, a nightly job deletes posts older than it. **This is
+permanent**: hidden posts are deleted too, and there is no recovery from this
+screen. A post exactly on the boundary is kept rather than deleted.
+
+**Run cleanup now** does the same job immediately and tells you how many posts
+it deleted. If the nightly job happens to be running, it says so and does
+nothing rather than deleting twice.
+
 ## Good to know
 
 - **Members cannot edit or delete their own posts.** Every request comes to you.
@@ -75,8 +93,8 @@ Use **Hide** unless you actually want the words gone.
   somebody else's name.
 - **Posts are limited to ten an hour per member**, so one person cannot fill the
   board.
-- **Nothing is deleted automatically yet.** A retention setting is coming; until
-  then the board keeps everything except what you remove.
+- **Nothing is deleted automatically until you set a retention period.** The
+  default keeps everything.
 - **Every action you take is recorded** in the audit log against your account.
 
 ## Troubleshooting

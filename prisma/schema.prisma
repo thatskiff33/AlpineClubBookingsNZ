@@ -5048,6 +5048,39 @@ model ClubPostReport {
   @@index([reporterMemberId])
 }
 
+// Retention and cleanup policy for the club message board (#2999, epic #2992).
+// A singleton, like MaintenanceReportSettings: this is a club decision, not a
+// per-lodge one, for the same reason ClubPost itself carries no lodge (D-C1).
+model ClubPostSettings {
+  id String @id @default("default")
+
+  /// Days a post is kept before the cleanup pass deletes it permanently.
+  /// DEFAULT 0 = KEEP EVERYTHING, and that default is load-bearing: an upgrade
+  /// must never begin destroying member content because a default said so.
+  /// A club chooses a window deliberately (INV-CONFIG-001).
+  retentionDays Int @default(0)
+
+  /// Single-flight claim for the cleanup pass, held while one runs.
+  ///
+  /// A status-guarded claim rather than a Postgres advisory lock, for the
+  /// reason src/lib/servernz-sync-claim.ts sets out at length: a session-scoped
+  /// advisory lock is taken and released through Prisma's connection POOL, so
+  /// the unlock can execute on a different connection and wedge the job until
+  /// the pool recycles. An xact-scoped lock would mean holding a transaction
+  /// open across the whole pass. A conditional update whose matched-row count
+  /// IS the claim has neither problem, and a process killed mid-pass is reaped
+  /// by staleness rather than by a sweeper.
+  cleanupStartedAt DateTime?
+
+  /// When the last pass finished, and what it deleted, so the admin screen can
+  /// say what happened without keeping a separate history.
+  lastCleanupAt      DateTime?
+  lastCleanupDeleted Int       @default(0)
+
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedByMemberId String?
+}
+
 enum ClubPostReportReason {
   SPAM
   INAPPROPRIATE

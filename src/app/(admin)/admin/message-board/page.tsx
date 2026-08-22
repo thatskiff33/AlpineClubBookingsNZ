@@ -1,6 +1,11 @@
 import { notFound } from "next/navigation";
 
+import { ClubPostRetentionSection } from "@/components/admin/club-posts/club-post-retention-section";
 import { ClubPostsAdmin } from "@/components/admin/club-posts/club-posts-admin";
+import {
+  countPostsBeyondRetention,
+  loadClubPostSettings,
+} from "@/lib/club-post-retention";
 import {
   listClubPostsForAdmin,
   parseAdminPostTab,
@@ -46,7 +51,13 @@ export default async function AdminMessageBoardPage({
   const tab = parseAdminPostTab(params.tab);
   const q = params.q?.trim() || undefined;
 
-  const posts = await listClubPostsForAdmin({ tab, q });
+  const [posts, settings] = await Promise.all([
+    listClubPostsForAdmin({ tab, q }),
+    loadClubPostSettings(),
+  ]);
+  const beyondRetention = await countPostsBeyondRetention(
+    settings.retentionDays,
+  );
 
   return (
     <div className="space-y-6">
@@ -58,6 +69,13 @@ export default async function AdminMessageBoardPage({
         </p>
       </div>
       <ClubPostsAdmin posts={posts} tab={tab} query={q ?? ""} />
+
+      <ClubPostRetentionSection
+        initialRetentionDays={settings.retentionDays}
+        initialBeyondRetention={beyondRetention}
+        lastCleanupAt={settings.lastCleanupAt}
+        lastCleanupDeleted={settings.lastCleanupDeleted}
+      />
     </div>
   );
 }

@@ -842,6 +842,17 @@ One member-written board, club-local for now.
   one `AdminViewOnlySectionBanner`, in a frame that renders in every state.
   Members still cannot edit or delete their own posts; every request reaches an
   admin.
+- **Retention** — a second section on the same admin page (#2999), and the one
+  place on the board that follows the canonical STAGED-EDIT settings model:
+  read-only on mount, Edit → Save/Cancel, Save dirty-gated by the hook. The
+  window defaults to **keep everything**, and only the offered periods are
+  accepted, so a hand-crafted PUT cannot set a one-day window and empty the
+  board. The card says how many posts the chosen window would delete BEFORE it
+  is saved, using the pass's own arithmetic rather than an estimate. Deletion is
+  strictly older-than, so a post on the boundary survives. The pass runs nightly
+  in the general cron cycle and on demand from **Run cleanup now**, under a
+  status-guarded claim so the two cannot race; a caller that loses the claim
+  reports `busy` rather than deleting twice.
 - **Audit** — one `communication` row per post, carrying the length rather than
   the body. That category is member-visible, so the author sees "you posted" on
   their own timeline; the body is deliberately not copied, since a second copy
