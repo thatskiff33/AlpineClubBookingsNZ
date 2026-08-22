@@ -6473,7 +6473,17 @@ model MembershipNominationSettings {
   minimumMembershipMonths Int       @default(12)
   minimumNights           Int       @default(6)
   requiredSignOffs        Int       @default(2)
-  gateEffectiveFrom       DateTime? @db.Date
+  // NOT `@db.Date`, and that is a decision rather than an oversight (#2872,
+  // CT-3). This column is MIXED: the admin panel sends a calendar day from an
+  // `<input type="date">`, but `api/admin/membership-nomination-settings`
+  // stamps `new Date()` — a real instant — the first time the gate is enabled
+  // with the cutoff box left empty, which the panel's own help text presents as
+  // ordinary use. A column with a clock writer is exactly what excluded
+  // `MemberInduction.inductionDate` from the same migration. Narrowing it would
+  // also make that migration's fail-closed preflight RAISE on any club that has
+  // already enabled the gate that way. See "WHAT IS DELIBERATELY NOT HERE" in
+  // prisma/migrations/20260825010000_narrow_calendar_date_columns/migration.sql.
+  gateEffectiveFrom       DateTime?
   updatedByMemberId       String?
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt

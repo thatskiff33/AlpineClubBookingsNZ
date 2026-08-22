@@ -155,14 +155,29 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // On that last path, be precise about WHAT makes it safe, because "it is a
   // Xero date-only field" is a claim about Xero and the risk is in the PARSE.
   // `getContactFirstInvoiceDate` does `new Date(invoices[0].date)`
-  // (xero-contacts.ts:1282). That lands on UTC midnight because the SDK hands
-  // back a value carrying an explicit UTC offset — Xero's `/Date(…+0000)/` wire
-  // form — and `new Date` honours the offset. An offset-less
-  // `yyyy-MM-dd HH:mm:ss` string would instead parse as SERVER-LOCAL midnight,
-  // which is the identical hazard `parseXeroCompanyNumberDate` already realises
-  // on `dateOfBirth`. Whether that can happen here is **#2869**; either way the
-  // KIND is unaffected, because a wrongly-parsed start date is still a calendar
-  // day and is still fixed at the write.
+  // (xero-contacts.ts). The hazard being ruled out is the one
+  // `parseXeroCompanyNumberDate` already realised on `dateOfBirth`: an
+  // offset-less `yyyy-MM-dd HH:mm:ss` string parses as SERVER-LOCAL midnight,
+  // which east of UTC is the previous UTC day. Neither shape this value can
+  // take is that one, and the SDK's own types settle it:
+  //
+  //   * `Invoice.date` is typed `string` and documented "Date invoice was issued
+  //     - YYYY-MM-DD" (node_modules/xero-node/.../accounting/invoice.d.ts). A
+  //     bare `yyyy-MM-dd` takes ECMAScript's DATE-ONLY branch, which is UTC:
+  //     `new Date("2019-03-04")` is `2019-03-04T00:00:00.000Z`.
+  //   * If a tenant returns the Microsoft `/Date(1551657600000+0000)/` wire form
+  //     instead, that string never reaches `new Date` at all — xero-node's
+  //     `ObjectSerializer.deserialize` intercepts any `string`-typed field
+  //     beginning `/Date(` and converts it to a `Date` at that exact epoch
+  //     (accounting/models.js, `deserializeDateFormats`), which for a Xero date
+  //     field is UTC midnight. `new Date(aDate)` then clones it.
+  //
+  // Measured, because the obvious reading is wrong: `new Date("/Date(1551657600000+0000)/")`
+  // is an Invalid Date, so an earlier version of this note — which said the SDK
+  // hands back that wire form and `new Date` honours its offset — described a
+  // path that would have produced `NaN`, not a correct day. The conclusion
+  // survives; the reason did not. This no longer defers to #2869: the SDK's
+  // types and serialiser answer it here.
   joinedDate: "calendarDay",
 };
 

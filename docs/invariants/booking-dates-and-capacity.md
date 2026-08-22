@@ -543,7 +543,11 @@ derivation).
   UTC-midnight value reads back as the same calendar day, but on a server west
   of UTC — this repository is a template with live forks — UTC midnight is the
   *previous* evening locally and every member's birthday moves a day.
-  `member-age.ts` reads through the club zone, which has the same dependence.
+  `member-age.ts` used to read through the club zone, which had the same
+  dependence in a subtler form — it agreed in New Zealand and reported an age a
+  year old on the day before a birthday for any club behind UTC. #2872 moved it
+  onto `formatDateOnly`; "today" on the other side of that comparison is still
+  the club's, and correctly so.
   The correct reading of a UTC-midnight column is UTC getters or
   `formatDateOnly`; treat the local-getter readers as working by deployment
   accident, not by construction.
@@ -552,10 +556,21 @@ derivation).
 
 - **A column holding a calendar day is `@db.Date`.** Not a bare `DateTime` that
   writers agree to keep at UTC midnight — the schema states it, and PostgreSQL
-  refuses to keep a time. #2872 narrowed the last twelve such columns and the
-  reviewed exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, which
-  is the terminal state it was always meant to reach rather than a temporary
-  quiet.
+  refuses to keep a time. #2872 narrowed eleven such columns and the reviewed
+  exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, which is the
+  terminal state it was always meant to reach rather than a temporary quiet.
+- **A column only qualifies if EVERY writer agrees.** Three were examined and
+  deliberately left as `DateTime`, and the reason is the same each time — one
+  writer puts a real moment in them. `MemberInduction.inductionDate` is stamped
+  with the clock when the last sign-off lands. `MembershipNominationSettings.gateEffectiveFrom`
+  is a date the admin types, except on the branch where they leave it blank and
+  the panel's own help text promises it "defaults to the date you first enable
+  the gate" — which the route implements as `new Date()`. `CalendarEventSeries.until`
+  is written at local **noon**, so a UTC-day truncation would move the stored
+  day for half the year and not the other half. Narrowing a mixed column does
+  not tidy it; it destroys the evidence of which rows were which, and here it
+  would also abort the deploy, because the preflight is fail-closed and every
+  such row is an offender.
 - **A bare `DateTime` may hold a calendar day only through that list**, one entry
   per field, naming the write that proves it. An entry dies when its column is
   narrowed, and `date-only-encoding-guard.test.ts` fails an entry that outlives

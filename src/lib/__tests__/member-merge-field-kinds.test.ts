@@ -296,8 +296,19 @@ describe("#2860 the classification agrees with #2684's reviewed record of the sa
     binding has to consult BOTH, or it would fail on exactly the fields the
     migration made structurally correct.
   */
+  /*
+    `Object.hasOwn`, NOT `in`. Now that the reviewed record is empty, `in` would
+    make that disjunct a pure PROTOTYPE CHANNEL: `constructor`, `toString`,
+    `valueOf`, `hasOwnProperty` and `__proto__` are all `in` an ordinary object
+    literal, so a merged field with one of those names would be classified as a
+    reviewed calendar day by a list that reviewed nothing. The record itself also
+    carries a null prototype now, which closes the same hole for #2684's guard,
+    which asks the question its own way and lives in a file this lane may not
+    edit. Two independent defences, and the test below pins both.
+  */
   const reviewedOrStructural = (field: string) =>
-    field in DATE_ONLY_IN_DATETIME_COLUMN || DATE_ONLY_COLUMN_FIELDS.has(field);
+    Object.hasOwn(DATE_ONLY_IN_DATETIME_COLUMN, field) ||
+    DATE_ONLY_COLUMN_FIELDS.has(field);
 
   it("has some date-kinded fields to check", () => {
     // Vacuity guard: if every field became `plain`, both assertions below would
@@ -318,7 +329,55 @@ describe("#2860 the classification agrees with #2684's reviewed record of the sa
       "The @db.Date scan found no `checkIn`, so prisma/schema.prisma has " +
         "stopped parsing and every classification below is meaningless.",
     ).toBe(true);
-    expect(DATE_ONLY_COLUMN_FIELDS.size).toBeGreaterThanOrEqual(15);
+    /*
+      A FLOOR AT THE MEASURED COUNT, not at a token one. This was 15 against 31
+      real names, which tolerated losing half the set to a schema-format change
+      and still passing. A floor cannot be tripped by ADDING a `@db.Date` column
+      — the count only goes up — so pinning it at today's figure costs a future
+      lane nothing. Removing one does trip it, deliberately: a calendar-day
+      column leaving this set is exactly the change somebody should look at. If
+      that removal is right, move this number and say why in the pull request.
+    */
+    expect(
+      DATE_ONLY_COLUMN_FIELDS.size,
+      "Fewer `@db.Date` field names than the 31 measured when this floor was " +
+        "set. Either the schema scan has partially broken (which makes every " +
+        "classification below weaker without failing it), or a calendar-day " +
+        "column was narrowed back to a bare `DateTime` — say which, in the PR.",
+    ).toBeGreaterThanOrEqual(31);
+  });
+
+  it("does not read a reviewed exception off Object.prototype", () => {
+    /*
+      #2872 review. The reviewed record is EMPTY, so `field in record` had become
+      a pure prototype channel: every name below is `in` an ordinary object
+      literal, and a merged field carrying one would have been reported as a
+      reviewed calendar day — silently, by a list that reviews nothing. Both
+      defences are asserted here, because either alone would close it and the
+      point is that neither can be dropped unnoticed: this binding asks with
+      `Object.hasOwn`, and the record has a null prototype, which is what also
+      protects #2684's guard in a file this lane may not edit.
+    */
+    for (const inherited of [
+      "constructor",
+      "toString",
+      "valueOf",
+      "hasOwnProperty",
+      "__proto__",
+      "isPrototypeOf",
+    ]) {
+      expect(inherited in {}, `${inherited} is not an inherited key`).toBe(true);
+      expect(
+        reviewedOrStructural(inherited),
+        `${inherited} was treated as a reviewed calendar day`,
+      ).toBe(false);
+    }
+
+    expect(
+      Object.getPrototypeOf(DATE_ONLY_IN_DATETIME_COLUMN),
+      "DATE_ONLY_IN_DATETIME_COLUMN must have a null prototype: #2684's guard " +
+        "asks `field in` it and cannot use Object.hasOwn from here.",
+    ).toBeNull();
   });
 
   it("records every calendar day it declares as a date-only column, or on #2684's reviewed list", () => {

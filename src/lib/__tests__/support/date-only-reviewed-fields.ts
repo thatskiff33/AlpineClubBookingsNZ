@@ -51,6 +51,18 @@ import path from "node:path";
  * reviewed list exists so the difference between the two is written down rather
  * than assumed.
  *
+ * IT HAS A NULL PROTOTYPE, AND THAT IS LOAD-BEARING NOW THAT IT IS EMPTY. Both
+ * consumers ask `field in DATE_ONLY_IN_DATETIME_COLUMN`, and `in` walks the
+ * prototype chain. On an ordinary object literal with no own keys left, that
+ * disjunct is therefore a PURE prototype channel: `constructor`, `toString`,
+ * `valueOf`, `hasOwnProperty` and `__proto__` are all `in` it, so a column with
+ * any of those names would be silently treated as a REVIEWED calendar day by
+ * both guards at once. `Object.create(null)` removes the chain, which fixes it
+ * for every consumer including the ones that cannot be edited from here;
+ * `member-merge-field-kinds.test.ts` additionally reads its own copy of the
+ * question with `Object.hasOwn`, and pins this prototype so the two defences
+ * cannot both be removed by accident.
+ *
  * "The write that proves it" was always doing real work, and #2860 found out
  * why: an entry records what a field MEANS, which is not a promise that every
  * writer honours it. `parseXeroCompanyNumberDate` built SERVER-LOCAL midnight
@@ -59,7 +71,13 @@ import path from "node:path";
  * calendar day. Keep that distinction if an entry ever returns: a reader must
  * not infer from a listing here that the stored data is clean.
  */
-export const DATE_ONLY_IN_DATETIME_COLUMN: Record<string, string> = {};
+export const DATE_ONLY_IN_DATETIME_COLUMN: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    // Empty on purpose — see the docblock above. A returning entry goes here,
+    // as `fieldName: "the write that proves it"`.
+  },
+);
 
 /**
  * Every field name the Prisma schema declares `@db.Date` — a calendar day the

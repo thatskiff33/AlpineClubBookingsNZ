@@ -1,5 +1,4 @@
-import { APP_TIME_ZONE } from "@/config/operational";
-import { formatDateOnlyForTimeZone, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
 
 /**
  * THE shared member-age helper (#2568).
@@ -11,11 +10,13 @@ import { formatDateOnlyForTimeZone, todayDateOnlyForTimeZone } from "@/lib/date-
  *
  * Semantics, all deliberate:
  *
- * - **Date-only, on the New Zealand calendar.** A date of birth is a calendar
- *   day, not an instant. `Date` inputs are read through the club time zone with
- *   the same `formatDateOnlyForTimeZone` the family-group screens already use to
- *   RENDER a date of birth, so a displayed date and the age derived from it can
- *   never disagree by a day. "Today" defaults to the club's calendar date
+ * - **Date-only, and a date of birth carries no time zone at all.** Every column
+ *   this reads — `Member.dateOfBirth`, `FamilyGroupJoinRequest.childDateOfBirth`
+ *   and `requestedDateOfBirth` — is `DateTime @db.Date` since #2872: a calendar
+ *   day, encoded as UTC midnight. A `Date` or an ISO string is therefore read by
+ *   TRUNCATION (`formatDateOnly`, INV-DATE-010, INV-DATE-026), which returns the
+ *   stored day from any zone on earth. "Today" is a different question with a
+ *   different answer and keeps the club's calendar date
  *   (`todayDateOnlyForTimeZone`), never the server's or the browser's UTC date —
  *   reading `new Date()` in UTC puts "today" a day behind New Zealand for the
  *   first 12-13 hours of every NZ day, which is exactly the off-by-one that
@@ -67,12 +68,25 @@ function partsFromDateOnlyString(value: string): DateParts | null {
 }
 
 /**
- * The calendar day a date-of-birth value denotes, in the club time zone.
+ * The calendar day a date-of-birth value denotes.
  *
  * A bare `yyyy-MM-dd` string is already a calendar day and is taken as written.
- * Anything else (a Prisma `Date`, or the ISO timestamp that same value becomes
- * once it is JSON-serialised) is resolved through the club zone, so the two
- * representations of one stored value always agree.
+ * Anything else — a Prisma `Date` from a `@db.Date` column, or the ISO timestamp
+ * that same value becomes once it is JSON-serialised — is UTC midnight on that
+ * day, so the day is read straight off the UTC clock face.
+ *
+ * IT USED TO PROJECT THE VALUE INTO THE CLUB ZONE FIRST, and the comment here
+ * defended that as making "the two representations of one stored value always
+ * agree". They do agree — both ARE UTC midnight — so truncation makes them agree
+ * AND agree with what is stored, which the projection does not. Projecting UTC
+ * midnight into a zone BEHIND Greenwich lands on the previous evening, so a
+ * member born on 1 January read a year short on their own birthday for any club
+ * west of UTC. It agreed in New Zealand, which sits ahead of UTC, and that is
+ * why it survived (#2872, INV-DATE-026).
+ *
+ * The receiver contract is `formatDateOnly`'s: what is handed in must be a
+ * calendar day, not a real moment. Nothing here can tell the difference, and a
+ * caller passing an instant as `referenceDate` would get its UTC day.
  */
 function parseDateOnlyParts(value: Date | string | null | undefined): DateParts | null {
   if (value === null || value === undefined || value === "") return null;
@@ -86,11 +100,7 @@ function parseDateOnlyParts(value: Date | string | null | undefined): DateParts 
   const instant = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(instant.getTime())) return null;
 
-  try {
-    return partsFromDateOnlyString(formatDateOnlyForTimeZone(instant, APP_TIME_ZONE));
-  } catch {
-    return null;
-  }
+  return partsFromDateOnlyString(formatDateOnly(instant));
 }
 
 function comparableDay(parts: DateParts): number {

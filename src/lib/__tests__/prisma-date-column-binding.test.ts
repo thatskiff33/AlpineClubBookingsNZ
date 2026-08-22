@@ -198,18 +198,21 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
   /*
     WHY THESE ARE HERE AND NOT LEFT TO THE THREE ABOVE. #2838 pinned the adapter's
     behaviour on `Booking.checkIn`, which has been `@db.Date` since it was
-    created. #2872 narrowed twelve columns that were bare `DateTime` — three of
-    them on `Member`, the rest across five other tables — and the whole reason
+    created. #2872 narrowed eleven columns that were bare `DateTime` — three of
+    them on `Member`, the rest across four other tables — and the whole reason
     that change is risky is that a bound value which used to reach Postgres whole
     now reaches it as a DAY. So the probe follows the migration: each newly
     narrowed column is driven through the real client, the real compiler and the
     real adapter, and what the driver would receive is asserted.
 
-    The issue asks for "representative" migrated fields rather than all twelve.
-    These four are the representatives, chosen for what each one proves: a
-    `Member` column (the hot table, and the one an age-tier cutoff filters on), a
-    `PromoCode` window edge (money), a settings singleton, and a deadline that a
-    reader still compares against a clock.
+    The issue asks for "representative" migrated fields rather than all eleven.
+    These are the representatives, chosen for what each one proves: a `Member`
+    column (the hot table, and the one an age-tier cutoff filters on), a
+    `PromoCode` window edge (money), a family-request date of birth, and a
+    deadline that a reader still compares against a clock. One more case covers
+    the twelfth CANDIDATE, `MembershipNominationSettings.gateEffectiveFrom`,
+    which #2872 deliberately did NOT narrow — an exclusion is only real if
+    something fails when it is quietly undone.
   */
 
   it("narrows a Member date-of-birth bound to its UTC day", async () => {
@@ -252,21 +255,42 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
     ).toEqual(["2008-04-01"]);
   });
 
-  it("accepts a bare date STRING and still binds a day", async () => {
-    // `api/applications/route.ts` hands Prisma the zod-validated `yyyy-MM-dd`
-    // string straight from the request, never a `Date`. `mapArg` turns a string
-    // into a `Date` first and then formats it for the column, so the two input
-    // shapes must land on the same value — and if that ever stopped being true,
-    // a membership application would store the wrong birthday with nothing in
-    // the type system to notice.
+  it("binds the shape the applications path actually produces — new Date(yyyy-MM-dd)", async () => {
+    // The membership-application route validates a bare `yyyy-MM-dd` with zod and
+    // `nomination.ts` wraps it in `new Date(...)` before Prisma ever sees it, so
+    // a `Date` is the only shape this column is ever written with. That call
+    // takes ECMAScript's DATE-ONLY branch, which is UTC midnight, and the adapter
+    // must narrow it back to the day it names. If it ever stopped doing so, a
+    // membership application would store the wrong birthday with nothing in the
+    // type system to notice.
+    await prisma.memberApplication.findMany({
+      where: { applicantDateOfBirth: new Date("2001-01-01") },
+    });
+    expect(whereValues(1, '"applicantDateOfBirth" =')).toEqual(["2001-01-01"]);
+
+    // And the same value once it has been through JSON and back. `mapArg` turns
+    // a string into a `Date` first and then formats it for the column, so the two
+    // shapes must land on the same day.
+    captured.length = 0;
     await prisma.memberApplication.findMany({
       where: { applicantDateOfBirth: "2001-01-01T00:00:00.000Z" },
     });
-
     expect(whereValues(1, '"applicantDateOfBirth" =')).toEqual(["2001-01-01"]);
   });
 
-  it("narrows a promo window edge, a settings day and a join deadline", async () => {
+  it("REFUSES a bare yyyy-MM-dd string, which is why every writer wraps it", async () => {
+    // Worth pinning rather than assuming, because it is what makes the wrap above
+    // something other than ceremony: the client rejects the bare day outright
+    // instead of guessing at it, so a future writer that skipped `new Date` would
+    // fail loudly at the call rather than quietly a day out.
+    await expect(
+      prisma.memberApplication.findMany({
+        where: { applicantDateOfBirth: "2001-01-01" },
+      }),
+    ).rejects.toThrow(/ISO-8601 DateTime/);
+  });
+
+  it("narrows a promo window edge, a family-request date of birth and a join deadline", async () => {
     // Three columns on three tables in one pass. `PromoCode.bookingStartFrom`
     // gates on a booking's `checkIn`, which is itself `@db.Date`: the two are now
     // the same kind of value, which is the point of narrowing it.
@@ -276,10 +300,10 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
     expect(whereValues(1, '"bookingStartFrom" <= $1')).toEqual(["2026-06-01"]);
 
     captured.length = 0;
-    await prisma.membershipNominationSettings.findMany({
-      where: { gateEffectiveFrom: { gte: new Date("2026-06-15T00:00:00.000Z") } },
+    await prisma.familyGroupJoinRequest.findMany({
+      where: { childDateOfBirth: { gte: new Date("2019-01-15T00:00:00.000Z") } },
     });
-    expect(whereValues(1, '"gateEffectiveFrom" >= $1')).toEqual(["2026-06-15"]);
+    expect(whereValues(1, '"childDateOfBirth" >= $1')).toEqual(["2019-01-15"]);
 
     captured.length = 0;
     await prisma.groupBooking.findMany({
@@ -288,10 +312,41 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
     expect(whereValues(1, '"joinDeadline" > $1')).toEqual(["2026-08-30"]);
   });
 
+  it("THE COLUMN #2872 LEFT ALONE: the nomination-gate cutoff still binds a whole instant", async () => {
+    /*
+      `MembershipNominationSettings.gateEffectiveFrom` was the twelfth candidate
+      and is deliberately excluded, because it is MIXED: the admin panel writes a
+      calendar day, but the settings route stamps `new Date()` the first time the
+      gate is enabled with the cutoff box left empty, which the panel's own help
+      text presents as ordinary use. Narrowing a column with a clock writer would
+      truncate that instant — and on a club that had already used the feature
+      that way, the migration's fail-closed preflight would RAISE and stop the
+      deploy.
+
+      An exclusion nobody can trip over is one that quietly comes back, so it is
+      pinned here rather than only written down. This asserts what the adapter
+      sends today; adding `@db.Date` to that column turns it into a bare
+      `2026-06-15` and fails.
+    */
+    await prisma.membershipNominationSettings.findMany({
+      where: { gateEffectiveFrom: { gte: new Date("2026-06-15T21:00:00.000Z") } },
+    });
+
+    expect(
+      whereValues(1, '"gateEffectiveFrom" >= $1'),
+      "INV-DATE-019: `gateEffectiveFrom` has a clock writer, so it is a plain " +
+        "`DateTime` on purpose (#2872). If this comes back as a bare day the " +
+        "column has been narrowed, and the 21:00 an admin's first enable writes " +
+        "no longer survives.",
+    ).toEqual(["2026-06-15 21:00:00"]);
+  });
+
   it("still keeps the whole instant on the neighbouring columns of the SAME tables", async () => {
     // The other half of the claim, and the one a careless migration breaks: the
-    // narrowing was supposed to reach twelve columns and no more. `Member.createdAt`
-    // and `PromoCode.archivedAt` sit beside two of them and are real moments.
+    // narrowing was supposed to reach eleven columns and no more. `Member.createdAt`
+    // and `PromoCode.archivedAt` sit beside two of them and are real moments, so
+    // both are driven — on their own tables. (An earlier version of this case
+    // named `PromoCode.archivedAt` in the comment and queried only `Member`.)
     await prisma.member.findMany({
       where: {
         dateOfBirth: { lt: new Date("2008-04-02T00:00:00.000Z") },
@@ -305,5 +360,21 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
         "these agree, either an instant has been narrowed or a calendar day has " +
         "not been — and INV-DATE-019 or INV-DATE-010 is broken either way.",
     ).toEqual(["2008-04-02", "2026-07-01 12:00:00"]);
+
+    captured.length = 0;
+    await prisma.promoCode.findMany({
+      where: {
+        validUntil: { gte: new Date("2026-09-30T00:00:00.000Z") },
+        archivedAt: { gte: new Date("2026-07-01T12:00:00.000Z") },
+      },
+    });
+
+    expect(
+      whereValues(2, '"validUntil" >= $1'),
+      "`PromoCode.archivedAt` is the moment an operator archived the code, and " +
+        "it sits beside four narrowed window edges on the same table. Narrowing " +
+        "it would move an archival to midnight, and west of UTC to the previous " +
+        "day.",
+    ).toEqual(["2026-09-30", "2026-07-01 12:00:00"]);
   });
 });
