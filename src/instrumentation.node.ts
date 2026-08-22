@@ -196,25 +196,6 @@ export async function register() {
       return;
     }
 
-    // The club's persisted civil-time zone, read BEFORE the first
-    // `cron.schedule(...)` so every job below is registered against it rather
-    // than against the container's `TZ` (CT-5, #2869; INV-CONFIG-002).
-    //
-    // `readClubTimeZoneOutsideRequest()` never throws and always answers —
-    // persisted value, then the environment seed CT-1 backfills from, then the
-    // documented default — so there is nothing here to fall back to, and this
-    // line cannot fail a server boot. It is deliberately NOT CT-1's reader:
-    // that module carries `import "server-only"`, and a boot hook is one of the
-    // Node runtimes where that marker is a liability rather than a guard.
-    const { readClubTimeZoneOutsideRequest } = await import(
-      "./lib/club-time-zone-runtime"
-    );
-    clubCronTimeZone = await readClubTimeZoneOutsideRequest();
-    logger.info(
-      { clubTimeZone: clubCronTimeZone },
-      "Resolved the club timezone for scheduled jobs",
-    );
-
     const cron = await import("node-cron");
     const Sentry = await import("@sentry/nextjs");
     const { prisma } = await import("./lib/prisma");
@@ -225,12 +206,61 @@ export async function register() {
     const optionalCron = getOptionalCronRegistrationState();
 
     // Verify Prisma client is ready before starting cron jobs
+    let databaseReady = true;
     try {
       await prisma.$queryRawUnsafe("SELECT 1");
       logger.info("Prisma client verified — database connection OK");
     } catch (err) {
+      databaseReady = false;
       logger.error({ err }, "Prisma client startup check failed — cron jobs may be unreliable");
       Sentry.captureException(err);
+    }
+
+    /*
+      THE CLUB'S PERSISTED CIVIL-TIME ZONE, resolved before the first
+      `cron.schedule(...)` so every job below is registered against it rather
+      than against the container's `TZ` (CT-5, #2869; INV-CONFIG-002).
+
+      IT RUNS AFTER THE READINESS PROBE ABOVE, deliberately (#2869 review). It
+      used to run before it, and `readClubTimeZoneOutsideRequest()` never
+      throws — so a database that was not up yet pinned all 25 jobs to the
+      environment seed for the life of the process while the log line beside it
+      read "Resolved the club timezone for scheduled jobs", which is
+      indistinguishable from success.
+
+      SO THE OUTCOME IS NAMED. `resolveClubTimeZoneOutsideRequest()` reports
+      whether the answer is the club's own persisted setting or a fallback, and
+      a fallback is logged as a WARNING that says which and why. Note the
+      tension it exposes, which is real and not resolved here: CT-1's self-heal
+      refuses to GUESS a location when `TZ` is unset or names no place, and this
+      resolver then schedules 25 jobs against `Pacific/Auckland` anyway, because
+      `node-cron` must be handed some named zone. The honest form of that is a
+      warning naming the guess, which is what this writes.
+    */
+    const { resolveClubTimeZoneOutsideRequest } = await import(
+      "./lib/club-time-zone-runtime"
+    );
+    const { publishCronRuntimeZone } = await import("./lib/cron-runtime-zone");
+    const clubZoneResolution = await resolveClubTimeZoneOutsideRequest();
+    clubCronTimeZone = clubZoneResolution.zone;
+    publishCronRuntimeZone(clubCronTimeZone);
+    if (clubZoneResolution.source === "persisted") {
+      logger.info(
+        { clubTimeZone: clubCronTimeZone, source: clubZoneResolution.source },
+        "Scheduled jobs will run on the club's persisted timezone",
+      );
+    } else {
+      logger.warn(
+        {
+          clubTimeZone: clubCronTimeZone,
+          source: clubZoneResolution.source,
+          readFailed: clubZoneResolution.readFailed,
+          databaseReady,
+        },
+        clubZoneResolution.readFailed
+          ? "The club's persisted timezone could not be read at boot; every scheduled job below is pinned to a fallback zone until this process is restarted"
+          : "No club timezone is configured; every scheduled job below is pinned to a fallback zone. Set it on Admin → Club Time Zone and restart",
+      );
     }
 
     // Overlap guards: prevent concurrent execution of the same cron job
@@ -402,7 +432,7 @@ export async function register() {
 
         logger.info(
           { job: "xero-membership-refresh" },
-          "Scheduled Xero membership safety-net refresh (daily at 2 AM NZST)"
+          `Scheduled Xero membership safety-net refresh (daily at 2 AM ${cronTimeZone()})`
         );
       } else {
         logger.info(
@@ -411,7 +441,7 @@ export async function register() {
         );
       }
 
-      // Historical Xero link backfill (daily at 2:20 AM NZST)
+      // Historical Xero link backfill (daily at 2:20 AM club time)
       cron.default.schedule("20 2 * * *", async () => {
         if (isXeroBackfillCronRunning) {
           logger.info({ job: "xero-link-backfill" }, "Already running, skipping");
@@ -445,9 +475,9 @@ export async function register() {
         }
       }, { timezone: cronTimeZone() });
 
-      logger.info({ job: "xero-link-backfill" }, "Scheduled Xero link backfill (daily at 2:20 AM NZST)");
+      logger.info({ job: "xero-link-backfill" }, `Scheduled Xero link backfill (daily at 2:20 AM ${cronTimeZone()})`);
 
-      // Stale canonical Xero link cleanup (daily at 2:25 AM NZST)
+      // Stale canonical Xero link cleanup (daily at 2:25 AM club time)
       cron.default.schedule("25 2 * * *", async () => {
         if (isXeroLinkCleanupCronRunning) {
           logger.info({ job: "xero-link-cleanup" }, "Already running, skipping");
@@ -479,9 +509,9 @@ export async function register() {
         }
       }, { timezone: cronTimeZone() });
 
-      logger.info({ job: "xero-link-cleanup" }, "Scheduled Xero stale link cleanup (daily at 2:25 AM NZST)");
+      logger.info({ job: "xero-link-cleanup" }, `Scheduled Xero stale link cleanup (daily at 2:25 AM ${cronTimeZone()})`);
 
-      // Nightly Xero reconciliation report (daily at 2:35 AM NZST)
+      // Nightly Xero reconciliation report (daily at 2:35 AM club time)
       cron.default.schedule("35 2 * * *", async () => {
         if (isXeroReportCronRunning) {
           logger.info({ job: "xero-reconciliation-report" }, "Already running, skipping");
@@ -515,10 +545,10 @@ export async function register() {
 
       logger.info(
         { job: "xero-reconciliation-report" },
-        "Scheduled Xero reconciliation report (daily at 2:35 AM NZST)"
+        `Scheduled Xero reconciliation report (daily at 2:35 AM ${cronTimeZone()})`
       );
 
-      // #2501: Xero credit-sync checker (daily at 2:45 AM NZST). Reconciles
+      // #2501: Xero credit-sync checker (daily at 2:45 AM club time). Reconciles
       // BookingApp's stamped applied credit against Xero's live invoice
       // allocations and warns admins on drift. Read-only, fail-safe, and
       // internally throttled to ~daily, so a mid-cycle overlap simply skips.
@@ -555,7 +585,7 @@ export async function register() {
 
       logger.info(
         { job: "xero-credit-sync-check" },
-        "Scheduled Xero credit-sync check (daily at 2:45 AM NZST)"
+        `Scheduled Xero credit-sync check (daily at 2:45 AM ${cronTimeZone()})`
       );
 
       // Xero outbox and replay workers (every 15 minutes)
@@ -770,7 +800,7 @@ export async function register() {
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
 
-    // Data pruning cron (daily at 3:30 AM NZST — staggered from backup at 3:00 AM)
+    // Data pruning cron (daily at 3:30 AM club time — staggered from backup at 3:00 AM)
     let isPruningRunning = false;
     cron.default.schedule("30 3 * * *", async () => {
       if (isPruningRunning) {
@@ -890,9 +920,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "data-pruning" }, "Scheduled data pruning (daily at 3:30 AM NZST)");
+    logger.info({ job: "data-pruning" }, `Scheduled data pruning (daily at 3:30 AM ${cronTimeZone()})`);
 
-    // Alpine Central Server Other Clubs sync (daily at 3:00 AM NZST). Bidirectional:
+    // Alpine Central Server Other Clubs sync (daily at 3:00 AM club time). Bidirectional:
     // uploads local rows changed since the last upload watermark, then downloads the
     // centrally-distributed rows changed since the last cursor. Both directions are
     // incremental, so a quiet day makes at most one cheap request each way.
@@ -966,10 +996,10 @@ export async function register() {
 
     logger.info(
       { job: "alpine-server-other-lodges-sync" },
-      "Scheduled Alpine Central Server Other Clubs sync (daily at 3:00 AM NZST)",
+      `Scheduled Alpine Central Server Other Clubs sync (daily at 3:00 AM ${cronTimeZone()})`,
     );
 
-    // Draft expiry cleanup (daily at 4:00 AM NZST)
+    // Draft expiry cleanup (daily at 4:00 AM club time)
     let isDraftCleanupRunning = false;
     cron.default.schedule("0 4 * * *", async () => {
       if (isDraftCleanupRunning) {
@@ -1051,10 +1081,10 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "draft-cleanup" }, "Scheduled draft cleanup (daily at 4:00 AM NZST)");
+    logger.info({ job: "draft-cleanup" }, `Scheduled draft cleanup (daily at 4:00 AM ${cronTimeZone()})`);
 
     // Member-guest pending-hold expiry (#2307, epic #2305) — daily at 4:30 AM
-    // NZST. Its own schedule rather than a slot in general-cron-runner's 3-hourly
+    // club time. Its own schedule rather than a slot in general-cron-runner's 3-hourly
     // cycle: a lapse should happen once, on a predictable day boundary, not eight
     // times a day. 4:30 is a free slot between draft-cleanup (4:00) and
     // credit-reconciliation (5:00).
@@ -1131,10 +1161,10 @@ export async function register() {
 
     logger.info(
       { job: "member-guest-consent-expiry" },
-      "Scheduled member-guest consent expiry (daily at 4:30 AM NZST)",
+      `Scheduled member-guest consent expiry (daily at 4:30 AM ${cronTimeZone()})`,
     );
 
-    // N-06: Cron job - Pending deadline alerts (daily at 8:00 AM NZST)
+    // N-06: Cron job - Pending deadline alerts (daily at 8:00 AM club time)
     let isPendingDeadlineRunning = false;
     cron.default.schedule("0 8 * * *", async () => {
       if (isPendingDeadlineRunning) {
@@ -1166,9 +1196,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "pending-deadline-alerts" }, "Scheduled pending deadline alerts (daily at 8:00 AM NZST)");
+    logger.info({ job: "pending-deadline-alerts" }, `Scheduled pending deadline alerts (daily at 8:00 AM ${cronTimeZone()})`);
 
-    // Membership nomination reminders (daily at 8:15 AM NZST)
+    // Membership nomination reminders (daily at 8:15 AM club time)
     let isNominationReminderRunning = false;
     cron.default.schedule("15 8 * * *", async () => {
       if (isNominationReminderRunning) {
@@ -1200,9 +1230,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "nomination-reminders" }, "Scheduled nomination reminders (daily at 8:15 AM NZST)");
+    logger.info({ job: "nomination-reminders" }, `Scheduled nomination reminders (daily at 8:15 AM ${cronTimeZone()})`);
 
-    // N-01: Cron job - Check-in reminders (daily at 9:00 AM NZST)
+    // N-01: Cron job - Check-in reminders (daily at 9:00 AM club time)
     let isCheckinReminderRunning = false;
     cron.default.schedule("0 9 * * *", async () => {
       if (isCheckinReminderRunning) {
@@ -1234,9 +1264,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "checkin-reminders" }, "Scheduled check-in reminders (daily at 9:00 AM NZST)");
+    logger.info({ job: "checkin-reminders" }, `Scheduled check-in reminders (daily at 9:00 AM ${cronTimeZone()})`);
 
-    // N-03: Cron job - Capacity warnings (daily at 7:00 AM NZST)
+    // N-03: Cron job - Capacity warnings (daily at 7:00 AM club time)
     let isCapacityWarningRunning = false;
     cron.default.schedule("0 7 * * *", async () => {
       if (isCapacityWarningRunning) {
@@ -1268,9 +1298,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "capacity-warnings" }, "Scheduled capacity warnings (daily at 7:00 AM NZST)");
+    logger.info({ job: "capacity-warnings" }, `Scheduled capacity warnings (daily at 7:00 AM ${cronTimeZone()})`);
 
-    // N-13: Cron job - Admin daily digest (daily at 7:30 AM NZST)
+    // N-13: Cron job - Admin daily digest (daily at 7:30 AM club time)
     let isAdminDigestRunning = false;
     cron.default.schedule("30 7 * * *", async () => {
       if (isAdminDigestRunning) {
@@ -1301,7 +1331,7 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "admin-digest" }, "Scheduled admin daily digest (daily at 7:30 AM NZST)");
+    logger.info({ job: "admin-digest" }, `Scheduled admin daily digest (daily at 7:30 AM ${cronTimeZone()})`);
 
     // N-11: Cron job - Email retry (every 30 minutes)
     let isEmailRetryRunning = false;
@@ -1376,9 +1406,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "complete-bookings" }, "Scheduled complete bookings (daily at 1:00 AM NZST)");
+    logger.info({ job: "complete-bookings" }, `Scheduled complete bookings (daily at 1:00 AM ${cronTimeZone()})`);
 
-    // Hut leader auto-assign (daily at 6:00 AM NZST)
+    // Hut leader auto-assign (daily at 6:00 AM club time)
     let isHutLeaderAutoAssignRunning = false;
     cron.default.schedule("0 6 * * *", async () => {
       if (isHutLeaderAutoAssignRunning) {
@@ -1409,9 +1439,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "hut-leader-auto-assign" }, "Scheduled hut leader auto-assign (daily at 6:00 AM NZST)");
+    logger.info({ job: "hut-leader-auto-assign" }, `Scheduled hut leader auto-assign (daily at 6:00 AM ${cronTimeZone()})`);
 
-    // Age-up cron (daily at 6:30 AM NZST) — detect members turning 18, grant login
+    // Age-up cron (daily at 6:30 AM club time) — detect members turning 18, grant login
     let isAgeUpRunning = false;
     cron.default.schedule("30 6 * * *", async () => {
       if (isAgeUpRunning) {
@@ -1442,9 +1472,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:30 AM NZST)");
+    logger.info({ job: "age-up" }, `Scheduled age-up check (daily at 6:30 AM ${cronTimeZone()})`);
 
-    // Email-inheritance reconciliation (daily at 6:45 AM NZST) — #2716.
+    // Email-inheritance reconciliation (daily at 6:45 AM club time) — #2716.
     // Scheduled immediately AFTER age-up deliberately: age-up is the other job
     // that moves members across the "can receive mail" line, and running the
     // sweep behind it means a member who aged up this morning has their
@@ -1479,9 +1509,9 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "email-inheritance-reconcile" }, "Scheduled email inheritance reconciliation (daily at 6:45 AM NZST)");
+    logger.info({ job: "email-inheritance-reconcile" }, `Scheduled email inheritance reconciliation (daily at 6:45 AM ${cronTimeZone()})`);
 
-    // ── Credit reconciliation (daily at 5:00 AM NZST) ──────────────────
+    // ── Credit reconciliation (daily at 5:00 AM club time) ──────────────────
 
     let isCreditReconRunning = false;
 
@@ -1514,7 +1544,7 @@ export async function register() {
       }
     }, { timezone: cronTimeZone() });
 
-    logger.info({ job: "credit-reconciliation" }, "Scheduled credit reconciliation (daily at 5:00 AM NZST)");
+    logger.info({ job: "credit-reconciliation" }, `Scheduled credit reconciliation (daily at 5:00 AM ${cronTimeZone()})`);
 
     if (optionalCron.waitlistProcessor) {
     // Waitlist processor (every 30 minutes)

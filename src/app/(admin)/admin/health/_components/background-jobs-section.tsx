@@ -23,6 +23,23 @@ export function BackgroundJobsSection({
         <Clock className="h-5 w-5" />
         Cron Jobs
       </h2>
+      {cronHealth?.timezoneRestartRequired ? (
+        <div className="mb-3 rounded-lg border border-warning-6 bg-warning-2 p-4 text-sm">
+          <p className="font-semibold">
+            These jobs are still running on the old time zone
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            The club time zone was changed to{" "}
+            <span className="font-medium">{cronHealth.configuredTimezone}</span>
+            , but the scheduled jobs below were set up when the application last
+            started and are still firing on{" "}
+            <span className="font-medium">{cronHealth.runningTimezone}</span>.
+            Every &ldquo;expected&rdquo; time on this page is the time they fire
+            today. Restart the application to move them onto{" "}
+            {cronHealth.configuredTimezone}.
+          </p>
+        </div>
+      ) : null}
       {(cronHealth
         ? cronHealth.jobs.length === 0
         : Object.keys(cronJobs).length === 0) ? (

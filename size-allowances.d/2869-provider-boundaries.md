@@ -16,7 +16,7 @@ rather than folded into the modules that call them, which is why the two largest
 concentrations of new logic cost nothing here.
 
 file: src/instrumentation.node.ts
-lines: 1574
+lines: 1604
 reason: this is the change. The file is one declarative registration table for
   twenty-five scheduled jobs, and a cron expression is a club-local scheduled
   time — so the zone that resolves it has to be read once, at boot, before the
@@ -26,16 +26,38 @@ reason: this is the change. The file is one declarative registration table for
   cannot infer: `node-cron` reads the `timezone` option when a job is registered
   and never again, so a club that changes its timezone keeps the old schedule
   until the next restart. Splitting a registration table by line count would put
-  some jobs somewhere else for no reason a reader could name.
+  some jobs somewhere else for no reason a reader could name. Review added the
+  resolution's honest reporting — it runs AFTER the database readiness probe and
+  logs a warning naming the fallback when the club's own zone could not be read,
+  rather than logging every outcome as a success — and removed nineteen
+  hard-coded "AM NZST" strings from the job-registration log lines, which is an
+  `INV-CONFIG-001` correction in the same breath.
 
 file: src/lib/admin-cron-health.ts
-lines: 795
+lines: 829
 reason: the zone becomes an argument and the forty hand-written
   "02:20 NZT/NZDT daily" strings become the configured zone, which is both the
   CT-5 correction and an `INV-CONFIG-001` one — this is the generic product, and
   it was spelling one club's timezone into the operator-facing description of
   every job. The net growth is the module docblock explaining that; the job table
-  itself is very slightly shorter.
+  itself is very slightly shorter. Review added the RUNNING-versus-CONFIGURED
+  distinction to the report: `node-cron` pins a job's zone when the job is
+  registered, so between an admin changing the setting and the next restart the
+  page was asserting an hour no job would fire at.
+
+file: src/app/api/webhooks/xero/route.ts
+lines: 313
+reason: the anchor defect of this issue, in the one place the census could not
+  see it. `eventDateUtc` is offset-less on Xero's wire, and `new Date(...)` read
+  it in the container's zone — storing `XeroInboundEvent.eventCreatedAt` about
+  thirteen hours early — while the payload validator beside it was as lenient as
+  `new Date` itself and accepted prose such as "11 March 2019". Both now go
+  through `@/lib/xero-provider-dates`. The code is two lines shorter; the growth
+  is the docblock naming the wire shape, because the line it sits on now reads
+  as trivially safe and the next person to touch it has no other way to learn
+  that the provider omits the offset. Splitting a Next route handler in half to
+  carry one field's classification would put the validator somewhere the reader
+  of the handler will not look.
 
 file: src/lib/config-transfer/categories/xero-config.ts
 lines: 815

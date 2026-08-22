@@ -81,6 +81,40 @@ describe("Xero membership subscription invoice adoption", () => {
     expect(subscriptionInvoiceMatchesSnapshot({ invoice: invoice(), ...snapshot })).toBe(true);
   });
 
+  // The due interval is measured from `invoice.date` and `invoice.dueDate`, and
+  // both are typed `string` while `xero-node` hands back a `Date` for a
+  // Microsoft-JSON payload. `invoiceDueIntervalDays` used to carry its own copy
+  // of that classification; it now calls the Xero boundary, so this pins that
+  // ALL FOUR wire shapes still measure the same thirty days and the charge
+  // still adopts its own invoice (CT-5, #2869 review). A shape that stopped
+  // being read would return `null` and send the charge to `CONFLICT`.
+  it.each([
+    ["plain calendar dates", "2026-07-01", "2026-07-31"],
+    ["offset-less date-times", "2026-07-01T00:00:00", "2026-07-31T00:00:00"],
+    ["offset-bearing instants", "2026-07-01T00:00:00Z", "2026-07-31T00:00:00Z"],
+    // 1782864000000 = 2026-07-01T00:00Z, 1785456000000 = 2026-07-31T00:00Z.
+    ["Microsoft-JSON strings", "/Date(1782864000000+0000)/", "/Date(1785456000000+0000)/"],
+  ])("measures the same due interval from %s", (_label, date, dueDate) => {
+    expect(
+      subscriptionInvoiceMatchesSnapshot({
+        invoice: invoice({ date, dueDate } as Partial<Invoice>),
+        ...snapshot,
+      }),
+    ).toBe(true);
+  });
+
+  it("adopts an invoice whose dates the SDK already deserialised into Dates", () => {
+    expect(
+      subscriptionInvoiceMatchesSnapshot({
+        invoice: invoice({
+          date: new Date("2026-07-01T00:00:00.000Z"),
+          dueDate: new Date("2026-07-31T00:00:00.000Z"),
+        } as unknown as Partial<Invoice>),
+        ...snapshot,
+      }),
+    ).toBe(true);
+  });
+
   it.each([
     ["amount mismatch", invoice({ total: 119.99 })],
     ["recipient mismatch", invoice({ contact: { contactID: "other" } })],

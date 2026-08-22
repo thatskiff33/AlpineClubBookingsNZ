@@ -10,7 +10,7 @@ import {
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
 import { XERO_REPORT_OAUTH_SCOPES } from "@/lib/xero-config";
-import { toOptionalDate } from "./date-format";
+import { toOptionalDate, toOptionalReportDateText } from "./date-format";
 
 const XERO_REPORT_SCOPE_BY_OPERATION = {
   getReportProfitAndLoss: XERO_REPORT_OAUTH_SCOPES.profitAndLoss,
@@ -178,7 +178,7 @@ export function buildFinanceReportSnapshot(input: {
     reportType: input.report.reportType ?? null,
     reportTitle: input.report.reportTitle ?? null,
     reportTitles: input.report.reportTitles ?? [],
-    reportDate: input.report.reportDate ?? null,
+    reportDate: toOptionalReportDateText(input.report.reportDate),
     updatedDateUTC: toOptionalDate(input.report.updatedDateUTC)?.toISOString() ?? null,
     fields: (input.report.fields ?? []).map((field) => mapReportField(field)),
     rows,

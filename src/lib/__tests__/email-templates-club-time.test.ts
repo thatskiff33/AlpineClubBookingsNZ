@@ -47,6 +47,13 @@ vi.mock("@/lib/club-theme", () => ({
  */
 const DIVERGENT = new Date("2026-04-16T00:30:00.000Z");
 
+/**
+ * A persisted zone that is never the runner's own and never the documented
+ * fallback, so "the persisted value won" cannot be read off a coincidence.
+ * `Pacific/Chatham` is +12:45 and a real IANA location.
+ */
+const PERSISTED_ZONE = "Pacific/Chatham";
+
 const hostTimeZone = captureHostTimeZone();
 
 beforeEach(async () => {
@@ -121,6 +128,41 @@ describe("before it is primed", () => {
     expect(clubTime.emailClubTimeZoneForTests()).toBe(APP_TIME_ZONE);
   });
 
+  it("deliberately DIFFERS from APP_TIME_ZONE for a seed that names no place", async () => {
+    /*
+      THE EXCEPTION TO THE SENTENCE ABOVE, pinned rather than glossed over
+      (#2869 review). The module's docblock used to claim a cold cache was
+      "character-for-character the `APP_TIME_ZONE` these templates used before".
+      It is not: `APP_TIME_ZONE` is `process.env.TZ` UNVALIDATED, while this
+      resolves the seed through `resolveClubTimeZone`, which refuses a value
+      naming no place — `UTC`, `GMT`, `Zulu`, `Etc/*` — and answers the
+      documented default instead.
+
+      That is the epic's intended behaviour and matches CT-1's refusal to record
+      such a seed, so the test pins the DIFFERENCE rather than the claim. It is
+      also the one deployment class whose email dates move on the release that
+      lands CT-5, which is why it is worth a test of its own.
+
+      Both constants are frozen at module load, so the seed has to be pinned
+      before a FRESH import of each — hence `vi.resetModules()`.
+    */
+    const hostTimeZone = captureHostTimeZone();
+    try {
+      vi.resetModules();
+      process.env.TZ = "UTC";
+      const freshClubTime = await import("@/lib/email-templates-club-time");
+      const { APP_TIME_ZONE: freshAppTimeZone } = await import(
+        "@/config/operational"
+      );
+
+      expect(freshAppTimeZone).toBe("UTC");
+      expect(freshClubTime.emailClubTimeZoneForTests()).toBe("Pacific/Auckland");
+    } finally {
+      hostTimeZone.restore();
+      vi.resetModules();
+    }
+  });
+
   // The seed is read once, at module load. A live `process.env.TZ` read would
   // make an email's dates depend on when it was rendered relative to an
   // environment change — and would let one suite's `TZ` pin leak into another's
@@ -134,14 +176,109 @@ describe("before it is primed", () => {
     });
   });
 
-  it("does not touch the database from the synchronous render path", async () => {
+  it("never WAITS on the database from the synchronous render path", async () => {
+    /*
+      THE PROPERTY THAT MATTERS, and it is not the one this test used to assert.
+
+      It used to require that a cold render start NO read at all, and that made
+      the cache unrecoverable: the TTL branch sat behind a `persisted === null`
+      early return, so the only thing that could ever load the zone was the boot
+      prime and the only thing that could recover from a failed boot prime was
+      another boot. A container that started before PostgreSQL was ready dated
+      EVERY email for the life of that process in the environment's zone (#2869
+      review).
+
+      What a render must not do is WAIT. It answers from the cache — the
+      environment fallback while cold — and returns; the read it kicks off is
+      not awaited and cannot make it slower.
+    */
     const clubTime = await import("@/lib/email-templates-club-time");
+    const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
+    let resolveRead: (zone: string) => void = () => {};
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
 
+    const { APP_TIME_ZONE } = await import("@/config/operational");
+    expect(
+      PERSISTED_ZONE,
+      "the persisted fixture must differ from the runner's own zone, or this proves nothing",
+    ).not.toBe(APP_TIME_ZONE);
+
+    // The read is in flight and unresolved; the render still answers, from the
+    // cold cache, without waiting for it.
+    const coldZone = clubTime.emailClubTimeZoneForTests();
+    expect(coldZone).toBe(APP_TIME_ZONE);
+    expect(clubTime.emailClubDate(DIVERGENT)).toBe(
+      bindClubTime(requireClubTimeZone(coldZone)).instantDate(DIVERGENT),
+    );
+
+    resolveRead(PERSISTED_ZONE);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(PERSISTED_ZONE);
+  });
+
+  it("starts ONE read for a burst of renders, not one per message", async () => {
+    // The bound that makes a self-warming cold cache safe: `refreshing` plus a
+    // stamp taken up front, exactly as `emailPalette()` does one module along.
+    const clubTime = await import("@/lib/email-templates-club-time");
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(
+      PERSISTED_ZONE,
+    );
+
+    for (let index = 0; index < 50; index += 1) {
+      clubTime.emailClubDate(DIVERGENT);
+    }
+
+    expect(
+      mocks.readPersistedClubTimeZoneOutsideRequest,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers from a cold start whose first read failed", async () => {
+    /*
+      THE DEFECT, END TO END. The boot prime runs before PostgreSQL is ready and
+      fails. Under the old code nothing else could ever load the zone, so every
+      email that process sent was dated in the container's zone. Now the next
+      render past the failure cooldown reads again and the zone arrives.
+
+      The cooldown is real time, so it is stepped over with `vi.setSystemTime`
+      rather than waited out — and the suite re-pins the frozen default
+      afterwards, per the repository clock rule.
+    */
+    const clubTime = await import("@/lib/email-templates-club-time");
+    const frozenNow = new Date();
+
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockRejectedValueOnce(
+      new Error("database not ready"),
+    );
+    await clubTime.primeEmailClubTimeZone();
+
+    const { APP_TIME_ZONE } = await import("@/config/operational");
+    expect(clubTime.emailClubTimeZoneForTests()).toBe(APP_TIME_ZONE);
+
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(
+      PERSISTED_ZONE,
+    );
+    // Inside the cooldown, nothing is retried.
     clubTime.emailClubDate(DIVERGENT);
-    clubTime.emailClubDateTime(DIVERGENT);
-    clubTime.emailClubTimeZoneForTests();
+    expect(
+      mocks.readPersistedClubTimeZoneOutsideRequest,
+    ).toHaveBeenCalledTimes(1);
 
-    expect(mocks.readPersistedClubTimeZoneOutsideRequest).not.toHaveBeenCalled();
+    try {
+      vi.setSystemTime(new Date(frozenNow.getTime() + 31_000));
+      clubTime.emailClubDate(DIVERGENT);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(clubTime.emailClubTimeZoneForTests()).toBe(PERSISTED_ZONE);
+    } finally {
+      vi.setSystemTime(frozenNow);
+    }
   });
 });
 
@@ -150,8 +287,22 @@ describe("a read that finds nothing", () => {
   // database, a row whose value is not a usable named zone — and the point is
   // that none of them may become the answer the templates render in.
   it("commits nothing when the reader has nothing usable", async () => {
+    /*
+      `before` IS TAKEN FROM A PRIMED CACHE, not a cold one, and that is the
+      whole discrimination (#2869 review). Reading it cold made `before` the
+      environment fallback — which is also what a mutant that COMMITTED the
+      fallback on a `null` read would produce, so the assertion held either way
+      and proved nothing. Priming a zone that is neither the host's nor the
+      fallback first means "unchanged" can only mean "nothing was committed".
+    */
     const clubTime = await import("@/lib/email-templates-club-time");
+
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(
+      PERSISTED_ZONE,
+    );
+    await clubTime.primeEmailClubTimeZone();
     const before = clubTime.emailClubTimeZoneForTests();
+    expect(before).toBe(PERSISTED_ZONE);
 
     mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(null);
     await clubTime.primeEmailClubTimeZone();

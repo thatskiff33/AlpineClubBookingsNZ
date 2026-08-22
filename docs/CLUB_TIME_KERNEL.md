@@ -141,8 +141,14 @@ Two honest limits while both exist:
   Sentry monitors and the finance-sync schedule, resolve it before the first
   `cron.schedule` and keep it for the life of the process. Changing the club
   time zone therefore does not move a running job: **the application has to be
-  restarted.** Nothing in the product enforces that, so it belongs in the
-  operator's runbook rather than in an admin's assumptions.
+  restarted.** The product says so rather than leaving it to a runbook — on the
+  zone panel, on its page, in contextual help, and as a banner on the health
+  page's Cron Jobs section, which shows the zone the jobs are *running* beside
+  the one that has been configured. `cron-runtime-zone.ts` publishes the
+  boot-pinned value on a `Symbol.for` global, because Next bundles
+  instrumentation separately from routes and a module-level `let` is not
+  reliably shared between them; `null` there means **unknown**, never
+  agreement.
 - `APP_LOCALE` is still an environment-derived constant. Locale is a separate
   axis this epic does not touch.
 

@@ -52,11 +52,11 @@ export default function ClubTimePage() {
           another country should see club time, not their own.
         </p>
         <p className="text-sm text-muted-foreground">
-          It is recorded here, and the site moves onto it as the rest of the
-          club-time work lands. Until then the times the site shows — booking
-          confirmations, rosters, reminders, cut-offs — and when club-local
-          scheduled jobs fire still follow the TZ setting this deployment starts
-          with, so keep the two the same.
+          The times the site and its emails show — booking confirmations,
+          rosters, reminders, cut-offs — are worked out in this zone, and so are
+          the dates on invoices and credit notes sent to Xero. Scheduled jobs are
+          the one exception: they keep running on the zone the application
+          started with until it is restarted.
         </p>
       </div>
       <ClubTimeZonePanel />

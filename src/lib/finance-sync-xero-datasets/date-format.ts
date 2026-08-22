@@ -144,3 +144,23 @@ export function toOptionalText(value: unknown): string | null {
 export function toOptionalDateOnlyText(value: unknown): string | null {
   return xeroCalendarDateText(value);
 }
+
+/**
+ * A Xero REPORT's `reportDate`, which is a label as often as it is a date.
+ *
+ * Xero renders this field for humans — `"30 September 2020"` on a balance sheet
+ * — and the only consumer in this codebase (`readPnlPeriodLabel`) uses it as the
+ * last-resort period caption. So it cannot simply go through
+ * {@link toOptionalDateOnlyText}: that would answer `null` for the ordinary case
+ * and delete the caption.
+ *
+ * But it was passed through VERBATIM, which broke this module's other rule — a
+ * serialised value says which kind it is — for the case where Xero DOES send a
+ * temporal shape: `"2019-03-11T00:00:00"` was stored as a timestamp-looking
+ * string in a field a reader has to guess about (#2869 review). So: a value this
+ * boundary can read as a calendar day is stored as the canonical ten characters,
+ * and anything else is kept as the human label it is.
+ */
+export function toOptionalReportDateText(value: unknown): string | null {
+  return xeroCalendarDateText(value) ?? toOptionalText(value);
+}

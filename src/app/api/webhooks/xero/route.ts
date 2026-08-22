@@ -13,6 +13,10 @@ import {
   isWebhookBodyTooLargeError,
   readBoundedWebhookText,
 } from "@/lib/webhook-body";
+import {
+  classifyXeroWireTemporal,
+  xeroInstant,
+} from "@/lib/xero-provider-dates";
 
 const XERO_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
 const XERO_WEBHOOK_MAX_EVENTS = 100;
@@ -32,12 +36,30 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/**
+ * `eventDateUtc` is a XERO PAYLOAD TEMPORAL FIELD, judged and read at the Xero
+ * boundary rather than here (CT-5, #2869; `INV-DATE-019`).
+ *
+ * The envelope carries it OFFSET-LESS — Xero's own example is
+ * `"2018-08-23T05:44:47.622"` — and the previous `new Date(value)` resolved that
+ * wall-clock reading in the container's zone, storing
+ * `XeroInboundEvent.eventCreatedAt` about thirteen hours early under the
+ * `TZ=Pacific/Auckland` pin. The validator was as lenient as `new Date` itself,
+ * so it also accepted `"11 March 2019"`; `classifyXeroWireTemporal` accepts
+ * exactly the shapes Xero can send and rejects the rest with a 400, which Xero
+ * retries. Only signature-verified traffic reaches this point.
+ */
 function isValidOptionalDateString(value: unknown): value is string | undefined {
   if (value === undefined) {
     return true;
   }
 
-  return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const shape = classifyXeroWireTemporal(value);
+  return shape !== "unreadable" && shape !== "absent";
 }
 
 function isXeroWebhookEventPayload(
@@ -191,8 +213,9 @@ export async function POST(request: NextRequest) {
 
     const { eventType, eventCategory, resourceId } = event;
     const eventStart = Date.now();
-    const eventDateUtc =
-      typeof event.eventDateUtc === "string" ? new Date(event.eventDateUtc) : null;
+    // Classified at the Xero boundary, never parsed here — see
+    // `isValidOptionalDateString` above and `@/lib/xero-provider-dates`.
+    const eventDateUtc = xeroInstant(event.eventDateUtc);
     const correlationKey = buildXeroIdempotencyKey(
       "xero",
       "webhook",

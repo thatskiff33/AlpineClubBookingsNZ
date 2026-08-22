@@ -5,6 +5,7 @@ import {
   parseOptionalDateOnly,
   toOptionalDate,
   toOptionalDateOnlyText,
+  toOptionalReportDateText,
 } from "@/lib/finance-sync-xero-datasets/date-format";
 import { requireClubTimeZone } from "@/lib/club-time";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
@@ -153,5 +154,43 @@ describe("the finance report window (#2869)", () => {
     expect(
       getFinanceMonthKeyForDate(new Date("2026-05-01T00:30:00.000Z"), CLUB_BEHIND_UTC),
     ).toBe("2026-04");
+  });
+});
+
+describe("a report's own date field (#2869)", () => {
+  /*
+    `Report.reportDate` is a LABEL as often as it is a date — Xero renders
+    "30 September 2020" on a balance sheet, and `readPnlPeriodLabel` uses it as
+    the last-resort period caption. So it cannot simply go through the date-only
+    reader, which would answer `null` and delete the caption.
+
+    But it was passed through VERBATIM, which broke this module's other rule for
+    the case where Xero DOES send a temporal shape: an offset-less
+    "2019-03-11T00:00:00" was persisted as a timestamp-looking string in a field
+    a consumer has to guess about.
+  */
+  it("canonicalises a temporal value to ten characters", () => {
+    expect(toOptionalReportDateText("2019-03-11")).toBe("2019-03-11");
+    expect(toOptionalReportDateText("2019-03-11T00:00:00")).toBe("2019-03-11");
+    expect(toOptionalReportDateText("2019-03-11T13:45:00Z")).toBe("2019-03-11");
+    expect(toOptionalReportDateText(new Date("2019-03-11T00:00:00.000Z"))).toBe(
+      "2019-03-11",
+    );
+  });
+
+  it("keeps a human label exactly as Xero wrote it", () => {
+    expect(toOptionalReportDateText("30 September 2020")).toBe("30 September 2020");
+    expect(toOptionalReportDateText("")).toBeNull();
+    expect(toOptionalReportDateText(null)).toBeNull();
+  });
+
+  it("reads the same on every host zone", () => {
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      withTimeZone(hostZone, () => {
+        expect(toOptionalReportDateText("2019-03-11T00:00:00"), hostZone).toBe(
+          "2019-03-11",
+        );
+      });
+    }
   });
 });

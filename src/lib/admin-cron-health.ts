@@ -70,7 +70,26 @@ interface CronHealthJob extends AdminCronJobDefinition {
 export interface CronHealthReport {
   generatedAt: string;
   cronEnabled: boolean;
+  /**
+   * The zone every "expected local time" below is stated in — the zone the jobs
+   * are ACTUALLY running on when that is knowable, and the configured one when
+   * it is not (CT-5, #2869).
+   */
   defaultTimezone: string;
+  /** The club's persisted setting, which a running job only adopts on restart. */
+  configuredTimezone: string;
+  /**
+   * The zone the scheduler pinned at boot, or `null` when neither this process
+   * nor the cron leader could report one. See `@/lib/cron-runtime-zone`.
+   */
+  runningTimezone: string | null;
+  /**
+   * True when the running zone is KNOWN and differs from the configured one:
+   * somebody changed the club's timezone and nothing has restarted since, so
+   * every time below is the time jobs fire today, not the time they will fire
+   * after the next deploy.
+   */
+  timezoneRestartRequired: boolean;
   jobs: CronHealthJob[];
 }
 
@@ -768,12 +787,23 @@ function classifyCronJob(
 export function buildCronHealthReport({
   runs,
   clubTimeZone,
+  runningTimeZone = null,
   now = new Date(),
   definitions,
 }: {
   runs: AdminCronRun[];
-  /** The club's persisted civil-time zone — see the module doc (CT-5, #2869). */
+  /**
+   * The club's PERSISTED civil-time zone — see the module doc (CT-5, #2869).
+   * This is the setting, which a job already registered with `node-cron` only
+   * adopts when the process restarts.
+   */
   clubTimeZone: string;
+  /**
+   * The zone the scheduler is actually running on, when it can be established.
+   * `null` means unknown, not "the same": the report then states the configured
+   * zone and says so, rather than asserting an hour no job will fire at.
+   */
+  runningTimeZone?: string | null;
   now?: Date;
   definitions: AdminCronJobDefinition[];
 }): CronHealthReport {
@@ -787,7 +817,11 @@ export function buildCronHealthReport({
   return {
     generatedAt: now.toISOString(),
     cronEnabled: definitions.some((definition) => definition.enabled),
-    defaultTimezone: clubTimeZone,
+    defaultTimezone: runningTimeZone ?? clubTimeZone,
+    configuredTimezone: clubTimeZone,
+    runningTimezone: runningTimeZone,
+    timezoneRestartRequired:
+      runningTimeZone !== null && runningTimeZone !== clubTimeZone,
     jobs: [...definitions, ...unknownDefinitions].map((definition) =>
       classifyCronJob(definition, runsByJob[definition.jobName] ?? [], now)
     ),

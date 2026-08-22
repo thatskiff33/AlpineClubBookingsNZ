@@ -17,11 +17,26 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/club-time-zone-settings", () => ({
-  // CT-5 (#2869): the job's civil-time zone is the club's PERSISTED one. Pinned
-  // here to a zone that is not the host's, so a regression to `process.env.TZ`
-  // shows up as a different string rather than as a coincidence.
-  getClubTimeZone: vi.fn(async () => "Pacific/Auckland"),
+/**
+ * CT-5 (#2869): the job's civil-time zone is the club's PERSISTED one.
+ *
+ * TWO THINGS HERE WERE WRONG AND BOTH MATTERED (#2869 review). The mock named
+ * `@/lib/club-time-zone-settings`, which the code under test does not import —
+ * it reads `readClubTimeZoneOutsideRequest` from `@/lib/club-time-zone-runtime`
+ * — so the mock was never consulted at all. And it pinned `Pacific/Auckland`,
+ * which is what the UNMOCKED path answers on CI anyway (no `clubTimeSettings`
+ * delegate on the Prisma mock, `TZ` unset, so the documented fallback), so the
+ * assertions passed on precisely the coincidence the mock's own comment claimed
+ * to have removed. Measured: three of them failed the moment the host zone was
+ * `America/Denver`.
+ *
+ * So: the module the code really imports, pinned to a zone that is neither the
+ * host's nor the fallback.
+ */
+const CLUB_TIME_ZONE = "America/Denver";
+
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => CLUB_TIME_ZONE),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -155,7 +170,7 @@ describe("finance-sync-cron", () => {
         monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG,
         status: "in_progress",
       },
-      financeSyncCronCheckinConfig("Pacific/Auckland")
+      financeSyncCronCheckinConfig(CLUB_TIME_ZONE)
     );
     expect(captureCheckIn).toHaveBeenNthCalledWith(2, {
       checkInId: "check-in-1",

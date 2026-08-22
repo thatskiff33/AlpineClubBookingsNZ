@@ -551,6 +551,51 @@ describe("determineSubscriptionStatus", () => {
     expect(result.paidAt).toEqual(new Date("2026-05-20"))
   })
 
+  // The same four-shape x three-zone sweep the due-date half gets below, and it
+  // is needed for the SAME reason (#2869 review). The case above pins
+  // `fullyPaidOnDate: "2026-05-20"`, where the calendar-date reading and the
+  // instant reading coincide exactly — so a mutant that swapped
+  // `xeroCalendarDateAsDateOnly` for `xeroInstant` survived it. For an
+  // offset-less `"2026-05-20T10:30:00"` the two differ by ten and a half hours,
+  // and that value is written to `MemberSubscription.paidAt`.
+  it.each([
+    ["a plain calendar date", "2026-05-20"],
+    ["an offset-less date-time", "2026-05-20T10:30:00"],
+    ["an offset-bearing instant", "2026-05-20T10:30:00Z"],
+    ["a Microsoft-JSON string", "/Date(1779235200000+0000)/"],
+  ])("reads paidAt as the club calendar day from %s on every host zone", (_label, fullyPaidOnDate) => {
+    const invoice = {
+      status: Invoice.StatusEnum.PAID,
+      fullyPaidOnDate,
+    } as unknown as Invoice
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      withTimeZone(hostZone, () => {
+        const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
+        expect(result.status, `${_label} read on ${hostZone}`).toBe("PAID")
+        // UTC midnight of the day Xero named — the date-only ENCODING every
+        // other calendar value in this system carries (INV-DATE-010), never the
+        // time of day the payload happened to include.
+        expect(result.paidAt, `${_label} read on ${hostZone}`).toEqual(
+          new Date("2026-05-20T00:00:00.000Z"),
+        )
+      })
+    }
+  })
+
+  // The SDK hands back a `Date` for a field it types as `string`; a date-only
+  // field's Microsoft-JSON encoding is UTC midnight, so its UTC day is the day.
+  it("reads paidAt from a fullyPaidOnDate the SDK already deserialised", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.PAID,
+      fullyPaidOnDate: new Date("2026-05-20T00:00:00.000Z"),
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).paidAt).toEqual(
+      new Date("2026-05-20T00:00:00.000Z"),
+    )
+  })
+
   it("returns PAID with updatedDateUTC fallback when no fullyPaidOnDate", () => {
     const invoice = {
       status: Invoice.StatusEnum.PAID,

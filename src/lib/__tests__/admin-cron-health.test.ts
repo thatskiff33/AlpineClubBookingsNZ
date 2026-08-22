@@ -126,6 +126,63 @@ describe("admin cron health", () => {
     );
   });
 
+  describe("the running zone versus the configured one (CT-5, #2869)", () => {
+    /*
+      `node-cron` reads a job's zone when the job is REGISTERED and never
+      re-reads it, so between an admin changing the club timezone and the next
+      restart the setting and the running schedule disagree. The health page was
+      stating the SETTING across about forty "expected local time" sentences for
+      jobs still firing on the old zone — an hour no job would fire at. The
+      report now carries both and says which.
+    */
+    const definitions = [cronDefinition({ jobName: "current" })];
+
+    it("states the configured zone, and no restart, when nothing can report a running one", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.configuredTimezone).toBe("Pacific/Chatham");
+      expect(report.runningTimezone).toBeNull();
+      expect(report.defaultTimezone).toBe("Pacific/Chatham");
+      // Unknown is NOT "they agree": claiming a restart is outstanding when
+      // nothing knows would put a permanent warning on every web slot.
+      expect(report.timezoneRestartRequired).toBe(false);
+    });
+
+    it("prefers the running zone and flags the outstanding restart", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        runningTimeZone: "America/Denver",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.configuredTimezone).toBe("Pacific/Chatham");
+      expect(report.runningTimezone).toBe("America/Denver");
+      // The times on the page describe when jobs fire TODAY.
+      expect(report.defaultTimezone).toBe("America/Denver");
+      expect(report.timezoneRestartRequired).toBe(true);
+    });
+
+    it("flags nothing once the two agree", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        runningTimeZone: "Pacific/Chatham",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.timezoneRestartRequired).toBe(false);
+      expect(report.defaultTimezone).toBe("Pacific/Chatham");
+    });
+  });
+
   it("documents the finance daily sync schedule in the club's own timezone", () => {
     const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
