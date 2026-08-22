@@ -801,6 +801,43 @@ Two doors into one form, one officer queue behind them.
   verified identity. The officer is emailed a new-report notification through the
   existing notification-rules machinery.
 
+## Club message board (#2994, epic #2992)
+
+One member-written board, club-local for now.
+
+- **Member door** — a **Message board** card on `/dashboard` (shown only while
+  the `commsPortal` module is on, and only once at least one post exists) links
+  to `/message-board`. The board lists posts newest first with the author's name
+  and the date; the composer sits above the first page only.
+- **What a post is** — plain text, up to 4000 characters, stored and rendered as
+  typed. Markup is neither stripped nor interpreted: a member who types
+  `<b>bold</b>` sees those characters, because rewriting somebody's words is
+  worse than showing them literally. Line breaks are kept.
+- **Who wrote it** — the author's name and id come from the session and are
+  snapshotted onto the row. A name in the request body is ignored. That matters
+  beyond this screen: when a later child shares a post to other clubs, the
+  central server cannot verify the author and trusts this club's key, so the
+  post is only as honest as this route.
+- **Paging** — by link, not by fetching in the browser. The cursor
+  `(postedAt, id)` lives in the query string, so **Older posts** is an ordinary
+  navigation and a page of the board can be linked to. Both halves of the cursor
+  are required; half a cursor is a 400, because paging on `postedAt` alone would
+  silently skip posts sharing a millisecond.
+- **Limits** — ten posts an hour per member (member-scoped, so the IP key
+  carries ten times that and a lodge on one connection is not throttled as one
+  person). Not `authSensitive`: there is no credential behind it, and
+  quartering the allowance during a database blip would silence the board.
+- **Sharing** — a **Share with all clubs** tickbox is rendered, unchecked and
+  disabled, with a note saying it is not available yet. It is present now so the
+  composer does not grow a control out of nowhere when a later child enables it.
+- **Moderation** — none yet. The reader already filters `hiddenAt`/`removedAt`,
+  so the moderation child cannot forget to, and members can neither edit nor
+  delete their own posts.
+- **Audit** — one `communication` row per post, carrying the length rather than
+  the body. That category is member-visible, so the author sees "you posted" on
+  their own timeline; the body is deliberately not copied, since a second copy
+  in an audit row would outlive any later moderation of the first.
+
 ## Feedback Conventions
 
 One rule for "did that work?" feedback, so the affordance is predictable on

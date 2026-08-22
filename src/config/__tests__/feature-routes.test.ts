@@ -470,17 +470,10 @@ describe("feature route map", () => {
     // /api/admin/integrations/analytics, which the module flag now 404s. It still
     // injects a script into public pages rather than owning a public route, so the
     // rule gates only the admin configuration subtree.
-    // `commsPortal` is here TEMPORARILY and on a known clock: #2993 lands the
-    // schema and the module flag with no screens at all, so there is no route
-    // for a rule to gate yet. #2992's child 2 adds the member board and child 3
-    // the admin screens, and each must add its route rule AND take this entry
-    // out — the second assertion below fails the moment a rule exists while the
-    // exemption remains, so it cannot be left behind quietly.
     const MODULES_WITHOUT_ROUTE_RULES: ModuleKey[] = [
       "twoFactor",
       "magicLink",
       "googleLogin",
-      "commsPortal",
     ];
 
     const gatedFlags = new Set<string>(
