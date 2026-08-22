@@ -141,6 +141,8 @@ authority and changing them does not change the club's time. See
 | The page says it is available to full administrators only | Your admin account is not a Full Administrator | Ask a Full Administrator to make the change. Everyone with admin access can still see the current zone on the setup checklist |
 | Times moved by an hour after a change, but only some of them | Expected. Recorded moments are re-displayed in the new zone; calendar dates such as lodge nights are not converted at all | Nothing to fix. If the zone itself is wrong, change it back — no data was altered either way |
 | Times look wrong and the club time zone is correct | Something outside this setting is formatting a date on its own | This is a defect, not a configuration problem. Raise it with the club's technical contact and quote `INV-CONFIG-002` |
+| A scheduled job still runs at the old time after a zone change | Expected, and it needs an action. The nightly jobs read the zone once when the application starts, so they keep the old one until it is restarted | Restart the application. Until then **Admin → Setup & Configuration → System health** shows the new zone against the job times, which is the zone the job *will* use after the restart rather than the one it is using now |
+| A club outside New Zealand sees `NZST` in the server's start-up log | A cosmetic leftover in the boot log only. The job itself runs in the club's configured zone | Nothing to fix in the settings. It is a defect in the log line; quote `INV-CONFIG-001` to the club's technical contact |
 | Someone changed the zone and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_TIME_ZONE_UPDATED`. The entry names the administrator, and the zone before and after |
 
 ## Related links

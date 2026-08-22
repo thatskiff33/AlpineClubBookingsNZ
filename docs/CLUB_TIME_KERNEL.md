@@ -126,12 +126,23 @@ have moved their callers.
 
 Two honest limits while both exist:
 
-- **The adapters still pass `APP_TIME_ZONE`.** CT-2 makes the persisted zone
-  *reachable*; it does not move the application onto it. On a deployment where
-  the environment and the persisted value agree — which is every deployment
-  today, and which `club-time-zone-env-agreement.test.ts` pins — **no test can
-  detect the difference.** Do not read a green suite as evidence that the
-  application is running on the persisted zone yet.
+- **The adapters still pass `APP_TIME_ZONE`, and a call site that has not moved
+  yet is still on the environment.** CT-2 made the persisted zone *reachable*.
+  CT-5 (#2869) moved the provider, scheduled-job, export and email surfaces onto
+  it; CT-3 (#2872) moved the temporal schema; **CT-4 (#2870) still has the
+  remainder**, which is most of the admin and member screens. So "is this
+  application running on the persisted zone?" has a different answer per surface
+  until CT-6 (#2991) retires the adapters, and until then no green suite settles
+  it: on a deployment where the environment and the persisted value agree —
+  which is every deployment today, and which
+  `club-time-zone-env-agreement.test.ts` pins — **no test can detect the
+  difference.**
+- **The scheduled jobs read the zone once, at boot.** All 25 of them, plus the
+  Sentry monitors and the finance-sync schedule, resolve it before the first
+  `cron.schedule` and keep it for the life of the process. Changing the club
+  time zone therefore does not move a running job: **the application has to be
+  restarted.** Nothing in the product enforces that, so it belongs in the
+  operator's runbook rather than in an admin's assumptions.
 - `APP_LOCALE` is still an environment-derived constant. Locale is a separate
   axis this epic does not touch.
 
