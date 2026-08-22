@@ -3,9 +3,18 @@ import { FinanceSyncRunStatus, FinanceSyncRunTrigger } from "@prisma/client";
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron";
+
+/**
+ * CT-5 (#2869): the panel reports the zone the job actually runs on — the
+ * club's PERSISTED one — so it is mocked here rather than read from the host.
+ */
+const CLUB_TIME_ZONE = "Pacific/Auckland";
 import { DEFAULT_FINANCE_SYNC_WORKFLOW } from "@/lib/finance-sync-service";
+
+vi.mock("@/lib/club-time-zone-settings", () => ({
+  getClubTimeZone: vi.fn(async () => "Pacific/Auckland"),
+}));
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -195,7 +204,7 @@ describe("finance-sync-diagnostics", () => {
       cron: {
         jobName: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: CLUB_TIME_ZONE,
         latestRun: {
           id: "cron-latest",
           jobName: FINANCE_SYNC_CRON_JOB_NAME,
@@ -275,7 +284,7 @@ describe("finance-sync-diagnostics", () => {
       cron: {
         jobName: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: CLUB_TIME_ZONE,
         latestRun: null,
       },
       recentFailures: {

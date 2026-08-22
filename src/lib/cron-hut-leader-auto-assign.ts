@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lodgeNullTolerantScope } from "./lodges";
 import { acquireLodgeCapacityLock } from "./lodge-capacity-lock";
 import { findHutLeaderOverlapRefusal } from "./hut-leader-overlap-guard";
@@ -43,7 +45,7 @@ export async function autoAssignHutLeaders(): Promise<{
   }
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
-  const today = getTodayDateOnly();
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const endDate = addDays(today, lookAheadDays);
   const days = eachDayOfInterval({ start: today, end: endDate });
 

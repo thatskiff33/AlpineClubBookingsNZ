@@ -41,7 +41,9 @@ import { ApiError } from "@/lib/api-error";
 // feeds queueXeroBookingEditSettlement (#1729): settled-lifecycle status plus
 // a payment row carrying the Xero invoice id.
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { wouldQueueCheckInDatedInvoiceUpdate } from "@/lib/xero-booking-edit-conditions";
 // The source domain module, not the @/lib/xero facade (#1208 lint rule).
@@ -210,7 +212,7 @@ export async function assertCheckInClearsXeroLockDate(
 ): Promise<void> {
   // An unparseable date is the normal validation path's rejection to make.
   if (Number.isNaN(checkIn.getTime())) return;
-  if (checkIn >= getTodayDateOnly()) return;
+  if (checkIn >= dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))) return;
 
   const xeroIntegrationEnabled =
     options?.xeroIntegrationEnabled ??

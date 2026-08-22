@@ -16,6 +16,7 @@ import {
 // surfaces classify job health from the same rows.
 import { getCronRunsForAdminHealth } from "@/lib/admin-cron-runs";
 import logger from "@/lib/logger";
+import { getClubTimeZone } from "@/lib/club-time-zone-settings";
 
 interface RuntimeStatusPayload {
   cronEnabled: boolean;
@@ -106,17 +107,17 @@ async function getCronLeaderRuntimeStatus(): Promise<RuntimeStatusPayload | null
   }
 }
 
-async function getCronJobDefinitionsForHealthReport() {
+async function getCronJobDefinitionsForHealthReport(clubTimeZone: string) {
   if (!isWebRuntimeRole(process.env.APP_RUNTIME_ROLE)) {
-    return getAdminCronJobDefinitions();
+    return getAdminCronJobDefinitions(clubTimeZone);
   }
 
   const cronLeaderRuntimeStatus = await getCronLeaderRuntimeStatus();
   if (!cronLeaderRuntimeStatus) {
-    return getAdminCronJobDefinitions();
+    return getAdminCronJobDefinitions(clubTimeZone);
   }
 
-  return getAdminCronJobDefinitions({
+  return getAdminCronJobDefinitions(clubTimeZone, {
     ...process.env,
     APP_RUNTIME_ROLE: cronLeaderRuntimeStatus.role,
     CRON_ENABLED: cronLeaderRuntimeStatus.cronEnabled ? "true" : "false",
@@ -136,7 +137,10 @@ export async function GET() {
   if (!guard.ok) return guard.response;
   try {
     const { report: healthResponse } = await getDetailedHealthReport();
-    const cronDefinitions = await getCronJobDefinitionsForHealthReport();
+    // Scheduled jobs are described in the CLUB's civil time (CT-5, #2869).
+    const clubTimeZone = await getClubTimeZone();
+    const cronDefinitions =
+      await getCronJobDefinitionsForHealthReport(clubTimeZone);
 
     // Keep the global recent window for the UI, then add bounded per-job
     // history so high-frequency jobs cannot hide daily expected jobs.
@@ -147,6 +151,7 @@ export async function GET() {
     const cronHealth = buildCronHealthReport({
       definitions: cronDefinitions,
       runs: cronRuns,
+      clubTimeZone,
     });
 
     // Webhook stats and SES suppression telemetry

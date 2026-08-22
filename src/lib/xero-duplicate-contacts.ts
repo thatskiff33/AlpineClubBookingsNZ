@@ -22,6 +22,7 @@ import {
   normalizeXeroContactMatchValue,
 } from "./xero-contacts";
 import { isPlaceholderContactEmail } from "./placeholder-contact-email";
+import { xeroInstant } from "@/lib/xero-provider-dates";
 
 export interface PotentialXeroContactMatch {
   contactId: string;
@@ -386,7 +387,12 @@ export async function findDuplicateContacts(): Promise<{
         hasInvoices: invoiceCount > 0,
         invoiceCount,
         contactStatus: contact.contactStatus?.toString() || "ACTIVE",
-        updatedDateUTC: contact.updatedDateUTC?.toString(),
+        // An INSTANT crossing a JSON boundary, so it leaves as an unambiguous
+        // instant. `Date.prototype.toString()` rendered it in the SERVER's zone
+        // as human prose ("Wed Mar 11 2019 09:12:34 GMT+1300 (...)"), which is
+        // neither a calendar date nor a machine-readable moment and changed
+        // shape with the container (#2869).
+        updatedDateUTC: xeroInstant(contact.updatedDateUTC)?.toISOString(),
         xeroLink: xeroContactLink(contact.contactID!),
       });
     }

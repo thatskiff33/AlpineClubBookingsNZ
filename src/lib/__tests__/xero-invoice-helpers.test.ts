@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { requireClubTimeZone } from "@/lib/club-time";
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   getBookingInvoiceDueDate,
   getBookingInvoiceIssueDate,
@@ -16,19 +17,25 @@ import {
  * "divergent" instant is not enough — 21:30Z sits ~9.5h into a 12h window, so it
  * passes under any zone from about UTC+10 upwards, including zones with no
  * daylight saving at all.
+ *
+ * WHAT CT-5 (#2869) CHANGED HERE, and why the suite is stronger for it. The club
+ * zone used to arrive through `APP_TIME_ZONE`, so this file opened with a
+ * premise guard asserting `APP_TIME_ZONE === "Pacific/Auckland"` — a check that
+ * only ever failed when somebody set `TZ`, and nothing in this repository or on
+ * CI ever does. The zone is now an ARGUMENT, so the club's zone is stated in the
+ * test and the host's is varied around it: every case below runs under three
+ * host zones and must give one answer.
  */
-describe("#2697 the club zone really is New Zealand", () => {
-  it("runs with the club time zone actually set to New Zealand", () => {
-    // docs/TESTING.md rule 6: setting TZ=UTC to imitate the CI runner ALSO moves
-    // APP_TIME_ZONE, because it is `process.env.TZ || NEXT_PUBLIC_TZ ||
-    // "Pacific/Auckland"`. Every assertion below would then go red and read like
-    // the product bug this suite proves is fixed. Say what actually happened.
-    expect(
-      APP_TIME_ZONE,
-      "This suite exists to prove the club day and the UTC day differ, so it needs the club zone to be New Zealand. TZ (or NEXT_PUBLIC_TZ) is overriding APP_TIME_ZONE — see docs/TESTING.md rule 6.",
-    ).toBe("Pacific/Auckland");
-  });
-});
+const CLUB_ZONE = requireClubTimeZone("Pacific/Auckland");
+
+/** Host zones the same assertion must survive. */
+const HOST_ZONES = ["UTC", "America/Denver", "Pacific/Auckland"];
+
+function onEveryHostZone(assert: () => void): void {
+  for (const hostZone of HOST_ZONES) {
+    withTimeZone(hostZone, assert);
+  }
+}
 
 describe("getBookingInvoiceDueDate", () => {
   it("dates the first instant of a club day to that club day (NZST, UTC+12)", () => {
@@ -38,7 +45,9 @@ describe("getBookingInvoiceDueDate", () => {
     const createdAt = new Date("2026-06-14T12:00:00.000Z");
 
     expect(createdAt.toISOString().slice(0, 10)).toBe("2026-06-14");
-    expect(getBookingInvoiceDueDate({ createdAt })).toBe("2026-06-15");
+    onEveryHostZone(() =>
+      expect(getBookingInvoiceDueDate({ createdAt }, CLUB_ZONE)).toBe("2026-06-15"),
+    );
   });
 
   it("dates the last divergent instant of a club day to that club day", () => {
@@ -46,7 +55,9 @@ describe("getBookingInvoiceDueDate", () => {
     const createdAt = new Date("2026-06-14T23:59:59.999Z");
 
     expect(createdAt.toISOString().slice(0, 10)).toBe("2026-06-14");
-    expect(getBookingInvoiceDueDate({ createdAt })).toBe("2026-06-15");
+    onEveryHostZone(() =>
+      expect(getBookingInvoiceDueDate({ createdAt }, CLUB_ZONE)).toBe("2026-06-15"),
+    );
   });
 
   it("is unchanged at the first instant where both calendars agree", () => {
@@ -54,7 +65,9 @@ describe("getBookingInvoiceDueDate", () => {
     const createdAt = new Date("2026-06-15T00:00:00.000Z");
 
     expect(createdAt.toISOString().slice(0, 10)).toBe("2026-06-15");
-    expect(getBookingInvoiceDueDate({ createdAt })).toBe("2026-06-15");
+    onEveryHostZone(() =>
+      expect(getBookingInvoiceDueDate({ createdAt }, CLUB_ZONE)).toBe("2026-06-15"),
+    );
   });
 
   it("proves the daylight-saving offset, not merely a positive one (NZDT, UTC+13)", () => {
@@ -64,13 +77,15 @@ describe("getBookingInvoiceDueDate", () => {
     const createdAt = new Date("2026-01-14T11:30:00.000Z");
 
     expect(createdAt.toISOString().slice(0, 10)).toBe("2026-01-14");
-    expect(getBookingInvoiceDueDate({ createdAt })).toBe("2026-01-15");
+    onEveryHostZone(() =>
+      expect(getBookingInvoiceDueDate({ createdAt }, CLUB_ZONE)).toBe("2026-01-15"),
+    );
   });
 
   it("accepts a serialised instant as well as a Date", () => {
-    expect(getBookingInvoiceDueDate({ createdAt: "2026-06-14T12:00:00.000Z" })).toBe(
-      "2026-06-15"
-    );
+    expect(
+      getBookingInvoiceDueDate({ createdAt: "2026-06-14T12:00:00.000Z" }, CLUB_ZONE),
+    ).toBe("2026-06-15");
   });
 });
 
@@ -79,17 +94,20 @@ describe("getBookingInvoiceIssueDate", () => {
   // AHEAD of UTC gives the same calendar day either way, so they would also pass
   // if this helper were (wrongly) routed through the club zone. The test that
   // actually discriminates the two receivers lives in
-  // xero-invoice-helpers-zone-behind-utc.test.ts, which needs a different club
-  // zone and therefore its own module registry.
+  // xero-invoice-helpers-zone-behind-utc.test.ts, which puts the club behind UTC.
   it("reads a date-only lodge night back as the day it encodes", () => {
-    expect(
-      getBookingInvoiceIssueDate({ checkIn: new Date("2026-06-15T00:00:00.000Z") })
-    ).toBe("2026-06-15");
+    onEveryHostZone(() =>
+      expect(
+        getBookingInvoiceIssueDate({ checkIn: new Date("2026-06-15T00:00:00.000Z") }),
+      ).toBe("2026-06-15"),
+    );
   });
 
   it("reads a date-only lodge night back the same way in the NZDT half of the year", () => {
-    expect(
-      getBookingInvoiceIssueDate({ checkIn: new Date("2026-01-15T00:00:00.000Z") })
-    ).toBe("2026-01-15");
+    onEveryHostZone(() =>
+      expect(
+        getBookingInvoiceIssueDate({ checkIn: new Date("2026-01-15T00:00:00.000Z") }),
+      ).toBe("2026-01-15"),
+    );
   });
 });

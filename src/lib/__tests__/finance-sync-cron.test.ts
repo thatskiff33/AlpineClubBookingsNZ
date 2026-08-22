@@ -17,6 +17,13 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+vi.mock("@/lib/club-time-zone-settings", () => ({
+  // CT-5 (#2869): the job's civil-time zone is the club's PERSISTED one. Pinned
+  // here to a zone that is not the host's, so a regression to `process.env.TZ`
+  // shows up as a different string rather than as a coincidence.
+  getClubTimeZone: vi.fn(async () => "Pacific/Auckland"),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -26,11 +33,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
-  FINANCE_SYNC_CRON_CHECKIN_CONFIG,
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_MONITOR_SLUG,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
+  financeSyncCronCheckinConfig,
   registerDailyFinanceSyncCron,
   resetFinanceSyncCronRunnerForTests,
   runDailyFinanceSyncCron,
@@ -83,18 +89,18 @@ describe("finance-sync-cron", () => {
       error: vi.fn(),
     };
 
-    registerDailyFinanceSyncCron({ schedule }, { logger });
+    registerDailyFinanceSyncCron({ schedule }, "Pacific/Auckland", { logger });
 
     expect(schedule).toHaveBeenCalledWith(
       FINANCE_SYNC_CRON_SCHEDULE,
       expect.any(Function),
-      { timezone: FINANCE_SYNC_CRON_TIMEZONE }
+      { timezone: "Pacific/Auckland" }
     );
     expect(logger.info).toHaveBeenCalledWith(
       {
         job: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: "Pacific/Auckland",
       },
       "Scheduled daily finance sync"
     );
@@ -149,7 +155,7 @@ describe("finance-sync-cron", () => {
         monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG,
         status: "in_progress",
       },
-      FINANCE_SYNC_CRON_CHECKIN_CONFIG
+      financeSyncCronCheckinConfig("Pacific/Auckland")
     );
     expect(captureCheckIn).toHaveBeenNthCalledWith(2, {
       checkInId: "check-in-1",

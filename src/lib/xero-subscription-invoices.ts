@@ -11,9 +11,10 @@ import { findOrCreateXeroContact } from "@/lib/xero-contacts";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildXeroInvoiceUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -356,7 +357,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       // whether a pre-existing Xero invoice may be adopted against this
       // immutable charge; adding `dueDays x 24h` to the instant instead would
       // slip an hour across a daylight-saving transition and could move the day.
-      const issueDate = formatDateOnlyForTimeZone(new Date());
+      const issueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
       const dueDate = formatDateOnly(
         addDaysDateOnly(parseDateOnly(issueDate), charge.dueDays),
       );

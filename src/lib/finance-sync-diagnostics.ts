@@ -1,8 +1,8 @@
 import { FinanceSyncRunStatus, Prisma } from "@prisma/client";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron";
 import { DEFAULT_FINANCE_SYNC_WORKFLOW } from "@/lib/finance-sync-service";
 import { prisma } from "@/lib/prisma";
@@ -365,6 +365,10 @@ export async function getFinanceSyncDiagnosticsStatus(input?: {
     "workflow"
   );
   const recentFailureLimit = clampRecentFailureLimit(input?.recentFailureLimit);
+  // The zone this job's civil-time schedule is read in is the CLUB's persisted
+  // one, so the diagnostics panel reports the zone the job actually runs on
+  // rather than whatever `TZ` this container happens to carry (CT-5, #2869).
+  const clubTimeZone = await readClubTimeZoneOutsideRequest();
 
   const [latestRun, recentFailedRuns, latestCronRun, recentFailedCronRuns] =
     await Promise.all([
@@ -406,7 +410,7 @@ export async function getFinanceSyncDiagnosticsStatus(input?: {
     cron: {
       jobName: FINANCE_SYNC_CRON_JOB_NAME,
       schedule: FINANCE_SYNC_CRON_SCHEDULE,
-      timezone: FINANCE_SYNC_CRON_TIMEZONE,
+      timezone: clubTimeZone,
       latestRun: latestCronRun ? mapCronJobRun(latestCronRun) : null,
     },
     recentFailures: {

@@ -35,7 +35,11 @@ import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
 } from "./xero-contacts";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  xeroDocumentDateForClubToday,
+  xeroDocumentDateFromInstant,
+} from "@/lib/xero-provider-dates";
 
 export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
@@ -163,13 +167,14 @@ export async function createXeroSupplementaryInvoice(params: {
   // `DateTime @default(now())`, and the fallback is the clock itself — so both
   // land on the previous UTC day for roughly the first half of every New Zealand
   // day. The club's calendar is the only correct one here (INV-DATE-019, #2834).
-  const supplementaryInvoiceDueDate = formatDateOnlyForTimeZone(
-    bookingModification?.createdAt ?? new Date()
+  const supplementaryInvoiceDueDate = xeroDocumentDateFromInstant(
+    bookingModification?.createdAt ?? new Date(),
+    await readClubTimeZoneOutsideRequest(),
   );
   // Read the club day ONCE. `buildInvoice` is called for the recorded
   // `requestPayload` and again for each contact-repair attempt, so a per-call
   // clock read could record one date and send another across midnight.
-  const supplementaryInvoiceIssueDate = formatDateOnlyForTimeZone(new Date());
+  const supplementaryInvoiceIssueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
@@ -277,7 +282,7 @@ export async function createXeroSupplementaryInvoice(params: {
         // reason as the issue date above — `callXeroApi` re-invokes this
         // callback on every retry attempt, so a read inside it could send a
         // different date on a retry that crossed club midnight.
-        const supplementaryPaymentDate = formatDateOnlyForTimeZone(new Date());
+        const supplementaryPaymentDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
         const paymentResponse = await callXeroApi(
           () =>
             xero.accountingApi.createPayments(

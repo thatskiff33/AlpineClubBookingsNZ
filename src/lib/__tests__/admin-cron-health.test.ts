@@ -8,8 +8,15 @@ import {
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron-config";
+
+/**
+ * CT-5 (#2869): every definition names the CLUB's persisted timezone, which the
+ * caller resolves and passes in. A zone that is deliberately NOT this machine's
+ * would be a stronger probe still; `Pacific/Auckland` is used because the
+ * assertions below quote the strings an operator reads.
+ */
+const CLUB_TIME_ZONE = "Pacific/Auckland";
 
 function cronDefinition(
   overrides: Partial<AdminCronJobDefinition> & { jobName: string }
@@ -66,6 +73,7 @@ describe("admin cron health", () => {
     ];
     const report = buildCronHealthReport({
       now: new Date("2026-05-15T00:00:00.000Z"),
+      clubTimeZone: CLUB_TIME_ZONE,
       definitions,
       runs: [
         cronRun({
@@ -118,8 +126,8 @@ describe("admin cron health", () => {
     );
   });
 
-  it("documents the finance daily sync schedule as a Pacific/Auckland local-time job", () => {
-    const definitions = getAdminCronJobDefinitions({
+  it("documents the finance daily sync schedule in the club's own timezone", () => {
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const finance = definitions.find(
@@ -128,15 +136,15 @@ describe("admin cron health", () => {
 
     expect(finance).toMatchObject({
       schedule: FINANCE_SYNC_CRON_SCHEDULE,
-      timezone: FINANCE_SYNC_CRON_TIMEZONE,
-      expectedLocalTime: "10:15 NZT/NZDT daily",
+      timezone: CLUB_TIME_ZONE,
+      expectedLocalTime: `10:15 daily in ${CLUB_TIME_ZONE}`,
       staleAfterMinutes: 2160,
     });
-    expect(finance?.note).toContain("10:15 local New Zealand time");
+    expect(finance?.note).toContain(`10:15 in the club's own time (${CLUB_TIME_ZONE})`);
   });
 
   it("tracks draft cleanup as a daily CronJobRun-backed job", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const draftCleanup = definitions.find(
@@ -151,7 +159,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks general cron cycle jobs with matching freshness thresholds", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
 
@@ -179,7 +187,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks payment recovery every fifteen minutes with a matching freshness threshold", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const paymentRecovery = definitions.find(
@@ -194,7 +202,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks Xero outbox and stale link cleanup as CronJobRun-backed jobs", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
 
@@ -215,7 +223,7 @@ describe("admin cron health", () => {
   });
 
   it("describes the daily Xero membership refresh as an optional disabled safety net", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false",
     } as unknown as NodeJS.ProcessEnv);

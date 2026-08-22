@@ -41,6 +41,8 @@ import {
   resetXeroRateLimitStateForTests,
 } from "../xero"
 import { Invoice } from "xero-node"
+import { requireCalendarDate } from "@/lib/club-time"
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone"
 
 beforeEach(() => {
   resetXeroRateLimitStateForTests()
@@ -531,13 +533,20 @@ describe("shouldBackfillMembershipStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("determineSubscriptionStatus", () => {
+  /**
+   * The CLUB's calendar day, supplied explicitly (CT-5, #2869). It used to be
+   * `new Date()` compared against a midnight whose meaning depended on the
+   * container's zone AND on which of the four Xero wire shapes arrived.
+   */
+  const CLUB_TODAY = requireCalendarDate("2026-07-01")
+
   it("returns PAID for paid invoices", () => {
     const invoice: Invoice = {
       status: Invoice.StatusEnum.PAID,
       fullyPaidOnDate: "2026-05-20",
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("PAID")
     expect(result.paidAt).toEqual(new Date("2026-05-20"))
   })
@@ -548,7 +557,7 @@ describe("determineSubscriptionStatus", () => {
       updatedDateUTC: "2026-05-20T10:30:00Z",
     } as unknown as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("PAID")
     expect(result.paidAt).toEqual(new Date("2026-05-20T10:30:00Z"))
   })
@@ -562,7 +571,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: futureDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
     expect(result.paidAt).toBeUndefined()
   })
@@ -575,7 +584,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: pastDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("OVERDUE")
   })
 
@@ -588,7 +597,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: futureDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
   })
 
@@ -597,7 +606,7 @@ describe("determineSubscriptionStatus", () => {
       status: Invoice.StatusEnum.DRAFT,
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
   })
 
@@ -606,8 +615,74 @@ describe("determineSubscriptionStatus", () => {
       status: Invoice.StatusEnum.VOIDED,
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
+  })
+
+  // CT-5 (#2869). Before this, "past due" was `new Date(invoice.dueDate) < new
+  // Date()`, so an invoice flipped to OVERDUE partway through the day it was
+  // due — at 12pm New Zealand for a Microsoft-JSON payload, and on the evening
+  // BEFORE on a host west of Greenwich.
+  it("is not overdue on the day it is due", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-07-01",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("UNPAID")
+  })
+
+  it("is overdue the day after it was due", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-06-30",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("OVERDUE")
+  })
+
+  // The four wire shapes Xero can send for ONE date-only field, each read under
+  // TWO host zones. Every cell must be the same answer: the club's calendar is
+  // the only calendar involved.
+  it.each([
+    ["a plain calendar date", "2026-07-01"],
+    ["an offset-less date-time", "2026-07-01T00:00:00"],
+    ["an offset-bearing instant", "2026-07-01T00:00:00Z"],
+    ["a Microsoft-JSON string", "/Date(1782864000000+0000)/"],
+  ])("reads a due date identically from %s on every host zone", (_label, dueDate) => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate,
+    } as unknown as Invoice
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      withTimeZone(hostZone, () => {
+        expect(
+          determineSubscriptionStatus(invoice, CLUB_TODAY).status,
+          `${_label} read on ${hostZone}`,
+        ).toBe("UNPAID")
+      })
+    }
+  })
+
+  // The SDK hands back a `Date` for a field it types as `string`; a date-only
+  // field's Microsoft-JSON encoding is UTC midnight, so its UTC day is the day.
+  it("reads a due date the SDK already deserialised into a Date", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: new Date("2026-06-30T00:00:00.000Z"),
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("OVERDUE")
+  })
+
+  it("treats an unreadable due date as not-yet-due rather than inventing a day", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-02-30",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("UNPAID")
   })
 })
 

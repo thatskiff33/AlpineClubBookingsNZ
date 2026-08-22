@@ -16,6 +16,7 @@ import {
   type XeroClient,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { xeroInstant } from "@/lib/xero-provider-dates";
 import { callXeroApi } from "./xero-api-client";
 import {
   DEFAULT_XERO_SYNC_SCOPE,
@@ -187,13 +188,18 @@ export function getXeroContactDisplayName(contact: {
   );
 }
 
+/**
+ * The exact moment Xero last changed this contact, or `null`.
+ *
+ * `updatedDateUTC` is an INSTANT — the provider names its zone in the field —
+ * and it is classified at the Xero boundary rather than round-tripped through
+ * `new Date(value.toString())`, which was correct only by luck: for a `Date` it
+ * re-parsed a HOST-LOCAL rendering and silently dropped the milliseconds, and for
+ * an offset-less string it resolved a UTC timestamp in whatever zone the
+ * container happened to run in — up to thirteen hours out (#2869).
+ */
 function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
-  if (!contact.updatedDateUTC) {
-    return null;
-  }
-
-  const updatedAt = new Date(contact.updatedDateUTC.toString());
-  return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
+  return xeroInstant(contact.updatedDateUTC);
 }
 
 function buildCachedXeroContact(

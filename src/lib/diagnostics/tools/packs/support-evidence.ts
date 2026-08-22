@@ -93,6 +93,7 @@ import { loadKnowledgeBundle } from "../../knowledge/load";
 import { isVerifiedCommitSha } from "../../knowledge/verify";
 import type { DiagnosticsToolRawRow } from "../define";
 import { withBoundedReadOnlyTransaction } from "../read-only-transaction";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
 /** The stable "nothing to report" code, so an empty list is never an empty string. */
 export const NO_CODES = "none";
@@ -391,11 +392,13 @@ const JOB_HEALTH_READ_BUDGET_MS = 10_000;
 export async function readBackgroundJobHealthEvidence(
   now: Date = new Date(),
 ): Promise<readonly DiagnosticsToolRawRow[]> {
-  const definitions = getAdminCronJobDefinitions();
+  // Scheduled jobs are described in the CLUB's civil time (CT-5, #2869).
+  const clubTimeZone = await readClubTimeZoneOutsideRequest();
+  const definitions = getAdminCronJobDefinitions(clubTimeZone);
   const runs = await getCronRunsForAdminHealth(definitions, {
     deadlineAtMs: Date.now() + JOB_HEALTH_READ_BUDGET_MS,
   });
-  const report = buildCronHealthReport({ definitions, runs, now });
+  const report = buildCronHealthReport({ definitions, runs, now, clubTimeZone });
 
   return [...report.jobs]
     .sort((left, right) => {

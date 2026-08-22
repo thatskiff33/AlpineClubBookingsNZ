@@ -14,7 +14,7 @@ import {
   paragraph,
   supportContactMuted,
 } from "./layout";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /** Sent to an adult member when they're invited to join a family group */
 export function familyGroupInvitationTemplate(
@@ -171,7 +171,7 @@ export function partnerInviteTemplate(params: {
     ${paragraph("<strong>" + escapeHtml(params.inviterName) + "</strong> has invited you to join the family group <strong>" + escapeHtml(params.groupName) + "</strong>.")}
     ${paragraph("Use the button below to get started. If you don't have a member account yet, you'll be guided through joining first, then you can accept this invitation once your login is active.")}
     ${button("Accept Invitation", params.claimUrl, { sameOrigin: true })}
-    ${paragraph("This link expires on <strong>" + escapeHtml(formatNZDateTime(params.expiresAt)) + "</strong>.")}
+    ${paragraph("This link expires on <strong>" + escapeHtml(emailClubDateTime(params.expiresAt)) + "</strong>.")}
     ${muted("If you weren't expecting this invitation, you can safely ignore it.")}
   `);
 }

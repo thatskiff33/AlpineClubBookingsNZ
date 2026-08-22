@@ -1,7 +1,8 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
@@ -83,7 +84,7 @@ async function processWaitlistCronOnce(): Promise<{
   // checking out today until tomorrow — a day late. The stay whose dates are all
   // in the past includes one checking out today, so it must cancel today
   // (F32, #1888).
-  const today = getTodayDateOnly();
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
   const candidates = await prisma.booking.findMany({
     where: {

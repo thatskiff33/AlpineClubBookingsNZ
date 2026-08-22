@@ -8,7 +8,8 @@ import {
   type AdditionalPaymentReminderKind,
 } from "@/lib/additional-payment-chase";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
 import type { GeneralCronJobName } from "@/lib/general-cron-runner";
@@ -73,7 +74,7 @@ export interface AdditionalPaymentReminderResult {
 
 export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymentReminderResult> {
   const now = new Date();
-  const today = getTodayDateOnly();
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
   const chaseStartsAt = await resolveAdditionalPaymentChaseStartedAt();
 

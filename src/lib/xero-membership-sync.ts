@@ -28,6 +28,18 @@ import {
   getSubscriptionItemCodes,
 } from "./xero-mappings";
 import { getSeasonStartMonth } from "@/lib/financial-year";
+import {
+  clubToday,
+  compareCalendarDates,
+  type CalendarDate,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  seasonYearOfCalendarDate,
+  xeroCalendarDate,
+  xeroCalendarDateAsDateOnly,
+  xeroInstant,
+} from "@/lib/xero-provider-dates";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -748,7 +760,12 @@ export async function checkMembershipStatus(
       return { status: "NOT_INVOICED" };
     }
 
-    const status = determineSubscriptionStatus(subscriptionInvoice);
+    // The club's calendar day, from the PERSISTED club timezone (INV-CONFIG-002)
+    // — never the container's. Read once here, outside the pure judgement below.
+    const status = determineSubscriptionStatus(
+      subscriptionInvoice,
+      clubToday(await readClubTimeZoneOutsideRequest()),
+    );
     const matchedInvoiceChanged = Boolean(
       matchedInvoiceId && options?.changedInvoiceIds?.has(matchedInvoiceId)
     );
@@ -1071,17 +1088,24 @@ export function collectSubscriptionInvoiceMatches(
   } = options;
   const itemCodeSet = new Set(itemCodes.filter((code): code is string => Boolean(code)));
   const startMonth = getSeasonStartMonth(); // 1-12
-  const seasonStart = new Date(seasonYear, startMonth - 1, 1);
-  const seasonEndExclusive = new Date(seasonYear + 1, startMonth - 1, 1);
 
   const matches: SubscriptionInvoiceMatch[] = [];
 
   invoices.forEach((invoice, index) => {
-    // Check if invoice date falls within the season year [seasonStart, seasonEndExclusive)
-    const invoiceDate = invoice.date ? new Date(invoice.date) : null;
+    // `Invoice.date` is a CALENDAR DATE, so the season window is decided on the
+    // calendar and never on the host's clock (#2869). The previous form built
+    // `new Date(seasonYear, startMonth - 1, 1)` — host-LOCAL midnight — and
+    // compared it against `new Date(invoice.date)`, whose meaning depends on
+    // which of the four Xero wire shapes arrived. On a container west of
+    // Greenwich the two disagreed by the offset, so an invoice dated the first
+    // day of a season fell OUTSIDE it and a paid member read as unpaid. Comparing
+    // the invoice's own season year against the one asked for removes the host
+    // from the question entirely; plain `CalendarDate` string ordering would work
+    // too, and this spelling also says what the window MEANS.
+    const invoiceDate = xeroCalendarDate(invoice.date);
     if (!invoiceDate) return;
 
-    if (invoiceDate < seasonStart || invoiceDate >= seasonEndExclusive) return;
+    if (seasonYearOfCalendarDate(invoiceDate, startMonth) !== seasonYear) return;
 
     // Match on the configured chart-of-account code (e.g. 203 "Annual Subs").
     const hasAccountCode = Boolean(
@@ -1120,7 +1144,12 @@ export function collectSubscriptionInvoiceMatches(
     matches.push({
       invoice,
       index,
-      isPaid: determineSubscriptionStatus(invoice).status === "PAID",
+      // A settled invoice, decided by STATUS alone. This used to ask
+      // `determineSubscriptionStatus(invoice).status === "PAID"`, which computes
+      // the identical answer — only that function's PAID branch can return
+      // "PAID" — while also dragging the due-date comparison, and therefore the
+      // club's calendar, into a ranking that has no use for either (#2869).
+      isPaid: invoice.status === Invoice.StatusEnum.PAID,
       // "Strong" = matched by a DISTINGUISHING signal (the account code, the
       // flat primary/fallback item code, or the text fallback) rather than ONLY
       // a union-only fee-schedule code shared with hut/joining/promo fees. A
@@ -1247,21 +1276,34 @@ export async function buildSubscriptionInvoiceMatchOptions(): Promise<Subscripti
 
 // test seam
 /**
- * Determine subscription status from a Xero invoice. Exported for testing.
+ * Subscription status from a Xero invoice, judged against the CLUB's calendar
+ * day rather than against the host's clock. Exported for testing.
+ *
+ * `clubToday` is passed in rather than read here so this stays a pure function
+ * of the provider payload plus one explicit civil-time fact — which is what lets
+ * the hostile-host-zone tests hold the club zone constant while moving `TZ`.
  */
-export function determineSubscriptionStatus(invoice: Invoice): {
+export function determineSubscriptionStatus(
+  invoice: Invoice,
+  clubToday: CalendarDate,
+): {
   status: "PAID" | "UNPAID" | "OVERDUE";
   paidAt?: Date;
 } {
   const invoiceStatus = invoice.status;
 
   if (invoiceStatus === Invoice.StatusEnum.PAID) {
-    // Use fullyPaidOnDate if available, otherwise fall back to updatedDateUTC
-    const paidAt = invoice.fullyPaidOnDate
-      ? new Date(invoice.fullyPaidOnDate)
-      : invoice.updatedDateUTC
-        ? new Date(invoice.updatedDateUTC)
-        : undefined;
+    // TWO DIFFERENT CONCEPTS, and the old code read both with `new Date(...)`.
+    // `fullyPaidOnDate` is a CALENDAR DATE (Xero types it `string` and documents
+    // it as a date); `updatedDateUTC` is an INSTANT the provider names as UTC. A
+    // calendar day has no time of day, so the paid-at instant it implies is the
+    // start of that day in UTC — the same date-only encoding every other calendar
+    // value in this system carries (INV-DATE-010) — not host-local midnight,
+    // which is what the previous parse produced for an offset-less payload.
+    const paidAt =
+      xeroCalendarDateAsDateOnly(invoice.fullyPaidOnDate) ??
+      xeroInstant(invoice.updatedDateUTC) ??
+      undefined;
     return { status: "PAID", paidAt };
   }
 
@@ -1269,9 +1311,16 @@ export function determineSubscriptionStatus(invoice: Invoice): {
     invoiceStatus === Invoice.StatusEnum.AUTHORISED ||
     invoiceStatus === Invoice.StatusEnum.SUBMITTED
   ) {
-    // Check if it's past due
-    const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
-    if (dueDate && dueDate < new Date()) {
+    // Past due is a CALENDAR comparison: an invoice is overdue once the club's
+    // today is past its due day, not once some instant derived from that day has
+    // elapsed. The old `new Date(invoice.dueDate) < new Date()` compared a
+    // midnight — UTC midnight for an SDK `Date`, host-local midnight for an
+    // offset-less string — against the wall clock, so the flip happened partway
+    // through the due date itself, at an hour that moved with the container's
+    // zone: an invoice went OVERDUE on the afternoon of the day it was due in
+    // New Zealand, and on the EVENING BEFORE on a host west of Greenwich.
+    const dueDate = xeroCalendarDate(invoice.dueDate);
+    if (dueDate && compareCalendarDates(clubToday, dueDate) > 0) {
       return { status: "OVERDUE" };
     }
     return { status: "UNPAID" };
