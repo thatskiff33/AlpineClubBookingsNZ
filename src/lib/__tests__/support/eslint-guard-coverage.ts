@@ -80,7 +80,10 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   { file: "scripts/x.ts", why: "an operator script / money backfill" },
   { file: "prisma/seed-x.ts", why: "a seed or migration helper" },
   // --- the narrowed blocks: an exemption from one guard must not lift another -
-  { file: "src/lib/nzst-date.ts", why: "the NZ date helper — exempt from the DATE rules only" },
+  {
+    file: "src/lib/nzst-date.ts",
+    why: "the club rendering adapter — it lost its toLocale* exemption when CT-2 (#2990) made it delegate to @/lib/club-time, so it must now resolve to the FULL set like any other library module",
+  },
   { file: "src/lib/date-only.ts", why: "the date-only helper — exempt from the DATE rules only" },
   {
     file: "src/lib/email-templates/chores.ts",

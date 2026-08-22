@@ -50,6 +50,34 @@ describe("date-only helpers", () => {
     ).toBe("2026-04-30T11:59:59.999Z");
   });
 
+  it("stays LOUD for the one day whose next day does not exist (#2990)", () => {
+    /*
+      `/admin/audit-log?to=9999-12-31` really reaches here: that route validates
+      `to` with a bare `YYYY-MM-DD` regex, and `9999-12-31` passes it. The
+      exclusive end of that day falls in the year 10000, which no `CalendarDate`
+      can hold, so the kernel refuses.
+
+      An Invalid Date is what this helper has always returned for an input it
+      cannot answer, and what it returned for this input before CT-2 — Prisma
+      then refuses to serialise it and the operator sees the query fail. The
+      alternative, briefly live on this branch, was an upper bound in the YEAR
+      999: the audit log came back EMPTY while the filter still said
+      "to 9999-12-31", which is the worst of the three answers because nothing
+      says anything is wrong.
+    */
+    expect(
+      Number.isNaN(endOfDateOnlyForTimeZone("9999-12-31", "Pacific/Auckland").getTime()),
+    ).toBe(true);
+    // And it is the LAST day that is special, not the neighbourhood.
+    expect(
+      endOfDateOnlyForTimeZone("9999-12-30", "Pacific/Auckland").toISOString(),
+    ).toBe("9999-12-30T10:59:59.999Z");
+    // The inclusive lower bound of that same last day still answers normally.
+    expect(
+      startOfDateOnlyForTimeZone("9999-12-31", "Pacific/Auckland").toISOString(),
+    ).toBe("9999-12-30T11:00:00.000Z");
+  });
+
   it("adds days in UTC so lodge dates stay aligned with @db.Date values", () => {
     expect(
       addDaysDateOnly(parseDateOnly("2026-04-16"), 1).toISOString()

@@ -1,6 +1,6 @@
 import type { DisplayState } from "@/lib/lodge-display-state";
 import type { DisplayPanelOptions } from "./module-options";
-import { DISPLAY_SHORT_WEEKDAY } from "./status-helpers";
+import { shortDay } from "./status-helpers";
 
 // The day's chore list (fork issue #31): renders DisplayState.chores exactly
 // as the privacy serialiser provided them — assignee labels are already
@@ -9,11 +9,8 @@ import { DISPLAY_SHORT_WEEKDAY } from "./status-helpers";
 
 function choreDayLabel(date: string, windowStart: string): string {
   if (date === windowStart) return "Today";
-  // Same terse column-head shape as every other display module, from the one
-  // shared constant, and handed over at UTC midnight rather than parsed in the
-  // browser's own zone (#2264) — see `status-helpers.shortDay`.
-  const day = new Date(`${date}T00:00:00Z`);
-  return `${DISPLAY_SHORT_WEEKDAY.format(day)} ${day.getUTCDate()}`;
+  // The one shared column-head shape (`status-helpers.shortDay`).
+  return shortDay(date);
 }
 
 export function ChoresBoard({
