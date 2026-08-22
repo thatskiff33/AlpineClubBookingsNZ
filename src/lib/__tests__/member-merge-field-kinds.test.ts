@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
-import { DATE_ONLY_IN_DATETIME_COLUMN } from "@/lib/__tests__/support/date-only-reviewed-fields";
+import {
+  DATE_ONLY_COLUMN_FIELDS,
+  DATE_ONLY_IN_DATETIME_COLUMN,
+} from "@/lib/__tests__/support/date-only-reviewed-fields";
 import {
   formatMergeFieldValue,
   mergeFieldValueKind,
@@ -284,39 +287,70 @@ describe("#2860 the classification agrees with #2684's reviewed record of the sa
     ([, kind]) => kind !== "plain",
   );
 
+  /*
+    #2872 WIDENED WHAT COUNTS AS "REVIEWED", AND IT IS NOW USUALLY THE SCHEMA.
+    A column holds a calendar day either because the database says so
+    (`@db.Date`) or because a reviewed exception says so despite the column type.
+    Since CT-3 migrated all ten of #2684's entries, the reviewed record is empty
+    and every calendar day on this screen is settled by the schema — so the
+    binding has to consult BOTH, or it would fail on exactly the fields the
+    migration made structurally correct.
+  */
+  const reviewedOrStructural = (field: string) =>
+    field in DATE_ONLY_IN_DATETIME_COLUMN || DATE_ONLY_COLUMN_FIELDS.has(field);
+
   it("has some date-kinded fields to check", () => {
     // Vacuity guard: if every field became `plain`, both assertions below would
     // pass over an empty list.
     expect(dateKinds.length).toBeGreaterThan(0);
   });
 
-  it("records every calendar day it declares on #2684's reviewed list", () => {
+  it("can still see the schema's own date-only columns", () => {
+    // The second vacuity guard, and the one #2872 made necessary:
+    // DATE_ONLY_COLUMN_FIELDS is PARSED from prisma/schema.prisma, so a change
+    // to the schema's formatting could return an empty set and turn the
+    // calendar-day assertion below into a permanent failure — or, worse, turn
+    // the instant assertion into one that passes over nothing. Pin the
+    // archetype: `Booking.checkIn` is the lodge night this whole contract is
+    // named after.
+    expect(
+      DATE_ONLY_COLUMN_FIELDS.has("checkIn"),
+      "The @db.Date scan found no `checkIn`, so prisma/schema.prisma has " +
+        "stopped parsing and every classification below is meaningless.",
+    ).toBe(true);
+    expect(DATE_ONLY_COLUMN_FIELDS.size).toBeGreaterThanOrEqual(15);
+  });
+
+  it("records every calendar day it declares as a date-only column, or on #2684's reviewed list", () => {
     const missing = dateKinds
       .filter(([, kind]) => kind === "calendarDay")
       .map(([field]) => field)
-      .filter((field) => !(field in DATE_ONLY_IN_DATETIME_COLUMN));
+      .filter((field) => !reviewedOrStructural(field));
 
     expect(
       missing,
       "This field is rendered by TRUNCATION on the merge screen, which is only " +
-        "correct for a column that holds a calendar day — but it is not on " +
-        "#2684's reviewed list in src/lib/__tests__/support/" +
-        "date-only-reviewed-fields.ts. Add it there WITH THE WRITE THAT PROVES " +
-        "IT, or classify it as an instant here (INV-DATE-019).",
+        "correct for a column that holds a calendar day — but the schema does " +
+        "not declare it `@db.Date` and it is not on #2684's reviewed list in " +
+        "src/lib/__tests__/support/date-only-reviewed-fields.ts. Narrow the " +
+        "column (that is what #2872 did to the other ten), add it to the " +
+        "reviewed list WITH THE WRITE THAT PROVES IT, or classify it as an " +
+        "instant here (INV-DATE-019).",
     ).toEqual([]);
   });
 
-  it("declares no instant that #2684 reviewed as a calendar day", () => {
+  it("declares no instant that the schema or #2684 treats as a calendar day", () => {
     const contradictory = dateKinds
       .filter(([, kind]) => kind === "instant")
       .map(([field]) => field)
-      .filter((field) => field in DATE_ONLY_IN_DATETIME_COLUMN);
+      .filter(reviewedOrStructural);
 
     expect(
       contradictory,
-      "Two guards now disagree about what this column means: it is an instant " +
-        "here and a reviewed calendar day on #2684's list. One of them is wrong, " +
-        "and whichever it is, some surface is showing a date a day early.",
+      "Two records now disagree about what this column means: it is an instant " +
+        "here and a calendar day in prisma/schema.prisma or on #2684's list. " +
+        "One of them is wrong, and whichever it is, some surface is showing a " +
+        "date a day early.",
     ).toEqual([]);
   });
 });

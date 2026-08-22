@@ -193,3 +193,117 @@ describe("a plain DateTime column keeps the whole instant (#2838, INV-DATE-013)"
     expect(whereValues(1, '"draftExpiresAt" > $1')).toEqual(["2026-07-02 00:00:00"]);
   });
 });
+
+describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", () => {
+  /*
+    WHY THESE ARE HERE AND NOT LEFT TO THE THREE ABOVE. #2838 pinned the adapter's
+    behaviour on `Booking.checkIn`, which has been `@db.Date` since it was
+    created. #2872 narrowed twelve columns that were bare `DateTime` — three of
+    them on `Member`, the rest across five other tables — and the whole reason
+    that change is risky is that a bound value which used to reach Postgres whole
+    now reaches it as a DAY. So the probe follows the migration: each newly
+    narrowed column is driven through the real client, the real compiler and the
+    real adapter, and what the driver would receive is asserted.
+
+    The issue asks for "representative" migrated fields rather than all twelve.
+    These four are the representatives, chosen for what each one proves: a
+    `Member` column (the hot table, and the one an age-tier cutoff filters on), a
+    `PromoCode` window edge (money), a settings singleton, and a deadline that a
+    reader still compares against a clock.
+  */
+
+  it("narrows a Member date-of-birth bound to its UTC day", async () => {
+    await prisma.member.findMany({
+      where: { dateOfBirth: { lt: new Date("2008-04-02T00:00:00.000Z") } },
+    });
+
+    expect(
+      whereValues(1, '"dateOfBirth" < $1'),
+      "INV-DATE-010: `Member.dateOfBirth` is `@db.Date` since #2872. If this " +
+        "comes back with a time on it the migration has not been applied to the " +
+        "schema the client was generated from, and every bound below is asking " +
+        "a different question than it reads as.",
+    ).toEqual(["2008-04-02"]);
+  });
+
+  it("THE REGRESSION #2872 HAD TO FIX: a host-local-midnight bound binds the PREVIOUS day", async () => {
+    // The age-up cron built its cutoff with `new Date(year, month, day)` —
+    // HOST-local midnight. Under the Dockerfile's `TZ=Pacific/Auckland` pin that
+    // is 11:00 or 12:00 UTC on the day BEFORE. While `dateOfBirth` was a plain
+    // `DateTime` the whole instant was bound and the comparison was right; the
+    // moment the column became `@db.Date` the adapter started throwing the time
+    // away, so the bound moved back a day and the member born on exactly the
+    // season-start anniversary fell out of the candidate set — one season late
+    // for their own age-up, which is a price and a hosting right.
+    //
+    // The instant is written out rather than constructed locally, so this asserts
+    // the same thing in every runner zone (docs/TESTING.md rule 6).
+    const localMidnightUnderNzPin = new Date("2008-04-01T11:00:00.000Z");
+
+    await prisma.member.findMany({
+      where: { dateOfBirth: { lt: localMidnightUnderNzPin } },
+    });
+
+    expect(
+      whereValues(1, '"dateOfBirth" < $1'),
+      "INV-DATE-013: this is the defect, made executable. If these two ever " +
+        "agree, the reason cron-age-up.ts binds a calendar day has stopped " +
+        "existing and the comment there is lying to the next reader.",
+    ).toEqual(["2008-04-01"]);
+  });
+
+  it("accepts a bare date STRING and still binds a day", async () => {
+    // `api/applications/route.ts` hands Prisma the zod-validated `yyyy-MM-dd`
+    // string straight from the request, never a `Date`. `mapArg` turns a string
+    // into a `Date` first and then formats it for the column, so the two input
+    // shapes must land on the same value — and if that ever stopped being true,
+    // a membership application would store the wrong birthday with nothing in
+    // the type system to notice.
+    await prisma.memberApplication.findMany({
+      where: { applicantDateOfBirth: "2001-01-01T00:00:00.000Z" },
+    });
+
+    expect(whereValues(1, '"applicantDateOfBirth" =')).toEqual(["2001-01-01"]);
+  });
+
+  it("narrows a promo window edge, a settings day and a join deadline", async () => {
+    // Three columns on three tables in one pass. `PromoCode.bookingStartFrom`
+    // gates on a booking's `checkIn`, which is itself `@db.Date`: the two are now
+    // the same kind of value, which is the point of narrowing it.
+    await prisma.promoCode.findMany({
+      where: { bookingStartFrom: { lte: new Date("2026-06-01T00:00:00.000Z") } },
+    });
+    expect(whereValues(1, '"bookingStartFrom" <= $1')).toEqual(["2026-06-01"]);
+
+    captured.length = 0;
+    await prisma.membershipNominationSettings.findMany({
+      where: { gateEffectiveFrom: { gte: new Date("2026-06-15T00:00:00.000Z") } },
+    });
+    expect(whereValues(1, '"gateEffectiveFrom" >= $1')).toEqual(["2026-06-15"]);
+
+    captured.length = 0;
+    await prisma.groupBooking.findMany({
+      where: { joinDeadline: { gt: new Date("2026-08-30T00:00:00.000Z") } },
+    });
+    expect(whereValues(1, '"joinDeadline" > $1')).toEqual(["2026-08-30"]);
+  });
+
+  it("still keeps the whole instant on the neighbouring columns of the SAME tables", async () => {
+    // The other half of the claim, and the one a careless migration breaks: the
+    // narrowing was supposed to reach twelve columns and no more. `Member.createdAt`
+    // and `PromoCode.archivedAt` sit beside two of them and are real moments.
+    await prisma.member.findMany({
+      where: {
+        dateOfBirth: { lt: new Date("2008-04-02T00:00:00.000Z") },
+        createdAt: { gte: new Date("2026-07-01T12:00:00.000Z") },
+      },
+    });
+
+    expect(
+      whereValues(2, '"dateOfBirth" < $1'),
+      "One statement, two columns of two different kinds, two encodings. If " +
+        "these agree, either an instant has been narrowed or a calendar day has " +
+        "not been — and INV-DATE-019 or INV-DATE-010 is broken either way.",
+    ).toEqual(["2008-04-02", "2026-07-01 12:00:00"]);
+  });
+});

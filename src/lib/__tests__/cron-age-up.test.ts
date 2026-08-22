@@ -1324,7 +1324,14 @@ describe("checkAgeUpMembers", () => {
   it("should query for the correct member criteria", async () => {
     mockedFindMany.mockResolvedValue([]);
 
-    await checkAgeUpMembers();
+    // #2872: the club's own zone is FORCED, not inherited, and without that this
+    // test cannot tell the fix from the defect. `getSeasonStartDate` builds
+    // HOST-local midnight; the bound must be the calendar DAY at UTC midnight.
+    // On a UTC runner — which is what CI is — those two are the same instant, so
+    // every assertion below would pass against a local-midnight bound as
+    // happily as against a correct one. Pinning a zone ahead of UTC is what
+    // separates them (docs/TESTING.md rules 6 and 7).
+    await withTimeZoneAsync("Pacific/Auckland", () => checkAgeUpMembers());
 
     expect(mockedFindMany).toHaveBeenCalledWith({
       where: {
@@ -1360,24 +1367,31 @@ describe("checkAgeUpMembers", () => {
     });
 
     // Verify the cutoff day is 18 years before season start (April 1, 2026),
-    // i.e. April 1, 2008. #2859: the bound is now EXCLUSIVE on the day AFTER
-    // that, so a member born on 1 April 2008 — who turns 18 on season start and
-    // is an adult that season — is inside the candidate set whichever way their
-    // date of birth is encoded.
+    // i.e. April 1, 2008. #2859: the bound is EXCLUSIVE on the day AFTER that,
+    // so a member born on 1 April 2008 — who turns 18 on season start and is an
+    // adult that season — is inside the candidate set.
     const cutoff = (mockedFindMany.mock.calls[0]![0] as any).where.dateOfBirth;
     const cutoffWindowEnd = cutoff.lt as Date;
-    expect(cutoffWindowEnd.getFullYear()).toBe(2008);
-    expect(cutoffWindowEnd.getMonth()).toBe(3); // April
-    expect(cutoffWindowEnd.getDate()).toBe(2);
-    // Exactly the season-start construction plus one day, pinned as an instant
-    // so a widening beyond one day cannot pass. Both sides are built with the
-    // same local-midnight constructor the code uses, so this holds in any
-    // runner zone (docs/TESTING.md rule 6).
-    expect(cutoffWindowEnd.getTime()).toBe(new Date(2008, 3, 2).getTime());
-    // The whole of 1 April 2008 is inside the window, in both encodings: the
-    // UTC-midnight one every correct writer produces, and the local-midnight one
-    // the #2859 migration repairs. Under the club's own Pacific/Auckland pin the
-    // old `lte` bound was 2008-03-31T11:00Z, which excluded the first of these.
+    // #2872: the bound is now a CALENDAR DAY at UTC midnight, not local midnight
+    // on that day, because `Member.dateOfBirth` is `@db.Date` and the adapter
+    // narrows such a bound to its UTC date. Read it with the UTC getters — the
+    // local ones would answer 1 April on a host west of UTC and pass here on the
+    // very shape the change exists to prevent.
+    expect(cutoffWindowEnd.getUTCFullYear()).toBe(2008);
+    expect(cutoffWindowEnd.getUTCMonth()).toBe(3); // April
+    expect(cutoffWindowEnd.getUTCDate()).toBe(2);
+    // Pinned as an exact instant so a widening beyond one day cannot pass, and
+    // as an explicit UTC literal rather than `new Date(2008, 3, 2)` — the
+    // local-midnight constructor no longer describes what the code builds, and
+    // asserting against it would make this test agree with the defect on the
+    // club's own host while failing everywhere else (docs/TESTING.md rule 6).
+    expect(cutoffWindowEnd.toISOString()).toBe("2008-04-02T00:00:00.000Z");
+    // THE POINT OF THE WHOLE BOUND: the entire day of 1 April 2008 is inside the
+    // window. A date of birth is stored at UTC midnight, so this is the row that
+    // the pre-#2859 `lte` instant bound excluded, and that a local-midnight
+    // bound against the now-`@db.Date` column would exclude again — the adapter
+    // would narrow 2008-04-01T11:00Z to the DATE 2008-04-01, making the
+    // comparison `< 2008-04-01` and dropping this member for a whole season.
     expect(new Date("2008-04-01T00:00:00.000Z").getTime()).toBeLessThan(
       cutoffWindowEnd.getTime(),
     );
@@ -1524,7 +1538,12 @@ describe("checkAgeUpMembers", () => {
     mockedCreateToken.mockResolvedValue({} as any);
     mockedSendEmail.mockResolvedValue(undefined);
 
-    const result = await checkAgeUpMembers();
+    // Zone forced for the same reason as the criteria test above (#2872): on a
+    // UTC runner a local-midnight bound and a calendar-day bound are the same
+    // instant, and the cutoff assertions below would not discriminate.
+    const result = await withTimeZoneAsync("Pacific/Auckland", () =>
+      checkAgeUpMembers(),
+    );
 
     expect(result.upgraded).toBe(1);
     const cutoff = (mockedFindMany.mock.calls[0]![0] as any).where.dateOfBirth;
@@ -1532,9 +1551,11 @@ describe("checkAgeUpMembers", () => {
     // an ADULT minimum age of 21 the cutoff day is 1 April 2005, so the window
     // ends at the start of 2 April 2005.
     const cutoffWindowEnd = cutoff.lt as Date;
-    expect(cutoffWindowEnd.getFullYear()).toBe(2005);
-    expect(cutoffWindowEnd.getMonth()).toBe(3);
-    expect(cutoffWindowEnd.getDate()).toBe(2);
+    // UTC getters (#2872): the bound is a calendar day at UTC midnight now that
+    // `Member.dateOfBirth` is `@db.Date`.
+    expect(cutoffWindowEnd.getUTCFullYear()).toBe(2005);
+    expect(cutoffWindowEnd.getUTCMonth()).toBe(3);
+    expect(cutoffWindowEnd.getUTCDate()).toBe(2);
     expect(mockedSendEmail).toHaveBeenCalledWith(
       "adult21@example.com",
       "Alex",
