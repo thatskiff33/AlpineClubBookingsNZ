@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useSectionEditState } from "@/hooks/use-section-edit-state";
+import { formatNZDateTime } from "@/lib/nzst-date";
 import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 
 interface RetentionDraft {
@@ -210,7 +211,7 @@ export function ClubPostRetentionSection({
 
         {lastCleanupAt ? (
           <p className="text-xs text-muted-foreground">
-            Last run {new Date(lastCleanupAt).toLocaleString("en-NZ")} — deleted{" "}
+            Last run {formatNZDateTime(new Date(lastCleanupAt))} — deleted{" "}
             {lastCleanupDeleted} post{lastCleanupDeleted === 1 ? "" : "s"}.
           </p>
         ) : (
