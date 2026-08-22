@@ -572,6 +572,19 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
+- Member message board (`ClubPost`, `ClubPostImage`, `ClubPostReport`, the
+  `commsPortal` module): a post carries no `lodgeId`, decided as D-C1 on epic
+  #2992 and delivered by #2993. Two reasons, and the first is the binding one.
+  A post can be **shared onto the central-server network**, whose registry is a
+  list of other CLUBS and which has no concept of this club's buildings — so a
+  lodge on the row would have nowhere to travel to and nothing to mean at the
+  far end. That is the same reasoning already recorded above for
+  `ServerNzSettings`. Second, the board is club conversation rather than
+  building operation: `Notice` next to it is club-wide on the same footing,
+  while `MaintenanceReport` is lodge-scoped precisely because a physical fault
+  belongs to one building. If a club ever wants a per-lodge board — a
+  Whakapapa-only noticeboard — that is a new ADR and not a widening of this
+  model, because the shared half would still have nowhere to put the lodge.
 
 ## Known Not-Yet-Scoped Surfaces (open)
 

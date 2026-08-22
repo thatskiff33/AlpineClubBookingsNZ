@@ -38,6 +38,7 @@ const modulesOn: FeatureFlags = {
   aiDiagnostics: false,
   maintenanceReports: true,
   alpineCentralServer: false,
+  commsPortal: false,
 };
 
 function emptyEmailResponses() {
