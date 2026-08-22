@@ -1,3 +1,4 @@
+import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { assertValidClubPostContent } from "@/lib/club-posts";

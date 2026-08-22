@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useSectionEditState } from "@/hooks/use-section-edit-state";
-import { RETENTION_CHOICES } from "@/lib/club-post-retention";
+import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 
 interface RetentionDraft {
   retentionDays: number;

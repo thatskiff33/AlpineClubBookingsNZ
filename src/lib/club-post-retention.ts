@@ -1,3 +1,5 @@
+import "server-only";
+import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -18,14 +20,10 @@ export const CLUB_POST_SETTINGS_ID = "default";
  */
 export const STALE_CLEANUP_CLAIM_MS = 30 * 60 * 1000;
 
-/** Retention choices offered on the admin screen, in days. */
-export const RETENTION_CHOICES = [
-  { days: 0, label: "Keep everything" },
-  { days: 90, label: "3 months" },
-  { days: 183, label: "6 months" },
-  { days: 365, label: "1 year" },
-  { days: 730, label: "2 years" },
-] as const;
+// Re-exported so server-side callers have one obvious place to reach for it.
+// The list itself lives in a module with no imports, because the client
+// component that renders it must not reach anything that imports prisma.
+export { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
 
 export interface ClubPostSettingsValues {
   retentionDays: number;
