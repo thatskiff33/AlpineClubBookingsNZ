@@ -505,11 +505,13 @@ derivation).
 ### INV-DATE-024
 
 - **`Member.dateOfBirth` is a CALENDAR DAY, stored at UTC midnight.** The column
-  is still `DateTime?` rather than `@db.Date`, so nothing in the schema enforces
-  this and every writer has to. Typing it is **#2872** — settled as a follow-up
-  by the owner on 14 August 2026, in the decision recorded on #2859: the column
-  stays `DateTime?` here, and #2872 carries the typing with its own migration
-  and a sweep of every reader.
+  is `@db.Date` as of **#2872**, which the owner settled as a follow-up on
+  14 August 2026 in the decision recorded on #2859, and which shipped with a
+  fail-closed migration and a sweep of every reader. **The writer rule below did
+  not go away with it.** A column type pins what the database stores, not the
+  value a writer computes: a writer that builds server-local midnight now has
+  its wrong day truncated to a wrong day, which is no improvement at all. What
+  the typing adds is that the wrong value can no longer hide a time inside it.
   Build it with `parseDateOnly(\`${yyyy}-${mm}-${dd}\`)`, an explicit
   `T00:00:00.000Z`, or `Date.UTC(...)`. **Never**
   `new Date(\`${yyyy}-${mm}-${dd}T00:00:00\`)`: with no `Z` and no offset that
@@ -545,6 +547,35 @@ derivation).
   The correct reading of a UTC-midnight column is UTC getters or
   `formatDateOnly`; treat the local-getter readers as working by deployment
   accident, not by construction.
+
+### INV-DATE-026
+
+- **A column holding a calendar day is `@db.Date`.** Not a bare `DateTime` that
+  writers agree to keep at UTC midnight — the schema states it, and PostgreSQL
+  refuses to keep a time. #2872 narrowed the last twelve such columns and the
+  reviewed exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, which
+  is the terminal state it was always meant to reach rather than a temporary
+  quiet.
+- **A bare `DateTime` may hold a calendar day only through that list**, one entry
+  per field, naming the write that proves it. An entry dies when its column is
+  narrowed, and `date-only-encoding-guard.test.ts` fails an entry that outlives
+  its fix, so the list cannot silently accumulate.
+- **The corollary is the part that actually breaks things: a Prisma bound against
+  a `@db.Date` column must be a calendar day at UTC midnight.** The adapter
+  narrows whatever instant you hand it, so a bound built as midnight in the club
+  zone — or, worse, on the host — becomes the **previous day**, and nothing warns
+  you. That is not visible in a schema diff, which is why narrowing a column
+  without censusing its readers is the dangerous half of the change. #2872 found
+  three: an age-up cutoff that dropped the member born exactly on the
+  season-start anniversary (an age tier, and therefore a price), a joined-date
+  report bound that started a day early, and a date of birth projected through a
+  club zone, which agrees in New Zealand and returns the previous day for any
+  club behind UTC.
+- `src/lib/__tests__/prisma-date-column-binding.test.ts` is the executable form
+  of the corollary, and `DATE_ONLY_COLUMN_FIELDS` — parsed from
+  `schema.prisma` rather than hand-listed — is what keeps the field set honest.
+- Minted on #2872 (CT-3) under epic #2988.
+
 
 ### INV-DATE-019
 
@@ -586,9 +617,9 @@ derivation).
     `src/lib/member-family-service.ts`, which reached the pattern through that
     file's own `toDateInputValue` wrapper. That wrapper is still correct, and
     still used, for the three date-only receivers beside it — with one
-    exception worth knowing about. `Member.dateOfBirth` is `DateTime?`, not
-    `@db.Date`, so nothing but writer convention pins it to UTC midnight, and
-    the Xero import parses `dd/MM/yyyy` as SERVER-LOCAL midnight
+    exception worth knowing about. `Member.dateOfBirth` has been `@db.Date`
+    since #2872, but that pins storage rather than the value a writer hands it,
+    and the Xero import parses `dd/MM/yyyy` as SERVER-LOCAL midnight
     (`parseXeroCompanyNumberDate`, in `src/lib/xero-contacts.ts` and a
     byte-identical clone in the import-member-contact route). Under the
     container's `TZ=Pacific/Auckland` that stores the previous UTC day, so a
@@ -628,12 +659,11 @@ derivation).
     **That declaration adds no exception to the rule above; it applies it.**
     `photoUpdatedAt` and `hutLeaderEligibleAt` are real instants and are read
     through `formatDateOnlyForTimeZone`, exactly as this bullet requires.
-    `dateOfBirth`, `joinedDate` and `lifeMemberDate` are bare `DateTime?`
-    columns holding a date-only value, which is the pre-existing reviewed
-    exception the guard already records field-by-field in
-    `DATE_ONLY_IN_DATETIME_COLUMN` — all three were on that list before #2860
-    and the merge screen simply reads them the way the list says they may be
-    read. The flat prohibition on truncating a `DateTime` is unchanged: it is
+    `dateOfBirth`, `joinedDate` and `lifeMemberDate` are `@db.Date` columns
+    since #2872 and the merge screen reads them as the calendar days they are.
+    All three used to be bare `DateTime?` and sat on the reviewed exception list
+    `DATE_ONLY_IN_DATETIME_COLUMN` instead; narrowing the columns emptied that
+    list, which is the state it was always meant to reach. The flat prohibition on truncating a `DateTime` is unchanged: it is
     the *column type* that never settles the question, and the reviewed list is
     where a field is allowed to settle it instead.
 
