@@ -482,16 +482,52 @@ jobs:
         run: npm run lint
 
       # #2687: the file-size budgets in docs/MAINTENANCE.md, enforced as a
-      # regression ratchet against the committed baseline in
-      # `scripts/quality/file-size-baseline.txt`. Current debt may stay; new
-      # debt and debt growth may not appear silently. `git ls-files` plus the
-      # working tree and nothing else — no network, no database, no build — and
-      # it runs in well under a second, so it sits here rather than behind the
-      # slower gates. It exits non-zero on a missing, stale or malformed
-      # baseline as well as on a regression: a gate that cannot trust its own
-      # input must say so instead of reporting a pass it has not earned.
+      # regression ratchet. Current debt may stay; new debt and debt growth may
+      # not appear silently.
+      #
+      # #2979 removed the committed baseline this used to compare against. Each
+      # changed file's previous length now comes from the base named below —
+      # precisely, from the merge base of that ref and HEAD, so a branch is
+      # judged on what IT did rather than on how far `main` has moved since.
+      # (On a `pull_request` event those two are the same commit: the checkout
+      # is `refs/pull/N/merge`, whose first parent IS the base tip.)
+      #
+      # THE BASE IS PASSED EXPLICITLY BECAUSE THE DEFAULT IS VACUOUS ON A PUSH.
+      # This workflow runs on `push` to `main` as well as on pull requests, and
+      # there `origin/main` is the very commit being tested: the merge base is
+      # HEAD, the diff is empty, and the gate reports "0 production file(s)
+      # changed" and exits 0 whatever the tree holds. That is not theoretical.
+      # Two lanes that each add 60 lines to a 600-line file both pass their own
+      # pull-request gate, merge cleanly to 720 against a 700 budget, and the
+      # push gate says nothing — after which the NEXT pull request to touch the
+      # file is judged against 720, so the debt is accepted permanently and in
+      # silence. The push event's immutable pre-push SHA is the honest base, and
+      # it is the same field `Check doc index integrity` uses above.
+      #
+      # Keyed on `github.event_name` deliberately: a `pull_request.synchronize`
+      # payload ALSO carries a top-level `before`, and it is the previous PR
+      # head. Using that would judge only the newest push to the branch and let
+      # everything earlier in it through.
+      #
+      # A base the checkout cannot reach — an all-zero `before` from a
+      # ref-creating push, or a commit orphaned by a force-push — FAILS here
+      # rather than passing with no evidence, the same way `npm run pr:check`
+      # treats an unresolvable base. Both are blocked on `main` by branch
+      # protection, so a red gate is the right answer if either ever appears.
+      #
+      # `fetch-depth: 0` on this job's checkout is load-bearing for a quieter
+      # reason than it used to say here: a shallow clone does NOT fail: it
+      # resolves the ref, returns HEAD as the merge base, and reports OK over a
+      # tree holding a 1300-line module. Truncated history narrows the diff
+      # silently, which is worse than an error.
+      #
+      # Reads git and the working tree only — no network, no database, no
+      # build — and runs in well under a second, so it sits here rather than
+      # behind the slower gates.
       - name: File-size budget ratchet
-        run: npm run quality:budget
+        env:
+          BUDGET_BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
+        run: npm run quality:budget -- --base "$BUDGET_BASE"
 
       - name: Generate Prisma client
         run: npm run db:generate

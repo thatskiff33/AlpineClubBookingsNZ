@@ -145,6 +145,17 @@ export interface BookingEditorData {
   // viewer, so a member's payload never carries the club list. Its presence is
   // what offers the "Member of Other Lodge" control at all.
   otherLodges?: Array<{ id: string; name: string }>;
+  /**
+   * #2978: the guests an officer may tick as an other-lodge member - resolved
+   * server-side by `resolveOtherLodgeRateEligibleGuestIds`, which is also what
+   * the save fences on, so the screen can never offer a tick the save refuses.
+   *
+   * ADMIN-ONLY, and a conditional spread for the same reason `otherLodges` is:
+   * ineligibility can mean "this member's unpaid subscription has repriced
+   * them", so shipping it to every viewer would leak subscription standing over
+   * the RSC wire.
+   */
+  otherLodgeRateEligibleGuestIds?: string[];
 }
 
 
@@ -205,6 +216,7 @@ export function BookingEditor({
           memberWholeLodge: booking.memberWholeLodge,
           otherLodgeId: booking.otherLodgeId,
           otherLodges: booking.otherLodges,
+          otherLodgeRateEligibleGuestIds: booking.otherLodgeRateEligibleGuestIds,
         }}
         canAdminOverride={canAdminOverride}
         replaceExceptionRequestId={replaceExceptionRequestId}
@@ -293,12 +305,18 @@ export function BookingEditor({
                   <p className="text-sm text-muted-foreground">
                     {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
                     {/*
-                      Other Lodges epic: a non-member the booking officer has
+                      Other Lodges epic: somebody the booking officer has
                       recognised as a member of the club's partner lodge, and who
                       is therefore charged this club's member rate. Said here, on
                       the rate category, because this line is the only thing on
                       the read view that explains why the fee beside it is not
-                      the non-member one.
+                      the one their category would otherwise buy.
+
+                      #2978: the category beside it is deliberately left alone.
+                      The tick now reaches people who read "Member" here — a
+                      member whose membership TYPE prices them at the non-member
+                      rate — and that word is still the truth about their
+                      standing in THIS club, which the tick never changes.
                     */}
                     {guest.otherLodgeMember ? " (Other Club Member)" : ""}
                   </p>

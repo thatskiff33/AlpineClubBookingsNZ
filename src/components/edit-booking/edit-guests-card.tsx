@@ -10,6 +10,7 @@ import { GuestNightGrid } from "@/components/guest-night-grid";
 import { EditMemberGuestFinder } from "@/components/booking/edit-member-guest-section";
 import { AddedGuestRow } from "@/components/edit-booking/added-guest-row";
 import { ExistingGuestRow } from "@/components/edit-booking/existing-guest-row";
+import { OtherLodgeRateControl } from "@/components/edit-booking/other-lodge-rate-control";
 import { eachNightKey } from "@/components/edit-booking/stay-nights";
 import type {
   BookingData,
@@ -83,6 +84,14 @@ export interface GuestsCardOtherLodge {
   enabled: boolean;
   lodgeId: string | null;
   flaggedGuestIds: ReadonlySet<string>;
+  /**
+   * #2978: the guests the server will accept a tick for - those currently
+   * priced at the club's non-member rate. Decided server-side because it needs
+   * membership types and subscription standing, neither of which the client
+   * holds; empty for a viewer who was shipped none, so nobody is offered a tick
+   * they could not save.
+   */
+  eligibleGuestIds: ReadonlySet<string>;
   /** False until a lodge is named, which is what disables every guest tick. */
   guestTicksEnabled: boolean;
   /**
@@ -466,43 +475,7 @@ export function EditGuestsCard({
         {otherLodge.available &&
         !mode.overrideEnabled &&
         !mode.isInProgressEdit ? (
-          <div className="space-y-3 rounded-md border p-3 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={otherLodge.enabled}
-                onChange={(e) => otherLodge.onEnabledChange(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span className="font-medium">Member of Other Lodge</span>
-            </label>
-            {otherLodge.enabled ? (
-              <div className="space-y-1">
-                <Label htmlFor="other-lodge-name">Other Lodge Name</Label>
-                <select
-                  id="other-lodge-name"
-                  value={otherLodge.lodgeId ?? ""}
-                  onChange={(e) =>
-                    otherLodge.onLodgeIdChange(e.target.value || null)
-                  }
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-                >
-                  <option value="">Select a lodge</option>
-                  {otherLodge.lodges.map((lodge) => (
-                    <option key={lodge.id} value={lodge.id}>
-                      {lodge.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Tick the non-members below who are members of this lodge. Each
-                  one is re-priced at this club&apos;s member rate for their age
-                  group; unticking puts them back on the non-member rate. The
-                  price change is shown before you save.
-                </p>
-              </div>
-            ) : null}
-          </div>
+          <OtherLodgeRateControl otherLodge={otherLodge} />
         ) : null}
 
         {/* Existing guests */}
@@ -550,10 +523,34 @@ export function EditGuestsCard({
               !mode.overrideEnabled &&
               !mode.isInProgressEdit
                 ? {
-                    // A tick is offered for NON-MEMBERS only: a member of this
-                    // club already prices at their own membership rate, and the
-                    // server refuses the combination outright.
-                    offered: !guest.isMember,
+                    // #2978: offered to whoever currently prices at the club's
+                    // NON-MEMBER rate, which is NOT the same as `!isMember`. A
+                    // non-member contact re-added through the member-guest
+                    // finder carries `isMember` while resolving to the built-in
+                    // NON_MEMBER type, and they are exactly who a reciprocal
+                    // rate is for.
+                    //
+                    // The set is resolved SERVER-side by the same helper the
+                    // save fences on, rather than re-derived here from
+                    // `isMember`: the client cannot see membership types or
+                    // subscription standing, so deriving it here would offer
+                    // ticks the save refuses. Empty for a non-admin viewer.
+                    //
+                    // `|| checked` IS LOAD-BEARING, and its absence made a
+                    // booking uneditable. Eligibility is judged now, but the
+                    // flag was stored earlier: a ticked guest whose membership
+                    // type changes, or whose subscription lapses, drops out of
+                    // the set. Their box would then disappear while the hook
+                    // still submits their id in the complete set, so the quote
+                    // AND the save both refuse, and the only escape is to retract
+                    // the whole election — the lodge and every other guest with
+                    // it. Showing the box for a stored tick means a stale flag
+                    // can always be cleared. It cannot be used to CREATE one: an
+                    // unticked ineligible guest is not `checked`, and unticking
+                    // is the direction the server always allows.
+                    offered:
+                      otherLodge.eligibleGuestIds.has(guest.id) ||
+                      otherLodge.flaggedGuestIds.has(guest.id),
                     // Live only once a lodge is named, and never on a row this
                     // edit is removing.
                     enabled:

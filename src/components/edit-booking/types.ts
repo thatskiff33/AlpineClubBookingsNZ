@@ -163,6 +163,17 @@ export interface BookingData {
    * the panel never guesses the audience, exactly as with `memberWholeLodge`.
    */
   otherLodges?: Array<{ id: string; name: string }>;
+  /**
+   * #2978: the guests an officer may tick as an other-lodge member - resolved
+   * server-side by `resolveOtherLodgeRateEligibleGuestIds`, which is also what
+   * the save fences on, so the screen can never offer a tick the save refuses.
+   *
+   * ADMIN-ONLY, and a conditional spread for the same reason `otherLodges` is:
+   * ineligibility can mean "this member's unpaid subscription has repriced
+   * them", so shipping it to every viewer would leak subscription standing over
+   * the RSC wire.
+   */
+  otherLodgeRateEligibleGuestIds?: string[];
 }
 
 // #2266: an eligible promo chip, as returned by GET /api/promo-codes/available

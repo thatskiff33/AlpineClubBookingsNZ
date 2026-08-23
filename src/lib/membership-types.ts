@@ -454,6 +454,35 @@ export function defaultMembershipTypeKeyForRole(
 }
 
 /**
+ * The DISPLAY NAME of the built-in type a role falls back to when a member has
+ * no season assignment (#2978), e.g. `NON_MEMBER` -> "Non-Member".
+ *
+ * PREFERS THE CLUB'S OWN ROW, and that is the whole point of the parameter.
+ * `MembershipType.name` is editable — `PATCH /api/admin/membership-types/[id]`
+ * writes it with no built-in guard, and the ASSOCIATE seed's own description
+ * invites it ("Clubs can rename this label without changing policy") — so a club
+ * that calls its `NON_MEMBER` type "Visitor" must read "Visitor" everywhere.
+ * Hard-coding the seed name here would put one club's wording into the generic
+ * product on one screen and the club's own wording on every other, which
+ * `INV-CONFIG-001` forbids. The seed name is the fallback for exactly one case:
+ * no row for that key is to hand (the caller has not loaded them yet, or the row
+ * is genuinely absent), which mirrors what
+ * `resolveMembershipTypePoliciesForMembers` does with the same two sources.
+ *
+ * `liveTypes` is deliberately a plain list rather than a database read: every
+ * caller is a client component that already holds the club's types.
+ */
+export function defaultMembershipTypeNameForRole(
+  role: Role | string,
+  liveTypes?: ReadonlyArray<{ key: string; name: string }>,
+): string {
+  const key = defaultMembershipTypeKeyForRole(role);
+  const clubName = liveTypes?.find((type) => type.key === key)?.name?.trim();
+  if (clubName) return clubName;
+  return BUILT_IN_MEMBERSHIP_TYPES.find((type) => type.key === key)?.name ?? key;
+}
+
+/**
  * Effective membership-type subscription behaviour for a member (#2149). The
  * membership TYPE is the sole authority for whether a subscription is owed:
  * an explicit season assignment wins; with no assignment the member's role maps

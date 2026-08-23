@@ -20,6 +20,7 @@ import { toast } from "sonner"
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code"
+import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options"
 import {
   getXeroPartialSuccessGuidance,
   isXeroPartialSuccessRecovery,
@@ -251,6 +252,13 @@ export default function MembersPage() {
   const { shortCode: xeroOrgShortCode } = useXeroOrgShortCode(
     xeroConnected === true,
   )
+
+  // The club's own membership types, fetched ONCE here and handed to both
+  // consumers (#2978). The filter toolbar has always needed them for its
+  // Membership Type picker; the table now needs them too, to name a non-member
+  // category's fallback type the way this club names it. Each calling the hook
+  // for itself would fetch the same admin endpoint twice on every page load.
+  const membershipTypes = useMembershipTypeOptions()
 
   const membersListPath = buildMembersListPath()
   const exportUrl = buildExportUrl()
@@ -506,6 +514,7 @@ export default function MembersPage() {
         filters={filters}
         xeroFeatures={xeroFeatures}
         xeroContactGroupsList={xeroContactGroupsList}
+        membershipTypes={membershipTypes}
         onSearchChange={setSearch}
         onSetFilter={setFilter}
         resetDisabled={isDatasetDefault}
@@ -539,6 +548,7 @@ export default function MembersPage() {
           sortBy={sortBy}
           sortDir={sortDir}
           membersListPath={membersListPath}
+          membershipTypes={membershipTypes}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
           onToggleSort={toggleSort}

@@ -86,6 +86,11 @@ vi.mock("@/components/ui/select", () => ({
       {children}
     </div>
   ),
+  // #2978: the Membership Type picker now carries a `SelectLabel` hint. A mock
+  // factory missing an export the widened tree reads at render time kills the
+  // whole file, so it is listed here even though nothing asserts on it.
+  SelectGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectLabel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SelectTrigger: ({
     children,
     ...props

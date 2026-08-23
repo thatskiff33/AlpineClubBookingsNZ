@@ -125,6 +125,9 @@ import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { loadMemberGuestSettings } from "@/lib/member-guest-settings";
 import { resolveMemberGuestNameSearchAccess } from "@/lib/member-guest-find";
+import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { getSeasonYear } from "@/lib/utils";
 import { getPublicOtherLodges } from "@/lib/booking-request";
 import { eachDateOnlyInRange, getTodayDateOnly } from "@/lib/date-only";
 import {
@@ -860,6 +863,31 @@ export default async function BookingDetailPage({
     }),
     clubNameSearchEnabled: memberGuestSettings?.openMemberSearchEnabled ?? false,
   });
+  /**
+   * #2978: the season the other-lodge eligibility fence is judged in — resolved
+   * AUTHORITATIVELY rather than from whatever happened to warm the cache.
+   *
+   * `getSeasonYear` reads the process-level financial-year cache in
+   * `financial-year.ts`, which serves the March default until a server path
+   * seeds it. Every WRITE path reaches `refreshFinancialYearConfig` through
+   * `resolveSubscriptionLockoutMode`; a page render does not, so on a cold
+   * process a club with any other year-end month would have this page offer
+   * ticks judged in one season while `modify-quote` — which reseeds before its
+   * own `getSeasonYear` — fences them in another. The officer would see a tick
+   * box and be refused when they used it, which is exactly what acceptance
+   * criterion 2 of #2978 exists to prevent. No money is at stake (pricing
+   * re-checks eligibility itself), but `subscription-lockout-enforcement.ts` and
+   * `adult-member-hosting-review.ts` both refuse to trust this cache in these
+   * same words, and a season answer that depends on process history is not one
+   * to trust here either.
+   *
+   * Reseeded only for an admin, since only the admin spread below asks the
+   * question. `refreshFinancialYearConfig` reads the club's stored override and,
+   * with none set, the connected organisation's year end through its own cache.
+   */
+  if (viewerAuthorizationRole === "ADMIN") {
+    await refreshFinancialYearConfig();
+  }
   const editorData: BookingEditorData = {
     id: booking.id,
     checkIn: formatDateOnly(new Date(booking.checkIn)),
@@ -948,7 +976,22 @@ export default async function BookingDetailPage({
     // rows either way, because it is what the member is being charged.
     otherLodgeId: booking.otherLodgeId,
     ...(viewerAuthorizationRole === "ADMIN"
-      ? { otherLodges: await getPublicOtherLodges(prisma) }
+      ? {
+          otherLodges: await getPublicOtherLodges(prisma),
+          // #2978: which guests may be ticked. Resolved server-side because the
+          // answer needs membership types and the unpaid-subscription set, and
+          // shipped in the SAME admin-only spread as the registry above for a
+          // second reason: an ineligible row can be ineligible because that
+          // member's subscription is unpaid, so this list must not reach an
+          // ordinary viewer. Costs no query on the common all-non-members
+          // booking, which the helper short-circuits.
+          otherLodgeRateEligibleGuestIds: [
+            ...(await resolveOtherLodgeRateEligibleGuestIds(prisma, {
+              seasonYear: getSeasonYear(booking.checkIn),
+              guests: booking.guests,
+            })),
+          ],
+        }
       : {}),
     // #2104: an already-flagged/reviewed booking must not re-prompt the member
     // for a justification when the guest list shuffles — the edit panel keys the

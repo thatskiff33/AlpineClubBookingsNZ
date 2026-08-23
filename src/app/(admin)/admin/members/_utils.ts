@@ -1,8 +1,13 @@
 import type { Filters, MemberForm } from "./_types";
 import { ACCESS_ROLE_LABELS } from "@/lib/access-roles";
-import { ROLE_LABELS } from "@/lib/member-roles";
 import { LOGIN_STAGE_LABELS } from "@/lib/member-login-stage";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
+import {
+  NON_MEMBER_ROLE_VALUES,
+  ROLE_LABELS,
+  type AppRole,
+} from "@/lib/member-roles";
 
 export const emptyForm: MemberForm = {
   title: "",
@@ -130,17 +135,56 @@ export function formatAgeTierLabel(ageTier: string): string {
 }
 
 /**
+ * The type name a non-member category falls back to (#2978), e.g. `NON_MEMBER`
+ * -> "Non-Member". Resolved from the SAME role->type mapping the pricing engine
+ * uses, so the column cannot drift from what the person is actually charged.
+ *
+ * `clubMembershipTypes` is the club's OWN rows, which is what decides the word.
+ * `MembershipType.name` is editable, so a club that renames its `NON_MEMBER`
+ * type to "Visitor" must read "Visitor" here as well as everywhere else; the
+ * seed name is only the fallback while the list has not loaded. That resolution
+ * lives in `defaultMembershipTypeNameForRole`, shared with the member detail
+ * page so the roster and the record cannot disagree.
+ */
+function fallbackTypeNameForNonMemberRole(
+  role: string | null | undefined,
+  clubMembershipTypes?: ReadonlyArray<{ key: string; name: string }>,
+): string | null {
+  if (!role) return null;
+  if (!(NON_MEMBER_ROLE_VALUES as readonly string[]).includes(role)) return null;
+  return defaultMembershipTypeNameForRole(role as AppRole, clubMembershipTypes);
+}
+
+/**
  * Combined "Type – Tier" display column (#1445). The membership type and age
  * tier stay separate data (separate filters); this only combines them for
- * display, e.g. "Full – Adult". Members with no current-season membership type
- * read "Unassigned – {tier}", matching the Membership Type filter's Unassigned
- * option.
+ * display, e.g. "Full – Adult".
+ *
+ * #2978: a NON-MEMBER category record now reads its own built-in type -
+ * "Non-Member – Adult" - instead of "Unassigned – Adult". A non-member booking
+ * contact has no season assignment and never will, so "Unassigned" was not a
+ * blank but a WRONG answer: it reads as a member whose type nobody has set yet,
+ * i.e. an administrative to-do, on a row that is complete exactly as it stands.
+ * The role->default-type fallback already existed and already decided what these
+ * people are charged; it simply was not applied to the displayed type.
+ *
+ * DISPLAY ONLY, and deliberately so. The Membership Type filter's "Unassigned"
+ * option still means "no current-season assignment" and still matches these
+ * rows - the label changed, the data did not. Every other role keeps reading
+ * "Unassigned", because for them it is the truth: a member with no type assigned
+ * really is an administrative to-do.
  */
 export function formatTypeTierLabel(
   typeName: string | null | undefined,
   ageTier: string,
+  role?: string | null,
+  clubMembershipTypes?: ReadonlyArray<{ key: string; name: string }>,
 ): string {
-  return `${typeName ?? "Unassigned"} – ${formatAgeTierLabel(ageTier)}`;
+  const resolved =
+    typeName ??
+    fallbackTypeNameForNonMemberRole(role, clubMembershipTypes) ??
+    "Unassigned";
+  return `${resolved} – ${formatAgeTierLabel(ageTier)}`;
 }
 
 export function getInitialLifecycleStatus(searchParams: URLSearchParams) {

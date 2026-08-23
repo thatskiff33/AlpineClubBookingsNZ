@@ -17,6 +17,7 @@ import {
   getMembershipTypeBookingPolicyErrorBody,
   MembershipTypeBookingPolicyError,
   priceBookingGuestsWithMembershipTypePolicy,
+  resolveOtherLodgeRateEligibleGuestIds,
 } from "@/lib/membership-type-policy";
 import {
   groupDiscountEditNotice,
@@ -33,6 +34,8 @@ import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
   OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE,
+  requestCarriesOtherLodgeElection,
+  requestIsOtherLodgeRateElectionOnly,
   resolveOtherLodgeRateElection,
   type OtherLodgeRateElection,
 } from "@/lib/booking-other-lodge-rate";
@@ -684,33 +687,29 @@ export async function POST(
     );
   /**
    * The other-lodge re-rate is exempt from the quote-priced edit block on the
-   * same terms as the #2337 link, and for the same reason.
+   * same terms as the #2337 link, and for the same reason. The rule itself —
+   * election-only, and which fields count as disturbing — lives in
+   * `requestIsOtherLodgeRateElectionOnly`, which the SAVE path calls too.
    *
-   * A booking converted from a public request IS quote-priced: its guest rows
-   * carry an even split of the total the officer negotiated (#1032 blocks
-   * ordinary edits so nothing disturbs that basis). But the request path is
-   * exactly where an other-club guest arrives — the public form asks "are you a
-   * member of another lodge?" — and re-rating them afterwards is the officer's
-   * deliberate, audited decision about one named person, not an ordinary edit.
-   * Every guest NOT re-rated keeps their locked split price untouched, because
-   * only the ticked/unticked rows clear their locks.
-   *
-   * Election-only, like the link exemption: pair it with a date change or a
-   * guest add and the ordinary block applies again.
+   * That sharing is a fix, not tidying. This list used to be written out here
+   * and nowhere else: `modifyBookingBatch` had no other-lodge exemption at all,
+   * so an election-only edit on a negotiated booking previewed 200 and saved
+   * 400 (owner decision, 21 Aug 2026). Two hand-maintained lists drift; one
+   * cannot. Only the officer check stays local to each caller.
    */
   const requestIsOtherLodgeRateExempt =
-    (requestedOtherLodgeId !== undefined ||
-      otherLodgeMemberGuestIds !== undefined) &&
     isAdmin &&
-    !(
-      newCheckInStr ||
-      newCheckOutStr ||
-      addGuests?.length ||
-      removeGuestIds?.length ||
-      guestStayRanges?.length ||
-      newPromoCode ||
-      removePromoCode
-    );
+    requestIsOtherLodgeRateElectionOnly({
+      otherLodgeId: requestedOtherLodgeId,
+      otherLodgeMemberGuestIds,
+      checkIn: newCheckInStr,
+      checkOut: newCheckOutStr,
+      addGuests,
+      removeGuestIds,
+      guestStayRanges,
+      promoCode: newPromoCode,
+      removePromoCode,
+    });
   const quotePriced = await isQuotePricedBooking(prisma, bookingId);
   if (
     !requestIsIdentityOnly &&
@@ -748,15 +747,59 @@ export async function POST(
   // Other Lodges epic: the same resolver the apply path runs, so a refused tick
   // is refused here with the same message before pricing, and the effective
   // per-guest flag below is identical to the one the save will persist.
+  // #2543 — resolved ONCE for this request. The member-guest refusal, the
+  // paid-up-adult requirement, the pricing calls and (since #2978) the
+  // other-lodge eligibility fence must all branch on the same answer: an admin
+  // saving the lockout panel mid-request could otherwise have one of them
+  // decide under one regime and another under the other, and this route
+  // differences two pricing calls into the member's settlement delta. Hoisted
+  // to here rather than resolved twice, which is what
+  // `subscription-lockout-call-sites.test.ts` exists to catch.
+  //
+  // HOISTED FROM ~500 LINES BELOW BY #2978, AND THAT MOVED MORE THAN THE READ.
+  // There are roughly fifteen early returns between here and where this used to
+  // sit, so a preview that refuses at one of them now performs this settings
+  // read where before it short-circuited first. Two consequences worth having in
+  // the open: the read is cached but can reach Xero for the organisation's
+  // accounting year when the Xero module is on, and — the reason the hoist is a
+  // net improvement rather than a cost — it reseeds the financial-year cache
+  // BEFORE the `getSeasonYear(booking.checkIn)` calls below, so a cold process at
+  // a club with a non-March year end no longer judges the season against the
+  // March default.
+  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+
   let otherLodgeElection: OtherLodgeRateElection;
   try {
+    // #2978: who may be ticked is a RATE question, so it needs the season's
+    // membership-type policies and the unpaid-subscription set. Resolved from
+    // the BOOKING's own season rather than any new dates this edit proposes:
+    // the edit panel decides which rows get a tick box from the stored booking,
+    // so keying the fence to the same season is what keeps the screen and the
+    // save from disagreeing. A date move across a season boundary can therefore
+    // judge eligibility on the old season - accepted, because the alternative
+    // is a tick the officer can see and cannot save.
+    const otherLodgeInput = {
+      otherLodgeId: requestedOtherLodgeId,
+      otherLodgeMemberGuestIds,
+    };
+    // Only when the request actually mentions the rate, and only for an actor
+    // who could act on the answer. Almost no modification mentions it, and
+    // resolving eligibility costs several reads — which an ordinary member could
+    // otherwise force on every request, since `resolveOtherLodgeRateElection`
+    // does not raise its 403 until after this. Nothing leaks either way (the set
+    // never reaches the response on that path); this is about not doing the work.
+    const otherLodgeEligibleGuestIds =
+      isAdmin && requestCarriesOtherLodgeElection(otherLodgeInput)
+        ? await resolveOtherLodgeRateEligibleGuestIds(prisma, {
+            seasonYear: getSeasonYear(booking.checkIn),
+            guests: booking.guests,
+          })
+        : new Set<string>();
     otherLodgeElection = resolveOtherLodgeRateElection({
       booking,
-      input: {
-        otherLodgeId: requestedOtherLodgeId,
-        otherLodgeMemberGuestIds,
-      },
+      input: otherLodgeInput,
       role: actorRole,
+      eligibleGuestIds: otherLodgeEligibleGuestIds,
     });
     await assertOtherLodgeExists(prisma, otherLodgeElection.otherLodgeId);
   } catch (error) {
@@ -1260,10 +1303,6 @@ export async function POST(
     }
     throw error;
   }
-
-  // #2543 — resolved once for this request; the member-guest refusal and the
-  // paid-up-adult requirement below must branch on the same answer.
-  const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
 
   if (!isAdmin) {
     // D-8: throws the neutral refusal for a cross-family guest rather than

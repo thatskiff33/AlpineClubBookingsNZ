@@ -35,6 +35,10 @@ import {
   isQuotePricedBooking,
   QUOTE_PRICED_EDIT_BLOCK_MESSAGE,
 } from "@/lib/booking-modify";
+import {
+  requestCarriesOtherLodgeElection,
+  requestIsOtherLodgeRateElectionOnly,
+} from "@/lib/booking-other-lodge-rate";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -206,6 +210,11 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
       perNightRates: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
       nightDates: (guest.nights ?? []).map((night) => night.stayDate),
     })),
+    // Nothing was rated here — this echo does not run the rate resolver at all.
+    // A request carrying an other-lodge election is therefore kept OFF this path
+    // (see `pricePreservingModification` below): storing the flag from an echo
+    // would stamp a re-rate the money never made.
+    otherLodgeRatedGuestIds: new Set<string>(),
   };
 }
 
@@ -473,11 +482,39 @@ export async function modifyBookingBatch({
         input.promoCode ||
         input.removePromoCode
       );
+    /**
+     * The other-lodge election, exempt on exactly the link's terms (owner
+     * decision, 21 Aug 2026).
+     *
+     * THIS EXEMPTION WAS MISSING, and its absence broke the feature's headline
+     * case. `modify-quote` has carried one since the Other Lodges epic, so an
+     * election-only edit on a quote-priced booking PREVIEWED 200 and then SAVED
+     * 400 — on precisely the bookings these guests arrive through, since the
+     * public request form is what asks "are you a member of another lodge?".
+     * #2978 did not cause that, but it widened who may be ticked, so it made it
+     * far more reachable.
+     *
+     * The owner's reasoning for allowing it: the tick renegotiates nothing. It
+     * records that somebody belongs to a partner lodge and applies the rate the
+     * club has already agreed to give such people — the same character as the
+     * #2337 placeholder link exempted above.
+     *
+     * The rule is `requestIsOtherLodgeRateElectionOnly`, the SAME function the
+     * preview calls, so the two can no longer drift: pair the tick with a date,
+     * add/remove-guest, stay-range or promo change and the block applies again
+     * in full. Officer-only, matching `resolveOtherLodgeRateElection`'s own
+     * `role !== "ADMIN"` refusal — that resolver would throw 403 later anyway,
+     * but an exemption that reads as if a member could use it is a trap for the
+     * next reader.
+     */
+    const requestIsOtherLodgeRateExempt =
+      actor.role === "ADMIN" && requestIsOtherLodgeRateElectionOnly(input);
     const quotePriced = await isQuotePricedBooking(tx, bookingId);
     if (
       !requestIsIdentityOnly &&
       !requestIsCreditElectionOnly &&
       !requestIsMemberLinkExempt &&
+      !requestIsOtherLodgeRateExempt &&
       quotePriced
     ) {
       throw new ApiError(QUOTE_PRICED_EDIT_BLOCK_MESSAGE, 400);
@@ -615,8 +652,21 @@ export async function modifyBookingBatch({
     // rate change. The promo is equally untouched: nothing promo-relevant
     // changes when a name does. #2266: a credit-election-only modification is
     // price-preserving for the same reason and takes the same echo.
+    //
+    // #2978 review: an other-lodge election is NEVER price-preserving, whatever
+    // else the request carries. A name edit plus a tick used to take this echo,
+    // which writes the per-guest flag from the election while leaving every
+    // locked night exactly as it was — the officer sees the tick land and the
+    // total never moves, and the row then reads "(Other Club Member)" beside a
+    // fee that says otherwise. Same reasoning as `linkGuestToMember` in
+    // `requestedStructuralChange` above: a re-rate has to reach the rate
+    // resolver. Kept out HERE rather than added to `requestedStructuralChange`
+    // deliberately, so the quote-priced exemptions above keep the meaning
+    // `modify-quote` gives them and the preview and the save still agree about
+    // what is allowed.
     const pricePreservingModification =
-      identityOnlyModification || requestIsCreditElectionOnly;
+      (identityOnlyModification || requestIsCreditElectionOnly) &&
+      !requestCarriesOtherLodgeElection(input);
     const pricing = pricePreservingModification
       ? buildIdentityOnlyPricing(booking)
       : await calculateModifiedPricing(tx, {
@@ -702,6 +752,9 @@ export async function modifyBookingBatch({
       // per-guest flag is written from the same decision that cleared their
       // locked nights.
       otherLodgeElection: guestPlan.otherLodgeElection,
+      // #2978 review: and who pricing actually rated at that rate, so a tick the
+      // rate resolver declined is never stored as though it had been honoured.
+      otherLodgeRatedGuestIds: pricing.otherLodgeRatedGuestIds,
     });
 
     const choreWarnings = await applyChoreCleanup(tx, {

@@ -23,12 +23,15 @@ vi.mock("@/hooks/use-access-role-options", async () => {
   return { useAccessRoleOptions: () => options };
 });
 
-vi.mock("@/hooks/use-membership-type-options", () => ({
-  useMembershipTypeOptions: () => [
-    { id: "mt-full", name: "Full" },
-    { id: "mt-life", name: "Life" },
-  ],
-}));
+/**
+ * The club's own types, as the page now fetches them ONCE and hands to both the
+ * toolbar and the table (#2978). `key` rides along because `name` is editable
+ * and the Type – Tier fallback has to resolve by key.
+ */
+const clubMembershipTypes = [
+  { id: "mt-full", key: "FULL", name: "Full", isActive: true },
+  { id: "mt-life", key: "LIFE", name: "Life", isActive: true },
+];
 
 vi.mock("next/link", () => ({
   default: ({
@@ -59,6 +62,10 @@ vi.mock("@/components/ui/select", () => ({
       {children}
     </div>
   ),
+  // Plain text inside the listbox, NOT an option — which is the point of using
+  // it for the Unassigned hint (#2978): it can never be selected as a value.
+  SelectGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectLabel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SelectTrigger: ({ children, ...props }: { children: ReactNode }) => (
     <button type="button" {...props}>
       {children}
@@ -126,6 +133,7 @@ function renderToolbar() {
       filters={emptyFilters}
       xeroFeatures={{ liveMemberGroupLookups: false, autoLoadContactGroups: false }}
       xeroContactGroupsList={[]}
+      membershipTypes={clubMembershipTypes}
       onSearchChange={vi.fn()}
       onSetFilter={vi.fn()}
       resetDisabled={true}
@@ -134,10 +142,15 @@ function renderToolbar() {
   );
 }
 
-function renderMemberTable(members: Member[]) {
+function renderMemberTable(
+  members: Member[],
+  membershipTypes: Array<{ id: string; key: string; name: string; isActive: boolean }> =
+    clubMembershipTypes,
+) {
   return render(
     <MemberTable
       members={members}
+      membershipTypes={membershipTypes}
       loading={false}
       debouncedSearch=""
       selectedIds={new Set()}
@@ -242,5 +255,123 @@ describe("Type – Tier display helpers (#1445)", () => {
     expect(formatTypeTierLabel("Full", "ADULT")).toBe("Full – Adult");
     expect(formatTypeTierLabel(null, "ADULT")).toBe("Unassigned – Adult");
     expect(formatTypeTierLabel("School", "NOT_APPLICABLE")).toBe("School – N/A");
+  });
+});
+
+/**
+ * #2978. Booking on behalf of a non-member creates a real `Member` row with role
+ * NON_MEMBER, and such a record has no season membership assignment and never
+ * will. It therefore read "Unassigned – Adult", which is not a blank but a WRONG
+ * answer: it reads as a member whose type nobody has got round to setting, on a
+ * row that is already complete and already correctly priced.
+ */
+describe("Type – Tier names the non-member category (#2978)", () => {
+  afterEach(() => cleanup());
+
+  it("names the built-in type for a non-member category with no assignment", () => {
+    expect(formatTypeTierLabel(null, "ADULT", "NON_MEMBER")).toBe(
+      "Non-Member – Adult",
+    );
+    expect(formatTypeTierLabel(null, "CHILD", "NON_MEMBER")).toBe(
+      "Non-Member – Child",
+    );
+    // The sibling category, fixed with it: leaving one of the pair reading
+    // "Unassigned" would be arbitrary.
+    expect(formatTypeTierLabel(null, "ADULT", "SCHOOL")).toBe("School – Adult");
+  });
+
+  it("still reads Unassigned for a MEMBER-level role, where that is the truth", () => {
+    // An ordinary member with no type assigned really is an administrative
+    // to-do, so the old label is right for them and must not change.
+    expect(formatTypeTierLabel(null, "ADULT", "USER")).toBe("Unassigned – Adult");
+    expect(formatTypeTierLabel(null, "ADULT", "ADMIN")).toBe("Unassigned – Adult");
+    expect(formatTypeTierLabel(null, "ADULT", null)).toBe("Unassigned – Adult");
+  });
+
+  it("never overrides a real assignment, whatever the role", () => {
+    // The fallback is a FALLBACK. A non-member category that has somehow been
+    // given a season type shows the type they were actually given.
+    expect(formatTypeTierLabel("Full", "ADULT", "NON_MEMBER")).toBe("Full – Adult");
+  });
+
+  it("renders it in the members table for a non-member booking contact", () => {
+    renderMemberTable([
+      {
+        ...baseMember,
+        id: "contact-1",
+        firstName: "Vic",
+        lastName: "Visitor",
+        role: "NON_MEMBER",
+        accessRoles: [],
+        canLogin: false,
+        ageTier: "ADULT",
+        currentMembershipType: null,
+      },
+    ]);
+
+    expect(screen.getByText("Non-Member – Adult")).toBeInTheDocument();
+    expect(screen.queryByText("Unassigned – Adult")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * #2978 review: the word is the CLUB'S, not the seed's.
+ *
+ * `MembershipType.name` is editable — the membership-types PATCH writes it with
+ * no built-in guard, and the ASSOCIATE seed's own description invites renaming —
+ * so hard-coding "Non-Member" here would put the seed's wording on this one
+ * screen while every other surface showed the club's. That is the
+ * generic-product rule (`INV-CONFIG-001`), and it is also just wrong on the
+ * screen: the officer would see two different names for one thing.
+ */
+describe("Type – Tier uses the club's own name for the fallback type (#2978)", () => {
+  afterEach(() => cleanup());
+
+  const renamedTypes = [
+    { id: "mt-nm", key: "NON_MEMBER", name: "Visitor", isActive: true },
+    { id: "mt-school", key: "SCHOOL", name: "School Group", isActive: true },
+  ];
+
+  it("prefers the club's row over the built-in seed name", () => {
+    expect(
+      formatTypeTierLabel(null, "ADULT", "NON_MEMBER", renamedTypes),
+    ).toBe("Visitor – Adult");
+    expect(formatTypeTierLabel(null, "ADULT", "SCHOOL", renamedTypes)).toBe(
+      "School Group – Adult",
+    );
+  });
+
+  it("falls back to the seed name when the club's list is not to hand", () => {
+    // The list arrives from a fetch, so the first paint has none — and a viewer
+    // without membership:view never gets one. The seed name is right for every
+    // club that has not renamed the type, which is the overwhelming majority.
+    expect(formatTypeTierLabel(null, "ADULT", "NON_MEMBER", [])).toBe(
+      "Non-Member – Adult",
+    );
+    expect(formatTypeTierLabel(null, "ADULT", "NON_MEMBER")).toBe(
+      "Non-Member – Adult",
+    );
+  });
+
+  it("renders the renamed word in the members table", () => {
+    renderMemberTable(
+      [
+        {
+          ...baseMember,
+          id: "contact-2",
+          firstName: "Vic",
+          lastName: "Visitor",
+          role: "NON_MEMBER",
+          accessRoles: [],
+          canLogin: false,
+          ageTier: "ADULT",
+          currentMembershipType: null,
+        },
+      ],
+      renamedTypes,
+    );
+
+    expect(screen.getByText("Visitor – Adult")).toBeInTheDocument();
+    expect(screen.queryByText("Non-Member – Adult")).not.toBeInTheDocument();
   });
 });

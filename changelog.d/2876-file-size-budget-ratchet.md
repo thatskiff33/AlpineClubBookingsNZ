@@ -8,26 +8,17 @@
   magnitude, so the one artefact that looked like enforcement was the least
   accurate thing in the repository.
 
-  Every over-budget file and its current line count is now recorded in
-  `scripts/quality/file-size-baseline.txt`, and a check in the blocking CI job
-  compares the tree against it. Existing debt is allowed to stay; what fails is
-  a file that newly goes over budget, a file that grows past the line count
-  recorded for it, or a baseline that is missing, out of date or hand-edited.
-  Shrinking is always accepted, but the check reports the old ceiling as stale
-  until the baseline is regenerated; that regeneration records the lower
-  ceiling so the removed debt cannot quietly return.
+  A check in the blocking CI job now enforces the budgets. Existing debt is
+  allowed to stay; what fails is a file that newly goes over budget, or a file
+  already over budget that grows. Shrinking is always accepted, and the smaller
+  length becomes the ceiling the next change is measured against, so removed
+  debt cannot quietly return. (When this entry was written the check compared
+  against a checked-in list of every over-budget file, kept up to date by hand
+  with its own command. Neither reached a release — both were replaced first, by
+  the change described under #2979 below.)
 
   Nothing about the code itself changed, and no production file had to be
-  altered to make the tree pass. For a contributor the practical effect is one
-  command — `npm run quality:budget:update` — when a change legitimately moves
-  a large file's size. That command is an intentional, review-visible escape,
-  not a verification pass: a rename appears as removed and added ledger
-  records, every pre-update regression is listed separately, and the net debt
-  change is reported only as context. A larger shrink elsewhere therefore
-  cannot hide the warning for a file that grew, and the pull request must
-  explain every accepted increase. Update mode refuses a missing, malformed or
-  untracked starting ledger, so it cannot rewrite away the comparison needed to
-  produce those warnings. A contract also pins the public package command to
+  altered to make the tree pass. A contract pins the public package command to
   the blocking `verify` job. The gate's TypeScript tests under
   `scripts/__tests__/` are now covered by `npm run typecheck` (#2875); existing
   JavaScript/MJS Vitest files are loaded by the test project but remain outside

@@ -1532,6 +1532,7 @@ export function EditBookingPanel({
           enabled: otherLodgeRate.enabled,
           lodgeId: otherLodgeRate.lodgeId,
           flaggedGuestIds: otherLodgeRate.flaggedGuestIds,
+          eligibleGuestIds: otherLodgeRate.eligibleGuestIds,
           guestTicksEnabled: otherLodgeRate.guestTicksEnabled,
           quotedGuestPriceCents,
           onEnabledChange: otherLodgeRate.onEnabledChange,

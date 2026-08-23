@@ -71,13 +71,19 @@ src/lib/config-transfer/import-types.ts text eol=lf diff
 *.toml text eol=lf
 .gitleaksignore text eol=lf
 
-# #2687: plain-text ledgers are the same class again. The file-size baseline
-# (`scripts/quality/file-size-baseline.txt`) is parsed line by line and compared
-# byte-for-byte against the form the generator produces, so a CRLF checkout would
-# fail the ratchet on Windows and pass on Linux CI — the exact split that took
-# days to diagnose for the migration SQL (#2399) and the shell scripts. Pinned as
-# a class rather than by name so the next tracked `.txt` inherits it; the
-# existing tracked `.txt` blobs are already LF, so this is zero churn.
+# #2687: tracked plain-text data files are the same class again. Several are
+# read line by line and compared byte-for-byte, so a CRLF checkout would fail on
+# Windows and pass on Linux CI — the exact split that took days to diagnose for
+# the migration SQL (#2399) and the shell scripts. Live examples, because a rule
+# whose only example has been deleted is a rule nobody can check:
+# `src/lib/__tests__/support/email-render-pins.txt` is compared line by line
+# against rendered output by `email-render-equivalence.test.ts`, and
+# `scripts/data-migration-verification-grandfathered.txt` is parsed by
+# `check-data-migration-verification.sh`, which gates a required check.
+# (#2979 deleted the file-size baseline this comment used to cite; the rule
+# outlived it, which is why it is pinned as a class rather than by name.) The
+# class pin also means the next tracked `.txt` inherits it; the existing tracked
+# `.txt` blobs are already LF, so this is zero churn.
 *.txt text eol=lf
 
 # Shell scripts are the fourth instance of the same class, and the worst of

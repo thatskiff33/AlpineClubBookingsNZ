@@ -17,6 +17,7 @@ import {
 import { ApiError } from "@/lib/api-error";
 import {
   assertOtherLodgeExists,
+  requestCarriesOtherLodgeElection,
   resolveOtherLodgeRateElection,
   type OtherLodgeRateElection,
 } from "@/lib/booking-other-lodge-rate";
@@ -106,6 +107,7 @@ import {
 } from "@/lib/date-only";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
+import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
 import { getSeasonYear } from "@/lib/utils";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
@@ -653,10 +655,43 @@ export async function prepareGuestPlan(
   // save writes, and the rows it reprices, are exactly the ones the officer was
   // quoted. `booking` here is the post-lock re-read, so a concurrent edit that
   // changed a guest's flag is seen before the reprice decision is made.
+  // #2978: eligibility is a rate question, so it needs the season's
+  // membership-type policies and whether anybody owes a subscription. Resolved
+  // on `tx`, never the module client: this runs inside the transaction holding
+  // the capacity lock, and a second pool connection under that lock is the
+  // starvation shape `docs/CONCURRENCY_AND_LOCKING.md` forbids by name. Keyed to
+  // the BOOKING's season, exactly as `modify-quote` keys it, so the preview and
+  // the save fence identical sets.
+  //
+  // ONLY WHEN THIS REQUEST ACTUALLY MENTIONS THE RATE, because of what it costs
+  // inside that transaction. Be precise about the number: it is THREE reads
+  // minimum on an election that names a member guest — the policy resolver's
+  // member + assignment pair, then the settlement pair (subscriptions +
+  // members) issued together — and a fourth when a member has no season
+  // assignment and the built-in fallback type has to be looked up. It is ZERO
+  // when nobody on the booking is a member, which the helper short-circuits.
+  //
+  // ONE OF THOSE READS CAN LEAVE THIS TRANSACTION, and saying "no settings read
+  // is added" (as this comment used to) was wrong.
+  // `loadMemberSubscriptionSettlements` calls `getAgeTierSettings()`, which
+  // serves a five-minute in-process cache and, on a miss, imports the MODULE
+  // prisma client and reads `AgeTierSetting` on a second connection. That shape
+  // is pre-existing and is not introduced here; what #2978 changes is how often
+  // it is reached, since eligibility no longer consults the lockout mode (owner
+  // decision, 21 Aug 2026) and so no longer returns early under `HARD_BLOCK` and
+  // `NO_BLOCK`. It stays bounded: an election request, a member guest on the
+  // booking, and a cold cache, all at once.
+  const otherLodgeEligibleGuestIds = requestCarriesOtherLodgeElection(input)
+    ? await resolveOtherLodgeRateEligibleGuestIds(tx, {
+        seasonYear: getSeasonYear(booking.checkIn),
+        guests: booking.guests,
+      })
+    : new Set<string>();
   const otherLodgeElection = resolveOtherLodgeRateElection({
     booking,
     input,
     role,
+    eligibleGuestIds: otherLodgeEligibleGuestIds,
   });
   // Only when this edit named a lodge: an inert election's stored id was already
   // validated when it was set, so re-reading it on every unrelated modification
@@ -1152,6 +1187,26 @@ export type PricingResult = {
     perNightRates: number[];
     nightDates?: Date[];
   }>;
+  /**
+   * The existing guests pricing ACTUALLY resolved to the other-lodge member rate
+   * (`rateSource: "OTHER_LODGE_MEMBER"`), as opposed to the ones the request
+   * asked for (#2978 review).
+   *
+   * The two are not the same set, and the gap is what let a flag be stored
+   * against somebody the money never reached. The election fence is judged
+   * against the STORED booking rows; pricing is judged against the PROPOSED
+   * rows, which `linkGuestToMember` has already rewritten — so a request that
+   * links placeholder G to member M and ticks G passes the fence (G is a
+   * placeholder non-member on the stored booking) while pricing correctly
+   * resolves M through their own membership type. The charge was right and the
+   * stored flag was a lie: the Guests list then reads "(Other Club Member)"
+   * against a member of this club, and the stale flag can go live on a later
+   * edit if their eligibility changes.
+   *
+   * `applyGuestChanges` writes the flag from THIS set, so the column and the
+   * money are answered by the same pass.
+   */
+  otherLodgeRatedGuestIds: ReadonlySet<string>;
 };
 
 /**
@@ -1559,6 +1614,23 @@ export async function calculateModifiedPricing(
     newTotalPriceCents,
     priceBreakdown,
     guestNightRates,
+    // #2978 review: read off the rated rows the pricing engine was handed, so
+    // "who carries the flag" and "who was charged the member rate" can only ever
+    // be the same answer. Empty on the in-progress branch, whose prices come
+    // from the plan rather than these rows — and where the election is refused
+    // outright (`OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE`), so nothing is written
+    // there anyway.
+    otherLodgeRatedGuestIds: new Set(
+      inProgressPlan
+        ? []
+        : policyAdjustedGuestsForPricing
+            .filter(
+              (guest) =>
+                guest.rateSource === "OTHER_LODGE_MEMBER" &&
+                Boolean(guest.bookingGuestId),
+            )
+            .map((guest) => guest.bookingGuestId as string),
+    ),
   };
 }
 
@@ -1947,6 +2019,7 @@ export async function applyGuestChanges(
     priceBreakdown,
     inProgressPlan,
     otherLodgeElection,
+    otherLodgeRatedGuestIds,
   }: {
     bookingId: string;
     newCheckIn: Date;
@@ -1979,6 +2052,15 @@ export async function applyGuestChanges(
      * tests keep compiling; absent means "no election", which writes no flag.
      */
     otherLodgeElection?: OtherLodgeRateElection;
+    /**
+     * Who the pricing pass actually rated as an other-lodge member
+     * (`PricingResult.otherLodgeRatedGuestIds`, #2978 review). A tick pricing did
+     * NOT honour is stored as `false`, not as the officer asked — the flag is a
+     * record of what was charged, and a `true` the money never followed is the
+     * one state it must never hold. Absent is treated as "nothing was rated",
+     * which is correct for the existing unit tests that pass no election either.
+     */
+    otherLodgeRatedGuestIds?: ReadonlySet<string>;
   },
 ): Promise<{ createdGuests: BookingGuest[] }> {
   const createdGuests: BookingGuest[] = [];
@@ -2207,11 +2289,23 @@ export async function applyGuestChanges(
         // guests whose flag this request actually changed, so an unrelated edit
         // never rewrites a settled row — and written here, in the same update as
         // the price it produced, so the flag and the money can never disagree.
+        //
+        // #2978 review: `true` is conditional on PRICING having resolved this row
+        // to the other-lodge member rate, not merely on the election having asked
+        // for it. The two fences read different inputs — the election is judged
+        // against the STORED booking, pricing against the PROPOSED rows, which
+        // `linkGuestToMember` has already rewritten — so a request that links a
+        // placeholder to a member AND ticks it used to store `true` on a member
+        // of this club. Unticking is unconditional in the other direction: a
+        // request that clears somebody's flag always clears it, or a stale flag
+        // could never be removed.
         ...(otherLodgeElection?.repriceGuestIds.has(remainingGuests[i].id)
           ? {
-              otherLodgeMember: otherLodgeElection.flaggedGuestIds.has(
-                remainingGuests[i].id,
-              ),
+              otherLodgeMember:
+                otherLodgeElection.flaggedGuestIds.has(
+                  remainingGuests[i].id,
+                ) &&
+                (otherLodgeRatedGuestIds?.has(remainingGuests[i].id) ?? false),
             }
           : {}),
         // Overwrite the rate-type snapshot on the full-reprice path (#1930,

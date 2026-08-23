@@ -25,12 +25,17 @@ import {
 } from "@/lib/admin-member-detail-helpers";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 import { isFullAdmin } from "@/lib/access-roles";
-import { canAdminRequestMembershipCancellation } from "@/lib/member-roles";
+import {
+  canAdminRequestMembershipCancellation,
+  NON_MEMBER_ROLE_VALUES,
+} from "@/lib/member-roles";
+import { defaultMembershipTypeNameForRole } from "@/lib/membership-types";
 import { toast } from "sonner";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useXeroStatus } from "@/hooks/use-xero-status";
 import { useXeroOrgShortCode } from "@/hooks/use-xero-org-short-code";
+import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options";
 import { Accordion } from "@/components/ui/accordion";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import { MemberDetailHeader } from "./_components/member-detail-header";
@@ -117,6 +122,19 @@ export default function MemberDetailPage({
   // billing-family card takes it as a prop.
   const canEditMembership = useAdminAreaEditAccess("membership");
   const canEditFinance = useAdminAreaEditAccess("finance");
+  /**
+   * The club's own membership types, for the display fallback below (#2978).
+   * `MembershipType.name` is club-editable, so the seed word "Non-Member" is a
+   * last resort, not the answer. Empty until the fetch lands and empty for a
+   * viewer without `membership:view`, in which case the label falls back to the
+   * built-in name — correct for every club that has not renamed it.
+   *
+   * A second call to the same endpoint on this page: the Seasonal Membership
+   * card fetches the full type objects for its picker. Lifting that fetch here
+   * would mean reshaping that card's loading/retry state, which is a bigger
+   * change than this label is worth; one extra cached admin GET is the price.
+   */
+  const membershipTypes = useMembershipTypeOptions();
 
   /*
     #2168 owner decision: ONE view-only banner for this page, not one per card.
@@ -743,6 +761,27 @@ export default function MemberDetailPage({
     (member.subscriptions ?? []).find(
       (subscription) => subscription.seasonYear === member.currentSeasonYear,
     ) ?? null;
+  /**
+   * The membership type to SHOW for this season (#2978).
+   *
+   * Rides along with the members-list change, and has to: the roster now reads
+   * "Non-Member – Adult" for a non-member booking contact, while this page — the
+   * record the roster links to — said "None" in the summary strip and "No
+   * seasonal type set" in the Membership section. Before that change the two
+   * agreed; leaving this alone would have made the person's own record
+   * contradict the list they were found in. (The `User Type: User` label further
+   * down is the separate thing #2978 explicitly defers; this is not that.)
+   *
+   * Same rule and same resolver as the list: an actual season assignment always
+   * wins, a NON-MEMBER category with none falls back to its built-in type named
+   * the way THIS club names it, and every other role keeps reading the empty
+   * state, because for them a missing type really is an administrative to-do.
+   */
+  const currentSeasonTypeName =
+    currentSeasonAssignment?.membershipType.name ??
+    ((NON_MEMBER_ROLE_VALUES as readonly string[]).includes(member.role)
+      ? defaultMembershipTypeNameForRole(member.role, membershipTypes)
+      : null);
   const embeddedCardClassName = "rounded-none border-0 shadow-none";
   const groupPreviews = {
     contact: formatMemberContactPreview(member),
@@ -758,8 +797,7 @@ export default function MemberDetailPage({
     }),
     membership: formatMemberMembershipPreview({
       currentSeasonYear: member.currentSeasonYear,
-      currentSeasonTypeName:
-        currentSeasonAssignment?.membershipType.name ?? null,
+      currentSeasonTypeName,
       currentSeasonSubscriptionLabel: currentSeasonSubscription
         ? subscriptionStatusLabel(currentSeasonSubscription.status)
         : null,
@@ -836,7 +874,7 @@ export default function MemberDetailPage({
 
       <MemberSummaryStrip
         member={member}
-        membershipLabel={currentSeasonAssignment?.membershipType.name ?? "None"}
+        membershipLabel={currentSeasonTypeName ?? "None"}
         creditBalance={creditBalance}
         creditLoading={creditLoading}
       />

@@ -1,44 +1,29 @@
 import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { run } from "../ci/check-file-size-budget";
+import { evaluateComputedRatchet } from "../lib/file-size-base";
+import { ALLOWANCE_DIR } from "../lib/file-size-allowances";
 
 import {
-  BASELINE_PATH,
   PRODUCTION_LIMIT,
   ROUTE_HANDLER_LIMIT,
   ROUTE_PAGE_LIMIT,
-  baselineEntriesFor,
   budgetForFile,
-  evaluateRatchet,
+  countLines,
   findOversizedProductionFiles,
   findUnclassifiedFiles,
   isProductionFile,
   isRatchetExcludedTestFile,
-  parseBaseline,
   scanRepository,
-  serializeBaseline,
-  type BaselineEntry,
+  summariseSizeDebt,
   type FileStat,
-  type RatchetFindingKind,
 } from "../lib/file-size-budget";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
-
-function kinds(
-  findings: readonly { kind: RatchetFindingKind }[],
-): RatchetFindingKind[] {
-  return findings.map((finding) => finding.kind);
-}
 
 /** A small synthetic tree: one file per budget category, all within budget. */
 const CLEAN_TREE: FileStat[] = [
@@ -47,49 +32,75 @@ const CLEAN_TREE: FileStat[] = [
   { file: "src/app/(admin)/admin/example/page.tsx", lines: ROUTE_PAGE_LIMIT },
 ];
 
-function baselineFor(stats: FileStat[]): string {
-  return serializeBaseline(baselineEntriesFor(stats));
-}
-
-function git(root: string, args: readonly string[]): string {
-  return execFileSync("git", [...args], {
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", args, {
     cwd: root,
     encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
-function writeLines(root: string, file: string, lines: number): void {
-  const target = path.join(root, file);
-  mkdirSync(path.dirname(target), { recursive: true });
-  writeFileSync(target, "line\n".repeat(lines), "utf8");
-}
+/**
+ * A throwaway repository, because the decision now depends on the DIFF.
+ *
+ * #2979 moved the previous length out of a file we wrote ourselves and into
+ * git, so a harness that injects sizes without controlling the diff can only
+ * prove the empty case. Every case below therefore builds real commits and
+ * drives the real entry point over them.
+ *
+ * `core.autocrlf false` plus an explicit `.gitattributes` keeps the blob and
+ * the working tree byte-identical on Windows, so `git show` and `countLines`
+ * cannot disagree about how many lines a file has (#2399).
+ */
+const ROOTS: string[] = [];
 
-function createTrackedRepo(file: string, lines: number): string {
+afterEach(() => {
+  for (const root of ROOTS) rmSync(root, { force: true, recursive: true });
+  ROOTS.length = 0;
+  vi.restoreAllMocks();
+});
+
+function newRepo() {
   const root = mkdtempSync(path.join(os.tmpdir(), "acb-file-size-budget-"));
-  git(root, ["init", "--quiet"]);
-  git(root, ["config", "core.autocrlf", "false"]);
+  ROOTS.push(root);
+  git(root, "init", "--quiet");
+  // Not `git init -b`: naming the branch through the symbolic ref works the
+  // same way on every git this repository is built with.
+  git(root, "symbolic-ref", "HEAD", "refs/heads/main");
+  git(root, "config", "core.autocrlf", "false");
+  git(root, "config", "user.email", "test@example.invalid");
+  git(root, "config", "user.name", "Test");
+  git(root, "config", "commit.gpgsign", "false");
   writeFileSync(
     path.join(root, ".gitattributes"),
-    "*.ts text eol=lf\n*.txt text eol=lf\n",
+    "* text eol=lf\n",
     "utf8",
   );
-  writeLines(root, file, lines);
-  const baseline = serializeBaseline(baselineEntriesFor([{ file, lines }]));
-  const baselineTarget = path.join(root, BASELINE_PATH);
-  mkdirSync(path.dirname(baselineTarget), { recursive: true });
-  writeFileSync(baselineTarget, baseline, "utf8");
-  git(root, ["add", "--", ".gitattributes", file, BASELINE_PATH]);
-  return root;
+
+  const write = (file: string, lines: number) => {
+    const full = path.join(root, file);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, "line\n".repeat(lines), "utf8");
+  };
+  const commit = (message: string) => {
+    git(root, "add", "-A");
+    git(root, "commit", "--quiet", "-m", message);
+    return git(root, "rev-parse", "HEAD").trim();
+  };
+  /** Declare a file-size allowance the way a pull request would. */
+  const allow = (name: string, body: string) => {
+    const full = path.join(root, ALLOWANCE_DIR, name);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, body, "utf8");
+  };
+
+  return { root, write, commit, allow };
 }
 
 function captureRun(
   root: string,
   argv: readonly string[],
-): {
-  code: number;
-  stdout: string;
-  stderr: string;
-} {
+): { code: number; stdout: string; stderr: string } {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const stdoutSpy = vi
@@ -136,9 +147,31 @@ describe("blocking CI wiring", () => {
     expect(packageJson.scripts?.["quality:budget"]).toBe(
       "tsx scripts/ci/check-file-size-budget.ts",
     );
-    expect(packageJson.scripts?.["quality:budget:update"]).toBe(
-      "tsx scripts/ci/check-file-size-budget.ts --update",
+  });
+
+  it("offers no baseline-update command, because there is no baseline to update", () => {
+    // #2979 acceptance criterion 8. The escape hatch existed to record an
+    // accepted increase in a file that no longer exists; an accepted increase
+    // is now explained in the pull request body.
+    const packageJson = JSON.parse(
+      readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(Object.keys(packageJson.scripts ?? {})).not.toContain(
+      "quality:budget:update",
     );
+  });
+
+  it("tracks no file-size baseline, so no two branches can conflict over one", () => {
+    // #2979 acceptance criterion 1. `--error-unmatch` exits non-zero for a path
+    // git does not track, which is the assertion: the ledger is really gone from
+    // the index, not merely deleted from someone's working tree.
+    expect(() =>
+      execFileSync(
+        "git",
+        ["ls-files", "--error-unmatch", "scripts/quality/file-size-baseline.txt"],
+        { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+      ),
+    ).toThrow();
   });
 
   it("runs the public check command exactly once in the blocking verify job", () => {
@@ -149,8 +182,47 @@ describe("blocking CI wiring", () => {
     const verify = verifyJobSource(workflow);
     expect(verify, "ci.yml must contain a top-level verify job").not.toBe("");
     expect(
-      verify.match(/^        run: npm run quality:budget\s*$/gm) ?? [],
+      verify.match(
+        /^        run: npm run quality:budget -- --base "\$BUDGET_BASE"\s*$/gm,
+      ) ?? [],
     ).toHaveLength(1);
+  });
+
+  it("passes an explicit base, because the default is vacuous on a push to main", () => {
+    // `verify` runs on `push: branches: [main]` as well as on pull requests, and
+    // there `origin/main` IS the commit under test: the merge base is HEAD, the
+    // diff is empty, and the gate reports "0 production file(s) changed" and
+    // exits 0 whatever the tree holds. Reproduced with two lanes that each add
+    // 60 lines to a 600-line file: both pass their own PR gate, merge to 720
+    // against a 700 budget, and the push gate says nothing.
+    //
+    // The event name is what selects the base, and that is the load-bearing
+    // half. A `pull_request.synchronize` payload also carries a top-level
+    // `before` — the previous PR head — so keying on the field instead of on
+    // the event would judge only the newest push to a branch and let everything
+    // earlier in it through.
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    const verify = verifyJobSource(workflow);
+    expect(verify).toContain(
+      "BUDGET_BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}",
+    );
+  });
+
+  it("checks out full history in that job, which the computed comparison needs", () => {
+    // Load-bearing since #2979, for a quieter reason than it first said here: a
+    // shallow clone does NOT fail. Measured — `git clone --depth 1` resolves
+    // `origin/main`, the merge base comes back as HEAD, the diff is empty, and
+    // the gate prints OK over a tree holding a 1300-line module. Truncated
+    // history narrows the diff silently, so a switch to a shallow checkout would
+    // turn this gate off rather than red.
+    const workflow = readFileSync(
+      path.join(REPO_ROOT, ".github/workflows/ci.yml"),
+      "utf8",
+    );
+    expect(verifyJobSource(workflow)).toMatch(/fetch-depth:\s*0/);
   });
 });
 
@@ -228,184 +300,8 @@ describe("budget classification", () => {
       ]),
     ).toHaveLength(1);
   });
-});
 
-describe("baseline serialisation", () => {
-  it("round-trips and is byte-stable regardless of input order", () => {
-    const entries: BaselineEntry[] = [
-      { file: "src/lib/zeta.ts", lines: 900, slug: "domain-module" },
-      { file: "src/app/api/a/route.ts", lines: 300, slug: "route-handler" },
-      { file: "src/app/b/page.tsx", lines: 600, slug: "route-page-shell" },
-    ];
-    const forward = serializeBaseline(entries);
-    const reversed = serializeBaseline([...entries].reverse());
-    expect(forward).toBe(reversed);
-    expect(parseBaseline(forward).problems).toEqual([]);
-    expect(parseBaseline(forward).entries).toEqual(
-      [...entries].sort((a, b) => (a.file < b.file ? -1 : 1)),
-    );
-  });
-
-  it("carries no timestamp, count or other regenerating noise in its header", () => {
-    const a = serializeBaseline([
-      { file: "src/lib/a.ts", lines: 800, slug: "domain-module" },
-    ]);
-    const b = serializeBaseline([
-      { file: "src/lib/a.ts", lines: 800, slug: "domain-module" },
-      { file: "src/lib/b.ts", lines: 900, slug: "domain-module" },
-    ]);
-    const headerOf = (text: string) =>
-      text
-        .split("\n")
-        .filter((line) => line.startsWith("#"))
-        .join("\n");
-    expect(headerOf(a)).toBe(headerOf(b));
-    expect(headerOf(a)).not.toMatch(/\d{4}-\d{2}-\d{2}|generated at|total/i);
-  });
-
-  it("round-trips a path containing a space rather than going permanently red", () => {
-    // The generator writes `<path> <loc> <slug>`; a strict three-field split
-    // could not read back what it had just written, and the advertised fix
-    // (regenerate) reproduced the identical line.
-    const entry: BaselineEntry = {
-      file: "src/lib/zz probe.ts",
-      lines: 800,
-      slug: "domain-module",
-    };
-    const text = serializeBaseline([entry]);
-    const parsed = parseBaseline(text);
-    expect(parsed.problems).toEqual([]);
-    expect(parsed.entries).toEqual([entry]);
-    expect(
-      evaluateRatchet([{ file: "src/lib/zz probe.ts", lines: 800 }], text)
-        .findings,
-    ).toEqual([]);
-  });
-
-  it("rejects every hand-edit shape that would make the file unreliable", () => {
-    const cases: Array<[string, RegExp]> = [
-      ["src/lib/a.ts 800", /expected `<path> <loc> <budget-category>`/],
-      ["src/lib/a.ts eight-hundred domain-module", /positive integer/],
-      ["src/lib/a.ts 0 domain-module", /positive integer/],
-      ["src/lib/a.ts -5 domain-module", /positive integer/],
-      ["src/lib/a.ts 800 tiny-module", /unknown budget category/],
-      ["scripts/a.ts 800 domain-module", /under src\//],
-      ["src\\lib\\a.ts 800 domain-module", /forward slashes/],
-      ["src/lib/../etc.ts 800 domain-module", /normalised/],
-      ["  src/lib/a.ts 800 domain-module", /whitespace/],
-      ["", /blank line/],
-    ];
-    for (const [line, expected] of cases) {
-      const parsed = parseBaseline(`# header\n${line}\n`);
-      expect(
-        parsed.problems.map((problem) => problem.message).join(" | "),
-      ).toMatch(expected);
-    }
-  });
-
-  it("rejects duplicate and out-of-order records", () => {
-    const duplicate = parseBaseline(
-      "src/lib/a.ts 800 domain-module\nsrc/lib/a.ts 900 domain-module\n",
-    );
-    expect(duplicate.problems[0].message).toMatch(/duplicate entry/);
-
-    const unsorted = parseBaseline(
-      "src/lib/b.ts 800 domain-module\nsrc/lib/a.ts 900 domain-module\n",
-    );
-    expect(unsorted.problems[0].message).toMatch(/out of order/);
-  });
-});
-
-describe("the ratchet", () => {
-  it("passes when the tree matches the committed baseline exactly", () => {
-    const tree: FileStat[] = [
-      ...CLEAN_TREE,
-      { file: "src/lib/big.ts", lines: 1200 },
-      { file: "src/app/api/big/route.ts", lines: 400 },
-    ];
-    const result = evaluateRatchet(tree, baselineFor(tree));
-    expect(result.findings).toEqual([]);
-    expect(result.oversizedFiles).toBe(2);
-    expect(result.currentOverage).toBe(
-      1200 - PRODUCTION_LIMIT + (400 - ROUTE_HANDLER_LIMIT),
-    );
-  });
-
-  it("fails on a NEW over-budget file", () => {
-    const before: FileStat[] = [...CLEAN_TREE];
-    const after: FileStat[] = [
-      ...CLEAN_TREE,
-      { file: "src/lib/brand-new.ts", lines: 900 },
-    ];
-    const result = evaluateRatchet(after, baselineFor(before));
-    expect(kinds(result.findings)).toEqual(["new-over-budget"]);
-    const [finding] = result.findings;
-    expect(finding.severity).toBe("regression");
-    expect(finding.file).toBe("src/lib/brand-new.ts");
-    expect(finding.budget).toBe("domain module, <= 700 LOC");
-    expect(finding.current).toContain("900 LOC");
-    expect(finding.action).toMatch(/split or reduce/);
-  });
-
-  it("fails when an already-oversized file grows beyond its baseline", () => {
-    const before: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const after: FileStat[] = [{ file: "src/lib/big.ts", lines: 1201 }];
-    const result = evaluateRatchet(after, baselineFor(before));
-    expect(kinds(result.findings)).toEqual(["grown-beyond-baseline"]);
-    const [finding] = result.findings;
-    expect(finding.severity).toBe("regression");
-    expect(finding.baseline).toBe("1200 LOC");
-    expect(finding.current).toContain("+1 since the baseline");
-  });
-
-  it("fails when a file shrinks and the baseline is not regenerated, and the regenerated baseline is lower", () => {
-    const before: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const after: FileStat[] = [{ file: "src/lib/big.ts", lines: 900 }];
-    const stale = evaluateRatchet(after, baselineFor(before));
-    expect(kinds(stale.findings)).toEqual(["shrunk-below-baseline"]);
-    expect(stale.findings[0].severity).toBe("stale");
-    expect(stale.findings[0].action).toMatch(/quality:budget:update/);
-
-    // Regenerating is the fix, the new ceiling is the lower number, and the
-    // old ceiling no longer passes.
-    const regenerated = stale.regenerated;
-    expect(regenerated).toContain("src/lib/big.ts 900 domain-module");
-    expect(evaluateRatchet(after, regenerated).findings).toEqual([]);
-    expect(kinds(evaluateRatchet(before, regenerated).findings)).toEqual([
-      "grown-beyond-baseline",
-    ]);
-  });
-
-  it("fails when an oversized file drops out of the baseline's scope without regeneration", () => {
-    const before: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const withinBudget = evaluateRatchet(
-      [{ file: "src/lib/big.ts", lines: 400 }],
-      baselineFor(before),
-    );
-    expect(kinds(withinBudget.findings)).toEqual(["no-longer-over-budget"]);
-    expect(withinBudget.findings[0].current).toMatch(/now within budget/);
-
-    const deleted = evaluateRatchet(
-      [{ file: "src/lib/other.ts", lines: 10 }],
-      baselineFor(before),
-    );
-    expect(kinds(deleted.findings)).toEqual(["no-longer-over-budget"]);
-    expect(deleted.findings[0].current).toMatch(
-      /deleted, renamed, or moved out of src\//,
-    );
-  });
-
-  it("fails clearly when the baseline is missing rather than skipping enforcement", () => {
-    const result = evaluateRatchet(
-      [{ file: "src/lib/big.ts", lines: 1200 }],
-      null,
-    );
-    expect(kinds(result.findings)).toEqual(["missing-baseline"]);
-    expect(result.findings[0].severity).toBe("unusable");
-    expect(result.findings[0].problem).toContain(BASELINE_PATH);
-  });
-
-  it("fails on a tracked src/ file the classifier does not recognise", () => {
+  it("flags a tracked src/ file the classifier does not recognise", () => {
     const unclassified = findUnclassifiedFiles([
       "src/lib/big.ts",
       "src/styles/app.css",
@@ -417,320 +313,609 @@ describe("the ratchet", () => {
       "src/lib/mystery.rs",
       "src/lib/no-extension",
     ]);
-
-    const tree: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const result = evaluateRatchet(tree, baselineFor(tree), unclassified);
-    expect(kinds(result.findings)).toEqual([
-      "unclassified-source-file",
-      "unclassified-source-file",
-    ]);
-    expect(result.findings[0].severity).toBe("unusable");
-    expect(result.findings[0].action).toMatch(/SOURCE_EXTENSIONS/);
-  });
-
-  it("fails clearly when the scan finds no production files at all", () => {
-    const result = evaluateRatchet([], "");
-    expect(kinds(result.findings)).toEqual(["empty-scan"]);
-    expect(result.findings[0].severity).toBe("unusable");
-  });
-
-  it("fails on a malformed baseline instead of comparing against a partial one", () => {
-    const tree: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const result = evaluateRatchet(
-      tree,
-      "# header\nsrc/lib/big.ts twelve-hundred domain-module\n",
-    );
-    expect(kinds(result.findings)).toEqual(["malformed-baseline"]);
-    expect(result.findings[0].severity).toBe("unusable");
-  });
-
-  it("refuses a baseline whose recorded budget category is not the one the path implies", () => {
-    const tree: FileStat[] = [{ file: "src/app/api/big/route.ts", lines: 400 }];
-    // Hand-edited from route-handler (250) to domain-module (700) so the file
-    // would look within budget. Rejected, not obeyed.
-    const result = evaluateRatchet(
-      tree,
-      "# header\nsrc/app/api/big/route.ts 400 domain-module\n",
-    );
-    expect(kinds(result.findings)).toEqual(["malformed-baseline"]);
-    expect(result.findings[0].problem).toMatch(
-      /does not match the one this path implies/,
-    );
-  });
-
-  it("refuses a baseline entry that is not over its budget", () => {
-    const tree: FileStat[] = [{ file: "src/lib/small.ts", lines: 100 }];
-    const result = evaluateRatchet(
-      tree,
-      "# header\nsrc/lib/small.ts 100 domain-module\n",
-    );
-    expect(kinds(result.findings)).toEqual(["malformed-baseline"]);
-    expect(result.findings[0].problem).toMatch(/not over its budget/);
-  });
-
-  it("cannot be quietly curated: deleting a still-oversized record reads as new debt", () => {
-    const tree: FileStat[] = [
-      { file: "src/lib/a.ts", lines: 1200 },
-      { file: "src/lib/b.ts", lines: 1300 },
-    ];
-    const curated = serializeBaseline([
-      { file: "src/lib/a.ts", lines: 1200, slug: "domain-module" },
-    ]);
-    const result = evaluateRatchet(tree, curated);
-    expect(kinds(result.findings)).toEqual(["new-over-budget"]);
-    expect(result.findings[0].file).toBe("src/lib/b.ts");
-  });
-
-  it("rejects a hand-raised ceiling that the tree does not justify", () => {
-    const tree: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const inflated = serializeBaseline([
-      { file: "src/lib/big.ts", lines: 5000, slug: "domain-module" },
-    ]);
-    expect(kinds(evaluateRatchet(tree, inflated).findings)).toEqual([
-      "shrunk-below-baseline",
-    ]);
-  });
-
-  it("rejects a baseline whose records match but whose bytes do not", () => {
-    const tree: FileStat[] = [{ file: "src/lib/big.ts", lines: 1200 }];
-    const tampered = baselineFor(tree).replace(
-      /^# File-size budget baseline.*$/m,
-      "# nothing to see here",
-    );
-    const result = evaluateRatchet(tree, tampered);
-    expect(kinds(result.findings)).toEqual(["malformed-baseline"]);
-    expect(result.findings[0].problem).toMatch(/byte-identical/);
-  });
-
-  it("reports several regressions at once rather than stopping at the first", () => {
-    const before: FileStat[] = [{ file: "src/lib/a.ts", lines: 1200 }];
-    const after: FileStat[] = [
-      { file: "src/lib/a.ts", lines: 1300 },
-      { file: "src/lib/b.ts", lines: 800 },
-      { file: "src/app/api/c/route.ts", lines: 300 },
-    ];
-    const result = evaluateRatchet(after, baselineFor(before));
-    expect(result.findings).toHaveLength(3);
-    expect(new Set(kinds(result.findings))).toEqual(
-      new Set(["grown-beyond-baseline", "new-over-budget"]),
-    );
   });
 });
 
-describe("the visible baseline-update escape", () => {
-  it("refuses update when the reviewed baseline is missing and does not recreate it", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      rmSync(path.join(root, BASELINE_PATH));
+describe("summariseSizeDebt", () => {
+  it("is the whole tree's debt, and the same shape the report and the gate both read", () => {
+    const summary = summariseSizeDebt([
+      ...CLEAN_TREE,
+      { file: "src/lib/big.ts", lines: 1200 },
+      { file: "src/app/api/big/route.ts", lines: 400 },
+    ]);
+    expect(summary.scannedFiles).toBe(5);
+    expect(summary.oversizedFiles).toBe(2);
+    expect(summary.debt).toBe(
+      1200 - PRODUCTION_LIMIT + (400 - ROUTE_HANDLER_LIMIT),
+    );
+    // Worst first, so the report's "largest" list needs no second sort key.
+    expect(summary.oversized[0]?.file).toBe("src/lib/big.ts");
+  });
+});
 
-      const refused = captureRun(root, ["--update"]);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("refusing baseline update");
-      expect(refused.stderr).toContain("UNUSABLE");
-      expect(refused.stderr).toContain("missing");
-      expect(refused.stderr).toContain("No baseline bytes were written");
-      expect(() =>
-        readFileSync(path.join(root, BASELINE_PATH), "utf8"),
-      ).toThrow();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+describe("the gate, end to end, against real commits", () => {
+  it("passes on a clean checkout of the base ref", () => {
+    // #2979 acceptance criterion 2, in its most important form: a tree with 283
+    // over-budget files and nothing changed since the base must be GREEN,
+    // without a single line of accepted debt written down anywhere.
+    const repo = newRepo();
+    repo.write("src/lib/way-over.ts", 1200);
+    repo.write("src/app/api/thing/route.ts", 900);
+    const base = repo.commit("base");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("File-size budget ratchet: OK");
   });
 
-  it("refuses an untracked baseline instead of promoting it to reviewed truth", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      const original = readFileSync(path.join(root, BASELINE_PATH), "utf8");
-      git(root, ["rm", "--cached", "--", BASELINE_PATH]);
+  it("fails a NEW over-budget file, naming it, its length, its budget and the split", () => {
+    // #2979 acceptance criterion 3.
+    const repo = newRepo();
+    repo.write("src/lib/existing.ts", 10);
+    const base = repo.commit("base");
+    repo.write("src/lib/brand-new.ts", 900);
+    repo.commit("added a big new module");
 
-      const refused = captureRun(root, ["--update"]);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("not tracked by git");
-      expect(refused.stderr).toContain("No baseline bytes were written");
-      expect(readFileSync(path.join(root, BASELINE_PATH), "utf8")).toBe(
-        original,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("src/lib/brand-new.ts");
+    expect(result.stderr).toContain("900 LOC");
+    expect(result.stderr).toContain("domain module, <= 700 LOC");
+    expect(result.stderr).toContain("over by 200");
+    expect(result.stderr).toMatch(/split it/);
+    expect(result.stderr).toContain("a NEW file is over its budget");
   });
 
-  it("does not rewrite a malformed baseline while unrelated source debt grows", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      writeLines(root, "src/lib/unrelated-growth.ts", 850);
-      git(root, ["add", "--", "src/lib/unrelated-growth.ts"]);
-      const malformed = readFileSync(
-        path.join(root, BASELINE_PATH),
+  it("fails an UNTRACKED new over-budget file, which `git diff` cannot see", () => {
+    // Found by probing, not by reading: the staged case failed correctly while
+    // the untracked case printed nothing at all, because `git diff` lists
+    // tracked changes only. The deleted ledger had the same blind spot through
+    // `git ls-files`. Whoever runs the check before `git add` is exactly the
+    // person who most needs the answer.
+    const repo = newRepo();
+    repo.write("src/lib/existing.ts", 10);
+    const base = repo.commit("base");
+    repo.write("src/lib/never-added.ts", 900);
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("src/lib/never-added.ts");
+  });
+
+  it("leaves an ignored file alone however large", () => {
+    const repo = newRepo();
+    repo.write("src/lib/existing.ts", 10);
+    writeFileSync(path.join(repo.root, ".gitignore"), "src/generated/\n", "utf8");
+    const base = repo.commit("base");
+    repo.write("src/generated/huge.ts", 9000);
+
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+  });
+
+  it("fails an already-over-budget file that grew by one line", () => {
+    // #2979 acceptance criterion 4, the growth half.
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    const base = repo.commit("base");
+    repo.write("src/lib/big.ts", 1201);
+    repo.commit("grew");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("1200 LOC on the base ref");
+    expect(result.stderr).toContain("+1 beyond its ceiling");
+    expect(result.stderr).toContain("an already-oversized file grew");
+  });
+
+  it("passes the same file unchanged, and passes it shrinking", () => {
+    // #2979 acceptance criterion 4, the other two halves. Shrinking needs no
+    // regeneration: the base ref carries the smaller number next time, so a
+    // stale ceiling that would let those lines come back cannot exist.
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    const base = repo.commit("base");
+
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    repo.write("src/lib/big.ts", 900);
+    const shrunk = repo.commit("split some of it out");
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    // And the smaller number really is the new ceiling.
+    repo.write("src/lib/big.ts", 901);
+    repo.commit("crept back up");
+    const crept = captureRun(repo.root, ["--base", shrunk]);
+    expect(crept.code).toBe(1);
+    expect(crept.stderr).toContain("900 LOC on the base ref");
+  });
+
+  it("lets a renamed over-budget file keep its predecessor's ceiling", () => {
+    // #2979 acceptance criterion 5. Moving an oversized file must not read as
+    // 900 lines of brand-new debt.
+    const repo = newRepo();
+    repo.write("src/lib/old-home.ts", 1200);
+    const base = repo.commit("base");
+    git(repo.root, "mv", "src/lib/old-home.ts", "src/lib/new-home.ts");
+    repo.commit("moved it");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+  });
+
+  it("no longer lets a .ts to .js rename launder an over-budget file", () => {
+    // #2979 acceptance criterion 6, and the sharper half of it. The ledger was
+    // keyed by PATH: renaming a 1200-line `.ts` to `.js` left the old entry
+    // behind, the new path was unlisted, and the tool reported the vanished
+    // record as a debt REDUCTION. Here the previous length is looked up under
+    // the old path git reports, so the ceiling follows the file across the
+    // rename and growth is caught in the same commit as the rename.
+    const repo = newRepo();
+    repo.write("src/lib/audit.ts", 1200);
+    const base = repo.commit("base");
+    git(repo.root, "mv", "src/lib/audit.ts", "src/lib/audit.js");
+    repo.write("src/lib/audit.js", 1700);
+    repo.commit("renamed to .js and grew 500 lines");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("src/lib/audit.js");
+    expect(result.stderr).toContain("renamed from src/lib/audit.ts");
+    expect(result.stderr).toContain("+500 beyond its ceiling");
+  });
+
+  it("fails a file MOVED INTO src/ from outside the policy, over its budget", () => {
+    // A rename is followed only within the budgeted scope. `prisma/`, `scripts/`
+    // and the rest have no ceiling to inherit, so a file arriving from one of
+    // them is judged as new — which is what the deleted ledger did by scanning
+    // the whole tree and finding an over-budget file with no entry. Following
+    // the rename unconditionally made a 1324-line `prisma/demo-seed.ts` pass on
+    // arrival at `src/lib/`, and `prisma/demo-seed.ts` is a real file here.
+    const repo = newRepo();
+    repo.write("prisma/demo-seed.ts", 1324);
+    repo.write("src/lib/keep.ts", 10);
+    const base = repo.commit("base");
+    mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+    git(repo.root, "mv", "prisma/demo-seed.ts", "src/lib/demo-seed.ts");
+    repo.commit("moved into src");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("src/lib/demo-seed.ts");
+    expect(result.stderr).toContain(
+      "a file MOVED INTO the budgeted scope is over its budget",
+    );
+    expect(result.stderr).toContain("prisma/demo-seed.ts");
+    expect(result.stderr).toContain("over by 624");
+  });
+
+  it("passes the same move when the arriving file is under its budget", () => {
+    const repo = newRepo();
+    repo.write("prisma/small.ts", 300);
+    repo.write("src/lib/keep.ts", 10);
+    const base = repo.commit("base");
+    mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+    git(repo.root, "mv", "prisma/small.ts", "src/lib/small.ts");
+    repo.commit("moved into src");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+  });
+
+  it("closes the two-step launder through a test path, on the return leg", () => {
+    // Both legs used to pass. Move `src/lib/big.ts` into `src/lib/__tests__/`
+    // (excluded from production debt) and grow it 1200 -> 5000: nothing in scope
+    // changed, so green, and correctly so. Then move it back to
+    // `src/lib/big2.ts`, inheriting 5000 as its previous length: green again. A
+    // 5000-line production module lands with no run ever going red.
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    // Something must stay in scope, or the empty-scan floor answers first and
+    // this case stops being about the launder.
+    repo.write("src/lib/keep.ts", 10);
+    const base1 = repo.commit("base");
+
+    mkdirSync(path.join(repo.root, "src/lib/__tests__"), { recursive: true });
+    git(repo.root, "mv", "src/lib/big.ts", "src/lib/__tests__/big.ts");
+    repo.write("src/lib/__tests__/big.ts", 5000);
+    const base2 = repo.commit("leg one: out of scope and grown");
+
+    expect(captureRun(repo.root, ["--base", base1]).code).toBe(0);
+
+    git(repo.root, "mv", "src/lib/__tests__/big.ts", "src/lib/big2.ts");
+    repo.commit("leg two: back into scope");
+
+    const returned = captureRun(repo.root, ["--base", base2]);
+    expect(returned.code).toBe(1);
+    expect(returned.stderr).toContain("src/lib/big2.ts");
+    expect(returned.stderr).toContain("over by 4300");
+  });
+
+  it("refuses to report clean when it scanned no production files at all", () => {
+    // "Scanned and found nothing wrong" and "scanned nothing" produce the same
+    // empty findings list. The ledger implementation floored on this and the
+    // rewrite lost it, so a checkout with no `src/` tree printed OK and exited
+    // 0. A sparse checkout, a partial clone or the wrong working directory all
+    // land here, and a gate that scans nothing must say so.
+    const repo = newRepo();
+    repo.write("docs/notes.md", 5);
+    const base = repo.commit("base");
+    repo.write("docs/more.md", 5);
+    repo.commit("more docs");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("no production source files at all");
+    expect(result.stderr).toContain("an empty scan is not a pass");
+  });
+
+  it("names the commit it compared against, not only the ref", () => {
+    // The comparison is against the merge base of the ref and HEAD, which on a
+    // stale branch is not where the ref points. Until now nothing the gate
+    // printed said so in either direction, so a surprising result could not be
+    // checked without re-deriving the base by hand.
+    const repo = newRepo();
+    repo.write("src/lib/a.ts", 10);
+    const base = repo.commit("base");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`merge base \`${base.slice(0, 12)}\``);
+  });
+
+  it("judges a branch on what IT did, not on how far main has moved", () => {
+    // The reason the previous length comes from the MERGE BASE rather than from
+    // the ref's tip. Measured on the #2979 branch itself: `origin/main` had
+    // moved ahead by one merged pull request and `git diff origin/main` reported
+    // seven `src/` files as changed that the branch never touched.
+    //
+    // Here `main` SPLITS an oversized file after the branch point. Against the
+    // tip, the untouched branch copy reads as +300 lines of growth it did not
+    // cause; against the merge base it reads as what it is, unchanged.
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    repo.commit("base");
+    git(repo.root, "checkout", "--quiet", "-b", "feature");
+    git(repo.root, "checkout", "--quiet", "main");
+    repo.write("src/lib/big.ts", 900);
+    repo.commit("main split it");
+    git(repo.root, "checkout", "--quiet", "feature");
+
+    const untouched = captureRun(repo.root, ["--base", "main"]);
+    expect(untouched.stderr).toBe("");
+    expect(untouched.code).toBe(0);
+
+    // And the merge base is not a way to hide the branch's OWN growth.
+    repo.write("src/lib/big.ts", 1250);
+    repo.commit("feature grew it");
+    const grown = captureRun(repo.root, ["--base", "main"]);
+    expect(grown.code).toBe(1);
+    expect(grown.stderr).toContain("1200 LOC on the base ref");
+    expect(grown.stderr).toContain("+50 beyond its ceiling");
+  });
+
+  it("fails loudly when the base ref cannot be resolved, rather than passing", () => {
+    // #2979 acceptance criterion 9. An empty diff and an unreadable base look
+    // identical from the outside — both produce no findings — which is why this
+    // one has to be an explicit refusal rather than an absence.
+    const repo = newRepo();
+    repo.write("src/lib/way-over.ts", 5000);
+    repo.commit("base");
+
+    const result = captureRun(repo.root, ["--base", "origin/main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("origin/main");
+    expect(result.stderr).toContain("git fetch origin main");
+    expect(result.stderr).toContain("Judged 0 production file(s)");
+  });
+
+  it("fails loudly when the base exists but shares no history with this checkout", () => {
+    // The shallow-clone shape. A ref that resolves but has no merge base is the
+    // one case where "resolved the ref" is not the same as "can compare".
+    const repo = newRepo();
+    repo.write("src/lib/a.ts", 5);
+    repo.commit("base");
+    git(repo.root, "checkout", "--quiet", "--orphan", "unrelated");
+    git(repo.root, "rm", "-rq", "--cached", ".");
+    repo.write("src/lib/b.ts", 5);
+    repo.commit("unrelated root");
+
+    const result = captureRun(repo.root, ["--base", "main"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("shares no commit");
+    expect(result.stderr).toContain("git fetch --unshallow");
+  });
+
+  it("refuses to judge anything while a tracked src/ file is unclassifiable", () => {
+    // A scope hole reads exactly like a clean pass, so it is `unusable` rather
+    // than a finding to be weighed against the others.
+    const repo = newRepo();
+    repo.write("src/lib/mystery.rs", 5);
+    const base = repo.commit("base");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("src/lib/mystery.rs");
+  });
+
+  it("explains that --update is gone instead of silently doing nothing", () => {
+    const repo = newRepo();
+    repo.write("src/lib/a.ts", 5);
+    repo.commit("base");
+
+    const result = captureRun(repo.root, ["--update"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("`--update` no longer exists");
+    expect(result.stderr).toContain("pull request body");
+    // It must not have recreated the thing it used to write.
+    expect(() =>
+      readFileSync(
+        path.join(repo.root, "scripts/quality/file-size-baseline.txt"),
         "utf8",
-      ).replace(
-        /^# File-size budget baseline.*$/m,
-        "# corrupted header that is not the reviewed contract",
-      );
-      writeFileSync(path.join(root, BASELINE_PATH), malformed, "utf8");
-
-      const refused = captureRun(root, ["--update"]);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("refusing baseline update");
-      expect(refused.stderr).toContain("not byte-identical");
-      expect(refused.stderr).toContain("No baseline bytes were written");
-      expect(refused.stdout).not.toContain("Intentional baseline update");
-      expect(readFileSync(path.join(root, BASELINE_PATH), "utf8")).toBe(
-        malformed,
-      );
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+      ),
+    ).toThrow();
   });
 
-  it("refuses a pure rename before update, then moves the ledger record with unchanged debt", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      git(root, ["mv", "src/lib/original.ts", "src/lib/renamed.ts"]);
+  it("prints the whole tree's debt on request, and never fails on it", () => {
+    // #2979 acceptance criterion 8's other half: the debt figure survives as a
+    // report generated on demand rather than as a checked-in number.
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    repo.write("src/app/api/thing/route.ts", 400);
+    repo.write("src/lib/fine.ts", 20);
+    repo.commit("base");
 
-      const refused = captureRun(root, []);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("src/lib/original.ts");
-      expect(refused.stderr).toContain("src/lib/renamed.ts");
-      expect(refused.stderr).toContain("REGRESSION");
-      expect(refused.stderr).toContain("STALE BASELINE");
-
-      const accepted = captureRun(root, ["--update"]);
-      expect(accepted.code).toBe(0);
-      expect(accepted.stdout).toContain("Intentional baseline update");
-      expect(accepted.stdout).toContain("(unchanged)");
-      expect(accepted.stdout).toContain("PRE-UPDATE REGRESSIONS ACCEPTED (1)");
-      expect(accepted.stdout).toContain("src/lib/renamed.ts");
-
-      const ledger = readFileSync(path.join(root, BASELINE_PATH), "utf8");
-      expect(ledger).not.toContain("src/lib/original.ts 800 domain-module");
-      expect(ledger).toContain("src/lib/renamed.ts 800 domain-module");
-      const ledgerDiff = git(root, ["diff", "--", BASELINE_PATH]);
-      expect(ledgerDiff).toContain("-src/lib/original.ts 800 domain-module");
-      expect(ledgerDiff).toContain("+src/lib/renamed.ts 800 domain-module");
-      expect(captureRun(root, []).code).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+    const result = captureRun(repo.root, ["--report"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("2 of 3 production files are over budget");
+    // (1200 - 700) + (400 - 250)
+    expect(result.stdout).toContain("carrying 650 lines of debt");
+    expect(result.stdout).toContain("src/lib/big.ts");
   });
 
-  it("refuses rename-and-grow before update, then exposes the positive debt delta and ledger change", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      git(root, ["mv", "src/lib/original.ts", "src/lib/renamed.ts"]);
-      writeLines(root, "src/lib/renamed.ts", 850);
-
-      const refused = captureRun(root, []);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("src/lib/renamed.ts");
-      expect(refused.stderr).toContain("850 LOC, over by 150");
-      expect(refused.stderr).toContain("src/lib/original.ts");
-
-      const accepted = captureRun(root, ["--update"]);
-      expect(accepted.code).toBe(0);
-      expect(accepted.stdout).toContain("Intentional baseline update");
-      expect(accepted.stdout).toContain("+50 vs the previous baseline");
-      expect(accepted.stdout).toContain("PRE-UPDATE REGRESSIONS ACCEPTED (1)");
-      expect(accepted.stdout).toContain("src/lib/renamed.ts");
-      expect(accepted.stdout).toContain(
-        "The aggregate accepted debt also increased",
-      );
-
-      const ledgerDiff = git(root, ["diff", "--", BASELINE_PATH]);
-      expect(ledgerDiff).toContain("-src/lib/original.ts 800 domain-module");
-      expect(ledgerDiff).toContain("+src/lib/renamed.ts 850 domain-module");
-      expect(captureRun(root, []).code).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("still names rename-and-grow when a larger unrelated shrink makes aggregate debt fall", () => {
-    const root = createTrackedRepo("src/lib/original.ts", 800);
-    try {
-      writeLines(root, "src/lib/shrinking.ts", 900);
-      const initialBaseline = serializeBaseline(
-        baselineEntriesFor([
-          { file: "src/lib/original.ts", lines: 800 },
-          { file: "src/lib/shrinking.ts", lines: 900 },
-        ]),
-      );
-      writeFileSync(path.join(root, BASELINE_PATH), initialBaseline, "utf8");
-      git(root, ["add", "--", "src/lib/shrinking.ts", BASELINE_PATH]);
-
-      git(root, ["mv", "src/lib/original.ts", "src/lib/renamed.ts"]);
-      writeLines(root, "src/lib/renamed.ts", 850);
-      writeLines(root, "src/lib/shrinking.ts", 800);
-
-      const refused = captureRun(root, []);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("src/lib/renamed.ts");
-      expect(refused.stderr).toContain("src/lib/shrinking.ts");
-
-      const accepted = captureRun(root, ["--update"]);
-      expect(accepted.code).toBe(0);
-      expect(accepted.stdout).toContain("-50 vs the previous baseline");
-      expect(accepted.stdout).toContain("PRE-UPDATE REGRESSIONS ACCEPTED (1)");
-      expect(accepted.stdout).toContain("src/lib/renamed.ts");
-      expect(accepted.stdout).toContain("850 LOC, over by 150");
-      expect(accepted.stdout).toContain(
-        "An aggregate debt decrease does not cancel a regression above",
-      );
-      expect(accepted.stdout).not.toContain(
-        "The aggregate accepted debt also increased",
-      );
-
-      const ledgerDiff = git(root, ["diff", "--", BASELINE_PATH]);
-      expect(ledgerDiff).toContain("-src/lib/original.ts 800 domain-module");
-      expect(ledgerDiff).toContain("+src/lib/renamed.ts 850 domain-module");
-      expect(ledgerDiff).toContain("-src/lib/shrinking.ts 900 domain-module");
-      expect(ledgerDiff).toContain("+src/lib/shrinking.ts 800 domain-module");
-      expect(captureRun(root, []).code).toBe(0);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  it("says so instead of throwing when it is not run inside a checkout", () => {
+    const result = captureRun(path.join(REPO_ROOT, "no-such-directory-2979"), []);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("could not list tracked files");
   });
 });
 
-describe("the committed baseline in this repository", () => {
-  it("describes the current tree exactly", () => {
-    const scan = scanRepository(REPO_ROOT);
-    const committed = readFileSync(
-      path.join(REPO_ROOT, BASELINE_PATH),
-      "utf8",
-    ).replace(/\r\n/g, "\n");
-    const result = evaluateRatchet(
-      scan.productionStats,
-      committed,
-      scan.unclassified,
-    );
-    const summary = result.findings
-      .map(
-        (finding) =>
-          `${finding.severity} ${finding.kind} ${finding.file}: ${finding.problem}`,
-      )
-      .join("\n");
-    expect(summary).toBe("");
-    expect(result.scannedFiles).toBeGreaterThan(1000);
-    expect(result.oversizedFiles).toBeGreaterThan(0);
+describe("the deliberate escape: a declared allowance", () => {
+  /**
+   * Owner decision, 21 Aug 2026. Deleting `quality:budget:update` left the 283
+   * already-over-budget files unable to gain a line, ever, with no way to say
+   * "yes, I mean it" — measured, PR #2980 grows eight of them by 463 lines and
+   * PR #2985 hit the same wall on `src/proxy.ts`. The escape is per-pull-request
+   * (the `changelog.d/` pattern, so no two branches conflict), it names the
+   * file, the length and the reason, and it must never reopen either bypass
+   * this pull request closed.
+   */
+  const REASON =
+    "the branch is four lines of policy inside an existing decision tree, and " +
+    "lifting that tree out is a refactor of its own.";
+
+  function overBudgetRepo() {
+    const repo = newRepo();
+    repo.write("src/lib/big.ts", 1200);
+    repo.write("src/lib/keep.ts", 10);
+    return { repo, base: repo.commit("base") };
+  }
+
+  it("lets an already-over-budget file grow, and says out loud that it did", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.commit("grew, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    // Visible on SUCCESS, not only when something fails: an escape nobody can
+    // see is the ledger again in another shape.
+    expect(result.stdout).toContain("ALLOWED GROWTH");
+    expect(result.stdout).toContain("src/lib/big.ts  ->  1300 LOC");
+    expect(result.stdout).toContain(`${ALLOWANCE_DIR}/2980-big.md`);
+    expect(result.stdout).toContain("lifting that tree out is a refactor of its own");
   });
 
-  it("is tracked by git and is the only place the accepted debt is recorded", () => {
-    const tracked = execFileSync(
-      "git",
-      ["ls-files", "--error-unmatch", BASELINE_PATH],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
+  it("fails when the recorded length is not the file's real length", () => {
+    // The rule that stops an allowance drifting from the tree the way the
+    // ledger did, and stops one being written once and reached for later.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1250\nreason: ${REASON}\n`);
+    repo.commit("grew, with a stale allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("does not match the file");
+    expect(result.stderr).toContain("records 1250 LOC");
+    expect(result.stderr).toContain("1300 LOC — longer than the allowance says");
+    expect(result.stderr).toContain("set `lines: 1300`");
+  });
+
+  it("CONSTRAINT: an allowance cannot cover a NEW file", () => {
+    // Bypass one of the two this pull request closed. An allowance permits an
+    // already-over-budget file to GROW; it is not a way to arrive over budget.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/brand-new.ts", 900);
+    repo.allow(
+      "2980-new.md",
+      `file: src/lib/brand-new.ts\nlines: 900\nreason: ${REASON}\n`,
+    );
+    repo.commit("a new oversized module, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("an allowance cannot cover a NEW file");
+    expect(result.stderr).toContain("src/lib/brand-new.ts");
+    expect(result.stderr).toContain("delete the allowance and split the file");
+  });
+
+  it("CONSTRAINT: an allowance cannot cover a file renamed INTO the scope", () => {
+    // Bypass two. Without this, "move it into src/ and declare it" would walk
+    // any out-of-scope file in at any size.
+    const repo = newRepo();
+    repo.write("prisma/demo-seed.ts", 1324);
+    repo.write("src/lib/keep.ts", 10);
+    const base = repo.commit("base");
+    mkdirSync(path.join(repo.root, "src/lib"), { recursive: true });
+    git(repo.root, "mv", "prisma/demo-seed.ts", "src/lib/demo-seed.ts");
+    repo.allow(
+      "2980-moved.md",
+      `file: src/lib/demo-seed.ts\nlines: 1324\nreason: ${REASON}\n`,
+    );
+    repo.commit("moved into src, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "an allowance cannot cover a file MOVED INTO the budgeted scope",
+    );
+    expect(result.stderr).toContain("src/lib/demo-seed.ts");
+  });
+
+  it("cannot carry a file over its budget for the first time either", () => {
+    // The owner decision permits growth of an existing OVER-BUDGET file. A
+    // module still inside its budget has the cheapest split available to it.
+    const repo = newRepo();
+    repo.write("src/lib/mod.ts", 600);
+    repo.write("src/lib/keep.ts", 10);
+    const base = repo.commit("base");
+    repo.write("src/lib/mod.ts", 800);
+    repo.allow("2980-mod.md", `file: src/lib/mod.ts\nlines: 800\nreason: ${REASON}\n`);
+    repo.commit("crossed its budget, with an allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "an allowance cannot carry a file over its budget for the first time",
+    );
+  });
+
+  it("says so when a change declares an allowance nothing needed", () => {
+    // Either a mistake or a file that shrank, and both are worth seeing. It
+    // FAILS rather than merely printing, because an allowance left lying around
+    // is the seed of the shared ledger this whole change deletes.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/keep.ts", 11);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1200\nreason: ${REASON}\n`);
+    repo.commit("an unrelated change, with a spare allowance");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("declares an allowance the check did not need");
+    expect(result.stderr).toContain(`delete the entry from ${ALLOWANCE_DIR}/2980-big.md`);
+  });
+
+  it("is one-shot: a merged allowance is inert for the next change", () => {
+    // What makes this per-pull-request rather than a ledger by accretion. The
+    // allowance only has effect on the change that introduces it, so it cannot
+    // be reached for again — and after merge it can be swept up in bulk, like a
+    // compiled changelog fragment.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    const merged = repo.commit("PR1: grew, with its allowance");
+
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    repo.write("src/lib/big.ts", 1400);
+    repo.commit("PR2: grows it again, leaning on PR1's allowance");
+
+    const second = captureRun(repo.root, ["--base", merged]);
+    expect(second.code).toBe(1);
+    expect(second.stderr).toContain("an already-oversized file grew");
+    expect(second.stderr).toContain("+100 beyond its ceiling");
+  });
+
+  it("survives into the push-to-main run, which judges the same merge", () => {
+    // Load-bearing, and not obvious: `verify` also runs on a push to `main`,
+    // against the push's own pre-push commit. If an allowance did not reach
+    // that run, every merge of a pull request carrying one would redden `main`
+    // for growth that was already declared and reviewed. It does reach it,
+    // because the allowance file is part of the same merge and so is in that
+    // run's diff too.
+    const { repo, base } = overBudgetRepo();
+    git(repo.root, "checkout", "--quiet", "-b", "lane");
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.commit("lane grows it, with an allowance");
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    git(repo.root, "checkout", "--quiet", "main");
+    const before = git(repo.root, "rev-parse", "HEAD").trim();
+    git(repo.root, "merge", "--quiet", "--no-ff", "-m", "merge lane", "lane");
+
+    const push = captureRun(repo.root, ["--base", before]);
+    expect(push.stderr).toBe("");
+    expect(push.code).toBe(0);
+    expect(push.stdout).toContain("ALLOWED GROWTH");
+  });
+
+  it("refuses to judge anything on an allowance it cannot read", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", "file: src/lib/big.ts\nlines: 1300\nreason: needed\n");
+    repo.commit("grew, with a bare marker for a reason");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("6-character reason");
+    // And the growth is still reported, rather than being swallowed by the
+    // unreadable declaration.
+    expect(result.stderr).toContain("an already-oversized file grew");
+  });
+
+  it("points at the escape in the failure it is the answer to", () => {
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.commit("grew, with nothing said about it");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(`${ALLOWANCE_DIR}/<pr-number>-<slug>.md`);
+    expect(result.stderr).toContain("one file per pull request");
+    expect(result.stderr).toContain(
+      "splitting the file is still the better answer",
+    );
+  });
+});
+
+describe("this repository", () => {
+  it("produces a trustworthy comparison against its own HEAD", () => {
+    // Deliberately asserts the absence of `unusable` rather than a clean exit:
+    // a developer part-way through growing a file should see the GATE complain,
+    // not this test as well. What is checked here is that the machinery reads
+    // this repository correctly — the ref resolves, the diff parses, every
+    // changed file classifies.
+    const result = evaluateComputedRatchet({
+      root: REPO_ROOT,
+      baseRef: "HEAD",
+      unclassified: scanRepository(REPO_ROOT).unclassified,
+      isProductionFile,
+      budgetForFile: (file) => {
+        const budget = budgetForFile(file);
+        return { category: budget.category, limit: budget.limit };
       },
-    );
-    expect(tracked.trim()).toBe(BASELINE_PATH);
+      countLines,
+    });
+    expect(result.findings.filter((f) => f.severity === "unusable")).toEqual([]);
+    expect(result.baseSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  it("covers files in every budget category, so no category is silently unenforced", () => {
+  it("carries files in every budget category, so no category is silently unenforced", () => {
     const scan = scanRepository(REPO_ROOT);
     const slugs = new Set(
-      baselineEntriesFor(scan.productionStats).map((entry) => entry.slug),
+      findOversizedProductionFiles(scan.productionStats).map(
+        (stat) => stat.slug,
+      ),
     );
     expect([...slugs].sort()).toEqual([
       "domain-module",

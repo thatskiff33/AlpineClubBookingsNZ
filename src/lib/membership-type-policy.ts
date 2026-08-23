@@ -726,6 +726,41 @@ async function resolveUnpaidSubscriptionRepricedMemberIds(
     params.subscriptionLockoutMode ?? (await peekSubscriptionLockoutMode());
   if (mode !== "NON_MEMBER_PRICING") return empty;
 
+  return readMemberIdsOwingSubscription(db, {
+    candidateIds,
+    seasonYear: params.seasonYear,
+    policies: params.policies,
+  });
+}
+
+/**
+ * Which of these members owe a required season subscription they have not paid,
+ * read with NO reference to the club's lockout mode.
+ *
+ * THE SHARED CORE OF TWO DIFFERENT QUESTIONS, deliberately factored out rather
+ * than answered twice:
+ *
+ *   - the #2543 REPRICE ("charge them non-member rates"), which is a money rule
+ *     the club opts into and therefore fires only under `NON_MEMBER_PRICING` —
+ *     see `resolveUnpaidSubscriptionRepricedMemberIds` above, which applies that
+ *     gate before calling this;
+ *   - whether the reciprocal other-lodge tick may be OFFERED to them at all
+ *     (#2978), which the owner decided on 21 Aug 2026 is mode-INDEPENDENT —
+ *     see `resolveMemberIdsOwingSubscription` below.
+ *
+ * It takes an already-narrowed client and an already-de-duplicated id list, so
+ * each caller keeps its own early-return order (the reprice checks readability
+ * before it reads the mode, so a narrow test double never triggers a settings
+ * query) instead of inheriting one from here.
+ */
+async function readMemberIdsOwingSubscription(
+  db: UnpaidSubscriptionRepriceDb,
+  params: {
+    seasonYear: number;
+    candidateIds: ReadonlyArray<string>;
+    policies: ReadonlyMap<string, ResolvedMembershipTypePolicy>;
+  },
+): Promise<ReadonlySet<string>> {
   const behaviorByMember = new Map(
     [...params.policies].map(([memberId, policy]) => [
       memberId,
@@ -733,13 +768,13 @@ async function resolveUnpaidSubscriptionRepricedMemberIds(
     ]),
   );
   const settlements = await loadMemberSubscriptionSettlements(db, {
-    memberIds: candidateIds,
+    memberIds: params.candidateIds,
     seasonYear: params.seasonYear,
     subscriptionBehaviorByMember: behaviorByMember,
   });
 
-  const repriced = new Set<string>();
-  for (const memberId of candidateIds) {
+  const owing = new Set<string>();
+  for (const memberId of params.candidateIds) {
     if (
       memberUnpaidSubscriptionForcesNonMemberRate({
         isMember: true,
@@ -748,10 +783,180 @@ async function resolveUnpaidSubscriptionRepricedMemberIds(
         subscriptionPaid: settlements.get(memberId)?.subscriptionPaid ?? false,
       })
     ) {
-      repriced.add(memberId);
+      owing.add(memberId);
     }
   }
-  return repriced;
+  return owing;
+}
+
+/**
+ * Which member-linked guests owe this club a subscription — the question the
+ * other-lodge tick is withheld on (#2978; owner decision, 21 Aug 2026).
+ *
+ * MODE-INDEPENDENT, AND THAT IS THE DECISION, not an oversight. The neighbouring
+ * reprice answers "does the club charge them non-member rates", which only a club
+ * in `NON_MEMBER_PRICING` does. This answers "do they owe us a subscription",
+ * which does not depend on what the club chose to do about it — and the owner's
+ * reasoning for withholding the tick was exactly that: "the lockout exists
+ * precisely to chase an unpaid subscription, and a person in that position does
+ * still owe this club one". Letting reciprocity win for them would let anybody
+ * lapse their subscription, claim membership of a partner lodge, and hold the
+ * member rate indefinitely.
+ *
+ * Gating this on `NON_MEMBER_PRICING` would have left the DEFAULT configuration
+ * (`MembershipLockoutSettings.mode` defaults to `HARD_BLOCK`) offering the tick to
+ * an unpaid member on a `NON_MEMBER_RATE` membership type — the built-in
+ * ASSOCIATE shape — which is the one combination where the rule has to bite.
+ * `NO_BLOCK` was considered and deliberately included too.
+ *
+ * IT DOES NOT REPRICE ANYBODY. This decides which ticks may be OFFERED and
+ * ACCEPTED; a flag already stored against a guest keeps pricing exactly as it did
+ * (`resolveGuestRateMembershipTypes` still fences on the mode-gated reprice set),
+ * so no club's existing booking moves money because of this rule. Under
+ * `NON_MEMBER_PRICING` the two sets coincide and the fences agree.
+ */
+async function resolveMemberIdsOwingSubscription(
+  db: unknown,
+  params: {
+    seasonYear: number;
+    memberIds: ReadonlyArray<string | null | undefined>;
+    policies: ReadonlyMap<string, ResolvedMembershipTypePolicy>;
+  },
+): Promise<ReadonlySet<string>> {
+  const empty: ReadonlySet<string> = new Set<string>();
+  const candidateIds = [
+    ...new Set(
+      params.memberIds
+        .map((id) => id?.trim())
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (candidateIds.length === 0) return empty;
+  // A client that cannot read these facts yields an empty set, exactly as the
+  // reprice does — and that is fail-CLOSED here rather than fail-open, because
+  // the same client cannot resolve a membership-type policy either, so every
+  // member-flagged guest is already refused by the `!policy` rule below.
+  if (!canReadUnpaidSubscriptionFacts(db)) return empty;
+
+  return readMemberIdsOwingSubscription(db, {
+    candidateIds,
+    seasonYear: params.seasonYear,
+    policies: params.policies,
+  });
+}
+
+/**
+ * Whether this guest may carry the other-lodge member rate at all (#2978).
+ *
+ * THE QUESTION IS "WHAT RATE IS THIS PERSON ON", NOT "IS THIS PERSON A MEMBER".
+ * The original fence was `!isMember`, which was wrong in both directions. A
+ * booking guest can be flagged `isMember` and still price at the club's
+ * NON-member rate - most commonly a non-member contact created by
+ * book-on-behalf and later re-added through the member-guest finder, which
+ * filters only on `active` and age tier, so the row carries `isMember` while its
+ * role resolves to the built-in NON_MEMBER type. Those people are exactly who
+ * the reciprocal rate is for, and the old fence hid the tick from them.
+ *
+ * THE ONE CLASS THAT STAYS FENCED OUT: a member who owes this club a season
+ * subscription. Under `NON_MEMBER_PRICING` they are already repriced to
+ * non-member rates, and they carry `NON_MEMBER_DEFAULT` - the same rate source a
+ * true non-member gets, which is deliberate (it keeps the group discount
+ * treating them alike), so the rate source alone cannot separate them.
+ * `isMember` plus the withheld set separates them exactly. Letting the tick
+ * reach them would restore the member rate and quietly undo a lockout the club
+ * configured on purpose, and — owner decision, 21 Aug 2026 — it is withheld
+ * under EVERY lockout mode, because owing the subscription is the fact that
+ * matters and the club's chosen response to it is not.
+ *
+ * THE TWO CALLERS PASS DIFFERENT SETS ON PURPOSE, so read the parameter's name
+ * rather than assuming. `resolveOtherLodgeRateEligibleGuestIds` (who may be
+ * ticked, on the screen and at both API boundaries) passes the MODE-INDEPENDENT
+ * "owes a subscription" set. `resolveGuestRateMembershipTypes` (what a stored
+ * flag is priced at) passes the mode-gated #2543 REPRICE set, so no club's
+ * existing booking is repriced by the offer rule; under `NON_MEMBER_PRICING` the
+ * two coincide.
+ */
+function guestIsOtherLodgeRateEligible(
+  guest: { isMember: boolean; memberId?: string | null },
+  policies: Map<string, { bookingBehavior: MembershipTypeBookingBehavior }>,
+  subscriptionWithheldMemberIds: ReadonlySet<string>,
+): boolean {
+  // A true non-member: always eligible, and the only class the feature
+  // originally served.
+  if (!guest.isMember) return true;
+  // Owes a subscription -> never, per the note above.
+  if (guest.memberId && subscriptionWithheldMemberIds.has(guest.memberId)) {
+    return false;
+  }
+  const policy = guest.memberId ? policies.get(guest.memberId) : undefined;
+  // A member with no resolvable type prices at the member (FULL) rate below, so
+  // there is no non-member rate here to replace. Fail-closed: a client that
+  // cannot resolve policies at all refuses every member-flagged guest rather
+  // than waving them through.
+  if (!policy) return false;
+  // `=== "NON_MEMBER_RATE"`, NOT `!== "MEMBER_RATE"`. The third value,
+  // `BLOCK_BOOKING`, is not "on the non-member rate" — it is "may not book" —
+  // and the looser test admitted it. That is unreachable today only because
+  // `assertMembershipTypeBookingAllowed` refuses such a guest earlier in every
+  // pricing path, which makes a money fence depend on an unrelated guard
+  // continuing to exist. State the rule the fence actually means.
+  return policy.bookingBehavior === "NON_MEMBER_RATE";
+}
+
+/**
+ * The guests on a booking that may be offered the other-lodge member tick.
+ *
+ * Exists so the SCREEN, the preview and the save all answer this question from
+ * the same code: the edit panel decides which rows get a tick box from this, and
+ * `resolveOtherLodgeRateElection` refuses a tick on anybody outside it. Deriving
+ * the two independently is how a screen ends up offering a control whose save is
+ * refused.
+ *
+ * IT TAKES NO LOCKOUT MODE, and that absence is load-bearing (owner decision,
+ * 21 Aug 2026). Somebody who owes this club a subscription is withheld the tick
+ * whatever the club does about the debt, so this question never consults the
+ * mode — see `resolveMemberIdsOwingSubscription`. The mode still governs the
+ * #2543 REPRICE, which is a different question asked in a different place.
+ */
+export async function resolveOtherLodgeRateEligibleGuestIds(
+  db: unknown,
+  params: {
+    seasonYear: number;
+    guests: ReadonlyArray<{
+      id: string;
+      isMember: boolean;
+      memberId?: string | null;
+    }>;
+  },
+): Promise<Set<string>> {
+  const eligible = new Set<string>();
+  if (params.guests.length === 0) return eligible;
+  // Short-circuit: with no member-flagged guest there is nothing to resolve and
+  // every guest is eligible by the first rule above, so the ordinary
+  // all-non-members booking costs zero extra queries.
+  if (!params.guests.some((guest) => guest.isMember)) {
+    for (const guest of params.guests) eligible.add(guest.id);
+    return eligible;
+  }
+  const policies = await resolveMembershipTypePoliciesForMembers(db, {
+    memberIds: params.guests.map((guest) => guest.memberId),
+    seasonYear: params.seasonYear,
+  });
+  const owingSubscriptionMemberIds = await resolveMemberIdsOwingSubscription(db, {
+    seasonYear: params.seasonYear,
+    memberIds: params.guests
+      .filter((guest) => guest.isMember)
+      .map((guest) => guest.memberId),
+    policies,
+  });
+  for (const guest of params.guests) {
+    if (
+      guestIsOtherLodgeRateEligible(guest, policies, owingSubscriptionMemberIds)
+    ) {
+      eligible.add(guest.id);
+    }
+  }
+  return eligible;
 }
 
 /**
@@ -910,13 +1115,16 @@ export async function resolveGuestRateMembershipTypes<
     //
     // FIRST, and deliberately so. It is an explicit, audited human decision about
     // one named person on one booking, so it outranks every rule below, all of
-    // which are derived from the guest's own record. It is fenced to
-    // `!isMember`: a member of THIS club already resolves through their own
-    // membership type, and letting the flag reach them would silently override
-    // both their type's policy and the #2543 unpaid-subscription reprice. The
-    // API boundary refuses the combination too — this is the second fence, not
-    // the only one.
-    if (!guest.isMember && guest.otherLodgeMember) {
+    // which are derived from the guest's own record.
+    //
+    // #2978 WIDENED THE FENCE FROM `!isMember` TO "prices at the non-member
+    // rate", which is the question this feature was always asking - see
+    // `guestIsOtherLodgeRateEligible`. The half of the old fence that MATTERS is
+    // kept there: a member repriced by the #2543 unpaid-subscription lockout is
+    // still refused, so a tick can never undo a lockout. The API boundary
+    // refuses the same set too - this is the second fence, not the only one.
+    if (guest.otherLodgeMember &&
+        guestIsOtherLodgeRateEligible(guest, policies, unpaidRepricedMemberIds)) {
       return {
         ...guest,
         rateMembershipTypeId: fullTypeId(),

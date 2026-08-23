@@ -172,6 +172,16 @@ vi.mock("@/app/(admin)/admin/members/_components/member-table", () => ({
   MemberTable: () => <div>No affected member in this filtered page</div>,
 }));
 
+// #2978: the page fetches the club's membership types once and hands them to
+// the toolbar and the table. Both are stubbed above, and this suite's fetch mock
+// is ORDER-keyed (mockResolvedValueOnce / mockRejectedValueOnce), so a second
+// caller of the shared `fetch` would consume the response queued for the list
+// refresh. Stubbed rather than URL-routed, because what this file tests is the
+// Xero recovery alert, not where the type names come from.
+vi.mock("@/hooks/use-membership-type-options", () => ({
+  useMembershipTypeOptions: () => [],
+}));
+
 describe("members-list Xero partial-success recovery", () => {
   beforeEach(() => {
     vi.clearAllMocks();

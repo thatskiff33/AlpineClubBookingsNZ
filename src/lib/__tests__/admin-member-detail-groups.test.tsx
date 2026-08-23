@@ -259,6 +259,45 @@ describe("Admin member detail grouped layout", () => {
     ).toBeTruthy();
   });
 
+  /**
+   * #2978 review: the roster now reads "Non-Member – Adult" for a non-member
+   * booking contact, so the record it links to must not read "None" and "No
+   * seasonal type set" for the same person. Before the roster change the two
+   * agreed; this keeps them agreeing.
+   */
+  it("names the non-member category where the roster does, instead of an empty state", async () => {
+    memberOverrides = {
+      role: "NON_MEMBER",
+      accessRoles: [],
+      canLogin: false,
+      seasonalMembershipAssignments: [],
+    };
+
+    await renderPage();
+
+    // The Membership group's preview line…
+    expect(
+      screen.getByText("2026/2027: Non-Member", { exact: false })
+    ).toBeTruthy();
+    expect(screen.queryByText(/No seasonal type set/)).toBeNull();
+    // …and the summary strip beside it, whose Membership tile read "None".
+    // Matched by the tile's own value node: the preview line above renders
+    // "2026/2027: Non-Member", so an exact match can only be the tile.
+    expect(screen.getByText("Non-Member", { exact: true })).toBeTruthy();
+  });
+
+  it("still shows the empty state for a MEMBER with no season type, where it is the truth", async () => {
+    // An ordinary member with no type assigned really is an administrative
+    // to-do, and #2978 must not paper over it.
+    memberOverrides = { seasonalMembershipAssignments: [] };
+
+    await renderPage();
+
+    expect(
+      screen.getByText("2026/2027: No seasonal type set", { exact: false })
+    ).toBeTruthy();
+  });
+
   it("expands a group on click and persists the choice per section", async () => {
     await renderPage();
 

@@ -36,6 +36,11 @@ const h = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   getXeroLockDates: vi.fn(),
   isQuotePricedBooking: vi.fn(),
+  // #2978 review: hoisted so the tests can assert what the ROUTE passes it. It
+  // was previously an inline stub, which meant nothing checked that the route
+  // handed it the booking's guests or the booking's season — the two inputs that
+  // decide who gets a tick box.
+  resolveOtherLodgeRateEligible: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
@@ -83,6 +88,14 @@ vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
 // makes of the flag is unit-tested in `booking-other-lodge-rate.test.ts`.
 vi.mock("@/lib/membership-type-policy", () => ({
   assertMembershipTypeBookingAllowed: vi.fn().mockResolvedValue(undefined),
+  // #2978: every guest on this suite's fixtures is a plain non-member, so the
+  // real helper would return all of them. Stubbed rather than run for real
+  // because this file mocks the module wholesale and has no membership-type or
+  // subscription fixtures behind it; WHO is eligible is tested against the real
+  // resolver in `membership-type-policy-subscription-reprice.test.ts`, and the
+  // FENCE against that answer in `booking-other-lodge-rate.test.ts`. What this
+  // file tests is the quote route's behaviour once eligibility is settled.
+  resolveOtherLodgeRateEligibleGuestIds: h.resolveOtherLodgeRateEligible,
   resolveGuestRateMembershipTypes: vi
     .fn()
     .mockImplementation((_db: unknown, { guests }: { guests: Array<Record<string, unknown>> }) =>
@@ -259,6 +272,10 @@ beforeEach(() => {
   h.groupDiscountFindUnique.mockResolvedValue(null);
   h.bookingRequestFindFirst.mockResolvedValue(null);
   h.isQuotePricedBooking.mockResolvedValue(false);
+  h.resolveOtherLodgeRateEligible.mockImplementation(
+    (_db: unknown, { guests }: { guests: Array<{ id: string }> }) =>
+      Promise.resolve(new Set(guests.map((guest) => guest.id))),
+  );
   h.getDefaultLodgeId.mockResolvedValue("lodge-1");
   h.getLodgeCapacity.mockResolvedValue(29);
   h.findConflicts.mockResolvedValue([]);
@@ -394,6 +411,76 @@ describe("modify-quote — other-lodge member rate", () => {
 
     expect(res.status).toBe(403);
     expect(h.priceGuests).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #2978 review: the same refusal, from the one actor who gets past the
+   * ownership check — the booking's OWN member. That is the only shape in which
+   * a non-admin reaches the election resolver at all (the test above is refused
+   * ~300 lines earlier, for not owning the booking), so it is the only shape
+   * that can show the reads are not done first.
+   *
+   * `resolveOtherLodgeRateElection` raises its admin-only 403 AFTER eligibility
+   * is resolved in program order. Without the `isAdmin` gate on the resolution,
+   * an ordinary member could make every one of their own previews pay for
+   * several database reads whose answer they are then refused.
+   */
+  it("refuses the booking's own member without resolving eligibility first", async () => {
+    h.auth.mockResolvedValue({ user: { id: "m1" } });
+    h.authorizationRole.mockReturnValue("MEMBER");
+
+    const res = await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(res.status).toBe(403);
+    expect(h.resolveOtherLodgeRateEligible).not.toHaveBeenCalled();
+    expect(h.priceGuests).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #2978 review: this suite stubs eligibility, so without these two assertions
+   * nothing checked the ROUTE's half of the contract — which guests it asks
+   * about and in which season. A stub that answers "everybody is eligible"
+   * cannot tell a correct call from one that passed the wrong booking.
+   */
+  it("asks about this booking's own guests, in this booking's own season", async () => {
+    await POST(
+      req({
+        otherLodgeId: "lodge-partner",
+        otherLodgeMemberGuestIds: ["g-visitor"],
+      }),
+      { params },
+    );
+
+    expect(h.resolveOtherLodgeRateEligible).toHaveBeenCalledTimes(1);
+    const [, args] = h.resolveOtherLodgeRateEligible.mock.calls[0] as [
+      unknown,
+      { seasonYear: number; guests: Array<{ id: string }> },
+    ];
+    // Every guest on the STORED booking, member and non-member alike — the fence
+    // is judged over the whole roster, not over the ticked subset.
+    expect(args.guests.map((guest) => guest.id)).toEqual([
+      "g-owner",
+      "g-visitor",
+      "g-stranger",
+    ]);
+    // The booking's check-in falls in the 2026 season (the fixture stays in
+    // August 2026 against the frozen 2026-07-01 clock), NOT any new date this
+    // edit proposes: the panel offered the ticks from the stored booking, so the
+    // fence has to be judged in the same season or the screen and the save
+    // disagree.
+    expect(args.seasonYear).toBe(2026);
+  });
+
+  it("does not resolve eligibility at all on a modification that never mentions the rate", async () => {
+    await POST(req({ checkOut: "2026-08-04" }), { params });
+
+    expect(h.resolveOtherLodgeRateEligible).not.toHaveBeenCalled();
   });
 
   it("refuses a lodge id that names nothing", async () => {

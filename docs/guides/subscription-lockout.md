@@ -95,6 +95,20 @@ This option moves money, so it is worth reading before you pick it.
   stopping them: today that member cannot book at all, and here they get the
   Booking-Officer override path with the bed held. If a paid-up adult member is on
   the booking — a financial spouse or parent, say — it simply books.
+- **They cannot be given the "member of another lodge" rate while the
+  subscription is owed.** If your club runs the reciprocal arrangement described
+  in [Bookings → Charge a visiting club's members at your member
+  rate](bookings.md#charge-a-visiting-clubs-members-at-your-member-rate), the
+  tick box simply does not appear beside a member who owes a subscription, and
+  the Guests card says why. This one is **not** conditional on the option you
+  pick on this page — it holds even for clubs that stop unpaid members booking
+  outright, and for clubs that have the lockout switched off — because the fact
+  it turns on is that the subscription is owed, not what the club does about it.
+  It deliberately catches the awkward case too: somebody who has let *your*
+  subscription lapse while being fully paid up at the partner lodge gets no tick
+  either. Otherwise anybody could lapse, name a partner lodge, and hold your
+  member rate indefinitely, which is exactly the money this page exists to chase.
+  Settle the subscription and the tick box appears.
 - **An unpaid member stops counting as the adult member who hosts non-member
   guests.** If you also run the adult-member hosting rule, somebody the club is
   charging as a non-member is not the responsible member that rule asks for, so

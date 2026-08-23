@@ -161,9 +161,10 @@ branches included, and locks still win over it in both states of the switch.
 
 ## INV-MOD-027
 
-A booking officer may price a **non-member** at the club's own member rate as a
-recognised member of a partner lodge, and that election changes the RATE and
-nothing else (Other Lodges epic, follow-up to #2749).
+A booking officer may price a guest who is **currently on the club's non-member
+rate** at the club's own member rate instead, as a recognised member of a partner
+lodge, and that election changes the RATE and nothing else (Other Lodges epic,
+follow-up to #2749; eligibility widened by #2978).
 
 `Booking.otherLodgeId` names the partner lodge for the whole booking;
 `BookingGuest.otherLodgeMember` is the per-person opt-in. A flagged guest
@@ -172,14 +173,107 @@ resolves to the built-in `FULL` type's rate rows with `rateSource`
 `resolveGuestRateMembershipTypes`, the one gate every pricing path already
 passes through (INV-MOD-007), so no write path can be missing the rule.
 
-**`isMember` stays false, permanently and deliberately.** The person is a member
-of ANOTHER club, not of this one, so adult-member hosting (`INV-HOST`), the
-non-member hold, split bookings, `Booking.hasNonMembers`, the member-guest
-subscription gate and member-only promotions must all keep seeing a non-member.
+**WHO MAY BE ELECTED IS A RATE QUESTION, NOT AN `isMember` QUESTION (#2978).**
+The eligible set is everyone the club currently charges its non-member rate, and
+that is NOT the same as everyone with `isMember` false: a non-member contact
+created by book-on-behalf and later re-added through the member-guest finder
+carries `isMember` true while resolving to the built-in `NON_MEMBER` type, and
+those people are exactly who a reciprocal rate is for. `resolveOtherLodgeRateEligibleGuestIds`
+(`src/lib/membership-type-policy.ts`) is the single answer: the edit panel decides
+which rows get a tick box from it, and `resolveOtherLodgeRateElection` refuses a
+tick on anybody outside it, so the screen can never offer a control whose save is
+refused.
+
+**One class is excluded on purpose: a member who owes this club a season
+subscription.** Under `NON_MEMBER_PRICING` they are `isMember` with
+`NON_MEMBER_DEFAULT` — the same rate source a true non-member carries,
+deliberately, so the group discount treats them alike (see the note in
+`resolveGuestRateMembershipTypes`) — so the rate source alone cannot separate
+them and `isMember` plus the unpaid set does. Electing them would restore the
+member rate and silently undo a lockout the club configured on purpose, which is
+a money outcome, so both the API boundary and the rate resolver refuse it.
+
+**Owing the subscription withholds the tick under EVERY lockout mode** (owner
+decision, 21 Aug 2026). It is not conditional on the club having chosen
+`NON_MEMBER_PRICING`: the fact that matters is the debt, not the club's chosen
+response to it, and `MembershipLockoutSettings.mode` defaults to `HARD_BLOCK`, so
+a mode-gated rule would have left the DEFAULT configuration offering the club's
+own member rate to an unpaid member on a `NON_MEMBER_RATE` membership type.
+`NO_BLOCK` was considered and deliberately included. In code the two questions
+are separate functions on purpose: `resolveMemberIdsOwingSubscription` answers
+"do they owe us one" for the OFFER, and the mode-gated
+`resolveUnpaidSubscriptionRepricedMemberIds` answers "does the club charge them
+non-member rates" for the REPRICE. Nothing about the offer rule moves money on an
+existing booking: a flag already stored keeps pricing exactly as it did.
+
+**Why a lapsed member of this club who is paid up at a partner lodge still gets
+no tick, and why that is intended rather than a bug.** It looks harsh, and it was
+put to the owner as its own question. Letting reciprocity win there would let
+anybody lapse their subscription, claim membership of a partner lodge, and keep
+paying the member rate indefinitely — the lockout exists precisely to chase an
+unpaid subscription, and somebody in that position does still owe this club one.
+It was weighed against offering the tick with an officer-facing warning, and the
+clean rule was preferred. The officer is told the tick is withheld and why (see
+[the booking officer's guide](../guides/bookings.md) and
+[Subscription lockout](../guides/subscription-lockout.md)); the way to apply the
+reciprocal rate to that person is to settle their subscription, not to work
+around the rule here.
+
+**Eligibility answers `bookingBehavior === "NON_MEMBER_RATE"`, not
+`!== "MEMBER_RATE"`.** The third value, `BLOCK_BOOKING`, means "may not book at
+all", which is not "is on the non-member rate"; the looser test admitted it, and
+was unreachable only because `assertMembershipTypeBookingAllowed` refuses such a
+guest earlier in every pricing path. A money fence must not depend on an
+unrelated guard continuing to exist.
+
+**A stored flag records what was CHARGED, never what was asked for.** The
+election fence is judged against the stored booking rows while pricing is judged
+against the proposed rows, which the `INV-MOD` placeholder→member link has
+already rewritten — so a request that links a placeholder to a member and ticks
+them passes the fence while pricing correctly resolves the member's own type.
+`applyGuestChanges` therefore writes `otherLodgeMember: true` only for guests the
+pricing pass resolved to `OTHER_LODGE_MEMBER`
+(`PricingResult.otherLodgeRatedGuestIds`), while an untick always clears the flag
+— gate the clear and a stale flag could never be removed. For the same reason an
+election is never price-preserving: it may not take the identity-only pricing
+echo, which would write the flag without running the rate resolver at all.
+
+**`isMember` is never written by this election, permanently and deliberately.**
+The tick records that somebody is a member of ANOTHER club and says nothing about
+their standing in this one, so adult-member hosting (`INV-HOST`), the non-member
+hold, split bookings, `Booking.hasNonMembers`, the member-guest subscription gate
+and member-only promotions all keep seeing exactly what they saw before it.
 Only the rate resolver reads the flag, which is what confines the blast radius to
-price. The resolver additionally refuses to apply the flag to a member row at
-all, so a row that somehow carries both still resolves through that member's own
-membership type — the API refusal is the first fence, not the only one.
+price — and the resolver re-checks eligibility itself, so a row that somehow
+carries the flag without qualifying still resolves through the ordinary rules.
+The API refusal is the first fence, not the only one.
+
+**An election-only edit is EXEMPT from the quote-priced edit block, on both the
+preview and the save** (owner decision, 21 Aug 2026). A booking converted from a
+public request is quote-priced: its guest rows carry a split of a total an
+officer negotiated, and `QUOTE_PRICED_EDIT_BLOCK_MESSAGE` normally refuses any
+edit that would disturb that basis. The tick is exempted because it does not
+renegotiate anything — it records that somebody belongs to a partner lodge and
+applies the rate the club has already agreed to give such people. That is the
+same character as the `INV-MOD` placeholder→member link, which was exempted
+first and is the precedent this follows. **This was decided, not overlooked.**
+
+The exemption is **election-ONLY**, and that fence is what makes it safe: pair
+the tick with a date move, a guest added or removed, a per-guest stay range or a
+promotion and the block applies again in full, because those genuinely do move
+the negotiated basis. Every guest the election does not name keeps their locked
+split price, since only the ticked and unticked rows have their locks cleared.
+It is officer-only, matching the resolver's own admin refusal.
+
+**One predicate answers it for both paths**
+(`requestIsOtherLodgeRateElectionOnly`), and that is deliberate rather than
+tidiness. The preview and the save each used to carry their own hand-written
+list of disturbing fields — and the save's list did not exist at all, so an
+election-only edit on a negotiated booking previewed 200 and then saved 400, on
+precisely the bookings these guests arrive through. Two lists drift; one cannot.
+For the same reason an election never takes the identity-only price-preserving
+echo: that path writes the flag without running the rate resolver, so the tick
+would land and the money would not move.
 
 **The election is an END STATE, and the guests whose flag CHANGES are exactly the
 guests whose locked nights are cleared.** `resolveOtherLodgeRateElection`

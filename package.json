@@ -51,7 +51,6 @@
     "load:dashboard": "k6 run load/scenarios/member-dashboard.js",
     "quality:report": "tsx scripts/quality-report.ts",
     "quality:budget": "tsx scripts/ci/check-file-size-budget.ts",
-    "quality:budget:update": "tsx scripts/ci/check-file-size-budget.ts --update",
     "audit:census": "tsx scripts/audit/audit-writer-census.ts",
     "diagnostics:bundle": "tsx scripts/diagnostics/generate-knowledge-bundle.ts",
     "diagnostics:provision-role": "tsx scripts/diagnostics/provision-ai-diagnostics-role.ts",

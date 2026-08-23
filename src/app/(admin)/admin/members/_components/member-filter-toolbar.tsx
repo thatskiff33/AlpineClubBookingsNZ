@@ -10,11 +10,13 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectGroup,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
 import { useAccessRoleOptions } from "@/hooks/use-access-role-options"
-import { useMembershipTypeOptions } from "@/hooks/use-membership-type-options"
+import type { MembershipTypeOption } from "@/hooks/use-membership-type-options"
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter"
 import { NON_MEMBER_ROLE_VALUES, ROLE_LABELS } from "@/lib/member-roles"
 import {
@@ -34,6 +36,13 @@ interface MemberFilterToolbarProps {
   filters: Filters
   xeroFeatures: XeroFeatureFlags
   xeroContactGroupsList: XeroContactGroup[]
+  /**
+   * The club's membership types, ALL of them. Passed in rather than fetched here
+   * (#2978): the table needs the same list to name a non-member category's
+   * fallback type, and two components each calling `useMembershipTypeOptions`
+   * would fetch the same endpoint twice on one page load.
+   */
+  membershipTypes?: MembershipTypeOption[]
   onSearchChange: (value: string) => void
   onSetFilter: (key: keyof Filters, value: string) => void
   resetDisabled: boolean
@@ -45,13 +54,18 @@ export function MemberFilterToolbar({
   filters,
   xeroFeatures,
   xeroContactGroupsList,
+  membershipTypes,
   onSearchChange,
   onSetFilter,
   resetDisabled,
   onReset,
 }: MemberFilterToolbarProps) {
   const roleOptions = useAccessRoleOptions()
-  const membershipTypeOptions = useMembershipTypeOptions()
+  // Only the ACTIVE types are offered as filter values, exactly as before the
+  // hook widened to return every type.
+  const membershipTypeOptions = (membershipTypes ?? []).filter(
+    (type) => type.isActive,
+  )
   // The `role` filter param is shared by the Access Role and Non-Member
   // Category selects (backend reads a single `role` param); the two categories
   // are mutually exclusive, so each select shows its neutral "All" state when
@@ -147,6 +161,33 @@ export function MemberFilterToolbar({
               <SelectItem value={UNASSIGNED_MEMBERSHIP_TYPE_VALUE}>
                 Unassigned
               </SelectItem>
+              {/*
+                #2978 (owner decision, 21 Aug 2026): COPY ONLY — nothing about
+                what these options match has changed, and acceptance criterion 1
+                forbids changing it. The Type – Tier column now reads
+                "Non-Member – Adult" for a non-member booking contact, so an
+                officer reasonably picks the Non-Member type below and gets
+                nothing: those rows carry no season assignment, which is what
+                Unassigned means and always meant. Say so where they are looking.
+
+                A `SelectLabel`, not an item: Radix renders it as a plain node
+                inside the listbox, so it is announced as text and can never be
+                chosen as a value.
+
+                IT MUST BE WRAPPED IN A `SelectGroup`, and the wrapper is not
+                cosmetic. Radix's `SelectLabel` reads the group context and
+                THROWS without it - and it throws on page load, not on open,
+                because a CLOSED `SelectContent` still portals its children into
+                a detached DocumentFragment to collect them. Unwrapped, this
+                crashed the whole members page to the error boundary; the unit
+                suites could not see it because they mock this select module.
+              */}
+              <SelectGroup>
+                <SelectLabel className="max-w-[240px] whitespace-normal text-xs font-normal text-muted-foreground">
+                  Non-member contacts have no membership type — they are listed
+                  under Unassigned.
+                </SelectLabel>
+              </SelectGroup>
               {membershipTypeOptions.map((type) => (
                 <SelectItem key={type.id} value={type.id}>
                   {type.name}

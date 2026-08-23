@@ -333,97 +333,223 @@ the existing surface.
 
 ### File-size budget ratchet
 
-The tree does not meet the budgets today and will not for some time. At the
-baseline carried after `main` commit `aafbd08f3`, the scanner measured 1,903
-production files; 281 were over budget and carried 131,709 lines of size debt.
-These are an anchored measurement, not acceptance constants — rerun
-`npm run quality:budget` for the current tree. Failing all debt at once would
-produce either a permanently red gate or a mass exception list, and both are
-worse than no gate, because they look like enforcement while providing none.
-So the rule CI enforces is:
+The tree does not meet the budgets today and will not for some time. Measured
+on 21 Aug 2026: 283 of 2,036 production files are over budget, carrying 122,887
+lines of size debt. That is an anchored measurement, not an acceptance constant
+— run `npm run quality:budget -- --report` for the current tree, which is now
+the only place the figure lives. Failing all that debt at once would produce
+either a permanently red gate or a mass exception list, and both are worse than
+no gate, because they look like enforcement while providing none. So the rule CI
+enforces is:
 
 > Current size debt may stay. New debt and debt growth may not appear silently.
 
-Every over-budget file is recorded in
-[`scripts/quality/file-size-baseline.txt`](../scripts/quality/file-size-baseline.txt)
-with the line count that is now its ceiling. From that:
+**No ceiling is written down.** For each file a change touches, the check reads
+how long that file was on `origin/main` and compares. From that:
 
-- a file **not** in the baseline may not exceed its budget;
-- a file **in** the baseline may not exceed its recorded line count;
-- shrinking is always allowed; verification reports the old ceiling as stale
-  until regeneration **lowers** it;
-- a missing, stale or malformed baseline fails too — an enforcement tool that
-  cannot trust its own input must say so rather than report a pass it has not
-  earned.
+- a file that was **within** its budget may not go over it;
+- a file that was **already over** may not exceed the length it had on
+  `origin/main`;
+- shrinking is always allowed, and needs no follow-up: the smaller number is
+  what the next change is measured against, because that is what `origin/main`
+  will then carry;
+- a file the change did not touch is not judged at all — it cannot have grown;
+- an already-over-budget file **may** grow if the change says so out loud, in a
+  per-pull-request allowance that names the file, its new length and why
+  splitting is worse — see "When a file legitimately has to grow" below;
+- a file **renamed within** the budgeted scope keeps its predecessor's ceiling,
+  so moving an oversized module does not read as a pile of brand-new debt. A
+  file renamed **into** the scope from outside it — from `prisma/`, `scripts/`,
+  or a `__tests__/` path — has no ceiling to inherit and is judged as **new**,
+  so it must meet its budget outright. Otherwise "move it into `src/`" would be
+  a way to arrive over budget with the gate green, and moving it out and back
+  again would be a way to launder any amount of growth in two steps;
+- if the base cannot be read, the check **fails**. An enforcement tool that
+  cannot see what it is comparing against must say so rather than report a pass
+  it has not earned, which is the same rule `npm run pr:check` follows for an
+  unfetched `origin/main`. The same goes for a run that finds **no production
+  files at all**: "scanned and found nothing wrong" and "scanned nothing" are
+  the same empty result and must not be the same message.
 
 ```bash
-npm run quality:budget          # verify (also a step in CI's `verify` job)
-npm run quality:budget:update    # regenerate against the working tree
+npm run quality:budget                    # verify (also a step in CI's `verify` job)
+npm run quality:budget -- --base <ref>    # compare against something other than origin/main
+npm run quality:budget -- --report        # the whole tree's debt, on demand
 ```
 
-Both read `git ls-files` and the working tree only: no network, no database,
-no build. A full run is well under a second.
+All three read `git` and the working tree only: no network, no database, no
+build. A full run is well under a second.
+
+**"On `origin/main`" means at the point this branch was cut from it** — the
+merge base of `origin/main` and `HEAD`, not the tip. Otherwise a branch is
+measured against whatever has landed on `main` since, and `main`'s own edits
+read as the branch's. That was measured while building this: `origin/main` had
+moved ahead by one merged pull request and `git diff origin/main` reported seven
+`src/` files as changed that the branch had never touched. They happened to be
+shrinks, so nothing failed — but had that pull request *split* a file, the local
+run would have gone red for somebody else's edit.
+
+**In CI the two readings are the same commit**, so this choice costs and buys
+nothing there. A `pull_request` run checks out `refs/pull/N/merge`, a merge
+commit whose first parent is the base tip, so the merge base *is* the tip — and
+the merge tree already carries `main`'s version of every untouched file, so the
+seven files above could not have appeared under either reading. The difference
+is entirely about running the check locally on a branch that has not merged
+`main` in.
+
+**What it costs locally, stated plainly.** The merge base is not uniformly the
+stricter reading. If `main` *shrinks* a file after the branch point, the branch
+is still judged against the larger pre-split length: measured, a 1,200-line
+module that `main` splits to 300 can be re-inflated to 1,199 on a stale branch
+and the local run passes, where the tip reading would have failed it at 700. The
+gap closes as soon as `main` is merged in — the merge base then moves to the
+split — and it never opens in CI.
+
+**On a push to `main` the default base is not usable at all**, and the `verify`
+job passes an explicit one. There, `origin/main` *is* the commit being tested:
+the merge base is `HEAD`, the diff is empty, and the check would report "0
+production files changed" whatever the tree holds. Two branches that each add
+sixty lines to a six-hundred-line file both pass their own pull-request run,
+merge cleanly to 720 against a 700 budget, and nothing would ever say so — after
+which the next change to that file is measured against 720. The workflow
+therefore passes the push event's own pre-push commit as `--base`, and keys that
+on the event name, because a `pull_request` payload carries a `before` field too
+and it means something else entirely.
+
+Most of the time that run says exactly what the pull-request run already said,
+against exactly the same base — for a branch that was up to date, the merge
+commit's tree is the tree CI already tested. It differs in two situations, and
+both are worth knowing. If `main` moved between a branch's last run and its
+merge, the push run is the first thing to see the combined result, which is the
+whole point. And if an accepted increase is ever landed by merging a red pull
+request, the push run goes red once as well; it clears on the next push, and
+while it is red it is reporting what `main` now holds rather than a fault in the
+merge.
+
+This is also why CI's `verify` job must keep `fetch-depth: 0` — for a quieter
+reason than "a shallow clone has no merge base", which is not true. A depth-1
+clone resolves `origin/main` perfectly well, returns `HEAD` as the merge base,
+and reports **OK** over a tree holding a 1,300-line module. Truncated history
+narrows the diff silently rather than failing, which is the worse of the two.
+
+#### Why there is no longer a baseline file (#2979)
+
+Until August 2026 the previous length came from a checked-in ledger,
+`scripts/quality/file-size-baseline.txt`, listing every over-budget file and its
+ceiling. The rule was right; the file was the problem.
+
+Every change that grew a listed file rewrote the same line, so the next change
+to merge re-conflicted it, forever. On the 21 Aug 2026 wave, **five of nine**
+parallel lanes touched it, and `.gitattributes` gives it no merge driver —
+`CHANGELOG.md` is the file's only `merge=` entry — so every collision was a real
+three-way conflict that somebody resolved by hand. Twice, that hand resolution
+shipped a wrong number:
+
+- two lanes both raised the ceiling for `src/proxy.ts`; their code changes
+  merged cleanly in different regions, and the merged file was 1,329 lines while
+  the recorded ceiling read either 1,320 or 1,208, whichever side won;
+- one recorded 1,101 for a file whose untouched length on `main` was already
+  1,104 — a ledger the tree violated the moment it landed.
+
+Two loopholes closed with it, both recorded against the old ratchet. A `.ts` to
+`.js` rename used to pass, because the ledger was keyed by path and the new path
+was simply unlisted; the previous length is now looked up under the old path git
+reports, so the allowance follows the file. And a stored ceiling could drift
+above the file's real size, letting removed lines come back unnoticed; the
+ceiling is now the base ref itself, so drift is not prevented so much as
+unrepresentable.
 
 **Scope.** Tracked source under `src/` only, tests excluded, in any of
 `.ts .tsx .mts .cts .js .jsx .mjs .cjs`. Everything outside `src/` —
 `scripts/`, `prisma/`, `e2e/`, `load/`, and a temporary `measurement/` tree —
-is outside the file-size policy by definition and never appears in the
-baseline. That scope is stated once, in the tool, rather than as a per-issue
-exemption; adding or deleting a measurement tree is a non-event for this gate.
+is outside the file-size policy by definition. That scope is stated once, in
+the tool, rather than as a per-issue exemption; adding or deleting a
+measurement tree is a non-event for this gate.
+
+An **untracked** new file under `src/` is judged too, even before `git add`.
+`git diff` cannot see one, so without that a brand-new 900-line module would be
+checked by nobody until somebody staged it — and whoever runs the check before
+staging is exactly the person who most needs the answer. A file git is
+**ignoring** stays ignored.
 
 The extension list is checked rather than trusted. A tracked file under `src/`
 whose extension is in neither the source set nor the tool's short list of
 declared non-source kinds (`.css`, `.md`, `.json`, images, fonts) **fails the
 check**, naming the file and asking for it to be classified. Without that, the
 scope silently narrows the first time a new file kind lands, and a narrowing
-scope in a ratchet looks exactly like progress: renaming a baselined
-`src/lib/audit.ts` to `audit.js` used to remove it from the gate entirely and
-report the removal as a 45-line *reduction* in accepted debt, in a diff showing
-one deleted baseline line. That is the shape this section teaches reviewers to
-read as a split going well.
+scope in a ratchet looks exactly like progress: renaming `src/lib/audit.ts` to
+`audit.js` once removed it from the gate entirely and reported the removal as a
+45-line *reduction* in accepted debt. That is the shape this section teaches
+reviewers to read as a split going well.
 
-#### Changing the baseline
+#### When a file legitimately has to grow
 
-The baseline is generated, never hand-edited. Regenerate it whenever the tree
-legitimately changes and commit the result in the same PR. Update mode is an
-intentional, reviewed escape from the old ceiling, not a verification pass: CI
-runs only `npm run quality:budget`, never the update command. It may accept
-regression and stale-record findings from a valid committed ledger, but it
-refuses to write from a missing, malformed or untracked ledger, an empty scan,
-or an unclassified source file. Restore the last reviewed baseline first; an
-update without a trusted comparison could erase the very per-record warnings a
-reviewer needs.
+**Splitting the file is the preferred answer, and stays the preferred answer.**
+Where a cohesive helper can come out into a focused module, take that — it is
+the outcome the budgets exist to produce, and it lowers the ceiling for everyone
+who comes next.
 
-- **A split or a thinning** lowers a number, or removes a line entirely. This is
-  the expected direction. Never edit a reduced file back upward to avoid a
-  conflict.
-- **A rebase** that conflicts on the baseline is resolved by regenerating
-  against the rebased tree, not by merging counts by hand. The file is one
-  sorted record per line with no totals and no header that changes, so
-  concurrent branches touching different files usually merge without a
-  conflict at all.
-- **A deliberate increase** is allowed, and is the only escape path. It must
-  land as added, removed or changed records in this file, and the PR body must
-  say why the increase is necessary and why splitting is worse at that point. There is no
-  second exceptions list, and there is no way to pass the gate without the
-  changed line: hand-raising a ceiling the tree does not justify, deleting a
-  record for a file that is still over budget, or retyping a route handler as a
-  domain module all fail as a malformed or stale baseline.
+Where the split is genuinely worse — the rule and its exception belong in one
+place, or the seam does not exist yet and inventing one for this change would
+make the code harder to follow — say so out loud, in a file of your own:
 
-`npm run quality:budget:update` lists every pre-update regression separately,
-including its path, budget, baseline status and current size, then prints the
-aggregate debt change as context. Review the per-record list first: a reduction
-in one file must not cancel the warning for growth in another. A pure rename of
-an oversized file fails verification before update as one new-debt record plus
-one stale old-path record; regeneration moves the ledger entry and reports an
-unchanged aggregate. A rename that also grows remains in the per-record warning
-even when a larger unrelated split makes aggregate debt fall. Because a rename
-appears as a new path, the command cannot claim which deleted path was its old
-identity or ceiling; the ledger diff supplies that old-path evidence. The diff
-shows both path records and the command names the accepted regression, so the
-PR body must justify the growth rather than pointing only to the favourable net
-total. That visible, reviewed acceptance is the intended contract — neither
-case is a silent bypass.
+```markdown
+size-allowances.d/2980-membership-type-policy.md
+
+file: src/lib/membership-type-policy.ts
+lines: 1509
+reason: the school-teacher discriminator has to sit beside the policy it
+  guards; splitting it would put the rule and its exception in different files.
+```
+
+That is **one new file per pull request**, at a path no other pull request
+touches, which is the same shape `changelog.d/` uses and for exactly the same
+reason: a shared list is what made this gate a treadmill in the first place.
+[`size-allowances.d/README.md`](../size-allowances.d/README.md) is the full
+format and the rules. In short:
+
+- it names the **file**, its **new length** and the **reason**, because a bare
+  "allow growth" marker is not something a reviewer can weigh;
+- the recorded length must be the file's **real** length. The check fails if it
+  is not, which is what stops an allowance drifting away from the tree the way
+  the old ledger did, and stops one being written once and reached for later;
+- it is **one-shot**. It only has effect on the change that introduces it, so
+  after merge it is inert — the grown length *is* the base ref by then, and the
+  file can be swept out of the directory in bulk whenever somebody tidies, the
+  same way compiled changelog fragments are;
+- an allowance the check **did not need** fails too, rather than passing
+  quietly. That is either a mistake or a file that shrank, and leaving one lying
+  around is how a per-change note turns back into a stored exceptions list;
+- it may **not** cover a new file, a file renamed into the budgeted scope, or a
+  file crossing its budget for the first time. Each is refused by name. An
+  allowance lets an already-over-budget file grow; it is not a way to arrive
+  over budget.
+
+**`npm run quality:budget:update` is gone** (#2979) — if you remember typing it,
+or find it in an old branch or an old pull request comment, the allowance above
+is what replaced it. It regenerated the deleted baseline file; running it now
+prints an explanation rather than doing nothing quietly.
+
+What this arrangement buys, stated plainly: an accepted increase is still
+machine-checked and still visible in a diff, but **no other pull request pays
+for the decision**. The old escape hatch was a single shared file that every
+concurrent branch had to re-resolve, which is what made it a treadmill rather
+than a control.
+
+- **A split or a thinning** lowers the ceiling automatically on the next change,
+  because `origin/main` then carries the smaller file. Nothing to regenerate and
+  no way to leave the old number behind.
+- **A rebase or a merge from `main`** does not conflict on anything belonging to
+  this gate, because no two branches write the same path.
+- **A deliberate increase** is one disposable file, reviewed on its own terms.
+  There is still no exceptions list and no shared allow-list to hand-edit into a
+  laxer ceiling.
+
+If you want the aggregate figure for context — how many files are over budget
+and by how much in total — run `npm run quality:budget -- --report`, or read the
+`File-size budget ratchet` section of `npm run quality:report`. Both compute it
+from the tree through the same function, so neither can drift from the other or
+from the gate.
 
 ### Quality report
 
@@ -439,7 +565,7 @@ The script scans tracked files via `git ls-files` and prints a markdown
 summary of:
 
 - largest production files
-- the same ratchet findings the blocking gate reports
+- the whole tree's size debt, and any scope hole in the gate's classifier
 - largest oversized files, largest route handlers and App Router pages
 - largest test files
 - production `any` / type-suppression hotspots
@@ -450,17 +576,18 @@ It uses only existing repo tooling, runs without external service
 credentials or network access, and is advisory: it warns and informs rather
 than failing the build. The `Over budget` column is a review prompt: `yes`
 means the file exceeds the route-handler, page-shell, or new-domain-module
-budget. The `File-size budget ratchet` section is the enforced part, and it is
-computed by the same module `npm run quality:budget` uses — the report and the
-gate cannot disagree about which files are over budget.
+budget. The `File-size budget ratchet` section reports the population the
+blocking gate enforces its rule over, and both read it from the same function —
+so the report and the gate cannot disagree about which files are over budget.
+The report itself never fails; `npm run quality:budget` is the half that does.
 
 ### Refactor history and split guidance
 
-The ledger of accepted size debt is
-[`scripts/quality/file-size-baseline.txt`](../scripts/quality/file-size-baseline.txt),
-regenerated from the tree. This table is not that ledger and is not an
-allow-list: it is the standing guidance for a handful of surfaces whose split
-axis was decided once and should not be relitigated. It carries no line counts,
+There is no ledger of accepted size debt any more (#2979) — the current figure
+is whatever `npm run quality:budget -- --report` measures. This table is not a
+ledger and is not an allow-list: it is the standing guidance for a handful of
+surfaces whose split axis was decided once and should not be relitigated. It
+carries no line counts,
 because a hand-maintained count is exactly what went stale here before — the
 nine files this table used to list were presented as *the* over-budget
 population while the real figure was in the hundreds, and three of the counts
@@ -473,8 +600,8 @@ were off by two orders of magnitude.
 | `src/lib/xero-operation-outbox.ts` | Queued for future split when queue dispatch, release, or retry policy changes next land (PR-b of #1272 co-locates the replay stack). |
 | `src/lib/email-templates.ts` (deleted) | Split (#2689) into 19 cohesive family/content modules under `src/lib/email-templates/`, plus the shared `layout` shell and `escape` leaf (21 files altogether), with **no compatibility barrel** — callers import the family module directly. Fourteen modules mirror sender families in `src/lib/email/`; `communications` and `refunds` cover senders outside that tree; and `booking-reminders`, `booking-exceptions`, and `admin-xero-reports` keep large families within budget. The domain-only money rows and netting arithmetic live separately at `src/lib/booking-money-lines.ts`, shared by renderers, booking settlement reads, and the Xero drift checker. Largest rendering module 581 LOC, inside the 700 budget. The render-equivalence gate pins 219 complete outputs and discovers template modules from the directory, so a new renderer cannot arrive uncovered. Three former send-site bodies under two registry keys (`website-contact` and `admin-email-failure`) were brought under that gate, then deliberately moved onto the standard club shell; recipient, template, and booking values are escaped at the rendering edge. The old `adminXeroRepeatedFailureTemplate:minimal` pin was stale: the exact pre-split head renders 5,799 bytes with sha256 `f7a72f30fc8250c8ff75ca1417b9251541f5a06664e7d5c4fe3b8b171b9f6d4d`, byte-identical to the split head, rather than its recorded 5,802-byte hash. The split corrected that one pin row; it did not change that body. Mutation proofs cover byte-neutral body drift, module omissions, duplicate export names, duplicate case and pin IDs, and removed escaping. |
 | `src/lib/contextual-help.ts` (deleted) | Split (#2689) into 16 modules under `src/lib/contextual-help/`. `index.ts` **is** the registry (path matching, longest-prefix resolution, fallbacks, question attachment) rather than a barrel, and keeps the same three exported accessors; entry content sits in one module per **admin sidebar section** (`admin/*.ts`, matching `navSections` in `admin-sidebar.tsx`) — plus one `appearance-and-website` module split off Setup & Configuration, because `/admin/appearance` is an item in that section rather than a section of its own and folding its seven pages back would take that module to ~810 lines, over budget — with `finance.ts`, `questions-*.ts`, `fallbacks.ts`, and the two leaves `types.ts` and `booking-status-glossary.ts`. Content stayed TypeScript by owner decision — the typed shape is the schema check. Largest module 580 LOC. The structural move was proved value-for-value for every one of the 68 resolved paths: a JSON dump keyed by path — both scopes, both fallbacks, nested resolution and `normalisePath` — was byte-identical before and after (106,917 bytes, same sha256). The same PR then reconciled the shadowed second `/admin/notifications` entry against the live page and folded its accurate delivery-mode field into the surviving entry. The registry now has 68 entries with 68 unique paths (67 admin, one finance), and a permanent test rejects any future duplicate as unreachable text. |
-| `src/lib/admin-bed-allocation.ts` (deleted) | Split (#2688) into eighteen modules named for one responsibility each, all under the 700-LOC budget, with **no barrel** — every one of its 31 non-test importers names the module it depends on, because a re-export facade would have left the monolith in place under a new name and recreated the same dependency magnet. The two barrel rows in this table are precedents for a *published API*, not for hiding a split. It had grown to 55 exports over 80 functions covering room and bed inventory, board assembly, allocation writing, range assignment, audit recording and date arithmetic. The modules, by concern: leaves `-admin-contract` (shared error and db-client types), `-display-names` (how a member and a guest are named), `-admin-settings` (the settings read/write bound to `prisma`), `-date-range` (the board's lodge-night range and its parse); wire shapes `-board-payload` (types only) and `-range-report` (client-safe); pure `-warnings` (the board's warnings); reads `-board-records` (queries and DTO serialisers) and `-board` (payload assembly, officer-card counter); writers `-placement` (the shared write chokepoint all three manual paths pass through, carrying the D-12 consent refusal and the ADR-001 whole-lodge-hold refusal), `-manual-writes` (single night, bulk nights, same-date move, delete), `-range-assign` (#2251 range assignment) with `-range-audit` (its audit record, which stores counts, night runs and booking ids but never other bookings' guest or member names), `-auto-allocate` ("Run auto allocation"), `-approval` (approval plus the #776 booking row lock), `-bunk-pairing` (the #1675 bunk rule and its room-row lock), `-rooms` (room inventory, config import, delete guards) and `-beds` (bed inventory, retire/delete guards). Every function body moved verbatim; the live ceilings are in the baseline ledger, not here. |
-| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. Grow this file only with the algorithm; a genuinely independent concern with its own API and tests may still be extracted, and anything else is a reason to re-read this row rather than to add here. The ratchet holds its ceiling at whatever the baseline ledger currently records. |
+| `src/lib/admin-bed-allocation.ts` (deleted) | Split (#2688) into eighteen modules named for one responsibility each, all under the 700-LOC budget, with **no barrel** — every one of its 31 non-test importers names the module it depends on, because a re-export facade would have left the monolith in place under a new name and recreated the same dependency magnet. The two barrel rows in this table are precedents for a *published API*, not for hiding a split. It had grown to 55 exports over 80 functions covering room and bed inventory, board assembly, allocation writing, range assignment, audit recording and date arithmetic. The modules, by concern: leaves `-admin-contract` (shared error and db-client types), `-display-names` (how a member and a guest are named), `-admin-settings` (the settings read/write bound to `prisma`), `-date-range` (the board's lodge-night range and its parse); wire shapes `-board-payload` (types only) and `-range-report` (client-safe); pure `-warnings` (the board's warnings); reads `-board-records` (queries and DTO serialisers) and `-board` (payload assembly, officer-card counter); writers `-placement` (the shared write chokepoint all three manual paths pass through, carrying the D-12 consent refusal and the ADR-001 whole-lodge-hold refusal), `-manual-writes` (single night, bulk nights, same-date move, delete), `-range-assign` (#2251 range assignment) with `-range-audit` (its audit record, which stores counts, night runs and booking ids but never other bookings' guest or member names), `-auto-allocate` ("Run auto allocation"), `-approval` (approval plus the #776 booking row lock), `-bunk-pairing` (the #1675 bunk rule and its room-row lock), `-rooms` (room inventory, config import, delete guards) and `-beds` (bed inventory, retire/delete guards). Every function body moved verbatim; the live sizes are whatever the tree currently carries, not a number recorded here. |
+| `src/lib/bed-allocation.ts` | **Accepted, oversized, and deliberately not split** (owner decision, 9 Aug 2026, #2688). It is 13 exports across 69 functions: a small public surface around one first-fit allocation algorithm whose function bodies are long because the algorithm is. That is cohesion, not sprawl, and the budget is a signal about sprawl. Splitting it would produce files that must be read together to follow one algorithm, which makes capacity code — money code — harder to reason about, not easier. The sibling that WAS split, `admin-bed-allocation.ts`, was the opposite shape: 55 exports over 80 functions of unrelated responsibilities. Grow this file only with the algorithm; a genuinely independent concern with its own API and tests may still be extracted, and anything else is a reason to re-read this row rather than to add here. The ratchet holds its ceiling at whatever length `origin/main` currently carries for it. |
 | `src/lib/email.ts` | Split (#1137) into a re-export facade over cohesive `src/lib/email/` modules (`core`, `admin-alerts`, `account`, `booking`, `membership`, `family`, `waitlist`, `groups`, `booking-requests`, `chores`, `ses-feedback`, plus non-re-exported `internal` plumbing). The `admin-alerts` surface was itself split (#1210) by **domain/source** — `admin-alerts.ts` is now a barrel re-exporting `admin-alerts-shared` (plumbing + `getAdminEmails`), `admin-alerts-booking`, `admin-alerts-membership`, `admin-alerts-finance`, and `admin-alerts-ops`. When an alerts/email module next exceeds the ~700 LOC soft cap, split it along the **domain axis** (booking/capacity, membership lifecycle, finance/Xero/payments, ops) — not by audience, which is fuzzy because most alerts fan out to all admins — and keep the facade barrel's exports byte-identical so `src/lib/email.ts` and every importer keep resolving. |
 | `src/lib/xero-hardening.ts` | Accepted as-is for now: central Xero hardening policy and diagnostics boundary. The `xero-hardening-canonical-links.ts` ↔ `xero-hardening-report.ts` clone pair (112 duplicated lines / 2 clones, jscpd 2026-07-07) is recorded as accepted under this same disposition (#1524 C4, owner-ticked 2026-07; same subsystem call as #1208 items 5/6). |
 | `src/lib/finance-sync-xero-datasets.ts` | Split (#1531, #1524 C3) into a re-export barrel over cohesive `src/lib/finance-sync-xero-datasets/` modules (`constants`, `types`, `date-format`, `report-snapshot`, `invoice-helpers`, `open-invoices`, `aged-invoices-snapshot`, `open-invoices-snapshot`, `report-sync`, `monthly-facts`, `chart-of-accounts`, `invoice-sync`). Behavior-preserving verbatim motion with an acyclic import graph (`constants`/`types`/`date-format` are leaves; the sync orchestrators sit on top); the barrel re-exports the unchanged public surface (29 functions/consts + the `FinanceMonthlyFactsWindowInput` type). The self-duplicated clone regions were deduped: the accounts-receivable and accounts-payable invoice builders now share one generic `buildFinanceOpenInvoicesSnapshot` (each snapshot's persisted invoice shape is supplied verbatim by the caller, keeping `expectedPaymentDate`/`plannedPaymentDate` divergent), and the aged + open-invoice builders share `updateContactDueDateRange`/`compareOpenInvoicePayloadsByDueDate`/`deriveSnapshotCurrency`. jscpd (min-tokens 70) dropped from 186 duplicated lines / 7 clones to 38 / 3 (2026-07-08); the 3 residual clones are the intentionally-separate AR-vs-AP payload literals plus two short prefix regions whose further extraction would over-abstract. |

@@ -49,6 +49,15 @@ interface MemberTableProps {
   sortBy: string
   sortDir: "asc" | "desc"
   membersListPath: string
+  /**
+   * The club's own membership types (#2978), so the Type – Tier column can name
+   * a non-member category's fallback type the way THIS club names it rather than
+   * the way the seed does. Optional and empty-tolerant: until the page's fetch
+   * resolves, and for a viewer whose permissions do not reach the membership
+   * types endpoint, the label falls back to the built-in name — which is right
+   * for every club that has not renamed it.
+   */
+  membershipTypes?: ReadonlyArray<{ key: string; name: string }>
   onToggleSelect: (id: string) => void
   onToggleSelectAll: () => void
   onToggleSort: (column: string) => void
@@ -98,6 +107,7 @@ export function MemberTable({
   sortBy,
   sortDir,
   membersListPath,
+  membershipTypes,
   onToggleSelect,
   onToggleSelectAll,
   onToggleSort,
@@ -268,6 +278,14 @@ export function MemberTable({
                   {formatTypeTierLabel(
                     member.currentMembershipType?.name,
                     member.ageTier,
+                    // #2978: the role decides the fallback when there is no
+                    // season assignment, so a non-member booking contact reads
+                    // "Non-Member" rather than "Unassigned".
+                    member.role,
+                    // …named as THIS club names it. `MembershipType.name` is
+                    // editable, so a club that renamed its Non-Member type must
+                    // read its own word here and not the seed's.
+                    membershipTypes,
                   )}
                 </span>
               </TableCell>

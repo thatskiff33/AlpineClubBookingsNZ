@@ -6,10 +6,16 @@
  * then prints a markdown summary. Uses `git ls-files` and `fs` only — no
  * external services, no network, no production build.
  *
- * Budgets, classification and the committed baseline all come from
+ * Budgets, classification and the whole-tree debt figure all come from
  * `scripts/lib/file-size-budget.ts`, which is the same module the blocking gate
  * uses. That is deliberate: this report and `npm run quality:budget` must never
  * be able to disagree about which files are over budget (#2687).
+ *
+ * That figure used to be read out of a checked-in ledger. #2979 deleted the
+ * ledger — a file every branch rewrote was a file every merge re-conflicted —
+ * so the debt is now MEASURED FROM THE TREE each time this runs, exactly as
+ * `npm run quality:budget -- --report` measures it. Nothing has to be committed
+ * to keep it current, and there is no longer a stored number that can be wrong.
  *
  * Exit status is always 0: this is the warn-and-inform half. The half that
  * fails CI is `scripts/ci/check-file-size-budget.ts`.
@@ -19,22 +25,20 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
-  BASELINE_PATH,
   CHECK_COMMAND,
   PRODUCTION_LIMIT,
   ROUTE_HANDLER_LIMIT,
   ROUTE_PAGE_LIMIT,
   budgetForFile,
-  evaluateRatchet,
   isProductionFile,
   isRatchetExcludedTestFile,
   isRouteHandler,
   isRoutePage,
   countLines,
   scanRepository,
+  summariseSizeDebt,
   type FileStat,
   type OversizedFileStat,
-  type RatchetFinding,
 } from "./lib/file-size-budget";
 
 const ROOT = process.cwd();
@@ -162,29 +166,19 @@ function renderOversizedTable(stats: OversizedFileStat[]): string {
   );
 }
 
-function renderRatchetTable(findings: readonly RatchetFinding[]): string {
+/**
+ * Tracked `src/` files no budget covers.
+ *
+ * A scope hole reads exactly like a clean pass, so it belongs in the report even
+ * though it is the gate that refuses to run while one exists.
+ */
+function renderScopeHoleTable(
+  unclassified: ReadonlyArray<{ file: string; reason: string }>,
+): string {
   return renderTable(
-    findings.map((finding) => [
-      finding.file ?? BASELINE_PATH,
-      finding.severity,
-      finding.budget ?? "-",
-      finding.baseline ?? "-",
-      finding.current ?? "-",
-      finding.problem,
-    ]),
-    ["File", "Severity", "Budget", "Baseline", "Current", "Problem"],
+    unclassified.map((entry) => [entry.file, entry.reason]),
+    ["File", "Why nothing measures it"],
   );
-}
-
-function readBaseline(): string | null {
-  try {
-    return readFileSync(path.join(ROOT, BASELINE_PATH), "utf8").replace(
-      /\r\n/g,
-      "\n",
-    );
-  } catch {
-    return null;
-  }
 }
 
 export function main() {
@@ -230,14 +224,7 @@ export function main() {
   const overBudgetPages = routePageStats.filter(
     (s) => s.lines > ROUTE_PAGE_LIMIT,
   );
-  const ratchet = evaluateRatchet(
-    productionStats,
-    readBaseline(),
-    scan.unclassified,
-  );
-  const regressions = ratchet.findings.filter(
-    (finding) => finding.severity === "regression",
-  );
+  const debt = summariseSizeDebt(productionStats);
 
   const lines: string[] = [];
   lines.push("# Quality report");
@@ -272,13 +259,12 @@ export function main() {
           `Pages over ${ROUTE_PAGE_LIMIT} LOC budget`,
           String(overBudgetPages.length),
         ],
-        ["Files over budget (all categories)", String(ratchet.oversizedFiles)],
+        ["Files over budget (all categories)", String(debt.oversizedFiles)],
+        ["Accepted size debt (LOC over budget)", String(debt.debt)],
         [
-          "Accepted size debt (LOC over budget)",
-          String(ratchet.currentOverage),
+          "Unclassified src/ files (scope holes)",
+          String(scan.unclassified.length),
         ],
-        ["Ratchet findings", String(ratchet.findings.length)],
-        ["…of which regressions", String(regressions.length)],
       ],
       ["Metric", "Value"],
     ),
@@ -288,11 +274,20 @@ export function main() {
   lines.push("## File-size budget ratchet");
   lines.push("");
   lines.push(
-    `_Compared against the committed baseline \`${BASELINE_PATH}\`. This report never fails; ` +
-      `\`${CHECK_COMMAND}\` runs the same comparison and does._`,
+    `_Measured from the tree, not from a stored ledger (#2979). This report never fails; ` +
+      `\`${CHECK_COMMAND}\` applies the rule to the files a change touches — comparing each ` +
+      `against its length on \`origin/main\` — and does fail._`,
   );
   lines.push("");
-  lines.push(renderRatchetTable(ratchet.findings));
+  lines.push(
+    `${debt.oversizedFiles} of ${debt.scannedFiles} production files are over budget, ` +
+      `carrying ${debt.debt} lines of size debt. Current debt may stay; new debt and debt ` +
+      `growth may not appear silently.`,
+  );
+  lines.push("");
+  lines.push("### Scope holes");
+  lines.push("");
+  lines.push(renderScopeHoleTable(scan.unclassified));
   lines.push("");
 
   lines.push("## Largest production files");
@@ -394,7 +389,7 @@ export function main() {
   lines.push("## Notes");
   lines.push("");
   lines.push(
-    "- The documented budgets are the long-term target. What CI enforces is the ratchet: a file not in the baseline may not go over budget, and a file in it may not exceed its recorded ceiling.",
+    "- The documented budgets are the long-term target. What CI enforces is the ratchet: for each file a change touches, a file that was within budget on `origin/main` may not go over it, and a file that was already over may not grow.",
   );
   lines.push(
     "- New production code should not add `any` or `eslint-disable` without a local justification comment.",
@@ -403,7 +398,7 @@ export function main() {
     "- For oversized files, prefer extracting cohesive helpers into `src/lib` modules before adding new functionality.",
   );
   lines.push(
-    `- Shrinking an oversized file lowers its ceiling: regenerate with \`npm run quality:budget:update\` so the lower number is what the next change is measured against.`,
+    "- Shrinking an oversized file lowers its ceiling automatically: the next change is measured against whatever length `origin/main` then carries, so there is nothing to regenerate and no way for a stale ceiling to let those lines come back.",
   );
 
   process.stdout.write(lines.join("\n") + "\n");

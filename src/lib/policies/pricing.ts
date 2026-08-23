@@ -19,11 +19,17 @@ import {
 //   TYPE_POLICY_FORCED  — a member whose type forces the non-member rate
 //                         (bookingBehavior NON_MEMBER_RATE); priced from
 //                         NON_MEMBER but excluded from the group discount.
-//   OTHER_LODGE_MEMBER  — a NON-member of this club whom the booking officer has
-//                         recognised as a member of the booking's partner lodge
+//   OTHER_LODGE_MEMBER  — a guest the club currently charges its NON-MEMBER
+//                         rate, whom the booking officer has recognised as a
+//                         member of the booking's partner lodge
 //                         (BookingGuest.otherLodgeMember); priced from the
 //                         built-in FULL type's rows, i.e. the club's own member
-//                         rate. Excluded from the group-discount substitution
+//                         rate. #2978: that is NOT the same as "a non-member of
+//                         this club" — a member whose membership TYPE prices
+//                         them at the non-member rate qualifies too, while a
+//                         member repriced by the unpaid-subscription lockout is
+//                         excluded. `guestIsOtherLodgeRateEligible` is the rule.
+//                         Excluded from the group-discount substitution
 //                         for the same reason a member is: the substitution
 //                         exists to lift a NON_MEMBER-priced guest UP to the
 //                         FULL rate, and this guest is already there.
