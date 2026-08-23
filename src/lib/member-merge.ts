@@ -449,6 +449,11 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "FamilyGroupJoinRequest.reviewedBy",
   "DeletionRequest.reviewedBy",
   "MembershipSubscriptionBillingSettings.updatedByMemberId",
+  // Epic #2992: who uploaded a board image. A bare scalar with no @relation,
+  // for the same reasons MediaImage.uploadedByMemberId is one -- it is the
+  // audit answer to "who put this here", which a merge must not rewrite, and
+  // an unclaimed upload has no post to be attributed through instead.
+  "ClubPostImage.uploadedByMemberId",
   // #2999: the club message board's settings-audit column -- who last changed
   // the retention window. Identical in kind to the billing-settings column above
   // and MemberGuestSettings.updatedByMemberId below: a bare scalar with no

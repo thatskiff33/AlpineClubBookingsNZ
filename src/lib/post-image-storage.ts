@@ -58,20 +58,6 @@ export class PostImageRejectedError extends Error {
   }
 }
 
-/**
- * What a member may upload.
- *
- * An allowlist of three, checked against the file's own leading bytes rather
- * than the name or the browser-supplied type — both of which the client
- * chooses. SVG is deliberately absent: it is a document that can carry script,
- * and nothing about a lodge photo needs it.
- */
-export const ALLOWED_POST_IMAGE_TYPES = new Map<string, string>([
-  ["image/jpeg", "jpg"],
-  ["image/png", "png"],
-  ["image/webp", "webp"],
-]);
-
 /** 8 MB. Under the Caddy 10 MB body cap, with headroom for the rest of a post. */
 export const MAX_POST_IMAGE_BYTES = 8 * 1024 * 1024;
 

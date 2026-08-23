@@ -19,6 +19,9 @@ const mocks = vi.hoisted(() => ({
   settingsUpsert: vi.fn(),
   postDeleteMany: vi.fn(),
   postCount: vi.fn(),
+  imageFindMany: vi.fn(),
+  imageDeleteMany: vi.fn(),
+  deletePostImage: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -33,7 +36,17 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: mocks.postDeleteMany,
       count: mocks.postCount,
     },
+    clubPostImage: {
+      findMany: mocks.imageFindMany,
+      deleteMany: mocks.imageDeleteMany,
+    },
   },
+}));
+
+// The filesystem side of the pass. Mocked so the tests stay about WHAT is
+// deleted and in what order, not about a real mount being present.
+vi.mock("@/lib/post-image-storage", () => ({
+  deletePostImage: mocks.deletePostImage,
 }));
 
 import {
@@ -60,6 +73,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.settingsFindUnique.mockResolvedValue(settings(365));
   mocks.settingsUpdateMany.mockResolvedValue({ count: 1 });
+  // Default: nothing on disk to reclaim, so the existing tests keep asserting
+  // only what they were written to assert.
+  mocks.imageFindMany.mockResolvedValue([]);
+  mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.deletePostImage.mockResolvedValue(undefined);
   mocks.settingsUpdate.mockResolvedValue({});
   mocks.postDeleteMany.mockResolvedValue({ count: 3 });
   mocks.postCount.mockResolvedValue(0);
@@ -191,5 +209,80 @@ describe("the cleanup pass", () => {
     // the screen says different things about them.
     mocks.postDeleteMany.mockResolvedValue({ count: 0 });
     expect(await runClubPostCleanup(NOW)).toEqual({ deleted: 0 });
+  });
+});
+
+describe("image cleanup", () => {
+  it("deletes the FILES of expired posts, not just their rows", async () => {
+    mocks.imageFindMany.mockImplementation(async (args: { where: unknown }) => {
+      // The doomed-images query, not the orphan query.
+      const where = args.where as { postId?: null };
+      if (where.postId === null) return [];
+      return [{ storageKey: "posts/2025/01/a.webp" }];
+    });
+    mocks.postDeleteMany.mockResolvedValue({ count: 1 });
+
+    await runClubPostCleanup(NOW);
+
+    // Without this the rows would go and the photographs would stay on the
+    // mount forever, which is the opposite of what a retention window promises.
+    expect(mocks.deletePostImage).toHaveBeenCalledWith("posts/2025/01/a.webp");
+  });
+
+  it("collects the doomed files BEFORE deleting the rows that name them", async () => {
+    const order: string[] = [];
+    mocks.imageFindMany.mockImplementation(async () => {
+      order.push("find-images");
+      return [];
+    });
+    mocks.postDeleteMany.mockImplementation(async () => {
+      order.push("delete-posts");
+      return { count: 0 };
+    });
+
+    await runClubPostCleanup(NOW);
+
+    // The cascade removes the image rows with the posts, so a query made after
+    // the delete returns nothing and every file leaks. Order is the behaviour.
+    expect(order.indexOf("find-images")).toBeLessThan(
+      order.indexOf("delete-posts"),
+    );
+  });
+
+  it("sweeps uploads that were never attached to a post", async () => {
+    mocks.imageFindMany.mockImplementation(async (args: { where: unknown }) => {
+      const where = args.where as { postId?: null };
+      if (where.postId === null) {
+        return [{ id: "img-1", storageKey: "posts/2025/01/orphan.webp" }];
+      }
+      return [];
+    });
+    mocks.postDeleteMany.mockResolvedValue({ count: 0 });
+
+    await runClubPostCleanup(NOW);
+
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["img-1"] } },
+    });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith(
+      "posts/2025/01/orphan.webp",
+    );
+  });
+
+  it("gives a fresh upload an hour before treating it as abandoned", async () => {
+    mocks.imageFindMany.mockResolvedValue([]);
+    mocks.postDeleteMany.mockResolvedValue({ count: 0 });
+
+    await runClubPostCleanup(NOW);
+
+    const orphanQuery = mocks.imageFindMany.mock.calls
+      .map(([args]) => args as { where: { postId?: null; createdAt?: { lt: Date } } })
+      .find((args) => args.where.postId === null);
+
+    // A member who is still composing must not have their picture swept out
+    // from under them.
+    expect(orphanQuery?.where.createdAt?.lt).toEqual(
+      new Date(NOW.getTime() - 60 * 60 * 1000),
+    );
   });
 });

@@ -1259,7 +1259,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // unchanged, so no existing classification moved in this merge either.
     // 326 -> 332 (#2992): the six club message board writers, none of them
     // per-site pinned.
-    ).toEqual({ pinned: 127, unpinned: 332 });
+    ).toEqual({ pinned: 127, unpinned: 333 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

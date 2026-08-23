@@ -35,3 +35,15 @@ ALTER TABLE "ClubPostImage" ALTER COLUMN "height" DROP NOT NULL;
 -- The serving route looks an image up by publicId alone, so this index is the
 -- read path as well as the uniqueness guarantee.
 CREATE UNIQUE INDEX "ClubPostImage_publicId_key" ON "ClubPostImage"("publicId");
+
+-- An image is uploaded BEFORE the post that will carry it exists, so its post
+-- link starts null and is claimed on submit. Widening a NOT NULL column to
+-- nullable is `DROP NOT NULL` — a catalog metadata flip, no heap rewrite — and
+-- it only ever widens what the column may hold, so no existing read breaks.
+ALTER TABLE "ClubPostImage" ALTER COLUMN "postId" DROP NOT NULL;
+
+-- Who uploaded it. Deliberately a bare column with NO foreign key, matching
+-- "MediaImage"."uploadedByMemberId": it is an audit snapshot rather than a live
+-- link, so a member merge leaves it pointing at the id that actually uploaded,
+-- and it puts no validating constraint on the hot "Member" table.
+ALTER TABLE "ClubPostImage" ADD COLUMN "uploadedByMemberId" TEXT;

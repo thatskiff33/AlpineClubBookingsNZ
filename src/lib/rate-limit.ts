@@ -674,6 +674,10 @@ export const rateLimiters = {
    * the moment somebody is trying to tell the club something.
    */
   clubPostCreate: { id: "club-post-create", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  // Deliberately below clubPostCreate's ten posts x six images: an upload holds
+  // a decoded bitmap in memory while sharp works, so THIS limit rather than the
+  // byte cap is what stops one member exhausting the container.
+  clubPostImageUpload: { id: "club-post-image-upload", limit: 30, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // test seam
