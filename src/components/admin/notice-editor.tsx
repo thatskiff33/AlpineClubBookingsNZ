@@ -105,6 +105,18 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 function useNoticeExpiryField() {
   const clubTime = useClubTime();
   return {
+    /**
+     * The club's zone, NAMED ON SCREEN beside the field.
+     *
+     * A `datetime-local` control is the one input in this tree that presents
+     * itself as the reader's own clock: the browser labels it that way, there is
+     * no zone in the widget, and every other date field here is a calendar day
+     * with no time at all. So an officer in London types 5pm meaning 5pm, and
+     * what is stored is 5pm at the club. That is the correct behaviour — a club
+     * expiry means five o'clock at the club — but silence about it is how a
+     * correct behaviour reads as a bug.
+     */
+    zone: clubTime.zone,
     toInput(iso: string | null): string {
       if (!iso) return "";
       const instant = new Date(iso);
@@ -367,8 +379,9 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
                 onChange={(e) => setExpiresInput(e.target.value)}
               />
               <p className="mt-1 text-xs text-muted-foreground">
-                After this time the notice is hidden from members. Leave blank
-                for no expiry.
+                Times here are the club&apos;s ({expiryField.zone}), not your
+                own. After this time the notice is hidden from members. Leave
+                blank for no expiry.
               </p>
             </div>
 

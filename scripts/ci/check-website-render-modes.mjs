@@ -164,14 +164,100 @@ const REQUEST_READ_PATTERNS = [
  * satisfied by a comment mentioning it, which is a check that can pass on a file
  * that does nothing.
  *
- * `//` is left alone when it follows a colon, so a `https://…` inside a string
- * survives. That is a heuristic rather than a parser, and it is the right size for
- * this job: everything here is a presence check over a handful of small route files,
- * and the failure mode of over-stripping is a loud false failure, never a silent
- * pass.
+ * A SINGLE LEFT-TO-RIGHT PASS, not a pair of regular expressions, and the
+ * difference is a measured defect rather than tidiness. This used to strip block
+ * comments first and then line comments, with `//` left alone after a colon so a
+ * `https://…` inside a string survived. That ordering means a `/*` written inside
+ * a LINE comment opens a block comment which the regex then closes at the next
+ * block-comment terminator anywhere below — and `src/app/(admin)/layout.tsx`
+ * contains exactly that:
+ * a `// … /admin/* … ` comment on line 32 and a JSX comment ending on line 123.
+ * Stripping it removed 4,739 of its 6,290 characters, including the
+ * `<AppProviders>` it exists to prove. The scan below never met that shape
+ * because it reads only the two public route groups; the club-time census reads
+ * the whole of `src/app`, which is how it surfaced.
+ *
+ * The pass tracks four states — code, line comment, block comment, and inside a
+ * `'`, `"` or backtick string, honouring backslash escapes — so a comment
+ * delimiter inside a string or inside the other kind of comment is left alone by
+ * construction rather than by a lookbehind. It is still not a parser: a regular
+ * expression LITERAL is treated as code, so `/…//…/` could confuse it. That shape
+ * does not occur in this repository, and it cannot be written by accident,
+ * because an unescaped `/` ends a regex.
+ *
+ * EXPORTED because the same hazard turned up again in a different census:
+ * `src/components/__tests__/club-time-provider-mount-census.test.tsx` asserts
+ * that a layout really renders `<AppProviders>` or `<WebsiteChrome>`, and a raw
+ * substring match on the un-stripped file was measured passing on a layout that
+ * only MENTIONS one in a comment. That is the positive-rule failure described
+ * above, so both readers share the one implementation rather than each keeping a
+ * copy of the heuristic and its caveats.
  */
-function stripComments(source) {
-  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+export function stripComments(source) {
+  let out = "";
+  let index = 0;
+  // "code" | "line" | "block" | a quote character we are inside.
+  let mode = "code";
+
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (mode === "line") {
+      if (char === "\n") {
+        mode = "code";
+        out += char;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (mode === "block") {
+      if (char === "*" && next === "/") {
+        mode = "code";
+        index += 2;
+        continue;
+      }
+      // Newlines are kept so a stripped file still has its line structure.
+      if (char === "\n") out += char;
+      index += 1;
+      continue;
+    }
+
+    if (mode === "'" || mode === '"' || mode === "`") {
+      out += char;
+      if (char === "\\") {
+        out += source[index + 1] ?? "";
+        index += 2;
+        continue;
+      }
+      if (char === mode) mode = "code";
+      index += 1;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      mode = "line";
+      index += 2;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      mode = "block";
+      index += 2;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      mode = char;
+      out += char;
+      index += 1;
+      continue;
+    }
+
+    out += char;
+    index += 1;
+  }
+
+  return out;
 }
 
 /** Every file under `directory`, as paths relative to it, in posix form. */

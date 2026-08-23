@@ -20,8 +20,9 @@ import { formatClubWeekday, requireCalendarDate } from "@/lib/club-time";
  * THE DAY-AND-MONTH HALF STAYS LOCAL, because the kernel declares no "16 Apr"
  * shape — `HOUSE_SHAPES.date` is "16 Apr 2026" and there is nothing between it
  * and the bare weekday. Adding one means editing `src/lib/club-time/**`, which
- * belongs to the last group of this migration; it is reported there. Until then
- * this is the same UTC-pinned identity, not a second zone authority.
+ * belongs to the last group of this migration; the missing shape is recorded on
+ * **#2870**, in this group's hand-off list to the kernel group. Until then this
+ * is the same UTC-pinned identity, not a second zone authority.
  */
 const NIGHT_COLUMN_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
   day: "numeric",

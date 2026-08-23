@@ -13,16 +13,21 @@ import { withheldEmailDisplayName } from "@/lib/booking-email-suppression";
 
 /**
  * CT-4 (#2870): the banner is a SERVER component and now awaits the club's
- * PERSISTED timezone, so the real reader - which reaches Prisma through
- * `server-only` - is replaced here by the same zone the environment resolves to.
- * The rendered strings are therefore unchanged; what moved is where the zone
- * comes from. The zone-AUTHORITY assertion lives in
- * `club-time-client-boundary.test.tsx`, which pins a zone the environment does
- * not hold.
+ * PERSISTED timezone, so the real reader — which reaches Prisma through
+ * `server-only` — is replaced here.
+ *
+ * IT IS REPLACED BY A ZONE THE ENVIRONMENT DOES NOT HOLD, and that is the whole
+ * point of the choice. `America/Denver` is neither `APP_TIME_ZONE`
+ * (`Pacific/Auckland` wherever `TZ` is unset, CI included) nor CI's host zone
+ * (UTC), and it is BEHIND UTC where both of those are on it or ahead. Mocked to
+ * `Pacific/Auckland` this file proved nothing about zone authority: the persisted
+ * zone and the environment agreed, so reverting the component to `formatNZDateTime`
+ * — the exact defect CT-4 exists to end — would have rendered identical strings and
+ * every test here would still have passed.
  */
 vi.mock("@/lib/club-time/server", async () => {
   const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
-  const zone = requireClubTimeZone("Pacific/Auckland");
+  const zone = requireClubTimeZone("America/Denver");
   return { clubTime: async () => bindClubTime(zone), clubTimeZone: async () => zone };
 });
 
@@ -101,9 +106,20 @@ describe("BookingWithheldEmailsBanner (#2259)", () => {
     }
   });
 
-  it("renders timestamps in NZ time, not the runtime's zone", async () => {
-    // 2026-07-19T21:30Z is 20 July in NZ (UTC+12). A bare toLocaleString would
-    // print the runtime's local day — the bug class #2256 fixed elsewhere.
+  it("renders timestamps in the club's PERSISTED zone, not the runtime's or NZ", async () => {
+    /*
+      One instant, three civil days, and the assertion names the only one the
+      club's own setting produces. 2026-07-19T21:30Z is:
+
+        - 19 July, 3:30 pm  in America/Denver (UTC-6) — the club's persisted zone
+        - 19 July, 9:30 pm  in UTC             — the runtime's zone on CI
+        - 20 July, 9:30 am  in Pacific/Auckland (UTC+12) — `APP_TIME_ZONE`, and
+                                                  what `formatNZDateTime` renders
+
+      A bare `toLocaleString` prints the runtime's local day (the #2256 class), and
+      a revert to `formatNZDateTime` prints the NZ day (the CT-4 class). Both are
+      excluded below, by answer rather than by mechanism.
+    */
     await renderAsync(
       <BookingWithheldEmailsBanner
         noEmails
@@ -117,9 +133,10 @@ describe("BookingWithheldEmailsBanner (#2259)", () => {
         ]}
       />,
     );
-    expect(screen.getByRole("listitem").textContent).toContain(
-      "20 Jul 2026",
-    );
+    const line = screen.getByRole("listitem").textContent ?? "";
+    expect(line).toContain("19 Jul 2026");
+    expect(line).toMatch(/3:30\s*pm/i);
+    expect(line).not.toContain("20 Jul 2026");
   });
 
   it("groups a fan-out into one line with a count, so it cannot bury the rest", async () => {

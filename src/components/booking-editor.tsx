@@ -30,8 +30,9 @@ import { APP_LOCALE } from "@/config/operational";
  * at "Thursday, 16 April". Adding one means editing `src/lib/club-time/**`,
  * which belongs to the last group of this migration, and composing the year on
  * is byte-identical for `en-NZ` but not for a configurable `APP_LOCALE` (see
- * `formatClubWeekdayDay`'s docblock for the same hazard). Reported as a shape to
- * add; when it lands this becomes one call.
+ * `formatClubWeekdayDay`'s docblock for the same hazard). The missing shape is
+ * recorded on **#2870**, in this group's hand-off list to the kernel group; when
+ * it lands this becomes one call.
  */
 const STAY_DATE_LONG = new Intl.DateTimeFormat(APP_LOCALE, {
   timeZone: "UTC",

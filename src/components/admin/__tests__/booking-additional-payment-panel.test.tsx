@@ -9,16 +9,21 @@ vi.mock("next/navigation", () => ({
 
 /**
  * CT-4 (#2870): the panel is a SERVER component and now awaits the club's
- * PERSISTED timezone, so the real reader - which reaches Prisma through
- * `server-only` - is replaced here by the same zone the environment resolves to.
- * Every expected string below is therefore unchanged; what moved is where the
- * zone comes from. The zone-AUTHORITY assertion lives in
- * `club-time-client-boundary.test.tsx`, which pins a zone the environment does
- * not hold.
+ * PERSISTED timezone, so the real reader — which reaches Prisma through
+ * `server-only` — is replaced here.
+ *
+ * IT IS REPLACED BY A ZONE THE ENVIRONMENT DOES NOT HOLD, and that is the whole
+ * point of the choice. `America/Denver` is neither `APP_TIME_ZONE`
+ * (`Pacific/Auckland` wherever `TZ` is unset, CI included) nor CI's host zone
+ * (UTC), and it is BEHIND UTC where both of those are on it or ahead. Mocked to
+ * `Pacific/Auckland` this file proved nothing about zone authority: the persisted
+ * zone and the environment agreed, so reverting the component to `formatNZDateTime`
+ * — the exact defect CT-4 exists to end — would have rendered identical strings and
+ * every test here would still have passed.
  */
 vi.mock("@/lib/club-time/server", async () => {
   const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
-  const zone = requireClubTimeZone("Pacific/Auckland");
+  const zone = requireClubTimeZone("America/Denver");
   return { clubTime: async () => bindClubTime(zone), clubTimeZone: async () => zone };
 });
 
@@ -96,13 +101,22 @@ describe("BookingAdditionalPaymentPanel", () => {
     });
 
     expect(html).not.toContain("Not yet");
-    // Club-time medium date + short time (#2264): "9 Jun 2026, 12:00 pm". The
-    // date part is pinned exactly — it is what proves the newest stamp won —
-    // while the time is matched loosely, because some ICU builds emit a narrow
-    // no-break space (U+202F) before am/pm and others a plain space.
-    expect(html).toContain("9 Jun 2026");
-    expect(html).not.toContain("4 Jun 2026");
-    expect(html).toMatch(/12:00\s*[ap]m/i);
+    /*
+      Club-time medium date + short time (#2264), spelled in the club's PERSISTED
+      zone. 2026-06-09T00:00Z is 8 June, 6:00 pm in America/Denver and 9 June,
+      12:00 pm in Pacific/Auckland — so the exact date pins two things at once:
+      that the newest stamp won, and that the zone came from the club's setting
+      rather than from `APP_TIME_ZONE` or a reverted `formatNZDateTime`. The time
+      is matched loosely, because some ICU builds emit a narrow no-break space
+      (U+202F) before am/pm and others a plain space.
+    */
+    expect(html).toContain("8 Jun 2026");
+    expect(html).toMatch(/6:00\s*pm/i);
+    // The older stamp, in the club's zone — the one that must NOT have won.
+    expect(html).not.toContain("3 Jun 2026");
+    // And the NZ spelling of the same winning instant, which is what a revert to
+    // `formatNZDateTime` or a read of `APP_TIME_ZONE` would print.
+    expect(html).not.toContain("9 Jun 2026");
   });
 
   it("renders nothing at all once the extra has been collected", async () => {

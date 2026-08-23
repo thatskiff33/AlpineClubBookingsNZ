@@ -1,4 +1,7 @@
-import { render as rtlRender } from "@testing-library/react";
+import {
+  render as rtlRender,
+  renderHook as rtlRenderHook,
+} from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
@@ -20,10 +23,16 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
  *
  * ## Import it INSTEAD of `@testing-library/react`
  *
- * It re-exports the whole module, so `screen`, `fireEvent`, `waitFor`,
- * `renderHook` and the rest come from here too and only the import line changes.
- * A test that needs its own `wrapper` may still pass one; it replaces this one,
- * and must then mount the provider itself.
+ * It re-exports the whole module, so `screen`, `fireEvent`, `waitFor` and the
+ * rest come from here too and only the import line changes. A test that needs its
+ * own `wrapper` may still pass one; it replaces this one, and must then mount the
+ * provider itself.
+ *
+ * `renderHook` IS OVERRIDDEN TOO, and that is not symmetry for its own sake. A
+ * hook is the likeliest thing in this tree to call `useClubTime()` directly — the
+ * migrated components mostly wrap it in one — and a `renderHook` re-exported
+ * bare from Testing Library mounts no provider, so it throws while its import
+ * line says otherwise. Whoever hits that has done nothing wrong.
  *
  * ## The default zone is deliberately the one the suite already assumed
  *
@@ -57,6 +66,13 @@ export function render(
   options?: Parameters<typeof rtlRender>[1],
 ): ReturnType<typeof rtlRender> {
   return rtlRender(ui, { wrapper: ClubTimeTestProvider, ...options });
+}
+
+export function renderHook<Result, Props>(
+  hook: (initialProps: Props) => Result,
+  options?: Parameters<typeof rtlRenderHook<Result, Props>>[1],
+): ReturnType<typeof rtlRenderHook<Result, Props>> {
+  return rtlRenderHook(hook, { wrapper: ClubTimeTestProvider, ...options });
 }
 
 export * from "@testing-library/react";

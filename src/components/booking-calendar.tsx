@@ -35,8 +35,9 @@ import { formatCalendarDayOnly, parseDateOnly } from "@/lib/date-only";
  * byte-identical for `en-NZ` and is NOT safe in general: `APP_LOCALE` is
  * configurable and a locale that orders or punctuates the pair differently would
  * silently change every day button — the exact hazard `formatClubWeekdayDay`'s
- * own docblock records. Reported to the `src/lib` group as a shape to add;
- * when it lands, this becomes one call.
+ * own docblock records. The missing shape is recorded on **#2870**, in this
+ * group's hand-off list to the kernel group; when it lands, this becomes one
+ * call.
  */
 const DAY_BUTTON_DATE_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
   timeZone: "UTC",

@@ -57,11 +57,20 @@ import { MembershipCancellationBlockerNotice } from "@/components/admin/membersh
  * ## The premise is asserted, not assumed — and it does not depend on the host
  *
  * Each case comes in a PAIR: the same component, the same fixture, rendered
- * under two different provider zones, asserted to produce two different answers.
- * That pair is the discrimination, and it is what a test of zone AUTHORITY looks
- * like — an implementation that ignores the provider and reads the environment,
- * or the viewer's clock, or a hard-coded zone, gives the SAME answer to both
- * halves and fails one of them whatever the host happens to be.
+ * under two different provider zones. In the first two cases the two halves are
+ * asserted to produce DIFFERENT answers, and that difference is the
+ * discrimination — it is what a test of zone AUTHORITY looks like, because an
+ * implementation that ignores the provider and reads the environment, or the
+ * viewer's clock, or a hard-coded zone, gives the SAME answer to both halves and
+ * fails one of them whatever the host happens to be.
+ *
+ * THE THIRD CASE IS THE EXCEPTION, AND ITS PAIR MEANS THE OPPOSITE. Its claim is
+ * INDEPENDENCE — a calendar day is the same day in every zone — so its two halves
+ * are asserted to produce the SAME answer, and a difference between them would be
+ * the failure. Saying "each case is a pair asserted to produce two different
+ * answers" as a blanket rule would be untrue of it, and worse, would invite
+ * somebody to "fix" the case into asserting the defect. Its own comments say what
+ * it does and does not prove.
  *
  * Each case also states, as an ANSWER rather than an identifier, that the two
  * zones really do disagree about this fixture. An identifier check —
@@ -250,11 +259,23 @@ describe("CT-4: a calendar date consults NO zone at all", () => {
   }
 
   it("renders the stored day under a club zone that would have shifted it", () => {
-    // PREMISE as an answer: projecting this value through the club's zone — what
-    // the code this replaced did — gives a DIFFERENT day. So the assertion below
-    // fails against a zone-projecting implementation rather than passing under
-    // both, which is the whole difference between testing zone AUTHORITY and
-    // testing zone independence.
+    /*
+      PREMISE as an answer: projecting this value through the PROVIDER's zone
+      gives a different day from decoding it as the calendar day it encodes. So
+      this half fails against an implementation that projects the value through
+      whatever zone the provider carries — the shape a future author is most
+      likely to reach for, since every neighbouring value in this tree is an
+      instant and `instantDate` is right there.
+
+      WHAT IT DOES NOT PROVE, said plainly because the comment here used to claim
+      it did. This is NOT what the code this replaced did. That was
+      `formatNZDate(new Date(value))`, which projects through `APP_TIME_ZONE` —
+      `Pacific/Auckland` wherever `TZ` is unset — and for a UTC-midnight lodge
+      night east of Greenwich that yields "16 Apr 2026", the same answer as the
+      calendar-date formatter. The predecessor implementation therefore passes
+      BOTH halves of this case, and so would any implementation pinned to a zone
+      ahead of UTC. What the case is worth is stated on the second half.
+    */
     const projected = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
       new Date(NIGHT),
     );
@@ -271,11 +292,24 @@ describe("CT-4: a calendar date consults NO zone at all", () => {
   });
 
   it("renders the same day under a completely different club zone", () => {
-    // The whole point of a calendar day: the provider's zone cannot move it.
-    // Kiritimati is UTC+14, the far side of the world from Denver.
+    /*
+      The whole point of a calendar day: the provider's zone cannot move it.
+      Kiritimati is UTC+14, the far side of the world from Denver.
+
+      THIS HALF IS THE INDEPENDENCE CLAIM, and it deliberately asserts the SAME
+      answer as the half above rather than a different one — the only case in this
+      file that does. Against a zone-PROJECTING implementation the Denver half is
+      what fails; this half would keep passing, because Kiritimati is ahead of UTC
+      and projects the UTC-midnight encoding onto the day it already encodes. It is
+      here as a forward-looking regression guard on the pair — it pins that the two
+      halves agree, so an implementation that starts consulting the provider for a
+      calendar date reddens one of them — and not as a second, independent proof.
+    */
     process.env.TZ = "Asia/Tokyo";
     renderInClubZone(blockerNotice(), "Pacific/Kiritimati");
 
     expect(screen.getByText(/16 Apr 2026/)).toBeTruthy();
+    expect(screen.queryByText(/15 Apr 2026/)).toBeNull();
+    expect(screen.queryByText(/17 Apr 2026/)).toBeNull();
   });
 });

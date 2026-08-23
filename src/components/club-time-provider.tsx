@@ -37,6 +37,28 @@ import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
  * genuinely have no civil date until a zone is chosen, and choosing the viewer's
  * is the defect the epic exists to end.
  *
+ * ## And when you DO decode a calendar day here, decide which decoder on purpose
+ *
+ * The kernel offers two, and in a `"use client"` component the difference is not
+ * cosmetic. `requireCalendarDate` THROWS on a malformed day; in a browser render
+ * that is an unhandled throw, so the nearest error boundary replaces the whole
+ * screen — an officer's queue goes blank rather than showing one bad row.
+ * `parseCalendarDate` returns `null` and hands the decision back to the caller.
+ *
+ * The split across this group is not arbitrary and is worth keeping: every
+ * `parseCalendarDate` caller already has something honest to render when there is
+ * no valid day — the raw stored text, or an em-dash — and every
+ * `requireCalendarDate` caller is formatting a required server field inline with
+ * no such fallback in scope, where a silent wrong-looking string would be worse
+ * than a loud failure. So the question to answer before choosing is not "which is
+ * stricter" but "what would this screen SHOW if the value were bad?". If the
+ * answer is a sensible fallback, parse; if the answer is a lie, require.
+ *
+ * Nothing in this application produces a malformed day today — every value comes
+ * from a `@db.Date` column through a typed route — so this is a rule about the
+ * next caller rather than a live defect. Note that a decoder is not a validator:
+ * these values arrive over `fetch` with no runtime schema check on the way in.
+ *
  * ## Why a context rather than a prop
  *
  * Three reasons, in the order they decided it.
