@@ -772,6 +772,12 @@ describe("setup-readiness club-config DB-first gate (#1987, C8)", () => {
  * actually in force and say that the app stores it on the next boot, or an
  * operator reads a normal post-migration state as a broken site.
  *
+ * The one exception is an environment that names no place (`TZ=UTC`): the owner
+ * decided on 23 Aug 2026 (#2989) that such a deployment is DEFAULTED to
+ * `Pacific/Auckland` rather than blocked — and warned about, both before the
+ * first boot records it and after, because the row carries no provenance and the
+ * boot backfill always runs before anybody can open `/admin/setup`.
+ *
  * Every case below pins `process.env.TZ` rather than inheriting the host's or the
  * CI runner's zone, and restores it by ASSIGNING the captured value back (#2485).
  * Nothing here formats a date, so the frozen clock is not involved.
@@ -932,13 +938,14 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
   );
 
   it.each(["UTC", "Etc/GMT-12", "SystemV/EST5"])(
-    "refuses to name ANY zone as in force when TZ=%s names no place",
+    "warns rather than blocking when TZ=%s names no place, and says what will be stored instead",
     (raw) => {
-      // The second half of the same finding. `TZ=UTC` used to print
-      // "In effect right now: Pacific/Auckland" — a zone nobody had chosen, that
-      // the un-migrated APP_TIME_ZONE call sites were demonstrably not using, and
-      // that the backfill now (correctly) refuses to invent. A step whose job is
-      // to say what is in force must not name something that is not.
+      // Owner decision, 23 Aug 2026 (#2989). This state used to be blocked with
+      // nothing recorded. It is now a WARNING — the owner said not to block
+      // setup — and it must still be honest about the two things that make it a
+      // warning rather than a clean step: the environment value could not be
+      // used, and the zone about to be recorded is a DEFAULT rather than the one
+      // this deployment was running on.
       pinEnvironmentZone(raw);
 
       const check = clubTimeZoneCheck({
@@ -946,17 +953,70 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
         clubTimeZone: null,
       });
 
-      expect(check.status).toBe("blocked");
+      expect(check.status).toBe("warning");
       const text = `${check.message} ${check.details.join(" ")}`;
       expect(text).toContain(raw);
-      expect(text).not.toContain("Pacific/Auckland");
-      expect(text).not.toMatch(/in effect right now/i);
-      // It says plainly that nothing will be stored and who has to act.
+      expect(text).toContain("Pacific/Auckland");
       expect(text).toMatch(/not a place|name no place/i);
+      expect(text).toMatch(/default/i);
       expect(text).toContain("/admin/club-time");
-      expect(text).not.toMatch(/next time it starts/i);
     },
   );
+
+  it.each(["UTC", "Etc/GMT-12"])(
+    "keeps warning AFTER the boot has recorded the default, for TZ=%s",
+    (raw) => {
+      // The state an operator actually meets. The boot backfill runs from
+      // `instrumentation.node.ts` before anybody can open /admin/setup, so by
+      // the time this page renders the row exists — and without this branch a
+      // club that has been on UTC for years reads a clean "complete" naming a
+      // zone nobody chose, which is exactly what the owner's decision says must
+      // not happen.
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: "Pacific/Auckland",
+      });
+
+      expect(check.status).toBe("warning");
+      const text = `${check.message} ${check.details.join(" ")}`;
+      expect(text).toContain(raw);
+      expect(text).toContain("Pacific/Auckland");
+      // It does not claim to know whether the zone was chosen or defaulted — the
+      // row records no provenance — so it asks, and names both ways out.
+      expect(text).toMatch(/acknowledge/i);
+      expect(text).toContain("/admin/club-time");
+    },
+  );
+
+  it("PREMISE: the same stored default is COMPLETE once the environment names a place", () => {
+    // Without this leg the two assertions above cannot tell a real condition
+    // from a step that warns whenever Pacific/Auckland is stored.
+    pinEnvironmentZone("Europe/London");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "Pacific/Auckland",
+    });
+
+    expect(check.status).toBe("complete");
+  });
+
+  it("does not warn about a stored zone that is not the default, whatever TZ says", () => {
+    // The other half of the condition: the post-boot warning is about the value
+    // the backfill would have invented, so a club on any other zone has plainly
+    // configured itself and must not be nagged.
+    pinEnvironmentZone("UTC");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "Australia/Sydney",
+    });
+
+    expect(check.status).toBe("complete");
+    expect(check.message).toContain("Australia/Sydney");
+  });
 
   it("reports 'not checked' rather than a remedy when the timezone row could not be READ", () => {
     // An un-migrated database: every other setting answered and this one query
@@ -995,6 +1055,54 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
     const text = `${check.message} ${check.details.join(" ")}`;
     expect(text).toContain("NZT");
     expect(text).toContain("Europe/London");
+  });
+
+  it.each([
+    ["GB", "Europe/London"],
+    ["NZ-CHAT", "Pacific/Chatham"],
+    ["EST5EDT", "America/New_York"],
+  ])(
+    "does not contradict itself about the fallback when TZ=%s is a legacy alias",
+    (raw, expected) => {
+      // #2989 fix round, finding F1b. The step names the zone the reader is
+      // falling back to — which comes from `resolveClubTimeZone`, whose
+      // environment leg uses the PRESERVATION rule — and then explained where it
+      // came from using the OPERATOR-INPUT validator. For all thirty-six legacy
+      // aliases the two disagree, so the details said, in consecutive sentences,
+      // "falling back to Europe/London" and then "the TZ value ("GB") is not a
+      // named place either, so the built-in New Zealand default applies".
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: "NZT",
+      });
+      const text = `${check.message} ${check.details.join(" ")}`;
+
+      expect(check.status).toBe("blocked");
+      expect(text).toContain(expected);
+      // The contradiction, in the exact words it used to appear in.
+      expect(text).not.toMatch(/is not a named place either/i);
+      expect(text).not.toMatch(
+        /built-in New Zealand default applies until the club's timezone is set again/i,
+      );
+      // And the raw spelling is still shown, so the interpretation is visible.
+      expect(text).toContain(raw);
+    },
+  );
+
+  it("PREMISE: it DOES say the environment is no help when TZ really names no place", () => {
+    // The leg that makes the assertions above mean something: with an
+    // environment value that neither rule can use, the sentence they refuse to
+    // see is the correct one and must still be printed.
+    pinEnvironmentZone("Etc/GMT-12");
+
+    const check = clubTimeZoneCheck({ ...completeDatabase, clubTimeZone: "NZT" });
+    const text = `${check.message} ${check.details.join(" ")}`;
+
+    expect(check.status).toBe("blocked");
+    expect(text).toMatch(/is not a named place either/i);
+    expect(text).toContain("Pacific/Auckland");
   });
 
   it("blocks on a stored fixed offset", () => {
@@ -1083,6 +1191,8 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
     "EST5EDT",
     "Australia/Sydney",
     "australia/sydney",
+    "UTC",
+    "Etc/GMT-12",
     null,
   ])(
     "promises exactly what the next boot will record, for TZ=%s",
@@ -1096,8 +1206,6 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
       // it.each blocks above pin what the right answer IS.
       pinEnvironmentZone(raw);
       const decision = decideClubTimeZoneBackfill();
-      expect(decision.record).toBe(true);
-      if (!decision.record) return;
 
       const check = clubTimeZoneCheck({
         ...completeDatabase,
@@ -1110,12 +1218,14 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
   );
 
   it.each(["UTC", "Etc/GMT-12"])(
-    "names no zone at all when the next boot would record nothing, for TZ=%s",
+    "agrees with the backfill that TZ=%s is a DEFAULT and not a preserved zone",
     (raw) => {
-      // The other half of the agreement: where the backfill records nothing, the
-      // checklist must not name a zone either — which is the whole finding.
+      // The other half of the agreement. Both sides now record
+      // `Pacific/Auckland` for this input, so "they name the same zone" is no
+      // longer discriminating on its own — what has to agree is that neither
+      // presents it as the zone the deployment was using.
       pinEnvironmentZone(raw);
-      expect(decideClubTimeZoneBackfill().record).toBe(false);
+      expect(decideClubTimeZoneBackfill().kind).toBe("defaulted");
 
       const check = clubTimeZoneCheck({
         ...completeDatabase,
@@ -1123,10 +1233,11 @@ describe("setup-readiness club timezone (CT-1, #2989)", () => {
       });
       const text = `${check.message} ${check.details.join(" ")}`;
 
-      expect(check.status).toBe("blocked");
-      // No IANA-shaped identifier appears anywhere except inside the refusal's
-      // own examples of what is NOT acceptable.
-      expect(text).not.toContain("Pacific/Auckland");
+      expect(check.status).toBe("warning");
+      expect(text).toMatch(/default/i);
+      // And it never claims the value came out of the environment, which is the
+      // sentence state 5 uses and the one thing that is not true here.
+      expect(text).not.toMatch(/keeping exactly the timezone this deployment/i);
       expect(text).not.toContain("Australia/Sydney");
     },
   );

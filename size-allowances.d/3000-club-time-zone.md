@@ -13,7 +13,7 @@ their original module so no importer, no document and no schema comment had to
 change. So the club-timezone backfill step carries no size debt at all.
 
 file: src/lib/setup-readiness.ts
-lines: 1841
+lines: 1893
 reason: this is the change. The setup checklist gains a seventeenth step, and the
   sixteen already there are all defined in this file and assembled into the
   readiness report a few lines below them. A seventeenth check in its own module
@@ -25,7 +25,11 @@ reason: this is the change. The setup checklist gains a seventeenth step, and th
   place at all, the message names the raw value and no zone rather than printing a
   fallback that is not in force. Two review lenses independently found that last
   one reported `Pacific/Auckland` as "in effect right now" on a deployment running
-  on UTC, so the wording is the fix, not decoration.
+  on UTC, so the wording is the fix, not decoration. It grew again for the owner's
+  23 Aug decision, which needs a SEVENTH state: the checklist has to notice that a
+  stored `Pacific/Auckland` was defaulted rather than chosen, because the boot
+  backfill runs before anybody can open the page and the earlier warning would
+  otherwise never be seen by the one club it is for.
 
 file: src/components/admin-sidebar.tsx
 lines: 1078
