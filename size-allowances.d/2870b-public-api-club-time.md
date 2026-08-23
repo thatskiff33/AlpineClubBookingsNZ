@@ -35,6 +35,34 @@ before it are not written twice. Adding one there now would force exactly the
 rewrite the epic's ordering exists to avoid. When CT-4f lands the helper once,
 these three copies go and the lines come back.
 
+## Two `src/lib` modules join the list, and why that is not scope creep
+
+Adversarial review found that three of the route edits above changed only ONE
+SIDE of a cross-file pair. Each pair is two files that read the same stored
+column and must read it the same way; correcting one and not the other did more
+damage than leaving both wrong, because both had been wrong in the same
+direction and therefore agreed.
+
+The worst of them stopped a workflow dead. The exception-request route freezes a
+proposal and hashes it; `booking-exception-approval.ts` replays it at approval
+time and re-hashes. With the route corrected and the replay still projecting, the
+two hashes differed for any club behind Greenwich, the integrity gate reported
+`drift`, and the officer was told to have the member resubmit — which reproduced
+it exactly. No modification policy exception could be approved at all
+(`INV-EXCEPT`).
+
+So the fix has to land on both sides, in the same change, which brings two
+`src/lib` modules that CT-4f would otherwise own into this diff. Both are single
+declared exceptions rather than a widening of scope: the edits are the same
+`@db.Date`-decode correction the routes got, and nothing else in either file
+moves. The comments are longer than the code because the whole hazard is
+invisible in the diff and lives across two files — a reader who reinstates one
+line will not be looking at the other one.
+
+`booking-edit-policy.ts` and `booking-modification-stay-ranges.ts` took the same
+kind of correction and needed no allowance: both are comfortably inside the
+700-line domain-module budget.
+
 file: src/app/api/bookings/[id]/arrival-time/route.ts
 lines: 372
 reason: seventeen lines on a 355-line route that is not restructured here.
@@ -46,13 +74,17 @@ reason: seventeen lines on a 355-line route that is not restructured here.
   the right one in New Zealand.
 
 file: src/app/api/bookings/[id]/change-requests/route.ts
-lines: 580
-reason: sixteen lines on a 564-line route, of which nine are the shared
+lines: 587
+reason: twenty-three lines on a 564-line route, of which nine are the shared
   `storedDateOnly` helper and its doc. That helper belongs in `src/lib/**`, which
   CT-4f owns and which must move last so the five groups ahead of it are not
   written twice; until then a local copy is the smaller cost. The remainder is
-  the club-time import and one corrected comment about which frame the
-  comparisons share.
+  the club-time import and a rewritten comment about which frame the comparisons
+  share — rewritten because the first attempt at it was WRONG, claiming
+  `editPolicy.today` was a club calendar day when it is still the container's.
+  A comment that overstates how far a migration got is the "false and green"
+  hazard `docs/CLUB_TIME_KERNEL.md` names, so the replacement is explicit about
+  which half of that policy moved and which half is CT-6's.
 
 file: src/app/api/bookings/[id]/exception-requests/route.ts
 lines: 302
@@ -107,3 +139,28 @@ reason: five lines on a 491-line route. The existing comment already explained
   (#2682); two lines are added saying WHOSE day it now is, and the rest is the
   club-time import. Deleting the surrounding explanation to stay level would
   lose the reason the comparison is shaped this way at all.
+
+file: src/lib/booking-create.ts
+lines: 1889
+reason: fifteen lines on an already-oversized create service, of which thirteen
+  are one comment and two are imports. `POST /api/bookings` and this service run
+  the same two retroactive-booking rules — the service deliberately re-checks the
+  RESOLVED envelope, which guest nights can widen — and CT-4 moved the route onto
+  the club's day while leaving this on the container's. On a deployment whose
+  container is a day ahead, the route admits a check-in and the service then
+  throws "Retroactive bookings can go back at most 365 days" against a boundary
+  one day later, refusing what the same request just accepted. Both now read one
+  helper, and the comment says why two "today"s here are a straddle rather than
+  defence in depth. Splitting a 1,874-line booking-creation service is a real job
+  and an entirely separate one.
+
+file: src/lib/booking-exception-approval.ts
+lines: 1064
+reason: twenty-one lines on an already-oversized module: nine are the same
+  `storedDateOnly` helper and doc the three routes carry, awaiting CT-4f's single
+  home for it in `src/lib/**`, and eleven are the comment on the five decodes that
+  must stay spelled exactly as the request route spells them. This is the pair
+  whose divergence made every modification policy exception unapprovable, so the
+  five lines being one edit apart from their counterpart is the single most
+  important thing a future reader can know about them. Splitting the approval
+  hooks is CT-4f-adjacent work that would bury this migration's own diff.

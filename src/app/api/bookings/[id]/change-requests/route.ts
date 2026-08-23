@@ -109,11 +109,18 @@ function requestTouchesLockedPeriod({
   const currentCheckIn = storedDateOnly(booking.checkIn);
   const currentCheckOut = storedDateOnly(booking.checkOut);
 
-  // `today` comes from `getBookingEditPolicy` (a club calendar day at midnight
-  // UTC). `requestedEffectiveDate` and the booking dates come from
-  // `parseDateOnly` / `storedDateOnly`, which also yield midnight UTC. The
-  // comparisons below rely on both sides being on the same midnight-UTC
-  // date-only frame.
+  // Every value compared below is a calendar day at midnight UTC, which is what
+  // makes the comparisons meaningful: `requestedEffectiveDate` from
+  // `parseDateOnly`, the booking's own dates from `storedDateOnly`, and
+  // `editPolicy.today` / `editPolicy.editableFrom` from `getBookingEditPolicy`.
+  //
+  // BE PRECISE ABOUT `today`, because a comment here once was not. It is still
+  // `getTodayDateOnly()` inside that policy — the CONTAINER's day, from
+  // `APP_TIME_ZONE`, not the persisted club zone `INV-CONFIG-002` names.
+  // Migrating it makes a synchronous, widely-called pure function async and is
+  // CT-6's (#2991). `editableFrom` IS on the club's frame: it is the booking's
+  // own `@db.Date` check-in, and CT-4 (#2870) stopped that one being projected
+  // through a zone on the way out.
   if (requestedEffectiveDate && requestedEffectiveDate <= today) {
     return true;
   }

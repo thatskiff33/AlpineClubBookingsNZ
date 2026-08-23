@@ -1,7 +1,8 @@
+import { parseDateOnly } from "@/lib/date-only";
 import {
-  normalizeDateOnlyForTimeZone,
-  parseDateOnly,
-} from "@/lib/date-only";
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 import {
   normalizeGuestStayRange,
   type NormalizedBookingGuestStayRange,
@@ -126,6 +127,50 @@ function toDate(value: Date | string | null | undefined, fallback: Date): Date {
   return fallback;
 }
 
+/**
+ * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
+ *
+ * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
+ * no timezone (`INV-DATE-010`, `INV-DATE-026`). Idempotent, so a caller that has
+ * already decoded its rows this way hands in values this leaves alone.
+ */
+function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+
+/**
+ * A guest's STORED range, as the calendar days the `@db.Date` columns hold.
+ *
+ * CT-4 (#2870), and this line is one half of a cross-file FRAME PAIR — read the
+ * next paragraph before changing it. `normalizeDateOnlyForTimeZone`, which this
+ * replaces, projected the stored value through `APP_TIME_ZONE` first: the
+ * identity for a club ahead of Greenwich, the PREVIOUS day for one behind it.
+ *
+ * Two callers depend on this agreeing with how they decoded the same columns
+ * themselves, and both now decode in UTC:
+ *
+ *  - `/api/bookings/[id]/modify-quote` compares its own `storedDateOnly(...)`
+ *    of `guest.stayStart` against the range this returns to decide whether the
+ *    member changed anything. One projected side made `guestRangesChanged` true
+ *    for a delta that moved no dates, and then priced a window one night from
+ *    the one it compared against — a date-change charge for no date change.
+ *  - `buildModificationProposalParties` builds the frozen policy-exception BASE
+ *    party from the values its caller passes in and the PROPOSED party from
+ *    this, so a projection here alone shifted the proposal a day off its own
+ *    base, and `verifyLiveProposalIntegrity` then read the pair as drift.
+ *
+ * Both consequences are invisible on a deployment at or ahead of UTC, which is
+ * why they survived: `Pacific/Auckland` makes the projection the identity.
+ *
+ * WHAT THIS DOES NOT FIX, so nobody reads the resolver as fully converged. The
+ * sibling path — `normalizeGuestStayRange` in `booking-guest-stay-range-input.ts`
+ * — still projects, at three sites, and one of them is reachable from here: an
+ * ADDED guest carrying no range of their own is defaulted from the envelope
+ * through that helper, so on a club behind Greenwich they still land a night
+ * early. It is not this pair, nothing here made it worse, and CT-6 (#2991) is
+ * where those three go. Measured under `America/Denver`, correcting this line
+ * took the resolver's own suites from 32 failures to 28.
+ */
 function storedRange(
   guest: LiveGuestStayRow,
   booking: { checkIn: Date; checkOut: Date },
@@ -135,8 +180,8 @@ function storedRange(
       ? guest.nights.map((night) => night.stayDate)
       : undefined;
   return {
-    stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
-    stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+    stayStart: storedDateOnly(guest.stayStart ?? booking.checkIn),
+    stayEnd: storedDateOnly(guest.stayEnd ?? booking.checkOut),
     ...(nights ? { nights } : {}),
   };
 }

@@ -22,7 +22,15 @@ import { APP_TIME_ZONE } from "@/config/operational";
   route reads the wrong one — and the exact-lookback-boundary case turns that
   one-day difference into a 400.
 */
-const PERSISTED_CLUB_ZONE = "America/Denver";
+/*
+  Hoisted so the prisma mock factory below can name it too. `vi.mock` factories
+  hoist above every plain `const`, so the persisted zone used to be written out
+  twice — here and as a literal in the mock — and only this one was pinned by the
+  premise. One declaration, both call sites.
+*/
+const { PERSISTED_CLUB_ZONE } = vi.hoisted(() => ({
+  PERSISTED_CLUB_ZONE: "America/Denver",
+}));
 
 function getTodayDateOnly() {
   return dateOnlyInstantOf(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE)));
@@ -108,7 +116,7 @@ vi.mock("@/lib/prisma", () => ({
     // failing.
     clubTimeSettings: {
       findUnique: vi.fn().mockResolvedValue({
-        timeZone: "America/Denver",
+        timeZone: PERSISTED_CLUB_ZONE,
         updatedByMemberId: null,
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
       }),
