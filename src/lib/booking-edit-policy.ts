@@ -1,5 +1,28 @@
 import { BookingStatus } from "@prisma/client";
-import { addDaysDateOnly, getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
+
+/**
+ * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
+ *
+ * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
+ * no timezone (`INV-DATE-010`, `INV-DATE-026`). `normalizeDateOnlyForTimeZone`,
+ * which this replaces, projected it through `APP_TIME_ZONE` first — the identity
+ * for a club ahead of Greenwich, the PREVIOUS day for one behind it.
+ *
+ * It matters here because `editableFrom` is handed BACK to callers that then
+ * compare it against the same booking's dates decoded their own way.
+ * `/api/bookings/[id]/modify-quote` does exactly that one call later, so with
+ * this line projecting and that one not, the same stored `checkIn` was two
+ * different days a few lines apart and the self-service check-out lock ran a day
+ * wide.
+ */
+function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
 
 const MEMBER_FUTURE_EDIT_STATUSES = new Set<string>([
   BookingStatus.PENDING,
@@ -73,10 +96,17 @@ function isInProgressEditStatusAllowed(status: string): boolean {
 export function getBookingEditPolicy(
   input: BookingEditPolicyInput
 ): BookingEditPolicy {
+  // STILL THE CONTAINER'S DAY, deliberately, and callers must not claim
+  // otherwise. `getTodayDateOnly()` reads `APP_TIME_ZONE` (`process.env.TZ`),
+  // where `INV-CONFIG-002` makes the persisted `ClubTimeSettings.timeZone` the
+  // only authority. Moving it means resolving the zone from the database, which
+  // makes this synchronous, pure, widely-called function `async`; that plumbing
+  // is CT-6's (#2991), not CT-4's. The `@db.Date` decodes below are a different
+  // question with a local answer, and they are fixed.
   const today = getTodayDateOnly();
   const tomorrow = addDaysDateOnly(today, 1);
-  const checkIn = normalizeDateOnlyForTimeZone(input.checkIn);
-  const checkOut = normalizeDateOnlyForTimeZone(input.checkOut);
+  const checkIn = storedDateOnly(input.checkIn);
+  const checkOut = storedDateOnly(input.checkOut);
 
   // Admin override (issue #1668): lift the date-window locks entirely. Status
   // eligibility is still enforced (canModifyBookingStatusForRole); only the
@@ -147,14 +177,16 @@ export function getBookingEditPolicy(
  * The single source of truth shared by the self-service started-stay cancel
  * block (`booking-cancel.ts`) and the booking-detail UI, so the cancel route and
  * the Cancel button can never disagree about when a stay has begun. `today` is
- * injectable purely for deterministic tests; production always resolves the NZ
- * calendar date via `getTodayDateOnly()`.
+ * injectable purely for deterministic tests; production resolves it via
+ * `getTodayDateOnly()`, which is still the CONTAINER's day for the reason given
+ * in `getBookingEditPolicy` above. `checkIn` is a `@db.Date` calendar day and is
+ * read as one (CT-4, #2870).
  */
 export function bookingStayHasStarted(
   checkIn: Date,
   today: Date = getTodayDateOnly(),
 ): boolean {
-  return normalizeDateOnlyForTimeZone(checkIn) <= today;
+  return storedDateOnly(checkIn) <= today;
 }
 
 export function canModifyBookingStatusForRole(status: string, role: string): boolean {

@@ -11,7 +11,9 @@ import {
   rateLimitedResponse,
   rateLimiters,
 } from "@/lib/rate-limit";
-import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { requireActiveSession } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 
@@ -130,7 +132,11 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  if (checkIn < getTodayDateOnly()) {
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the submitted date-only values.
+  const today = dateOnlyInstantOf((await clubTime()).today());
+  if (checkIn < today) {
     return NextResponse.json(
       { error: "Cannot request a stay in the past" },
       { status: 400 }

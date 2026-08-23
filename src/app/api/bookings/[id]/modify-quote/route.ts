@@ -120,9 +120,12 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 import { getSeasonYear } from "@/lib/utils";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
@@ -131,6 +134,18 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
+
+/**
+ * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
+ *
+ * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
+ * no timezone (INV-DATE-010, INV-DATE-026). `normalizeDateOnlyForTimeZone`, which
+ * this replaces, projected it into the club zone first — the identity ahead of
+ * Greenwich, the PREVIOUS day behind it, so every stay date came back a day early.
+ */
+function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -998,12 +1013,12 @@ export async function POST(
   const finalRequestedCheckOut = envelopeRanges.ranges.checkOut;
 
   const isInProgressEdit = editPolicy.mode === "in-progress";
-  const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+  const bookingCheckIn = storedDateOnly(booking.checkIn);
   const editableFrom = editPolicy.editableFrom;
 
   if (isInProgressEdit) {
     if (
-      formatDateOnly(normalizeDateOnlyForTimeZone(finalRequestedCheckIn)) !==
+      formatDateOnly(storedDateOnly(finalRequestedCheckIn)) !==
         formatDateOnly(bookingCheckIn)
     ) {
       return NextResponse.json(
@@ -1011,7 +1026,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    if (editableFrom && normalizeDateOnlyForTimeZone(finalRequestedCheckOut) < editableFrom) {
+    if (editableFrom && storedDateOnly(finalRequestedCheckOut) < editableFrom) {
       return NextResponse.json(
         { error: "NZ today and earlier are locked for self-service changes" },
         { status: 400 }
@@ -1048,7 +1063,7 @@ export async function POST(
     }
   } else if (
     !isAdmin &&
-    normalizeDateOnlyForTimeZone(finalRequestedCheckIn) <= editPolicy.today
+    storedDateOnly(finalRequestedCheckIn) <= editPolicy.today
   ) {
     return NextResponse.json(
       { error: "NZ today and earlier are locked for self-service changes" },
@@ -1748,10 +1763,10 @@ export async function POST(
   const newNights = getStayNights(newCheckIn, newCheckOut).length;
   const datesChanged = targetDatesChanged;
   const guestRangesChanged = proposedRemainingGuests.some((entry) => {
-    const currentStayStart = normalizeDateOnlyForTimeZone(
+    const currentStayStart = storedDateOnly(
       entry.guest.stayStart ?? booking.checkIn
     );
-    const currentStayEnd = normalizeDateOnlyForTimeZone(
+    const currentStayEnd = storedDateOnly(
       entry.guest.stayEnd ?? booking.checkOut
     );
     return (
@@ -1776,8 +1791,8 @@ export async function POST(
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
-      stayStart: normalizeDateOnlyForTimeZone(g.stayStart ?? booking.checkIn),
-      stayEnd: normalizeDateOnlyForTimeZone(g.stayEnd ?? booking.checkOut),
+      stayStart: storedDateOnly(g.stayStart ?? booking.checkIn),
+      stayEnd: storedDateOnly(g.stayEnd ?? booking.checkOut),
     }));
     const newRemainingForPricing = proposedRemainingGuests.map((entry) => ({
       ageTier: entry.guest.ageTier as AgeTier,
@@ -2183,8 +2198,8 @@ async function buildShiftPreviewResponse({
   newCheckInStr?: string;
   newCheckOutStr?: string;
 }): Promise<NextResponse> {
-  const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-  const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+  const oldCheckIn = storedDateOnly(booking.checkIn);
+  const oldCheckOut = storedDateOnly(booking.checkOut);
   const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
 
   const providedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : null;
@@ -2240,15 +2255,15 @@ async function buildShiftPreviewResponse({
   const translatedRanges = booking.guests.map((guest) => ({
     memberId: guest.memberId ?? null,
     stayStart: addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayStart),
+      storedDateOnly(guest.stayStart),
       deltaDays,
     ),
     stayEnd: addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayEnd),
+      storedDateOnly(guest.stayEnd),
       deltaDays,
     ),
     nights: guest.nights.map((night) =>
-      addDaysDateOnly(normalizeDateOnlyForTimeZone(night.stayDate), deltaDays),
+      addDaysDateOnly(storedDateOnly(night.stayDate), deltaDays),
     ),
   }));
 

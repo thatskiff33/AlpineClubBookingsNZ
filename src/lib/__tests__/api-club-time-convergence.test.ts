@@ -1,31 +1,42 @@
 /**
- * No admin API route resolves the club's timezone from the ENVIRONMENT (CT-4a,
- * #2870; epic #2988).
+ * No API route resolves the club's timezone from the ENVIRONMENT (CT-4, #2870;
+ * epic #2988).
+ *
+ * ## Scope: the WHOLE `src/app/api` tree, admin and member and public alike
+ *
+ * It started as CT-4a's admin-only scan (`src/app/api/admin/**`, 297 files) and
+ * was widened to all 475 when CT-4b migrated the member and public routes. The
+ * widening cost one constant and needed no exemption: measured on this tree, the
+ * 178 non-admin files carry ZERO violations of any rule below. That matters
+ * because CT-4b hand-wrote a behavioural test for four of its fourteen routes
+ * and reasoned about the other ten from the shape of the change — and reasoning
+ * about a shape is the thing a census can replace with a measurement.
  *
  * ## What this census claims, and what it deliberately does not
  *
- * It claims exactly one thing: no file under `src/app/api/admin/**` reaches a
+ * It claims exactly one thing: no file under `src/app/api/**` reaches a
  * zone-bearing legacy helper — the ones that default their zone to
  * `APP_TIME_ZONE`, which is the container's `TZ`. That is a property of the
- * FILES IN THIS DIRECTORY, and it is what stops a route added next month
- * copying its neighbour's environment read.
+ * FILES THEMSELVES, and it is what stops a route added next month copying its
+ * neighbour's environment read.
  *
  * IT IS NOT the claim that this layer no longer touches the environment zone at
- * all, and an earlier draft of this docblock said that it was. Measured on this
- * tree by transitive import closure: **186 of the 297** non-test files under
- * `src/app/api/admin/**` still reach a module that imports `APP_TIME_ZONE` from
- * `@/config/operational`, overwhelmingly through `src/lib/date-only.ts` (144 of
- * them) and `src/lib/nzst-date.ts` (22). Those wrappers — the capacity, pricing,
- * guest-stay, consent and email-template layers among them — are group F's work
- * and CT-6 (#2991) retires the modules themselves. Saying so here is not a
- * caveat for form's sake: `docs/CLUB_TIME_KERNEL.md` warns specifically against
- * a guard whose headline is "false and green", and a layer-wide claim backed by
- * a directory-wide scan would be exactly that.
+ * all, and an earlier draft of this docblock said that it was. Measured by
+ * transitive import closure over the admin half: **186 of those 297** files
+ * still reach a module that imports `APP_TIME_ZONE` from `@/config/operational`,
+ * overwhelmingly through `src/lib/date-only.ts` (144 of them) and
+ * `src/lib/nzst-date.ts` (22). The non-admin half has not been measured that way
+ * and no claim is made about it here; the wrappers are shared, so expect a
+ * similar picture. Those wrappers — the capacity, pricing, guest-stay, consent
+ * and email-template layers among them — are group F's work and CT-6 (#2991)
+ * retires the modules themselves. Saying so is not a caveat for form's sake:
+ * `docs/CLUB_TIME_KERNEL.md` warns specifically against a guard whose headline
+ * is "false and green", and a layer-wide claim backed by a file-level scan would
+ * be exactly that.
  *
- * The per-route tests in this directory prove that the migrated handlers answer
- * with the club's PERSISTED zone. This proves the negative that no route test
- * can: that the fourteenth route, the one nobody wrote a test for, did not reach
- * for the environment either.
+ * The per-route tests prove that the migrated handlers answer with the club's
+ * PERSISTED zone. This proves the negative that no route test can: that the
+ * route nobody wrote a test for did not reach for the environment either.
  *
  * ## What is forbidden here, and what deliberately is not
  *
@@ -53,21 +64,26 @@
  * would hand the sibling lane a test that goes red the moment it fixes them,
  * which is a worse failure than the gap. CT-6 closes the set.
  *
- * ## The `/xero/` skip is an allowlist, and a coarse one
+ * ## The Xero skip is an allowlist, and it is now a PREFIX
  *
- * `SKIPPED_PATH_SUBSTRING` is not a scoping rule, whatever it looks like: it is
- * a named exemption for the CT-5 lane, and it exempts those files from EVERY
- * check here, not only from the two helpers that motivated it. It is also a
- * plain substring test over the whole repo-relative path, so any future
- * directory whose path happens to contain `/xero/` — at any depth, under any
- * parent — is silently exempt too. That is more than it needs to be. It is
- * written this way because the alternative on offer was a per-file allowlist
- * that the sibling lane would turn red by doing its job. What is asserted below
- * is the boundary rather than the count: every skipped file must live under
- * `src/app/api/admin/xero/`, so the substring cannot start exempting some other
- * directory that happens to contain it. A count would be tighter still and is
- * deliberately not used — it would go red the moment CT-5 adds a Xero route,
- * which is not a regression.
+ * `SKIPPED_PATH_PREFIX` is not a scoping rule, whatever it looks like: it is a
+ * named exemption for the CT-5 lane (#2869), and it exempts those files from
+ * EVERY check here, not only from the two zone-bearing helpers that motivated
+ * it. `startOfDateOnlyForTimeZone` and `endOfDateOnlyForTimeZone` are the two:
+ * both callers live under `src/app/api/admin/xero/`, both belong to CT-5, and
+ * naming them in the banned set instead would hand the sibling lane a test that
+ * goes red the moment it fixes them. CT-6 closes the set.
+ *
+ * It USED to be a plain substring over the whole repo-relative path, and its own
+ * assertion warned that any directory whose path merely contained `/xero/`, at
+ * any depth under any parent, was silently exempt too. Widening the scan turned
+ * that warning into a live case: `src/app/api/cron/xero/route.ts` and
+ * `src/app/api/webhooks/xero/route.ts` would have inherited a blanket skip they
+ * were never granted. Both are clean under every rule here, so the fix is to
+ * narrow the exemption rather than bless them — it is now the exact prefix
+ * `src/app/api/admin/xero/`, and the assertion below pins that those two files
+ * are scanned. If CT-5 ever needs one of them exempt, that is a deliberate line
+ * to add here, not something a substring should grant by accident.
  *
  * ## Reaching the legacy adapters by named import only
  *
@@ -95,7 +111,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
-const ADMIN_API_DIR = path.join(ROOT, "src", "app", "api", "admin");
+const API_DIR = path.join(ROOT, "src", "app", "api");
 
 /**
  * Helpers whose answer depends on a timezone, and which resolve that timezone
@@ -128,7 +144,12 @@ const ENVIRONMENT_ZONE_HELPERS: Record<string, string> = {
 const LEGACY_MODULE_BASENAMES = new Set(["date-only", "nzst-date"]);
 
 /** The CT-5 exemption. See the docblock — this is an allowlist, not a scope. */
-const SKIPPED_PATH_SUBSTRING = "/xero/";
+const SKIPPED_PATH_PREFIX = "src/app/api/admin/xero/";
+
+/** Repo-relative, forward-slashed, so one spelling is compared everywhere. */
+function repoPath(file: string): string {
+  return path.relative(ROOT, file).split(path.sep).join("/");
+}
 
 /** True when this module specifier resolves to one of the legacy adapters. */
 function isLegacyModuleSpecifier(specifier: string): boolean {
@@ -195,51 +216,51 @@ function opaqueLegacyModuleReads(source: string): string[] {
   return found;
 }
 
-const FILES = sourceFiles(ADMIN_API_DIR);
-const SKIPPED = FILES.filter((file) =>
-  path.relative(ROOT, file).split(path.sep).join("/").includes(SKIPPED_PATH_SUBSTRING),
-);
+const FILES = sourceFiles(API_DIR);
+const SKIPPED = FILES.filter((file) => repoPath(file).startsWith(SKIPPED_PATH_PREFIX));
 
-describe("admin API temporal convergence (CT-4a, #2870)", () => {
-  it("finds the admin API source tree at all", () => {
+describe("API temporal convergence (CT-4, #2870)", () => {
+  it("finds the whole API source tree, member and public routes included", () => {
     // A census whose scan returns nothing passes every assertion below while
-    // proving none of them. Pin a file this tree certainly contains.
-    expect(FILES.length).toBeGreaterThan(100);
-    expect(
-      FILES.some((file) => file.endsWith(path.join("bookings", "route.ts"))),
-    ).toBe(true);
+    // proving none of them. Pin files this tree certainly contains — and pin one
+    // from EACH half, because the scan being silently narrowed back to
+    // `src/app/api/admin` is the specific regression that would make CT-4b's ten
+    // untested routes unguarded again without anything going red.
+    expect(FILES.length).toBeGreaterThan(400);
+    const paths = FILES.map(repoPath);
+    expect(paths).toContain("src/app/api/admin/bookings/route.ts");
+    expect(paths).toContain("src/app/api/bookings/[id]/modify-quote/route.ts");
+    expect(paths).toContain("src/app/api/booking-requests/whole-lodge/route.ts");
+    expect(paths).toContain("src/app/api/profile/route.ts");
   });
 
-  it("exempts nothing outside the one directory the exemption is for", () => {
-    // The exemption is coarse by design (see the docblock): a plain substring
-    // over the whole repo-relative path, so `/xero/` at ANY depth under ANY
-    // parent is exempt. The CT-5 lane owns exactly one directory, so that is
-    // the boundary asserted here. A count would be tighter still, but it would
-    // also go red the moment the sibling lane adds a Xero route, which is not a
-    // regression and not this test's business.
-    const outsideTheXeroArea = SKIPPED.map((file) =>
-      path.relative(ROOT, file).split(path.sep).join("/"),
-    ).filter((rel) => !rel.startsWith("src/app/api/admin/xero/"));
-    expect(
-      outsideTheXeroArea,
-      "The `/xero/` exemption is a substring test, so a new directory whose " +
-        "path merely contains it inherits a blanket skip of every check in this " +
-        "file. Narrow the rule, or move the directory.",
-    ).toEqual([]);
+  it("exempts the CT-5 directory and nothing that merely looks like it", () => {
+    // The exemption is a prefix, not a substring, and this is what that buys.
+    // Both of these contain `/xero/` and neither belongs to the CT-5 lane, so
+    // both must be SCANNED. Under the old substring rule they were exempt from
+    // every check in this file the moment the scan widened past `admin`.
+    const paths = FILES.map(repoPath);
+    const scanned = paths.filter((rel) => !rel.startsWith(SKIPPED_PATH_PREFIX));
+    expect(scanned).toContain("src/app/api/cron/xero/route.ts");
+    expect(scanned).toContain("src/app/api/webhooks/xero/route.ts");
+
     // And it really is exempting something, so the rule is live rather than
-    // vestigial — a skip list that matched nothing would pass the check above
-    // by matching nothing at all.
+    // vestigial — a skip list that matched nothing would pass by matching
+    // nothing at all.
     expect(SKIPPED.length).toBeGreaterThan(0);
-    expect(FILES.length - SKIPPED.length).toBeGreaterThan(250);
+    expect(SKIPPED.every((file) => repoPath(file).startsWith(SKIPPED_PATH_PREFIX))).toBe(
+      true,
+    );
+    expect(FILES.length - SKIPPED.length).toBeGreaterThan(400);
   });
 
   it("reads no club timezone from the environment", () => {
     const offenders: string[] = [];
     for (const file of FILES) {
-      const rel = path.relative(ROOT, file).split(path.sep).join("/");
-      // CT-5 (#2869) owns every provider-facing file, and its two remaining
-      // callers of the day-boundary pair live here. Not this lane's to move.
-      if (rel.includes(SKIPPED_PATH_SUBSTRING)) continue;
+      const rel = repoPath(file);
+      // CT-5 (#2869) owns the admin Xero area, and its two remaining callers of
+      // the day-boundary pair live there. Not this lane's to move.
+      if (rel.startsWith(SKIPPED_PATH_PREFIX)) continue;
       const source = fs.readFileSync(file, "utf8");
       for (const name of legacyImportedNames(source)) {
         const fix = ENVIRONMENT_ZONE_HELPERS[name];
@@ -255,7 +276,7 @@ describe("admin API temporal convergence (CT-4a, #2870)", () => {
 
     expect(
       offenders,
-      "INV-CONFIG-002 (docs/invariants/product-configuration.md): an admin route " +
+      "INV-CONFIG-002 (docs/invariants/product-configuration.md): an API route " +
         "resolved the club's timezone from `APP_TIME_ZONE`, which is the " +
         "CONTAINER's `TZ`. The club's civil time is the persisted " +
         "`ClubTimeSettings.timeZone`, and the two agree on every deployment " +

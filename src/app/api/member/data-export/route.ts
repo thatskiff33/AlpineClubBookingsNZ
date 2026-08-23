@@ -11,7 +11,8 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
-import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubTime } from "@/lib/club-time/server";
 
 export async function GET() {
   const session = await auth();
@@ -201,7 +202,9 @@ export async function GET() {
       },
     });
 
-    const exportDate = todayDateOnlyForTimeZone();
+    // CT-4 (#2870): the CLUB's calendar day, from the persisted
+    // ClubTimeSettings zone and not the container's TZ (INV-CONFIG-002).
+    const exportDate = (await clubTime()).today();
     const payload = {
       exportedAt: new Date().toISOString(),
       exportedBy: `${member.firstName} ${member.lastName}`,

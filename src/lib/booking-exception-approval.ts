@@ -1,10 +1,10 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
 
+import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import {
-  addDaysDateOnly,
-  parseDateOnly,
-  normalizeDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
@@ -257,6 +257,17 @@ export async function reauthorizeBookingOfficerFromDb(
 // ---------------------------------------------------------------------------
 
 /**
+ * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
+ *
+ * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
+ * no timezone (`INV-DATE-010`, `INV-DATE-026`). The same three lines the request
+ * route spells for the same columns.
+ */
+function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+
+/**
  * Load the live booking's guests in exactly the shape the request route froze
  * them in, so a replayed base is comparable byte-for-byte with the frozen one.
  */
@@ -292,9 +303,19 @@ async function loadLiveBookingForIntegrity(
     },
   });
   if (!booking) return null;
+  // CT-4 (#2870), and THE OTHER HALF OF A FRAME PAIR: these five decodes must
+  // stay spelled exactly as `/api/bookings/[id]/exception-requests` spells them
+  // when it FREEZES the proposal, because the replay below re-hashes the result
+  // and compares it to the frozen hash. They diverged once — the route decoded
+  // the stored calendar days in UTC while this still projected them through
+  // `APP_TIME_ZONE` — and for any club behind Greenwich the replayed base came
+  // back a day early, so `verifyLiveProposalIntegrity` reported `drift` on a
+  // booking nobody had touched. The officer was told to ask the member to
+  // resubmit, and the resubmitted request reproduced it: no modification policy
+  // exception could ever be approved. Change one side and you must change both.
   return {
-    checkIn: normalizeDateOnlyForTimeZone(booking.checkIn),
-    checkOut: normalizeDateOnlyForTimeZone(booking.checkOut),
+    checkIn: storedDateOnly(booking.checkIn),
+    checkOut: storedDateOnly(booking.checkOut),
     liveGuests: booking.guests.map((guest) => ({
       id: guest.id,
       firstName: guest.firstName,
@@ -302,10 +323,10 @@ async function loadLiveBookingForIntegrity(
       ageTier: guest.ageTier,
       isMember: guest.isMember,
       memberId: guest.memberId,
-      stayStart: normalizeDateOnlyForTimeZone(guest.stayStart),
-      stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd),
+      stayStart: storedDateOnly(guest.stayStart),
+      stayEnd: storedDateOnly(guest.stayEnd),
       nights: guest.nights.map((night) => ({
-        stayDate: normalizeDateOnlyForTimeZone(night.stayDate),
+        stayDate: storedDateOnly(night.stayDate),
       })),
     })),
   };

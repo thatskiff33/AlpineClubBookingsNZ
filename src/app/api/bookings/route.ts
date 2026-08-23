@@ -93,10 +93,11 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   addDaysDateOnly,
-  getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { aggregatePolicyExceptionViolations } from "@/lib/booking-policy-exceptions";
 import {
@@ -591,7 +592,10 @@ export async function POST(request: NextRequest) {
   // rolling lookback. Everything else keeps the original today-or-future rule.
   const retroactiveCreate =
     parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
-  const today = getTodayDateOnly();
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
+  const today = dateOnlyInstantOf((await clubTime()).today());
   // The flag is strictly retroactive: a today-or-future check-in carrying it is
   // rejected rather than silently widening normal-create behaviour (lead-time
   // skip, capacity warn-and-confirm belong to past stays only).
