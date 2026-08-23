@@ -63,8 +63,21 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 /**
  * Every entrypoint a person runs directly under `tsx`. Directories rather than
  * a hand-list, so a new script joins the census by existing.
+ *
+ * `e2e/setup` was NOT here when this census was written, and that omission cost
+ * a full CI cycle on #3056: `scripts/e2e-stack.sh` runs
+ * `npx tsx e2e/setup/seed-second-lodge.ts`, a shared `src/lib` module on its
+ * graph gained a `club-time/server` import, and `E2E multi-lodge` died at that
+ * import with the bare `server-only` throw — while this census, whose entire
+ * job is to prevent exactly that, stayed green because it was not looking.
+ *
+ * The lesson is the list, not the entry. A directory here is only as good as
+ * whoever remembered to add it, so `covers every tsx invocation in the
+ * repository` below derives the answer from the shell scripts and package
+ * scripts instead, and fails when a `tsx` entrypoint exists that no root
+ * covers.
  */
-const CLI_ROOT_DIRECTORIES = ["scripts", "e2e/tools"] as const;
+const CLI_ROOT_DIRECTORIES = ["scripts", "e2e/tools", "e2e/setup"] as const;
 /** Seed entrypoints, which `prisma db seed` also runs under `tsx`. */
 const CLI_ROOT_FILES = ["prisma/seed.ts", "prisma/demo-seed.ts"] as const;
 
@@ -159,6 +172,19 @@ function findServerOnlyReach(entry: string): string[] | null {
   return null;
 }
 
+/**
+ * Files directly inside one directory, by extension. Shallow on purpose: the
+ * places a `tsx` entrypoint is NAMED are flat (shell scripts, workflow files),
+ * and a recursive walk here would pull in fixtures that merely mention one.
+ */
+function walkShallow(directory: string, extension: string): string[] {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
+    .map((entry) => path.join(directory, entry.name))
+    .sort();
+}
+
 function cliRoots(): string[] {
   const roots: string[] = [];
   for (const directory of CLI_ROOT_DIRECTORIES) {
@@ -218,5 +244,55 @@ describe("no CLI entrypoint statically reaches a server-only module", () => {
       serverBinding,
       "server-only",
     ]);
+  });
+
+  it("covers every tsx invocation in the repository", () => {
+    // The root list above is only as good as whoever remembered to add a
+    // directory to it, and on #3056 nobody had: `e2e/setup` was missing, the
+    // multi-lodge E2E seed died on the `server-only` throw, and this census
+    // stayed green throughout. So the roots are no longer trusted on their own
+    // — this derives the answer from the places a `tsx` entrypoint is actually
+    // NAMED, and fails when one exists that no root covers.
+    const searched: string[] = [];
+    for (const relative of [
+      ...walkShallow(path.join(REPO_ROOT, "scripts"), ".sh"),
+      path.join(REPO_ROOT, "package.json"),
+      ...walkShallow(path.join(REPO_ROOT, ".github", "workflows"), ".yml"),
+    ]) {
+      if (!existsSync(relative)) continue;
+      searched.push(relative);
+    }
+    // A non-vacuity floor: if the sweep stops finding files, it stops finding
+    // invocations too, and a green here would mean nothing.
+    expect(searched.length).toBeGreaterThan(5);
+
+    const invoked = new Set<string>();
+    for (const file of searched) {
+      const text = readFileSync(file, "utf8");
+      for (const match of text.matchAll(
+        /(?:^|[\s"'])tsx\s+(?:--[\w-]+(?:=\S+)?\s+)*([\w./-]+\.[cm]?tsx?)(?=[\s"';)]|$)/gm,
+      )) {
+        invoked.add(match[1].replace(/^\.\//, ""));
+      }
+    }
+    // The sweep must be able to see one, or the assertion below is vacuous.
+    expect(invoked.size).toBeGreaterThan(0);
+
+    const covered = new Set(
+      CLI_ROOTS.map((absolute) =>
+        path.relative(REPO_ROOT, absolute).split(path.sep).join("/"),
+      ),
+    );
+    const uncovered = [...invoked]
+      .filter((entry) => !covered.has(entry))
+      .filter((entry) => existsSync(path.join(REPO_ROOT, entry)))
+      .sort();
+
+    expect(uncovered, [
+      "A `tsx` entrypoint is invoked somewhere in this repository that no CLI",
+      "root covers, so nothing checks whether it reaches a `server-only`",
+      "module. Add its directory to CLI_ROOT_DIRECTORIES (or the file to",
+      "CLI_ROOT_FILES) and re-run.",
+    ].join(" ")).toEqual([]);
   });
 });
