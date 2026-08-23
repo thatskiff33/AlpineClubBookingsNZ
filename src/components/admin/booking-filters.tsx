@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import { useClubTime } from "@/components/club-time-provider";
+import { calendarDateParts } from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -99,6 +101,7 @@ export function BookingFilters({
   showBedAllocation = true,
   lodgeOptions = [],
 }: BookingFiltersProps) {
+  const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -150,9 +153,13 @@ export function BookingFilters({
     status !== "all" &&
     !bookingStatuses.includes(status as (typeof bookingStatuses)[number]);
 
-  // Generate month options: current year ±1
+  // Generate month options: current year ±1. The CLUB's year (CT-4, #2870;
+  // INV-CONFIG-002), not the browser's - `new Date().getFullYear()` reads the
+  // admin's own clock, so for the hours either side of New Year an admin abroad
+  // was offered a different three-year window from the one beside them, and the
+  // months the server can actually filter on.
   const monthOptions: Array<{ value: string; label: string }> = [];
-  const currentYear = new Date().getFullYear();
+  const currentYear = calendarDateParts(clubTime.today()).year;
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   for (let y = currentYear - 1; y <= currentYear + 1; y++) {
     for (let m = 0; m < 12; m++) {

@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
@@ -9,11 +14,32 @@ vi.mock("@/components/club-identity-provider", () => ({
 }));
 
 import { BookingCalendar } from "@/components/booking-calendar";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 
-// A day in the current month that is never in the past: tomorrow, clamped to the
-// month's last day (mirrors booking-calendar-a11y.test.tsx so assertions stay
-// deterministic across any run date).
-const now = new Date();
+/*
+  A day in the current month that is never in the past: tomorrow, clamped to the
+  month's last day (mirrors booking-calendar-a11y.test.tsx so assertions stay
+  deterministic across any run date).
+
+  "TODAY" HERE IS THE CLUB'S DAY, NOT THE HOST'S (CT-4, #2870).
+
+  `BookingCalendar` opens on the month `clubTime.today()` names, which comes from
+  the `ClubTimeProvider` this harness mounts (`Pacific/Auckland`). Deriving these
+  fixtures from a bare `new Date()` reads the RUNNER's clock instead, and the two
+  agree only while the host is on or east of UTC — which is CI's shape, and is why
+  it looked fine. On a developer machine or container running `TZ=America/Denver`
+  the frozen instant is 30 June there and 1 July at the club, so every fixture
+  below landed in the wrong month and this suite failed against entirely correct
+  code. Same defect, same reasoning and same fix as the header of
+  `admin-booking-calendar.test.tsx`.
+
+  Constructed as a LOCAL date from the club's calendar parts, so every
+  `now.get*()` reader below keeps working unchanged and returns the club's
+  year/month/day in any host zone.
+*/
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
+const now = new Date(clubYear, clubMonth - 1, clubDay);
 const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 const targetDay = Math.min(now.getDate() + 1, lastDay);
 const targetIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;

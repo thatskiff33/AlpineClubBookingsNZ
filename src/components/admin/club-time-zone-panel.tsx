@@ -10,7 +10,7 @@ import {
   CLUB_TIME_ZONE_MAX_LENGTH,
   listSelectableClubTimeZones,
 } from "@/lib/club-time-zone";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * The club-timezone maintenance panel (CT-1, #2989; epic #2988).
@@ -142,21 +142,32 @@ function describeSource(state: ClubTimeZoneState): string {
 }
 
 /**
- * "Last changed", in the same zone as every other admin timestamp.
+ * "Last changed", in the same zone as every other admin timestamp — which is now
+ * the CONFIGURED one (CT-4, #2870; INV-CONFIG-002).
  *
- * Deliberately NOT the club's configured zone, even though the configured zone
- * is what this screen is about. `/admin/audit-log` renders the very same class of
- * timestamp — the audit row this save writes — through `APP_TIME_ZONE`, and one
- * screen quietly spelling an instant in a different zone from the screen beside
- * it, with nothing on either saying which, is worse than both sitting on the
- * transitional constant. CT-4 moves every admin timestamp onto the configured
- * zone in one change, and this line moves with them. `formatNZDateTime` pins
- * locale and zone together, which is what INV-DATE-015 and the ESLint date guard
- * require of any formatter here.
+ * CT-1's version of this comment said the line sat on the transitional
+ * `APP_TIME_ZONE` deliberately, because `/admin/audit-log` rendered the very same
+ * class of timestamp that way and one screen quietly spelling an instant in a
+ * different zone from the screen beside it is worse than both sitting on the
+ * constant. It also said CT-4 would move every admin timestamp together and this
+ * line would move with them. This is that change: they moved together.
+ *
+ * IT READS THE ZONE FROM THE PROVIDER, NOT FROM THIS PANEL'S OWN FETCH, even
+ * though the panel holds a freshly loaded `state.timeZone`. The provider carries
+ * what the whole session is rendering in, so this screen agrees with the audit
+ * log beside it; using the panel's own copy would make this one stamp jump ahead
+ * of every other screen for the rest of the session after a save, which is the
+ * exact inconsistency the paragraph above refused. The saved value takes effect
+ * everywhere on the next server render.
  */
-function formatChangedAt(iso: string): string {
-  const changedAt = new Date(iso);
-  return Number.isNaN(changedAt.getTime()) ? iso : formatNZDateTime(changedAt);
+function useChangedAtFormatter() {
+  const clubTime = useClubTime();
+  return (iso: string): string => {
+    const changedAt = new Date(iso);
+    return Number.isNaN(changedAt.getTime())
+      ? iso
+      : clubTime.instantDateTime(changedAt);
+  };
 }
 
 /** Match on the identifier with underscores read as spaces: "new york" finds America/New_York. */
@@ -167,6 +178,7 @@ function matchesFilter(zone: string, filter: string): boolean {
 }
 
 export function ClubTimeZonePanel() {
+  const formatChangedAt = useChangedAtFormatter();
   const [state, setState] = useState<ClubTimeZoneState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [editing, setEditing] = useState(false);

@@ -5,7 +5,9 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
-import { getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { logAudit } from "@/lib/audit";
 import {
   isXeroConnected,
@@ -229,9 +231,12 @@ export async function PUT(
       { status: 422 },
     );
   }
-  // A later NZ calendar day, not a later instant (#2682) — the same comparison
-  // `request-child/route.ts` already makes.
-  if (dob > getTodayDateOnly()) {
+  // CT-4 (#2870): "in the future" means a later CLUB calendar day, taken from
+  // the persisted ClubTimeSettings zone and not the container's TZ
+  // (INV-CONFIG-002, INV-DATE-019). The date of birth takes no zone at all
+  // (INV-DATE-010), and both sides stay UTC-midnight date-only values.
+  const today = dateOnlyInstantOf((await clubTime()).today());
+  if (dob > today) {
     return NextResponse.json(
       { error: "Date of birth cannot be in the future" },
       { status: 422 },

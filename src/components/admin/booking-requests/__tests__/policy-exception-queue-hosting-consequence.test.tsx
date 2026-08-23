@@ -14,7 +14,7 @@
 // Read off the FROZEN violation, never the live policy row: the club may have changed
 // the setting since, and what the officer decides is what happened at the time.
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({

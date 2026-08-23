@@ -46,7 +46,9 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { ApiError } from "@/lib/api-error";
-import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   redeemPromoCode,
   shouldPersistPromoRedemption,
@@ -591,7 +593,30 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // resolved envelope actually starts in the past; when unset, every code
   // path below stays byte-identical to the member flow.
   const allowPastDates = Boolean(input.allowPastDates) && isOnBehalf;
-  const todayDateOnly = getTodayDateOnly();
+  // CT-4 (#2870): the club's day, from the persisted `ClubTimeSettings` zone and
+  // not the container's `TZ` (`INV-CONFIG-002`, `INV-DATE-019`), encoded at UTC
+  // midnight so it shares a frame with the stored dates and `addDaysDateOnly`.
+  //
+  // ONE HALF OF A FRAME PAIR — `POST /api/bookings` runs the same two rules
+  // before calling this, and the block below re-runs them as defence in depth on
+  // the RESOLVED envelope. Two "today"s from two different authorities are not
+  // defence in depth, they are a straddle: with the route on the club's day and
+  // this on the container's, a deployment whose container sits ahead of the club
+  // admits `clubToday - 365` at the door and then throws "Retroactive bookings
+  // can go back at most 365 days" here, one day later. Both sides read this one
+  // helper, so they cannot disagree. Read outside every transaction.
+  //
+  // The reader is `club-time-zone-runtime`, NOT `club-time/server`, and that is
+  // not a style choice. `server-only` is a bare `throw` that is inert only under
+  // the `react-server` condition, which `tsx` does not set — so a shared
+  // `src/lib` module importing `club-time/server` kills every command-line entry
+  // point that reaches it, at import, before `main()`. CT-5 (#2869) found that
+  // the hard way and added this marker-free reader for exactly this position.
+  // The first version of this line used `clubTime()` and took down the
+  // multi-lodge E2E seed.
+  const todayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const retroactiveOverride = allowPastDates && checkIn < todayDateOnly;
   // Over-capacity warn-and-confirm (#1668/#1695, widened by #1767): every
   // on-behalf create may overbook behind an explicit admin confirmation —

@@ -81,7 +81,7 @@ id and need the file it lives in.
 | Documentation itself | — | [`STYLE_GUIDE.md`](docs/STYLE_GUIDE.md) |
 | Locating bounded code, import or Prisma context for an agent | — | [`agents/SCOPED_CONTEXT.md`](docs/agents/SCOPED_CONTEXT.md) |
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
-| Working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — read the thread with `npm run issue -- <n>`, never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
+| Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
 | Posting in public — issues, PRs, comments, claims, cross-lane hand-offs | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — what never goes in a public artifact, the `CLAIM:`/`LANE-SYNC:` prefixes, lane identity |
 | A Next.js API or convention | — | the relevant guide in `node_modules/next/dist/docs/` |
 | Any part of your change that no row above covers — including a change that also matched a row | — | [`docs/contributors/README.md`](docs/contributors/README.md) — the contributor index, which names every technical reference and feature hub; [`docs/README.md`](docs/README.md) routes to the adopter and member paths; [`README.md`](README.md) for what the product is |
@@ -138,6 +138,21 @@ id and need the file it lives in.
 - One GitHub Issue equals one branch and one PR unless the issue explicitly says
   otherwise. **An epic's children target its integration branch, never `main`**
   (#3002); that branch's pull request into `main` is the epic's one gated merge.
+- **An epic is one atomic release outcome, not a thematic bucket** (#3049). A
+  dependency, shared files, a shared domain theme, or having been found in the
+  same audit are not reasons to bundle work; an epic that should have been three
+  issues holds finished work off `main`. Work that is independently complete and
+  safe to release is a normal issue and a normal PR to `main`. Run the
+  four-question test in
+  [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) → "What qualifies
+  as an epic", which also separates an epic from a **programme** (ordered work
+  whose stages each ship on their own), a **standalone issue**, and a **GitHub
+  Project** (a planning view that bounds no release).
+- **An issue body explains itself to a person before it briefs an agent**
+  (#3049): what happens today, who it affects, what is proposed, and the
+  alternatives weighed — then the execution contract, as precise as it is now.
+  Order: same file → "Writing an issue: the human explanation, then the
+  execution contract".
 - Work only inside the issue scope. Stop and ask for human review if the code or
   docs contradict the issue.
 - **This repository is the generic product, not one club's site.** Each deployed
@@ -242,22 +257,15 @@ validation gates.
   files under `.artifacts/agent-context/` are ignored, local, bounded context —
   never committed, pasted wholesale into a prompt, or injected automatically by
   a hook. Clear issue-specific context before switching lanes.
-- **Spend models, tools, and subagents in proportion to risk.** Decide the spend
-  when you dispatch, from the lineup and the task in front of you — this file
-  names the decision, not the model, because the tiers change faster than it
-  does. Ask first whether a deterministic command already answers the question
-  exactly: a grep, a focused test, a typecheck or `npm run agent:context`
-  returns a checkable fact, where a model returns a claim you then have to
-  verify. That test, not a list of "routine" task types, is what makes local
-  tooling the cheaper answer. When a model is warranted, dispatch the cheapest
-  tier you would trust to be right on this task *without re-reading its work*,
-  and escalate on evidence — a wrong answer, a refusal, a task that proves
-  reasoning-bound — rather than on a hunch that bigger is safer. Prefer
-  repository commands over an MCP or browser round trip when they answer the
-  same question. Delegate only a sizeable independent track whose payoff exceeds
-  re-establishing its context, and give it the smallest relevant artifact and
-  file set. Gated areas retain the strongest-model high/xhigh rules in the
-  orchestration model below, and `xhigh` remains the ceiling.
+- **Spend models, tools, and subagents in proportion to risk.** Ask first
+  whether a deterministic command answers the question exactly; the rest of the
+  rule, and the three questions it works down, is "Model selection" below —
+  decide at dispatch, from the task in front of you rather than from a list of
+  "routine" task types. Prefer repository commands over an MCP or browser round
+  trip when they answer the same question, and delegate per "Delegate
+  deliberately" below, with the smallest relevant artifact and file set. Gated
+  areas retain the strongest-model high/xhigh rules in the orchestration model
+  below, and `xhigh` remains the ceiling.
 - **Gate the blueprint by risk.** A narrow Low/Medium issue with complete scope
   needs only a concise working plan. Before implementing High/Critical work,
   record a blueprint that names the affected invariants, counterpart writers,
@@ -266,10 +274,9 @@ validation gates.
   the issue.
 - **Validate coherent batches.** Run the cheapest relevant check after a
   meaningful batch or boundary (parser, schema client, route, UI, docs), not
-  after every keystroke and not only at the end. The final local gate remains
-  branch-correct Prisma generation, lint, typecheck, `test:related`, focused
-  touched/adjacent tests, and the routed docs/knip checks; PR CI still owns the
-  full suite and build.
+  after every keystroke and not only at the end. The final local gate, command
+  by command, is in "Per-issue pipeline" below; PR CI still owns the full suite
+  and build.
 - **Two identical failures trip a circuit breaker.** After the same command and
   material error fail twice, do not spend a third attempt on an unchanged
   strategy. Preserve the exact command and error, inspect the root cause, narrow
@@ -345,14 +352,12 @@ an orchestrator with subagents, not a single agent doing everything inline:
   and keep routine verification in the orchestrator loop. Reserve subagents for
   genuinely independent, sizeable tracks: per-issue implementation lanes, wide
   multi-file investigations, and the adversarial review lenses.
-- **Capability scaling:** the orchestrator chooses subagent model/effort by
-  task complexity. Work in gated areas (money movement, booking capacity,
-  membership/family lifecycle, schema, auth/security, live providers) keeps
-  the strongest available model at high reasoning effort, per the rule above —
-  and auth/security work runs at `xhigh` — the effort ceiling for all work
-  (owner directive, 10 Aug 2026: `max` overthinks and produces worse outcomes) —
-  since an uncertain security blocker escalates in effort toward that ceiling,
-  never in model tier (see "Model selection").
+- **Capability scaling:** the orchestrator chooses subagent model/effort by task
+  complexity. Gated areas (money movement, booking capacity, membership/family
+  lifecycle, schema, auth/security, live providers) keep the strongest available
+  model at high reasoning effort, and auth/security runs at `xhigh`. The reason
+  an uncertain security blocker escalates in effort and never in model tier is
+  in "Model selection" below, with the ceiling directive.
 - **Parallel lanes:** multiple issues may run concurrently, each in its own
   worktree/branch/PR, only when their code surfaces do not clash. Shared
   documentation files (for example `docs/DOMAIN_INVARIANTS.md`) are acceptable
@@ -621,8 +626,11 @@ handed an epic-with-children or asked to run several related issues at once.
 
 ### 1. Plan first: epic + child issues are the source of truth
 
+- **First check the epic is an epic** — the four-question test above. A review
+  round hands you a list, and a list looks like a plan; independently shippable
+  items are a programme of normal issues, run as a wave by this same playbook.
 - Break the work into **topic-sized child issues, one issue = one branch = one
-  PR**. Each child issue body opens with a plain-English explainer, then scope,
+  PR**. Each child issue body follows the human-first order above, then scope,
   acceptance criteria, risks, and **re-verified `file:line` anchors**.
 - Run an adversarial **cross-review of the plan itself** before coding: have
   reviewers attack each issue's scope against the current `main`, integrate the
@@ -883,24 +891,16 @@ CI-green → evidence**.
   - **Fixes introduce new problems more often than expected.** In one wave, three
     separate fixes each created a fresh defect — including a security regression
     that dropped a header on error responses. The verify-fix pass above is what
-    caught every one; run it even when the fix looks obviously correct. **This
-    means the targeted, in-lane verify-fix of §3 — re-run the touched and
-    adjacent suites, mutation-test each new guard, re-read the changed hunks. It
-    does not mean a fresh adversarial lens over the diff**, which §3 reserves for
-    a security blocker or for code the fix round newly wrote.
-- **Housekeeping that bites parallel lanes.** Every branch used to add its entry
-  at the top of `CHANGELOG.md`'s `## Unreleased`, so concurrent lanes reliably
-  conflicted there. **Write the entry as a new fragment file
-  `changelog.d/<pr-number>-<slug>.md` instead** (#2452) — a new file per PR never
-  conflicts, and `changelog.d/README.md` documents the house entry style and the
-  explicit no-entry marker for a change that genuinely needs none. The `verify`
-  job fails a PR that changes `src/` or `prisma/` and carries neither. Do **not**
-  edit `## Unreleased` by hand; `scripts/release/compile-changelog.mjs` folds the
-  fragments (and any legacy direct entries) into the release section at release
-  time. If you must resolve a `CHANGELOG.md` conflict on an older branch, keep
-  **both** entries with an ordinary merge commit, never a force-push. Note also
-  that GitHub honours `Closes #NNN` **only in the PR description**, not in
-  comments, so a linked issue referenced only in a comment will stay open after
+    caught every one; run it even when the fix looks obviously correct — the
+    targeted, in-lane one §3 defines, not a fresh adversarial lens over the
+    diff.
+- **Housekeeping that bites parallel lanes.** The changelog entry is a
+  `changelog.d/` fragment, never a hand-edit of `## Unreleased` — Change
+  Discipline above, and `changelog.d/README.md` for the style, the no-entry
+  marker and the release compile. If you must resolve a `CHANGELOG.md` conflict
+  on an older branch, keep **both** entries with an ordinary merge commit, never
+  a force-push. And GitHub honours `Closes #NNN` **only in the PR description**,
+  not in comments, so a linked issue named only in a comment stays open after
   merge.
 - **PRs open as drafts and stay drafts** through review → fix → CI. Flip to
   ready-for-review only when the PR is fully reviewed, all confirmed findings are

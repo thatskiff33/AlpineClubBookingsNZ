@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest"
-import { cleanup, render, renderHook, screen } from "@testing-library/react"
+import { cleanup, render, renderHook, screen } from "@/lib/__tests__/support/club-time-render"
 import type { ReactElement } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 

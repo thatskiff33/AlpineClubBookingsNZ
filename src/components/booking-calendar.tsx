@@ -3,22 +3,44 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { useClubTime } from "@/components/club-time-provider";
+import { APP_LOCALE } from "@/config/operational";
 import {
-  addDaysDateOnly,
-  formatCalendarDayOnly,
-  formatDateOnly,
-  parseDateOnly,
-} from "@/lib/date-only";
-import { formatNZMonthYear } from "@/lib/nzst-date";
+  addCalendarDays,
+  calendarDateParts,
+  formatClubMonthYear,
+  requireCalendarDate,
+} from "@/lib/club-time";
+import { formatCalendarDayOnly, parseDateOnly } from "@/lib/date-only";
 
-// Not one of the shared `nzst-date` helpers (#2264): a day button's accessible
-// name spells the date out in full — long weekday, long month — because a screen
-// reader user hears it with no grid around it to give the cell context. The
-// shared medium/weekday shapes abbreviate, which would make the announcement
-// harder to follow.
+/**
+ * A day button's accessible name, spelled out in full — long weekday, long month
+ * — because a screen reader user hears it with no grid around it to give the
+ * cell context (#2264). The kernel's medium and weekday shapes abbreviate, which
+ * would make the announcement harder to follow.
+ *
+ * PINNED TO UTC, NOT TO THE CLUB'S ZONE, AND THAT IS THE FIX (CT-4, #2870;
+ * INV-DATE-010). What it renders is a CALENDAR DAY, carried as a `yyyy-MM-dd`
+ * string and parsed at UTC midnight below, so a UTC-pinned formatter is the
+ * IDENTITY: it reads back exactly the day it was handed, in every zone. The
+ * constant this replaces pinned `APP_TIME_ZONE`, which is the identity only for
+ * a club east of Greenwich and a day early for any club west of it — the same
+ * defect `formatClubDate` and friends exist to remove.
+ *
+ * IT IS STILL A LOCAL `Intl.DateTimeFormat` BECAUSE THE KERNEL HAS NO SUCH
+ * SHAPE. `HOUSE_SHAPES` in `club-time/intl.ts` declares `longWeekdayDayMonth`
+ * ("Thursday, 16 April") but nothing carrying the YEAR as well, and adding a
+ * shape means editing `src/lib/club-time/**`, which belongs to the last group of
+ * this migration. Composing the year on ("… 16 April" + " 2026") happens to be
+ * byte-identical for `en-NZ` and is NOT safe in general: `APP_LOCALE` is
+ * configurable and a locale that orders or punctuates the pair differently would
+ * silently change every day button — the exact hazard `formatClubWeekdayDay`'s
+ * own docblock records. The missing shape is recorded on **#2870**, in this
+ * group's hand-off list to the kernel group; when it lands, this becomes one
+ * call.
+ */
 const DAY_BUTTON_DATE_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
+  timeZone: "UTC",
   weekday: "long",
   day: "numeric",
   month: "long",
@@ -60,9 +82,21 @@ const RETROACTIVE_LOOKBACK_DAYS = 365;
 
 export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut, lodgeId, allowPastDates = false, allowFullDates = false }: BookingCalendarProps) {
   const { lodgeCapacity } = useClubIdentity();
+  /**
+   * The month the calendar opens on, and the day it treats as "today", both come
+   * from the CLUB's calendar (CT-4, #2870; INV-CONFIG-002).
+   *
+   * WHAT THIS REPLACES READ THE BROWSER'S CLOCK, and it was a live defect rather
+   * than a theoretical one: a member booking from London at 10am New Zealand time
+   * saw yesterday as "today", so the current lodge night was greyed out and
+   * unselectable and the calendar opened on the wrong month either side of a
+   * month boundary. The club's day is the same day for every viewer.
+   */
+  const clubTime = useClubTime();
+  const clubToday = clubTime.today();
   const [currentMonth, setCurrentMonth] = useState(() => {
-    const now = new Date();
-    return { year: now.getFullYear(), month: now.getMonth() };
+    const parts = calendarDateParts(clubToday);
+    return { year: parts.year, month: parts.month - 1 };
   });
   const [availability, setAvailability] = useState<Record<string, number>>({});
   const [seasons, setSeasons] = useState<Record<string, SeasonInfo>>({});
@@ -102,21 +136,14 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
   // Adjust for Monday start (0=Mon, 6=Sun)
   const startOffset = firstDay === 0 ? 6 : firstDay - 1;
 
-  // "Today" as the browser's own calendar day, encoded as a date-only string so
-  // every selectability comparison is a lexicographic (== chronological) compare
-  // of `yyyy-MM-dd` values rather than instant arithmetic.
-  const nowLocal = new Date();
-  const todayStr = formatCalendarDayOnly(
-    nowLocal.getFullYear(),
-    nowLocal.getMonth(),
-    nowLocal.getDate(),
-  );
+  // The CLUB's calendar day, as a date-only string, so every selectability
+  // comparison stays a lexicographic (== chronological) compare of `yyyy-MM-dd`
+  // values rather than instant arithmetic.
+  const todayStr = clubToday;
   // Earliest clickable day. Under the retroactive flag this drops 365 days back
-  // (UTC date-only arithmetic, DST-immune); otherwise it is today.
+  // (calendar-day arithmetic, DST-immune); otherwise it is today.
   const minSelectableStr = allowPastDates
-    ? formatDateOnly(
-        addDaysDateOnly(parseDateOnly(todayStr), -RETROACTIVE_LOOKBACK_DAYS),
-      )
+    ? addCalendarDays(todayStr, -RETROACTIVE_LOOKBACK_DAYS)
     : todayStr;
 
   function handleDayClick(day: number) {
@@ -211,8 +238,10 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     });
   }
 
-  const monthName = formatNZMonthYear(
-    new Date(Date.UTC(currentMonth.year, currentMonth.month, 1)),
+  const monthName = formatClubMonthYear(
+    requireCalendarDate(
+      formatCalendarDayOnly(currentMonth.year, currentMonth.month, 1),
+    ),
   );
 
   // Unique seasons visible in the current month for the legend

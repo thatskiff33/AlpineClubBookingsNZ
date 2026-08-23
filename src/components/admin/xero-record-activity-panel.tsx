@@ -28,7 +28,7 @@ import type {
   XeroRecordActivityData,
   XeroRecordActivityOperation,
 } from "@/lib/xero-record-types";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 interface XeroRecordActivityPanelProps {
   localModel: string
@@ -70,14 +70,19 @@ function shortId(value: string | null | undefined) {
   return value.length > 12 ? `${value.slice(0, 12)}...` : value
 }
 
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return "-"
-  }
-
-  // Club time and no seconds (#2264): a Xero sync stamp is read against the
-  // club's own day, and the bare locale string rendered in the operator's zone.
-  return formatNZDateTime(new Date(value))
+/**
+ * A Xero sync stamp, read against the CLUB's day and with no seconds (#2264).
+ *
+ * The stamp is a real INSTANT, so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before - only the zone's AUTHORITY moved. A hook because that setting
+ * reaches the browser as data through `ClubTimeProvider` and is no longer a
+ * module constant.
+ */
+function useXeroTimestampFormatter() {
+  const clubTime = useClubTime()
+  return (value: string | null | undefined) =>
+    value ? clubTime.instantDateTime(new Date(value)) : "-"
 }
 
 function OperationItem({
@@ -93,6 +98,7 @@ function OperationItem({
   retrying: boolean
   canEdit: boolean | undefined
 }) {
+  const formatTimestamp = useXeroTimestampFormatter()
   return (
     <div className={cn("rounded-md border p-3", compact ? "space-y-2" : "space-y-3")}>
       <div className="flex flex-wrap items-center gap-2">
@@ -198,6 +204,7 @@ export function XeroRecordActivityPanel({
   compact = false,
   className,
 }: XeroRecordActivityPanelProps) {
+  const formatTimestamp = useXeroTimestampFormatter()
   // Record-scoped Xero retry/replay are finance-area writes; a finance:view
   // admin sees the activity read-only (#1940). The retry/replay routes enforce
   // finance:edit.

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APP_LOCALE } from "@/config/operational";
 
@@ -9,12 +15,33 @@ vi.mock("@/components/club-identity-provider", () => ({
 }));
 
 import { BookingCalendar } from "@/components/booking-calendar";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 
-// Navigating with the calendar's own Prev button keeps the assertions
-// deterministic across any real run date: the 15th exists in every month, a
-// month one step back is always within the 365-day retroactive window, and a
-// month 13 steps back is always beyond it (#1695).
-const now = new Date();
+/*
+  Navigating with the calendar's own Prev button keeps the assertions
+  deterministic across any real run date: the 15th exists in every month, a
+  month one step back is always within the 365-day retroactive window, and a
+  month 13 steps back is always beyond it (#1695).
+
+  "TODAY" HERE IS THE CLUB'S DAY, NOT THE HOST'S (CT-4, #2870).
+
+  `BookingCalendar` opens on the month `clubTime.today()` names, which comes from
+  the `ClubTimeProvider` this harness mounts (`Pacific/Auckland`). Deriving these
+  fixtures from a bare `new Date()` reads the RUNNER's clock instead, and the two
+  agree only while the host is on or east of UTC — which is CI's shape, and is why
+  it looked fine. On a developer machine or container running `TZ=America/Denver`
+  the frozen instant is 30 June there and 1 July at the club, so every fixture
+  below landed in the wrong month and this suite failed against entirely correct
+  code. Same defect, same reasoning and same fix as the header of
+  `admin-booking-calendar.test.tsx`.
+
+  Constructed as a LOCAL date from the club's calendar parts, so every
+  `now.get*()` reader below keeps working unchanged and returns the club's
+  year/month/day in any host zone.
+*/
+const clubToday = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE)).today();
+const [clubYear, clubMonth, clubDay] = clubToday.split("-").map(Number);
+const now = new Date(clubYear, clubMonth - 1, clubDay);
 
 function monthLabelPrefix(monthsBack: number, day: number) {
   const date = new Date(now.getFullYear(), now.getMonth() - monthsBack, day);

@@ -21,7 +21,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 // Mirrors SITE_CONTENT_KEYS (src/lib/page-content.ts) and
 // SITE_CONTENT_LABELS (src/lib/site-content.ts, server-only).
@@ -57,16 +57,24 @@ type ApiDocument = {
   updatedAt: string | null;
 };
 
-function formatUpdatedAt(value: string | null): string {
-  if (!value) {
-    return "Never updated";
-  }
-  // Club time, not the admin's own (#2264): the stamp says when the club's
-  // document changed, so an officer abroad must not read it in their zone.
-  return formatNZDateTime(new Date(value));
+/**
+ * "Last saved", in the club's time rather than the admin's own.
+ *
+ * The stamp says when the CLUB's document changed, so an officer abroad must not
+ * read it in their zone (#2264). The stamp is a real INSTANT, so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before - only the zone's AUTHORITY moved, from the environment to
+ * the club's recorded setting. A hook because that setting reaches the browser
+ * as data through `ClubTimeProvider`, so it is not a module constant any more.
+ */
+function useUpdatedAtFormatter() {
+  const clubTime = useClubTime();
+  return (value: string | null): string =>
+    value ? clubTime.instantDateTime(new Date(value)) : "Never updated";
 }
 
 export function SiteContentPanel() {
+  const formatUpdatedAt = useUpdatedAtFormatter();
   const canEdit = useAdminAreaEditAccess("content");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
