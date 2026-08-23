@@ -54,7 +54,7 @@ function readInstrumentationRecordedJobNames(): string[] {
 describe("cron recording vs admin cron-health contract (issue #814)", () => {
   const recordedJobNames = readInstrumentationRecordedJobNames();
   const definitionNames = new Set(
-    getAdminCronJobDefinitions().map((definition) => definition.jobName),
+    getAdminCronJobDefinitions("Pacific/Auckland").map((definition) => definition.jobName),
   );
 
   it("discovers the scheduled jobs that record CronJobRun outcomes", () => {
@@ -72,7 +72,7 @@ describe("cron recording vs admin cron-health contract (issue #814)", () => {
   });
 
   it("has an in-process recording path for every enabled tracked admin health job", () => {
-    const enabledDefinitionNames = getAdminCronJobDefinitions({
+    const enabledDefinitionNames = getAdminCronJobDefinitions("Pacific/Auckland", {
       CRON_ENABLED: "true",
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "true",
     } as unknown as NodeJS.ProcessEnv)

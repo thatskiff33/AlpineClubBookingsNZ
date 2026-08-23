@@ -38,6 +38,7 @@ import {
 import { syncManagedXeroContactGroupForMember } from "./xero-contact-groups";
 import { buildXeroContactUpdatePayload } from "./xero-contact-sync";
 import { buildXeroContactCompanyNumberPatch } from "@/lib/xero-contact-date-of-birth";
+import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import {
   ambiguousMemberContactCreateReservationWhere,
@@ -1265,6 +1266,22 @@ export async function createXeroContactForMember(
 // First-invoice date helper (used by bulk sync joined-date backfill)
 // ---------------------------------------------------------------------------
 
+/**
+ * The calendar day of a contact's earliest Xero invoice, as the UTC-midnight
+ * date-only value `Member.joinedDate` holds — or `null` when the contact has no
+ * invoice, or Xero sent something no reader can turn into a real day.
+ *
+ * THE ORIGINAL DEFECT OF #2869 lived on this line. `new Date(invoices[0].date)`
+ * was correct only for the wire shape `xero-node` happened to be producing:
+ * `Invoice.date` is TYPED `string`, and the SDK's `ObjectSerializer` silently
+ * hands back a `Date` for a Microsoft-JSON payload and the raw string for
+ * anything else. An offset-less `"2019-03-11T00:00:00"` therefore parsed as
+ * SERVER-LOCAL midnight, which under the `TZ=Pacific/Auckland` pin in the
+ * Dockerfile is 2019-03-10T11:00Z — so a member's joined date was stored, and
+ * read back, one day early. `xeroCalendarDateAsDateOnly` classifies the field
+ * first (`xero-provider-dates.ts`) and identifies the same calendar day under
+ * every observed shape, on every host zone.
+ */
 export async function getContactFirstInvoiceDate(
   xero: XeroClient,
   tenantId: string,
@@ -1296,10 +1313,7 @@ export async function getContactFirstInvoiceDate(
       }
     );
     const invoices = response.body.invoices ?? [];
-    if (invoices.length > 0 && invoices[0].date) {
-      return new Date(invoices[0].date);
-    }
-    return null;
+    return xeroCalendarDateAsDateOnly(invoices[0]?.date);
   } catch (err) {
     // Let daily limit errors propagate so callers can abort
     if (err instanceof XeroDailyLimitError) throw err;

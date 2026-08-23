@@ -52,7 +52,9 @@ import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import {
   getBookingInvoiceDueDate,
   getBookingInvoiceIssueDate,
@@ -534,12 +536,17 @@ export async function createXeroInvoiceForBooking(
     lineItems.push(discountLineItem);
   }
 
+  // Read once, outside the closure: `buildInvoice` runs for the recorded
+  // request payload and again on every contact-repair attempt, and both must
+  // carry the same date (CT-5, #2869).
+  const clubZone = await readClubTimeZoneOutsideRequest();
+
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
     contact: { contactID: resolvedContactId },
     lineItems,
     date: getBookingInvoiceIssueDate(booking),
-    dueDate: getBookingInvoiceDueDate(booking),
+    dueDate: getBookingInvoiceDueDate(booking, clubZone),
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
@@ -703,7 +710,7 @@ export async function createXeroInvoiceForBooking(
         // UTC one (INV-DATE-019, #2834). The invoice's own `date`/`dueDate`
         // above are derived from `checkIn` and `createdAt` and were settled on
         // #2697; this payment was the remaining instant in this file.
-        date: formatDateOnlyForTimeZone(new Date()),
+        date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
         reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
       };
       const paymentIdempotencyKey = buildXeroIdempotencyKey(
@@ -1216,7 +1223,9 @@ export async function updateXeroBookingInvoiceForBooking(
       // next time an unrelated edit synced — and the owner decision on #2697 is
       // that already-issued invoices are untouched, with no write-back. Only
       // newly created invoices get the corrected date.
-      dueDate: currentInvoice.dueDate ?? getBookingInvoiceDueDate(booking),
+      dueDate:
+        currentInvoice.dueDate ??
+        getBookingInvoiceDueDate(booking, await readClubTimeZoneOutsideRequest()),
       reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
       invoiceNumber: currentInvoice.invoiceNumber,
       lineAmountTypes: currentInvoice.lineAmountTypes ?? LineAmountTypes.Inclusive,

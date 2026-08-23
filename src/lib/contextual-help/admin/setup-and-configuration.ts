@@ -526,9 +526,10 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     "/admin/club-time",
     help(
       "Club Time Zone",
-      "Club Time Zone records the single time zone this club runs on — the place whose clocks and daylight-saving rules the site keeps. It is the setting the whole product is moving onto; for now the times the site shows are still worked out from the TZ setting this deployment starts with, so keep the two the same.",
+      "Club Time Zone is the single time zone this club runs on — the place whose clocks and daylight-saving rules the site keeps. Every time the site and its emails show is worked out in it, and so are the dates on invoices and credit notes sent to Xero. Scheduled jobs are the one exception: they keep running on the zone the application started with until it is restarted, and Admin → Health says so while that is outstanding.",
       [
         "Check the time zone here before launch, and again if the club ever moves.",
+        "Restart the application after changing it, so the scheduled jobs move onto the new zone as well.",
         "Choose the named place the club keeps time by, such as Pacific/Auckland, rather than an abbreviation or a fixed offset.",
         "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change it, and every change is recorded in the audit log with the old and new zone.",
       ],

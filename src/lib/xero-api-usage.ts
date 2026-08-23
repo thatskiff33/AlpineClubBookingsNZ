@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
@@ -36,8 +38,26 @@ interface UsageBucket {
   failureCount: number;
 }
 
-function startOfLocalDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+/**
+ * The CLUB's calendar day for an instant, as the UTC-midnight encoding a
+ * `@db.Date` column round-trips through (`INV-DATE-010`, CT-5 #2869).
+ *
+ * It used to be `new Date(d.getFullYear(), d.getMonth(), d.getDate())` — the
+ * HOST's calendar components, at host-local midnight — and both halves of that
+ * were wrong. The zone was the container's rather than the club's, so a
+ * redeployed container re-bucketed the day; and a local-midnight instant is not
+ * a date-only encoding, so for a club east of Greenwich Postgres took its UTC
+ * date part and labelled the bucket a day early. Reads and writes agreed with
+ * each other, which is why this only ever showed as an off-by-one LABEL on the
+ * admin usage panel rather than as a lost count.
+ *
+ * Nothing gates on this figure — it is an operator display of Xero API calls
+ * against a daily budget — so the change costs at most one day's bucket being
+ * split across the deploy, and no migration.
+ */
+async function clubUsageDate(at: Date): Promise<Date> {
+  const zone = await readClubTimeZoneOutsideRequest();
+  return dateOnlyInstantOf(clubCalendarDateOf(at, zone));
 }
 
 function getUsageStatus(totalCalls: number): "healthy" | "warning" | "critical" | "exhausted" {
@@ -93,13 +113,16 @@ function buildUsageBuckets(
 
 export async function recordXeroApiUsage(input: RecordXeroApiUsageInput): Promise<void> {
   const createdAt = input.createdAt ?? new Date();
-  const usageDate = startOfLocalDay(createdAt);
   const rateLimitCategory = input.rateLimitCategory ?? null;
   const usagePrisma = prisma as XeroApiUsagePrisma;
 
   if (!usagePrisma.xeroApiUsageEvent || !usagePrisma.xeroApiUsageDaily) {
     return;
   }
+
+  // Read AFTER the delegate check, so a deployment whose Prisma client predates
+  // these tables does not pay for a zone lookup it will not use.
+  const usageDate = await clubUsageDate(createdAt);
 
   try {
     await prisma.$transaction([
@@ -174,7 +197,7 @@ export async function getLatestXeroUsageErrorMessage(): Promise<string | null> {
 }
 
 export async function getTodaysXeroUsageSummary() {
-  const usageDate = startOfLocalDay(new Date());
+  const usageDate = await clubUsageDate(new Date());
   const last24HoursStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const [daily, events] = await Promise.all([
     prisma.xeroApiUsageDaily.findUnique({

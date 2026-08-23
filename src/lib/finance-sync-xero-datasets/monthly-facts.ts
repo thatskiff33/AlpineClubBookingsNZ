@@ -218,7 +218,7 @@ export async function fetchFinanceBalanceSheetByMonthSnapshot(
 export async function syncFinanceProfitAndLossByMonthFacts(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const currentMonth = getFinanceMonthKeyForDate(context.startedAt);
+  const currentMonth = getFinanceMonthKeyForDate(context.startedAt, context.clubTimeZone);
 
   return fetchFinanceProfitAndLossByMonthSnapshot(context, {
     endMonth: currentMonth,
@@ -229,7 +229,7 @@ export async function syncFinanceProfitAndLossByMonthFacts(
 export async function syncFinanceBalanceSheetByMonthFacts(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const currentMonth = getFinanceMonthKeyForDate(context.startedAt);
+  const currentMonth = getFinanceMonthKeyForDate(context.startedAt, context.clubTimeZone);
 
   return fetchFinanceBalanceSheetByMonthSnapshot(context, {
     endMonth: currentMonth,

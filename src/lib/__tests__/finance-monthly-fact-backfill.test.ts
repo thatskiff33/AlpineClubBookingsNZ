@@ -52,6 +52,8 @@ function createContext(): FinanceSyncDatasetContext {
     startedAt: new Date("2026-04-20T10:15:00.000Z"),
     xeroTenantId: "tenant-123",
     xero: {} as never,
+    // CT-5 (#2869): the run carries the club's civil-time authority.
+    clubTimeZone: "Pacific/Auckland" as FinanceSyncDatasetContext["clubTimeZone"],
   };
 }
 

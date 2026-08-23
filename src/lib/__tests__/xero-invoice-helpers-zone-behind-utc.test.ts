@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { requireClubTimeZone } from "@/lib/club-time";
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
+import {
+  getBookingInvoiceDueDate,
+  getBookingInvoiceIssueDate,
+} from "@/lib/xero-invoice-helpers";
 
 /**
  * The one test that can actually tell the two Xero invoice date helpers apart.
@@ -10,7 +17,7 @@ import { describe, expect, it, vi } from "vitest";
  * just as happily if someone "tidied" it to use the club-timezone helper and
  * quietly broke the date-only contract (INV-DATE-010).
  *
- * Pin the club zone BEHIND UTC and the two helpers diverge, which is exactly the
+ * Put the club BEHIND UTC and the two helpers diverge, which is exactly the
  * distinction #2697 turns on:
  *
  *   - `checkIn` is a lodge night. Its UTC midnight is the ENCODING of a calendar
@@ -20,34 +27,45 @@ import { describe, expect, it, vi } from "vitest";
  *     (INV-DATE-019).
  *
  * This also covers the case the repository actually ships for: it is a template
- * other clubs fork and configure, so a non-NZ `APP_TIME_ZONE` is a supported
+ * other clubs fork and configure, so a non-NZ club zone is a supported
  * configuration, not a hypothetical.
+ *
+ * CT-5 (#2869) made the club zone an ARGUMENT rather than `APP_TIME_ZONE`, so
+ * this file no longer needs to mock `@/config/operational` and re-import the
+ * module under a fresh registry — it states the club zone and varies the HOST's
+ * around it, which is the property the epic actually promises.
  */
-vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "Pacific/Niue", // UTC-11, no daylight saving
-  APP_LOCALE: "en-NZ",
-  APP_CURRENCY: "NZD",
-  APP_STRIPE_CURRENCY: "nzd",
-}));
+const CLUB_BEHIND_UTC = requireClubTimeZone("Pacific/Niue"); // UTC-11, no DST
+
+const HOST_ZONES = ["UTC", "Pacific/Auckland", "America/Denver"];
 
 describe("the two receivers diverge once the club zone is behind UTC", () => {
-  it("keeps a date-only lodge night on the day it encodes", async () => {
-    const { getBookingInvoiceIssueDate } = await import("@/lib/xero-invoice-helpers");
-
-    // Truncation, deliberately: the stored value MEANS 15 June, in any zone.
-    expect(
-      getBookingInvoiceIssueDate({ checkIn: new Date("2026-06-15T00:00:00.000Z") })
-    ).toBe("2026-06-15");
+  it("keeps a date-only lodge night on the day it encodes", () => {
+    for (const hostZone of HOST_ZONES) {
+      withTimeZone(hostZone, () => {
+        // Truncation, deliberately: the stored value MEANS 15 June, in any zone.
+        expect(
+          getBookingInvoiceIssueDate({ checkIn: new Date("2026-06-15T00:00:00.000Z") }),
+          `read on ${hostZone}`,
+        ).toBe("2026-06-15");
+      });
+    }
   });
 
-  it("moves a real instant onto the club's calendar day", async () => {
-    const { getBookingInvoiceDueDate } = await import("@/lib/xero-invoice-helpers");
-
-    // The same wall-clock input, read as an instant: 2026-06-15T00:00Z is
-    // 13:00 on 14 June in Pacific/Niue. A club there made the booking on the
-    // 14th, so that is the day the invoice is due.
-    expect(
-      getBookingInvoiceDueDate({ createdAt: new Date("2026-06-15T00:00:00.000Z") })
-    ).toBe("2026-06-14");
+  it("moves a real instant onto the club's calendar day", () => {
+    for (const hostZone of HOST_ZONES) {
+      withTimeZone(hostZone, () => {
+        // The same wall-clock input, read as an instant: 2026-06-15T00:00Z is
+        // 13:00 on 14 June in Pacific/Niue. A club there made the booking on the
+        // 14th, so that is the day the invoice is due.
+        expect(
+          getBookingInvoiceDueDate(
+            { createdAt: new Date("2026-06-15T00:00:00.000Z") },
+            CLUB_BEHIND_UTC,
+          ),
+          `read on ${hostZone}`,
+        ).toBe("2026-06-14");
+      });
+    }
   });
 });

@@ -8,7 +8,11 @@
  * other just for date / allocation helpers.
  */
 
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import type { ClubTimeZone } from "@/lib/club-time";
+import {
+  xeroDocumentDateFromDateOnlyColumn,
+  xeroDocumentDateFromInstant,
+} from "@/lib/xero-provider-dates";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 
 /**
@@ -35,7 +39,7 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 export function getBookingInvoiceIssueDate(booking: {
   checkIn: Date | string;
 }): string {
-  return formatDateOnly(new Date(booking.checkIn));
+  return xeroDocumentDateFromDateOnlyColumn(new Date(booking.checkIn));
 }
 
 /**
@@ -49,10 +53,11 @@ export function getBookingInvoiceIssueDate(booking: {
  * canonical zone-aware helper rather than by truncating the instant
  * (INV-DATE-019).
  */
-export function getBookingInvoiceDueDate(booking: {
-  createdAt: Date | string;
-}): string {
-  return formatDateOnlyForTimeZone(new Date(booking.createdAt));
+export function getBookingInvoiceDueDate(
+  booking: { createdAt: Date | string },
+  zone: ClubTimeZone,
+): string {
+  return xeroDocumentDateFromInstant(new Date(booking.createdAt), zone);
 }
 
 /**
