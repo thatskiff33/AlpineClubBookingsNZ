@@ -34,6 +34,7 @@ const mockPrisma = {
   member: { count: vi.fn() },
   memberSubscription: { count: vi.fn() },
   lodge: { findUnique: mockLodgeFindUnique },
+  clubTimeSettings: { findUnique: vi.fn() },
 };
 
 const mockAuth = vi.fn();
@@ -434,5 +435,108 @@ describe("admin reports route", () => {
     expect(contractMigration).toContain(
       'ALTER TABLE "Booking" ALTER COLUMN "lodgeId" SET NOT NULL;',
     );
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 — one report window, two encodings, and the zone
+  belongs to exactly one of them.
+
+  The route derives four bounds from the same `?from=&to=` pair. Two are the
+  first and last MOMENT of the club's days, for real-instant columns; two are the
+  two CALENDAR DAYS themselves, for `@db.Date` columns, which take no zone at all
+  because the pg adapter narrows such a bound to its UTC date and a club-midnight
+  instant would land a day early there (INV-DATE-026).
+
+  The member count is where the two meet, and it is the mixed expression #2870
+  names by hand: `joinedDate` is `@db.Date` since #2872 and takes the DAYS, while
+  the `joinedDate: null` fallback reaches for `createdAt`, which is an instant and
+  takes the MOMENTS. Those two branches mean different things and must not be
+  collapsed into one another.
+
+  Both halves are pinned here against a club in `America/Denver` while the
+  environment says `Pacific/Auckland`, so the assertions distinguish the persisted
+  authority from the environment one (INV-CONFIG-002) as well as the day encoding
+  from the instant encoding.
+*/
+describe("admin reports route — the report window comes from the persisted club zone (CT-4, #2870)", () => {
+  const hostTimeZone = captureHostTimeZone();
+
+  beforeAll(() => {
+    // The environment authority the legacy helpers read. Deliberately NOT the
+    // club's persisted zone, so a green run means something.
+    process.env.TZ = "Pacific/Auckland";
+  });
+
+  afterAll(() => {
+    hostTimeZone.restore();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+    });
+    mockRequireActiveSessionUser.mockResolvedValue(null);
+    mockResolveMetricsCapacityAndScope.mockImplementation(async (lodgeId?: string) => ({
+      capacity: 29,
+      bookingLodgeWhere: lodgeId ? { lodgeId } : {},
+    }));
+    zeroMemberQueries();
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.clubTimeSettings.findUnique.mockResolvedValue({
+      timeZone: "America/Denver",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    });
+  });
+
+  it("bounds instants by the club's civil day and calendar columns by the plain days", async () => {
+    const { APP_TIME_ZONE } = await import("@/config/operational");
+    expect(
+      APP_TIME_ZONE,
+      "INV-CONFIG-002: `APP_TIME_ZONE` is the authority the legacy helpers read, " +
+        "and it is frozen at module load, so `process.env.TZ` above cannot move it " +
+        "once something has imported it. If it has become the club's persisted zone " +
+        "— on a host whose TZ is America/Denver, say — this assertion can no longer " +
+        "tell the two authorities apart and would pass over a reverted migration.",
+    ).not.toBe("America/Denver");
+
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-04-08&to=2026-04-08"),
+    );
+    expect(response.status).toBe(200);
+
+    const memberWhere = mockPrisma.member.count.mock.calls
+      .map((call) => (call[0] as { where?: Record<string, unknown> } | undefined)?.where)
+      .find((where) => Array.isArray(where?.OR));
+    const [joinedBranch, createdBranch] = (
+      memberWhere as { OR: Array<Record<string, { gte: Date; lte: Date }>> }
+    ).OR;
+
+    // THE CALENDAR-DATE BRANCH. `@db.Date`, so UTC midnight on both ends and no
+    // zone anywhere near it. In Auckland the old start-of-day would have been
+    // 2026-04-07T12:00Z and in Denver 2026-04-08T06:00Z; the stored day is
+    // neither, and that is the point.
+    expect(joinedBranch.joinedDate.gte.toISOString()).toBe("2026-04-08T00:00:00.000Z");
+    expect(joinedBranch.joinedDate.lte.toISOString()).toBe("2026-04-08T00:00:00.000Z");
+
+    // THE INSTANT BRANCH. 8 April 2026 in Denver is MDT (UTC-6), so the club's
+    // day runs 06:00Z to 05:59:59.999Z the next morning. Under the environment's
+    // Pacific/Auckland it would be 2026-04-07T12:00Z to 2026-04-08T11:59:59.999Z
+    // — a different window over a real column, which is the whole of #2870.
+    expect(createdBranch.createdAt.gte.toISOString()).toBe("2026-04-08T06:00:00.000Z");
+    expect(createdBranch.createdAt.lte.toISOString()).toBe("2026-04-09T05:59:59.999Z");
+  });
+
+  it("refuses a shape-valid date that names no real day, instead of failing later", async () => {
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-02-30&to=2026-03-05"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 });

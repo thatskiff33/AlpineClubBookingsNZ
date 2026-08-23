@@ -27,7 +27,8 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { getSeasonYear } from "@/lib/utils";
 import {
   AdminAccountGuardError,
@@ -319,7 +320,10 @@ export async function POST(req: NextRequest) {
       linkedGuestCount: number;
     }> = [];
     if (action === "set-role") {
-      const today = getTodayDateOnly();
+      // `Booking.checkIn` is `@db.Date`, so this "future booking" cut-off is a calendar
+      // day from the PERSISTED club timezone (CT-4, #2870), re-encoded to UTC midnight
+      // for the bound (INV-DATE-026).
+      const today = dateOnlyInstantOf((await clubTime()).today());
       for (const { member, nextAccessRoles } of setRoleTargets) {
         const wasOrg = isOrganisationMember({
           accessRoleTokens: resolveAccessRoleTokens(member),

@@ -28,14 +28,9 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import {
-  addDaysDateOnly,
-  eachDateOnlyInRange,
-  endOfDateOnlyForTimeZone,
-  formatDateOnly,
-  parseDateOnly,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { dateOnlyInstantOf, endOfClubDayExclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -67,19 +62,24 @@ export async function GET(request: NextRequest) {
   }
 
   // ONE REPORT WINDOW, TWO ENCODINGS, BECAUSE THE COLUMNS ARE TWO KINDS OF THING
-  // (INV-DATE-013). The `*Instant` pair is the first and last MOMENT of the
-  // club's days, for real-instant columns. The `*Day` pair is the two CALENDAR
-  // DAYS, for `@db.Date` columns — the adapter narrows such a bound to its UTC
-  // date, so a club-midnight instant would land a day early there.
-  const fromInstant = startOfDateOnlyForTimeZone(parsed.data.from);
-  const toInstant = endOfDateOnlyForTimeZone(parsed.data.to);
-  const fromDay = parseDateOnly(parsed.data.from);
-  const toDay = parseDateOnly(parsed.data.to);
+  // (INV-DATE-013). The `*Instant` pair is the club's first and last MOMENT of the day,
+  // in the PERSISTED timezone rather than the container's (CT-4, #2870; INV-CONFIG-002),
+  // keeping the INCLUSIVE last-millisecond `lte` shape — the kernel's day end is
+  // half-open, hence the -1. The `*Day` pair is the two CALENDAR DAYS, for `@db.Date`
+  // columns, which take no zone: the adapter narrows such a bound to its UTC date, so a
+  // club-midnight instant lands a day early (INV-DATE-026). The shape regex admits
+  // `2026-13-45`, which used to reach here as an Invalid Date and surface as a 500 from
+  // Prisma; a day that does not exist is a bad request.
+  const from = parseCalendarDate(parsed.data.from);
+  const to = parseCalendarDate(parsed.data.to);
+  if (!from || !to) return NextResponse.json({ error: "Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD" }, { status: 400 });
+  const zone = await clubTimeZone();
+  const fromInstant = startOfClubDay(from, zone);
+  const toInstant = new Date(endOfClubDayExclusive(to, zone).getTime() - 1);
+  const fromDay = dateOnlyInstantOf(from);
+  const toDay = dateOnlyInstantOf(to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
-
-  if (toInstant <= fromInstant) {
-    return NextResponse.json({ error: "to must be after from" }, { status: 400 });
-  }
+  if (toInstant <= fromInstant) return NextResponse.json({ error: "to must be after from" }, { status: 400 });
 
   // Validate an explicit lodge scope the way the write paths do (400 on
   // unknown/inactive). Omitted stays "all active lodges" — the sanctioned

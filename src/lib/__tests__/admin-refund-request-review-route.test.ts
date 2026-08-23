@@ -4,6 +4,7 @@ import {
   contentAdminSession,
   readOnlyAdminSession,
 } from "./helpers/admin-area-gate-sessions";
+import { APP_TIME_ZONE } from "@/config/operational";
 
 const mocks = vi.hoisted(() => ({
   enqueueRefundRequestRefundRecovery: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   refundRequestApprovedTemplate: vi.fn(),
   refundRequestDeclinedTemplate: vi.fn(),
   createAuditLog: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -42,6 +44,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.refundRequestFindUnique,
       updateMany: mocks.refundRequestUpdateMany,
     },
+    clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     $transaction: mocks.transaction,
   },
 }));
@@ -371,6 +374,50 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       })
     );
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  /*
+    CT-4 (#2870), epic #2988 — the lodge nights this email prints are CALENDAR
+    DAYS, so no timezone touches them.
+
+    `Booking.checkIn` / `checkOut` are `@db.Date`. They used to reach the member
+    through `formatNZDate`, which is an INSTANT formatter: it takes the column's
+    UTC-midnight encoding and asks what civil day that moment falls on in the
+    club's zone. For New Zealand that is midday on the same date, so the answer
+    was right and stayed right. For a club behind UTC it is the evening BEFORE,
+    and the member is told their stay starts a day earlier than it does — on the
+    email confirming a refund decision about that stay.
+  */
+  it("prints the stored lodge nights in the outcome email, whatever zone the club is in", async () => {
+    expect(
+      APP_TIME_ZONE,
+      "INV-CONFIG-002: the environment zone must differ from the persisted club " +
+        "zone, or a zoned read could not be told apart from a zone-free one.",
+    ).not.toBe("America/Denver");
+
+    mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+      timeZone: "America/Denver",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    });
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateData: expect.objectContaining({
+          // The house medium shape, unchanged from what `formatNZDate` produced
+          // for this club — and the stay's real dates, which it would not have.
+          checkIn: "1 Jul 2026",
+          checkOut: "3 Jul 2026",
+        }),
+      }),
+    );
   });
 
   // #1792: admin per-action member-email choice. `notifyMember` gates ONLY the

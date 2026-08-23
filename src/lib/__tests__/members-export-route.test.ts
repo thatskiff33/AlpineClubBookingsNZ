@@ -10,6 +10,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findMany: vi.fn() },
+    clubTimeSettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -37,6 +38,7 @@ vi.mock("@/lib/age-tier", () => ({
 import { prisma } from "@/lib/prisma";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { APP_TIME_ZONE } from "@/config/operational";
 import {
   buildMemberImportPreview,
   inferMemberImportColumnMapping,
@@ -152,6 +154,83 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
     // Same NZ calendar date survives the round-trip.
     expect(preview.rows[0].normalizedDateValues.cancelledDate).toBe(
       "2020-07-01",
+    );
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 — zone AUTHORITY, on the one CSV that carries both
+  kinds of temporal value in adjacent columns.
+
+  `Member.cancelledAt` is a bare `DateTime`: a real moment, with no calendar day
+  of its own until a zone is chosen. `Member.dateOfBirth` and `lifeMemberDate`
+  are `@db.Date`: calendar days, which have no zone to choose. The export must
+  therefore treat two neighbouring columns differently, and the whole of #2870 is
+  that the codebase used to treat them the same.
+
+  THIS IS WHERE THE PERSISTED ZONE IS OBSERVABLE, which the lodge-night tests in
+  `admin-bookings-calendar-route.test.ts` deliberately are not. `APP_TIME_ZONE` —
+  what `formatDateOnlyForTimeZone` and every other legacy helper still read — is
+  `Pacific/Auckland` here, because CI sets no `TZ` and that is the documented
+  fallback. Persisting `America/Denver` therefore makes the two authorities
+  DISAGREE, and each assertion below is the Denver answer. Restore the legacy
+  helper and every one of them fails with the Auckland answer instead, which is
+  what makes them worth running.
+*/
+describe("members export — the persisted club timezone, not the environment (CT-4, #2870)", () => {
+  const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireAdmin.mockResolvedValue(adminGuard);
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+      timeZone: CLUB_ZONE_BEHIND_UTC,
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    } as never);
+  });
+
+  it("renders an instant in the persisted zone and a calendar day untouched", async () => {
+    expect(
+      APP_TIME_ZONE,
+      "INV-CONFIG-002: the environment zone must differ from the persisted club " +
+        "zone, or this test cannot tell which authority the route obeyed.",
+    ).not.toBe(CLUB_ZONE_BEHIND_UTC);
+
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      baseMember({
+        // A `@db.Date` calendar day, as Prisma returns it: UTC midnight.
+        dateOfBirth: new Date("1990-04-16T00:00:00.000Z"),
+        lifeMemberDate: new Date("2015-01-01T00:00:00.000Z"),
+      }),
+    ] as never);
+
+    const res = await exportRequest();
+    const csv = await res.text();
+
+    // THE INSTANT. 14:30 UTC on 30 June 2020 is 08:30 the same morning in
+    // Denver and 02:30 the NEXT day in Auckland, so the two authorities give
+    // different days and this cell says which one was consulted.
+    expect(cellByHeader(csv, "Cancelled At").value).toBe("2020-06-30");
+
+    // THE CALENDAR DAYS. Unchanged by the club's zone, in either direction —
+    // projecting them through Denver would return the 15th and 31 December.
+    expect(cellByHeader(csv, "Date of Birth").value).toBe("1990-04-16");
+    expect(cellByHeader(csv, "Life Member Date").value).toBe("2015-01-01");
+  });
+
+  it("stamps the download filename with the club's calendar day, not the host's", async () => {
+    expect(APP_TIME_ZONE).not.toBe(CLUB_ZONE_BEHIND_UTC);
+
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
+
+    const res = await exportRequest();
+
+    // The suite's frozen clock is 2026-07-01T00:00:00Z — midday in New Zealand,
+    // and still the EVENING OF 30 JUNE in Denver. A club there must not have
+    // yesterday's export named for tomorrow.
+    expect(res.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="tac-members-2026-06-30.csv"',
     );
   });
 });
