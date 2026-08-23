@@ -4,6 +4,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import sharp from "sharp";
+
 /**
  * Where message-board images live on disk (epic #2992).
  *
@@ -75,6 +77,24 @@ export const MAX_POST_IMAGE_BYTES = 8 * 1024 * 1024;
 
 /** Most a single post may carry. */
 export const MAX_POST_IMAGES = 6;
+
+/**
+ * Decode ceiling, in pixels.
+ *
+ * A decompression bomb is a small file that expands to an enormous bitmap; the
+ * byte cap above does nothing about it because the FILE is tiny. sharp refuses
+ * past this before allocating.
+ */
+const MAX_INPUT_PIXELS = 50_000_000;
+
+/** Longest edge kept. A board photo does not need to be a 48-megapixel one. */
+const MAX_WIDTH = 2000;
+const MAX_HEIGHT = 2000;
+
+const WEBP_QUALITY = 82;
+
+/** Everything is re-encoded, so this is the type of every STORED image. */
+export const STORED_POST_IMAGE_MIME = "image/webp";
 
 /**
  * Identify an image by its magic bytes.
@@ -209,6 +229,9 @@ export interface StoredPostImage {
   mimeType: string;
   bytes: number;
   sha256: string;
+  /** Of the STORED image, after rotation and resizing. */
+  width: number | null;
+  height: number | null;
 }
 
 /**
@@ -230,14 +253,56 @@ export async function writePostImage(
     );
   }
 
-  const mimeType = sniffImageType(data);
-  if (!mimeType) {
+  if (!sniffImageType(data)) {
     throw new PostImageRejectedError(
       "That file is not a JPEG, PNG or WebP image.",
     );
   }
-  const ext = ALLOWED_POST_IMAGE_TYPES.get(mimeType)!;
 
+  // DECODE AND RE-ENCODE RATHER THAN STORE WHAT ARRIVED. Three things fall out
+  // of that, and the first is the reason it is here at all:
+  //
+  //  * EXIF IS DROPPED. Phone photographs routinely carry GPS coordinates, and
+  //    a board post is not a place to publish where a member lives. sharp
+  //    discards metadata unless `.withMetadata()` asks for it, so the strip is
+  //    the ABSENCE of that call — do not add it back to "preserve orientation",
+  //    which is what `.rotate()` below is for.
+  //  * The stored bytes are a real image. A file that merely starts with JPEG
+  //    magic bytes but is malformed after them fails here rather than being
+  //    served later to every member.
+  //  * Size is bounded in pixels as well as bytes.
+  let processed: Buffer;
+  let width: number | null = null;
+  let height: number | null = null;
+  try {
+    const result = await sharp(data, {
+      limitInputPixels: MAX_INPUT_PIXELS,
+      failOn: "error",
+    })
+      // Applies the EXIF orientation flag to the pixels BEFORE that metadata is
+      // discarded. Without it, a portrait phone photo is stored sideways: the
+      // flag that said "rotate me" is gone and nothing is left to honour it.
+      .rotate()
+      .resize({
+        width: MAX_WIDTH,
+        height: MAX_HEIGHT,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: WEBP_QUALITY })
+      .toBuffer({ resolveWithObject: true });
+    processed = result.data;
+    width = result.info.width;
+    height = result.info.height;
+  } catch (err) {
+    throw new PostImageRejectedError(
+      `That image could not be processed: ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
+    );
+  }
+
+  const ext = "webp";
   const now = new Date();
   const dir = path.posix.join(
     "posts",
@@ -255,14 +320,18 @@ export async function writePostImage(
   }
 
   await mkdir(path.dirname(absolute), { recursive: true });
-  await writeFile(absolute, data);
+  await writeFile(absolute, processed);
 
   return {
     storageKey,
+    // 128 bits, independent of the row id, so holding one image's address
+    // never lets anyone derive another's.
     publicId: randomBytes(16).toString("hex"),
-    mimeType,
-    bytes: data.byteLength,
-    sha256: createHash("sha256").update(data).digest("hex"),
+    mimeType: STORED_POST_IMAGE_MIME,
+    bytes: processed.byteLength,
+    sha256: createHash("sha256").update(processed).digest("hex"),
+    width,
+    height,
   };
 }
 

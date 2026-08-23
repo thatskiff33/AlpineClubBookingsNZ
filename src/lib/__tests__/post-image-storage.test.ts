@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import sharp from "sharp";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   MAX_POST_IMAGE_BYTES,
   PostImagePathError,
+  readPostImage,
   resolvePostImageDirectory,
   sniffImageType,
+  writePostImage,
 } from "@/lib/post-image-storage";
 
 /**
@@ -138,5 +145,107 @@ describe("upload bounds", () => {
     // the proxy before the route could explain why, which reads to a member as
     // the site being broken rather than the file being too big.
     expect(MAX_POST_IMAGE_BYTES).toBeLessThan(10 * 1024 * 1024);
+  });
+});
+
+describe("writePostImage", () => {
+  let root = "";
+  let previous: string | undefined;
+
+  beforeAll(async () => {
+    // Outside the repository, so the application-root refusal does not fire.
+    root = await mkdtemp(path.join(tmpdir(), "post-images-"));
+    previous = process.env.POST_IMAGE_DIR;
+    process.env.POST_IMAGE_DIR = root;
+  });
+
+  afterAll(async () => {
+    if (previous === undefined) delete process.env.POST_IMAGE_DIR;
+    else process.env.POST_IMAGE_DIR = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** A JPEG carrying GPS EXIF, which is what a phone photograph looks like. */
+  async function phonePhotoWithGps(): Promise<Buffer> {
+    return sharp({
+      create: {
+        width: 60,
+        height: 40,
+        channels: 3,
+        background: { r: 10, g: 90, b: 60 },
+      },
+    })
+      .withExif({
+        IFD0: { Make: "TestPhone", Model: "TP-1" },
+        IFD3: {
+          GPSLatitudeRef: "S",
+          GPSLatitude: "41/1 17/1 0/1",
+          GPSLongitudeRef: "E",
+          GPSLongitude: "174/1 46/1 0/1",
+        },
+      })
+      .jpeg()
+      .toBuffer();
+  }
+
+  it("strips EXIF, so a member's photo does not publish where it was taken", async () => {
+    const input = await phonePhotoWithGps();
+    // Guard the fixture itself: if sharp stopped embedding the GPS block, the
+    // assertion below would pass while proving nothing.
+    expect((await sharp(input).metadata()).exif).toBeDefined();
+
+    const stored = await writePostImage(input);
+    const bytes = await readPostImage(stored.storageKey);
+    expect(bytes).not.toBeNull();
+
+    const meta = await sharp(bytes!).metadata();
+    expect(meta.exif).toBeUndefined();
+  });
+
+  it("re-encodes to WebP whatever arrived", async () => {
+    const stored = await writePostImage(await phonePhotoWithGps());
+    expect(stored.mimeType).toBe("image/webp");
+    expect(stored.storageKey.endsWith(".webp")).toBe(true);
+
+    const bytes = await readPostImage(stored.storageKey);
+    expect(sniffImageType(bytes!)).toBe("image/webp");
+  });
+
+  it("bounds the longest edge and reports the stored dimensions", async () => {
+    const huge = await sharp({
+      create: {
+        width: 4200,
+        height: 2400,
+        channels: 3,
+        background: { r: 0, g: 0, b: 0 },
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const stored = await writePostImage(huge);
+    expect(stored.width).toBe(2000);
+    // Aspect ratio preserved by fit:"inside" rather than cropped.
+    expect(stored.height).toBe(1143);
+  });
+
+  it("reports the size and digest of the STORED bytes, not the upload", async () => {
+    const input = await phonePhotoWithGps();
+    const stored = await writePostImage(input);
+    const bytes = await readPostImage(stored.storageKey);
+    expect(stored.bytes).toBe(bytes!.byteLength);
+    expect(stored.sha256).toHaveLength(64);
+  });
+
+  it("refuses a file that only pretends to be an image", async () => {
+    const fake = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff]),
+      Buffer.from("<script>alert(1)</script> padding padding padding"),
+    ]);
+    await expect(writePostImage(fake)).rejects.toThrow(/could not be processed/);
+  });
+
+  it("refuses an empty file", async () => {
+    await expect(writePostImage(new Uint8Array())).rejects.toThrow(/empty/);
   });
 });
