@@ -10,9 +10,9 @@ import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 
 const availabilityQuerySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100),
@@ -107,10 +107,16 @@ export async function GET(request: NextRequest) {
   for (const night of nights) {
     const key = formatDateOnly(night);
 
-    // Determine which season this date falls in
+    // Determine which season this date falls in.
+    //
+    // CT-4 (#2870): `Season.startDate`/`endDate` are `@db.Date` — a calendar day
+    // encoded as UTC midnight — so they are decoded in UTC and NEVER projected
+    // through a timezone (INV-DATE-010, INV-DATE-026). Projecting them landed on
+    // the same day in New Zealand and on the PREVIOUS day for any club behind
+    // UTC, which shifted every season label on the availability grid by a night.
     for (const season of activeSeasons) {
-      const sStart = formatDateOnlyForTimeZone(season.startDate);
-      const sEnd = formatDateOnlyForTimeZone(season.endDate);
+      const sStart = calendarDateOfDateOnlyInstant(season.startDate);
+      const sEnd = calendarDateOfDateOnlyInstant(season.endDate);
       if (key >= sStart && key <= sEnd) {
         seasons[key] = { name: season.name, type: season.type };
         break;

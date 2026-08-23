@@ -3,7 +3,11 @@ import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -20,6 +24,18 @@ import {
   projectMemberBookingChangeRequest,
 } from "@/lib/booking-change-request-member-view";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
+
+/**
+ * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
+ *
+ * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
+ * no timezone (INV-DATE-010, INV-DATE-026). `normalizeDateOnlyForTimeZone`, which
+ * this replaces, projected it into the club zone first — the identity ahead of
+ * Greenwich, the PREVIOUS day behind it, so every stay date came back a day early.
+ */
+function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
 
 const createChangeRequestSchema = z.object({
   checkIn: z.string().optional(),
@@ -65,7 +81,7 @@ function normalizeReason(value: string | undefined) {
 }
 
 function formatBookingDate(value: Date) {
-  return formatDateOnly(normalizeDateOnlyForTimeZone(value));
+  return calendarDateOfDateOnlyInstant(value);
 }
 
 function changedDate(
@@ -90,12 +106,12 @@ function requestTouchesLockedPeriod({
 }) {
   const today = editPolicy.today;
   const editableFrom = editPolicy.editableFrom;
-  const currentCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-  const currentCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+  const currentCheckIn = storedDateOnly(booking.checkIn);
+  const currentCheckOut = storedDateOnly(booking.checkOut);
 
-  // `today` is produced by getTodayDateOnly() (NZ-normalised midnight UTC).
-  // `requestedEffectiveDate` and the booking dates come from parseDateOnly /
-  // normalizeDateOnlyForTimeZone, which also yield midnight UTC. The
+  // `today` comes from `getBookingEditPolicy` (a club calendar day at midnight
+  // UTC). `requestedEffectiveDate` and the booking dates come from
+  // `parseDateOnly` / `storedDateOnly`, which also yield midnight UTC. The
   // comparisons below rely on both sides being on the same midnight-UTC
   // date-only frame.
   if (requestedEffectiveDate && requestedEffectiveDate <= today) {
@@ -259,8 +275,8 @@ export async function POST(
     return NextResponse.json({ error: "Invalid booking date" }, { status: 400 });
   }
 
-  const nextCheckIn = requestedCheckIn ?? normalizeDateOnlyForTimeZone(booking.checkIn);
-  const nextCheckOut = requestedCheckOut ?? normalizeDateOnlyForTimeZone(booking.checkOut);
+  const nextCheckIn = requestedCheckIn ?? storedDateOnly(booking.checkIn);
+  const nextCheckOut = requestedCheckOut ?? storedDateOnly(booking.checkOut);
   if (nextCheckOut <= nextCheckIn) {
     return NextResponse.json(
       { error: "Check-out must be after check-in" },
