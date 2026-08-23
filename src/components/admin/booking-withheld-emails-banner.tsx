@@ -25,7 +25,7 @@
  * here is safe to show a member — a member must never learn the switch exists.
  */
 import Link from "next/link";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import type { WithheldEmailRemedy } from "@/lib/booking-email-suppression";
 
 export interface WithheldEmailGroupView {
@@ -62,7 +62,15 @@ function remedyNote(remedy: WithheldEmailRemedy): string | null {
   return null;
 }
 
-export function BookingWithheldEmailsBanner({
+/**
+ * ASYNC, and the `await` is the point (CT-4, #2870; epic #2988). The withheld-row
+ * stamps below are real INSTANTS and must read in the club's PERSISTED timezone
+ * (`INV-CONFIG-002`), which is a server-only database read. This is a server
+ * component, so it takes the club's own binding directly rather than through the
+ * client provider - the same interface, one line different. Every caller renders
+ * it as a child, which is unchanged by the component becoming async.
+ */
+export async function BookingWithheldEmailsBanner({
   noEmails,
   isWaitlisted = false,
   total,
@@ -83,6 +91,8 @@ export function BookingWithheldEmailsBanner({
 }) {
   // Nothing to warn about: emails are on and nothing was ever withheld.
   if (!noEmails && total === 0) return null;
+
+  const club = await clubTime();
 
   const tone = noEmails
     ? "border-danger-6 bg-danger-3 text-danger-11"
@@ -146,7 +156,7 @@ export function BookingWithheldEmailsBanner({
                 ) : null}
                 {" ("}
                 {group.count > 1 ? "most recent " : ""}
-                {formatNZDateTime(new Date(group.latestAt))}
+                {club.instantDateTime(new Date(group.latestAt))}
                 {")"}
                 {remedyNote(group.remedy) ? (
                   <span className="mt-0.5 block pl-5 italic">

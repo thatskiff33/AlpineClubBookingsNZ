@@ -8,18 +8,33 @@ import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 import { parseDateOnly } from "@/lib/date-only";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
 
-// Not one of the shared `nzst-date` helpers (#2264): the two headline stay dates
-// are spelled out in full — long weekday, long month — because they are the
-// thing the member checks before agreeing to a change, and "Friday 12 June 2026"
-// is harder to misread than "Fri, 12 Jun 2026". Zone pinned to club time; the
-// values are NZ date-only lodge nights handed over at UTC midnight, so the
-// calendar day can no longer slide for a member browsing from overseas.
+/**
+ * The two headline stay dates, spelled out in full — long weekday, long month —
+ * because they are the thing the member checks before agreeing to a change, and
+ * "Friday 12 June 2026" is harder to misread than "Fri, 12 Jun 2026" (#2264).
+ *
+ * PINNED TO UTC, NOT TO A CLUB ZONE, AND THAT IS THE FIX (CT-4, #2870;
+ * INV-DATE-010). `checkIn`/`checkOut` are `@db.Date` LODGE NIGHTS — calendar
+ * days, which have no timezone — and they arrive at UTC midnight, so a
+ * UTC-pinned formatter reads back exactly the day it was handed, for every
+ * viewer and every club. The constant this replaces pinned `APP_TIME_ZONE`,
+ * which is that same identity only for a club east of Greenwich; west of it,
+ * every member's stay dates printed a day early.
+ *
+ * IT IS STILL A LOCAL `Intl.DateTimeFormat` because the kernel declares no shape
+ * carrying a long weekday, long month AND the year — `longWeekdayDayMonth` stops
+ * at "Thursday, 16 April". Adding one means editing `src/lib/club-time/**`,
+ * which belongs to the last group of this migration, and composing the year on
+ * is byte-identical for `en-NZ` but not for a configurable `APP_LOCALE` (see
+ * `formatClubWeekdayDay`'s docblock for the same hazard). Reported as a shape to
+ * add; when it lands this becomes one call.
+ */
 const STAY_DATE_LONG = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
+  timeZone: "UTC",
   weekday: "long",
   day: "numeric",
   month: "long",
@@ -185,6 +200,13 @@ export function BookingEditor({
   // deadline (future-tense auto-confirm copy) from a lapsed one (awaiting
   // processing copy). Day-scale deadlines make a single snapshot sufficient.
   const [nowMs] = useState(() => Date.now());
+  /**
+   * `nonMemberHoldUntil` is a bare `DateTime` — a real INSTANT, not a lodge
+   * night — so the deadline below reads in the club's PERSISTED timezone (CT-4,
+   * #2870; INV-CONFIG-002). `nowMs` above stays a raw clock read on purpose: the
+   * lapsed test compares two instants, which needs no zone at all.
+   */
+  const clubTime = useClubTime();
   const nonMemberHoldLapsed = booking.nonMemberHoldUntil
     ? new Date(booking.nonMemberHoldUntil).getTime() <= nowMs
     : false;
@@ -273,14 +295,14 @@ export function BookingEditor({
               {nonMemberHoldLapsed ? (
                 <>
                   This booking includes non-members. The hold period ended on{" "}
-                  {formatNZDate(new Date(booking.nonMemberHoldUntil))} and it is now
+                  {clubTime.instantDate(new Date(booking.nonMemberHoldUntil))} and it is now
                   awaiting confirmation, payment, or admin processing, subject to
                   availability. Members have priority.
                 </>
               ) : (
                 <>
                   This booking includes non-members. It will be auto-confirmed on{" "}
-                  {formatNZDate(new Date(booking.nonMemberHoldUntil))}, subject to
+                  {clubTime.instantDate(new Date(booking.nonMemberHoldUntil))}, subject to
                   availability. Members have priority.
                 </>
               )}

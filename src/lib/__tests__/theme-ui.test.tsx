@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AppProviders } from "@/components/app-providers";
+import { AppProvidersClient } from "@/components/app-providers-client";
 import { AppThemeProvider } from "@/components/app-theme-provider";
 import {
   ThemeSwitcher,
@@ -82,9 +82,20 @@ describe("AppThemeProvider", () => {
 
   it("passes the route layout CSP nonce through AppProviders", async () => {
     render(
-      <AppProviders clubIdentity={testClubIdentity} nonce="layout-nonce">
+      /*
+        CT-4 (#2870) split `AppProviders` in two: an async SERVER component that
+        resolves the club's persisted timezone, and this client shell holding the
+        provider stack. The nonce pass-through being asserted here lives in the
+        shell, and a server component cannot be rendered by Testing Library, so
+        the test points at the half that owns the behaviour.
+      */
+      <AppProvidersClient
+        clubIdentity={testClubIdentity}
+        clubTimeZone="Pacific/Auckland"
+        nonce="layout-nonce"
+      >
         <span>page content</span>
-      </AppProviders>
+      </AppProvidersClient>
     );
 
     expect(themeProviderMock).toHaveBeenCalledWith(

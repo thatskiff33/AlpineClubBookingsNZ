@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ClubTimeZonePanel } from "@/components/admin/club-time-zone-panel";
@@ -20,11 +20,28 @@ import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
      are on the screen in plain English. A confirmation the operator cannot fail
      to satisfy is decoration.
 
-  3. THE BROWSER NEVER DECIDES THE TIMEZONE. `Intl.DateTimeFormat()
-     .resolvedOptions()` — the viewer's own clock — is spied on and must never be
-     consulted, because a panel that seeded itself from the reader's machine
-     would show a London admin a different club than an Ohakune one and would
-     offer to "correct" the club's setting to the reader's own zone.
+  3. THE BROWSER NEVER DECIDES THE TIMEZONE. A panel that seeded itself from the
+     reader's machine would show a London admin a different club than an Ohakune
+     one, and would offer to "correct" the club's setting to the reader's own
+     zone.
+
+     WHAT IS SPIED ON CHANGED IN CT-4 (#2870), AND THE NEW SPY IS STRICTLY
+     STRONGER. It used to be `Intl.DateTimeFormat.prototype.resolvedOptions`,
+     asserted never to be called at all. That was a proxy for the rule rather
+     than the rule: `resolvedOptions()` is ALSO how you ask a runtime whether it
+     knows a named zone and what it calls it, which is validation, not a viewer
+     read — and CT-4 put exactly such a validation on the client, where the
+     browser's ICU may be an older build than the server's and a zone it cannot
+     load must fall back rather than throw a RangeError over the whole page.
+     Under the old spy that correct, necessary call read as a violation.
+
+     The ban is now asserted where it actually lives: no
+     `Intl.DateTimeFormat` may be CONSTRUCTED without an explicit `timeZone`.
+     That is the same shape `eslint.config.mjs` bans statically
+     (`NO_UNZONED_INTL_DATE_TIME_FORMAT`, INV-DATE-015), it is the only
+     construction whose `resolvedOptions().timeZone` reports the VIEWER's clock,
+     and it also catches an unzoned formatter that merely FORMATS — which the
+     old spy could not see at all.
 */
 
 const SERVER_STATE = {
@@ -45,7 +62,11 @@ function spelledIn(timeZone: string, iso: string): string {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
-let resolvedOptionsSpy: ReturnType<typeof vi.spyOn>;
+let dateTimeFormatSpy: ReturnType<typeof vi.spyOn>;
+/** Formatters built with no explicit `timeZone` — i.e. in the VIEWER's zone. */
+let unzonedFormatterCount = 0;
+/** Captured before the spy replaces the property, so the spy can delegate. */
+const RealDateTimeFormat = Intl.DateTimeFormat;
 
 function respondWith(state: unknown) {
   return {
@@ -62,14 +83,27 @@ beforeEach(() => {
       : respondWith(SERVER_STATE),
   );
   vi.stubGlobal("fetch", fetchMock);
-  resolvedOptionsSpy = vi.spyOn(
-    Intl.DateTimeFormat.prototype,
-    "resolvedOptions",
-  );
+  unzonedFormatterCount = 0;
+  // A plain `function`, not an arrow: this stands in for a CONSTRUCTOR, and it
+  // has to be callable with `new`. It delegates to the real implementation
+  // captured above, so every formatter the panel builds behaves normally and
+  // only the construction is counted.
+  function CountingDateTimeFormat(
+    locales?: Intl.LocalesArgument,
+    options?: Intl.DateTimeFormatOptions,
+  ) {
+    if (options?.timeZone === undefined) unzonedFormatterCount += 1;
+    return new RealDateTimeFormat(locales, options);
+  }
+  dateTimeFormatSpy = vi
+    .spyOn(Intl, "DateTimeFormat")
+    .mockImplementation(
+      CountingDateTimeFormat as unknown as typeof Intl.DateTimeFormat,
+    );
 });
 
 afterEach(() => {
-  resolvedOptionsSpy.mockRestore();
+  dateTimeFormatSpy.mockRestore();
   vi.unstubAllGlobals();
 });
 
@@ -143,10 +177,15 @@ describe("ClubTimeZonePanel", () => {
     await renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /Change time zone/ }));
 
-    // The list of CHOICES may come from this runtime. The DECISION may not:
-    // resolvedOptions() is how a browser would report its own zone, and nothing
-    // in the panel is allowed to consult it.
-    expect(resolvedOptionsSpy).not.toHaveBeenCalled();
+    // The list of CHOICES may come from this runtime. The DECISION may not: a
+    // formatter built with no `timeZone` renders in the browser's own zone, and
+    // reading its `resolvedOptions().timeZone` is how a page would learn that
+    // zone. Nothing in the panel, or in the club-time binding above it, is
+    // allowed to build one.
+    expect(unzonedFormatterCount).toBe(0);
+    // The spy is wired to the formatter the panel really uses, so a zero above
+    // is a measurement rather than an accident of never being installed.
+    expect(dateTimeFormatSpy).toHaveBeenCalled();
     // …and the panel is genuinely rendering, so the assertion is not vacuous.
     expect(screen.getByLabelText("Time zone")).not.toBeNull();
   });

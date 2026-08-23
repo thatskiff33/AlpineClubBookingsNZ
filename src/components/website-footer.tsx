@@ -2,6 +2,8 @@ import Link from "next/link";
 import { AnalyticsPreferencesLink } from "@/components/analytics-preferences-link";
 import { WebsiteFooterShell } from "@/components/website-footer-shell";
 import { WebsiteLogo } from "@/components/website-logo";
+import { calendarDateParts } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { getSiteFooterContent } from "@/lib/site-content";
 
@@ -41,7 +43,8 @@ export async function WebsiteFooter({
   logoUrl?: string | null;
   logoDataUrl?: string | null;
 }) {
-  const [raw, clubIdentity] = await Promise.all([
+  const [club, raw, clubIdentity] = await Promise.all([
+    clubTime(),
     getSiteFooterContent(),
     getCachedClubIdentity(),
   ]);
@@ -107,8 +110,13 @@ export async function WebsiteFooter({
         {/* Legal row stays code-rendered: auto year, non-removable links. */}
         <div className="mt-10 border-t border-brand-ridge/30 pt-6 text-center text-sm text-brand-snow/85">
           <p>
-            &copy; {new Date().getFullYear()} {clubName} Incorporated. All
-            rights reserved.
+            {/* The CLUB's year, not the server's (CT-4, #2870;
+                INV-CONFIG-002). `new Date().getFullYear()` is the host's
+                calendar year, so for the hours either side of New Year a
+                container and its club disagree about which year the copyright
+                line names. `clubToday` asks the club's own calendar. */}
+            &copy; {calendarDateParts(club.today()).year} {clubName}{" "}
+            Incorporated. All rights reserved.
           </p>
           <p className="mt-2 space-x-4">
             <Link

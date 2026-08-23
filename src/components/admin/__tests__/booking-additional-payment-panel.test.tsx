@@ -7,6 +7,21 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 
+/**
+ * CT-4 (#2870): the panel is a SERVER component and now awaits the club's
+ * PERSISTED timezone, so the real reader - which reaches Prisma through
+ * `server-only` - is replaced here by the same zone the environment resolves to.
+ * Every expected string below is therefore unchanged; what moved is where the
+ * zone comes from. The zone-AUTHORITY assertion lives in
+ * `club-time-client-boundary.test.tsx`, which pins a zone the environment does
+ * not hold.
+ */
+vi.mock("@/lib/club-time/server", async () => {
+  const { bindClubTime, requireClubTimeZone } = await import("@/lib/club-time");
+  const zone = requireClubTimeZone("Pacific/Auckland");
+  return { clubTime: async () => bindClubTime(zone), clubTimeZone: async () => zone };
+});
+
 import { BookingAdditionalPaymentPanel } from "@/components/admin/booking-additional-payment-panel";
 
 /**
@@ -31,23 +46,30 @@ function payment(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof BookingAdditionalPaymentPanel>[0]["payment"];
 }
 
-function render(props: Partial<Parameters<typeof BookingAdditionalPaymentPanel>[0]> = {}) {
-  return renderToStaticMarkup(
-    <BookingAdditionalPaymentPanel
-      bookingId="booking-1"
-      bookingStatus="PAID"
-      payment={payment()}
-      requestedOn={RAISED_AT}
-      canResend
-      now={NOW}
-      {...props}
-    />,
-  );
+/**
+ * The panel became an ASYNC server component in CT-4, so it is CALLED rather
+ * than rendered as an element: `renderToStaticMarkup` is synchronous and cannot
+ * await. A `null` return still renders as the empty string, which is what the
+ * "renders nothing" assertions below read.
+ */
+async function render(
+  props: Partial<Parameters<typeof BookingAdditionalPaymentPanel>[0]> = {},
+) {
+  const element = await BookingAdditionalPaymentPanel({
+    bookingId: "booking-1",
+    bookingStatus: "PAID",
+    payment: payment(),
+    requestedOn: RAISED_AT,
+    canResend: true,
+    now: NOW,
+    ...props,
+  });
+  return element === null ? "" : renderToStaticMarkup(element);
 }
 
 describe("BookingAdditionalPaymentPanel", () => {
-  it("names the amount, its age, and that it is still awaiting payment", () => {
-    const html = render();
+  it("names the amount, its age, and that it is still awaiting payment", async () => {
+    const html = await render();
 
     expect(html).toContain("Additional payment outstanding");
     expect(html).toContain("$210.00");
@@ -56,8 +78,8 @@ describe("BookingAdditionalPaymentPanel", () => {
     expect(html).toContain("Not yet");
   });
 
-  it("says plainly when the last charge attempt failed", () => {
-    const html = render({
+  it("says plainly when the last charge attempt failed", async () => {
+    const html = await render({
       payment: payment({ additionalPaymentStatus: "FAILED" }),
     });
 
@@ -65,8 +87,8 @@ describe("BookingAdditionalPaymentPanel", () => {
     expect(html).toContain("failed");
   });
 
-  it("reports when the member was last emailed, newest stamp wins", () => {
-    const html = render({
+  it("reports when the member was last emailed, newest stamp wins", async () => {
+    const html = await render({
       payment: payment({
         additionalReminderSentAt: new Date("2026-06-04T00:00:00.000Z"),
         additionalFinalReminderSentAt: new Date("2026-06-09T00:00:00.000Z"),
@@ -83,12 +105,12 @@ describe("BookingAdditionalPaymentPanel", () => {
     expect(html).toMatch(/12:00\s*[ap]m/i);
   });
 
-  it("renders nothing at all once the extra has been collected", () => {
+  it("renders nothing at all once the extra has been collected", async () => {
     expect(
-      render({ payment: payment({ additionalPaymentStatus: "SUCCEEDED" }) }),
+      await render({ payment: payment({ additionalPaymentStatus: "SUCCEEDED" }) }),
     ).toBe("");
-    expect(render({ payment: payment({ additionalAmountCents: 0 }) })).toBe("");
-    expect(render({ payment: null })).toBe("");
+    expect(await render({ payment: payment({ additionalAmountCents: 0 }) })).toBe("");
+    expect(await render({ payment: null })).toBe("");
   });
 
   /*
@@ -97,10 +119,10 @@ describe("BookingAdditionalPaymentPanel", () => {
     cancelled booking still owes money — and offer them a button to chase the
     member for it.
   */
-  it("renders nothing on a booking whose lifecycle ended the obligation", () => {
+  it("renders nothing on a booking whose lifecycle ended the obligation", async () => {
     for (const bookingStatus of ["CANCELLED", "BUMPED", "PAYMENT_PENDING"]) {
       expect(
-        render({
+        await render({
           bookingStatus,
           payment: payment({ additionalPaymentStatus: "FAILED" }),
         }),
@@ -108,18 +130,18 @@ describe("BookingAdditionalPaymentPanel", () => {
     }
   });
 
-  it("tells the officer the re-send replaces the automatic reminder", () => {
+  it("tells the officer the re-send replaces the automatic reminder", async () => {
     // The button writes the stamp that suppresses the pending automatic nudge,
     // so the person pressing it has to know the member gets one message.
-    expect(render()).toContain("takes the place of");
+    expect(await render()).toContain("takes the place of");
   });
 
-  it("offers the re-send only to an admin who may write", () => {
-    expect(render({ canResend: true })).toContain(
+  it("offers the re-send only to an admin who may write", async () => {
+    expect(await render({ canResend: true })).toContain(
       "Resend payment request email",
     );
 
-    const viewOnly = render({ canResend: false });
+    const viewOnly = await render({ canResend: false });
     expect(viewOnly).not.toContain("Resend payment request email");
     // The reason is stated in prose, in reading order, rather than hidden on a
     // disabled control.
@@ -131,7 +153,7 @@ describe("BookingAdditionalPaymentPanel", () => {
     waive, or zero the member's money from here. Collecting it stays with the
     member's own card or the ordinary modification tooling.
   */
-  it("offers no way to take or waive the payment", () => {
+  it("offers no way to take or waive the payment", async () => {
     const source = readFileSync(
       join(
         process.cwd(),
@@ -156,7 +178,7 @@ describe("BookingAdditionalPaymentPanel", () => {
     }
     // And nothing rendered takes input or posts anywhere: the only interactive
     // element the panel can produce is the re-send button.
-    const html = render();
+    const html = await render();
     expect(html).not.toContain("<form");
     expect(html).not.toContain("<input");
     const buttons = html.match(/<button/g) ?? [];
