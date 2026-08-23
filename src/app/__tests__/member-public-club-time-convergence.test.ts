@@ -60,16 +60,50 @@
  * the `type` modifier and a rename, and it resolves a specifier by BASENAME so a
  * relative path reaches the same verdict as the `@/lib/...` alias. A namespace
  * import and a dynamic `import()` hide WHICH helpers a file reads, so both are
- * banned outright rather than documented. Still open, and the same accepted
- * class the neighbouring `no-restricted-imports` rule writes down: a specifier
- * built by concatenation, a re-export chain that launders a helper under a new
- * name, `require()`, and a tsconfig path alias other than `@/`. Only removing
- * the modules closes those, which is CT-6's job.
+ * banned outright rather than documented — for `@/config/operational` as well as
+ * for the two legacy adapters, which is a gap this census carried until the
+ * #2870 fix round: the headline said "WITH NO EXCEPTIONS", and
+ * `import * as ops from "@/config/operational"` walked straight past it.
+ *
+ * Still open, and the same accepted class the neighbouring
+ * `no-restricted-imports` rule writes down: a specifier built by concatenation,
+ * a re-export chain that launders a helper under a new name, `require()`, and a
+ * tsconfig path alias other than `@/`. Only removing the modules closes those,
+ * which is CT-6's job.
+ *
+ * ## The three zone reads that reach no module at all
+ *
+ * An import census cannot see a page that never imports anything: it can read
+ * `process.env.TZ` itself, ask `Intl` for the VIEWER's zone, or simply type
+ * `"Pacific/Auckland"` into a formatter. All three produce exactly the defect
+ * this group fixed, and all three used to pass here.
+ *
+ * The middle one is the load-bearing addition, because nothing else in the
+ * repository catches it. `INV-DATE-015`'s lint arm fires on an
+ * `Intl.DateTimeFormat` with a MISSING `timeZone` key, and
+ * `timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone` has one. And a
+ * behavioural test cannot reliably catch it either: on CI `TZ` is unset, so the
+ * host resolves `UTC`, which makes a formatter pinned to `"UTC"` and a formatter
+ * pinned to the runtime's own zone render **identically**. Measured on this
+ * branch before the guard existed: that mutant killed 0 of 530 tests in the
+ * related set at `TZ=UTC`, and 0 with `TZ` unset.
+ *
+ * `timeZone: "UTC"` is the one literal allowed, and it is not an exception: a
+ * calendar day is encoded at UTC midnight, so pinning `UTC` over it is provably
+ * the identity rather than a projection (`formatCalendarDateShape` in
+ * `@/lib/club-time`). Any OTHER literal names one club and is wrong for the rest.
+ *
+ * These three are scanned over the file with COMMENTS STRIPPED, for the reason
+ * `importsEnvironmentZone` gives below: half the migrated files in this tree
+ * name the thing they no longer do, and a census that could not tell an
+ * explanation from a call would force every explanation to be deleted.
  */
 import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { stripComments } from "../../../scripts/ci/check-website-render-modes.mjs";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");
@@ -107,14 +141,65 @@ const ENVIRONMENT_ZONE_HELPERS: Record<string, string> = {
 /** The legacy adapter modules, identified by basename. */
 const LEGACY_MODULE_BASENAMES = new Set(["date-only", "nzst-date"]);
 
+/**
+ * Modules whose zone-bearing exports must be reached by NAME or not at all.
+ *
+ * `operational` joins the two adapters because `APP_TIME_ZONE` lives there: a
+ * namespace import of it hides an environment read exactly as effectively as a
+ * namespace import of `nzst-date` hides `formatNZDate`.
+ */
+const OPAQUE_READ_BASENAMES = new Set([
+  ...LEGACY_MODULE_BASENAMES,
+  "operational",
+]);
+
+/**
+ * Zone reads that reach no module, and therefore no import census.
+ *
+ * Each is checked against the source with comments stripped. See the module doc
+ * for why `resolvedOptions` is the one that nothing else in this repository
+ * catches.
+ */
+const AMBIENT_ZONE_READS: ReadonlyArray<{
+  readonly pattern: RegExp;
+  readonly describe: string;
+}> = [
+  {
+    pattern: /process\.env\.(?:TZ|NEXT_PUBLIC_TZ)/,
+    describe:
+      "reads `process.env.TZ` / `NEXT_PUBLIC_TZ`: that is the CONTAINER's zone, " +
+      "which is the club's only by accident. A server page takes the club's zone " +
+      "from `clubTime()`; a client component receives it as data",
+  },
+  {
+    pattern: /resolvedOptions\s*\(\s*\)/,
+    describe:
+      "reads the VIEWER's own clock through " +
+      "`Intl.DateTimeFormat().resolvedOptions()`. A member in London and a member " +
+      "in Ohakune must see the same club time (INV-CONFIG-002), and nothing else " +
+      "catches this: the lint arm fires on a MISSING `timeZone` key, and this " +
+      "spelling has one",
+  },
+];
+
+/** `timeZone: "..."` options, and the one value that is not a club's zone. */
+const PINNED_ZONE_LITERAL = /timeZone\s*:\s*["']([^"']+)["']/g;
+const ZONE_FREE_PIN = "UTC";
+
 function relative(absolute: string): string {
   return path.relative(ROOT, absolute).split(path.sep).join("/");
 }
 
+function basenameOf(specifier: string): string {
+  return specifier.replace(/\.(?:ts|tsx|js|mjs|cjs)$/, "").split("/").pop() ?? "";
+}
+
 function isLegacyModuleSpecifier(specifier: string): boolean {
-  const withoutExtension = specifier.replace(/\.(?:ts|tsx|js|mjs|cjs)$/, "");
-  const lastSegment = withoutExtension.split("/").pop() ?? "";
-  return LEGACY_MODULE_BASENAMES.has(lastSegment);
+  return LEGACY_MODULE_BASENAMES.has(basenameOf(specifier));
+}
+
+function isOpaqueReadSpecifier(specifier: string): boolean {
+  return OPAQUE_READ_BASENAMES.has(basenameOf(specifier));
 }
 
 function sourceFiles(dir: string): string[] {

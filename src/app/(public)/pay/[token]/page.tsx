@@ -18,6 +18,7 @@ import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseInstant,
+  type BoundClubTime,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -90,10 +91,43 @@ const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
  * this fallback is a FIX rather than a preserved behaviour.
  */
 function formatStayDay(value: string): string {
+  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
+  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
+  // `TypeError` out of the guard that exists to stop a throw. The premise above
+  // is that nothing validates this payload on the way in, and a missing field is
+  // exactly what an unvalidated payload produces — so the guard has to cover it.
+  if (typeof value !== "string") return "";
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
     return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * The moment the link stops working, spelled in the CLUB's zone (CT-4, #2870;
+ * INV-CONFIG-002).
+ *
+ * Deliberately NOT the same route as the stay dates rendered beside it: those
+ * are calendar days and take no zone at all, and merging the two is the defect
+ * this epic exists to end.
+ *
+ * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
+ * missing: this line sits nine below one whose docblock justifies its own
+ * try/catch by "nothing validates this payload on the way in", and then handed
+ * `new Date(...)` straight to a formatter. `Intl.DateTimeFormat.format` on an
+ * invalid `Date` is a `RangeError`, and an unhandled throw in a client render
+ * replaces the whole payment page with an error boundary — over a line that only
+ * tells the payer when the link expires.
+ */
+function formatLinkExpiry(value: string, club: BoundClubTime): string {
+  if (typeof value !== "string") return "";
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  try {
+    return club.instantDate(instant);
   } catch {
     return value;
   }
@@ -420,7 +454,8 @@ export default function PayByLinkPage() {
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
-            This payment link expires on {clubTime.instantDate(new Date(payable.expiresAt))}.
+            This payment link expires on{" "}
+            {formatLinkExpiry(payable.expiresAt, clubTime)}.
           </p>
         </div>
 

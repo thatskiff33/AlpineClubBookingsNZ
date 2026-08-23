@@ -54,6 +54,12 @@ import {
  * this fallback is a FIX rather than a preserved behaviour.
  */
 function formatStayDay(value: string): string {
+  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
+  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
+  // `TypeError` out of the guard that exists to stop a throw. The premise above
+  // is that nothing validates this payload on the way in, and a missing field is
+  // exactly what an unvalidated payload produces — so the guard has to cover it.
+  if (typeof value !== "string") return "";
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {

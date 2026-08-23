@@ -354,3 +354,62 @@ describe("public payment-link confirmation names the booking's lodge", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("the public payment page survives a payload that omits its dates", () => {
+  /*
+    THE GUARD THAT WAS HALF THERE (CT-4, #2870 fix round).
+
+    Every date on this page is rendered through a helper whose own docblock says
+    the reason it never throws: "a public token landing page with no runtime
+    schema check on the payload". That premise is the world where a field can be
+    absent — and the first version of the helper called `parseInstant(value)`,
+    which does `value.trim()` BEFORE any nullish check. So `formatStayDay(null)`
+    threw a `TypeError` out of the very guard written to prevent a throw, and an
+    unhandled throw in a client render replaces the whole page with an error
+    boundary. A payer with a link in their hand gets a blank screen instead of
+    the amount, the reference and the card form.
+
+    MUTATION-VERIFIED: remove the `typeof value !== "string"` arm from
+    `formatStayDay` (or from `formatLinkExpiry`) and this case goes red with
+    "Cannot read properties of null (reading 'trim')".
+  */
+  const contextWithNoDates = {
+    ...payableContext,
+    payable: {
+      ...payableContext.payable,
+      checkIn: null,
+      checkOut: null,
+      expiresAt: null,
+    },
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token" && !init?.method) {
+          return { ok: true, json: async () => contextWithNoDates } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }) as typeof fetch,
+    );
+  });
+
+  it("still renders the amount and the card, with the dates simply blank", async () => {
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    // The part the payer actually needs is still on screen…
+    expect(screen.getByText(/Amount due/)).toBeInTheDocument();
+    // …and the dates degrade to nothing rather than to "1 Jan 1970", which is
+    // what the pre-CT-4 spelling rendered for a missing value: wrong, plausible,
+    // and impossible to tell from a real stay.
+    expect(screen.queryByText(/1 Jan 1970/)).toBeNull();
+    expect(screen.getByText(/^Dates:/)).toBeInTheDocument();
+  });
+});

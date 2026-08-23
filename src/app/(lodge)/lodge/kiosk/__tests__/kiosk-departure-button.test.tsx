@@ -25,12 +25,37 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import KioskPage from "../page";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
-import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { buildWeekDateKeys } from "../_components/kiosk-week-view";
+
+/*
+  THE MACHINE IS MOVED ABOVE THE IMPORTS, AND IT HAS TO BE.
+
+  `page.tsx` renders the day heading through a module-level
+  `Intl.DateTimeFormat` CONSTANT and `kiosk-week-view.tsx` renders each tile's
+  `aria-label` through another, both frozen when those modules load. A zone
+  assigned in a `beforeEach` arrives after that and never reaches them — so a
+  formatter that dropped its `timeZone: "UTC"` pin and rendered in the runtime's
+  own zone could not be told from a correct one, least of all on CI, where `TZ`
+  is unset and the host resolves `UTC`.
+
+  `America/New_York` is UTC-4 in July, where a UTC-midnight encoding reads as the
+  previous evening. The reading is taken by hand because `vi.hoisted` runs above
+  this file's imports, so `captureHostTimeZone` does not exist yet;
+  `restoreHostTimeZone` below is the shared #2485 rule.
+*/
+const { originalHostTimeZone } = vi.hoisted(() => {
+  const original = {
+    envTz: process.env.TZ,
+    resolvedZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  process.env.TZ = "America/New_York";
+  return { originalHostTimeZone: original };
+});
 
 /*
   THE CLUB'S ZONE NOW ARRIVES THROUGH THE PROVIDER, AND THE ENVIRONMENT IS SET
@@ -40,11 +65,23 @@ import { buildWeekDateKeys } from "../_components/kiosk-week-view";
   and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
   anything once the HOST zone moved. The page now takes the club's day from
   `ClubTimeProvider` instead, and `renderKiosk` below supplies it — so the mock
-  is free to become a THIRD zone, and it should be. With three different zones
-  in play (club `Pacific/Auckland`, environment `America/Denver`, host `UTC`)
-  every date assertion in this file discriminates all three: an implementation
-  that read the environment, or the tablet's own clock, would name a different
-  night and go red.
+  is free to become a third zone, and it should be.
+
+  WHAT THAT DOES AND DOES NOT BUY, stated precisely, because the obvious claim is
+  wrong. Three authorities are in play — club `Pacific/Auckland` (the provider),
+  environment `America/Denver` (this mock), host `America/New_York` (above) — and
+  at the 02:00 UTC instants every case here pins, the club is on one calendar day
+  and BOTH of the others are on the day before. So a date assertion tells the
+  club apart from either wrong authority, which is what matters; it does not tell
+  the environment apart from the host, and no assertion at this instant could,
+  because at any single moment there are only ever two calendar days on earth.
+
+  The zone claim is carried by "opens on the club's day" below. Every other case
+  here reaches its night by CLICKING a tile by name, which self-corrects: pick
+  the wrong day to open on and the tile is still in the same week and still gets
+  clicked. Measured before that case existed: every zone mutant killed 0 of the
+  7 tests in this file, while the comment above claimed all of them discriminated
+  all three zones.
 
   `APP_LOCALE` still matters and is left alone — the kiosk header's long-weekday
   formatter is a calendar-date shape with no house entry in the kernel, so it
@@ -201,7 +238,11 @@ async function openGuestRow(day: {
   return row as HTMLElement;
 }
 
-const hostTimeZone = captureHostTimeZone();
+afterAll(() => {
+  // Never `delete process.env.TZ`: Node re-derives the zone on ASSIGNMENT only,
+  // so a bare delete leaks this zone into whichever suite runs next (#2485).
+  restoreHostTimeZone(originalHostTimeZone);
+});
 
 /** The club this kiosk belongs to. Delivered the way the application does it. */
 const CLUB_ZONE = "Pacific/Auckland";
@@ -215,16 +256,51 @@ function renderKiosk() {
 }
 
 describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)", () => {
-  beforeEach(() => {
-    process.env.TZ = "Pacific/Auckland";
-  });
-
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.setSystemTime(frozenTestNow());
-    hostTimeZone.restore();
+  });
+
+  it("opens on the CLUB's day, not the environment's and not the tablet's", async () => {
+    /*
+      THE ONLY CASE IN THIS FILE THAT MAKES A ZONE CLAIM, and it exists because
+      the others cannot: they reach their night by clicking a tile by name, so
+      opening on the wrong day self-corrects and every zone mutant survived.
+
+      At 02:00 UTC on 12 July the club (`Pacific/Auckland`, UTC+12) is on the
+      12th; the environment (`America/Denver`) and the tablet's own clock
+      (`America/New_York`) are both still on the 11th. So the Today chip lands on
+      a different tile for each answer, and the day heading names a different
+      night — which is a hut leader served the wrong guest list.
+
+      It also pins the two module-level `Intl.DateTimeFormat` constants that
+      produce these strings: the tile's `aria-label` in `kiosk-week-view.tsx` and
+      the heading in `page.tsx`. Both are calendar-day formatters pinned to
+      `UTC`, and with the host behind Greenwich a dropped pin renames both.
+    */
+    installFetchMock(guestPayload({ isDeparting: true, canMarkDeparted: true }));
+    vi.setSystemTime(new Date(`${INTERMEDIATE_DEPARTURE.dateKey}T02:00:00.000Z`));
+
+    renderKiosk();
+
+    const clubDay = await screen.findByRole("button", {
+      name: INTERMEDIATE_DEPARTURE.openLabel,
+    });
+    expect(within(clubDay).getByText("Today")).toBeVisible();
+
+    // And on no other tile — the day both wrong authorities would have chosen.
+    const dayBefore = screen.getByRole("button", {
+      name: "Open Saturday, 11 July",
+    });
+    expect(within(dayBefore).queryByText("Today")).toBeNull();
+
+    // The day view opens on the same night, named in full by `page.tsx`.
+    fireEvent.click(clubDay);
+    expect(
+      await screen.findByRole("heading", { name: "Sunday, 12 July 2026" }),
+    ).toBeVisible();
   });
 
   it("an intermediate departure morning shows the chip AND the button (#2628)", async () => {
@@ -304,16 +380,11 @@ describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)"
 });
 
 describe("the kiosk repeats the server's gap-night refusal verbatim (#2737)", () => {
-  beforeEach(() => {
-    process.env.TZ = "Pacific/Auckland";
-  });
-
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.setSystemTime(frozenTestNow());
-    hostTimeZone.restore();
   });
 
   const REFUSAL =

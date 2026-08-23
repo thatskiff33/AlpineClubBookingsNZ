@@ -1,21 +1,54 @@
 // @vitest-environment jsdom
 
 import { act, render } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /*
-  THE ENVIRONMENT IS PINNED, SO THIS SUITE MEANS THE SAME THING ON EVERY HOST.
+  THE MACHINE IS MOVED ABOVE THE IMPORTS, AND IT HAS TO BE.
+
+  `display-header-clock.tsx` renders the header's day line through a
+  module-level `Intl.DateTimeFormat` CONSTANT, frozen when that module loads. A
+  zone assigned in a `beforeEach` arrives after that and never reaches it — so
+  the calendar-day case at the end of this file could not tell a formatter
+  pinned to `UTC` from one that dropped the pin and renders in the runtime's own
+  zone. On CI, where `TZ` is unset and the host resolves `UTC`, those two are
+  literally the same thing.
+
+  The reading is taken by hand because `vi.hoisted` runs above this file's
+  imports, so `captureHostTimeZone` does not exist yet; `restoreHostTimeZone`
+  below is the shared #2485 rule, and it runs once, in `afterAll`.
+*/
+const { HOST, originalHostTimeZone } = vi.hoisted(() => {
+  const host = "America/New_York";
+  const original = {
+    envTz: process.env.TZ,
+    resolvedZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  process.env.TZ = host;
+  return { HOST: host, originalHostTimeZone: original };
+});
+
+import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+
+/*
+  THE ENVIRONMENT IS PINNED, SO THIS SUITE MEANS THE SAME THING ON EVERY HOST —
+  AND IT IS PINNED SOMEWHERE THE FALLBACK WOULD NEVER PUT IT.
 
   `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`,
   so a developer whose laptop is set to Denver would otherwise turn the premise
-  below into a red herring — docs/TESTING.md rule 6. Pinning it here makes
-  "Auckland is what the environment would have answered" a GUARANTEE rather than
-  an assumption about the machine, which is what lets the Denver expectations
-  mean "this did not come from the environment".
+  below into a red herring — docs/TESTING.md rule 6.
+
+  It used to be pinned to `Pacific/Auckland`, and that was the one value it must
+  not be: it is exactly what the constant falls back to wherever `TZ` is unset,
+  CI included, so a `vi.mock` that quietly stopped applying produced the SAME
+  answer and the premise guard beneath went on passing. Pinning a third zone
+  instead makes the stub falsifiable on any host, and it buys something more: the
+  environment now gives an answer that matches NEITHER club column, so a
+  component that read it is caught by both halves of the pair rather than by one.
 */
 vi.mock("@/config/operational", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_TIME_ZONE: "Atlantic/Cape_Verde",
 }));
 
 import { DisplayScreen } from "@/app/display/display-screen";
@@ -53,12 +86,24 @@ import { APP_TIME_ZONE } from "@/config/operational";
  * show: the same instant is 1 July in Auckland and 30 June in Denver, so a
  * wrong zone moves the day and not merely the hour. `expect(zone).not.toBe(...)`
  * on the identifier would be the tempting premise guard and is worthless — it
- * passes under `America/Chicago` while every assertion below goes vacuous. What
- * is checked instead is that the two EXPECTED ANSWERS differ from each other and
- * that the Auckland answer is the one the legacy environment pin would have
- * produced, so a runtime that collapsed them could not leave this file green.
- * The environment itself is STUBBED so that second half holds on any host, not
- * only on one whose `TZ` happens to be unset.
+ * passes under `America/Chicago` while every assertion below goes vacuous.
+ *
+ * What is checked instead is what `Intl` ITSELF makes of the pinned instant in
+ * each of the FOUR zones in play. Comparing the file's own two expectation
+ * LITERALS to each other, which is what the first version of that guard did,
+ * cannot fail for any reason whatsoever — they are constants declared eighty
+ * lines above it.
+ *
+ * Four zones because there are four candidate authorities and only one is
+ * right: the club's persisted zone (the prop under test), the environment's
+ * `APP_TIME_ZONE`, the machine's own clock, and a hard-coded New Zealand. The
+ * environment and the machine are both STUBBED, to two further places, so the
+ * suite means the same on every host — and neither stub is `Pacific/Auckland`,
+ * because that is what `APP_TIME_ZONE` falls back to wherever `TZ` is unset (CI
+ * included) and a stub set to the fallback cannot be told from no stub at all.
+ * The machine's zone is behind Greenwich as well, which is what lets the
+ * calendar-day case at the end of this file distinguish a formatter pinned to
+ * `UTC` from one pinned to nothing; on CI's `UTC` host those two are identical.
  */
 
 const PAYLOAD = {
@@ -102,10 +147,34 @@ const AUCKLAND = "Pacific/Auckland";
 /** BEHIND UTC, where a wrong zone moves the calendar day and not just the hour. */
 const DENVER = "America/Denver";
 
+/**
+ * The zone the CONTAINER's `TZ` is stubbed to, above. Not `Pacific/Auckland`, on
+ * purpose: see the stub's own comment.
+ */
+const ENVIRONMENT = "Atlantic/Cape_Verde";
+
+/*
+  `HOST` — the machine, a FOURTH place and behind Greenwich on purpose — is
+  declared in the `vi.hoisted` block at the top of this file, because it has to
+  be assigned before the imports run. `America/New_York` is UTC-4 in July, where
+  a UTC-midnight encoding reads as the previous evening. Measured on this branch:
+  the "every calendar-date formatter drops its UTC pin" mutant killed 0 of 530
+  tests in the related set at `TZ=UTC` before that pin existed.
+*/
+
 const EXPECTED = {
   [AUCKLAND]: { clock: "12:00 PM", day: "Wed, 1 Jul", updated: "12:00 pm" },
   [DENVER]: { clock: "6:00 PM", day: "Tue, 30 Jun", updated: "6:00 pm" },
 } as const;
+
+/** One civil reading, straight from `Intl` — never through the code under test. */
+function civilReading(zone: string, instant: Date): string {
+  return new Intl.DateTimeFormat("en-NZ", {
+    timeZone: zone,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(instant);
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -127,6 +196,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+afterAll(() => {
+  // Never `delete process.env.TZ`: Node re-derives the zone on ASSIGNMENT only,
+  // so a bare delete leaks this zone into whichever suite runs next (#2485).
+  restoreHostTimeZone(originalHostTimeZone);
+});
+
 async function renderHeaderFor(zone: string): Promise<HTMLElement> {
   const { container } = render(<DisplayScreen zone={zone} />);
   await act(async () => {
@@ -143,21 +218,44 @@ async function renderHeaderFor(zone: string): Promise<HTMLElement> {
 }
 
 describe("the lobby display renders in the club's persisted timezone (CT-4, #2870)", () => {
-  it("the two clubs' expected answers really differ, and Auckland is the legacy answer", () => {
+  it("four authorities, four different answers, and the two stubs are live", () => {
     /*
-      THE PREMISE, NOT AN IDENTIFIER COMPARISON.
+      THE PREMISE, AND IT HAS TO READ SOMETHING OUTSIDE THIS FILE.
 
-      If the runtime's ICU ever made these two zones render the same clock and
-      the same day, every assertion in this file would still pass while proving
-      nothing. Asserting the two expectations differ is what makes a collapse
-      visible. The second half records WHY Auckland is the control: it is the
-      value the old environment pin resolved to on this deployment, so a
-      component that ignored its prop would produce the Auckland column for both
-      clubs — which is exactly what the Denver cases below refuse.
+      The tempting version — `expect(EXPECTED[AUCKLAND].clock).not.toBe(
+      EXPECTED[DENVER].clock)` — compares two string literals declared eighty
+      lines above. No code change, no runtime upgrade and no ICU data update can
+      ever make it fail, so it asserted nothing at all while reading exactly like
+      the guard its own comment described. What is asserted instead is what
+      `Intl` ITSELF makes of `NOW` in each of the four zones in play, so a runtime
+      that collapsed any two of them fails here rather than leaving the cases
+      below quietly vacuous.
+
+      Four, not two, because there are four candidate authorities and only the
+      first is correct: the club's PERSISTED zone (the prop), the environment's
+      `APP_TIME_ZONE`, the machine's own clock, and a hard-coded New Zealand. All
+      four give a different reading of this one instant, so any component reading
+      the wrong one is caught — and caught by BOTH halves of the pair, not one.
     */
-    expect(EXPECTED[AUCKLAND].clock).not.toBe(EXPECTED[DENVER].clock);
-    expect(EXPECTED[AUCKLAND].day).not.toBe(EXPECTED[DENVER].day);
-    expect(APP_TIME_ZONE).toBe(AUCKLAND);
+    expect(civilReading(AUCKLAND, NOW)).toBe("1 Jul 2026, 12:00 pm");
+    expect(civilReading(DENVER, NOW)).toBe("30 Jun 2026, 6:00 pm");
+    expect(civilReading(ENVIRONMENT, NOW)).toBe("30 Jun 2026, 11:00 pm");
+    expect(civilReading(HOST, NOW)).toBe("30 Jun 2026, 8:00 pm");
+    expect(
+      new Set(
+        [AUCKLAND, DENVER, ENVIRONMENT, HOST].map((zone) =>
+          civilReading(zone, NOW),
+        ),
+      ).size,
+    ).toBe(4);
+
+    /*
+      AND BOTH STUBS REALLY APPLIED. Neither of these can pass by accident on a
+      host whose `TZ` is unset: `APP_TIME_ZONE` falls back to `Pacific/Auckland`
+      there, which is neither of the values demanded here.
+    */
+    expect(APP_TIME_ZONE).toBe(ENVIRONMENT);
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(HOST);
   });
 
   it.each([AUCKLAND, DENVER] as const)(

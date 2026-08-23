@@ -13,6 +13,7 @@ import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
   parseInstant,
+  type BoundClubTime,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
@@ -73,10 +74,39 @@ type Action = "ACCEPT" | "CANCEL" | "MODIFY" | "QUERY";
  * this fallback is a FIX rather than a preserved behaviour.
  */
 function formatStayDay(value: string): string {
+  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
+  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
+  // `TypeError` out of the guard that exists to stop a throw. The premise above
+  // is that nothing validates this payload on the way in, and a missing field is
+  // exactly what an unvalidated payload produces — so the guard has to cover it.
+  if (typeof value !== "string") return "";
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
     return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * When the quote stops being valid, spelled in the CLUB's zone (CT-4, #2870;
+ * INV-CONFIG-002).
+ *
+ * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
+ * missing: it sits nine lines below one whose docblock justifies its own
+ * try/catch by "a public token landing page whose payload nothing validates on
+ * the way in", and then handed `new Date(...)` straight to a formatter.
+ * `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`, and an
+ * unhandled throw in a client render replaces the whole screen with an error
+ * boundary — over a line that only says when the quote lapses.
+ */
+function formatQuoteExpiry(value: string, club: BoundClubTime): string {
+  if (typeof value !== "string") return "";
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  try {
+    return club.instantDateTime(instant);
   } catch {
     return value;
   }
@@ -263,7 +293,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               </p>
               <p>
                 <span className="text-muted-foreground">Expires:</span>{" "}
-                {clubTime.instantDateTime(new Date(context.expiresAt))}
+                {formatQuoteExpiry(context.expiresAt, clubTime)}
                 {expiresInLabel ? (
                   <span className="text-muted-foreground"> ({expiresInLabel})</span>
                 ) : null}

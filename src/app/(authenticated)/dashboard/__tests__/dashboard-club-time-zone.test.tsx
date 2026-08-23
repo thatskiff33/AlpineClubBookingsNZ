@@ -37,17 +37,51 @@
  *
  * `expect(APP_TIME_ZONE).not.toBe(PERSISTED_ZONE)` on the identifier alone would
  * be the tempting guard and is nearly worthless — it passes under
- * `America/Chicago` while every assertion here goes vacuous. What is asserted
- * instead is that the two clubs' EXPECTED ANSWERS differ, and that the
- * environment's own answer is the Auckland one, so a runtime in which the two
- * zones agreed about this instant could not leave this file green. The
- * environment is STUBBED to Auckland so that second half is a guarantee rather
- * than a fact about whoever's laptop is running the suite.
+ * `America/Chicago` while every assertion here goes vacuous.
+ *
+ * What is asserted instead is what `Intl` ITSELF puts each zone on at the pinned
+ * instant. Comparing the file's own two expectation LITERALS to each other, the
+ * first version of that guard, cannot fail for any reason whatsoever — they are
+ * constants declared a hundred lines above it.
+ *
+ * The environment is STUBBED to Auckland so "the environment's own answer is the
+ * Auckland one" is a guarantee rather than a fact about whoever's laptop is
+ * running the suite. And `process.env.TZ` is pinned to a THIRD zone, from
+ * `vi.hoisted` so it lands before the imports, so that stub cannot go stale
+ * unnoticed: `APP_TIME_ZONE` falls back to `Pacific/Auckland` wherever `TZ` is
+ * unset, CI included, so a `vi.mock` that stopped applying would answer exactly
+ * what the guard demands.
  */
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { APP_TIME_ZONE } from "@/config/operational";
+import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+
+/*
+  THE MACHINE IS MOVED TO A THIRD ZONE, ABOVE THE IMPORTS.
+
+  Two things here are frozen when their module loads and cannot be moved by a
+  `beforeEach`: `APP_TIME_ZONE` itself, and `dashboard/page.tsx`'s module-level
+  calendar-date formatter. Pinning the host from `vi.hoisted` is what makes the
+  "the environment stub is live" line below falsifiable — without it, a `vi.mock`
+  that stopped applying would resolve the FALLBACK, which is the very
+  `Pacific/Auckland` that line demands, and it would pass on CI while proving
+  nothing. `Atlantic/Cape_Verde` is UTC-1: behind Greenwich, so it also moves a
+  UTC-midnight encoding a day, and neither of the two clubs under test.
+
+  Read by hand because `vi.hoisted` runs above this file's imports;
+  `restoreHostTimeZone` below is the shared #2485 rule.
+*/
+const { HOST, originalHostTimeZone } = vi.hoisted(() => {
+  const host = "Atlantic/Cape_Verde";
+  const original = {
+    envTz: process.env.TZ,
+    resolvedZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  process.env.TZ = host;
+  return { HOST: host, originalHostTimeZone: original };
+});
 
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -139,6 +173,29 @@ const DENVER = "America/Denver";
 
 /** The club calendar day each configured club is on at `PINNED_INSTANT`. */
 const CLUB_TODAY = { [AUCKLAND]: "2026-07-02", [DENVER]: "2026-07-01" } as const;
+
+afterAll(() => {
+  // Never `delete process.env.TZ`: Node re-derives the zone on ASSIGNMENT only,
+  // so a bare delete leaks this zone into whichever suite runs next (#2485).
+  restoreHostTimeZone(originalHostTimeZone);
+});
+
+/**
+ * The `YYYY-MM-DD` a zone is on at `PINNED_INSTANT`, straight from `Intl`.
+ *
+ * Deliberately NOT the kernel: recomputing an expectation with the code under
+ * test proves only that the function is deterministic.
+ */
+function civilDayIn(zone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(PINNED_INSTANT));
+  const at = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${at("year")}-${at("month")}-${at("day")}`;
+}
 
 /**
  * A stay whose check-in is 3 July.
@@ -241,16 +298,32 @@ describe("the member dashboard runs on the persisted club timezone (CT-4, #2870)
     });
   });
 
-  it("the two clubs really are on different days at this instant", () => {
+  it("the runtime really puts these clubs where this file says, and both stubs are live", () => {
     /*
-      THE PREMISE. If the runtime ever put these two zones on the same calendar
-      day at `PINNED_INSTANT`, every assertion below would still pass and prove
-      nothing. The second line records why Auckland is the control: it is what
-      the environment resolves to here, so a page that ignored the persisted
-      setting would produce the Auckland column for both clubs.
+      THE PREMISE, AND IT HAS TO READ SOMETHING OUTSIDE THIS FILE.
+
+      `expect(CLUB_TODAY[AUCKLAND]).not.toBe(CLUB_TODAY[DENVER])` compares two
+      string literals declared a hundred lines above. Nothing — no code change,
+      no ICU data update — can ever make it fail, so it asserted nothing while
+      reading exactly like the guard this comment describes. What is asserted
+      instead is what `Intl` ITSELF puts each zone on at `PINNED_INSTANT`, so a
+      runtime that collapsed the two fails here rather than leaving every case
+      below quietly vacuous.
+
+      The last two lines record why Auckland is the control and make that
+      checkable: it is what the environment resolves to here, so a page that
+      ignored the persisted setting would produce the Auckland column for both
+      clubs. `APP_TIME_ZONE` falls back to `Pacific/Auckland` wherever `TZ` is
+      unset — CI included — so this line only means something because the host
+      is pinned somewhere else entirely (see the top of the file). A `vi.mock`
+      that quietly stopped applying now answers `Atlantic/Cape_Verde` and fails.
     */
-    expect(CLUB_TODAY[AUCKLAND]).not.toBe(CLUB_TODAY[DENVER]);
+    expect(civilDayIn(AUCKLAND)).toBe(CLUB_TODAY[AUCKLAND]);
+    expect(civilDayIn(DENVER)).toBe(CLUB_TODAY[DENVER]);
+    expect(civilDayIn(AUCKLAND)).not.toBe(civilDayIn(DENVER));
+
     expect(APP_TIME_ZONE).toBe(AUCKLAND);
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(HOST);
   });
 
   it.each([AUCKLAND, DENVER] as const)(

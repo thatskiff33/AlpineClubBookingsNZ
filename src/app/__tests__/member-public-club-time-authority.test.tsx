@@ -102,9 +102,24 @@ import type { MemberExceptionRequestItem } from "@/lib/member-exception-requests
  *
  * ## And the browser is a third authority, pointed somewhere else again
  *
- * Every case points `process.env.TZ` at `Asia/Tokyo`, which agrees with neither
- * of the two answers being distinguished. A component that read its own host —
- * the thing `INV-CONFIG-002` forbids — cannot pass by accident.
+ * Every case points `process.env.TZ` at `Atlantic/Cape_Verde`, which agrees with
+ * neither of the two answers being distinguished. A component that read its own
+ * host — the thing `INV-CONFIG-002` forbids — cannot pass by accident.
+ *
+ * IT IS BEHIND GREENWICH ON PURPOSE, AND THAT IS A SECOND, DIFFERENT MUTANT.
+ * This file used to point the host at `Asia/Tokyo`, which is UTC+9 — so a
+ * UTC-midnight `@db.Date` encoding read there is still the SAME day. A formatter
+ * that dropped its `timeZone: "UTC"` pin altogether and rendered in the
+ * runtime's own zone therefore passed the calendar-day case under Tokyo, and
+ * passes it on CI too, where `TZ` is unset and the host resolves `UTC` — which
+ * makes "pinned to UTC" and "not pinned at all" literally the same thing.
+ * MEASURED on this branch: that mutant killed **0 of 530** tests in the related
+ * set at `TZ=UTC`, and nothing else closes it — `INV-DATE-015`'s lint arm fires
+ * on a MISSING `timeZone` key, and a formatter naming the host's zone has one.
+ * `Atlantic/Cape_Verde` is UTC-1 all year: far enough west that the encoding
+ * reads as the previous evening, and near enough Greenwich that it still gives a
+ * third civil reading of the instant fixtures rather than collapsing onto
+ * Denver's.
  *
  * ## What is covered here, and what is covered by its twin
  *
@@ -169,9 +184,21 @@ function renderInClubZone(ui: React.ReactElement, zone = CLUB_ZONE) {
   return render(<ClubTimeProvider zone={zone}>{ui}</ClubTimeProvider>);
 }
 
-/** The viewer's own clock, set to a third place, for every case. */
+/**
+ * The viewer's own clock, set to a third place, for every case.
+ *
+ * `Atlantic/Cape_Verde` is UTC-1 all year. Two properties earn it the job, and
+ * the second is the one a later edit is most likely to throw away:
+ *
+ * - at `STAMP` it reads 1:30 am on 16 April, which is neither of the two civil
+ *   readings any instant case asserts, so a component that read its own host
+ *   fails whichever club is configured;
+ * - it is BEHIND Greenwich, so a UTC-midnight `@db.Date` encoding read in the
+ *   runtime's own zone lands on the PREVIOUS day. That is what makes the
+ *   calendar-day case falsifiable — see the module doc.
+ */
 function pointTheBrowserSomewhereElse() {
-  process.env.TZ = "Asia/Tokyo";
+  process.env.TZ = "Atlantic/Cape_Verde";
 }
 
 function stubJsonFetch(payload: unknown) {
@@ -520,6 +547,18 @@ describe("CT-4 group E: a calendar day consults NO zone at all", () => {
     );
 
     pointTheBrowserSomewhereElse();
+    // THE THIRD PREMISE, and the one the pair below cannot state for itself: the
+    // host now reads this encoding as a different day too, so a formatter that
+    // consulted the RUNTIME rather than nothing at all fails here. Read from
+    // `Intl` rather than `process.env`, because it is the resolved zone that
+    // decides what an unpinned formatter renders.
+    expect(
+      new Intl.DateTimeFormat("en-NZ", {
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        dateStyle: "medium",
+      }).format(new Date(NIGHT_IN)),
+    ).toBe("15 Apr 2026");
+
     stubJsonFetch(GROUP);
     renderInClubZone(<MemberGroupJoinPanel code="ABC123" />);
 
@@ -535,6 +574,9 @@ describe("CT-4 group E: a calendar day consults NO zone at all", () => {
       forward-looking regression guard on the PAIR — it pins that the two agree,
       so an implementation that starts consulting the provider for a calendar day
       reddens one of them — and not a second independent proof.
+
+      The host stays BEHIND Greenwich here too, so this half also refuses a
+      formatter that reads the runtime instead of the provider.
     */
     pointTheBrowserSomewhereElse();
     stubJsonFetch(GROUP);
