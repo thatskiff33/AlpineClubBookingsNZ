@@ -20,3 +20,11 @@ reason: one entry in MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS for
   file holding one of those entries is precisely the drift the guard exists to
   catch. The file is a long-standing split candidate on other grounds and is
   not made materially worse by five lines.
+
+file: src/lib/admin-cron-health.ts
+lines: 817
+reason: one more entry in the list `getAdminCronJobDefinitions` returns, for the
+  share-retry job. The cron-recording contract test asserts that every job which
+  records a run appears in this exact list, so there is one correct place for it
+  and a second file holding one of a dozen sibling definitions is the drift that
+  contract exists to catch.

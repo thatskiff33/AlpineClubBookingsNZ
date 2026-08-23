@@ -171,6 +171,21 @@ export function getAdminCronJobDefinitions(
     ),
     defineCronJob(
       {
+        // Epic #2992. Rides the shared general cron cycle. It appears here
+        // because a member can tick "share with all clubs" and reasonably
+        // believe it happened: if this stops running, shares queue silently and
+        // a stale entry is how an operator finds out.
+        jobName: "club-post-share-retry",
+        label: "Club message board share retry",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "confirm-pending",
         label: "Pending booking confirmation",
         schedule: "0 */3 * * *",

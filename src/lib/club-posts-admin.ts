@@ -2,7 +2,9 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { assertValidClubPostContent } from "@/lib/club-posts";
+import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { withdrawClubPost } from "@/lib/servernz-api";
 
 /**
  * Moderation for the club message board (#2998, epic #2992).
@@ -172,7 +174,7 @@ export async function editClubPostContent(
 export async function removeClubPost(postId: string): Promise<void> {
   const post = await prisma.clubPost.findUnique({
     where: { id: postId },
-    select: { id: true, removedAt: true },
+    select: { id: true, removedAt: true, serverPostId: true },
   });
   if (!post) throw new ClubPostNotFoundError();
   // Idempotent: removing an already-removed post is a no-op rather than an
@@ -181,6 +183,34 @@ export async function removeClubPost(postId: string): Promise<void> {
 
   await prisma.clubPost.update({
     where: { id: postId },
-    data: { content: "", removedAt: new Date() },
+    data: {
+      content: "",
+      bodyHtml: null,
+      removedAt: new Date(),
+      // Stops the retry pass from carrying a post the admin has just taken
+      // down. Without this, removing a post whose share had not yet succeeded
+      // would publish it minutes later.
+      shareRequestedAt: null,
+    },
   });
+
+  // A SHARED POST MUST COME DOWN EVERYWHERE, not just here. Removing it
+  // locally while it stays on every other club's board is the worst of both:
+  // the admin believes it is gone and the members who can see it are the ones
+  // it was taken down for.
+  //
+  // Deliberately AFTER the local write and deliberately not fatal: the local
+  // removal is the part the admin asked for and must not be undone because the
+  // central server is unreachable. `serverPostId` is kept so the withdrawal can
+  // be retried; the tombstone row is what a later sweep would use.
+  if (post.serverPostId) {
+    try {
+      await withdrawClubPost(post.serverPostId);
+    } catch (error) {
+      logger.error(
+        { postId, serverPostId: post.serverPostId, err: error },
+        "Removed a shared club post locally but could not withdraw it from the central server",
+      );
+    }
+  }
 }

@@ -5,6 +5,7 @@ import { MessageSquare } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { ClubPostBody } from "@/components/club-post-body";
 import { ClubPostComposer } from "@/components/club-post-composer";
+import { isServerNzConfigured } from "@/lib/servernz-config";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   listClubPostsForMember,
@@ -59,6 +60,11 @@ export default async function MessageBoardPage({
     beforeId,
   });
 
+  // Whether the composer may offer sharing at all. A tickbox that cannot do
+  // anything is worse than no tickbox: a member ticks it, posts, and reasonably
+  // believes other clubs can see it.
+  const canShare = await isServerNzConfigured();
+
   const isFirstPage = !before;
 
   return (
@@ -71,7 +77,10 @@ export default async function MessageBoardPage({
       {isFirstPage ? (
         <Card>
           <CardContent className="pt-6">
-            <ClubPostComposer maxLength={MAX_CLUB_POST_LENGTH} />
+            <ClubPostComposer
+              maxLength={MAX_CLUB_POST_LENGTH}
+              canShareToAllClubs={canShare}
+            />
           </CardContent>
         </Card>
       ) : null}

@@ -217,6 +217,8 @@ export async function createClubPost(input: {
   content: string;
   /** Rich body from the composer. Sanitised HERE; what arrives is a proposal. */
   bodyHtml?: string | null;
+  /** The member ticked "share with all clubs". Recorded, not acted on here. */
+  shareToAllClubs?: boolean;
 }): Promise<{ id: string }> {
   // SANITISED SERVER-SIDE, ALWAYS. The composer sanitises too, but that copy
   // runs in the member's own browser and anyone can post to this endpoint
@@ -240,8 +242,12 @@ export async function createClubPost(input: {
       authorName: input.authorName,
       content,
       bodyHtml,
+      // The INTENTION only. `sharedAt` is stamped when the central server
+      // actually takes it, which may be seconds later or, if the server is
+      // down, on a later retry — the post is live on this board either way.
+      shareRequestedAt: input.shareToAllClubs ? new Date() : null,
       // originClubCode/originClubName stay null: this club wrote it.
-      // sharedAt/serverPostId stay null until the post is shared.
+      // sharedAt/serverPostId stay null until the server takes it.
     },
     select: { id: true },
   });

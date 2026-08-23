@@ -152,6 +152,12 @@ function authHeaders(apiKey: string): HeadersInit {
   };
 }
 
+/**
+ * Sharing carries image bytes, so it gets its own, longer ceiling: the ordinary
+ * timeout is sized for small JSON calls and would abort a legitimate upload.
+ */
+const SHARE_TIMEOUT_MS = 60_000;
+
 /** Longest remote-supplied error text we will carry into a message or audit row. */
 const MAX_REMOTE_ERROR_CHARS = 200;
 
@@ -179,6 +185,110 @@ async function readError(res: Response): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Headers for a multipart request.
+ *
+ * Content-Type is deliberately ABSENT: `fetch` sets it from the FormData
+ * together with the boundary, and setting it by hand produces a body the
+ * server cannot parse because the boundary does not match.
+ */
+function multipartAuthHeaders(apiKey: string): HeadersInit {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
+
+/** One image to send with a shared post. */
+export interface SharedPostImage {
+  /** This club's own publicId, so the server can rewrite the body's URLs. */
+  publicId: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+const sharedPostResultSchema = z.object({
+  id: z.string().min(1),
+  images: z.number().int().nonnegative().optional(),
+  baseUrl: z.string().optional(),
+});
+export type SharedPostResult = z.infer<typeof sharedPostResultSchema>;
+
+/**
+ * Share one board post with the network.
+ *
+ * The images are sent in the same ORDER as `image_ids`, which is the contract
+ * the server uses to rewrite the body's image URLs onto its own copies. Send
+ * them out of order and every picture in the post ends up attached to the
+ * wrong paragraph.
+ *
+ * Author identity is whatever the caller passes, and the server cannot verify
+ * any of it — it trusts this club's API key. That is exactly why the route
+ * that calls this takes the author from the session and never from the
+ * request body.
+ */
+export async function shareClubPost(input: {
+  authorUserId: string;
+  authorName: string;
+  content: string;
+  bodyHtml: string | null;
+  images: SharedPostImage[];
+}): Promise<SharedPostResult> {
+  const { baseUrl, apiKey } = await resolveConnection();
+
+  const form = new FormData();
+  form.append("author_user_id", input.authorUserId);
+  form.append("author_name", input.authorName);
+  // authorEmail is deliberately NOT sent. The server holds it only for
+  // moderation and never serialises it, but a club that does not need to send
+  // a member's address should not send one.
+  form.append("content", input.content);
+  if (input.bodyHtml) form.append("body_html", input.bodyHtml);
+  if (input.images.length > 0) {
+    form.append("image_ids", input.images.map((i) => i.publicId).join(","));
+    for (const image of input.images) {
+      form.append(
+        "images",
+        new Blob([new Uint8Array(image.bytes)], { type: image.mimeType }),
+        `${image.publicId}.webp`,
+      );
+    }
+  }
+
+  const res = await fetch(`${baseUrl}/api/v1/posts`, {
+    method: "POST",
+    cache: "no-store",
+    headers: multipartAuthHeaders(apiKey),
+    body: form,
+    signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return sharedPostResultSchema.parse(await res.json());
+}
+
+/**
+ * Withdraw a previously shared post from the network.
+ *
+ * Idempotent by design: a 404 means the server has already forgotten it, which
+ * is the state the caller wanted, so it is a success rather than an error. A
+ * withdrawal that reported failure on a second attempt would leave the local
+ * row stuck claiming to be shared forever.
+ */
+export async function withdrawClubPost(serverPostId: string): Promise<void> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const res = await fetch(
+    `${baseUrl}/api/v1/posts/${encodeURIComponent(serverPostId)}`,
+    {
+      method: "DELETE",
+      cache: "no-store",
+      headers: authHeaders(apiKey),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  if (res.status === 404) return;
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
 }
 
 /** Upload the club's Other Clubs entries to the central server. */

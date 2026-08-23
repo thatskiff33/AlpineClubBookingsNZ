@@ -2,6 +2,7 @@ import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { drainHostingCoverageReevaluations } from "@/lib/adult-member-hosting-coverage-drain";
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
 import { runClubPostCleanup } from "@/lib/club-post-retention";
+import { retryPendingShares } from "@/lib/club-post-sharing";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
 import {
   recordCronJobRunSafe,
@@ -18,6 +19,7 @@ import { reportCronError } from "@/lib/observability-bridge";
 const GENERAL_CRON_JOB_NAMES = [
   "additional-payment-reminders",
   "club-post-retention",
+  "club-post-share-retry",
   "confirm-pending",
   "group-settlement-reaper",
   "hosting-coverage-reevaluation",
@@ -36,6 +38,7 @@ export interface GeneralCronCycleResult {
     ReturnType<typeof sendAdditionalPaymentReminders>
   > | null;
   clubPostRetention: Awaited<ReturnType<typeof runClubPostCleanup>> | null;
+  clubPostShareRetry: Awaited<ReturnType<typeof retryPendingShares>> | null;
   confirmPending: Awaited<ReturnType<typeof confirmPendingBookings>> | null;
   groupSettlementReap: Awaited<ReturnType<typeof reapStaleGroupSettlements>> | null;
   hostingCoverageReevaluation: Awaited<
@@ -69,6 +72,7 @@ export interface GeneralCronRunnerDependencies {
   tasks?: Partial<{
     sendAdditionalPaymentReminders: typeof sendAdditionalPaymentReminders;
     runClubPostCleanup: () => ReturnType<typeof runClubPostCleanup>;
+    retryPendingShares: () => ReturnType<typeof retryPendingShares>;
     confirmPendingBookings: typeof confirmPendingBookings;
     reapStaleGroupSettlements: typeof reapStaleGroupSettlements;
     drainHostingCoverageReevaluations: () => ReturnType<
@@ -154,6 +158,7 @@ export async function runGeneralCronCycle(
   const result: GeneralCronCycleResult = {
     additionalPaymentReminders: null,
     clubPostRetention: null,
+    clubPostShareRetry: null,
     confirmPending: null,
     groupSettlementReap: null,
     hostingCoverageReevaluation: null,
@@ -183,6 +188,16 @@ export async function runGeneralCronCycle(
       resultKey: "clubPostRetention",
       failureMessage: "Club post retention cron error",
       work: taskDependencies.runClubPostCleanup ?? runClubPostCleanup,
+    },
+    {
+      // Epic #2992. Carries board posts whose share to the central server has
+      // not succeeded yet. The BACKSTOP, not the main path: an ordinary share
+      // is attempted the moment the member posts, and this exists so an outage
+      // at the far end delays a post rather than losing it.
+      jobName: "club-post-share-retry",
+      resultKey: "clubPostShareRetry",
+      failureMessage: "Club post share retry cron error",
+      work: taskDependencies.retryPendingShares ?? retryPendingShares,
     },
     {
       jobName: "confirm-pending",

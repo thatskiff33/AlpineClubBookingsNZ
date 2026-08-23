@@ -9,7 +9,9 @@ import {
   listClubPostsForMember,
 } from "@/lib/club-posts";
 import logger from "@/lib/logger";
+import { shareOnePost } from "@/lib/club-post-sharing";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import { isServerNzConfigured } from "@/lib/servernz-config";
 import { prisma } from "@/lib/prisma";
 import { applyMemberScopedRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { requireActiveSession } from "@/lib/session-guards";
@@ -105,6 +107,8 @@ export async function POST(request: NextRequest) {
   const content = (body as { content?: unknown })?.content;
   const rawHtml = (body as { bodyHtml?: unknown })?.bodyHtml;
   const bodyHtml = typeof rawHtml === "string" ? rawHtml : null;
+  const wantsShare =
+    (body as { shareToAllClubs?: unknown })?.shareToAllClubs === true;
 
   // AUTHOR IDENTITY COMES FROM THE SESSION, NEVER FROM THE BODY, even though
   // the body could carry a name and it would be less work to believe it. The
@@ -134,6 +138,10 @@ export async function POST(request: NextRequest) {
       authorName,
       content: typeof content === "string" ? content : "",
       bodyHtml,
+      // Only honoured when this club actually has a central-server connection.
+      // A club without one that somehow asked would otherwise leave a post
+      // pending forever against a server it can never reach.
+      shareToAllClubs: wantsShare && (await isServerNzConfigured()),
     });
 
     const stored = (
@@ -142,6 +150,17 @@ export async function POST(request: NextRequest) {
         select: { content: true },
       })
     )?.content ?? "";
+
+    // Attempted inline so an ordinary share lands immediately rather than
+    // waiting for the next cron pass. Deliberately NOT awaited into the
+    // response path's success: if the central server is slow or down the
+    // member's post is already saved, and the retry pass will carry it.
+    if (wantsShare) {
+      void shareOnePost(post.id).catch(() => {
+        // Already recorded on the row and logged by the sharer; swallowed here
+        // so a failed share cannot turn a successful post into a 500.
+      });
+    }
 
     // `communication`, because the affected business domain is club messaging.
     // Note that category IS in MEMBER_VISIBLE_AUDIT_CATEGORIES, so this row
