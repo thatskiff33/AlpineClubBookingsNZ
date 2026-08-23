@@ -13,7 +13,12 @@ import {
   renderClientBookingMessage,
   type BookingMessageClubTokens,
 } from "@/lib/booking-message-definitions";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseInstant,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
@@ -65,6 +70,35 @@ const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
   info: { wrap: "text-info-11", icon: Info },
 };
 
+/**
+ * One end of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870; epic
+ * #2988).
+ *
+ * `payable.checkIn`/`checkOut` are the booking's `@db.Date` lodge nights,
+ * serialised by `src/lib/payment-link.ts` with `.toISOString()`. A calendar day
+ * has no timezone, so this consults no zone and could not be wrong about one:
+ * the kernel decodes the UTC-midnight encoding and formats it pinned to `UTC`,
+ * provably the identity for every club. The legacy helper projected it through
+ * `APP_TIME_ZONE`, which cancels only east of Greenwich — a club west of it
+ * named the night before the stay, on the page a guest pays from.
+ *
+ * `parseInstant` and the raw value rather than a throw: this is a public token
+ * landing page with no runtime schema check on the payload, and an unhandled throw in a client render
+ * replaces the whole screen with an error boundary. THE PREVIOUS CODE THREW
+ * TOO — `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`,
+ * not the string "Invalid Date", which only `toLocaleDateString` produces — so
+ * this fallback is a FIX rather than a preserved behaviour.
+ */
+function formatStayDay(value: string): string {
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  try {
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  } catch {
+    return value;
+  }
+}
+
 function toneForState(state: string): Tone {
   if (state === "paid") return "success";
   if (
@@ -106,6 +140,14 @@ function NarrativeCard({
 
 export default function PayByLinkPage() {
   const club = useClubIdentity();
+  /*
+    `expiresAt` is a real INSTANT — the moment the link stops working — so it has
+    no civil date until a zone is chosen, and the one to choose is the club's
+    PERSISTED setting (CT-4, #2870; INV-CONFIG-002). Deliberately NOT the same
+    route as the stay dates rendered beside it: those are calendar days and take
+    no zone at all. Merging the two is the defect this epic exists to end.
+  */
+  const clubTime = useClubTime();
   const { token } = useParams<{ token: string }>();
   const [context, setContext] = useState<PaymentLinkContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -369,8 +411,8 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatNZDate(new Date(payable.checkIn))} to{" "}
-            {formatNZDate(new Date(payable.checkOut))}
+            Dates: {formatStayDay(payable.checkIn)} to{" "}
+            {formatStayDay(payable.checkOut)}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">
@@ -378,7 +420,7 @@ export default function PayByLinkPage() {
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
-            This payment link expires on {formatNZDate(new Date(payable.expiresAt))}.
+            This payment link expires on {clubTime.instantDate(new Date(payable.expiresAt))}.
           </p>
         </div>
 

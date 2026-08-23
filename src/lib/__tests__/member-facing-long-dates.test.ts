@@ -2,9 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  bindClubTime,
   calendarDateOfDateOnlyInstant,
   formatClubLongDate,
   requireCalendarDate,
+  requireClubTimeZone,
 } from "../club-time";
 import { formatNZDate, formatNZLongDate } from "../nzst-date";
 import { expectClubTimeZonePremise } from "./helpers/club-time-zone";
@@ -25,6 +27,15 @@ import { expectClubTimeZonePremise } from "./helpers/club-time-zone";
   thing a later "tidy every date onto formatNZDate" pass would flatten without
   noticing. Asserting on the source is a blunt instrument, but it is the only
   one that fails loudly on that specific regression.
+
+  WHAT CT-4 (#2870) CHANGED, AND WHAT IT DID NOT. Three of the four sites have
+  moved off `formatNZLongDate`, and the owner decision above is untouched by it:
+  the long spelled-out form still holds on all four, and the snippet each row
+  names is simply the current spelling of it. What moved is which temporal
+  QUESTION each site asks. The booking messages hold `@db.Date` lodge nights,
+  which are calendar days and take no zone; the two instruction stamps hold real
+  instants, which take the club's PERSISTED zone rather than the container's
+  `TZ`. The fourth, `src/lib/report-pdf.ts`, is `src/lib` and belongs to group F.
 */
 
 const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
@@ -54,12 +65,25 @@ const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
   {
     what: "the member lodge-instructions 'last updated' stamp",
     file: "src/app/(authenticated)/lodge-instructions/page.tsx",
-    mustContain: ["return formatNZLongDate(new Date(value));"],
+    /*
+      MIGRATED TO THE CLUB'S PERSISTED ZONE BY CT-4 GROUP E (#2870), AND STILL
+      THE LONG FORM.
+
+      Unlike the stay dates above, `updatedAt` is a real INSTANT: it genuinely
+      has no civil date until a zone is chosen, so this one still takes a zone —
+      it just takes it from the club's persisted setting, delivered to the
+      browser by `ClubTimeProvider`, instead of from `APP_TIME_ZONE`.
+      `clubTime.instantLongDate` IS `formatClubInstantLongDate` with that zone
+      bound, so the shape INV-DATE-016 protects is byte-identical; the case below
+      pins that rather than taking it on trust.
+    */
+    mustContain: ["clubTime.instantLongDate(new Date(value))"],
   },
   {
     what: "the public hut-leader-instructions 'last updated' stamp",
     file: "src/app/(website-dynamic)/hut-leader-instructions/hut-leader-instructions-client.tsx",
-    mustContain: ["return formatNZLongDate(new Date(value));"],
+    // The same migration, for the same reason. See the row above.
+    mustContain: ["clubTime.instantLongDate(new Date(value))"],
   },
   {
     what: "the generated report PDF cover",
@@ -106,8 +130,35 @@ describe("member-facing dates keep the long spelled-out month (#2264)", () => {
     ).toBe("16 April 2026");
   });
 
+  it("the kernel's INSTANT long form is that same shape, with the zone bound", () => {
+    /*
+      What CT-4 group E replaced the two instruction stamps with. They are the
+      only two of these four sites that hold a real MOMENT, so they are the only
+      two that still take a zone at all — and `clubTime.instantLongDate` is
+      exactly `formatClubInstantLongDate` with the club's persisted zone closed
+      over (`src/lib/club-time/bound.ts`).
+
+      ASSERTED THROUGH TWO DIFFERENT ZONES, and that is the point rather than
+      thoroughness: the same instant reads as 16 April in Auckland and 15 April
+      in Denver, so this pins both that the SHAPE is the long spelled-out form
+      and that the ZONE argument is what decides the day. A binding that ignored
+      its zone would give the same answer twice and fail the second line.
+    */
+    const instant = new Date("2026-04-15T23:30:00.000Z");
+    expect(
+      bindClubTime(requireClubTimeZone("Pacific/Auckland")).instantLongDate(
+        instant,
+      ),
+    ).toBe("16 April 2026");
+    expect(
+      bindClubTime(requireClubTimeZone("America/Denver")).instantLongDate(
+        instant,
+      ),
+    ).toBe("15 April 2026");
+  });
+
   for (const site of MEMBER_FACING_LONG_DATE_SITES) {
-    it(`keeps ${site.what} on formatNZLongDate`, () => {
+    it(`keeps ${site.what} on the long spelled-out form`, () => {
       const source = readFileSync(join(process.cwd(), site.file), "utf8");
       for (const snippet of site.mustContain) {
         expect(source).toContain(snippet);

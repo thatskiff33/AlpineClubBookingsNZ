@@ -27,13 +27,31 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import KioskPage from "../page";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import { buildWeekDateKeys } from "../_components/kiosk-week-view";
 
-// The club's zone, pinned independently of the host's (docs/TESTING.md).
+/*
+  THE CLUB'S ZONE NOW ARRIVES THROUGH THE PROVIDER, AND THE ENVIRONMENT IS SET
+  SOMEWHERE ELSE ON PURPOSE (CT-4, #2870; INV-CONFIG-002).
+
+  Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
+  and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
+  anything once the HOST zone moved. The page now takes the club's day from
+  `ClubTimeProvider` instead, and `renderKiosk` below supplies it — so the mock
+  is free to become a THIRD zone, and it should be. With three different zones
+  in play (club `Pacific/Auckland`, environment `America/Denver`, host `UTC`)
+  every date assertion in this file discriminates all three: an implementation
+  that read the environment, or the tablet's own clock, would name a different
+  night and go red.
+
+  `APP_LOCALE` still matters and is left alone — the kiosk header's long-weekday
+  formatter is a calendar-date shape with no house entry in the kernel, so it
+  stays local and is pinned to `UTC` over the UTC-midnight encoding.
+*/
 vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_TIME_ZONE: "America/Denver",
   APP_LOCALE: "en-NZ",
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
@@ -171,7 +189,7 @@ async function openGuestRow(day: {
   // "today" — which is what the kiosk opens on — is the day under test.
   vi.setSystemTime(new Date(`${day.dateKey}T02:00:00.000Z`));
 
-  render(<KioskPage />);
+  renderKiosk();
 
   fireEvent.click(await screen.findByRole("button", { name: day.openLabel }));
 
@@ -184,6 +202,17 @@ async function openGuestRow(day: {
 }
 
 const hostTimeZone = captureHostTimeZone();
+
+/** The club this kiosk belongs to. Delivered the way the application does it. */
+const CLUB_ZONE = "Pacific/Auckland";
+
+function renderKiosk() {
+  return render(
+    <ClubTimeProvider zone={CLUB_ZONE}>
+      <KioskPage />
+    </ClubTimeProvider>,
+  );
+}
 
 describe("kiosk Mark Departed follows the check-out flag, not the badge (#2631)", () => {
   beforeEach(() => {

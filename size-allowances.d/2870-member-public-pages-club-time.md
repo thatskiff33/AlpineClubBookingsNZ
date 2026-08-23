@@ -58,8 +58,37 @@ reason: six lines, being the night count moving onto `countClubNights` and the
   a real piece of work and belongs to whoever does it deliberately.
 
 file: src/app/(lodge)/lodge/roster/[date]/setup/page.tsx
-lines: 831
-reason: nine lines. The roster header's long-weekday formatter has no house
+lines: 833
+reason: eleven lines. The roster header's long-weekday formatter has no house
   shape in the kernel, so it stays local and is now pinned to UTC over the
   UTC-midnight encoding; the date also comes straight off a URL segment, so the
-  decode gained a fallback rather than a throw that would blank the page.
+  decode gained a fallback rather than a throw that would blank the page — and
+  the note beside it now says plainly that the fallback is NEW, because the
+  previous spelling produced an invalid `Date` and `Intl` threw on it.
+
+## Added when the fourteen deferred client files were finished
+
+The rows above were written when this group still had fourteen `"use client"`
+files it could not migrate: CT-4 group C's shared client boundary had not merged,
+so a page needing the club's zone IN THE BROWSER had nowhere to get it from. That
+blocker cleared, all fourteen were finished, and exactly one of them is an
+already-oversized file that grew.
+
+The other thirteen are all inside their budgets and stay there — including
+`(public)/pay/[token]/page.tsx`, which went 444 to 484 against a 500-line
+route-page budget and was watched for exactly that reason.
+
+file: src/app/(lodge)/lodge/kiosk/page.tsx
+lines: 1180
+reason: twenty-nine lines on a page that was already 1151. Nine are the club-day
+  binding and the note saying the wall tablet's own clock has never been the
+  authority and must not become one; eleven are the header formatter's, which
+  has no house shape in the kernel so it stays local and is now pinned to UTC
+  over the UTC-midnight encoding rather than to the environment zone; the rest
+  are the decode gaining a fallback instead of a throw, because this is an
+  unattended screen in a lodge and a thrown render is a blank wall. This file was
+  the last `APP_TIME_ZONE` importer in the member, lodge, finance and public page
+  tree. Splitting it is real work and a real review: it is one screen with a week
+  strip, a day list, attendance, chores and a PIN login, and carving it up to buy
+  back twenty-nine lines while also moving its temporal authority would put two
+  unrelated risks in one diff.

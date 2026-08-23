@@ -84,7 +84,9 @@ const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
 function displayDate(dateStr: string): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this comes off the URL
   // segment, so a hand-typed `/lodge/roster/banana/setup` would otherwise throw
-  // and blank the page. Echoing the raw segment is what it did before.
+  // and blank the page. The fallback is NEW rather than preserved — the previous
+  // `new Date(dateStr + "T00:00:00Z")` produced an invalid Date and `Intl` threw
+  // `Invalid time value` out of the render.
   const date = parseCalendarDate(dateStr);
   return date === null
     ? dateStr

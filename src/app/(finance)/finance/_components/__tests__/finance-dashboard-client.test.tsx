@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { bindClubTime, fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceDashboardClient } from "@/app/(finance)/finance/_components/finance-dashboard-client";
 import { parseDateOnly } from "@/lib/date-only";
 import { resolveFinanceDashboardSelection } from "@/lib/finance-dashboard-ranges";
@@ -165,5 +167,94 @@ describe("FinanceDashboardClient dataset Reset", () => {
 
     expect(screen.getByLabelText("Range")).toHaveValue("last-month");
     expect(screen.getByLabelText("Expense Category")).toHaveValue("");
+  });
+});
+
+/*
+  THE EXPORTED FILE IS STAMPED WITH THE CLUB'S DAY (CT-4 group E, #2870; epic
+  #2988; INV-CONFIG-002).
+
+  `downloadCsv` used to call `todayDateOnlyForTimeZone()`, which reads
+  `APP_TIME_ZONE` — the container's `TZ`. It now takes the club's today from
+  `useClubTime()`, so two treasurers in two countries exporting the same figures
+  file them under the same club day.
+
+  RENDERED UNDER TWO EXPLICIT ZONES rather than through the shared default, and
+  that is the whole point: the default is `Pacific/Auckland`, which is also what
+  the environment resolves to here, so a render through it cannot tell the
+  persisted zone from the environment. The pair below can, on any host — an
+  implementation that ignored the provider has one answer to give and fails one
+  of the two halves.
+
+  `America/Denver` is behind UTC, so on the frozen instant
+  (2026-07-01T00:00:00.000Z) its day is 30 JUNE where New Zealand's is 1 July.
+  The premise is asserted as those two ANSWERS rather than as a zone identifier,
+  which would go vacuous on a host whose own zone happened to match.
+*/
+const CLUB_ZONE = "America/Denver";
+const LEGACY_REFERENCE_ZONE = "Pacific/Auckland";
+const frozenClock = fixedClubClock(new Date("2026-07-01T00:00:00.000Z"));
+
+const urlAny = URL as unknown as {
+  createObjectURL: unknown;
+  revokeObjectURL: unknown;
+};
+
+describe("FinanceDashboardClient CSV stamp carries the club's day (CT-4, #2870)", () => {
+  const realCreateObjectURL = urlAny.createObjectURL;
+  const realRevokeObjectURL = urlAny.revokeObjectURL;
+  let downloadedNames: string[] = [];
+  let clickSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    downloadedNames = [];
+    urlAny.createObjectURL = vi.fn(() => "blob:mock");
+    urlAny.revokeObjectURL = vi.fn();
+    clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        downloadedNames.push(this.download);
+      });
+  });
+
+  afterEach(() => {
+    clickSpy.mockRestore();
+    urlAny.createObjectURL = realCreateObjectURL;
+    urlAny.revokeObjectURL = realRevokeObjectURL;
+  });
+
+  function exportUnder(zone: string) {
+    render(
+      <ClubTimeProvider zone={zone}>
+        <FinanceDashboardClient
+          model={buildModel({ view: "costs" })}
+          currentSearch="view=costs"
+        />
+      </ClubTimeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "CSV" }));
+    return downloadedNames;
+  }
+
+  it("names the file with a behind-UTC club's day", () => {
+    // PREMISE AS AN ANSWER: the two zones really are on different days here.
+    expect(
+      bindClubTime(requireClubTimeZone(CLUB_ZONE)).today(frozenClock),
+    ).toBe("2026-06-30");
+    expect(
+      bindClubTime(requireClubTimeZone(LEGACY_REFERENCE_ZONE)).today(
+        frozenClock,
+      ),
+    ).toBe("2026-07-01");
+
+    expect(exportUnder(CLUB_ZONE)).toEqual(["finance-costs-2026-06-30.csv"]);
+  });
+
+  it("names it with a New Zealand club's day instead", () => {
+    // The other half. A `downloadCsv` that read the environment, or the
+    // treasurer's own browser, would answer both halves the same way.
+    expect(exportUnder(LEGACY_REFERENCE_ZONE)).toEqual([
+      "finance-costs-2026-07-01.csv",
+    ]);
   });
 });

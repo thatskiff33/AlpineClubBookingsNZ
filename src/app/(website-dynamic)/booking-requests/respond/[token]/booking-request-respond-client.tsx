@@ -8,7 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useConfirm } from "@/components/confirm-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseInstant,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 interface QuoteOption {
@@ -49,7 +54,44 @@ interface QuoteContext {
 type LoadState = "loading" | "ready" | "invalid" | "expired" | "error";
 type Action = "ACCEPT" | "CANCEL" | "MODIFY" | "QUERY";
 
+/**
+ * One end of the requested stay, rendered as the CALENDAR DAY it is (CT-4,
+ * #2870; epic #2988).
+ *
+ * `BookingRequest.checkIn`/`checkOut` are `@db.Date` lodge nights, serialised by
+ * `getBookingRequestQuoteContext`. A calendar day has no timezone, so this
+ * consults none: the kernel decodes the UTC-midnight encoding and pins `UTC`
+ * over it, provably the identity for every club. The legacy helper projected the
+ * encoding through `APP_TIME_ZONE`, which cancels only east of Greenwich — west
+ * of it this quote named the night before the one being priced.
+ *
+ * `parseInstant` and the raw value rather than a throw: a public token landing
+ * page whose payload nothing validates on the way in, where an unhandled throw in a client render
+ * replaces the whole screen with an error boundary. THE PREVIOUS CODE THREW
+ * TOO — `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`,
+ * not the string "Invalid Date", which only `toLocaleDateString` produces — so
+ * this fallback is a FIX rather than a preserved behaviour.
+ */
+function formatStayDay(value: string): string {
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  try {
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  } catch {
+    return value;
+  }
+}
+
 export function BookingRequestRespondClient({ token }: { token: string }) {
+  /*
+    The quote's `expiresAt` is a real INSTANT, so it has no civil date and time
+    until a zone is chosen — the club's PERSISTED one, delivered to this browser
+    as data by `ClubTimeProvider` (CT-4, #2870; INV-CONFIG-002). It used to be
+    `APP_TIME_ZONE`, the container's `TZ`. The countdown beside it is a DURATION
+    and is deliberately left alone: elapsed milliseconds are the same number in
+    every zone.
+  */
+  const clubTime = useClubTime();
   const [state, setState] = useState<LoadState>("loading");
   const [context, setContext] = useState<QuoteContext | null>(null);
   // Sampled when the quote context arrives so the expiry label below can be
@@ -212,8 +254,8 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               ) : null}
               <p>
                 <span className="text-muted-foreground">Dates:</span>{" "}
-                {formatNZDate(new Date(context.checkIn))} to{" "}
-                {formatNZDate(new Date(context.checkOut))}
+                {formatStayDay(context.checkIn)} to{" "}
+                {formatStayDay(context.checkOut)}
               </p>
               <p>
                 <span className="text-muted-foreground">Guests:</span>{" "}
@@ -221,7 +263,7 @@ export function BookingRequestRespondClient({ token }: { token: string }) {
               </p>
               <p>
                 <span className="text-muted-foreground">Expires:</span>{" "}
-                {formatNZDateTime(new Date(context.expiresAt))}
+                {clubTime.instantDateTime(new Date(context.expiresAt))}
                 {expiresInLabel ? (
                   <span className="text-muted-foreground"> ({expiresInLabel})</span>
                 ) : null}

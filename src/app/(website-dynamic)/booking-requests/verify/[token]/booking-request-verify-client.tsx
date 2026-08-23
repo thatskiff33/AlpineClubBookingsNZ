@@ -23,8 +23,10 @@ import {
  * `parseInstant` rather than a bare `new Date`, and the raw value rather than a
  * throw, because nothing validates this payload on the way in and this is a
  * public token landing page: an unhandled throw in a client render replaces the
- * whole screen with an error boundary, where the previous code would at worst
- * have shown "Invalid Date".
+ * whole screen with an error boundary. THE PREVIOUS CODE THREW TOO —
+ * `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`, not the
+ * string "Invalid Date", which only `toLocaleDateString` produces — so this
+ * fallback is a FIX rather than a preserved behaviour.
  */
 function formatStayDay(value: string): string {
   const instant = parseInstant(value);

@@ -4,12 +4,29 @@
  *
  * ## What this census claims, and what it deliberately does not
  *
- * It claims one thing about one directory: no file under `src/app/**` outside
- * `api/` and `(admin)/` reaches a zone-bearing legacy helper, or pins an
- * `Intl.DateTimeFormat` to `APP_TIME_ZONE` — except the files named on
- * {@link AWAITING_CLIENT_ZONE_BOUNDARY}, each with the reason it is still there.
- * That is a property of these files, and it is what stops the next page copying
- * its neighbour's environment read.
+ * It claims one thing about one directory, and it now claims it WITH NO
+ * EXCEPTIONS: no file under `src/app/**` outside `api/` and `(admin)/` reaches a
+ * zone-bearing legacy helper, or pins an `Intl.DateTimeFormat` to
+ * `APP_TIME_ZONE`. That is a property of these files, and it is what stops the
+ * next page copying its neighbour's environment read.
+ *
+ * ## There used to be an exemption list here, and it is deliberately GONE
+ *
+ * `AWAITING_CLIENT_ZONE_BOUNDARY` named fourteen `"use client"` files that
+ * needed the club's zone IN THE BROWSER at a time when the shared client
+ * boundary did not exist on this branch: CT-4 group C (#3057) was unmerged, and
+ * inventing a second delivery mechanism in a page would have been the one thing
+ * rule 6 of #2870 forbids. Group C then landed, `ClubTimeProvider` became
+ * reachable from all fourteen, and they were migrated — twelve onto
+ * `useClubTime()` for a real instant or the club's today, and two onto the
+ * calendar-date formatters, having turned out to render nothing but `@db.Date`
+ * days and therefore to need no zone at all.
+ *
+ * The empty map is not kept as a placeholder, and the reason is the one this
+ * epic keeps re-learning: a skip-list with no entries is an exemption mechanism
+ * standing open, and every assertion that reads it passes by inspecting nothing.
+ * The claim above is now unconditional. A future lane that genuinely needs an
+ * exemption has to write the mechanism back, in a diff a reviewer can see.
  *
  * IT IS NOT the claim that these surfaces no longer touch the environment zone
  * at all. Measured by transitive import closure on this branch, most of them
@@ -89,74 +106,6 @@ const ENVIRONMENT_ZONE_HELPERS: Record<string, string> = {
 
 /** The legacy adapter modules, identified by basename. */
 const LEGACY_MODULE_BASENAMES = new Set(["date-only", "nzst-date"]);
-
-/**
- * Files that still reach the environment for the club's civil time, and why
- * each one could not be finished in this group.
- *
- * EVERY ENTRY IS THE SAME BLOCKER, and it is structural rather than a matter of
- * effort. Each is a `"use client"` component that needs the club's zone IN THE
- * BROWSER — because what it renders is a real instant (`createdAt`, an expiry, a
- * "last updated" stamp) or because it derives the club's "today" for a date
- * input's bound. A browser cannot read `ClubTimeSettings`, so the zone has to
- * arrive as data through the shared client boundary that CT-4 group C (#3057)
- * builds in `src/components/**`. That component does not exist on this branch:
- * it is a sibling group's file, off-limits to this one, and unmerged at the time
- * this lane was cut.
- *
- * Inventing a second delivery mechanism here would be the exact thing rule 6 of
- * this issue forbids — a page designing its own timezone plumbing — and every
- * line of it would be deleted when the shared one lands. So these files are
- * named and left, rather than half-migrated into a shape somebody has to undo.
- *
- * **THE BLOCKER HAS SINCE CLEARED, AND THESE ROWS ARE NOW ACTIONABLE.** Group C
- * landed on the integration branch while this lane was building: `ClubTimeProvider`
- * exists, `AppProviders` and `WebsiteChrome` mount it for every route group, and
- * `useClubTime()` is reachable from all fourteen files below. Each is now a small,
- * mechanical change — swap the legacy helper for the hook's binding, delete the
- * row — and none of them needs a decision. What they still need is a lane, and
- * the honest thing is that this file is the list of what is left rather than a
- * claim that nothing is.
- *
- * `/display` is the one surface that is NOT on this list despite being outside
- * the shared boundary, and the reason is that it is outside it BY DESIGN: it is
- * an unattended kiosk with no route-group chrome, so its server page resolves the
- * zone and hands it down as a prop. See `src/app/display/page.tsx`.
- *
- * TO REMOVE A ROW: migrate the file onto the shared client boundary, then delete
- * its entry. The list is asserted for exact equality, so it cannot grow by
- * accident and cannot silently keep a row for a file that no longer needs one.
- */
-const AWAITING_CLIENT_ZONE_BOUNDARY: Record<string, string> = {
-  "src/app/(authenticated)/bookings/_components/my-exception-requests.tsx":
-    "renders `createdAt`, `reviewedAt` and `lastConflictAt` — three real instants — in a client list.",
-  "src/app/(authenticated)/lodge-instructions/page.tsx":
-    'a `"use client"` PAGE whose "last updated" stamp is a real instant; it has no server parent to take a prop from.',
-  "src/app/(authenticated)/profile/account-credit-section.tsx":
-    "renders each credit transaction's `createdAt`, fetched into the browser after mount.",
-  "src/app/(authenticated)/profile/membership-cancellation-panel.tsx":
-    "renders the cancellation request's `submittedAt`, a real instant.",
-  "src/app/(authenticated)/profile/profile-form.tsx":
-    "derives the club's today for the date-of-birth field's bound.",
-  "src/app/(finance)/finance/_components/finance-dashboard-client.tsx":
-    "derives the club's today to seed the finance range pickers.",
-  "src/app/(lodge)/lodge/kiosk/page.tsx":
-    'a `"use client"` PAGE that derives the club\'s today AND ticks it over at the club-day rollover; it also holds the last `APP_TIME_ZONE` formatter in this tree.',
-  "src/app/(public)/pay/[token]/page.tsx":
-    'a `"use client"` PAGE showing when the payment link expires — a real instant on a public token page.',
-  "src/app/(website-dynamic)/booking-requests/booking-request-form.tsx":
-    "derives the club's today for the earliest selectable lodge night.",
-  "src/app/(website-dynamic)/booking-requests/respond/[token]/booking-request-respond-client.tsx":
-    "renders the offer's `expiresAt` beside a live countdown.",
-  "src/app/(website-dynamic)/hut-leader-instructions/hut-leader-instructions-client.tsx":
-    'renders the instructions\' "last updated" stamp, a real instant.',
-  "src/app/(website-dynamic)/join/[code]/group-join-page-client.tsx":
-    "renders the group's `joinDeadline`, a real instant.",
-  "src/app/(website-dynamic)/join/[code]/member-group-join-panel.tsx":
-    "renders the same `joinDeadline` for a signed-in member.",
-  "src/app/(website-dynamic)/school-bookings/school-booking-form.tsx":
-    "derives the club's today for the earliest selectable stay date.",
-};
 
 function relative(absolute: string): string {
   return path.relative(ROOT, absolute).split(path.sep).join("/");
@@ -249,53 +198,10 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
     expect(found.has("src/app/display/display-screen.tsx")).toBe(true);
   });
 
-  it("names only files that exist, and only ones that really still need it", () => {
-    /*
-      A row for a deleted or renamed file makes this census inspect nothing while
-      still passing, which is the failure mode the group C mount census met and
-      wrote down. And a row for a file that has already been migrated is a
-      standing permission nobody needs: it would let a future edit reintroduce
-      the environment read with no test going red.
-    */
-    const stale: string[] = [];
-    const unnecessary: string[] = [];
-    for (const rel of Object.keys(AWAITING_CLIENT_ZONE_BOUNDARY)) {
-      const absolute = path.join(ROOT, rel);
-      if (!fs.existsSync(absolute)) {
-        stale.push(rel);
-        continue;
-      }
-      const source = fs.readFileSync(absolute, "utf8");
-      const stillNeedsIt =
-        importsEnvironmentZone(source) ||
-        legacyImportedNames(source).some((name) => name in ENVIRONMENT_ZONE_HELPERS);
-      if (!stillNeedsIt) unnecessary.push(rel);
-    }
-
-    expect(
-      stale,
-      "AWAITING_CLIENT_ZONE_BOUNDARY names files that do not exist. Point the " +
-        "row at wherever the surface moved to, or remove it — a row for a " +
-        "missing file exempts nothing and hides that fact.",
-    ).toEqual([]);
-
-    expect(
-      unnecessary,
-      "These files no longer read the club's timezone from the environment, so " +
-        "their exemption is now a standing permission for a defect nobody is " +
-        "committing. Delete the rows.",
-    ).toEqual([]);
-
-    // The list is live rather than vestigial. When it finally empties, delete
-    // this expectation along with it — that is the day CT-4 group E is done.
-    expect(Object.keys(AWAITING_CLIENT_ZONE_BOUNDARY).length).toBeGreaterThan(0);
-  });
-
   it("reads no club timezone from the environment", () => {
     const offenders: string[] = [];
     for (const file of FILES) {
       const rel = relative(file);
-      if (rel in AWAITING_CLIENT_ZONE_BOUNDARY) continue;
       const source = fs.readFileSync(file, "utf8");
 
       for (const name of legacyImportedNames(source)) {

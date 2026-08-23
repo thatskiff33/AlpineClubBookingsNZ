@@ -6,7 +6,7 @@
 // paths: the client hook (useClubIdentity) and the server-only constant
 // (CLUB_HUT_LEADER_LABEL).
 
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubIdentityProvider } from "@/components/club-identity-provider";
 
