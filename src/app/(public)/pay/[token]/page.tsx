@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import StripeProvider from "@/components/stripe/StripeProvider";
@@ -14,12 +14,6 @@ import {
   type BookingMessageClubTokens,
 } from "@/lib/booking-message-definitions";
 import { useClubTime } from "@/components/club-time-provider";
-import {
-  calendarDateOfDateOnlyInstant,
-  formatClubDate,
-  parseInstant,
-  type BoundClubTime,
-} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
@@ -29,148 +23,18 @@ import {
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
-
-interface Narrative {
-  state: string;
-  headline: string;
-  message: string;
-  nextStep: string;
-}
-
-interface PaymentLinkContext {
-  state: string;
-  narrative: Narrative;
-  firstName: string;
-  payable: {
-    checkIn: string;
-    checkOut: string;
-    guestCount: number;
-    status: string;
-    amountCents: number;
-    internetBankingReference?: string;
-    expiresAt: string;
-  } | null;
-  canRequestFreshLink: boolean;
-  /**
-   * The lodge THIS booking is at (#2919). Optional on the wire so a page served
-   * from a cached/older response still renders — the club default stands in.
-   */
-  lodgeName?: string;
-}
-
-type Tone = "success" | "warning" | "info";
-
-type PaymentRecovery = {
-  heading: string;
-  message: string;
-};
-
-const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
-  success: { wrap: "text-success-11", icon: CheckCircle2 },
-  warning: { wrap: "text-warning-11", icon: AlertTriangle },
-  info: { wrap: "text-info-11", icon: Info },
-};
-
-/**
- * One end of the stay, rendered as the CALENDAR DAY it is (CT-4, #2870; epic
- * #2988).
- *
- * `payable.checkIn`/`checkOut` are the booking's `@db.Date` lodge nights,
- * serialised by `src/lib/payment-link.ts` with `.toISOString()`. A calendar day
- * has no timezone, so this consults no zone and could not be wrong about one:
- * the kernel decodes the UTC-midnight encoding and formats it pinned to `UTC`,
- * provably the identity for every club. The legacy helper projected it through
- * `APP_TIME_ZONE`, which cancels only east of Greenwich — a club west of it
- * named the night before the stay, on the page a guest pays from.
- *
- * `parseInstant` and the raw value rather than a throw: this is a public token
- * landing page with no runtime schema check on the payload, and an unhandled throw in a client render
- * replaces the whole screen with an error boundary. THE PREVIOUS CODE THREW
- * TOO — `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`,
- * not the string "Invalid Date", which only `toLocaleDateString` produces — so
- * this fallback is a FIX rather than a preserved behaviour.
- */
-function formatStayDay(value: string): string {
-  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
-  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
-  // `TypeError` out of the guard that exists to stop a throw. The premise above
-  // is that nothing validates this payload on the way in, and a missing field is
-  // exactly what an unvalidated payload produces — so the guard has to cover it.
-  if (typeof value !== "string") return "";
-  const instant = parseInstant(value);
-  if (instant === null) return value;
-  try {
-    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
-  } catch {
-    return value;
-  }
-}
-
-/**
- * The moment the link stops working, spelled in the CLUB's zone (CT-4, #2870;
- * INV-CONFIG-002).
- *
- * Deliberately NOT the same route as the stay dates rendered beside it: those
- * are calendar days and take no zone at all, and merging the two is the defect
- * this epic exists to end.
- *
- * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
- * missing: this line sits nine below one whose docblock justifies its own
- * try/catch by "nothing validates this payload on the way in", and then handed
- * `new Date(...)` straight to a formatter. `Intl.DateTimeFormat.format` on an
- * invalid `Date` is a `RangeError`, and an unhandled throw in a client render
- * replaces the whole payment page with an error boundary — over a line that only
- * tells the payer when the link expires.
- */
-function formatLinkExpiry(value: string, club: BoundClubTime): string {
-  if (typeof value !== "string") return "";
-  const instant = parseInstant(value);
-  if (instant === null) return value;
-  try {
-    return club.instantDate(instant);
-  } catch {
-    return value;
-  }
-}
-
-function toneForState(state: string): Tone {
-  if (state === "paid") return "success";
-  if (
-    state === "cancelled_post_payment" ||
-    state === "cancelled_pre_payment" ||
-    state === "declined"
-  ) {
-    return "warning";
-  }
-  return "info";
-}
-
-function NarrativeCard({
-  narrative,
-  tone,
-  children,
-}: {
-  narrative: Narrative;
-  tone: Tone;
-  children?: React.ReactNode;
-}) {
-  const { wrap, icon: Icon } = TONE_STYLES[tone];
-  return (
-    <Card className="w-full max-w-lg">
-      <CardHeader>
-        <CardTitle>{narrative.headline}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className={`flex items-start gap-2 ${wrap}`}>
-          <Icon className="h-6 w-6 shrink-0" />
-          <p className="font-medium">{narrative.message}</p>
-        </div>
-        <p className="text-sm text-muted-foreground">{narrative.nextStep}</p>
-        {children}
-      </CardContent>
-    </Card>
-  );
-}
+// The presentation layer this page renders through, split out when the club-time
+// migration carried this file past its 500-line route-page budget. See that
+// file's header for why an allowance was not the answer.
+import {
+  formatLinkExpiry,
+  formatStayDay,
+  NarrativeCard,
+  toneForState,
+  type Narrative,
+  type PaymentLinkContext,
+  type PaymentRecovery,
+} from "./pay-link-presentation";
 
 export default function PayByLinkPage() {
   const club = useClubIdentity();
