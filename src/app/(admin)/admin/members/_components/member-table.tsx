@@ -25,7 +25,9 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { getLifecycleStatusConfig } from "@/lib/admin-member-badges"
 import { CHIP_TONE_CLASSES, type ChipTone } from "@/lib/chip-tones"
 import { memberName } from "@/lib/member-serialization"
-import { formatNZDate } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
+import { formatPayloadCalendarDay } from "../../_lib/calendar-day"
 import { getXeroContactGroupTone } from "@/lib/xero-contact-group-tone"
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links"
 import type { SubscriptionStatus } from "@prisma/client"
@@ -79,6 +81,34 @@ const SURFACE_CLASS = "rounded-lg border border-border bg-card"
  *  linkage/groups) render here through the shared `@/lib/chip-tones` map — the
  *  single source shared with StatusChip and MiniChip — rather than inventing a
  *  new kind or a private tone family. */
+/**
+ * "Member since", which is TWO DIFFERENT TEMPORAL CONCEPTS behind one column
+ * (CT-4, #2870 — the mandatory regression anchor for the mixed
+ * `joinedDate || createdAt` branch).
+ *
+ * `joinedDate` is a `@db.Date` CALENDAR DATE — the day the membership started,
+ * sourced from Xero's first invoice. A calendar date has no timezone, so it is
+ * decoded from its UTC-midnight encoding and formatted with no zone at all.
+ * Reading it through a zone is the `INV-DATE-019` defect, and through a zone
+ * behind UTC it named the day before the member actually joined.
+ *
+ * `createdAt` is a real INSTANT — when the row was written — and has no civil
+ * date until a zone is chosen. That zone is the club's persisted one
+ * (`INV-CONFIG-002`), never the viewer's.
+ *
+ * The old single expression fed BOTH through the instant formatter, so the
+ * calendar half was projected and the branch you got decided whether the
+ * displayed day was right.
+ */
+function formatMemberSince(
+  clubTime: ReturnType<typeof useClubTime>,
+  member: Pick<Member, "joinedDate" | "createdAt">,
+): string {
+  return member.joinedDate
+    ? formatPayloadCalendarDay(member.joinedDate)
+    : clubTime.instantDate(requireInstant(member.createdAt))
+}
+
 function InfoChip({
   tone = "neutral",
   className,
@@ -113,6 +143,8 @@ export function MemberTable({
   onToggleSort,
   onOpenPasswordActionDialog,
 }: MemberTableProps) {
+  // "Member since" mixes a calendar date with an instant; see formatMemberSince.
+  const clubTime = useClubTime()
   if (loading) {
     return (
       <div className={`flex justify-center py-12 ${SURFACE_CLASS}`}>
@@ -369,7 +401,7 @@ export function MemberTable({
                 </div>
               </TableCell>
               <TableCell className="text-muted-foreground text-sm">
-                {formatNZDate(new Date(member.joinedDate || member.createdAt))}
+                {formatMemberSince(clubTime, member)}
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex justify-end gap-1">

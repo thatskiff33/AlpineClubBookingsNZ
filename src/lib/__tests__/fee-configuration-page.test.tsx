@@ -1,7 +1,22 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+
+/**
+ * The club's day at the frozen instant (`2026-07-01T00:00:00.000Z`, midday NZ)
+ * under the suite's default provider zone, `Pacific/Auckland`.
+ */
+const CLUB_TODAY = "2026-07-01";
+
+/**
+ * The same instant for a club in `America/Denver` — six hours behind UTC, so
+ * still 30 June. `Pacific/Auckland` is what `APP_TIME_ZONE` also resolves to
+ * under test, so only a Denver render can tell the persisted zone from the
+ * environment (CT-4, #2870).
+ */
+const DENVER_TODAY = "2026-06-30";
 
 const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }));
@@ -168,10 +183,13 @@ beforeAll(async () => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   Element.prototype.releasePointerCapture = vi.fn();
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-07-13T12:30:00.000Z")); // 14 July in Pacific/Auckland
+  // The clock-pinning dance that used to sit here is gone with the defect it
+  // worked around (CT-4, #2870). The "effective from" default was a MODULE-LEVEL
+  // constant computed at import, so this suite had to pin a fake clock across
+  // the dynamic import to control it — and in the product that meant a tab left
+  // open across midnight kept yesterday's date. It is read per render now, from
+  // the club's persisted zone, so the frozen test clock is enough.
   FeeConfigurationPage = (await import("@/app/(admin)/admin/fees/_components/finance-fees-sections")).FinanceFeesSections;
-  vi.useRealTimers();
 });
 
 afterEach(() => {
@@ -236,11 +254,11 @@ describe("fee configuration page", () => {
     });
   });
 
-  it("uses the NZ date and discards membership form edits on cancel with no API call", async () => {
+  it("uses the club's date and discards membership form edits on cancel with no API call", async () => {
     const fetchMock = stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(CLUB_TODAY);
     fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("100.00");
     fireEvent.click(screen.getByRole("button", { name: "Close section" }));
@@ -248,8 +266,39 @@ describe("fee configuration page", () => {
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit membership fees" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(CLUB_TODAY);
     expect(postCalls(fetchMock)).toHaveLength(0);
+  });
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * The test above asserts the shape but cannot assert the AUTHORITY: it renders
+   * under `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to in
+   * this suite, so the migrated code and the `getTodayDateOnly()` it replaced
+   * return the identical string. It would pass against either.
+   *
+   * A fee's "effective from" is money — it decides which annual amount a
+   * member is charged from which day — so which day it defaults to has to come
+   * from the club's PERSISTED zone (`INV-CONFIG-002`) and nothing else. Under
+   * `America/Denver` at the frozen instant the club day is 30 JUNE, where
+   * Auckland, `APP_TIME_ZONE` and the host clock all say 1 July.
+   */
+  it("defaults the effective-from date to the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
+    // Premise, asserted rather than assumed: an identifier check would pass
+    // under a third zone while leaving the expectation vacuous.
+    expect(DENVER_TODAY).not.toBe(CLUB_TODAY);
+
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />, {
+      wrapper: ({ children }) => (
+        <ClubTimeProvider zone="America/Denver">{children}</ClubTimeProvider>
+      ),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(DENVER_TODAY);
+    expect((document.querySelector("#entrance-from") as HTMLInputElement)?.value ?? DENVER_TODAY).toBe(DENVER_TODAY);
   });
 
   it("commits an unchanged membership fee payload from edit mode", async () => {

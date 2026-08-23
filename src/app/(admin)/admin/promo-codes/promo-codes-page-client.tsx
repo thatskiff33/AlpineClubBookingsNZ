@@ -22,8 +22,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { APP_CURRENCY } from "@/config/operational";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDayFromPayload,
+  formatPayloadCalendarDay,
+} from "../_lib/calendar-day";
 import { formatCents } from "@/lib/pricing";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
@@ -142,12 +144,11 @@ const TYPE_LABELS: Record<string, string> = {
   day is money. It agrees in New Zealand, which is why nothing caught it.
 */
 function formatPromoDateInput(value: string | null) {
-  return value ? dateOnlyFromIsoString(value) : "";
+  return calendarDayFromPayload(value) ?? "";
 }
 
 function formatPromoDateDisplay(value: string | null) {
-  const day = value ? parseCalendarDate(dateOnlyFromIsoString(value)) : null;
-  return day ? formatClubDate(day) : "";
+  return formatPayloadCalendarDay(value, "");
 }
 
 export function PromoCodesPageClient({

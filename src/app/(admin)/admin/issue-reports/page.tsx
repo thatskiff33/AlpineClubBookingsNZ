@@ -18,7 +18,8 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import {
   Card,
   CardContent,
@@ -90,9 +91,15 @@ type ListResponse = {
   totalPages: number;
 };
 
-function formatDateTime(value: string | null) {
-  if (!value) return "Not set";
-  return formatNZDateTime(new Date(value));
+// Real INSTANTS, shown in the club's persisted zone rather than the viewer's
+// or the build's (CT-4, #2870; INV-CONFIG-002). `parseInstant` is stricter
+// than the `new Date()` it replaces: an offset-less ISO string names a
+// wall-clock reading in whichever zone happens to be reading it, so it now
+// falls to the placeholder instead of being read in the host's zone.
+function formatDateTime(clubTime: BoundClubTime, value: string | null) {
+  const instant = value === null ? null : parseInstant(value);
+  if (instant === null) return "Not set";
+  return clubTime.instantDateTime(instant);
 }
 
 function statusBadge(report: IssueReportSummary) {
@@ -113,6 +120,7 @@ function screenshotBadge(report: IssueReportSummary) {
 }
 
 export default function AdminIssueReportsPage() {
+  const clubTime = useClubTime();
   // resolve/reopen/delete-screenshot write the support-area issue-reports route;
   // a view-only support admin browses but cannot act (#1997).
   const canEdit = useAdminAreaEditAccess("support");
@@ -292,7 +300,7 @@ export default function AdminIssueReportsPage() {
                       <p className="break-all text-xs text-muted-foreground">{report.pageUrl}</p>
                       <p className="line-clamp-2 text-sm text-muted-foreground">{report.description}</p>
                       <p className="text-xs text-muted-foreground">
-                        {report.member.firstName} {report.member.lastName} - {report.member.email} - {formatDateTime(report.createdAt)}
+                        {report.member.firstName} {report.member.lastName} - {report.member.email} - {formatDateTime(clubTime, report.createdAt)}
                       </p>
                     </div>
                     <Button
@@ -361,9 +369,9 @@ export default function AdminIssueReportsPage() {
                   </div>
                   <div>
                     <p className="text-xs font-medium uppercase text-muted-foreground">Submitted</p>
-                    <p className="mt-1 text-foreground">{formatDateTime(selectedReport.createdAt)}</p>
+                    <p className="mt-1 text-foreground">{formatDateTime(clubTime, selectedReport.createdAt)}</p>
                     <p className="text-muted-foreground">
-                      Screenshot expires {formatDateTime(selectedReport.screenshot.expiresAt)}
+                      Screenshot expires {formatDateTime(clubTime, selectedReport.screenshot.expiresAt)}
                     </p>
                   </div>
                 </div>

@@ -5,7 +5,7 @@
 // say so on screen and mark the file it hands over.
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromoRedemptionsPanel } from "@/app/(admin)/admin/promo-codes/promo-redemptions-panel";
 

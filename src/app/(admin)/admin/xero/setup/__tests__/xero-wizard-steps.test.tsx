@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialsStep } from "../xero-wizard-steps";
 import { WebhooksStep } from "../xero-completion-steps";

@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BackLink } from "@/components/admin/back-link";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
   AdminViewOnlySectionBanner,
@@ -58,6 +59,9 @@ interface LodgeOption {
 }
 
 export default function AdminDisplayDevicesPage() {
+  // When a display device last checked in — real INSTANTS, projected through the club's persisted zone rather
+  // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   const [devices, setDevices] = useState<ClientDevice[]>([]);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [lodges, setLodges] = useState<LodgeOption[]>([]);
@@ -403,7 +407,7 @@ export default function AdminDisplayDevicesPage() {
                   )}
                   <span className="text-muted-foreground text-xs">
                     {device.lastSeenAt
-                      ? `Last seen ${formatNZDateTime(new Date(device.lastSeenAt))}`
+                      ? `Last seen ${clubTime.instantDateTime(requireInstant(device.lastSeenAt))}`
                       : "Never seen"}
                   </span>
                 </div>

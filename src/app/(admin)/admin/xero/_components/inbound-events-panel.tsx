@@ -13,7 +13,8 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { resetXeroInboundDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { fetchJson, postJson } from "./api"
 import {
   FilterSelect,
@@ -74,6 +75,9 @@ export function InboundEventsPanel({
       "inCreatedTo",
       "inPage",
     ].some((key) => searchParams.has(key))
+  // Received and processed stamps are real INSTANTS, rendered in the club's
+  // persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
   const [events, setEvents] = useState<XeroInboundEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -311,7 +315,7 @@ export function InboundEventsPanel({
                 <div className="flex flex-wrap items-center gap-2">
                   <OperationStatusChip status={event.status} />
                   <span className="text-sm font-medium">{event.eventCategory ?? "UNKNOWN"} {event.eventType}</span>
-                  <span className="text-xs text-muted-foreground">{formatNZDateTime(new Date(event.createdAt))}</span>
+                  <span className="text-xs text-muted-foreground">{clubTime.instantDateTime(requireInstant(event.createdAt))}</span>
                 </div>
                 <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                   <span>Source: {event.source}</span>
@@ -324,7 +328,7 @@ export function InboundEventsPanel({
                       ) : shortId(event.resourceId)}
                     </span>
                   ) : null}
-                  {event.processedAt ? <span>Processed: {formatNZDateTime(new Date(event.processedAt))}</span> : null}
+                  {event.processedAt ? <span>Processed: {clubTime.instantDateTime(requireInstant(event.processedAt))}</span> : null}
                 </div>
                 {event.errorMessage ? <p className="text-sm text-danger">{event.errorMessage}</p> : null}
                 <div className="flex flex-wrap items-center gap-2">

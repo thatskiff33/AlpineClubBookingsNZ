@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({

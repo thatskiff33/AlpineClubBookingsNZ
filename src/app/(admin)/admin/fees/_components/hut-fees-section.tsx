@@ -14,7 +14,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { APP_CURRENCY } from "@/config/operational";
 import { formatCents } from "@/lib/pricing";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatNZDate } from "@/lib/nzst-date";
 import {
   AdminViewOnlyNotice,
   AdminViewOnlySectionBanner,
@@ -27,7 +26,10 @@ import {
 } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDayFromPayload,
+  formatPayloadCalendarDay,
+} from "../../_lib/calendar-day";
 
 // The Hut Fees section of the consolidated /admin/fees console (#1933, E7):
 // per-lodge → per-season → membership-type × age-tier nightly rate grid (E4).
@@ -80,6 +82,15 @@ const FALLBACK_TIERS: AgeTierSetting[] = [
 ];
 
 const FLAT_KEY = "FLAT";
+
+// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
+// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
+// kernel's calendar-date formatter pins "UTC" over that encoding, so the
+// projection is the identity for every club. It used to be read through
+// APP_TIME_ZONE, which for a club behind UTC named the previous day.
+function formatSeasonEdge(value: string): string {
+  return formatPayloadCalendarDay(value, value);
+}
 
 function rateKey(membershipTypeId: string, ageTier: AgeTier | typeof FLAT_KEY): string {
   return `${membershipTypeId}::${ageTier}`;
@@ -354,8 +365,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
     setEditingId(season.id);
     setName(season.name);
     setType(season.type);
-    setStartDate(dateOnlyFromIsoString(season.startDate));
-    setEndDate(dateOnlyFromIsoString(season.endDate));
+    setStartDate(calendarDayFromPayload(season.startDate) ?? "");
+    setEndDate(calendarDayFromPayload(season.endDate) ?? "");
     setActive(season.active);
     setRates(seasonToRatesMap(season.membershipTypeRates, rateTypes, ageTiers));
     clearAmountDrafts();
@@ -868,8 +879,8 @@ export function HutFeesSection({ canEdit }: { canEdit: boolean }) {
                         )}
                       </div>
                       <CardDescription>
-                        {formatNZDate(new Date(season.startDate))} &mdash;{" "}
-                        {formatNZDate(new Date(season.endDate))}
+                        {formatSeasonEdge(season.startDate)} &mdash;{" "}
+                        {formatSeasonEdge(season.endDate)}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>

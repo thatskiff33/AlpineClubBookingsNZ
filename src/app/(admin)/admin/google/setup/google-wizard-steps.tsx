@@ -14,7 +14,8 @@ import { CopyField } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type {
   GoogleCredentialKey,
   GoogleWizardContext,
@@ -23,10 +24,12 @@ import type {
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials";
 const VERIFY_START_ENDPOINT = "/api/admin/integrations/google/verify/start";
 
-function formatSetAt(setAt: string | null): string {
+// A credential's "set at" is a real INSTANT, shown in the club's persisted zone
+// rather than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+function formatSetAt(clubTime: BoundClubTime, setAt: string | null): string {
   if (!setAt) return "";
-  const date = new Date(setAt);
-  return Number.isNaN(date.getTime()) ? "" : formatNZDate(date);
+  const instant = parseInstant(setAt);
+  return instant === null ? "" : clubTime.instantDate(instant);
 }
 
 function LegacyEnvWarning({ vars }: { vars: string[] }) {
@@ -41,10 +44,11 @@ function LegacyEnvWarning({ vars }: { vars: string[] }) {
 }
 
 function SetStatus({ set, setAt }: { set: boolean; setAt: string | null }) {
+  const clubTime = useClubTime();
   return (
     <span className="text-xs">
       {set ? (
-        <span className="text-success">Set ✓ {formatSetAt(setAt)}</span>
+        <span className="text-success">Set ✓ {formatSetAt(clubTime, setAt)}</span>
       ) : (
         <span className="text-muted-foreground">Not set</span>
       )}

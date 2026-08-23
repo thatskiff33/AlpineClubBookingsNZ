@@ -13,7 +13,8 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,6 +38,9 @@ interface HistoryEntry {
 }
 
 export default function CommunicationsPage() {
+  // When a communication was sent — real INSTANTS, projected through the club's persisted zone rather
+  // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   // Bulk send writes the communications route, which the route-area matrix maps
   // to the membership area; a view-only membership admin cannot send (#1997).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -261,7 +265,7 @@ export default function CommunicationsPage() {
                   {history.map((entry) => (
                     <tr key={entry.id} className="border-b">
                       <td className="py-2 pr-4 text-muted-foreground">
-                        {formatNZDate(new Date(entry.sentAt))}
+                        {clubTime.instantDate(requireInstant(entry.sentAt))}
                       </td>
                       <td className="py-2 pr-4 font-medium">{entry.subject}</td>
                       <td className="py-2 pr-4 text-muted-foreground">

@@ -25,7 +25,8 @@ import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
+import { calendarDayAsLocalDate } from "./_components/calendar-day";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
 import {
@@ -143,6 +144,16 @@ function getAdditionalLedgerGapWarning(summary: {
   return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
+/**
+ * A range bound (`yyyy-MM-dd`) through one of this page's date-fns patterns.
+ * The bounds come from the URL, so an unusable one renders as itself rather
+ * than throwing a `RangeError` that blanks the report (CT-4, #2870).
+ */
+function formatRangeDay(value: string, pattern: string): string {
+  const day = calendarDayAsLocalDate(value);
+  return day === null ? value : format(day, pattern);
+}
+
 function StatCard({
   title,
   value,
@@ -179,7 +190,10 @@ export default function ReportsPage() {
   // default range on the club-timezone "today" rather than the browser's local
   // date (a browser trailing NZ across a month boundary would otherwise seed a
   // window a whole month behind).
-  const clubToday = todayDateOnlyForTimeZone();
+  // The club's day, from the PERSISTED zone rather than APP_TIME_ZONE or the
+  // browser (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
+  const clubToday = clubTime.today();
   const { from: defaultFrom, to: defaultTo } =
     getReportsDatasetDefaults(clubToday);
 
@@ -384,7 +398,7 @@ export default function ReportsPage() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
-    const dateStr = todayDateOnlyForTimeZone();
+    const dateStr = clubTime.today();
     anchor.href = url;
     anchor.download = `tac-report-${dateStr}.csv`;
     anchor.click();
@@ -499,8 +513,8 @@ export default function ReportsPage() {
           <div className="hidden print:block">
             <h1 className="text-2xl font-bold text-foreground">Reports</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Date range: {format(new Date(from + "T00:00:00"), "d MMM yyyy")} to{" "}
-              {format(new Date(to + "T00:00:00"), "d MMM yyyy")}
+              Date range: {formatRangeDay(from, "d MMM yyyy")} to{" "}
+              {formatRangeDay(to, "d MMM yyyy")}
             </p>
             <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
@@ -590,7 +604,7 @@ export default function ReportsPage() {
               <StatCard
                 title="New Members"
                 value={data.memberStats.newMembers}
-                subtitle={`Joined between ${format(new Date(from + "T00:00:00"), "d MMM")} and ${format(new Date(to + "T00:00:00"), "d MMM yyyy")}`}
+                subtitle={`Joined between ${formatRangeDay(from, "d MMM")} and ${formatRangeDay(to, "d MMM yyyy")}`}
                 icon={UserPlus}
               />
             </div>

@@ -34,16 +34,47 @@ import {
   NonMemberContactForm,
   type NonMemberOwner,
 } from "@/components/admin/non-member-contact-form";
+import { useClubTime } from "@/components/club-time-provider";
 import {
-  countNightsDateOnly,
-  formatCalendarDayOnly,
-  parseDateOnly,
-} from "@/lib/date-only";
-import { formatNZDate, formatNZWeekdayDate } from "@/lib/nzst-date";
+  countClubNights,
+  formatClubDate,
+  formatClubWeekdayDate,
+  parseCalendarDate,
+} from "@/lib/club-time";
 
 import { CreditCard, Landmark } from "lucide-react";
 
 type BookingPaymentMethod = "stripe" | "internet_banking";
+
+/**
+ * A lodge night held in state as a `yyyy-MM-dd` string (#2474) — a CALENDAR
+ * DATE, which takes no timezone at all (CT-4, #2870). The old spelling parsed
+ * it to a UTC-midnight `Date` and handed that to the INSTANT formatter, which
+ * projected it through `APP_TIME_ZONE`; for a club behind UTC that named the
+ * night before. An empty or malformed value renders as itself rather than
+ * throwing while the operator is still choosing dates.
+ */
+function formatLodgeNight(value: string | null): string {
+  const day = value === null ? null : parseCalendarDate(value);
+  return day ? formatClubDate(day) : (value ?? "");
+}
+
+/** {@link formatLodgeNight}, weekday-bearing — "Thu, 16 Apr 2026". */
+function formatLodgeNightWithWeekday(value: string | null): string {
+  const day = value === null ? null : parseCalendarDate(value);
+  return day ? formatClubWeekdayDate(day) : (value ?? "");
+}
+
+/**
+ * Whole lodge nights between the two chosen days. `countClubNights` is calendar
+ * arithmetic rather than a millisecond division, which `CLUB_TIME_KERNEL.md`
+ * bans because a night across a DST transition is 23 or 25 hours.
+ */
+function countStayNights(checkIn: string | null, checkOut: string | null): number {
+  const from = checkIn === null ? null : parseCalendarDate(checkIn);
+  const to = checkOut === null ? null : parseCalendarDate(checkOut);
+  return from && to ? countClubNights(from, to) : 0;
+}
 
 interface FamilyMember {
   id: string;
@@ -78,6 +109,7 @@ interface SelectedMember {
 }
 
 export default function AdminBookPage() {
+  const clubTime = useClubTime();
   const router = useRouter();
   // Booking on behalf writes POST /api/bookings, which admits only a
   // bookings-manage (bookings:edit) actor. A view-only bookings admin can walk
@@ -174,14 +206,16 @@ export default function AdminBookPage() {
 
   // A retroactive booking is one whose check-in is genuinely in the past, with
   // the flag on. Drives the guest-cap relaxation and the POST body. Compared as
-  // date-only strings (#2474): "today" is the browser's own calendar day, and a
-  // lexicographic compare of `yyyy-MM-dd` values is a chronological one.
-  const nowLocal = new Date();
-  const todayStr = formatCalendarDayOnly(
-    nowLocal.getFullYear(),
-    nowLocal.getMonth(),
-    nowLocal.getDate(),
-  );
+  // date-only strings (#2474): a lexicographic compare of `yyyy-MM-dd` values is
+  // a chronological one.
+  //
+  // CT-4 (#2870) changed WHOSE today. It was the BROWSER's calendar day
+  // (`new Date()` read with host-local getters), so an admin in London booking
+  // at 21:00 their time — already tomorrow at the lodge — was told a stay
+  // starting today was retroactive, and the retroactive rules applied to a
+  // booking that is not one. "Today" for a club rule comes from club time
+  // (rule 4; INV-CONFIG-002), and the server decides the same way.
+  const todayStr = clubTime.today();
   const isRetroactive =
     allowPastDates && checkIn !== null && checkIn < todayStr;
 
@@ -653,12 +687,8 @@ export default function AdminBookPage() {
     setSavingDraft(false);
   }
 
-  // Whole date-only nights between the two lodge dates — exact, DST-immune UTC
-  // arithmetic (#2474).
-  const nights =
-    checkIn && checkOut
-      ? countNightsDateOnly(parseDateOnly(checkIn), parseDateOnly(checkOut))
-      : 0;
+  // Whole date-only nights between the two lodge dates — see `countStayNights`.
+  const nights = countStayNights(checkIn, checkOut);
 
   function formatCents(cents: number) {
     return `$${(cents / 100).toFixed(2)}`;
@@ -888,8 +918,8 @@ export default function AdminBookPage() {
               Add Guests
               {checkIn && checkOut && (
                 <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  {formatNZDate(parseDateOnly(checkIn))} -{" "}
-                  {formatNZDate(parseDateOnly(checkOut))} ({nights} night
+                  {formatLodgeNight(checkIn)} -{" "}
+                  {formatLodgeNight(checkOut)} ({nights} night
                   {nights !== 1 ? "s" : ""})
                 </span>
               )}
@@ -1004,13 +1034,13 @@ export default function AdminBookPage() {
                 <div>
                   <span className="text-muted-foreground">Check-in:</span>{" "}
                   <span className="font-medium">
-                    {formatNZWeekdayDate(parseDateOnly(checkIn!))}
+                    {formatLodgeNightWithWeekday(checkIn)}
                   </span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Check-out:</span>{" "}
                   <span className="font-medium">
-                    {formatNZWeekdayDate(parseDateOnly(checkOut!))}
+                    {formatLodgeNightWithWeekday(checkOut)}
                   </span>
                 </div>
                 <div>
@@ -1218,7 +1248,7 @@ export default function AdminBookPage() {
 
           {isRetroactive && (
             <div className="rounded-md bg-muted border border-border p-3 text-sm text-muted-foreground">
-              Recording a past stay ({formatNZDate(parseDateOnly(checkIn!))}). The
+              Recording a past stay ({formatLodgeNight(checkIn)}). The
               member email is optional (you choose on confirm); drafts are not
               available for retroactive bookings.
             </div>

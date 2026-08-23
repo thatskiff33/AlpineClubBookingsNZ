@@ -4,7 +4,8 @@ import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { format } from "date-fns";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import {
   resetSubscriptionsDatasetSearchParams,
@@ -76,6 +77,17 @@ import {
   type ManualPaymentTarget,
 } from "./_components/manual-payment-dialog";
 
+// CT-4 (#2870) DELIBERATELY LEFT THIS ALONE. It is a local copy of the shared
+// season rule, read from the BROWSER's clock at module-evaluation time, so a
+// treasurer abroad can land on the previous season on a boundary day. It is not
+// fixed here because every other season-year derivation in the product — the
+// shared `getSeasonYearForYearEndMonth`, seventeen call sites catalogued on
+// #2870 by group B, and two more admin screens in this group — has the same
+// clock, and moving one of them alone makes two admin screens DISAGREE on a
+// boundary day, which is worse than a consistent wrong answer. The measured fix
+// is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib` (a different lane's
+// file); passing a club-derived Date into these host-local getters was measured
+// on this epic to make a behind-UTC deployment worse, not better.
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
 }
@@ -196,6 +208,10 @@ function SummaryCard({
 }
 
 export default function SubscriptionsPage() {
+  // `paidAt` is a real INSTANT. date-fns `format` read it with HOST-LOCAL
+  // getters, so a treasurer abroad saw their own day rather than the club's
+  // (CT-4, #2870; INV-CONFIG-002). The "16 Apr 2026" shape is unchanged.
+  const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
@@ -744,7 +760,7 @@ export default function SubscriptionsPage() {
                     </a>
                   ) : "—"}
                 </TableCell>
-                <TableCell className="text-sm">{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
+                <TableCell className="text-sm">{sub.paidAt ? clubTime.instantDate(requireInstant(sub.paidAt)) : "—"}</TableCell>
                 {canEditFinance ? (
                   <TableCell>
                     {sub.id.startsWith("not-required:") ? (

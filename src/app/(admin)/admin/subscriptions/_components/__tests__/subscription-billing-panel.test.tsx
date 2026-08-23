@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -15,11 +16,32 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mocks.confirm, confirmDialog: null }),
 }));
-vi.mock("@/lib/date-only", () => ({
-  todayDateOnlyForTimeZone: () => "2026-07-13",
-}));
 
 import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_components/subscription-billing-panel";
+
+/**
+ * The club's day under the suite's default provider zone (`Pacific/Auckland`)
+ * and the frozen clock (`2026-07-01T00:00:00.000Z`, midday NZ).
+ *
+ * This suite used to `vi.mock("@/lib/date-only")` to pin the panel's default
+ * decision date. CT-4 (#2870) took the panel off that adapter — the default now
+ * comes from the club's PERSISTED timezone through `useClubTime` — so the mock
+ * was pinning a module the panel no longer reads. It is gone, and the zone the
+ * provider supplies is what decides.
+ *
+ * NOTE THAT THIS CONSTANT PROVES NOTHING ABOUT ZONE AUTHORITY on its own:
+ * `Pacific/Auckland` is also what `APP_TIME_ZONE` resolves to under test, so the
+ * migrated code and the code it replaced agree. The test below that renders
+ * under `America/Denver` is the one that can tell them apart.
+ */
+const CLUB_TODAY = "2026-07-01";
+
+/**
+ * The club's day at the same frozen instant for a club in `America/Denver` —
+ * six hours behind UTC, so still 30 June when Auckland has ticked over. This is
+ * the value no environment read can produce here.
+ */
+const DENVER_TODAY = "2026-06-30";
 
 function payload(options: {
   decisionDate?: string;
@@ -217,7 +239,7 @@ describe("subscription billing panel", () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
     const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
     expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
-      action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: "2026-07-13",
+      action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: CLUB_TODAY,
     });
   });
 
@@ -230,6 +252,51 @@ describe("subscription billing panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(0));
     expect(fetchMock.mock.calls.every(([, init]) => (init as RequestInit | undefined)?.method !== "POST")).toBe(true);
+  });
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * The default decision date is a BUSINESS DECISION derived from "today", and
+   * `INV-CONFIG-002` says which today: the club's, from the persisted
+   * `ClubTimeSettings.timeZone`. Everything else in this file renders under
+   * `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to under
+   * test — so those assertions cannot tell the persisted zone from the
+   * environment, and would pass just as happily against the code this change
+   * replaced.
+   *
+   * `America/Denver` can. At the frozen instant `2026-07-01T00:00:00.000Z` the
+   * club day in Denver is 30 JUNE, where Auckland, the host (UTC on CI) and
+   * `APP_TIME_ZONE` all say 1 July. So the request below carries `2026-06-30`
+   * only if the panel really asked the persisted zone.
+   */
+  it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
+    // Premise, asserted rather than assumed: the two zones must disagree on
+    // this instant, or the expectation below is vacuous. An identifier check —
+    // "the environment is not America/Denver" — would pass under
+    // America/Chicago while proving nothing.
+    expect(DENVER_TODAY).not.toBe(CLUB_TODAY);
+
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    render(<SubscriptionBillingPanel seasonYear={2026} />, {
+      wrapper: ({ children }) => (
+        <ClubTimeProvider zone="America/Denver">{children}</ClubTimeProvider>
+      ),
+    });
+    await screen.findByRole("button", { name: "Confirm and queue annual batch" });
+
+    const requested = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("decisionDate="));
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((url) => url.includes(`decisionDate=${DENVER_TODAY}`))).toBe(true);
+    expect(requested.some((url) => url.includes(`decisionDate=${CLUB_TODAY}`))).toBe(false);
+
+    // And the operator sees the same day in the field they can change.
+    expect(
+      (screen.getByLabelText("Decision date") as HTMLInputElement).value,
+    ).toBe(DENVER_TODAY);
   });
 
   // #2161 (D2): mark a PER_FAMILY entry as already invoiced (with an optional note).

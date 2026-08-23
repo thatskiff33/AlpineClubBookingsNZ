@@ -23,8 +23,12 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { APP_LOCALE } from "@/config/operational";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  formatClubDate,
+  parseCalendarDate,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
 import {
@@ -129,13 +133,14 @@ interface PromoSummary {
   archived: boolean;
 }
 
+// `value` is a yyyy-MM-dd lodge night from the API — a CALENDAR DATE, which
+// takes no timezone at all (CT-4, #2870). The hand-rolled parts-to-UTC-midnight
+// dance existed only to stop the INSTANT formatter shifting the day; the
+// calendar-date formatter has no zone to shift by. A malformed value still
+// renders as itself rather than throwing inside a table row.
 function formatStayDate(value: string): string {
-  // `value` is a yyyy-MM-dd lodge night from the API; parse the parts directly
-  // to UTC midnight so the club-time formatter renders that exact calendar day
-  // with no shift.
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return value;
-  return formatNZDate(new Date(Date.UTC(year, month - 1, day)));
+  const day = parseCalendarDate(value);
+  return day ? formatClubDate(day) : value;
 }
 
 // The truncation notice asks an operator to compare two five-figure counts, so
@@ -149,8 +154,14 @@ function formatCount(value: number): string {
 // says so in its own name. The suffix is the only truncation marker outside the
 // UI: the CSV body stays a plain row set, since a trailing "truncated" line
 // would corrupt every spreadsheet and parser that reads it.
-function csvFilename(code: string, truncated: boolean): string {
-  const dateStr = todayDateOnlyForTimeZone();
+// The club's day, not the operator's: an admin exporting at 8am in London must
+// get the same filename as one exporting at the lodge (CT-4, #2870).
+function csvFilename(
+  clubTime: BoundClubTime,
+  code: string,
+  truncated: boolean,
+): string {
+  const dateStr = clubTime.today();
   return `promo-${code}-redemptions-${dateStr}${truncated ? "-partial" : ""}.csv`;
 }
 
@@ -201,6 +212,7 @@ export function PromoRedemptionsPanel({
   promo: PromoSummary;
   onBack: () => void;
 }) {
+  const clubTime = useClubTime();
   const { lodges } = useLodgeOptions("admin");
   const multiLodge = lodges.length > 1;
 
@@ -358,7 +370,7 @@ export function PromoRedemptionsPanel({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = csvFilename(promo.code, truncation != null);
+      anchor.download = csvFilename(clubTime, promo.code, truncation != null);
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err) {
