@@ -1,15 +1,124 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * THE `Intl.DateTimeFormat` WATCH, INSTALLED BEFORE THIS FILE'S IMPORTS RUN.
+ *
+ * `vi.hoisted` is lifted above every `import` in this file, so the counting
+ * constructor below is in place before `club-time-zone-panel.tsx`, the club-time
+ * kernel, or anything else in their graph has been evaluated. That timing is the
+ * whole point rather than a detail, and each of the three defects it exists to
+ * see survived the previous version of this guard for a different reason:
+ *
+ *  1. A `beforeEach` spy CANNOT SEE A MODULE-SCOPE CONSTRUCTION. A panel holding
+ *     `const HOST_FMT = new Intl.DateTimeFormat();` at module scope — the viewer's
+ *     clock, read on every render — builds it at import time, long before any
+ *     hook has run. Installed here, that construction is counted.
+ *  2. THE KERNEL MEMOISES ITS FORMATTERS (`src/lib/club-time/intl.ts`), so a
+ *     counter reset per test sees nothing after the first render in the file: the
+ *     cache is module-level and outlives every `beforeEach`. These counters are
+ *     therefore CUMULATIVE FOR THE WHOLE FILE and are never reset, which is what
+ *     makes a kernel that dropped `timeZone` from its one construction visible
+ *     here at all.
+ *  3. COUNTING IS NOT MEASURING. A zero can mean "nothing was built without a
+ *     zone" or "nothing was built"; the previous version's anti-vacuity check was
+ *     satisfied by the TEST PROVIDER validating its own zone, so the panel could
+ *     have stopped formatting entirely and the guard would still have passed.
+ *     `kernelZones` records only constructions raised from inside the club-time
+ *     kernel — the panel's one and only formatting path — and records them BY
+ *     ZONE, so the guard can require one for a zone nothing else in this file
+ *     renders under. Break the panel's formatter into a pass-through and that
+ *     zone never appears.
+ *
+ * WHAT NO CONSTRUCTOR SPY OF ANY SHAPE CAN SEE, and this is a real limit rather
+ * than a caveat: `Date.prototype.toLocaleString` and its `toLocaleDateString` /
+ * `toLocaleTimeString` siblings do not go through the JS-visible
+ * `Intl.DateTimeFormat` constructor in V8, so they render in the VIEWER's zone
+ * and are invisible to everything below. That class is closed STATICALLY
+ * instead — `eslint.config.mjs` bans all three across `src/` under
+ * `INV-DATE-015`, this file carries no exemption from that block, and
+ * `src/lib/__tests__/date-only-encoding-guard.test.ts` lints a real violation at
+ * every production path to prove the arm still fires. The runtime guard and the
+ * lint arm cover different halves; neither is redundant.
+ */
+const intlWatch = vi.hoisted(() => {
+  const RealDateTimeFormat = Intl.DateTimeFormat;
+
+  const state = {
+    /** Constructions carrying no explicit `timeZone` — i.e. in the VIEWER's zone. */
+    unzoned: 0,
+    /**
+     * The zones the club-time KERNEL (`src/lib/club-time/intl.ts`) built a
+     * formatter for. Recorded by zone rather than counted, because the kernel
+     * memoises per zone: a render under a zone nothing else in this file uses is
+     * guaranteed to miss that cache, so its presence here is proof that THIS
+     * render reached the kernel — where a bare count could have been run up by
+     * any earlier test in the file.
+     */
+    kernelZones: new Set<string>(),
+    /** Every construction, so a zero above can be shown to be a measurement. */
+    total: 0,
+    restore(): void {
+      Intl.DateTimeFormat = RealDateTimeFormat;
+    },
+  };
+
+  /*
+    A plain `function`, not an arrow: this stands in for a CONSTRUCTOR and has to
+    be callable with `new`. It delegates to the real implementation captured
+    above, so every formatter behaves normally and only the construction is
+    observed. `Intl.DateTimeFormat` is also callable WITHOUT `new`, which returns
+    a formatter just the same, and this form counts that too.
+  */
+  function WatchedDateTimeFormat(
+    locales?: Intl.LocalesArgument,
+    options?: Intl.DateTimeFormatOptions,
+  ): Intl.DateTimeFormat {
+    state.total += 1;
+    if (options?.timeZone === undefined) state.unzoned += 1;
+    // The kernel is the only sanctioned formatting path in this tree, and its
+    // frame is what proves the PANEL — not the scaffolding — reached it. The
+    // provider's own zone validation (`normaliseClubTimeZone`) constructs from
+    // `src/lib/club-time-zone.ts` and so is deliberately not recorded here.
+    if (
+      options?.timeZone !== undefined &&
+      /club-time[/\\]intl/.test(new Error().stack ?? "")
+    ) {
+      state.kernelZones.add(options.timeZone);
+    }
+    return new RealDateTimeFormat(locales, options);
+  }
+
+  WatchedDateTimeFormat.prototype = RealDateTimeFormat.prototype;
+  WatchedDateTimeFormat.supportedLocalesOf = (
+    ...args: Parameters<typeof RealDateTimeFormat.supportedLocalesOf>
+  ) => RealDateTimeFormat.supportedLocalesOf(...args);
+
+  Intl.DateTimeFormat =
+    WatchedDateTimeFormat as unknown as typeof Intl.DateTimeFormat;
+
+  return state;
+});
+
+import type { ReactNode } from "react";
+
+import {
+  CLUB_TIME_TEST_ZONE,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 
 import { ClubTimeZonePanel } from "@/components/admin/club-time-zone-panel";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 
 /*
   The club-timezone maintenance panel (CT-1, #2989; epic #2988).
 
-  Three things are being pinned, and only the first is ordinary UI behaviour:
+  Four things are being pinned, and only the first is ordinary UI behaviour:
 
   1. STAGED EDITING. The panel mounts read-only, and choosing a zone from the
      selector persists NOTHING. `docs/ARCHITECTURE.md` -> "Admin/member layer"
@@ -20,11 +129,43 @@ import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
      are on the screen in plain English. A confirmation the operator cannot fail
      to satisfy is decoration.
 
-  3. THE BROWSER NEVER DECIDES THE TIMEZONE. `Intl.DateTimeFormat()
-     .resolvedOptions()` — the viewer's own clock — is spied on and must never be
-     consulted, because a panel that seeded itself from the reader's machine
-     would show a London admin a different club than an Ohakune one and would
-     offer to "correct" the club's setting to the reader's own zone.
+  3. THE BROWSER NEVER DECIDES THE TIMEZONE. A panel that seeded itself from the
+     reader's machine would show a London admin a different club than an Ohakune
+     one, and would offer to "correct" the club's setting to the reader's own
+     zone.
+
+     WHAT IS SPIED ON CHANGED IN CT-4 (#2870). It used to be
+     `Intl.DateTimeFormat.prototype.resolvedOptions`, asserted never to be called
+     at all. That was a proxy for the rule rather than the rule:
+     `resolvedOptions()` is ALSO how you ask a runtime whether it knows a named
+     zone and what it calls it, which is validation, not a viewer read — and CT-4
+     put exactly such a validation on the client (`normaliseClubTimeZone`, which
+     the provider above this panel runs on its own zone), where the browser's ICU
+     may be an older build than the server's and a zone it cannot load must fall
+     back rather than throw a RangeError over the whole page. Under the old spy
+     that correct, necessary call read as a violation — measured, on unmutated
+     code: "called 1 times".
+
+     The ban is now asserted where it actually lives: no `Intl.DateTimeFormat`
+     may be CONSTRUCTED without an explicit `timeZone`. That is the same shape
+     `eslint.config.mjs` bans statically (`NO_UNZONED_INTL_DATE_TIME_FORMAT`,
+     INV-DATE-015), it is the only construction whose `resolvedOptions().timeZone`
+     reports the VIEWER's clock, and it also catches an unzoned formatter that
+     merely FORMATS — which the old spy could not see at all.
+
+     THE FIRST VERSION OF THAT CHANGE WAS VACUOUS, and the fix is the hoisted
+     watch at the top of this file rather than the choice of what to count. See
+     its docblock: counting from a `beforeEach` cannot see a module-scope
+     construction, is blinded by the kernel's formatter memo after the first
+     render, and its anti-vacuity check was being satisfied by the test
+     provider's own zone validation rather than by anything the panel did.
+
+  4. THE PANEL SPELLS AN INSTANT IN THE CLUB'S PERSISTED ZONE, and the last test
+     in this file proves it with a PAIR — the same fixture under two provider
+     zones, asserted to produce two different answers. Nothing in this file reads
+     `APP_TIME_ZONE`: a premise written against it changes meaning with the host,
+     and on a machine running `TZ=America/Denver` it would equal the zone under
+     test and assert nothing at all.
 */
 
 const SERVER_STATE = {
@@ -35,17 +176,27 @@ const SERVER_STATE = {
   unusableStoredValue: null,
 };
 
-/** The same instant spelled in a named zone, in the house shape. */
+/**
+ * The same instant spelled in a named zone, through the club-time kernel.
+ *
+ * The KERNEL rather than a hand-rolled `Intl.DateTimeFormat`, because that is
+ * what the panel renders through: an expectation built any other way pins the
+ * house shape twice and drifts the moment one of the two copies is edited.
+ */
 function spelledIn(timeZone: string, iso: string): string {
-  return new Intl.DateTimeFormat(APP_LOCALE, {
-    timeZone,
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(iso));
+  return bindClubTime(requireClubTimeZone(timeZone)).instantDateTime(
+    new Date(iso),
+  );
+}
+
+/** A provider pinned to one named zone, replacing the harness's default. */
+function providerFor(zone: string) {
+  return function PinnedClubTime({ children }: { children: ReactNode }) {
+    return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+  };
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
-let resolvedOptionsSpy: ReturnType<typeof vi.spyOn>;
 
 function respondWith(state: unknown) {
   return {
@@ -62,20 +213,26 @@ beforeEach(() => {
       : respondWith(SERVER_STATE),
   );
   vi.stubGlobal("fetch", fetchMock);
-  resolvedOptionsSpy = vi.spyOn(
-    Intl.DateTimeFormat.prototype,
-    "resolvedOptions",
-  );
 });
 
 afterEach(() => {
-  resolvedOptionsSpy.mockRestore();
   vi.unstubAllGlobals();
 });
 
+/*
+  `Intl` is a realm global rather than a jsdom one, so the watch is handed back
+  explicitly on the way out rather than left for the environment teardown.
+*/
+afterAll(() => {
+  intlWatch.restore();
+});
+
 /** Render and wait for the server-supplied state to arrive. */
-async function renderPanel() {
-  render(<ClubTimeZonePanel />);
+async function renderPanel(zone?: string) {
+  render(
+    <ClubTimeZonePanel />,
+    zone === undefined ? undefined : { wrapper: providerFor(zone) },
+  );
   await screen.findByTestId("current-club-time-zone");
 }
 
@@ -139,14 +296,51 @@ describe("ClubTimeZonePanel", () => {
     expect(screen.queryByText(/Last changed/)).toBeNull();
   });
 
+  /**
+   * A zone no other test in this file renders under, so the club-time kernel's
+   * per-zone formatter memo is guaranteed to MISS on the render below. That miss
+   * is what makes the anti-vacuity assertion a measurement of this render rather
+   * than a tally some earlier test could have run up.
+   */
+  const CACHE_MISS_ZONE = "Pacific/Kiritimati";
+
   it("never asks the viewer's own clock what the timezone is", async () => {
-    await renderPanel();
+    await renderPanel(CACHE_MISS_ZONE);
     fireEvent.click(screen.getByRole("button", { name: /Change time zone/ }));
 
-    // The list of CHOICES may come from this runtime. The DECISION may not:
-    // resolvedOptions() is how a browser would report its own zone, and nothing
-    // in the panel is allowed to consult it.
-    expect(resolvedOptionsSpy).not.toHaveBeenCalled();
+    // The list of CHOICES may come from this runtime. The DECISION may not: a
+    // formatter built with no `timeZone` renders in the browser's own zone, and
+    // reading its `resolvedOptions().timeZone` is how a page would learn that
+    // zone. Nothing in the panel, in the club-time kernel beneath it, or in the
+    // binding above it is allowed to build one — and because the watch was
+    // installed before this file's imports, that covers a formatter frozen at
+    // module scope as well as one built during a render.
+    expect(
+      intlWatch.unzoned,
+      "INV-DATE-015: something in this panel's graph built an Intl.DateTimeFormat " +
+        "with no explicit timeZone. That formatter renders in the VIEWER's clock, " +
+        "and its resolvedOptions().timeZone is how a page learns the viewer's zone.",
+    ).toBe(0);
+
+    /*
+      THE ANTI-VACUITY, AND IT MEASURES THE PANEL. `unzoned === 0` is also what a
+      panel that formats NOTHING scores, and a watch installed but never reached
+      scores it too — which is precisely how the previous version of this guard
+      passed while counting nothing but the test provider validating its own zone.
+      The club-time kernel is the panel's only formatting path, and the render
+      above used a zone no other test here touches, so a kernel formatter for THAT
+      zone can only have come from this screen, on this render, through the
+      counted constructor. Break `useChangedAtFormatter` into a pass-through and
+      this is what fails.
+    */
+    expect(
+      [...intlWatch.kernelZones],
+      "The panel rendered without the club-time kernel building a formatter for " +
+        `${CACHE_MISS_ZONE}, so the zero above is an accident of never being ` +
+        `reached rather than a measurement (${intlWatch.total} construction(s) ` +
+        "seen in total).",
+    ).toContain(CACHE_MISS_ZONE);
+
     // …and the panel is genuinely rendering, so the assertion is not vacuous.
     expect(screen.getByLabelText("Time zone")).not.toBeNull();
   });
@@ -346,30 +540,72 @@ describe("ClubTimeZonePanel", () => {
     expect(saveButton().hasAttribute("disabled")).toBe(false);
   });
 
-  it("spells Last changed in the zone the rest of the admin tree uses", async () => {
-    /*
-      FINDING 4. This is the same class of timestamp `/admin/audit-log` renders --
-      the audit row this save writes -- and that screen spells it in
-      APP_TIME_ZONE. Spelling it here in the CONFIGURED zone instead let two
-      admin screens show one instant as two different times, with nothing on
-      either saying which. CT-4 moves them together; until then this one matches
-      its neighbours.
-    */
-    const configured = "Pacific/Honolulu";
-    fetchMock.mockImplementation(async () =>
-      respondWith({ ...SERVER_STATE, timeZone: configured }),
-    );
-    await renderPanel();
+  /*
+    LAST CHANGED IS SPELLED IN THE ZONE THE SESSION IS RENDERING IN, which since
+    CT-4 (#2870) is the club's PERSISTED zone carried by `ClubTimeProvider` — not
+    the deployment's `TZ`, not the viewer's clock, and deliberately not the zone
+    this panel's own fetch just returned.
 
-    const inAppZone = spelledIn(APP_TIME_ZONE, SERVER_STATE.updatedAt);
-    const inConfiguredZone = spelledIn(configured, SERVER_STATE.updatedAt);
-    // The premise: these two zones really do disagree about this instant, so the
-    // assertion below can tell them apart.
-    expect(inAppZone).not.toBe(inConfiguredZone);
+    IT IS A PAIR, and the pair is the whole assertion. CT-1's version of this test
+    compared the rendered line against `spelledIn(APP_TIME_ZONE, …)`, which was
+    fine while both sides read the same environment constant and became a trap the
+    moment the panel started reading the provider: on a host running
+    `TZ=America/Denver` the expectation moved and the component did not, so the
+    test failed against CORRECT code. Nothing here references `APP_TIME_ZONE` any
+    more. Two provider zones, two answers, and an implementation that ignored the
+    provider — reading the environment, the viewer's clock, the panel's own
+    `state.timeZone`, or a hard-coded zone — gives one answer to both halves and
+    fails whichever half disagrees with it.
+
+    Denver, and behind UTC specifically, for the reason
+    `club-time-client-boundary.test.tsx` sets out: `TZ` is unset on CI, so the host
+    resolves UTC while `APP_TIME_ZONE` falls back to `Pacific/Auckland`, and a club
+    zone AHEAD of UTC agrees with one or the other for most of the day.
+  */
+  const DENVER = "America/Denver";
+
+  it("spells Last changed in the club's PERSISTED zone", async () => {
+    // PREMISE, as an ANSWER rather than an identifier: the two zones really do
+    // disagree about this instant. `expect(zone).not.toBe(DENVER)` would pass
+    // happily under America/Chicago while the assertion beneath went vacuous.
+    const inDenver = spelledIn(DENVER, SERVER_STATE.updatedAt);
+    const inHarnessZone = spelledIn(CLUB_TIME_TEST_ZONE, SERVER_STATE.updatedAt);
+    expect(inDenver).toBe("30 Jun 2026, 3:30 pm");
+    expect(inHarnessZone).toBe("1 Jul 2026, 9:30 am");
+
+    /*
+      And the panel's OWN fetched value is a third answer again, so this half also
+      refuses the tempting implementation where the screen spells its stamp in the
+      zone it just loaded. `club-time-zone-panel.tsx` explains why it must not:
+      that would make this one line jump ahead of every other admin screen for the
+      rest of the session after a save.
+    */
+    fetchMock.mockImplementation(async () =>
+      respondWith({ ...SERVER_STATE, timeZone: "Pacific/Honolulu" }),
+    );
+    await renderPanel(DENVER);
 
     const line = screen.getByText(/Last changed/);
-    expect(line.textContent).toContain(inAppZone);
-    expect(line.textContent).not.toContain(inConfiguredZone);
+    expect(line.textContent).toContain(inDenver);
+    expect(line.textContent).not.toContain(inHarnessZone);
+    expect(line.textContent).not.toContain(
+      spelledIn("Pacific/Honolulu", SERVER_STATE.updatedAt),
+    );
+  });
+
+  it("follows a DIFFERENT club zone for the same stamp", async () => {
+    // The mirror image, and it is what makes the case above about the PROVIDER
+    // rather than about a hard-coded June: the panel is not producing "30 Jun"
+    // for some reason of its own.
+    await renderPanel(CLUB_TIME_TEST_ZONE);
+
+    const line = screen.getByText(/Last changed/);
+    expect(line.textContent).toContain(
+      spelledIn(CLUB_TIME_TEST_ZONE, SERVER_STATE.updatedAt),
+    );
+    expect(line.textContent).not.toContain(
+      spelledIn(DENVER, SERVER_STATE.updatedAt),
+    );
   });
 
   it("sends the chosen zone with an explicit confirmation, and shows the result", async () => {

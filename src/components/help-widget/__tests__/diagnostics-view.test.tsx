@@ -12,7 +12,7 @@
  *  - D10: the collapsed provenance line always carries the caveat.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HelpWidget } from "@/components/help-widget/help-widget";

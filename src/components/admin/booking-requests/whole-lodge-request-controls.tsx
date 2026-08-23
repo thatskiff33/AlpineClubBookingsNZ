@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 /*
@@ -89,6 +89,19 @@ export function WholeLodgeRequestBadges({
 }
 
 /**
+ * A lodge night as the calendar day it IS (CT-4, #2870; INV-DATE-010).
+ *
+ * WHAT THIS REPLACES WAS WRONG TWICE OVER. `new Date(`${d}T00:00:00`)` has no
+ * `Z`, so it parsed as midnight in the ADMIN's browser zone; that instant was
+ * then projected through `APP_TIME_ZONE` to be printed. For an admin west of the
+ * club the two errors did not cancel and the night came out a day early. A
+ * calendar day needs no zone at all, so both steps are gone.
+ */
+function formatNight(value: string): string {
+  return formatClubDate(requireCalendarDate(value));
+}
+
+/**
  * Collapsed-by-default availability + conflict preview for a whole-lodge
  * request. Advisory only: ADR-001 decision 1 grants the hold regardless of what
  * is already on those nights, and the officer resolves any overlap by hand. This
@@ -159,7 +172,7 @@ export function WholeLodgeAvailabilityStrip({
                           : "rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground"
                     }
                   >
-                    {formatNZDate(new Date(`${night.date}T00:00:00`))} ·{" "}
+                    {formatNight(night.date)} ·{" "}
                     {night.wholeLodgeHeld
                       ? "held"
                       : `${night.occupiedBeds}/${data.lodgeCapacity} beds`}
@@ -181,8 +194,8 @@ export function WholeLodgeAvailabilityStrip({
                     {data.conflicts.map((conflict) => (
                       <li key={conflict.id}>
                         {conflict.memberName} ·{" "}
-                        {formatNZDate(new Date(`${conflict.checkIn}T00:00:00`))}–
-                        {formatNZDate(new Date(`${conflict.checkOut}T00:00:00`))} ·{" "}
+                        {formatNight(conflict.checkIn)}–
+                        {formatNight(conflict.checkOut)} ·{" "}
                         {conflict.guestCount}{" "}
                         {conflict.guestCount === 1 ? "guest" : "guests"} ·{" "}
                         {conflict.status}

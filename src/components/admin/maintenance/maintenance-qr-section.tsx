@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * QR sign management (#2780, owner decision 5). Lodge Operations.
@@ -104,7 +104,22 @@ function printSign(lodgeName: string, qrDataUrl: string): boolean {
   return true;
 }
 
+/**
+ * A maintenance stamp in the club's own time.
+ *
+ * Every value below is a real INSTANT (`createdAt`, `rotatedAt`, `lastUsedAt`,
+ * `capturedAt`, `expiresAt`), so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before; only the zone's AUTHORITY moved. A hook because that setting
+ * reaches the browser as data through `ClubTimeProvider`.
+ */
+function useMaintenanceStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: Date) => clubTime.instantDateTime(value);
+}
+
 export function MaintenanceQrSection() {
+  const formatStamp = useMaintenanceStampFormatter();
   const canEdit = useAdminAreaEditAccess("lodge");
 
   const [rows, setRows] = useState<SignRow[]>([]);
@@ -349,10 +364,10 @@ export function MaintenanceQrSection() {
                       {row.sign ? (
                         <p className="text-xs text-muted-foreground">
                           {row.sign.rotatedAt
-                            ? `Last replaced ${formatNZDateTime(new Date(row.sign.rotatedAt))}`
-                            : `Created ${formatNZDateTime(new Date(row.sign.createdAt))}`}
+                            ? `Last replaced ${formatStamp(new Date(row.sign.rotatedAt))}`
+                            : `Created ${formatStamp(new Date(row.sign.createdAt))}`}
                           {row.sign.lastUsedAt
-                            ? ` · last scanned ${formatNZDateTime(new Date(row.sign.lastUsedAt))}`
+                            ? ` · last scanned ${formatStamp(new Date(row.sign.lastUsedAt))}`
                             : " · never scanned"}
                         </p>
                       ) : (

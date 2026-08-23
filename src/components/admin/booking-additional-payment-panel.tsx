@@ -6,7 +6,7 @@ import {
   isAdditionalPaymentOwed,
   type AdditionalPaymentChasePayment,
 } from "@/lib/additional-payment-chase";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import { formatCents } from "@/lib/utils";
 
 /**
@@ -50,7 +50,14 @@ export interface BookingAdditionalPaymentPanelProps {
   now?: Date;
 }
 
-export function BookingAdditionalPaymentPanel({
+/**
+ * ASYNC since CT-4 (#2870, epic #2988). The two stamps below are real INSTANTS
+ * and must read in the club's PERSISTED timezone (`INV-CONFIG-002`), which is a
+ * server-only database read - so this server component takes the club's own
+ * binding rather than the client provider's. `now` stays a bare instant: the
+ * age in days is an elapsed-time COMPARISON, which needs no zone.
+ */
+export async function BookingAdditionalPaymentPanel({
   bookingId,
   bookingStatus,
   payment,
@@ -61,6 +68,8 @@ export function BookingAdditionalPaymentPanel({
   if (!isAdditionalPaymentOwed({ bookingStatus, payment }) || !payment) {
     return null;
   }
+
+  const club = await clubTime();
 
   const failed = payment.additionalPaymentStatus === "FAILED";
   const lastChasedAt =
@@ -113,7 +122,7 @@ export function BookingAdditionalPaymentPanel({
             </dt>
             <dd className="font-medium">
               {requestedOn
-                ? `${formatNZDateTime(requestedOn)}${
+                ? `${club.instantDateTime(requestedOn)}${
                     ageDays != null
                       ? ` (${ageDays} day${ageDays === 1 ? "" : "s"} ago)`
                       : ""
@@ -126,7 +135,7 @@ export function BookingAdditionalPaymentPanel({
               Member last emailed
             </dt>
             <dd className="font-medium">
-              {lastChasedAt ? formatNZDateTime(lastChasedAt) : "Not yet"}
+              {lastChasedAt ? club.instantDateTime(lastChasedAt) : "Not yet"}
             </dd>
           </div>
         </dl>

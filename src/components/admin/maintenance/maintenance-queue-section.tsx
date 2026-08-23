@@ -36,7 +36,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * The maintenance officer's queue (#2780, owner decision 4). Lodge Operations.
@@ -134,7 +134,22 @@ function describeReporter(report: QueueReport): string {
   return "Reported from a lodge QR code";
 }
 
+/**
+ * A maintenance stamp in the club's own time.
+ *
+ * Every value below is a real INSTANT (`createdAt`, `rotatedAt`, `lastUsedAt`,
+ * `capturedAt`, `expiresAt`), so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before; only the zone's AUTHORITY moved. A hook because that setting
+ * reaches the browser as data through `ClubTimeProvider`.
+ */
+function useMaintenanceStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: Date) => clubTime.instantDateTime(value);
+}
+
 export function MaintenanceQueueSection() {
+  const formatStamp = useMaintenanceStampFormatter();
   const canEdit = useAdminAreaEditAccess("lodge");
 
   const [status, setStatus] = useState<QueueReport["status"] | "ALL">("OPEN");
@@ -341,7 +356,7 @@ export function MaintenanceQueueSection() {
                     <p className="truncate font-medium">{report.summary}</p>
                     <p className="text-xs text-muted-foreground">
                       {describeReporter(report)} ·{" "}
-                      {formatNZDateTime(new Date(report.createdAt))}
+                      {formatStamp(new Date(report.createdAt))}
                     </p>
                   </div>
                   <Button
@@ -387,7 +402,7 @@ export function MaintenanceQueueSection() {
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Reported</dt>
-                    <dd>{formatNZDateTime(new Date(detail.createdAt))}</dd>
+                    <dd>{formatStamp(new Date(detail.createdAt))}</dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Status</dt>
@@ -459,9 +474,9 @@ export function MaintenanceQueueSection() {
                         className="max-h-96 w-full rounded-md border object-contain"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Taken {formatNZDateTime(new Date(detail.photo.capturedAt ?? detail.createdAt))}
+                        Taken {formatStamp(new Date(detail.photo.capturedAt ?? detail.createdAt))}
                         {detail.photo.expiresAt
-                          ? ` · deleted automatically after ${formatNZDateTime(new Date(detail.photo.expiresAt))}`
+                          ? ` · deleted automatically after ${formatStamp(new Date(detail.photo.expiresAt))}`
                           : ""}
                       </p>
                     </>
