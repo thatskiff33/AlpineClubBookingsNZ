@@ -18,7 +18,6 @@ import {
 import { isLoginEmailUniqueConflict } from "@/lib/member-email";
 import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
-import { parseDateOnly } from "@/lib/date-only";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import {
   DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
@@ -35,7 +34,8 @@ import {
   type MemberImportDateFieldKey,
   type MemberImportDateFormatMapping,
 } from "@/lib/member-csv-import";
-import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubTime } from "@/lib/club-time/server";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
@@ -263,7 +263,7 @@ export async function POST(req: NextRequest) {
 
   // Optional-field visibility settings. When a field is switched off club-wide
   // we ignore any value present in the CSV rather than importing it.
-  const flags = await loadMemberFieldsFlags();
+  const [flags, club] = await Promise.all([loadMemberFieldsFlags(), clubTime()]);
   const dateFormats: MemberImportDateFormatMapping = {
     dateOfBirth:
       parsed.data.dateFormats?.dateOfBirth ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
@@ -437,7 +437,7 @@ export async function POST(req: NextRequest) {
       cancelledDateForFutureCheck &&
       isMemberImportCancelledDateInFuture(
         formatDateOnly(cancelledDateForFutureCheck),
-        todayDateOnlyForTimeZone(),
+        club.today(),
       )
     ) {
       rowErrors.push(

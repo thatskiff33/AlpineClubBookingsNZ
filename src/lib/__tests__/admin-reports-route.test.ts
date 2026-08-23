@@ -34,6 +34,7 @@ const mockPrisma = {
   member: { count: vi.fn() },
   memberSubscription: { count: vi.fn() },
   lodge: { findUnique: mockLodgeFindUnique },
+  clubTimeSettings: { findUnique: vi.fn() },
 };
 
 const mockAuth = vi.fn();
@@ -434,5 +435,137 @@ describe("admin reports route", () => {
     expect(contractMigration).toContain(
       'ALTER TABLE "Booking" ALTER COLUMN "lodgeId" SET NOT NULL;',
     );
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 — one report window, two encodings, and the zone
+  belongs to exactly one of them.
+
+  The route derives four bounds from the same `?from=&to=` pair. Two are the
+  first and last MOMENT of the club's days, for real-instant columns; two are the
+  two CALENDAR DAYS themselves, for `@db.Date` columns, which take no zone at all
+  because the pg adapter narrows such a bound to its UTC date and a club-midnight
+  instant would land a day early there (INV-DATE-026).
+
+  The member count is where the two meet, and it is the mixed expression #2870
+  names by hand: `joinedDate` is `@db.Date` since #2872 and takes the DAYS, while
+  the `joinedDate: null` fallback reaches for `createdAt`, which is an instant and
+  takes the MOMENTS. Those two branches mean different things and must not be
+  collapsed into one another.
+
+  Both halves are pinned here against a club in `America/Denver` while the
+  environment says `Pacific/Auckland`, so the assertions distinguish the persisted
+  authority from the environment one (INV-CONFIG-002) as well as the day encoding
+  from the instant encoding.
+*/
+describe("admin reports route — the report window comes from the persisted club zone (CT-4, #2870)", () => {
+  const hostTimeZone = captureHostTimeZone();
+
+  beforeAll(() => {
+    // The environment authority the legacy helpers read. Deliberately NOT the
+    // club's persisted zone, so a green run means something.
+    process.env.TZ = "Pacific/Auckland";
+  });
+
+  afterAll(() => {
+    hostTimeZone.restore();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] },
+    });
+    mockRequireActiveSessionUser.mockResolvedValue(null);
+    mockResolveMetricsCapacityAndScope.mockImplementation(async (lodgeId?: string) => ({
+      capacity: 29,
+      bookingLodgeWhere: lodgeId ? { lodgeId } : {},
+    }));
+    zeroMemberQueries();
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+    mockPrisma.clubTimeSettings.findUnique.mockResolvedValue({
+      timeZone: "America/Denver",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    });
+  });
+
+  it("bounds instants by the club's civil day and calendar columns by the plain days", async () => {
+    // THE PREMISE, MEASURED AS AN ANSWER RATHER THAN AN IDENTIFIER. What has to
+    // hold for the instant assertions below to discriminate is that the
+    // ENVIRONMENT authority — `APP_TIME_ZONE`, which is what every legacy helper
+    // reads and what this route used to call — puts the club day somewhere else.
+    // Comparing the two zone NAMES does not establish that: measured,
+    // `TZ=America/Chicago` produces Denver's answer for every fixture in this
+    // file, so a name check passes while the assertion quietly goes vacuous.
+    // `APP_TIME_ZONE` is also frozen at module load, so the `process.env.TZ` pin
+    // above cannot move it once anything has imported it — one more reason to
+    // assert the answer instead of the label.
+    const { startOfDateOnlyForTimeZone } = await import("@/lib/date-only");
+    expect(
+      startOfDateOnlyForTimeZone("2026-04-08").toISOString(),
+      "INV-CONFIG-002: the environment authority now opens the club day at the " +
+        "same instant the persisted zone does, so the bounds below can no longer " +
+        "tell which of the two the route obeyed, and would pass over a reverted " +
+        "migration. Pick a persisted zone the environment disagrees with.",
+    ).not.toBe("2026-04-08T06:00:00.000Z");
+
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-04-08&to=2026-04-08"),
+    );
+    expect(response.status).toBe(200);
+
+    const memberWhere = mockPrisma.member.count.mock.calls
+      .map((call) => (call[0] as { where?: Record<string, unknown> } | undefined)?.where)
+      .find((where) => Array.isArray(where?.OR));
+    const [joinedBranch, createdBranch] = (
+      memberWhere as { OR: Array<Record<string, { gte: Date; lte: Date }>> }
+    ).OR;
+
+    // THE CALENDAR-DATE BRANCH. `@db.Date`, so UTC midnight on both ends and no
+    // zone anywhere near it. In Auckland the old start-of-day would have been
+    // 2026-04-07T12:00Z and in Denver 2026-04-08T06:00Z; the stored day is
+    // neither, and that is the point.
+    expect(joinedBranch.joinedDate.gte.toISOString()).toBe("2026-04-08T00:00:00.000Z");
+    expect(joinedBranch.joinedDate.lte.toISOString()).toBe("2026-04-08T00:00:00.000Z");
+
+    // THE INSTANT BRANCH. 8 April 2026 in Denver is MDT (UTC-6), so the club's
+    // day runs 06:00Z to 05:59:59.999Z the next morning. Under the environment's
+    // Pacific/Auckland it would be 2026-04-07T12:00Z to 2026-04-08T11:59:59.999Z
+    // — a different window over a real column, which is the whole of #2870.
+    expect(createdBranch.createdAt.gte.toISOString()).toBe("2026-04-08T06:00:00.000Z");
+    expect(createdBranch.createdAt.lte.toISOString()).toBe("2026-04-09T05:59:59.999Z");
+  });
+
+  it("refuses a shape-valid date that names no real day, instead of failing later", async () => {
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-02-30&to=2026-03-05"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  /*
+    `9999-12-31` is a REAL day, so it passes both the shape regex and
+    `parseCalendarDate`. What it has not got is a day AFTER it, and the club
+    day's end is defined as the next day's start — so `addCalendarDays` throws a
+    `RangeError` and, because the derivation sits outside the handler's `try`,
+    the request used to die as an unhandled rejection rather than answer at all.
+    That is a REGRESSION from the logged 500 the legacy helper produced, and the
+    URL is not hypothetical: `src/lib/club-time/calendar-date.ts` records
+    `/admin/audit-log?to=9999-12-31` as a value that reached production.
+  */
+  it("refuses a window whose end has no day after it, rather than throwing", async () => {
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-04-08&to=9999-12-31"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 });
