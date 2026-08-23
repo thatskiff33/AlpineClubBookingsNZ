@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   captureHostTimeZone,
   withTimeZone,
@@ -31,7 +30,10 @@ import {
  * The sweep below varies the HOST clock, and that is worth having: it catches a
  * decoder that starts reading `getMonth()` or builds a local-midnight `Date`.
  * `America/Denver` is six hours behind UTC and `Pacific/Kiritimati` fourteen
- * ahead, so either direction of host-local slip moves the day.
+ * ahead. Only the BEHIND one can actually move the day, because a `@db.Date`
+ * column always arrives as UTC midnight — every zone at or ahead of UTC reads
+ * that back as the same day. Kiritimati is swept anyway, as the far edge of the
+ * half that must read back unchanged.
  *
  * IT IS NOT, ON ITS OWN, A TEST OF THE DEFECT, and that was measured rather than
  * reasoned: restoring the old `APP_TIME_ZONE` projection left every one of those
@@ -49,25 +51,51 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
 
   const HOSTILE_ZONES = [
     "UTC",
-    "America/Denver", // behind UTC — a projection reads 31 March
-    "Pacific/Kiritimati", // +14 — a projection reads 2 April
+    "America/Denver", // −6 — the only direction that moves a UTC-midnight day
+    "Pacific/Kiritimati", // +14 — the far edge of the "reads back unchanged" half
     "Pacific/Auckland", // the environment's own zone
   ];
 
-  it("has a premise: at least one hostile zone would give a DIFFERENT day if projected", () => {
-    // Asserted, not assumed. An identifier check ("the host is not Denver")
-    // would leave the sweep below vacuous under a third zone; what matters is
-    // that projecting really would move the day here.
-    const projectedInDenver = new Intl.DateTimeFormat("en-NZ", {
-      timeZone: "America/Denver",
-      dateStyle: "medium",
-    }).format(new Date(ISO_ENCODING));
-    const projectedInEnvironment = new Intl.DateTimeFormat("en-NZ", {
-      timeZone: APP_TIME_ZONE,
-      dateStyle: "medium",
-    }).format(new Date(ISO_ENCODING));
-    expect(projectedInDenver).not.toBe(projectedInEnvironment);
-    expect(projectedInDenver).toBe("31 Mar 2026");
+  it("has a premise: the swept zones really would move the day if this decoder projected", () => {
+    // Asserted, not assumed — but asserted about the RIGHT AXIS, which took a
+    // measurement to get right. This premise used to compare Denver against
+    // `APP_TIME_ZONE`, and with `TZ=America/Denver` it went red with a bare
+    // `expected '31 Mar 2026' not to be '31 Mar 2026'` that reads exactly like
+    // the product bug the file exists to disprove. That comparison belonged to
+    // the ENVIRONMENT axis, which is the last test in this file, not to the
+    // host sweep below.
+    //
+    // What the sweep needs is only this: projecting the stored encoding through
+    // the swept zones really would give more than one answer, and at least one
+    // of them would not be the stored day. Both facts are true on every host on
+    // earth, so this guard can no longer be silenced by an environment.
+    const projected = HOSTILE_ZONES.map((zone) =>
+      new Intl.DateTimeFormat("en-NZ", {
+        timeZone: zone,
+        dateStyle: "medium",
+      }).format(new Date(ISO_ENCODING)),
+    );
+    expect(new Set(projected).size).toBeGreaterThan(1);
+    expect(projected.some((day) => day !== "1 Apr 2026")).toBe(true);
+    // Pinned as a literal so a reader can check it by hand. Note the slip runs
+    // in ONE direction only, and that is a property of the encoding rather than
+    // of this fixture: a `@db.Date` column always arrives as UTC MIDNIGHT, so
+    // every zone at or ahead of UTC reads it back as the same day and only a
+    // zone behind UTC names the day before. That one-sidedness is why the
+    // defect this file guards against hurts a Denver club and is invisible to
+    // an Auckland one — and why the sweep needs a behind-UTC entry to bite.
+    expect(
+      new Intl.DateTimeFormat("en-NZ", {
+        timeZone: "America/Denver",
+        dateStyle: "medium",
+      }).format(new Date(ISO_ENCODING)),
+    ).toBe("31 Mar 2026");
+    expect(
+      new Intl.DateTimeFormat("en-NZ", {
+        timeZone: "Pacific/Kiritimati",
+        dateStyle: "medium",
+      }).format(new Date(ISO_ENCODING)),
+    ).toBe("1 Apr 2026");
   });
 
   it.each(HOSTILE_ZONES)(

@@ -3,20 +3,33 @@
 import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
 
 /**
  * The club's day at the frozen instant (`2026-07-01T00:00:00.000Z`, midday NZ)
  * under the suite's default provider zone, `Pacific/Auckland`.
+ *
+ * IT PROVES NOTHING ABOUT ZONE AUTHORITY on its own: that zone is also what
+ * `APP_TIME_ZONE` resolves to under test, so the migrated code and the
+ * `getTodayDateOnly()` it replaced agree. The zone-authority test further down
+ * chooses a zone the environment is not on, and is the one that can tell them
+ * apart (CT-4, #2870).
  */
 const CLUB_TODAY = "2026-07-01";
 
 /**
- * The same instant for a club in `America/Denver` — six hours behind UTC, so
- * still 30 June. `Pacific/Auckland` is what `APP_TIME_ZONE` also resolves to
- * under test, so only a Denver render can tell the persisted zone from the
- * environment (CT-4, #2870).
+ * The `yyyy-MM-dd` day a given zone is on at the frozen instant, computed
+ * independently of the kernel under test — an oracle, so that one defect inside
+ * `@/lib/club-time` cannot satisfy both sides of a comparison at once.
  */
-const DENVER_TODAY = "2026-06-30";
+const todayIn = (zone: string) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
 const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }));
@@ -280,25 +293,51 @@ describe("fee configuration page", () => {
    *
    * A fee's "effective from" is money — it decides which annual amount a
    * member is charged from which day — so which day it defaults to has to come
-   * from the club's PERSISTED zone (`INV-CONFIG-002`) and nothing else. Under
-   * `America/Denver` at the frozen instant the club day is 30 JUNE, where
-   * Auckland, `APP_TIME_ZONE` and the host clock all say 1 July.
+   * from the club's PERSISTED zone (`INV-CONFIG-002`) and nothing else. A club
+   * zone the environment is NOT on is what shows that: at the frozen instant a
+   * club six hours behind UTC is still on 30 June while one fourteen hours ahead
+   * has reached 1 July.
+   *
+   * ## Why the zone is CHOSEN rather than written down
+   *
+   * The premise here used to be `expect(DENVER_TODAY).not.toBe(CLUB_TODAY)` —
+   * two of this file's own constants, which can never disagree. So it could not
+   * fail, and MEASURED on this branch: with `TZ=America/Denver` the environment
+   * became Denver, this assertion stopped telling the persisted zone from the
+   * environment, and nothing went red. A premise that never consults the
+   * environment is not a premise about the environment.
    */
   it("defaults the effective-from date to the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
-    // Premise, asserted rather than assumed: an identifier check would pass
-    // under a third zone while leaving the expectation vacuous.
-    expect(DENVER_TODAY).not.toBe(CLUB_TODAY);
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      cases: [
+        { zone: "America/Denver", today: "2026-06-30" }, // −6: still 30 June
+        { zone: "Pacific/Kiritimati", today: "2026-07-01" }, // +14: already 1 July
+      ],
+      // An INDEPENDENT oracle, not `clubToday`: reading "what this zone would
+      // say" through the kernel under test would let one defect satisfy both
+      // sides. `en-CA` numeric is `yyyy-MM-dd`, the shape this field holds.
+      answerFor: (zone) => todayIn(zone),
+      // NOT `["UTC"]`. At one instant there are only two calendar days on
+      // earth, both already taken by the two candidates, so a second rival
+      // would leave nothing to choose and the chooser would refuse a correct
+      // tree. It is not needed either: `clubToday` consults only the zone it is
+      // handed, so "read the machine's clock" is not a reachable mutation — the
+      // reachable one is "read APP_TIME_ZONE", which the environment excludes.
+    });
+    const environmentToday = todayIn(APP_TIME_ZONE);
+    expect(chosen.today).not.toBe(environmentToday);
 
     stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />, {
       wrapper: ({ children }) => (
-        <ClubTimeProvider zone="America/Denver">{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
       ),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
 
-    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(DENVER_TODAY);
-    expect((document.querySelector("#entrance-from") as HTMLInputElement)?.value ?? DENVER_TODAY).toBe(DENVER_TODAY);
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(chosen.today);
+    expect((document.querySelector("#entrance-from") as HTMLInputElement)?.value ?? chosen.today).toBe(chosen.today);
   });
 
   it("commits an unchanged membership fee payload from edit mode", async () => {

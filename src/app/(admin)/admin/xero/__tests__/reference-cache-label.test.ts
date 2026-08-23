@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatReferenceCacheLabel } from "../_components/shared";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
 
 /**
  * #2256 first fixed this label: it was built from bare `toLocaleString()` calls,
@@ -11,50 +12,112 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
  * PERSISTED `ClubTimeSettings.timeZone`, supplied by the caller's binding, and
  * not `APP_TIME_ZONE` (INV-CONFIG-002).
  *
- * ## Why the zone here is `America/Denver` and not `Pacific/Auckland`
+ * ## Why the club zone is CHOSEN here rather than hard-coded
  *
- * Because a test under `Pacific/Auckland` CANNOT TELL THE TWO APART. That is the
- * zone `APP_TIME_ZONE` resolves to under test and the zone the old code used, so
- * the migrated code and the code it replaced return the identical string —
- * "false and green", the trap `CLUB_TIME_KERNEL.md` names. `America/Denver` is
- * behind UTC, where the defects show: at the fixture instant it disagrees with
- * `APP_TIME_ZONE` on the DAY and with the host's UTC clock on the HOUR, so the
- * single expected string below is reachable from neither.
+ * A test under `Pacific/Auckland` CANNOT TELL THE TWO APART. That is the zone
+ * `APP_TIME_ZONE` resolves to under test and the zone the old code used, so the
+ * migrated code and the code it replaced return the identical string — "false
+ * and green", the trap `CLUB_TIME_KERNEL.md` names. `America/Denver` escapes
+ * that, which is why it was the house choice.
+ *
+ * But it escapes it BY COINCIDENCE. Run this suite with `TZ=America/Denver` and
+ * the club zone and the environment become the same zone again — measured on
+ * this branch, where that is exactly what happened. So the zone is now picked
+ * from a table of candidates, each carrying its own hand-written expected label,
+ * and `chooseDivergentClubZone` takes the first that disagrees with BOTH the
+ * environment and UTC. On any ordinary host that is Denver and every literal
+ * below is the one a reader can check by hand; on a Denver host it is
+ * Kiritimati instead, and the suite stays discriminating rather than going
+ * quietly green.
+ *
+ * UTC is a rival here and not merely the environment, because the assertion
+ * pins the host to UTC on purpose: if the binding were ignored in favour of the
+ * host clock, the hour would be 11:30 pm, and that has to be an answer no
+ * candidate can accidentally produce.
  */
 describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
-  /** The club's persisted zone for this suite. Deliberately not the environment's. */
-  const CLUB_ZONE = "America/Denver";
-  const clubTime = bindClubTime(requireClubTimeZone(CLUB_ZONE));
-
   // 2026-04-15T23:30:00Z is 16 Apr 11:30 am in Pacific/Auckland, 15 Apr 5:30 pm
-  // in America/Denver and 15 Apr 11:30 pm in UTC. Three different answers, which
-  // is what makes the assertion below discriminating.
+  // in America/Denver, 16 Apr 1:30 pm in Pacific/Kiritimati and 15 Apr 11:30 pm
+  // in UTC. Four different answers, which is what leaves room to choose.
   const CACHE = {
     source: "database" as const,
     lastRefreshedAt: "2026-04-15T23:30:00.000Z",
     expiresAt: "2026-04-16T11:30:00.000Z",
   };
 
-  it("has a premise: the environment zone gives a DIFFERENT answer from the club's", () => {
-    // Not `expect(APP_TIME_ZONE).not.toBe("America/Denver")` — an identifier
-    // check passes under America/Chicago while the assertion below goes vacuous.
-    // What matters is that the two zones disagree on THIS instant.
-    const environmentAnswer = bindClubTime(
-      requireClubTimeZone(APP_TIME_ZONE),
-    ).instantDateTime(new Date(CACHE.lastRefreshedAt));
-    const clubAnswer = clubTime.instantDateTime(new Date(CACHE.lastRefreshedAt));
-    expect(clubAnswer).not.toBe(environmentAnswer);
+  /**
+   * Candidate club zones in preference order, each with the label it — and only
+   * it — produces. Both are far from UTC in opposite directions, so whichever
+   * the environment turns out to be, one of them still disagrees with it.
+   */
+  const CANDIDATES = [
+    {
+      zone: "America/Denver", // six hours behind UTC
+      refreshed: "15 Apr 2026, 5:30 pm",
+      label:
+        "Accounts: shared cache, refreshed 15 Apr 2026, 5:30 pm, expires 16 Apr 2026, 5:30 am",
+    },
+    {
+      zone: "Pacific/Kiritimati", // fourteen hours ahead of UTC
+      refreshed: "16 Apr 2026, 1:30 pm",
+      label:
+        "Accounts: shared cache, refreshed 16 Apr 2026, 1:30 pm, expires 17 Apr 2026, 1:30 am",
+    },
+  ];
+
+  /**
+   * The whole label is what the assertion pins, so the whole label is what the
+   * choice has to diverge on — a candidate agreeing with a rival on one of the
+   * two stamps would leave half the assertion vacuous.
+   *
+   * Deliberately an INDEPENDENT projection rather than `bindClubTime`, for two
+   * reasons. It is an oracle: computing "what this zone would render" through
+   * the very kernel under test would let a kernel-wide defect satisfy both
+   * sides at once. And the rivals are not all club zones — the kernel refuses
+   * `"UTC"` as a club timezone (`INV-CONFIG-002` bans a fixed offset), while a
+   * runner with `TZ=UTC` makes `APP_TIME_ZONE` exactly that. `Intl` accepts
+   * what the pre-CT-4 code accepted, which is the right admissibility rule for
+   * a "what would the old code have produced" question.
+   */
+  const DATE_TIME_SHAPE: Intl.DateTimeFormatOptions = {
+    dateStyle: "medium",
+    timeStyle: "short",
+  };
+  const answerFor = (zone: string) => {
+    const formatter = new Intl.DateTimeFormat(APP_LOCALE, {
+      ...DATE_TIME_SHAPE,
+      timeZone: zone,
+    });
+    return [CACHE.lastRefreshedAt, CACHE.expiresAt]
+      .map((stamp) => formatter.format(new Date(stamp)))
+      .join(" | ");
+  };
+
+  const chosen = chooseDivergentClubZone({
+    subject: "the Xero reference-cache stamps",
+    cases: CANDIDATES,
+    answerFor,
+    // The host, which the assertion pins to UTC so a host read is visible.
+    alsoDifferFrom: ["UTC"],
+  });
+  const clubTime = bindClubTime(requireClubTimeZone(chosen.zone));
+
+  it("has a premise: the chosen club zone answers differently from the environment and from UTC", () => {
+    // `chooseDivergentClubZone` already threw if this were false — it runs in
+    // the describe body, where a failure cannot be skipped past. This states it
+    // as a named test anyway, so a reader scanning the list can see the
+    // assertion below is not vacuous without having to trust the helper.
+    expect(answerFor(chosen.zone)).not.toBe(answerFor(APP_TIME_ZONE));
+    expect(answerFor(chosen.zone)).not.toBe(answerFor("UTC"));
   });
 
   it("renders both stamps in the club's persisted zone, not the host's and not APP_TIME_ZONE", () => {
     // Pinned to UTC so the host is a third zone again: if the binding were
-    // ignored in favour of the host, the hour below would be 11:30 pm.
+    // ignored in favour of the host, the refreshed stamp would read 11:30 pm.
     const label = withTimeZone("UTC", () =>
       formatReferenceCacheLabel(clubTime, "Accounts", CACHE),
     );
-    expect(label).toBe(
-      "Accounts: shared cache, refreshed 15 Apr 2026, 5:30 pm, expires 16 Apr 2026, 5:30 am",
-    );
+    expect(label).toBe(chosen.label);
   });
 
   it("still degrades to 'unknown' on an unparseable stamp instead of throwing", () => {
@@ -62,7 +125,7 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
       ...CACHE,
       expiresAt: "not-a-date",
     });
-    expect(label).toContain("refreshed 15 Apr 2026, 5:30 pm");
+    expect(label).toContain(`refreshed ${chosen.refreshed}`);
     expect(label).toContain("expires unknown");
   });
 

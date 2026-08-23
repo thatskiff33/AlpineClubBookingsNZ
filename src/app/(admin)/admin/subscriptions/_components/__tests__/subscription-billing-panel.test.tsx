@@ -3,6 +3,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -37,11 +39,25 @@ import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_com
 const CLUB_TODAY = "2026-07-01";
 
 /**
- * The club's day at the same frozen instant for a club in `America/Denver` —
- * six hours behind UTC, so still 30 June when Auckland has ticked over. This is
- * the value no environment read can produce here.
+ * The two candidate club zones for the zone-authority test at the bottom of this
+ * file, with the day each of them is on at the frozen instant.
+ *
+ * AT ANY ONE INSTANT THERE ARE ONLY EVER TWO CALENDAR DAYS ON EARTH, and that
+ * bounds what this test can do: one candidate for each of them, and the choice
+ * is whichever one the environment is NOT on. It also means `"UTC"` must not be
+ * added as a rival — with the environment on one day and UTC on the other, no
+ * candidate could contradict both and the chooser would refuse a correct tree.
+ *
+ * Not needing that rival is a fact about the code, not a convenience: the only
+ * zone `clubToday` consults is the one it is handed, so "the panel read the
+ * machine's clock" is not a reachable mutation here. The reachable one is "the
+ * panel read `APP_TIME_ZONE`" — the adapter call this change removed — and the
+ * environment is exactly the rival that excludes it.
  */
-const DENVER_TODAY = "2026-06-30";
+const CLUB_TODAY_CANDIDATES = [
+  { zone: "America/Denver", today: "2026-06-30" }, // −6: still 30 June
+  { zone: "Pacific/Kiritimati", today: "2026-07-01" }, // +14: already 1 July
+];
 
 function payload(options: {
   decisionDate?: string;
@@ -265,23 +281,53 @@ describe("subscription billing panel", () => {
    * environment, and would pass just as happily against the code this change
    * replaced.
    *
-   * `America/Denver` can. At the frozen instant `2026-07-01T00:00:00.000Z` the
-   * club day in Denver is 30 JUNE, where Auckland, the host (UTC on CI) and
-   * `APP_TIME_ZONE` all say 1 July. So the request below carries `2026-06-30`
-   * only if the panel really asked the persisted zone.
+   * A club zone the environment is NOT on can. At the frozen instant
+   * `2026-07-01T00:00:00.000Z` a club six hours behind UTC is still on 30 JUNE
+   * while one fourteen hours ahead has reached 1 July, so the request below
+   * carries the chosen day only if the panel really asked the persisted zone.
+   *
+   * ## Why the zone is CHOSEN and not written down
+   *
+   * It used to be the literal `America/Denver`, and its premise compared two of
+   * this file's own constants — `DENVER_TODAY` against `CLUB_TODAY`. Two
+   * literals never disagree, so that premise could not fail, and MEASURED on
+   * this branch: with `TZ=America/Denver` the environment became Denver, this
+   * assertion stopped distinguishing the persisted zone from the environment,
+   * and NOTHING WENT RED. That is worse than the three sibling premises that at
+   * least failed loudly, because a silent pass is indistinguishable from a
+   * proof. `chooseDivergentClubZone` consults the environment, which is the
+   * whole difference.
    */
-  it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
-    // Premise, asserted rather than assumed: the two zones must disagree on
-    // this instant, or the expectation below is vacuous. An identifier check —
-    // "the environment is not America/Denver" — would pass under
-    // America/Chicago while proving nothing.
-    expect(DENVER_TODAY).not.toBe(CLUB_TODAY);
+  it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      cases: CLUB_TODAY_CANDIDATES,
+      // An INDEPENDENT oracle rather than `clubToday`, so a kernel-wide defect
+      // cannot satisfy both sides of the comparison at once. `en-CA` numeric is
+      // `yyyy-MM-dd`, which is the shape the panel puts on the wire.
+      answerFor: (zone) =>
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: zone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date()),
+    });
+    const environmentToday = new Intl.DateTimeFormat("en-CA", {
+      timeZone: APP_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    // Stated as a named assertion too, so a reader can see the expectation
+    // below is not vacuous without having to trust the helper.
+    expect(chosen.today).not.toBe(environmentToday);
 
     mocks.canEdit.mockReturnValue(true);
     const fetchMock = vi.mocked(fetch);
     render(<SubscriptionBillingPanel seasonYear={2026} />, {
       wrapper: ({ children }) => (
-        <ClubTimeProvider zone="America/Denver">{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
       ),
     });
     await screen.findByRole("button", { name: "Confirm and queue annual batch" });
@@ -290,13 +336,13 @@ describe("subscription billing panel", () => {
       .map(([input]) => String(input))
       .filter((url) => url.includes("decisionDate="));
     expect(requested.length).toBeGreaterThan(0);
-    expect(requested.every((url) => url.includes(`decisionDate=${DENVER_TODAY}`))).toBe(true);
-    expect(requested.some((url) => url.includes(`decisionDate=${CLUB_TODAY}`))).toBe(false);
+    expect(requested.every((url) => url.includes(`decisionDate=${chosen.today}`))).toBe(true);
+    expect(requested.some((url) => url.includes(`decisionDate=${environmentToday}`))).toBe(false);
 
     // And the operator sees the same day in the field they can change.
     expect(
       (screen.getByLabelText("Decision date") as HTMLInputElement).value,
-    ).toBe(DENVER_TODAY);
+    ).toBe(chosen.today);
   });
 
   // #2161 (D2): mark a PER_FAMILY entry as already invoiced (with an optional note).

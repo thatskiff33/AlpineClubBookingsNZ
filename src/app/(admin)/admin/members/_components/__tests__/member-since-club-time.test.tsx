@@ -6,7 +6,9 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
-import { APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
 import type { Member } from "../../_types";
 import { MemberTable } from "../member-table";
 
@@ -31,14 +33,36 @@ import { MemberTable } from "../member-table";
  * either mutation — projecting the calendar date, or refusing to project the
  * instant — fails one of the two assertions below.
  *
- * ## Why `America/Denver`
+ * ## Two different claims, and they need two different fixtures
  *
- * Because `Pacific/Auckland` cannot discriminate. It is what `APP_TIME_ZONE`
- * resolves to under test, so the migrated code and the `formatNZDate` it
- * replaced return the identical string, and an assertion under it would pass
- * against the defect. Denver is behind UTC, which is where these defects show.
+ * This file used to make both claims with one zone and one wire value, and that
+ * could not work. They are:
+ *
+ * 1. **The opposition** — one wire value, two branches, two different strings.
+ *    This REQUIRES a club zone behind UTC, and no choice about it is available:
+ *    a `@db.Date` column arrives as UTC midnight, so every zone at or ahead of
+ *    UTC reads the instant back as the very day the calendar branch renders and
+ *    the opposition disappears. `America/Denver` is fixed here for that reason,
+ *    and the premise below asserts the opposition really exists rather than
+ *    assuming it.
+ * 2. **Zone authority** — the club's PERSISTED zone decided this, not
+ *    `APP_TIME_ZONE`. That needs the club zone to DISAGREE with the environment,
+ *    and at UTC midnight there are only two possible days on earth, both of them
+ *    already spoken for by claim 1. So on a behind-UTC host — `TZ=America/Denver`
+ *    is the measured case — claim 2 is unsatisfiable at this fixture: the club's
+ *    reading and the environment's are the same string, and the old code and the
+ *    new code cannot be told apart.
+ *
+ * Claim 2 therefore gets its own fixture: a MID-DAY instant, where the two
+ * candidate club zones straddle the day boundary in opposite directions, so
+ * whichever day the environment lands on, one candidate still contradicts it.
+ * `chooseDivergentClubZone` makes that choice; see the last test.
  */
 
+/**
+ * Fixed, not chosen. See claim 1 above: the opposition only exists for a club
+ * zone behind UTC, so there is nothing here to pick between.
+ */
 const CLUB_ZONE = "America/Denver";
 
 /** The wire value both branches are given, so only the READING can differ. */
@@ -116,7 +140,7 @@ const baseMember: Member = {
   currentMembershipType: null,
 };
 
-function renderInClubZone(members: Member[]) {
+function renderInClubZone(members: Member[], zone: string = CLUB_ZONE) {
   return render(
     <MemberTable
       members={members}
@@ -136,7 +160,7 @@ function renderInClubZone(members: Member[]) {
     />,
     {
       wrapper: ({ children }: { children: ReactNode }) => (
-        <ClubTimeProvider zone={CLUB_ZONE}>{children}</ClubTimeProvider>
+        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
       ),
     },
   );
@@ -145,19 +169,22 @@ function renderInClubZone(members: Member[]) {
 describe("members list · 'Member since' reads two concepts, not one (CT-4, #2870)", () => {
   afterEach(() => cleanup());
 
-  it("has a premise: the club's zone and the environment's disagree on this instant", () => {
-    // Not `expect(APP_TIME_ZONE).not.toBe(CLUB_ZONE)` — an identifier check
-    // passes under America/Chicago while the assertions below go vacuous. What
-    // has to be true is that the two zones give DIFFERENT ANSWERS here.
-    const environmentAnswer = bindClubTime(
-      requireClubTimeZone(APP_TIME_ZONE),
-    ).instantDate(new Date(WIRE_VALUE));
+  it("has a premise: the OPPOSITION exists — the club's zone reads this wire value as a different day from the one it encodes", () => {
+    // This used to compare the club's zone against `APP_TIME_ZONE`, and with
+    // `TZ=America/Denver` it went red with a bare
+    // `expected '31 Mar 2026' not to be '31 Mar 2026'` — which reads exactly
+    // like the product bug the file exists to disprove. That was the wrong
+    // premise for these two assertions: what they need is that the two BRANCHES
+    // disagree, not that the club and the environment do. Zone authority is a
+    // separate claim with its own fixture, in the last test.
+    //
+    // This premise is true on every host, because both readings are computed
+    // from explicit zones and neither consults the machine.
     const clubAnswer = bindClubTime(requireClubTimeZone(CLUB_ZONE)).instantDate(
       new Date(WIRE_VALUE),
     );
-    expect(clubAnswer).not.toBe(environmentAnswer);
     expect(clubAnswer).toBe(DENVER_CIVIL_DAY);
-    expect(environmentAnswer).toBe(CALENDAR_DAY);
+    expect(clubAnswer).not.toBe(CALENDAR_DAY);
   });
 
   it("renders joinedDate as the stored CALENDAR DAY, with no zone applied", () => {
@@ -172,7 +199,8 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
     renderInClubZone([{ ...baseMember, joinedDate: null }]);
 
     expect(screen.getByText(DENVER_CIVIL_DAY)).toBeInTheDocument();
-    // Reading the instant in UTC — or in APP_TIME_ZONE — would produce this.
+    // Reading the instant in UTC, or refusing to project it at all and treating
+    // it as the calendar day it encodes, would produce this instead.
     expect(screen.queryByText(CALENDAR_DAY)).toBeNull();
   });
 
@@ -184,5 +212,56 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
     renderInClubZone([{ ...baseMember, joinedDate: "2026-04-01" }]);
 
     expect(screen.getByText(CALENDAR_DAY)).toBeInTheDocument();
+  });
+
+  /**
+   * CLAIM 2: the PERSISTED zone decided this, not the environment's.
+   *
+   * A mid-day instant, because that is what leaves the choice open. At
+   * `2026-04-01T13:00:00Z` a club six hours behind UTC is still on 1 April while
+   * one fourteen hours ahead has reached 2 April, so whichever of those two days
+   * the environment happens to be on, the other candidate contradicts it. The
+   * opposition fixture above cannot do this — see the file docblock.
+   *
+   * The host is pinned to the environment's own zone for the render. That is not
+   * a weakening: it collapses the two ways of being wrong ("read
+   * `APP_TIME_ZONE`" and "read the machine") into ONE answer, which the single
+   * assertion below then excludes. With the two left free, at date granularity
+   * they can occupy both available days between them and no club zone can
+   * contradict both.
+   */
+  it("reads createdAt in the club's PERSISTED zone, not the environment's and not the host's", () => {
+    const MID_DAY_INSTANT = "2026-04-01T13:00:00.000Z";
+    const chosen = chooseDivergentClubZone({
+      subject: "the civil day of a mid-day createdAt",
+      cases: [
+        { zone: "America/Denver", civilDay: "1 Apr 2026" }, // −6, still 1 April
+        { zone: "Pacific/Kiritimati", civilDay: "2 Apr 2026" }, // +14, already 2 April
+      ],
+      // An INDEPENDENT oracle, not `bindClubTime`: computing "what this zone
+      // would render" through the kernel under test would let one kernel-wide
+      // defect satisfy both sides. It also has to accept zones the kernel
+      // rightly refuses as a CLUB zone — a runner with `TZ=UTC` makes
+      // `APP_TIME_ZONE` a fixed offset, which `requireClubTimeZone` throws on.
+      answerFor: (zone) =>
+        new Intl.DateTimeFormat(APP_LOCALE, {
+          timeZone: zone,
+          dateStyle: "medium",
+        }).format(new Date(MID_DAY_INSTANT)),
+    });
+    const environmentDay = new Intl.DateTimeFormat(APP_LOCALE, {
+      timeZone: APP_TIME_ZONE,
+      dateStyle: "medium",
+    }).format(new Date(MID_DAY_INSTANT));
+    expect(chosen.civilDay).not.toBe(environmentDay);
+
+    withTimeZone(APP_TIME_ZONE, () => {
+      renderInClubZone(
+        [{ ...baseMember, joinedDate: null, createdAt: MID_DAY_INSTANT }],
+        chosen.zone,
+      );
+      expect(screen.getByText(chosen.civilDay)).toBeInTheDocument();
+      expect(screen.queryByText(environmentDay)).toBeNull();
+    });
   });
 });

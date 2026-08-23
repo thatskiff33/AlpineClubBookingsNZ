@@ -25,9 +25,35 @@ import {
 } from "@/components/help-widget/help-widget-context";
 import { APPLIED_PAYMENTS_SEARCH_MAX_CHARS } from "@/app/(admin)/admin/payments/_applied-query-vocabulary";
 import { getPaymentsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import { getDiagnosticsPageContextRoute } from "@/lib/diagnostics/page-context/registry";
 import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "@/lib/diagnostics/page-context/types";
+
+/**
+ * The club day the PAGE will be on, taken from the zone the render actually
+ * supplies (CT-4, #2870).
+ *
+ * This was `todayDateOnlyForTimeZone()`, which defaults its zone to
+ * `APP_TIME_ZONE` — the container's `TZ`. Since CT-4 the payments page takes
+ * its default activity window from the club's zone delivered through
+ * `ClubTimeProvider`, so the two only agree while the environment happens to
+ * BE the provider's zone. MEASURED: with `TZ=America/Denver` this suite failed
+ * three payments assertions against entirely correct code — the fixture said
+ * 30 June and the page, correctly reading its provider, said 1 July.
+ *
+ * An expectation derived from the environment while the component reads the
+ * provider is the reverse of the defect this epic is closing, and it fails on
+ * exactly the deployments the epic exists to protect. It is computed with an
+ * independent `Intl` projection rather than through the kernel, so a defect
+ * inside `@/lib/club-time` cannot satisfy both sides of the comparison.
+ */
+const clubTodayForRender = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: CLUB_TIME_TEST_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
 const routerMocks = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -218,7 +244,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const { default: PaymentsPage } = await import(
       "@/app/(admin)/admin/payments/page"
     );
-    const clubToday = todayDateOnlyForTimeZone();
+    const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
 
     render(
@@ -261,7 +287,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const { default: PaymentsPage } = await import(
       "@/app/(admin)/admin/payments/page"
     );
-    const clubToday = todayDateOnlyForTimeZone();
+    const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
 
     render(
@@ -302,7 +328,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const { default: PaymentsPage } = await import(
       "@/app/(admin)/admin/payments/page"
     );
-    const clubToday = todayDateOnlyForTimeZone();
+    const clubToday = clubTodayForRender();
 
     render(
       <HelpWidgetProvider>
@@ -333,7 +359,7 @@ describe("/admin/payments publishes the window it applied (#2816)", () => {
     const { default: PaymentsPage } = await import(
       "@/app/(admin)/admin/payments/page"
     );
-    const clubToday = todayDateOnlyForTimeZone();
+    const clubToday = clubTodayForRender();
     const defaults = getPaymentsDatasetDefaults(clubToday);
 
     render(
