@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createAuditLog } from "@/lib/audit";
 import { DEFAULT_FAMILY_BILLING_MODE, FAMILY_BILLING_MODES } from "@/lib/authoritative-fees";
-import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import {
   buildSubscriptionBillingPreview,
   confirmSubscriptionBillingPreview,
@@ -108,9 +110,11 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
   const parsed = querySchema.safeParse(Object.fromEntries(new URL(request.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid billing preview query." }, { status: 400 });
+  // No explicit decision date means "today": the club's calendar day from the PERSISTED
+  // timezone (CT-4, #2870), as the UTC-midnight value an explicit date parses to.
   const decisionDate = parsed.data.decisionDate
     ? (isDateOnlyString(parsed.data.decisionDate) ? parseDateOnly(parsed.data.decisionDate) : null)
-    : getTodayDateOnly();
+    : dateOnlyInstantOf((await clubTime()).today());
   if (!decisionDate) return NextResponse.json({ error: "Decision date must be YYYY-MM-DD." }, { status: 400 });
   const seasonYear = parsed.data.seasonYear ?? getSeasonYear(decisionDate);
   try {

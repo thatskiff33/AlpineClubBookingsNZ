@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addDays } from "date-fns";
 import { BookingStatus, PaymentStatus } from "@prisma/client";
 import fc from "fast-check";
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   buildBookingTrendSeries,
   buildRevenueSeries,
@@ -258,4 +259,66 @@ describe("admin reports helpers", () => {
       ]),
     ).toBe(11_100);
   });
+});
+
+/*
+  CT-4 (#2870), epic #2988 -- the overlapping-guest count is calendar-day
+  arithmetic, so no zone may reach it.
+
+  `BookingGuest.stayStart`/`stayEnd` and `Booking.checkIn`/`checkOut` are
+  `@db.Date`, and `src/app/api/admin/reports/route.ts` hands the window in the
+  same encoding, so all four sides of the overlap test are UTC-midnight
+  encodings of a day (INV-DATE-010).
+
+  BOTH SIDES USED TO BE ZONE-DEPENDENT, IN TWO DIFFERENT ZONES. The guest keys
+  went through `formatDateOnlyForTimeZone`, which reads `APP_TIME_ZONE`; the
+  range keys went through date-fns `format`, which reads the HOST's zone. Both
+  are the identity for a zone at or ahead of UTC, so New Zealand never saw it,
+  and the two agreeing is what made the whole thing look correct rather than
+  merely lucky.
+
+  Measured on the fixture below with the host moved behind UTC and the
+  environment left at Pacific/Auckland -- which is a real deployment shape, not
+  a contrivance: a container that sets `NEXT_PUBLIC_TZ` but not `TZ` -- the old
+  code returned ZERO guests where there is one. The guest holds the only night
+  in the window, and the range keys slid back a day while the guest keys did
+  not.
+
+  This test therefore does the one thing the property allows: it asks the same
+  question from three different host zones, one behind UTC, one at it and one
+  ahead, and requires the same answer from all three. It is also why fixing only
+  the guest half would have been a regression rather than a fix -- that would
+  break the mirror image, a self-consistent host and club both behind UTC, which
+  the old code got right by accident.
+*/
+describe("summarizeOverlappingGuests is host-timezone independent (CT-4, #2870)", () => {
+  function countOneNightGuest() {
+    return summarizeOverlappingGuests(
+      [
+        booking({
+          checkIn: date("2026-04-08"),
+          checkOut: date("2026-04-09"),
+          guests: [
+            {
+              id: "one-night-guest",
+              isMember: true,
+              stayStart: date("2026-04-08"),
+              stayEnd: date("2026-04-09"),
+            },
+          ],
+        }),
+      ],
+      date("2026-04-08"),
+      date("2026-04-08"),
+    ).totalGuests;
+  }
+
+  it.each(["America/Denver", "UTC", "Pacific/Auckland"])(
+    "counts the guest holding the only night in the window, on a host in %s",
+    (hostZone) => {
+      // `stayEnd` is half-open -- a departure morning (INV-DATE-003) -- so this
+      // guest holds exactly the night of the 8th, which is the whole window.
+      expect(withTimeZone(hostZone, countOneNightGuest)).toBe(1);
+    },
+  );
 });

@@ -6,7 +6,7 @@ import {
   requireFullAdminForConfigTransfer,
 } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubTime } from "@/lib/club-time/server";
 
 // POST /api/admin/config-transfer/reseal — full-admin only.
 // Accepts a hand-edited bundle (multipart 'bundle' file) and returns a copy with
@@ -23,7 +23,8 @@ export async function POST(request: Request) {
 
   try {
     const zip = resealBundle(uploaded.upload.bytes);
-    const stamp = todayDateOnlyForTimeZone();
+    // The club's calendar day, from the PERSISTED club timezone (CT-4, #2870).
+    const stamp = (await clubTime()).today();
     return new NextResponse(new Uint8Array(zip), {
       status: 200,
       headers: {
