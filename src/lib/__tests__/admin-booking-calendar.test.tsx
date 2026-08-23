@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 
 // The component reads router/search params from next/navigation; provide
@@ -21,23 +30,31 @@ vi.mock("next/navigation", () => ({
 // PINNED clock rather than the runner's. (The LAST two describes pin a
 // different instant of their own for a deterministic June grid.) The instant is
 // chosen, not arbitrary: 2026-06-30T22:00Z is 30 June in UTC and 1 July in NZ
-// (10:00 NZST). The component seeds its month from the club timezone
-// (`getTodayDateOnly`), so with the club on NZ time it renders JULY here — a
+// (10:00 NZST). The component seeds its month from the CLUB's timezone
+// (`clubTime.today()`), so with the club on NZ time it renders JULY here — a
 // component that regressed to the runner's local date would render June on a
 // UTC runner and paint none of the fixtures below. That disagreement used to
 // exist only during the last hours of a month, which is exactly why it reached
-// CI unnoticed (#2426); pinning it makes the same regression fail on every run
-// where the club zone differs from the runner's — the CI shape (TZ unset,
-// club Pacific/Auckland). When TZ is set, `APP_TIME_ZONE` follows it, the two
-// zones agree, and this particular check is inert by construction.
+// CI unnoticed (#2426); pinning it makes the same regression fail on every run.
+//
+// THE ZONE THE FIXTURES ARE BUILT IN IS THE HARNESS'S, NOT THE ENVIRONMENT'S,
+// and after CT-4 (#2870) that distinction is load-bearing. Until CT-4 the
+// component read `APP_TIME_ZONE` and so did this line, so the two agreed
+// whatever `TZ` said and the old comment here could truthfully call the check
+// inert on a `TZ`-set host. The component now reads the ClubTimeProvider, so a
+// fixture month derived from `APP_TIME_ZONE` follows the HOST while the calendar
+// follows the PROVIDER: on `TZ=America/Denver` the fixtures landed in June, the
+// calendar opened on July, and nine of the thirteen tests below failed against
+// entirely correct code. `CLUB_TIME_TEST_ZONE` is what the harness mounts, so
+// both sides now name the same authority and no host can move one without the
+// other.
 //
 // The month is then resolved the way the COMPONENT resolves it — the club
-// timezone's calendar date for that instant, as UTC midnight. This is
-// `getTodayDateOnly()`'s own computation with the pinned instant substituted for
-// `new Date()`, which is what the module scope needs: fixtures are built at
-// import time, before any `beforeEach` can install the fake clock.
+// timezone's calendar date for that instant, as UTC midnight — which is what the
+// module scope needs: fixtures are built at import time, before any `beforeEach`
+// can install the fake clock.
 const PINNED_NOW = new Date("2026-06-30T22:00:00.000Z"); // NZ 2026-07-01 10:00
-const now = normalizeDateOnlyForTimeZone(PINNED_NOW); // 2026-07-01
+const now = normalizeDateOnlyForTimeZone(PINNED_NOW, CLUB_TIME_TEST_ZONE); // 2026-07-01
 const isoDay = (day: number) =>
   `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
@@ -421,5 +438,83 @@ describe("AdminBookingCalendar past-day greying (#2088 D-G2)", () => {
 
     expect(dataPast(container, "2026-07-01")).toBeNull();
     expect(dataPast(container, "2026-07-15")).toBeNull();
+  });
+});
+
+/**
+ * THE CLUB'S PERSISTED ZONE DECIDES WHICH MONTH OPENS (CT-4, #2870; epic #2988;
+ * INV-CONFIG-002).
+ *
+ * Everything above renders through the harness's default provider, which is
+ * `Pacific/Auckland` — the same answer `APP_TIME_ZONE` gives under test — so the
+ * migrated code and the code it replaced produce the identical grid and none of
+ * those assertions can tell the persisted zone from the environment. That is
+ * deliberate: they are about bars, overflow and greying, and re-pointing them at
+ * a foreign zone would change what they mean without proving anything.
+ *
+ * This pair is the one that is about the ZONE. The same component, the same
+ * pinned instant, under two provider zones, asserted to open on two different
+ * MONTHS. An implementation that ignored the provider — reading `APP_TIME_ZONE`,
+ * the viewer's clock, or a hard-coded `Pacific/Auckland` — answers both halves
+ * identically and fails one of them, whatever the host's `TZ` happens to be.
+ */
+describe("AdminBookingCalendar opens on the CLUB's month (CT-4, #2870)", () => {
+  /** Behind UTC, so it disagrees with both the harness zone and a UTC host. */
+  const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+
+  function providerFor(zone: string) {
+    return function PinnedClubTime({ children }: { children: ReactNode }) {
+      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(PINNED_NOW);
+    stubCalendar({ bookings: [], availability: {} });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    window.localStorage.clear();
+  });
+
+  it("opens on June for a club six hours behind UTC", async () => {
+    /*
+      PREMISE, as an ANSWER rather than an identifier: on this pinned instant the
+      two zones fall in DIFFERENT MONTHS. Asserting the calendar day rather than
+      comparing zone names is what stops this going vacuous if the fixture instant
+      is ever edited — a name check passes happily under America/Chicago while the
+      assertion beneath it stops discriminating.
+    */
+    expect(
+      normalizeDateOnlyForTimeZone(PINNED_NOW, CLUB_ZONE_BEHIND_UTC)
+        .toISOString()
+        .slice(0, 10),
+    ).toBe("2026-06-30");
+    expect(
+      normalizeDateOnlyForTimeZone(PINNED_NOW, CLUB_TIME_TEST_ZONE)
+        .toISOString()
+        .slice(0, 10),
+    ).toBe("2026-07-01");
+
+    render(<AdminBookingCalendar />, {
+      wrapper: providerFor(CLUB_ZONE_BEHIND_UTC),
+    });
+
+    await waitFor(() => expect(screen.getByText("June 2026")).toBeTruthy());
+    expect(screen.queryByText("July 2026")).toBeNull();
+  });
+
+  it("opens on July for a club twelve hours ahead of it", async () => {
+    // The mirror image, and it is what makes the case above about the PROVIDER
+    // rather than about a hard-coded June.
+    render(<AdminBookingCalendar />, {
+      wrapper: providerFor(CLUB_TIME_TEST_ZONE),
+    });
+
+    await waitFor(() => expect(screen.getByText("July 2026")).toBeTruthy());
+    expect(screen.queryByText("June 2026")).toBeNull();
   });
 });

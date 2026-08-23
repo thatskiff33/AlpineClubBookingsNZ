@@ -20,7 +20,7 @@ import {
   type MemberExceptionRequestSource,
 } from "@/lib/member-exception-requests";
 import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 /**
@@ -156,9 +156,17 @@ export interface RequestOfficerApprovalCardProps {
   requestAreaHref?: string;
 }
 
-/** A date-only lodge night rendered in NZ terms, never shifted by the viewer's zone. */
+/**
+ * A date-only lodge night rendered as the calendar day it IS - shifted by NO
+ * zone, the viewer's or the club's (CT-4, #2870; INV-DATE-010).
+ *
+ * WHAT THIS REPLACES pinned the value to UTC midnight and then read it back
+ * through `APP_TIME_ZONE`. That round trip is the identity only while the club
+ * is east of Greenwich; for a club west of it every lodge night printed a day
+ * early. A calendar day has no zone, so the kernel's formatter takes none.
+ */
 function formatNight(value: string) {
-  return formatNZDate(new Date(`${value}T00:00:00Z`));
+  return formatClubDate(requireCalendarDate(value));
 }
 
 /**

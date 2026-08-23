@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AuditTimeline } from "@/components/audit-timeline";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import type {
   AuditTimelineEntry,
   AuditTimelineResponse,
@@ -173,5 +181,91 @@ describe("AuditTimeline", () => {
 
     fireEvent.click(screen.getByText("Metadata"));
     expect(container.textContent).toContain('"field": "email"');
+  });
+});
+
+
+/**
+ * THE STAMP IS SPELLED IN THE CLUB'S PERSISTED ZONE (CT-4, #2870; epic #2988;
+ * INV-CONFIG-002).
+ *
+ * The audit timeline is the canonical `instantDateTime` surface in this tree — a
+ * real moment, recorded by the server, read back by a browser that may be
+ * anywhere — and it is the class of timestamp every other admin screen was
+ * aligned to. Everything above renders through the harness's default provider,
+ * `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to under test,
+ * so those assertions cannot tell the persisted zone from the environment. They
+ * are not about the zone and are correctly left alone.
+ *
+ * This pair is about the zone. Same fixture, two provider zones, two answers.
+ */
+describe("AuditTimeline spells a stamp in the club's zone (CT-4, #2870)", () => {
+  /** Behind UTC, so it disagrees with the harness zone and with a UTC host. */
+  const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+
+  /** The fixture stamp, which the two zones read as different DAYS. */
+  const STAMP = "2026-05-10T03:15:00.000Z";
+
+  function providerFor(zone: string) {
+    return function PinnedClubTime({ children }: { children: ReactNode }) {
+      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    };
+  }
+
+  function spelledIn(zone: string): string {
+    return bindClubTime(requireClubTimeZone(zone)).instantDateTime(
+      new Date(STAMP),
+    );
+  }
+
+  function stubOneEntry() {
+    fetchMock.mockResolvedValueOnce(
+      okJson(
+        auditResponse({
+          data: [auditEntry({ createdAt: STAMP })],
+          total: 1,
+        }),
+      ),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    global.fetch = fetchMock as typeof fetch;
+  });
+
+  it("reads a Denver club's stamp as the previous evening", async () => {
+    // PREMISE, as an ANSWER rather than an identifier: the two zones really do
+    // disagree about this instant, and by a whole day.
+    expect(spelledIn(CLUB_ZONE_BEHIND_UTC)).toBe("9 May 2026, 9:15 pm");
+    expect(spelledIn(CLUB_TIME_TEST_ZONE)).toBe("10 May 2026, 3:15 pm");
+
+    stubOneEntry();
+    const { container } = render(
+      <AuditTimeline endpoint="/api/admin/audit-log" />,
+      { wrapper: providerFor(CLUB_ZONE_BEHIND_UTC) },
+    );
+
+    expect(await screen.findByText("Payment confirmed")).toBeTruthy();
+    expect(container.textContent).toContain(spelledIn(CLUB_ZONE_BEHIND_UTC));
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_TIME_TEST_ZONE),
+    );
+  });
+
+  it("reads the same stamp as the next afternoon for a club ahead of UTC", async () => {
+    // The mirror image, and it is what makes the case above about the PROVIDER
+    // rather than about a hard-coded 9 May.
+    stubOneEntry();
+    const { container } = render(
+      <AuditTimeline endpoint="/api/admin/audit-log" />,
+      { wrapper: providerFor(CLUB_TIME_TEST_ZONE) },
+    );
+
+    expect(await screen.findByText("Payment confirmed")).toBeTruthy();
+    expect(container.textContent).toContain(spelledIn(CLUB_TIME_TEST_ZONE));
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_ZONE_BEHIND_UTC),
+    );
   });
 });

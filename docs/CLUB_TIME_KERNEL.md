@@ -53,11 +53,33 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
 - **Server component or route** — `await clubTime()` from `club-time/server`,
   which is `server-only` and request-scoped through React `cache()`. It returns
   a bound API so you do not thread the zone through every call.
-- **Client component** — the zone arrives as **data** the server already
-  resolved, and `bindClubTime(zone)` binds it. A client component must never call
+- **A shared `src/lib` module — NOT `club-time/server`.** Use
+  `readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`.
+  `server-only` is a bare `throw` that is inert only under the `react-server`
+  condition, which `tsx` does not set, so a shared module importing
+  `club-time/server` kills every command-line entry point that reaches it — at
+  import, before `main()`. That has happened twice: CT-5 (#2869) broke two
+  operator CLIs and added this reader, and CT-4 then broke the multi-lodge E2E
+  seed the same way. `cli-server-only-reach-census.test.ts` is the guard, and it
+  derives its entry points from where they are actually invoked rather than from
+  a list somebody has to remember to extend.
+- **Client component** — `useClubTime()`, from `@/components/club-time-provider`.
+  The zone is resolved on the server and delivered through a context mounted by
+  exactly two components, `AppProviders` and `WebsiteChrome`, which between them
+  cover every route group. **The hook throws when the provider is missing**,
+  rather than falling back — a fallback renders a plausible wrong hour and
+  nothing fails, which is the worst outcome available. That is only a safe
+  choice because the mount is *enforced*:
+  `club-time-provider-mount-census.test.tsx` walks every page, follows the
+  import graph, and fails if anything reachable from a providerless surface
+  reads the hook. Six such surfaces are named there, each with its reason.
+  A client component must never call
   `Intl.DateTimeFormat().resolvedOptions().timeZone`: that is the viewer's zone,
-  not the club's, and `INV-CONFIG-002` forbids it. Very often you need no zone at
-  all, because what you are rendering is a calendar date.
+  not the club's, and `INV-CONFIG-002` forbids it. **Very often you need no zone
+  at all**, because what you are rendering is a calendar date — 28 of the 57
+  components censused for CT-4 needed no zone plumbing whatsoever, and finding
+  that out first is what kept the migration from becoming a prop-threading
+  exercise across 48 files.
 
 ## A wall time may not exist, or may exist twice
 
@@ -129,8 +151,12 @@ Two honest limits while both exist:
 - **The adapters still pass `APP_TIME_ZONE`, and a call site that has not moved
   yet is still on the environment.** CT-2 made the persisted zone *reachable*.
   CT-5 (#2869) moved the provider, scheduled-job, export and email surfaces onto
-  it; CT-3 (#2872) moved the temporal schema; **CT-4 (#2870) still has the
-  remainder**, which is most of the admin and member screens. So "is this
+  it; CT-3 (#2872) moved the temporal schema; CT-4 (#2870) has moved the admin
+  API, the member-facing API and the client components. **What remains is
+  `src/lib` itself**, which CT-4's last group takes, and the list of what is
+  known to be wrong there is on #2870 — including two that are reachable today:
+  a season year read with host-local getters, and a booking-date projection the
+  policy-exception engine executes through. So "is this
   application running on the persisted zone?" has a different answer per surface
   until CT-6 (#2991) retires the adapters, and until then no green suite settles
   it: on a deployment where the environment and the persisted value agree —

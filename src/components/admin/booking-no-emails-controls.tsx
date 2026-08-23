@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * The per-booking "No emails" switch (#2259, owner decision D10).
@@ -34,6 +34,20 @@ import { formatNZDate } from "@/lib/nzst-date";
  * Rendered only for admins — the member view of this booking never mounts it.
  * A member must never learn the switch exists.
  */
+/**
+ * When notifications were switched off for this booking.
+ *
+ * A real INSTANT, projected through the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. `instantDate` keeps the
+ * medium "16 Apr 2026" shape this line has always shown; only the zone's
+ * AUTHORITY moved. The zone reaches this browser as data through
+ * `ClubTimeProvider` - never from the viewer's own clock.
+ */
+function useHoldStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
+}
+
 export function BookingNoEmailsControls({
   bookingId,
   noEmails,
@@ -69,6 +83,7 @@ export function BookingNoEmailsControls({
    */
   isWaitlisted?: boolean;
 }) {
+  const formatHoldStamp = useHoldStampFormatter();
   const router = useRouter();
   // Writes /api/admin/bookings/[id]/no-emails, which requires bookings:edit —
   // a view-only bookings admin sees the control disabled (#1997/#2160).
@@ -132,7 +147,7 @@ export function BookingNoEmailsControls({
     ? [
         setByName ? `Turned on by ${setByName}` : "Turned on",
         noEmailsAt
-          ? ` on ${formatNZDate(new Date(noEmailsAt))}`
+          ? ` on ${formatHoldStamp(noEmailsAt)}`
           : "",
         ".",
       ].join("")

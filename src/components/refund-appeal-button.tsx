@@ -9,7 +9,7 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { formatNZDate } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider";
 import { MONEY_INPUT_PROPS, parseDecimalDollarsToCents } from "@/lib/money-input"
 
 interface RefundAppealButtonProps {
@@ -29,11 +29,26 @@ interface RefundRequestData {
   reviewedAt: string | null
 }
 
+/**
+ * When the member raised the refund appeal.
+ *
+ * A real INSTANT, projected through the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. `instantDate` keeps the
+ * medium "16 Apr 2026" shape this line has always shown; only the zone's
+ * AUTHORITY moved. The zone reaches this browser as data through
+ * `ClubTimeProvider` - never from the viewer's own clock.
+ */
+function useAppealStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
+}
+
 export function RefundAppealButton({
   bookingId,
   maxRefundableCents,
   description = "If you believe you are entitled to a larger refund, you can submit an appeal for review.",
 }: RefundAppealButtonProps) {
+  const formatAppealStamp = useAppealStampFormatter()
   const [showForm, setShowForm] = useState(false)
   const [reason, setReason] = useState("")
   const [requestedAmount, setRequestedAmount] = useState("")
@@ -142,7 +157,7 @@ export function RefundAppealButton({
                     {humanizeStatus(req.status)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    {formatNZDate(new Date(req.createdAt))}
+                    {formatAppealStamp(req.createdAt)}
                   </span>
                 </div>
                 <p className="text-muted-foreground">{req.reason}</p>

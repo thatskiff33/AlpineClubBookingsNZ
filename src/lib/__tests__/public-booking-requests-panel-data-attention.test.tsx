@@ -12,7 +12,7 @@
  * only what actually failed, the acting affordances are off, and Decline — the
  * one action that works end to end on a flagged row — stays on.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";

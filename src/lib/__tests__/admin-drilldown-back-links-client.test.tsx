@@ -7,7 +7,7 @@
 // here so the conversion is genuinely regression-protected — not merely listed.
 import "@testing-library/jest-dom/vitest";
 import { Suspense } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Every page below reads the session permission matrix; provide an edit-level

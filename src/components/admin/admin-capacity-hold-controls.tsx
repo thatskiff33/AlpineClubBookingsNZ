@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useConfirm } from "@/components/confirm-dialog";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 interface AdminCapacityHoldControlsProps {
   bookingId: string;
@@ -32,6 +32,20 @@ interface AdminCapacityHoldControlsProps {
  * comes back as 409 CAPACITY_EXCEEDED and needs a second, explicit overbook
  * confirm — mirroring the force-confirm flow.
  */
+/**
+ * When the capacity hold was placed.
+ *
+ * A real INSTANT, projected through the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. `instantDate` keeps the
+ * medium "16 Apr 2026" shape this line has always shown; only the zone's
+ * AUTHORITY moved. The zone reaches this browser as data through
+ * `ClubTimeProvider` - never from the viewer's own clock.
+ */
+function useHoldStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
+}
+
 export function AdminCapacityHoldControls({
   bookingId,
   hasAdminCapacityHold,
@@ -40,6 +54,7 @@ export function AdminCapacityHoldControls({
   holdsCapacityNaturally,
   canPlaceHold,
 }: AdminCapacityHoldControlsProps) {
+  const formatHoldStamp = useHoldStampFormatter();
   const router = useRouter();
   // Hold/release write /api/admin/bookings/[id]/capacity-hold (bookings area).
   // A view-only bookings admin sees the controls disabled (#1997).
@@ -159,7 +174,7 @@ export function AdminCapacityHoldControls({
             Beds reserved
             {heldByName ? ` by ${heldByName}` : ""}
             {adminCapacityHoldAt
-              ? ` on ${formatNZDate(new Date(adminCapacityHoldAt))}`
+              ? ` on ${formatHoldStamp(adminCapacityHoldAt)}`
               : ""}
             {holdsCapacityNaturally
               ? ". The booking now holds its beds through its own status."
