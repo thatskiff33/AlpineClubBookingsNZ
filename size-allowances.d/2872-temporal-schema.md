@@ -58,8 +58,8 @@ The comment was cut from thirty-three lines to twenty during review, which is
 where it stops being able to say what the defect was.
 
 file: src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx
-lines: 1755
-reason: fourteen lines, almost all comment, on a 1741-line admin screen that was
+lines: 1756
+reason: fifteen lines, almost all comment, on a 1741-line admin screen that was
   already far over budget and is not restructured here. They record a live
   data-corruption defect the review found — the edit dialog seeded its date boxes
   by projecting a `@db.Date` value through the club zone and then wrote them
@@ -68,3 +68,9 @@ reason: fourteen lines, almost all comment, on a 1741-line admin screen that was
   version looked deliberate and agrees with the right one in New Zealand.
   Splitting a 1700-line form is a genuine job but an unrelated one, and doing it
   inside a schema migration would bury that migration's diff.
+  The fifteenth line is CT-4 group D's (#2870, PR #3067): the two promo-window
+  decoders collapsed onto the shared payload decoder, which is a net
+  simplification of the file rather than an addition to it. It is recorded here
+  rather than in group D's own allowance file because this gate measures against
+  `main`, where the file is still 1741 lines — so the whole 1741 to 1756 growth
+  has to be one entry, and one file may hold only one allowance.

@@ -56,6 +56,8 @@
  * club behind UTC.
  */
 
+import { APP_TIME_ZONE } from "@/config/operational";
+import { clubCalendarDateOf, requireClubTimeZone } from "@/lib/club-time";
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -78,7 +80,7 @@ export function calendarDayFromPayload(
   const bare = parseCalendarDate(value);
   if (bare !== null) return bare;
   const instant = parseInstant(value);
-  return instant === null ? null : calendarDateOfDateOnlyInstant(instant);
+  return instant === null ? null : clubCalendarDateOf(instant, requireClubTimeZone(APP_TIME_ZONE));
 }
 
 /**

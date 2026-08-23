@@ -136,12 +136,6 @@ reason: two adjacent columns, one an instant read host-locally by date-fns and o
   a calendar date, both rendering the same shape and neither saying which was
   which. The comment between them is the point of the change.
 
-file: src/app/(admin)/admin/promo-codes/promo-codes-page-client.tsx
-lines: 1756
-reason: one line. The two promo-window decoders collapsed onto the shared payload
-  decoder, which is a net simplification of this file rather than an addition
-  to it; there is nothing here that splitting would help.
-
 file: src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx
 lines: 798
 reason: the hand-rolled parts-to-UTC-midnight dance is gone and the export
