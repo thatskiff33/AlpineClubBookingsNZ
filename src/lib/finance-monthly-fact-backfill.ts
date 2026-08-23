@@ -98,7 +98,7 @@ async function backfillReportChunks(
   // Loaded once per report walk; the chart-of-accounts dataset in this run
   // has already persisted a fresh snapshot by the time this executes.
   const chart = await loadFinanceMonthlyChartContext();
-  const currentMonth = getFinanceMonthKeyForDate(context.startedAt);
+  const currentMonth = getFinanceMonthKeyForDate(context.startedAt, context.clubTimeZone);
   const snapshots: FinanceSyncSnapshotInput[] = [];
 
   let endMonth = currentMonth;

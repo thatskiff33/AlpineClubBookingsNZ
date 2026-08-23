@@ -1,0 +1,338 @@
+/**
+ * THE XERO TEMPORAL BOUNDARY (CT-5, #2869; epic #2988).
+ *
+ * Every date or time that crosses between this application and Xero is
+ * classified HERE, once, as one of the epic's three concepts — a calendar date,
+ * an instant, or a club-local scheduled time — and converted through the CT-2
+ * kernel (`@/lib/club-time`). Nothing else on the Xero surface may call
+ * `new Date(...)` on a provider payload field;
+ * `__tests__/xero-provider-date-boundary-census.test.ts` reads the tree off disk
+ * and fails if one does.
+ *
+ * ## Why a provider needs its own adapter at all
+ *
+ * The kernel already REFUSES an offset-less ISO string, because
+ * `"2019-03-11T00:00:00"` names a wall-clock reading and JavaScript resolves it
+ * in whichever zone the host happens to be in. That refusal is right for a
+ * general parser and useless at a boundary that must still produce an answer, so
+ * this module supplies the missing half: what each Xero FIELD means, so an
+ * offset-less string can be read correctly instead of guessed at.
+ *
+ * ## The wire shapes, and the evidence for them
+ *
+ * Measured against the vendored `xero-node` in this tree, not assumed:
+ *
+ * 1. **A `Date` the SDK already built, arriving through a field the SDK TYPES as
+ *    `string`.** `ObjectSerializer.deserialize`
+ *    (`node_modules/xero-node/dist/gen/model/accounting/models.js`) has a
+ *    primitive branch that checks `data.toString().substring(0, 6) === "/Date("`
+ *    and, when it matches, returns `deserializeDateFormats(...)` — a `Date`. So
+ *    `Invoice.date`, declared `'date'?: string`, is a `Date` object at runtime
+ *    whenever the classic Accounting JSON API answers with Microsoft-JSON.
+ *    TypeScript cannot see this, which is why every reader here takes `unknown`.
+ * 2. **A raw `/Date(1518652800000+0000)/` string**, for a payload the SDK did not
+ *    deserialise — a replayed webhook body, a cached response, a fixture. The
+ *    epoch is UTC milliseconds; the trailing offset is display metadata, and the
+ *    SDK itself ignores it (`/-?\d+/` takes the first run of digits).
+ * 3. **`YYYY-MM-DD`**, which is what the Xero documentation states for every
+ *    date-only field ("Date invoice was issued – YYYY-MM-DD").
+ * 4. **`YYYY-MM-DDTHH:mm:ss` with NO offset**, which the XML-shaped responses
+ *    carry. THIS IS THE ANCHOR DEFECT of #2869: `new Date(...)` reads it in the
+ *    server's zone, so the same payload means a different day on a developer's
+ *    laptop, on a UTC container and on the club's server, and
+ *    `Member.joinedDate` moved by a day. For a DATE-ONLY field the date half is
+ *    the whole answer and the time half is padding, so this module takes the
+ *    date half and never constructs an instant from it.
+ *
+ * ## Date-only fields versus instant fields
+ *
+ * Xero's own typings separate them and so does this module:
+ *
+ * | Xero field                                                        | Concept       |
+ * | ----------------------------------------------------------------- | ------------- |
+ * | `Invoice.date` / `.dueDate` / `.expectedPaymentDate`                | calendar date |
+ * | `Invoice.plannedPaymentDate` / `.fullyPaidOnDate`                   | calendar date |
+ * | `CreditNote.date` / `.dueDate` / `.fullyPaidOnDate`                 | calendar date |
+ * | `Payment.date`                                                      | calendar date |
+ * | `Organisation.periodLockDate` / `.endOfYearLockDate`                | calendar date |
+ * | `Contact.companyNumber` (this club's date of birth carrier)         | calendar date |
+ * | `updatedDateUTC` (every model) and `updatedDateUTCString`           | instant       |
+ *
+ * `fullyPaidOnDate` is typed `string` and documented "the date the invoice was
+ * fully paid", alongside `updatedDateUTC: Date` on the same model. It is a
+ * calendar day, and the one thing this module refuses to do with it is what the
+ * old code did: treat it as a moment and store it as one.
+ *
+ * `Contact.companyNumber` is decoded by `xero-contact-date-of-birth.ts` rather
+ * than here, because its `dd/MM/yyyy` shape is this club's convention for a
+ * field Xero means as an NZBN, not a Xero date format at all (#2859).
+ *
+ * ## The one asymmetry, stated so nobody has to rediscover it
+ *
+ * A date-only field arriving as a `Date` (shapes 1 and 2) is decoded by reading
+ * its **UTC** day, because the Microsoft-JSON encoding of a date-only value IS
+ * UTC midnight — the same rule `INV-DATE-010` states for a `@db.Date` column, and
+ * the same one `calendarDateOfDateOnlyInstant` implements. A date-only field
+ * arriving as TEXT (shapes 3 and 4) is decoded by taking its literal date half,
+ * with no zone applied at all, because a calendar day is never
+ * timezone-converted. The two rules agree on every value Xero actually sends and
+ * differ only on one it does not: a date-only field bearing a UTC offset large
+ * enough to move the day.
+ */
+
+import {
+  calendarDateOfDateOnlyInstant,
+  clubCalendarDateOf,
+  clubToday,
+  dateOnlyInstantOf,
+  isCalendarDate,
+  parseCalendarDate,
+  parseInstant,
+  type CalendarDate,
+  type ClubTimeZone,
+  type Instant,
+} from "@/lib/club-time";
+
+/**
+ * What a raw Xero temporal value turned out to be.
+ *
+ * Exported because the classification is as much the deliverable of #2869 as the
+ * conversion is: a diagnostic, a log line and a test can each name the shape they
+ * saw rather than only the value they could not read.
+ */
+export type XeroWireTemporalShape =
+  /** `null`, `undefined`, or an empty/whitespace string. */
+  | "absent"
+  /** A `Date` the SDK's `ObjectSerializer` already built. */
+  | "sdk-date"
+  /** A raw Microsoft-JSON `/Date(1518652800000+0000)/` string, or epoch ms. */
+  | "microsoft-json"
+  /** `YYYY-MM-DD`. */
+  | "calendar-date"
+  /** `YYYY-MM-DDTHH:mm:ss` with no `Z` and no offset — a wall-clock reading. */
+  | "offset-less-date-time"
+  /** An ISO 8601 value carrying `Z` or a UTC offset. */
+  | "offset-bearing-instant"
+  /** Present, and none of the above. */
+  | "unreadable";
+
+/** `/Date(<epoch ms><±hhmm>)/`, the classic Accounting API's JSON date. */
+const MICROSOFT_JSON_DATE = /^\/Date\((-?\d+)/;
+
+/** An ISO value that pins a moment: it carries `Z` or an offset. */
+const OFFSET_BEARING_ISO =
+  /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$/;
+
+/** An ISO value that names a wall clock and no zone at all. */
+const OFFSET_LESS_DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+/**
+ * Which of the wire shapes `value` is. Pure and total; every reader below routes
+ * through it so the shape vocabulary cannot drift between them.
+ */
+export function classifyXeroWireTemporal(value: unknown): XeroWireTemporalShape {
+  if (value === null || value === undefined) return "absent";
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "unreadable" : "sdk-date";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? "microsoft-json" : "unreadable";
+  }
+  if (typeof value !== "string") return "unreadable";
+
+  const trimmed = value.trim();
+  if (trimmed === "") return "absent";
+  if (MICROSOFT_JSON_DATE.test(trimmed)) return "microsoft-json";
+  if (isCalendarDate(trimmed)) return "calendar-date";
+  if (OFFSET_BEARING_ISO.test(trimmed)) return "offset-bearing-instant";
+  if (OFFSET_LESS_DATE_TIME.test(trimmed)) return "offset-less-date-time";
+  return "unreadable";
+}
+
+/** The epoch milliseconds a Microsoft-JSON date (or a bare number) carries. */
+function microsoftJsonEpochMs(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== "string") return null;
+  const match = MICROSOFT_JSON_DATE.exec(value.trim());
+  if (!match) return null;
+  const epochMs = Number(match[1]);
+  return Number.isFinite(epochMs) ? epochMs : null;
+}
+
+/**
+ * The UTC day a date-only ENCODING carries, as a `CalendarDate`, or `null`.
+ *
+ * `calendarDateOfDateOnlyInstant` throws for a value whose UTC year falls
+ * outside the four-digit `CalendarDate` range — which is what a provider typo,
+ * a sentinel or a corrupted epoch looks like from here. A boundary reader must
+ * answer rather than throw, so the range failure becomes "unreadable".
+ */
+function utcDayOfEncoding(value: Date): CalendarDate | null {
+  try {
+    return calendarDateOfDateOnlyInstant(value);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A Xero **date-only** field as a club calendar day, or `null`.
+ *
+ * `null` covers an absent value AND one this module cannot read — including a
+ * day that does not exist, because `parseCalendarDate` refuses to roll
+ * `2026-02-30` forward into March the way `new Date` does. A caller that has to
+ * tell "Xero sent nothing" from "Xero sent something unreadable" asks
+ * {@link classifyXeroWireTemporal}; giving every reader a second return channel
+ * almost none of them uses would cost more than it explains.
+ */
+export function xeroCalendarDate(value: unknown): CalendarDate | null {
+  switch (classifyXeroWireTemporal(value)) {
+    case "absent":
+    case "unreadable":
+      return null;
+    case "sdk-date":
+      // The Microsoft-JSON encoding of a DATE-ONLY field is UTC midnight, so its
+      // UTC day is the day Xero meant. Reading it in the club's zone would be the
+      // INV-DATE-010 error from the other direction.
+      return utcDayOfEncoding(value as Date);
+    case "microsoft-json": {
+      const epochMs = microsoftJsonEpochMs(value);
+      if (epochMs === null) return null;
+      const asDate = new Date(epochMs);
+      return Number.isNaN(asDate.getTime()) ? null : utcDayOfEncoding(asDate);
+    }
+    case "calendar-date":
+      return parseCalendarDate((value as string).trim());
+    case "offset-less-date-time":
+    case "offset-bearing-instant":
+      // The literal date half, with NO zone applied. A calendar day is never
+      // timezone-converted, and this is the shape whose `new Date(...)` reading
+      // moved `Member.joinedDate` by a day (#2869).
+      return parseCalendarDate((value as string).trim().slice(0, 10));
+  }
+}
+
+/**
+ * A Xero date-only field as the canonical `YYYY-MM-DD` wire text, or `null`.
+ *
+ * This is the identity a date-only value crosses a JSON, CSV or dataset boundary
+ * as, so a consumer never has to guess whether an ISO-looking column is a
+ * calendar day or an instant: a column built through this is always exactly ten
+ * characters, whatever shape Xero happened to send for it.
+ */
+export function xeroCalendarDateText(value: unknown): string | null {
+  return xeroCalendarDate(value);
+}
+
+/**
+ * A Xero date-only field as the UTC-midnight `Date` that a `@db.Date` column —
+ * and every date-only comparison in this codebase — round-trips through
+ * (`INV-DATE-010`).
+ *
+ * An ENCODING, not a moment: nothing may read the result in any zone but UTC.
+ */
+export function xeroCalendarDateAsDateOnly(value: unknown): Instant | null {
+  const date = xeroCalendarDate(value);
+  return date === null ? null : dateOnlyInstantOf(date);
+}
+
+/**
+ * A Xero **instant** field — `updatedDateUTC` and its siblings — as an exact
+ * moment, or `null`.
+ *
+ * AN OFFSET-LESS STRING IS READ AS UTC HERE, and that is not the guess the
+ * kernel's `parseInstant` refuses to make. These fields are named and documented
+ * by the provider as UTC (`'updatedDateUTC'`, "UTC timestamp of last update to
+ * the invoice"), so the zone comes from the FIELD's contract rather than from the
+ * host — which is exactly the classification the epic asks each integration to
+ * perform at its adapter boundary. A bare `YYYY-MM-DD` is read as UTC midnight,
+ * for the same reason.
+ */
+export function xeroInstant(value: unknown): Instant | null {
+  switch (classifyXeroWireTemporal(value)) {
+    case "absent":
+    case "unreadable":
+      return null;
+    case "sdk-date":
+      return value as Date;
+    case "microsoft-json": {
+      const epochMs = microsoftJsonEpochMs(value);
+      if (epochMs === null) return null;
+      const asDate = new Date(epochMs);
+      return Number.isNaN(asDate.getTime()) ? null : asDate;
+    }
+    case "offset-bearing-instant":
+      return parseInstant((value as string).trim());
+    case "calendar-date":
+      return parseInstant(`${(value as string).trim()}T00:00:00.000Z`);
+    case "offset-less-date-time":
+      return parseInstant(`${(value as string).trim()}Z`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Outbound: the document dates this application SENDS Xero
+// ---------------------------------------------------------------------------
+
+/**
+ * A document date from a `@db.Date` column — a lodge night, a season edge.
+ *
+ * The column holds UTC midnight as an ENCODING, so the day is read back in UTC
+ * and no zone is involved (`INV-DATE-010`).
+ */
+export function xeroDocumentDateFromDateOnlyColumn(value: Date): string {
+  return calendarDateOfDateOnlyInstant(value);
+}
+
+/**
+ * A document date from a real INSTANT — `Booking.createdAt`, a settlement's
+ * `createdAt`, the moment a refund was taken.
+ *
+ * The club's zone is REQUIRED and there is no default, because truncating the
+ * instant instead is `INV-DATE-019`: for a club at UTC+12/+13 the UTC day is
+ * yesterday for roughly the first half of every club day, and a document's issue
+ * date decides which GST period and financial year it falls in (#2697, #2834).
+ */
+export function xeroDocumentDateFromInstant(
+  instant: Instant,
+  zone: ClubTimeZone,
+): string {
+  return clubCalendarDateOf(instant, zone);
+}
+
+/**
+ * A document date meaning "today", in the club's calendar and nobody else's.
+ *
+ * The zone is required for the same reason as above, and it must be the
+ * PERSISTED club timezone (`INV-CONFIG-002`) rather than `process.env.TZ`: moving
+ * a container to another region must not re-date the club's invoices.
+ */
+export function xeroDocumentDateForClubToday(zone: ClubTimeZone): string {
+  return clubToday(zone);
+}
+
+/**
+ * The season year a Xero invoice belongs to, decided from its CALENDAR DATE.
+ *
+ * `getSeasonYearForYearEndMonth` (`src/lib/financial-year.ts`) reads
+ * `date.getMonth()` and `date.getFullYear()`, which are the HOST's calendar
+ * components. Handing it a Xero invoice date therefore made the season boundary
+ * move with the container's timezone: on a deployment west of Greenwich an
+ * invoice dated the first day of a season resolved to the PREVIOUS season,
+ * because that day's UTC-midnight encoding reads as the previous evening there.
+ * Deciding from the calendar day's own parts removes the host from the question.
+ *
+ * `seasonStartMonth` is 1-based and supplied by the caller: this module applies
+ * the club's financial-year configuration and never reads it.
+ */
+export function seasonYearOfCalendarDate(
+  date: CalendarDate,
+  seasonStartMonth: number,
+): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  return month >= seasonStartMonth ? year : year - 1;
+}

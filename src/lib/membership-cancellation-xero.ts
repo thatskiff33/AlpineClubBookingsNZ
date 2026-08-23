@@ -10,7 +10,8 @@ import {
   loadMembershipCancellationSettings,
   type MembershipCancellationXeroContactGroupSetting,
 } from "@/lib/membership-cancellation-settings";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { prisma } from "@/lib/prisma";
 import {
   buildXeroIdempotencyKey,
@@ -715,7 +716,7 @@ export async function createXeroMembershipCancellationCreditNote(
   // the club's calendar day. This file used to truncate the clock to its UTC day
   // through a private `formatDate` helper of its own, which is still yesterday
   // for roughly the first half of every New Zealand day (INV-DATE-019, #2834).
-  const cancellationCreditNoteDate = formatDateOnlyForTimeZone(new Date());
+  const cancellationCreditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -939,7 +940,7 @@ async function allocateMembershipCancellationCreditNote(params: {
   // read ONCE outside the closure: `callXeroApi` re-invokes its callback on
   // every retry attempt, so a read inside it would send a different date on a
   // retry that crossed club midnight, under the same idempotency key.
-  const allocationDate = formatDateOnlyForTimeZone(new Date());
+  const allocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   try {
     const response = await callXeroApi(

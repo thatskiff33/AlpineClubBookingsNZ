@@ -20,6 +20,7 @@ import "server-only";
 
 import type {
   ClubTimeZoneSource,
+  PersistedClubTimeSettings,
   ResolvedClubTimeZone,
 } from "@/lib/club-time-zone-settings";
 import { prisma } from "@/lib/prisma";
@@ -34,18 +35,16 @@ const MEMBER_NAME_SELECT = {
   lastName: true,
 } as const;
 
-/** The projection every read and write of the singleton uses. */
-export const CLUB_TIME_SETTINGS_SELECT = {
-  timeZone: true,
-  updatedByMemberId: true,
-  updatedAt: true,
-} as const;
-
-export type PersistedRow = {
-  timeZone: string;
-  updatedByMemberId: string | null;
-  updatedAt: Date;
-};
+/**
+ * The row this module turns into a payload.
+ *
+ * The PROJECTION that produces it — `CLUB_TIME_SETTINGS_SELECT` — lives in
+ * `club-time-zone-settings.ts`, the canonical reader, and this module used to
+ * carry a byte-identical copy of it under the same name (#2989 fix round). Two
+ * copies of one projection drift the way two spellings of the singleton id
+ * drift, and just as quietly, so there is now one.
+ */
+export type PersistedRow = PersistedClubTimeSettings;
 
 /**
  * The payload. `source` is the provenance word the panel and the setup

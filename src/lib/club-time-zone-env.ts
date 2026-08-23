@@ -24,9 +24,15 @@
  * This module is equally NOT marked `server-only`, and that is not an oversight:
  * two of its four callers are the `tsx` entrypoints (`npm run config:self-heal`
  * and `npm run setup`), which a `server-only` import would abort. It is kept off
- * the client graph by the honest means instead — nothing in `src/app` or
- * `src/components` imports it, and `client-server-boundary-census.test.ts`
- * (`INV-OPS-013`) is the guard that keeps it that way.
+ * the client graph by being NAMED as a forbidden leaf in both halves of
+ * `INV-OPS-013`: `FORBIDDEN_MODULES` in
+ * `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the real
+ * import graph out of every `"use client"` module, and the `$MOD` alternation in
+ * `.semgrep/rules/acb-client-server-boundary.yml`, which catches a direct import
+ * in review. Both are FIXED LEAF LISTS, so a module in neither of them is
+ * protected by neither — however firmly a docblock says otherwise. This one was
+ * in neither until #2989's fix round, which is why the claim is now two file
+ * names and a fixture rather than a reassurance.
  */
 
 import { normaliseClubTimeZoneForPreservation } from "@/lib/club-time-zone";
@@ -60,10 +66,16 @@ export function readEnvironmentClubTimeZoneSeed(): string | null {
  *                record it. `raw` is what the environment actually said, which is
  *                worth logging when the two differ (`GB` → `Europe/London`).
  * - `unusable` — the seed is set but names no place (`UTC`, `Etc/GMT-12`,
- *                `SystemV/EST5`). There is nothing to preserve and every
- *                candidate would be a guess, so a writer must record NOTHING and
- *                let the setup checklist ask the operator. `raw` is what to show
- *                them.
+ *                `SystemV/EST5`). There is nothing to preserve, so this seed
+ *                cannot answer "what is this deployment already using?" at all.
+ *                The owner's 23 Aug 2026 decision on #2989 is that a writer
+ *                records the documented `Pacific/Auckland` default rather than
+ *                leaving the setting empty and blocking setup — and that it says
+ *                so, loudly, every time, because the club may have just been
+ *                handed a zone up to thirteen hours from the one it uses. `raw`
+ *                is the value to name when it does. `decideClubTimeZoneBackfill`
+ *                in `config-self-heal-steps.ts` is where that decision is
+ *                spelled out once, for every writer.
  */
 export type EnvironmentClubTimeZoneSeed =
   | { kind: "absent" }

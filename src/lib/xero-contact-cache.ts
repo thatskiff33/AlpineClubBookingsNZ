@@ -16,6 +16,7 @@ import {
   type XeroClient,
 } from "xero-node";
 import { prisma } from "./prisma";
+import { xeroInstant } from "@/lib/xero-provider-dates";
 import { callXeroApi } from "./xero-api-client";
 import {
   DEFAULT_XERO_SYNC_SCOPE,
@@ -187,13 +188,32 @@ export function getXeroContactDisplayName(contact: {
   );
 }
 
+/**
+ * The exact moment Xero last changed this contact, or `null`.
+ *
+ * `updatedDateUTC` is an INSTANT — the provider names its zone in the field —
+ * and it is classified at the Xero boundary rather than round-tripped through
+ * `new Date(value.toString())`.
+ *
+ * WHAT THAT ROUND TRIP ACTUALLY COST, stated at the size it is (#2869 review).
+ * `xero-node` types this field `Date` and its deserialiser builds one, so on the
+ * SDK path the old code rendered a `Date` to its host-local string and parsed it
+ * back — which recovers the SAME INSTANT, and loses only the MILLISECONDS,
+ * because `Date.prototype.toString()` renders to the second. That is the whole
+ * of the reachable defect here: `XeroContactCache.sourceUpdatedAt` could sit up
+ * to 999 ms behind Xero's own value, which is enough to make a
+ * changed-since comparison flap and is not enough to move a day.
+ *
+ * The larger hazard the boundary exists for — an offset-less
+ * `"2019-03-11T00:00:00"` resolved in the container's zone, up to thirteen hours
+ * out — belongs to the fields that arrive as TEXT rather than through the
+ * deserialiser, and is documented at the boundary itself. Routing this call
+ * there as well is not a cost: it costs one function call and it means a payload
+ * that did NOT come through the deserialiser (a replayed body, a fixture, a
+ * cached response) is read correctly instead of by luck.
+ */
 function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
-  if (!contact.updatedDateUTC) {
-    return null;
-  }
-
-  const updatedAt = new Date(contact.updatedDateUTC.toString());
-  return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
+  return xeroInstant(contact.updatedDateUTC);
 }
 
 function buildCachedXeroContact(

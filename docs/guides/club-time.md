@@ -77,10 +77,13 @@ there is nothing to embed. It gets one when the manifest gains the page.)*
      only saving a zone here will. The page names the unusable value so you can
      see what is stored.
 
-   The setup checklist has one further state the page does not: **could not be
-   read**, which means the setting itself could not be loaded (typically the
-   database migration has not run yet). That is a deployment problem, not a
-   configuration one.
+   The setup checklist has two further states the page does not. **Could not be
+   read** means the setting itself could not be loaded — typically the database
+   migration has not run yet, which is a deployment problem rather than a
+   configuration one. And a **warning asking you to confirm the zone** means
+   `Pacific/Auckland` was recorded because the server's `TZ` named no actual
+   place, so nothing could be preserved from it; acknowledge it if that is right
+   for your club, or set the real zone here if it is not.
 
 ### 2. Change it
 
@@ -137,10 +140,13 @@ authority and changing them does not change the club's time. See
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | The setup checklist says the club time zone is not recorded yet | The installation has been upgraded but not restarted since, so nothing has been written to the settings yet. The zone in use is still correct — it is the one the server was started with | Restart the application, or run `npm run config:self-heal`. Then reload the setup checklist |
+| The setup checklist warns that the club time zone could not be confirmed | The server's `TZ` names no actual place — `UTC`, `Etc/UTC`, `Etc/GMT-12` — so there was nothing to preserve and `Pacific/Auckland` was recorded instead. The platform is telling you it guessed | If the club is in New Zealand, acknowledge the step and carry on. If it is not, set the club's real zone here — this is the one case where leaving it alone would leave a non-NZ club's times wrong |
 | A time zone will not save: "abbreviations and fixed offsets are not accepted" | The value is not a place — for example `NZST`, `EST`, `+12:00`, or `Etc/GMT-12` | Choose the named zone for the club's location, such as `Pacific/Auckland`. Use the filter box rather than typing an abbreviation |
 | The page says it is available to full administrators only | Your admin account is not a Full Administrator | Ask a Full Administrator to make the change. Everyone with admin access can still see the current zone on the setup checklist |
 | Times moved by an hour after a change, but only some of them | Expected. Recorded moments are re-displayed in the new zone; calendar dates such as lodge nights are not converted at all | Nothing to fix. If the zone itself is wrong, change it back — no data was altered either way |
 | Times look wrong and the club time zone is correct | Something outside this setting is formatting a date on its own | This is a defect, not a configuration problem. Raise it with the club's technical contact and quote `INV-CONFIG-002` |
+| A scheduled job still runs at the old time after a zone change | Expected, and it needs an action. The nightly jobs read the zone once when the application starts, so they keep the old one until it is restarted | Restart the application. Until you do, **Admin → Setup & Configuration → System health** says so in a banner on the Cron Jobs section, and shows the zone the jobs are **actually running** alongside the one that has been configured |
+| A job is due at 2am and the clocks change that night | One hour is skipped in spring and one happens twice in autumn, and several nightly jobs are scheduled between 2am and 3am | Nothing to configure. The zone panel warns about this at the point of change; if a job matters on those two nights, ask the club's technical contact to move it outside that hour |
 | Someone changed the zone and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_TIME_ZONE_UPDATED`. The entry names the administrator, and the zone before and after |
 
 ## Related links

@@ -51,7 +51,11 @@ reason: the new sparse-night branch is four lines of policy inside an
 
 - `file:` — the repo-relative path, with forward slashes. It must be a
   production source file the policy covers (tracked, under `src/`, not a test
-  path). One entry per file; two entries for one file is an error.
+  path). One entry per file **in your allowance file**; two entries for one
+  file there is an error, and so is one change carrying two allowance files
+  that name the same path. A file named by an allowance that has ALREADY
+  MERGED does not count — that allowance is inert, so declaring a fresh one
+  for the same path in a later change is exactly what you should do.
 - `lines:` — the length the file really is after this change. Not a ceiling, not
   a guess: the gate fails if it does not match, which is what stops an allowance
   drifting away from the tree the way the old ledger did.

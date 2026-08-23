@@ -1,10 +1,8 @@
 import { BookingStatus } from "@prisma/client";
 import { isAdditionalPaymentOwed } from "@/lib/additional-payment-chase";
-import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendPreArrivalReminderEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
@@ -28,7 +26,7 @@ export interface PreArrivalReminderResult {
 
 export async function sendPreArrivalReminders(): Promise<PreArrivalReminderResult> {
   const now = new Date();
-  const windowStart = getTodayDateOnly();
+  const windowStart = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const windowEndExclusive = addDaysDateOnly(
     windowStart,
     PRE_ARRIVAL_REMINDER_DAYS + 1,

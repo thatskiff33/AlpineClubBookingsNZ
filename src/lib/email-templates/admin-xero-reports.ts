@@ -20,7 +20,7 @@ import {
 } from "./layout";
 import { sanitizeEmailHref } from "@/lib/app-url";
 import { emailPalette } from "@/lib/email-theme";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { emailClubDateTime } from "@/lib/email-templates-club-time";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 
 type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
@@ -114,7 +114,7 @@ function formatEmailDateTime(value: Date | null): string {
     return "";
   }
 
-  return formatNZDateTime(value);
+  return emailClubDateTime(value);
 }
 
 function formatXeroObjectLabel(item: {
@@ -216,7 +216,7 @@ function renderIssueSection(section: XeroReconciliationIssueSectionEmail): strin
 export function adminXeroReconciliationReportTemplate(report: XeroReconciliationReportEmail): string {
   const p = emailPalette();
   const summaryRows = [
-    { label: "Generated", value: formatNZDateTime(report.generatedAt) },
+    { label: "Generated", value: emailClubDateTime(report.generatedAt) },
     { label: "Lookback Window", value: `${report.lookbackHours} hour${report.lookbackHours === 1 ? "" : "s"}` },
     { label: "Stale Pending Threshold", value: `${report.stalePendingMinutes} minute${report.stalePendingMinutes === 1 ? "" : "s"}` },
     { label: "Issue Categories", value: String(report.summary.issueCategoryCount) },
@@ -375,7 +375,7 @@ export function adminCreditSyncDriftTemplate(report: CreditSyncDriftReportEmail)
   const driftCount = report.drifts.length;
 
   const summaryRows = [
-    { label: "Generated", value: formatNZDateTime(report.generatedAt) },
+    { label: "Generated", value: emailClubDateTime(report.generatedAt) },
     { label: "Bookings scanned", value: String(report.scannedBookings) },
     { label: "Bookings checked", value: String(report.checkedBookings) },
     { label: "Bookings deferred", value: String(report.deferredBookings) },

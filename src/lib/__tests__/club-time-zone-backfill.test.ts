@@ -125,7 +125,7 @@ describe("decideClubTimeZoneBackfill", () => {
 
     const decision = decideClubTimeZoneBackfill();
 
-    expect(decision).toEqual({ record: true, timeZone: expected, raw });
+    expect(decision).toEqual({ kind: "preserved", timeZone: expected, raw });
   });
 
   it.each(["EST5EDT", "PST8PDT", "US/Pacific", "W-SU", "Navajo"])(
@@ -139,20 +139,19 @@ describe("decideClubTimeZoneBackfill", () => {
 
       const decision = decideClubTimeZoneBackfill();
 
-      expect(decision.record).toBe(true);
-      if (!decision.record) return;
+      expect(decision.kind).toBe("preserved");
       expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
       expect(decision.timeZone).not.toBe(CLUB_TIME_ZONE_FALLBACK);
     },
   );
 
   it("records the documented New Zealand default when the environment says nothing", () => {
-    // The "truly unset legacy install" the issue's fallback is for — and the
-    // ONLY state it is for.
+    // The "truly unset legacy install" the issue's fallback is for. Nobody is
+    // being moved, so this is `absent` and no caller says anything about it.
     pinEnvironmentZone(null);
 
     expect(decideClubTimeZoneBackfill()).toEqual({
-      record: true,
+      kind: "absent",
       timeZone: CLUB_TIME_ZONE_FALLBACK,
       raw: null,
     });
@@ -168,28 +167,49 @@ describe("decideClubTimeZoneBackfill", () => {
     "SystemV/EST5",
     "NZT",
     "Pacific/Atlantis",
-  ])("records NOTHING when TZ=%s names no place", (raw) => {
-    // There is no place whose civil time is UTC, so every candidate is a guess,
-    // and a create-if-absent write is never revisited. Recording nothing leaves
-    // the setup checklist blocked, which asks the operator — the only honest
-    // outcome available.
+  ])("records the default and says it DEFAULTED when TZ=%s names no place", (raw) => {
+    // Owner decision, 23 Aug 2026 (#2989). There is no place whose civil time is
+    // UTC, so nothing can be preserved — but leaving the setting empty blocked
+    // setup, and the issue's own requirements cannot both be met for this input.
+    // So a zone is recorded, and `defaulted` is what obliges every caller to say
+    // so: this club may have just been handed a zone thirteen hours from its own.
     pinEnvironmentZone(raw);
 
-    expect(decideClubTimeZoneBackfill()).toEqual({ record: false, raw });
+    expect(decideClubTimeZoneBackfill()).toEqual({
+      kind: "defaulted",
+      timeZone: CLUB_TIME_ZONE_FALLBACK,
+      raw,
+    });
+  });
+
+  it("keeps 'defaulted' distinct from 'absent' even though both write the same zone", () => {
+    // The whole point of the discriminator. If these two collapsed to one answer
+    // the boot log, the seed log and the setup checklist would all fall silent on
+    // the one input where the club is being moved — which is what "defaulting is
+    // not the same as being silent" means in code rather than in prose.
+    pinEnvironmentZone(null);
+    const unset = decideClubTimeZoneBackfill();
+    pinEnvironmentZone("UTC");
+    const utc = decideClubTimeZoneBackfill();
+
+    expect(unset.timeZone).toBe(utc.timeZone);
+    expect(unset.kind).not.toBe(utc.kind);
+    expect(unset.raw).toBeNull();
+    expect(utc.raw).toBe("UTC");
   });
 
   it("reads NEXT_PUBLIC_TZ when TZ is unset, and prefers TZ when both are set", () => {
     pinEnvironmentZone(null);
     process.env.NEXT_PUBLIC_TZ = "GB";
     expect(decideClubTimeZoneBackfill()).toEqual({
-      record: true,
+      kind: "preserved",
       timeZone: "Europe/London",
       raw: "GB",
     });
 
     process.env.TZ = "Australia/Sydney";
     expect(decideClubTimeZoneBackfill()).toEqual({
-      record: true,
+      kind: "preserved",
       timeZone: "Australia/Sydney",
       raw: "Australia/Sydney",
     });
@@ -225,10 +245,8 @@ describe("decideClubTimeZoneBackfill", () => {
     ]) {
       pinEnvironmentZone(raw);
       const decision = decideClubTimeZoneBackfill();
-      if (decision.record) {
-        expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
-        expect(decision.timeZone.length).toBeLessThanOrEqual(64);
-      }
+      expect(isValidClubTimeZone(decision.timeZone)).toBe(true);
+      expect(decision.timeZone.length).toBeLessThanOrEqual(64);
     }
   });
 });
@@ -268,16 +286,22 @@ describe("prisma/seed.ts club-timezone block", () => {
     expect(seedSource).not.toContain("readEnvironmentClubTimeZoneSeed");
   });
 
-  it("writes the row only when there is a zone to write", () => {
-    const guard = block.indexOf("if (clubTimeZoneBackfill.record) {");
+  it("always writes the row, and says out loud when the zone was defaulted", () => {
+    // Owner decision, 23 Aug 2026: a zone is always recorded, so there is no
+    // "did not seed" branch left to check. What has to be checked instead is
+    // that the seed did not answer the question by treating `defaulted` like
+    // any other outcome — a silent seed on `TZ=UTC` is the failure this decision
+    // explicitly guards against.
     const write = block.indexOf("prisma.clubTimeSettings.upsert(");
-    const otherwise = block.indexOf("} else {");
+    const defaulted = block.indexOf('clubTimeZoneBackfill.kind === "defaulted"');
 
-    expect(guard).toBeGreaterThan(-1);
-    expect(write).toBeGreaterThan(guard);
-    expect(otherwise).toBeGreaterThan(write);
-    // And the other branch says what happened rather than failing silently.
-    expect(block).toContain("NOT seeded");
+    expect(write).toBeGreaterThan(-1);
+    expect(defaulted).toBeGreaterThan(write);
+    expect(block).toContain("BY DEFAULT");
+    expect(block).toContain("/admin/club-time");
+    // The refuted shape: nothing may gate the write itself any more.
+    expect(block).not.toContain("if (clubTimeZoneBackfill.record)");
+    expect(seedSource).not.toContain("NOT seeded");
   });
 
   it("uses the shared singleton id rather than its own literal", () => {

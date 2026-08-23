@@ -89,6 +89,22 @@ function saveButton() {
   return screen.getByRole("button", { name: /Save time zone/ });
 }
 
+/**
+ * The zones the selector is offering, read straight off the `<select>`.
+ *
+ * NOT `getAllByRole("option")`, and the difference is measurable rather than
+ * stylistic (#2989 fix round). The unfiltered list holds 418 options, and the
+ * role query runs jsdom's accessibility check — a `getComputedStyle` walk up
+ * each element's ancestors — over every one of them, twice per assertion. That
+ * is what took the filter test below past the 5000 ms default timeout under
+ * parallel load while it passed in about a second on its own. A `<select>`'s
+ * `options` collection is the same set by construction, so nothing is weakened.
+ */
+function zoneOptions(): string[] {
+  const select = screen.getByLabelText("Time zone") as HTMLSelectElement;
+  return [...select.options].map((option) => option.textContent ?? "");
+}
+
 describe("ClubTimeZonePanel", () => {
   it("renders the zone the server supplied, and asks the server for it", async () => {
     await renderPanel();
@@ -206,7 +222,7 @@ describe("ClubTimeZonePanel", () => {
       target: { value: "reykjavik" },
     });
 
-    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    const options = zoneOptions();
     expect(options).toContain("Pacific/Auckland");
     expect(options).toContain("Atlantic/Reykjavik");
     expect(
@@ -245,29 +261,50 @@ describe("ClubTimeZonePanel", () => {
       screen.getByText(/keep the calendar dates they already have/),
     ).not.toBeNull();
     /*
-      AND THE SECOND ONE IS TRUE TODAY (#2989 review). CT-1 records the zone and
-      nothing reads it yet, so the panel must not promise that saving changes
-      what members see or when jobs fire: it says the deployment's TZ still
-      drives those, and asks for the two to be kept in step. Both legs are
-      asserted -- the honest sentence is present, and the old overclaim is gone --
-      so restoring the confident wording reddens this test rather than passing.
+      AND CT-5 (#2869) MADE THE SECOND ONE TRUE. CT-1's version of this test
+      asserted the opposite — that the panel says displayed times and scheduled
+      jobs still follow the deployment's `TZ` — because at that point nothing
+      read the setting. Emails, Xero document dates, the finance exports and
+      every scheduled job now do, so the honest copy changed and so does this.
+
+      Both legs are asserted the same way CT-1's were: the true sentence is
+      present, and the sentence that is now an UNDERclaim is gone, so restoring
+      the old "still follows TZ" wording reddens this test rather than passing.
     */
     expect(
-      screen.getByText(
-        /still follow the TZ setting this deployment starts with/,
-      ),
+      screen.getByText(/move to this zone straight away/),
     ).not.toBeNull();
     expect(
-      screen.queryByText(/What changes is how times are shown from now on/),
+      screen.queryByText(
+        /still follow the TZ setting this deployment starts with/,
+      ),
     ).toBeNull();
-    // And the acknowledgement itself says what it is acknowledging.
+
+    /*
+      THE ONE THING THAT IS STILL TRUE, and was nowhere in the product before
+      (#2869 review). `node-cron` reads a job's zone when the job is REGISTERED
+      and never re-reads it, so a running job keeps the old zone until the
+      application restarts. The documentation says so; this screen has to as
+      well, because this is the screen where somebody makes that happen.
+    */
+    expect(screen.getByText(/until it is/)).not.toBeNull();
+    expect(screen.getByText("restarted")).not.toBeNull();
+
+    // And the changeover-hour warning, which a settable zone makes reachable.
+    expect(
+      screen.getByText(/one hour is skipped and one hour happens twice/),
+    ).not.toBeNull();
+
+    // The acknowledgement itself says what it is acknowledging.
     expect(
       screen.getByText(
         /does not move any date or time already recorded/,
       ),
     ).not.toBeNull();
     expect(
-      screen.getByText(/keep following the deployment's TZ setting/),
+      screen.getByText(
+        /scheduled jobs keep their current zone until the application is restarted/,
+      ),
     ).not.toBeNull();
   });
 
@@ -385,14 +422,14 @@ describe("ClubTimeZonePanel", () => {
     await renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /Change time zone/ }));
 
-    const before = screen.getAllByRole("option").length;
+    const before = zoneOptions().length;
     expect(before).toBeGreaterThan(300);
 
     fireEvent.change(screen.getByLabelText("Find a time zone"), {
       target: { value: "auckland" },
     });
 
-    const after = screen.getAllByRole("option").map((o) => o.textContent);
+    const after = zoneOptions();
     expect(after).toContain("Pacific/Auckland");
     expect(after.length).toBeLessThan(before);
   });

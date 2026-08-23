@@ -51,7 +51,11 @@ import {
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import { buildInvoiceLineItems } from "./xero-booking-invoices";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  xeroDocumentDateFromDateOnlyColumn,
+  xeroDocumentDateFromInstant,
+} from "@/lib/xero-provider-dates";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
@@ -340,10 +344,17 @@ export async function createXeroInvoiceForGroupSettlement(
   // forbids: New Zealand runs 12-13 hours ahead of UTC, so for roughly the first
   // half of every club day the UTC day is still yesterday, and a settlement
   // invoice raised at 09:00 NZ on 1 July carried a due date of 30 June (#2834).
-  const issueDate = formatDateOnly(
+  // The issue date is the organiser booking's check-in, a `@db.Date` lodge night
+  // (a calendar day, read back in UTC — INV-DATE-010). The due date is derived
+  // from the settlement's `createdAt`, a real INSTANT, so it needs the club's
+  // calendar and gets it from the PERSISTED zone (CT-5, #2869; INV-DATE-019).
+  const issueDate = xeroDocumentDateFromDateOnlyColumn(
     new Date(settlement.groupBooking.organiserBooking.checkIn)
   );
-  const dueDate = formatDateOnlyForTimeZone(new Date(settlement.createdAt));
+  const dueDate = xeroDocumentDateFromInstant(
+    new Date(settlement.createdAt),
+    await readClubTimeZoneOutsideRequest(),
+  );
 
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,

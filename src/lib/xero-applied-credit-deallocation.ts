@@ -5,7 +5,8 @@ import {
   lockMemberCreditLedger,
 } from "./member-credit";
 import { callXeroApi, getAuthenticatedXeroClient } from "./xero-api-client";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -858,7 +859,7 @@ export async function deallocateExcessAppliedCreditForBooking(
         // re-invokes its callback on every retry attempt, so a read inside it
         // would send a different date on a retry that crossed club midnight,
         // under the same idempotency key.
-        const recreatedAllocationDate = formatDateOnlyForTimeZone(new Date());
+        const recreatedAllocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
         await callXeroApi(
           () => xero.accountingApi.createCreditNoteAllocation(
             tenantId,

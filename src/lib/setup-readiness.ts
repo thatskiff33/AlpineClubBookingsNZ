@@ -7,7 +7,10 @@ import {
   normaliseClubTimeZone,
   resolveClubTimeZone,
 } from "@/lib/club-time-zone";
-import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
+import {
+  classifyEnvironmentClubTimeZoneSeed,
+  type EnvironmentClubTimeZoneSeed,
+} from "@/lib/club-time-zone-env";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
@@ -656,20 +659,32 @@ function describeClubTimeZoneToRecord(
  * Where the zone the app is ANSWERING with came from, for a club whose stored
  * value cannot be used.
  *
- * This describes `resolveClubTimeZone`, the canonical reader's rule, and not the
- * preservation rule the backfill uses — the two deliberately differ, and this is
- * the one state where the reader's stricter answer is the true one. A row exists,
- * so no backfill will ever touch it; the app is on its documented fallback path
- * until somebody stores a usable zone.
+ * This describes `resolveClubTimeZone`, the canonical reader's rule. A row
+ * exists, so no backfill will ever touch it; the app is on its documented
+ * fallback path until somebody stores a usable zone.
+ *
+ * IT IS JUDGED FROM THE CLASSIFIED SEED, not from the raw string (#2989 fix
+ * round). The first version asked `normaliseClubTimeZone(raw) === fallback` —
+ * the OPERATOR-INPUT validator — while the value it was describing came out of
+ * `resolveClubTimeZone`, whose environment leg uses the PRESERVATION rule. On any
+ * deployment whose `TZ` is one of the thirty-six legacy aliases the two disagree,
+ * and the step printed two adjacent contradicting sentences: "falling back to
+ * Europe/London", then "the TZ value ("GB") is not a named place either, so the
+ * built-in New Zealand default applies". Taking `seed.kind` makes it impossible
+ * to answer this question with a different rule from the one that produced the
+ * answer.
  */
-function describeReaderFallback(raw: string | null, fallback: string): string {
-  if (raw === null) {
+function describeReaderFallback(seed: EnvironmentClubTimeZoneSeed): string {
+  if (seed.kind === "absent") {
     return "No TZ or NEXT_PUBLIC_TZ is set, so the built-in New Zealand default applies.";
   }
-  if (normaliseClubTimeZone(raw) === fallback) {
+  if (seed.kind === "unusable") {
+    return `The TZ / NEXT_PUBLIC_TZ value in the environment ("${printableTimeZoneValue(seed.raw)}") is not a named place either, so the built-in New Zealand default applies until the club's timezone is set again.`;
+  }
+  if (seed.raw === seed.timeZone) {
     return "That is the TZ / NEXT_PUBLIC_TZ value from the environment, which stands in only while nothing usable is stored.";
   }
-  return `The TZ / NEXT_PUBLIC_TZ value in the environment ("${printableTimeZoneValue(raw)}") is not a named place either, so the built-in New Zealand default applies until the club's timezone is set again.`;
+  return `That is the TZ / NEXT_PUBLIC_TZ value from the environment, which says "${printableTimeZoneValue(seed.raw)}" — the same place, named the way this runtime spells it. It stands in only while nothing usable is stored.`;
 }
 
 /**
@@ -677,9 +692,7 @@ function describeReaderFallback(raw: string | null, fallback: string): string {
  * persisted IANA timezone and it is the sole civil-time authority
  * (INV-CONFIG-002), so setup is not finished until it is stored explicitly.
  *
- * Six states. The first three are about the database, the last three are the
- * same "no row yet" state told apart by what the environment can be preserved
- * from — and telling those three apart is the point of the rework (#2989 review):
+ * Seven states:
  * 1. **No snapshot** — `setup:check` ran before the database was reachable. The
  *    same "not checked" warning the sibling DB-backed steps use; it cannot be
  *    answered from the environment, because the environment is precisely what
@@ -697,19 +710,38 @@ function describeReaderFallback(raw: string | null, fallback: string): string {
  *    the stored value is in force. This is `persisted-unusable` in
  *    `ClubTimeZoneSource`, and the maintenance panel says the same thing about
  *    it — one state, one instruction, wherever the operator meets it.
- * 5. **No row, and the environment names a place** → blocked, naming the zone
- *    the next start will record. A fresh install and a just-migrated existing
- *    install are both here, and it is deliberately a block rather than a
- *    warning: it is what stops setup finishing without an explicit timezone
- *    (issue AC). It is also not an emergency — the message names what will be
- *    recorded — so the block reads as "confirm this", not "the site is broken".
+ * 5. **No row, and the environment names a place** (or says nothing at all) →
+ *    blocked, naming the zone the next start will record. A fresh install and a
+ *    just-migrated existing install are both here, and it is deliberately a block
+ *    rather than a warning: it is what stops setup finishing without an explicit
+ *    timezone (issue AC). It is also not an emergency — the message names what
+ *    will be recorded — so the block reads as "confirm this", not "the site is
+ *    broken".
  * 6. **No row, and the environment names NO place** (`TZ=UTC`, `Etc/GMT-12`) →
- *    blocked, naming the raw value and saying plainly that nothing will be
- *    recorded until an administrator chooses. This state used to print
- *    "In effect right now: Pacific/Auckland", which was a zone nobody had chosen
- *    and which the un-migrated `APP_TIME_ZONE` call sites were demonstrably NOT
- *    using. A message whose job is to name the zone in force must not name a
- *    different one, so this state names none.
+ *    **warning**, naming the raw value and the `Pacific/Auckland` the next start
+ *    will record in its place. Owner decision, 23 Aug 2026 (#2989): such a
+ *    deployment is defaulted rather than blocked, because the zone it is
+ *    effectively using is not a storable club timezone and refusing to record
+ *    anything just leaves the setting empty. Not a block, because the owner said
+ *    not to block setup; not silence, because the club may be up to thirteen
+ *    hours from the zone it is about to be handed.
+ * 7. **`Pacific/Auckland` is stored, and the environment STILL names no place**
+ *    → **warning**, the post-boot form of state 6 and the state an operator
+ *    actually meets. The boot backfill runs before anybody can open
+ *    `/admin/setup`, so by the time this page renders the row exists and states 6
+ *    and 3 would otherwise be indistinguishable — a club that has been on `UTC`
+ *    for years would read a clean "complete" naming a zone nobody chose, which is
+ *    exactly what the owner's decision says must not happen.
+ *
+ *    IT CANNOT KNOW whether that `Pacific/Auckland` was defaulted or chosen: the
+ *    row records no provenance, and the setup CLI writes the same
+ *    `updatedByMemberId: null` a boot does. So the wording does not claim to
+ *    know — it says what is stored, says the environment could not confirm it,
+ *    and asks. The operator clears it either way: Acknowledge on this step if the
+ *    zone is right, or set the real one at `/admin/club-time` if it is not. That
+ *    a club deliberately on `Pacific/Auckland` with a `UTC` container sees this
+ *    once is the accepted cost of the club that was moved thirteen hours seeing
+ *    it at all.
  *
  * Deliberately clock-free: nothing here formats a date, so the answer is the same
  * at every instant.
@@ -763,29 +795,28 @@ function buildClubTimeZoneCheck(
 
   const stored = db.clubTimeZone ?? null;
 
+  // The environment, judged exactly as the boot backfill judges it
+  // (`decideClubTimeZoneBackfill`): its value is being PRESERVED, not approved,
+  // so `GB` is Europe/London and `NZ-CHAT` is Pacific/Chatham — while `UTC` and
+  // `Etc/GMT-12` name no place at all and are defaulted instead.
+  const seed = classifyEnvironmentClubTimeZoneSeed();
+
   // 5 / 6. No row yet — a fresh install, or an existing one between
   //         `prisma migrate deploy` and its first boot on the new release.
   if (stored === null) {
-    // What the next start will record, judged exactly as the boot backfill
-    // judges it (`decideClubTimeZoneBackfill`): the environment's value is being
-    // PRESERVED, not approved, so `GB` is Europe/London and `NZ-CHAT` is
-    // Pacific/Chatham — while `UTC` and `Etc/GMT-12` name no place at all and
-    // nothing will be recorded for them.
-    const seed = classifyEnvironmentClubTimeZoneSeed();
-
-    // 6. The environment names no place, so nothing will be recorded and this
-    //    step names NO zone as being in force. See the docblock.
+    // 6. The environment names no place, so the next start records the
+    //    documented default and says so. See the docblock.
     if (seed.kind === "unusable") {
       const raw = printableTimeZoneValue(seed.raw);
       return applyProgress(
         {
           ...base,
-          status: "blocked",
-          message: `The club's timezone has not been stored yet, and TZ / NEXT_PUBLIC_TZ is set to "${raw}", which is not a place. Choose the club's timezone at /admin/club-time.`,
+          status: "warning",
+          message: `The club's timezone has not been stored yet, and TZ / NEXT_PUBLIC_TZ is set to "${raw}", which is not a place — so the app will store ${CLUB_TIME_ZONE_FALLBACK}. Confirm that, or set the club's timezone at /admin/club-time.`,
           details: [
             "Source: none — nothing is stored in the database yet.",
-            `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so they carry no daylight-saving rules and no club's civil time can be derived from one.`,
-            "Nothing is stored automatically while that is the case: guessing a place would silently decide which day a lodge night falls on, and it would then be permanent. Set the club's timezone at /admin/club-time, or run npm run setup.",
+            `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so they carry no daylight-saving rules and no club's civil time can be read from one.`,
+            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run npm run setup) before or after the next start; a stored zone is never overwritten.`,
             CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
           ],
         },
@@ -820,13 +851,11 @@ function buildClubTimeZoneCheck(
   if (canonical === null) {
     // What the app answers meanwhile: the same precedence the canonical reader
     // uses, reached through the same resolver, so readiness cannot describe a
-    // different zone from the one in force. Note this is `resolveClubTimeZone`
-    // and NOT the preservation rule used above — a stored value that fails
-    // validation puts the reader on its documented fallback path, and this
-    // sentence has to describe the reader rather than the backfill.
-    const seed = classifyEnvironmentClubTimeZoneSeed();
-    const raw = seed.kind === "absent" ? null : seed.raw;
-    const fallback = resolveClubTimeZone(null, raw);
+    // different zone from the one in force.
+    const fallback = resolveClubTimeZone(
+      null,
+      seed.kind === "absent" ? null : seed.raw,
+    );
     return applyProgress(
       {
         ...base,
@@ -835,7 +864,7 @@ function buildClubTimeZoneCheck(
         details: [
           "Source: database (ClubTimeSettings)",
           `Stored value: "${printableTimeZoneValue(stored)}" — not a named IANA timezone such as Pacific/Auckland. Abbreviations (NZT, EST) and fixed offsets (+12:00, Etc/GMT-12) are refused because they carry no daylight-saving rules.`,
-          `Until it is fixed the app answers with ${fallback}. ${describeReaderFallback(raw, fallback)}`,
+          `Until it is fixed the app answers with ${fallback}. ${describeReaderFallback(seed)}`,
           CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
         ],
       },
@@ -843,7 +872,30 @@ function buildClubTimeZoneCheck(
     );
   }
 
-  // 2. Configured.
+  // 7. The documented default is stored and the environment STILL names no
+  //    place, so this may be the zone the boot backfill invented rather than one
+  //    anybody chose. It cannot be told apart from a deliberate choice, so the
+  //    wording asks instead of asserting. See the docblock.
+  if (canonical === CLUB_TIME_ZONE_FALLBACK && seed.kind === "unusable") {
+    const raw = printableTimeZoneValue(seed.raw);
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: `The club's timezone is ${canonical}, but nothing has confirmed it: TZ / NEXT_PUBLIC_TZ is "${raw}", which is not a place, so ${canonical} is what the app records by default. Confirm it, or set the club's timezone at /admin/club-time.`,
+        details: [
+          "Source: database (ClubTimeSettings)",
+          `Club timezone: ${canonical}`,
+          `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so nothing in this deployment's configuration says which timezone the club is actually in — ${canonical} is the built-in New Zealand default, recorded so setup could finish rather than because anything confirmed it.`,
+          `If the club is in ${canonical}, press Acknowledge on this step. If it is not, set the club's timezone at /admin/club-time: it decides which day a lodge night falls on and what time members see, and once CT-2 lands it drives every time this site displays.`,
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 3. Configured.
   return applyProgress(
     {
       ...base,

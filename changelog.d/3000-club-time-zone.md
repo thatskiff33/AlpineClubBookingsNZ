@@ -17,13 +17,15 @@
   setting that takes over as the rest of the time-zone work ships. So while both
   exist, keep the two in step. A club outside New Zealand is not reset to New
   Zealand: an older spelling is recorded under its modern name (`GB` becomes
-  `Europe/London`), and where `TZ` names no place at all — `UTC`, `Etc/UTC` — the
-  upgrade records **nothing** rather than guessing, and the setup checklist asks a
-  Full Administrator to choose. Confirm the **Club Time Zone** step on the setup
-  checklist after upgrading, and leave `TZ` in place while you do.
+  `Europe/London`). Where `TZ` names no place at all — `UTC`, `Etc/UTC` — there is
+  nothing to preserve, so `Pacific/Auckland` is recorded and **said out loud**: a
+  warning at startup, and the setup checklist asks a Full Administrator to confirm
+  rather than reporting it as settled. Confirm the **Club Time Zone** step after
+  upgrading, and leave `TZ` in place while you do.
 
   Changing it later is a Full Administrator job: it asks for an explicit
   confirmation and records who changed it and what it was before. **It rewrites
   nothing.** No stored date or time moves, and a stay keeps the same lodge
-  nights — what changes is how recorded moments are written out from then on, and
-  the club-local hour that overnight work runs at.
+  nights. What a change affects — once the setting is what members' times are
+  worked out from — is which zone recorded moments are written in from then on,
+  and the club-local hour overnight work runs at.

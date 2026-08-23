@@ -26,7 +26,8 @@ import {
   findOrCreateXeroContact,
   retryXeroWriteWithContactRepair,
 } from "./xero-contacts";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 
 export async function createXeroCreditNoteForModification(params: {
@@ -101,7 +102,7 @@ export async function createXeroCreditNoteForModification(params: {
   // club's calendar, not the UTC day, which is still yesterday for roughly the
   // first half of every New Zealand day (INV-DATE-019, #2834). Read once so the
   // recorded payload, every contact-repair attempt and the allocation all agree.
-  const modificationCreditNoteDate = formatDateOnlyForTimeZone(new Date());
+  const modificationCreditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,

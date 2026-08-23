@@ -25,6 +25,19 @@ vi.mock("@/lib/logger", () => ({
   default: mockLogger,
 }));
 
+/**
+ * The CLUB's persisted zone, pinned to something that is neither this runner's
+ * nor the documented fallback (CT-5, #2869). Without the pin the route would
+ * resolve the environment seed and the assertion below would be reading the
+ * host's own zone back — a pass that proves nothing, and a red on any machine
+ * whose `TZ` is not New Zealand.
+ */
+const CLUB_TIME_ZONE = "Pacific/Chatham";
+
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: vi.fn(async () => CLUB_TIME_ZONE),
+}));
+
 import { GET as getFinanceLegacyDashboardBookingsRoute } from "@/app/api/finance/legacy-dashboard/bookings/route";
 
 describe("finance legacy dashboard bookings route", () => {
@@ -83,9 +96,13 @@ describe("finance legacy dashboard bookings route", () => {
       historyStartDate: "2020-04-01",
       asOfDate: "2026-05-03",
     });
+    // The CLUB's persisted zone is passed explicitly (CT-5, #2869): the export
+    // derives every row's `created_date` from it, and the route derives the
+    // default `asOfDate` cut-off from it too.
     expect(mockGetLegacyDashboardBookingExport).toHaveBeenCalledWith({
       historyStartDate: "2020-04-01",
       asOfDate: "2026-05-03",
+      clubTimeZone: CLUB_TIME_ZONE,
     });
   });
 

@@ -16,7 +16,7 @@ import {
 export async function syncFinanceAgedReceivablesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const invoices = await listFinanceOpenInvoices(context, window.asOfDateString, {
     invoiceType: "ACCREC",
     contextLabel: "agedReceivables",
@@ -31,7 +31,7 @@ export async function syncFinanceAgedReceivablesSnapshot(
 export async function syncFinanceAccountsReceivableInvoicesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const invoices = await listFinanceOpenInvoices(context, window.asOfDateString, {
     invoiceType: "ACCREC",
     contextLabel: "accountsReceivableInvoices",
@@ -46,7 +46,7 @@ export async function syncFinanceAccountsReceivableInvoicesSnapshot(
 export async function syncFinanceAgedPayablesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const invoices = await listFinanceOpenInvoices(context, window.asOfDateString, {
     invoiceType: "ACCPAY",
     contextLabel: "agedPayables",
@@ -61,7 +61,7 @@ export async function syncFinanceAgedPayablesSnapshot(
 export async function syncFinanceAccountsPayableInvoicesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const invoices = await listFinanceOpenInvoices(context, window.asOfDateString, {
     invoiceType: "ACCPAY",
     contextLabel: "accountsPayableInvoices",

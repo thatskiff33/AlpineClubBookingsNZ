@@ -41,13 +41,23 @@ import { formatNZDateTime } from "@/lib/nzst-date";
  * does come from this runtime (`listSelectableClubTimeZones`), which is a list of
  * choices rather than a decision, and every choice is re-validated server-side.
  *
- * WHAT THIS SCREEN MAY CLAIM, which is narrower than it reads (#2989 review).
- * CT-1 RECORDS the zone and nothing more: no production code path reads
- * `getClubTimeZone()` yet, so every displayed time and every club-local schedule
- * still follows the deployment's `TZ`. So the copy below says the setting is
- * recorded here and asks the operator to keep the two in step. It must not tell
- * them that saving changes what members see, because today it does not — and if
- * you are the change that makes it true, this copy is part of your diff.
+ * WHAT THIS SCREEN MAY CLAIM, which changed with CT-5 (#2869) and is part of
+ * that diff exactly as CT-1's version of this paragraph said it would be. The
+ * setting is no longer inert: emails, Xero document dates, the finance exports
+ * and every scheduled job now read the PERSISTED zone. So the copy below says
+ * saving moves them — and says the one thing that is still true and is nowhere
+ * else in the product: a job that is ALREADY REGISTERED keeps its old zone until
+ * the application restarts, because `node-cron` reads the zone when a job is
+ * scheduled and never re-reads it. Admin -> Health shows a banner while that is
+ * outstanding.
+ *
+ * IT ALSO WARNS ABOUT THE CHANGEOVER HOUR, which is not a CT-5 regression but is
+ * newly reachable from a web form. Several jobs run between 2am and 3am, and on
+ * the two days a year a zone's clocks change, an hour is skipped and an hour
+ * repeats — so a job scheduled inside the skipped hour does not run that day, and
+ * one inside the repeated hour can run twice. Choosing a zone is now the moment
+ * an operator can move all of them into such an hour, so it is the moment to say
+ * so.
  */
 
 type ClubTimeZoneSource =
@@ -354,11 +364,24 @@ export function ClubTimeZonePanel() {
                 Nothing in the database changes except this setting.
               </li>
               <li>
-                What this changes today is the setting itself. The times the site
-                shows, and when club-local scheduled jobs — reminders, nightly
-                work, cut-offs — fire, still follow the TZ setting this
-                deployment starts with, and move onto this one as the rest of the
-                club-time work lands. So keep the two the same.
+                Times the site and its emails show move to this zone straight
+                away — booking confirmations, rosters, reminders and cut-offs.
+                So do the dates on invoices and credit notes sent to Xero, and
+                the date columns in the finance exports.
+              </li>
+              <li>
+                Scheduled jobs — reminders, nightly work, cut-offs — keep running
+                on the zone the application started with until it is{" "}
+                <span className="font-semibold">restarted</span>. Saving here
+                does not move a job that is already running. Admin &rarr; Health
+                shows a notice while a restart is outstanding.
+              </li>
+              <li>
+                On the two days a year the clocks change in the zone you choose,
+                one hour is skipped and one hour happens twice. A job scheduled
+                inside the skipped hour does not run that day, and one inside the
+                repeated hour can run twice. Several jobs here run between 2am
+                and 3am, which is when many zones change.
               </li>
               <li>
                 Lodge nights keep the calendar dates they already have. A booking
@@ -372,11 +395,11 @@ export function ClubTimeZonePanel() {
                 onCheckedChange={(checked) => setAcknowledged(checked)}
               />
               <Label htmlFor={acknowledgeId} className="text-sm font-normal">
-                I understand that this records the club&apos;s time zone, that
-                displayed times and club-local scheduled jobs keep following the
-                deployment&apos;s TZ setting until the rest of the club-time work
-                lands, and that saving does not move any date or time already
-                recorded.
+                I understand that this changes the club&apos;s time zone, that
+                displayed times, emails and Xero document dates move to it
+                straight away, that scheduled jobs keep their current zone until
+                the application is restarted, and that saving does not move any
+                date or time already recorded.
               </Label>
             </div>
           </div>

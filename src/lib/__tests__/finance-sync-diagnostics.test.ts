@@ -3,9 +3,25 @@ import { FinanceSyncRunStatus, FinanceSyncRunTrigger } from "@prisma/client";
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron";
+
+/**
+ * CT-5 (#2869): the panel reports the zone the job actually runs on — the
+ * club's PERSISTED one — so it is mocked here rather than read from the host.
+ *
+ * The mock below names `@/lib/club-time-zone-runtime`, which is the module the
+ * code under test imports. It used to name `@/lib/club-time-zone-settings`,
+ * which it does not, so the mock was inert and the assertions passed only
+ * because the unmocked fallback happens to be `Pacific/Auckland` on CI — the
+ * exact coincidence a mock exists to remove (#2869 review). The pinned zone is
+ * therefore deliberately NOT the fallback.
+ */
+const CLUB_TIME_ZONE = "America/Denver";
 import { DEFAULT_FINANCE_SYNC_WORKFLOW } from "@/lib/finance-sync-service";
+
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => "America/Denver"),
+}));
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -195,7 +211,7 @@ describe("finance-sync-diagnostics", () => {
       cron: {
         jobName: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: CLUB_TIME_ZONE,
         latestRun: {
           id: "cron-latest",
           jobName: FINANCE_SYNC_CRON_JOB_NAME,
@@ -275,7 +291,7 @@ describe("finance-sync-diagnostics", () => {
       cron: {
         jobName: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: CLUB_TIME_ZONE,
         latestRun: null,
       },
       recentFailures: {

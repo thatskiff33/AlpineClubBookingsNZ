@@ -4,7 +4,8 @@ import {
   FINANCE_FORWARD_COMMITTED_BOOKING_STATUSES,
   FINANCE_REALIZED_BOOKING_STATUSES,
 } from "@/lib/finance-booking-metrics";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
+import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -167,6 +168,7 @@ function toLegacyDashboardBookingRow(input: {
   overlapNights: number;
   totalStayNights: number;
   bookingIndexOffset: number;
+  clubTimeZone: ClubTimeZone;
 }): LegacyDashboardBookingRow | null {
   const guestCount = input.booking.guests.length;
 
@@ -192,7 +194,12 @@ function toLegacyDashboardBookingRow(input: {
     // (#2697). The other dates here are true `@db.Date` lodge nights, whose UTC
     // midnight IS the encoding of a calendar day (INV-DATE-010), so they are
     // correctly left on truncation.
-    created_date: formatDateOnlyForTimeZone(input.booking.createdAt),
+    //
+    // The zone is the CLUB's persisted one, supplied by the caller (CT-5,
+    // #2869). It used to default to `APP_TIME_ZONE` — `process.env.TZ` — so a
+    // report column moved by a day when the container moved region, which is
+    // precisely what issue #2869 s4 says a report date must never do.
+    created_date: clubCalendarDateOf(input.booking.createdAt, input.clubTimeZone),
     status: input.booking.status,
     guests: guestCount,
     nights: input.overlapNights,
@@ -214,6 +221,11 @@ function getLegacyDashboardExportStatuses(): BookingStatus[] {
 export async function getLegacyDashboardBookingExport(input: {
   historyStartDate: string;
   asOfDate: string;
+  /**
+   * The club's persisted civil-time zone (`INV-CONFIG-002`). Required, with no
+   * default: a default here would be the environment authority CT-5 removes.
+   */
+  clubTimeZone: ClubTimeZone;
 }): Promise<LegacyDashboardBookingExportResult> {
   const historyStartDate = parseIsoDate(
     input.historyStartDate,
@@ -253,6 +265,7 @@ export async function getLegacyDashboardBookingExport(input: {
           overlapNights: slice.overlapNights,
           totalStayNights: slice.totalStayNights,
           bookingIndexOffset: slice.bookingIndexOffset,
+          clubTimeZone: input.clubTimeZone,
         });
 
         if (row) {
@@ -289,6 +302,7 @@ export async function getLegacyDashboardBookingExport(input: {
       overlapNights: slice.overlapNights,
       totalStayNights: slice.totalStayNights,
       bookingIndexOffset: slice.bookingIndexOffset,
+      clubTimeZone: input.clubTimeZone,
     });
 
     if (!row) {

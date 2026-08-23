@@ -42,7 +42,7 @@ import {
   bookingPaymentDueNote,
   splitGuestPortionOwnBookingLine,
 } from "@/lib/email-message-notes";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /**
  * The "how to get to the lodge" block: travel note, and the door code when the
@@ -146,15 +146,15 @@ export function bookingConfirmedTemplate(
             provisional.guestCount === 1 ? "" : "s"
           } ${
             provisional.guestCount === 1 ? "is" : "are"
-          } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
+          } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${emailClubDateTime(
             provisional.holdUntil,
           )}, we'll automatically take that guest portion from your saved payment method and your guests are confirmed. If we can't take payment, we'll contact you to arrange it. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`,
           "warning",
         )
       : "";
   const rows: Array<{ label: string; value: string }> = [
-    { label: "Check-in", value: formatNZDate(checkIn) },
-    { label: "Check-out", value: formatNZDate(checkOut) },
+    { label: "Check-in", value: emailClubDate(checkIn) },
+    { label: "Check-out", value: emailClubDate(checkOut) },
     { label: "Guests", value: String(guestCount) },
   ];
 
@@ -287,12 +287,12 @@ export function bookingPendingTemplate(
     ${heading("Booking Pending")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been received and is currently pending.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailClubDate(checkIn) },
+      { label: "Check-out", value: emailClubDate(checkOut) },
       { label: "Guests", value: String(guestCount) },
-      { label: "Hold Until", value: formatNZDateTime(holdUntil) },
+      { label: "Hold Until", value: emailClubDateTime(holdUntil) },
     ])}
-    ${alertBox("Your booking includes non-member guests and will be held as pending until " + formatNZDateTime(holdUntil) + ".", "warning")}
+    ${alertBox("Your booking includes non-member guests and will be held as pending until " + emailClubDateTime(holdUntil) + ".", "warning")}
     ${paragraph("During this time, club members have priority. If the lodge fills up with member bookings, your booking may be bumped. <strong>Your card will only be charged when the booking is confirmed.</strong>")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
@@ -316,8 +316,8 @@ export function bookingBumpedTemplate(
     ${heading("Booking Update")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", unfortunately your pending lodge booking has been bumped due to member demand.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailClubDate(checkIn) },
+      { label: "Check-out", value: emailClubDate(checkOut) },
       { label: "Guests", value: String(guestCount) },
     ])}
     ${alertBox("Your card has not been charged.", "info")}
@@ -378,8 +378,8 @@ export function bookingCancelledTemplate(
     ${heading("Booking Cancelled")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been cancelled.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailClubDate(checkIn) },
+      { label: "Check-out", value: emailClubDate(checkOut) },
     ])}
     ${refundInfo}
     ${creditRestoredInfo}
@@ -397,8 +397,8 @@ export function bookingGuestsCancelledTemplate(
     ${heading("Booking Cancelled")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", you asked us to cancel your whole booking if your non-member guests couldn't come. The lodge filled up with member bookings, so we've cancelled it.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailClubDate(checkIn) },
+      { label: "Check-out", value: emailClubDate(checkOut) },
     ])}
     ${alertBox("Your card has not been charged.", "info")}
     ${paragraph("You're welcome to rebook for different dates where availability exists.")}
@@ -518,8 +518,8 @@ export function setupIntentFailedTemplate(data: {
   // #2256: these had the right locale but no `timeZone`, so they rendered in
   // whatever zone the sending process happened to run in — a 2026-04-15T23:30Z
   // check-in reads as 15 April from a UTC worker and 16 April in New Zealand.
-  // formatNZDate pins both the zone and the house "16 Apr 2026" format.
-  const dates = `${formatNZDate(data.checkIn)} – ${formatNZDate(data.checkOut)}`;
+  // emailClubDate pins both the zone and the house "16 Apr 2026" format.
+  const dates = `${emailClubDate(data.checkIn)} – ${emailClubDate(data.checkOut)}`;
   return layout(`
     ${heading("Card Setup Failed")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
@@ -553,8 +553,8 @@ export function splitGuestPortionCancelledTemplate(data: {
     ${heading("Your Guests' Provisional Place Was Cancelled")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the provisional place we were holding for your non-member guests stayed unpaid up to the check-in day, so it has now been automatically cancelled. Nothing was ever charged for it, and no beds were held.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailClubDate(data.checkIn) },
+      { label: "Check-out", value: emailClubDate(data.checkOut) },
       ...(data.parentBookingReference
         ? [
             {

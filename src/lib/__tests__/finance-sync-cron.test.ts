@@ -17,6 +17,28 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+/**
+ * CT-5 (#2869): the job's civil-time zone is the club's PERSISTED one.
+ *
+ * TWO THINGS HERE WERE WRONG AND BOTH MATTERED (#2869 review). The mock named
+ * `@/lib/club-time-zone-settings`, which the code under test does not import —
+ * it reads `readClubTimeZoneOutsideRequest` from `@/lib/club-time-zone-runtime`
+ * — so the mock was never consulted at all. And it pinned `Pacific/Auckland`,
+ * which is what the UNMOCKED path answers on CI anyway (no `clubTimeSettings`
+ * delegate on the Prisma mock, `TZ` unset, so the documented fallback), so the
+ * assertions passed on precisely the coincidence the mock's own comment claimed
+ * to have removed. Measured: three of them failed the moment the host zone was
+ * `America/Denver`.
+ *
+ * So: the module the code really imports, pinned to a zone that is neither the
+ * host's nor the fallback.
+ */
+const CLUB_TIME_ZONE = "America/Denver";
+
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => CLUB_TIME_ZONE),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: {
     info: vi.fn(),
@@ -26,11 +48,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
-  FINANCE_SYNC_CRON_CHECKIN_CONFIG,
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_MONITOR_SLUG,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
+  financeSyncCronCheckinConfig,
   registerDailyFinanceSyncCron,
   resetFinanceSyncCronRunnerForTests,
   runDailyFinanceSyncCron,
@@ -83,18 +104,18 @@ describe("finance-sync-cron", () => {
       error: vi.fn(),
     };
 
-    registerDailyFinanceSyncCron({ schedule }, { logger });
+    registerDailyFinanceSyncCron({ schedule }, "Pacific/Auckland", { logger });
 
     expect(schedule).toHaveBeenCalledWith(
       FINANCE_SYNC_CRON_SCHEDULE,
       expect.any(Function),
-      { timezone: FINANCE_SYNC_CRON_TIMEZONE }
+      { timezone: "Pacific/Auckland" }
     );
     expect(logger.info).toHaveBeenCalledWith(
       {
         job: FINANCE_SYNC_CRON_JOB_NAME,
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
+        timezone: "Pacific/Auckland",
       },
       "Scheduled daily finance sync"
     );
@@ -149,7 +170,7 @@ describe("finance-sync-cron", () => {
         monitorSlug: FINANCE_SYNC_CRON_MONITOR_SLUG,
         status: "in_progress",
       },
-      FINANCE_SYNC_CRON_CHECKIN_CONFIG
+      financeSyncCronCheckinConfig(CLUB_TIME_ZONE)
     );
     expect(captureCheckIn).toHaveBeenNthCalledWith(2, {
       checkInId: "check-in-1",

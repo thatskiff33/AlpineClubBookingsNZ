@@ -3,6 +3,7 @@ import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
+import { readCronRuntimeZone } from "@/lib/cron-runtime-zone";
 
 interface CheckResult {
   status: "ok" | "error";
@@ -46,6 +47,16 @@ export interface ReadinessHealthReport {
 export interface RuntimeStatusReport {
   cronEnabled: boolean;
   role: string;
+  /**
+   * The zone THIS process registered its scheduled jobs against, or `null` when
+   * it did not register them (CT-5, #2869).
+   *
+   * The admin health page runs on a web slot and the scheduler runs in the cron
+   * leader, so without this the page can only report the club's CONFIGURED zone
+   * — which is a different fact between an admin changing it and the next
+   * restart. See `@/lib/cron-runtime-zone`.
+   */
+  clubTimeZone: string | null;
 }
 
 const CHECK_TIMEOUT_MS = 3000;
@@ -239,6 +250,7 @@ export function getRuntimeStatus(): RuntimeStatusReport {
   return {
     cronEnabled: (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true",
     role: process.env.APP_RUNTIME_ROLE ?? "unknown",
+    clubTimeZone: readCronRuntimeZone(),
   };
 }
 
