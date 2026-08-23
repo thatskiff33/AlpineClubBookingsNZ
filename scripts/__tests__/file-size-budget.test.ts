@@ -870,6 +870,63 @@ describe("the deliberate escape: a declared allowance", () => {
     expect(second.stderr).toContain("+100 beyond its ceiling");
   });
 
+  it("and inert means inert: a merged allowance does not block a later one for the same file", () => {
+    /*
+      The other half of "one-shot", and the half that was broken. Two code paths
+      disagreed about what a merged allowance is. The EFFECT path honoured the
+      contract — an allowance applies only when its own file is in the diff — but
+      the DUPLICATE check read every `.md` in the directory, merged ones
+      included, so the second pull request to grow a file was told:
+
+        src/app/api/admin/reports/route.ts already has an allowance in
+        size-allowances.d/2870-admin-api-club-time.md; one file, one allowance
+
+      naming a file the author does not have in their diff and cannot act on.
+      Measured on the club-time epic branch: 22 files held an allowance and 15 of
+      them came from three already-merged declarations, several on files the
+      remaining groups were about to touch — and one lane had already escaped it
+      by contorting a route back to its exact original line count. This is the
+      case that has to work.
+    */
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-big.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    const merged = repo.commit("PR1: grew, with its allowance");
+    expect(captureRun(repo.root, ["--base", base]).code).toBe(0);
+
+    repo.write("src/lib/big.ts", 1400);
+    repo.allow(
+      "2981-big-again.md",
+      `file: src/lib/big.ts\nlines: 1400\nreason: ${REASON}\n`,
+    );
+    repo.commit("PR2: grows it again, with an allowance of its own");
+
+    const second = captureRun(repo.root, ["--base", merged]);
+    expect(second.stderr).toBe("");
+    expect(second.code).toBe(0);
+    expect(second.stdout).toContain("src/lib/big.ts  ->  1400 LOC");
+    expect(second.stdout).toContain(`${ALLOWANCE_DIR}/2981-big-again.md`);
+  });
+
+  it("but two allowances for one file in the SAME change still fail", () => {
+    // The rule the duplicate check exists for, and the reason the fix is
+    // liveness rather than deletion: two live declarations of one file's length
+    // are ambiguous, and ambiguity in a gate's input is how the old ledger
+    // shipped a ceiling the tree already violated.
+    const { repo, base } = overBudgetRepo();
+    repo.write("src/lib/big.ts", 1300);
+    repo.allow("2980-a.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.allow("2980-b.md", `file: src/lib/big.ts\nlines: 1300\nreason: ${REASON}\n`);
+    repo.commit("one change, two allowances for one file");
+
+    const result = captureRun(repo.root, ["--base", base]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("UNUSABLE");
+    expect(result.stderr).toContain("already has an allowance in");
+    expect(result.stderr).toContain(`${ALLOWANCE_DIR}/2980-a.md`);
+    expect(result.stderr).toContain(`${ALLOWANCE_DIR}/2980-b.md`);
+  });
+
   it("survives into the push-to-main run, which judges the same merge", () => {
     // Load-bearing, and not obvious: `verify` also runs on a push to `main`,
     // against the push's own pre-push commit. If an allowance did not reach
