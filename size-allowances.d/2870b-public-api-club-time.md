@@ -141,7 +141,7 @@ reason: five lines on a 491-line route. The existing comment already explained
   lose the reason the comparison is shaped this way at all.
 
 file: src/lib/booking-create.ts
-lines: 1889
+lines: 1899
 reason: fifteen lines on an already-oversized create service, of which thirteen
   are one comment and two are imports. `POST /api/bookings` and this service run
   the same two retroactive-booking rules — the service deliberately re-checks the
