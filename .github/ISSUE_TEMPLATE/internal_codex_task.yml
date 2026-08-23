@@ -4,6 +4,105 @@ title: "[Codex] "
 labels:
   - codex-ready
 body:
+  - type: markdown
+    attributes:
+      value: |
+        The first few questions are for a **person** — the owner deciding whether
+        this is worth doing, a fork maintainer working out whether it reaches
+        them, and whoever picks this up in six months. Answer them in ordinary
+        language, describing what somebody *sees* rather than the mechanism.
+
+        The execution contract further down is just as important and is not
+        being thinned; it simply comes second. Full guidance:
+        `docs/agents/ISSUE_WORKFLOW.md` → "Writing an issue: the human
+        explanation, then the execution contract".
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happens today
+      description: >-
+        The problem, limitation or opportunity in plain English. What does
+        somebody experience right now, or what can they not currently do?
+    validations:
+      required: true
+  - type: textarea
+    id: human_impact
+    attributes:
+      label: Who is affected, and why it matters
+      description: >-
+        Who notices — a member, a lodge officer, the treasurer, an adopting
+        club, a fork maintainer, a future agent — and what goes wrong for them
+        or what capability is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What is proposed, and what is different when it is done
+      description: >-
+        The outcome in ordinary language. Someone who reads only this field
+        should understand what will have changed once the work ships.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered, and why this approach
+      description: >-
+        Where there genuinely was a choice, name the material alternatives and
+        say why each was rejected — the next reader's question is almost always
+        "was X considered?". Do not manufacture alternatives to fill this in:
+        if one approach was the only sane one, say so in a line, or write N/A.
+    validations:
+      required: false
+  - type: dropdown
+    id: work_shape
+    attributes:
+      label: Shape of this work
+      description: >-
+        An epic is one atomic release outcome whose intermediate child states
+        must not reach downstream clubs on their own. A dependency, a shared
+        theme, shared files, or having been found in the same audit do not make
+        an epic. See `docs/agents/ISSUE_WORKFLOW.md` → "What qualifies as an
+        epic".
+      options:
+        - Standalone issue — independently useful, ships on its own
+        - Programme stage — ordered work, but this stage ships alone
+        - Epic — one atomic release outcome, children on an epic branch
+        - Child of an existing epic — targets its integration branch
+    validations:
+      required: true
+  - type: textarea
+    id: atomic_release_justification
+    attributes:
+      label: If this is an epic — why it must ship atomically
+      description: >-
+        Answer all four: (1) could a downstream club upgrade after this epic and
+        sensibly remain there? (2) can its release note describe a complete
+        useful outcome without saying "foundation for the next epic"? (3) does
+        anything user-visible become confusing or incomplete until another
+        planned epic lands? (4) will another planned epic soon need to
+        materially change the data model or behaviour this one establishes? Then
+        say what would be incomplete, confusing, unsafe or misleading about
+        delivering the children separately. Write N/A if this is not an epic.
+    validations:
+      required: false
+  - type: textarea
+    id: settled_decisions
+    attributes:
+      label: Settled decisions and product contract
+      description: >-
+        Any decision already taken that the implementor must not relitigate,
+        with a link to the comment that recorded it. Write N/A if none.
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        ### Execution contract
+
+        Everything below briefs the agent that will implement this. It stays as
+        precise as it has always been.
   - type: dropdown
     id: workstream
     attributes:
@@ -56,12 +155,6 @@ body:
     validations:
       required: true
   - type: textarea
-    id: goal
-    attributes:
-      label: Goal
-    validations:
-      required: true
-  - type: textarea
     id: context_files
     attributes:
       label: Context files
@@ -78,6 +171,15 @@ body:
     id: out_of_scope
     attributes:
       label: Out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies or blockers
+      description: >-
+        A blocker outranks every other sentence in the body, so make sure it is
+        still true after the rest of this form. Write None if there are none.
     validations:
       required: true
   - type: textarea
@@ -100,20 +202,23 @@ body:
     validations:
       required: true
   - type: textarea
-    id: codex_prompt
-    attributes:
-      label: Codex invocation prompt
-    validations:
-      required: true
-  - type: textarea
     id: manual_checks
     attributes:
       label: Manual checks
     validations:
       required: true
   - type: textarea
-    id: dependencies
+    id: residual_risk_reporting
     attributes:
-      label: Dependencies or blockers
+      label: Residual-risk reporting
+      description: >-
+        What the PR must report back, and anything already known to be at risk.
+        Residuals are resolved on the PR that finds them, not carried forward.
+    validations:
+      required: true
+  - type: textarea
+    id: codex_prompt
+    attributes:
+      label: Codex invocation prompt
     validations:
       required: true
