@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  clubPostHtmlToText,
+  clubPostImageIds,
+  sanitiseClubPostHtml,
+} from "@/lib/club-post-html";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -19,6 +24,9 @@ export const MAX_CLUB_POST_LENGTH = 4000;
 
 /** How many posts one page of the board holds. */
 export const CLUB_POST_PAGE_SIZE = 20;
+
+/** Most images one post may carry. Mirrors MAX_POST_IMAGES on the storage side. */
+export const MAX_CLUB_POST_IMAGES = 6;
 
 export class ClubPostValidationError extends Error {
   constructor(message: string) {
@@ -81,6 +89,13 @@ export interface MemberClubPost {
   /** Null once the author's member record is gone; the post survives them. */
   authorMemberId: string | null;
   content: string;
+  /**
+   * Sanitised rich body, or null for a post written before the editor existed.
+   * ALREADY SANITISED when it reaches a renderer -- sanitised on write, and
+   * sanitised AGAIN by the serializer below, so a row that predates a
+   * tightening of the allowlist cannot render under the old rules.
+   */
+  bodyHtml: string | null;
   postedAt: string;
   /** True when the signed-in member wrote it. */
   mine: boolean;
@@ -98,6 +113,7 @@ export function serializeClubPostForMember(
     authorName: string;
     authorMemberId: string | null;
     content: string;
+    bodyHtml?: string | null;
     postedAt: Date;
     originClubName: string | null;
   },
@@ -108,6 +124,10 @@ export function serializeClubPostForMember(
     authorName: post.authorName,
     authorMemberId: post.authorMemberId,
     content: post.content,
+    // Re-sanitised on the way OUT as well as on the way in. The allowlist can
+    // tighten, and a post stored under a looser one must not keep rendering
+    // under it just because it was accepted at the time.
+    bodyHtml: post.bodyHtml ? sanitiseClubPostHtml(post.bodyHtml) || null : null,
     postedAt: post.postedAt.toISOString(),
     mine: post.authorMemberId === viewerMemberId,
     originClubName: post.originClubName,
@@ -162,6 +182,7 @@ export async function listClubPostsForMember(
       authorName: true,
       authorMemberId: true,
       content: true,
+      bodyHtml: true,
       postedAt: true,
       originClubName: true,
     },
@@ -194,19 +215,52 @@ export async function createClubPost(input: {
   authorMemberId: string;
   authorName: string;
   content: string;
+  /** Rich body from the composer. Sanitised HERE; what arrives is a proposal. */
+  bodyHtml?: string | null;
 }): Promise<{ id: string }> {
-  const content = assertValidClubPostContent(input.content);
+  // SANITISED SERVER-SIDE, ALWAYS. The composer sanitises too, but that copy
+  // runs in the member's own browser and anyone can post to this endpoint
+  // directly, so the client pass is a courtesy and this one is the control.
+  const bodyHtml = input.bodyHtml
+    ? sanitiseClubPostHtml(input.bodyHtml) || null
+    : null;
+
+  // Derived from the SANITISED html rather than taken from the request when a
+  // rich body is present, so the two can never disagree: the text is what the
+  // stored markup actually says. A caller could otherwise submit innocuous
+  // text alongside markup saying something else, and the moderation list — which
+  // reads the text — would show the wrong thing.
+  const content = assertValidClubPostContent(
+    bodyHtml ? clubPostHtmlToText(bodyHtml) : input.content,
+  );
 
   const post = await prisma.clubPost.create({
     data: {
       authorMemberId: input.authorMemberId,
       authorName: input.authorName,
       content,
+      bodyHtml,
       // originClubCode/originClubName stay null: this club wrote it.
-      // sharedAt/serverPostId stay null: sharing arrives in a later child.
+      // sharedAt/serverPostId stay null until the post is shared.
     },
     select: { id: true },
   });
+
+  // Claim the images this body refers to. Scoped to THIS member's own
+  // unclaimed uploads: without that, a body could name another member's
+  // publicId and steal an image off a post it does not own — the ids are
+  // unguessable, but "hard to guess" is not an authorisation check.
+  const imageIds = bodyHtml ? clubPostImageIds(bodyHtml) : [];
+  if (imageIds.length > 0) {
+    await prisma.clubPostImage.updateMany({
+      where: {
+        publicId: { in: imageIds.slice(0, MAX_CLUB_POST_IMAGES) },
+        postId: null,
+        uploadedByMemberId: input.authorMemberId,
+      },
+      data: { postId: post.id },
+    });
+  }
 
   return post;
 }

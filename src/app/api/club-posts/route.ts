@@ -103,6 +103,8 @@ export async function POST(request: NextRequest) {
   }
 
   const content = (body as { content?: unknown })?.content;
+  const rawHtml = (body as { bodyHtml?: unknown })?.bodyHtml;
+  const bodyHtml = typeof rawHtml === "string" ? rawHtml : null;
 
   // AUTHOR IDENTITY COMES FROM THE SESSION, NEVER FROM THE BODY, even though
   // the body could carry a name and it would be less work to believe it. The
@@ -124,15 +126,22 @@ export async function POST(request: NextRequest) {
   const authorName = memberDisplayName(member);
 
   try {
-    // Validated here rather than inside the writer so the length that goes into
-    // the audit row is the length that was STORED, without validating twice.
-    const stored = assertValidClubPostContent(content);
-
+    // With a rich body the writer derives the text from the SANITISED html, so
+    // validating the request's own `content` here would check a value that is
+    // then discarded. Let the writer do it and read back what it stored.
     const post = await createClubPost({
       authorMemberId: memberId,
       authorName,
-      content: stored,
+      content: typeof content === "string" ? content : "",
+      bodyHtml,
     });
+
+    const stored = (
+      await prisma.clubPost.findUnique({
+        where: { id: post.id },
+        select: { content: true },
+      })
+    )?.content ?? "";
 
     // `communication`, because the affected business domain is club messaging.
     // Note that category IS in MEMBER_VISIBLE_AUDIT_CATEGORIES, so this row

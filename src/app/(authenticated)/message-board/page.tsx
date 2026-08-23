@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 
 import { auth } from "@/lib/auth";
+import { ClubPostBody } from "@/components/club-post-body";
 import { ClubPostComposer } from "@/components/club-post-composer";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -105,11 +106,10 @@ export default async function MessageBoardPage({
                       {formatNZDate(new Date(post.postedAt))}
                     </span>
                   </div>
-                  {/* Plain text, escaped by React. `whitespace-pre-wrap` keeps
-                      the member's own line breaks without any markup. */}
-                  <p className="whitespace-pre-wrap text-sm text-foreground">
-                    {post.content}
-                  </p>
+                  <ClubPostBody
+                    content={post.content}
+                    bodyHtml={post.bodyHtml}
+                  />
                 </CardContent>
               </Card>
             </li>
