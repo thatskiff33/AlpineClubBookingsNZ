@@ -492,15 +492,24 @@ describe("admin reports route — the report window comes from the persisted clu
   });
 
   it("bounds instants by the club's civil day and calendar columns by the plain days", async () => {
-    const { APP_TIME_ZONE } = await import("@/config/operational");
+    // THE PREMISE, MEASURED AS AN ANSWER RATHER THAN AN IDENTIFIER. What has to
+    // hold for the instant assertions below to discriminate is that the
+    // ENVIRONMENT authority — `APP_TIME_ZONE`, which is what every legacy helper
+    // reads and what this route used to call — puts the club day somewhere else.
+    // Comparing the two zone NAMES does not establish that: measured,
+    // `TZ=America/Chicago` produces Denver's answer for every fixture in this
+    // file, so a name check passes while the assertion quietly goes vacuous.
+    // `APP_TIME_ZONE` is also frozen at module load, so the `process.env.TZ` pin
+    // above cannot move it once anything has imported it — one more reason to
+    // assert the answer instead of the label.
+    const { startOfDateOnlyForTimeZone } = await import("@/lib/date-only");
     expect(
-      APP_TIME_ZONE,
-      "INV-CONFIG-002: `APP_TIME_ZONE` is the authority the legacy helpers read, " +
-        "and it is frozen at module load, so `process.env.TZ` above cannot move it " +
-        "once something has imported it. If it has become the club's persisted zone " +
-        "— on a host whose TZ is America/Denver, say — this assertion can no longer " +
-        "tell the two authorities apart and would pass over a reverted migration.",
-    ).not.toBe("America/Denver");
+      startOfDateOnlyForTimeZone("2026-04-08").toISOString(),
+      "INV-CONFIG-002: the environment authority now opens the club day at the " +
+        "same instant the persisted zone does, so the bounds below can no longer " +
+        "tell which of the two the route obeyed, and would pass over a reverted " +
+        "migration. Pick a persisted zone the environment disagrees with.",
+    ).not.toBe("2026-04-08T06:00:00.000Z");
 
     const { GET } = await import("@/app/api/admin/reports/route");
     const response = await GET(
@@ -534,6 +543,26 @@ describe("admin reports route — the report window comes from the persisted clu
     const { GET } = await import("@/app/api/admin/reports/route");
     const response = await GET(
       new NextRequest("http://localhost/api/admin/reports?from=2026-02-30&to=2026-03-05"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
+
+  /*
+    `9999-12-31` is a REAL day, so it passes both the shape regex and
+    `parseCalendarDate`. What it has not got is a day AFTER it, and the club
+    day's end is defined as the next day's start — so `addCalendarDays` throws a
+    `RangeError` and, because the derivation sits outside the handler's `try`,
+    the request used to die as an unhandled rejection rather than answer at all.
+    That is a REGRESSION from the logged 500 the legacy helper produced, and the
+    URL is not hypothetical: `src/lib/club-time/calendar-date.ts` records
+    `/admin/audit-log?to=9999-12-31` as a value that reached production.
+  */
+  it("refuses a window whose end has no day after it, rather than throwing", async () => {
+    const { GET } = await import("@/app/api/admin/reports/route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/reports?from=2026-04-08&to=9999-12-31"),
     );
 
     expect(response.status).toBe(400);

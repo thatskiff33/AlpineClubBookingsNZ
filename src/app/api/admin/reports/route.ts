@@ -21,9 +21,7 @@ import {
   summarizeOverlappingGuests,
 } from "@/lib/admin-reports";
 import { getSeasonYear } from "@/lib/utils";
-import {
-  OPERATIONAL_STAY_BOOKING_STATUSES,
-} from "@/lib/booking-status";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
@@ -67,12 +65,14 @@ export async function GET(request: NextRequest) {
   // keeping the INCLUSIVE last-millisecond `lte` shape — the kernel's day end is
   // half-open, hence the -1. The `*Day` pair is the two CALENDAR DAYS, for `@db.Date`
   // columns, which take no zone: the adapter narrows such a bound to its UTC date, so a
-  // club-midnight instant lands a day early (INV-DATE-026). The shape regex admits
-  // `2026-13-45`, which used to reach here as an Invalid Date and surface as a 500 from
-  // Prisma; a day that does not exist is a bad request.
+  // club-midnight instant lands a day early (INV-DATE-026). The shape regex admits two
+  // bad requests and both are refused here: `2026-13-45`, a day that does not exist,
+  // which used to reach Prisma as an Invalid Date and surface as a 500; and `9999-12-31`,
+  // which has no day AFTER it, so the half-open end below throws a `RangeError` from
+  // OUTSIDE the `try` — and `/admin/audit-log?to=9999-12-31` is a URL that really gets used.
   const from = parseCalendarDate(parsed.data.from);
   const to = parseCalendarDate(parsed.data.to);
-  if (!from || !to) return NextResponse.json({ error: "Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD" }, { status: 400 });
+  if (!from || !to || parsed.data.to >= "9999-12-31") return NextResponse.json({ error: "Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD" }, { status: 400 });
   const zone = await clubTimeZone();
   const fromInstant = startOfClubDay(from, zone);
   const toInstant = new Date(endOfClubDayExclusive(to, zone).getTime() - 1);

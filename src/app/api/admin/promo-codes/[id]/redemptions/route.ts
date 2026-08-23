@@ -91,6 +91,20 @@ export async function GET(
     );
   }
 
+  // `9999-12-31` passes `isDateOnlyString` — it IS a real day — but it has no day
+  // AFTER it, and the half-open club-day end below is the next day's start. So
+  // `addCalendarDays` throws a `RangeError` there, from outside any `try`, and the
+  // request dies as an unhandled rejection instead of an answer. That URL really gets
+  // typed (`/admin/audit-log?to=9999-12-31`; see `src/lib/club-time/calendar-date.ts`),
+  // so refuse it the same way `reports/route.ts` does: a window whose end has no
+  // successor is a bad request, not a server fault.
+  if (to && to >= "9999-12-31") {
+    return NextResponse.json(
+      { error: "to must be earlier than 9999-12-31" },
+      { status: 400 }
+    );
+  }
+
   // The redemptions report intentionally covers archived AND internal
   // (work-party) codes — unlike the promo CRUD routes, which hide internal
   // codes. Only a genuinely missing code is a 404.

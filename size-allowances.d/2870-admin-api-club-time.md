@@ -29,11 +29,15 @@ derivation and still comes out at exactly its base length, so it needs no
 allowance and does not collide with the one CT-3 left behind.
 
 file: src/app/api/admin/age-tier-settings/route.ts
-lines: 282
-reason: four lines. One is the second club-time import; three explain why the
+lines: 287
+reason: nine lines. One is the second club-time import; the rest explain why the
   live-guest cut-off is now resolved BEFORE the transaction opens — reading the
   club's settings row is a second query, and it must not run on another
-  connection while this one holds a write transaction.
+  connection while this one holds a write transaction — and why it is resolved
+  only for a save that actually drops a tier, so an ordinary settings PUT does
+  not pay for a read it will never use. The conditional needs the branch below
+  to test the resolved cut-off rather than the tier list, and a reader meeting
+  that test deserves to be told the two are the same question.
 
 file: src/app/api/admin/bookings/[id]/force-confirm/route.ts
 lines: 370
@@ -59,12 +63,16 @@ reason: four lines — the second club-time import, and three saying that the
   a guest, so a day either way changes who the batch refuses.
 
 file: src/app/api/admin/promo-codes/[id]/redemptions/route.ts
-lines: 367
-reason: three lines. The import block came out shorter; what grows is the note
-  that `PromoRedemption.createdAt` is a real instant, so its window edges are
-  civil-day boundaries in the club's persisted zone — unlike the `@db.Date`
-  check-in dates rendered eleven lines below, which take no zone at all. The two
-  kinds sit in one file and the difference is the point.
+lines: 381
+reason: seventeen lines. Three are the note that `PromoRedemption.createdAt` is a
+  real instant, so its window edges are civil-day boundaries in the club's
+  persisted zone — unlike the `@db.Date` check-in dates rendered eleven lines
+  below, which take no zone at all. The two kinds sit in one file and the
+  difference is the point. The other fourteen are a guard, with its reason, for a
+  `to` of `9999-12-31`: a real day with no day after it, so the half-open club-day
+  end throws a `RangeError` from outside any `try` and the request dies as an
+  unhandled rejection. It belongs at the other range guard it sits beside, not in
+  a helper a reader of this filter would never open.
 
 file: src/app/api/admin/refund-requests/[id]/route.ts
 lines: 461

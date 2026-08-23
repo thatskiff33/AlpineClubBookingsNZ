@@ -37,8 +37,10 @@ vi.mock("@/lib/age-tier", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
-import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  formatDateOnlyForTimeZone,
+  todayDateOnlyForTimeZone,
+} from "@/lib/date-only";
 import {
   buildMemberImportPreview,
   inferMemberImportColumnMapping,
@@ -101,6 +103,17 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRequireAdmin.mockResolvedValue(adminGuard);
+    // CT-4 (#2870): the export now reads the club's PERSISTED zone, so #1946's
+    // subject — "the NZ calendar date, not the naive UTC slice" — has to say
+    // which club it is talking about. Persisting New Zealand makes these three
+    // cases answer the same on any host, where before they silently inherited
+    // whatever `TZ` the machine had and failed with a bare date mismatch on a
+    // developer laptop outside NZ.
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+      timeZone: "Pacific/Auckland",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    } as never);
   });
 
   it("emits the cancelled date as an NZ date-only, not a full ISO datetime", async () => {
@@ -116,8 +129,15 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
     expect(value).not.toContain("T");
     // 2020-06-30T14:30Z is 2020-07-01 in NZ winter (+12): the NZ calendar date
     // is one day ahead of the naive UTC slice, which is the bug this fixes.
+    // The zone is named rather than defaulted: the helper's default is
+    // `APP_TIME_ZONE`, the ENVIRONMENT's opinion, which is no longer the
+    // authority the route obeys. Comparing the route's answer against it would
+    // be comparing two different authorities and calling agreement a pass.
     expect(value).toBe(
-      formatDateOnlyForTimeZone(new Date("2020-06-30T14:30:00.000Z")),
+      formatDateOnlyForTimeZone(
+        new Date("2020-06-30T14:30:00.000Z"),
+        "Pacific/Auckland",
+      ),
     );
     expect(value).toBe("2020-07-01");
     expect(value).not.toBe("2020-06-30");
@@ -179,6 +199,8 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
 */
 describe("members export — the persisted club timezone, not the environment (CT-4, #2870)", () => {
   const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+  /** `baseMember()`'s cancellation instant, so the premise can measure it. */
+  const CANCELLED_AT = new Date("2020-06-30T14:30:00.000Z");
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -191,11 +213,20 @@ describe("members export — the persisted club timezone, not the environment (C
   });
 
   it("renders an instant in the persisted zone and a calendar day untouched", async () => {
+    // THE PREMISE, ASSERTED AS AN ANSWER RATHER THAN AN IDENTIFIER. What has to
+    // be true for the cell below to discriminate is that the ENVIRONMENT
+    // authority — which is what `formatDateOnlyForTimeZone` reads, and what this
+    // route used to call — names a different day from the persisted one. Naming
+    // the two zone IDENTIFIERS and asserting they differ does NOT establish
+    // that: measured, `TZ=America/Chicago` gives Denver's answer for every
+    // fixture in this file, so the identifier check passes while the assertion
+    // goes vacuous.
     expect(
-      APP_TIME_ZONE,
-      "INV-CONFIG-002: the environment zone must differ from the persisted club " +
-        "zone, or this test cannot tell which authority the route obeyed.",
-    ).not.toBe(CLUB_ZONE_BEHIND_UTC);
+      formatDateOnlyForTimeZone(CANCELLED_AT),
+      "INV-CONFIG-002: the environment authority now agrees with the persisted " +
+        "club zone about this instant, so this cell can no longer tell which of " +
+        "the two the route obeyed. Pick a fixture where they disagree.",
+    ).not.toBe("2020-06-30");
 
     vi.mocked(prisma.member.findMany).mockResolvedValue([
       baseMember({
@@ -220,7 +251,13 @@ describe("members export — the persisted club timezone, not the environment (C
   });
 
   it("stamps the download filename with the club's calendar day, not the host's", async () => {
-    expect(APP_TIME_ZONE).not.toBe(CLUB_ZONE_BEHIND_UTC);
+    // Same premise, same reason: the environment's "today" must not already be
+    // the club's, or the filename below proves nothing.
+    expect(
+      todayDateOnlyForTimeZone(),
+      "INV-CONFIG-002: the environment authority already names the club's day, " +
+        "so this filename cannot tell the two apart.",
+    ).not.toBe("2026-06-30");
 
     vi.mocked(prisma.member.findMany).mockResolvedValue([] as never);
 

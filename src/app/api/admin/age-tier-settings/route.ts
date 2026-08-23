@@ -164,12 +164,17 @@ export async function PUT(request: NextRequest) {
   // the cut-off is now the day it says it is. The day now comes from the PERSISTED club
   // timezone (CT-4, #2870; INV-CONFIG-002), re-encoded to UTC midnight because that is
   // the only bound shape a `@db.Date` column accepts. Resolved BEFORE the transaction
-  // opens, so a settings read never runs on a second connection inside a write tx.
-  const today = dateOnlyInstantOf((await clubTime()).today());
+  // opens, so a settings read never runs on a second connection inside a write tx —
+  // and only for a save that actually DROPS a tier, because an ordinary settings PUT
+  // never reaches the count and should not pay for the club-settings read.
+  const liveGuestCutOff =
+    removedTiers.length > 0 ? dateOnlyInstantOf((await clubTime()).today()) : null;
 
   try {
     await prisma.$transaction(async (tx) => {
-      if (removedTiers.length > 0) {
+      // Non-null exactly when `removedTiers` is non-empty — the same test, one
+      // scope out, which is what resolved the cut-off in the first place.
+      if (liveGuestCutOff !== null) {
         const [activeMembers, archivedMembers, liveGuests] = await Promise.all([
           tx.member.count({
             where: { ageTier: { in: removedTiers }, archivedAt: null },
@@ -178,7 +183,7 @@ export async function PUT(request: NextRequest) {
             where: { ageTier: { in: removedTiers }, archivedAt: { not: null } },
           }),
           tx.bookingGuest.count({
-            where: { ageTier: { in: removedTiers }, stayEnd: { gte: today } },
+            where: { ageTier: { in: removedTiers }, stayEnd: { gte: liveGuestCutOff } },
           }),
         ]);
         if (activeMembers + archivedMembers > 0 || liveGuests > 0) {

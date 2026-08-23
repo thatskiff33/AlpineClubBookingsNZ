@@ -360,12 +360,19 @@ describe("subscription billing — the default decision date is the club's day (
   });
 
   it("defaults to the club's calendar day, encoded as UTC midnight", async () => {
-    const { APP_TIME_ZONE } = await import("@/config/operational");
+    // The premise, measured as an ANSWER rather than as a zone identifier. What
+    // has to hold for the assertion below to discriminate is that the
+    // ENVIRONMENT authority names a different day; comparing the two zone NAMES
+    // does not establish that, because two different names can agree
+    // (`America/Chicago` gives Denver's answer at this instant) and the check
+    // would then pass while the assertion went vacuous.
+    const { getTodayDateOnly } = await import("@/lib/date-only");
     expect(
-      APP_TIME_ZONE,
-      "INV-CONFIG-002: the environment zone must differ from the persisted club " +
-        "zone, or this cannot tell which authority produced the default.",
-    ).not.toBe("America/Denver");
+      getTodayDateOnly().toISOString(),
+      "INV-CONFIG-002: the environment authority now names the same day as the " +
+        "persisted club zone, so this default cannot tell which of the two " +
+        "produced it. Pick a persisted zone the environment disagrees with.",
+    ).not.toBe("2026-06-30T00:00:00.000Z");
 
     const response = await GET(
       new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026"),
