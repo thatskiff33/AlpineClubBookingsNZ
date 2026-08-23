@@ -81,6 +81,12 @@ x-app-environment: &app-environment
   # the app never sees and must never be given: a host path is not visible from
   # inside the container.
   BACKUP_LOCAL_DIR: ${BACKUP_LOCAL_DIR:-/backups}
+  # Where message-board images are written INSIDE the container (epic #2992).
+  # Same shape as BACKUP_LOCAL_DIR above and for the same reason: it must match
+  # the mount target on the app service, so both read one variable. The HOST
+  # side is POST_IMAGE_HOST_DIR, which the app never sees and must never be
+  # given — a host path is not visible from inside the container.
+  POST_IMAGE_DIR: ${POST_IMAGE_DIR:-/images}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   SENTRY_DSN: ${SENTRY_DSN:-}
   NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
@@ -180,6 +186,18 @@ x-app-service: &app-service
     # image_uploads does. The read-only root filesystem does not block either:
     # `read_only: true` applies to the image layers, never to a mount.
     - ${BACKUP_LOCAL_HOST_DIR:-backup_data}:${BACKUP_LOCAL_DIR:-/backups}
+    # Message board images (epic #2992). Identical mechanics to the backup
+    # mount above: a value with no slash is a NAMED VOLUME, so a club that
+    # never uses the board gets no stray host directory and no ownership to
+    # fix; set POST_IMAGE_HOST_DIR to an absolute host path and the same line
+    # becomes a bind mount. A bind-mounted host directory must be owned by uid
+    # 1001 (`sudo chown -R 1001:1001 <dir>`).
+    #
+    # Deliberately NOT under /app: the read-only root filesystem is not the
+    # reason — a mount is writable either way — but anything under the app
+    # directory is web-served without a session check, and these images are
+    # members-only.
+    - ${POST_IMAGE_HOST_DIR:-post_image_data}:${POST_IMAGE_DIR:-/images}
   security_opt:
     - no-new-privileges:true
   mem_limit: 1g
@@ -344,3 +362,7 @@ volumes:
   caddy_data:
   caddy_config:
   image_uploads:
+  # Default destination for message-board images when POST_IMAGE_HOST_DIR names
+  # no host directory. Like backup_data it is NOT pruned by any tooling here: it
+  # holds members' own photographs.
+  post_image_data:
