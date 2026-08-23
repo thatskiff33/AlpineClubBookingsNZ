@@ -6,10 +6,11 @@
 
   Before you save, the card tells you how many posts on the board are already
   older than the period you picked, so you can see what a choice would cost
-  before making it. Once set, a nightly job deletes posts past that age, and
+  before making it. Once set, a scheduled job deletes posts past that age -- it runs every few
+  hours, not once at night -- and
   **Run cleanup now** does it immediately and reports how many went.
 
   **This deletion is permanent.** Hidden posts are deleted too, and there is no
   recovery from the screen. A post exactly on the boundary is kept rather than
-  deleted, and if the nightly job is already running the button declines instead
-  of deleting twice.
+  deleted, and if the scheduled job is already running the button declines
+  instead of deleting twice.
