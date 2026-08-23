@@ -9,7 +9,7 @@ import { requireAdmin } from "@/lib/session-guards";
 /**
  * POST /api/admin/club-posts/cleanup — run the retention pass now (#2999).
  *
- * The same function the nightly cron calls. It takes a single-flight claim, so
+ * The same function the scheduled cron calls. It takes a single-flight claim, so
  * pressing this while the scheduled pass is running reports `busy` rather than
  * deleting twice.
  */

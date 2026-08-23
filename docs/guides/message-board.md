@@ -78,12 +78,14 @@ Use **Hide** unless you actually want the words gone.
 The default is **Keep everything**, and nothing is deleted automatically until
 you change it.
 
-Once a period is set, a nightly job deletes posts older than it. **This is
+Once a period is set, a scheduled job deletes posts older than it. That job
+runs every few hours, not once at night, so a post reaching the end of the
+window goes within hours rather than waiting for the next evening. **This is
 permanent**: hidden posts are deleted too, and there is no recovery from this
 screen. A post exactly on the boundary is kept rather than deleted.
 
 **Run cleanup now** does the same job immediately and tells you how many posts
-it deleted. If the nightly job happens to be running, it says so and does
+it deleted. If the scheduled job happens to be running, it says so and does
 nothing rather than deleting twice.
 
 ## Good to know

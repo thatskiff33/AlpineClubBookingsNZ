@@ -151,7 +151,7 @@ export function ClubPostRetentionSection({
           <p className="text-sm text-muted-foreground">
             {keepsEverything
               ? "Nothing is deleted automatically. Posts stay until an administrator removes them."
-              : "Posts older than this are deleted permanently by a nightly job. This cannot be undone, and hidden posts are deleted too."}
+              : "Posts older than this are deleted permanently by a job that runs every few hours. This cannot be undone, and hidden posts are deleted too."}
           </p>
 
           {!keepsEverything && beyond > 0 ? (

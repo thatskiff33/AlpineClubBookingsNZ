@@ -156,6 +156,21 @@ export function getAdminCronJobDefinitions(
   return [
     defineCronJob(
       {
+        // #2999. Rides the shared general cron cycle, so it carries that
+        // cycle's schedule rather than one of its own. It appears here because
+        // it DELETES member content: an operator needs to see that it is still
+        // running, and a stale entry is how they find out it is not.
+        jobName: "club-post-retention",
+        label: "Club message board retention",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         jobName: "confirm-pending",
         label: "Pending booking confirmation",
         schedule: "0 */3 * * *",

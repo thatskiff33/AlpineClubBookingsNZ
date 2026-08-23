@@ -122,7 +122,7 @@ export interface CleanupOutcome {
  * Delete every post older than the retention window.
  *
  * Safe to call concurrently: exactly one caller does the work and the rest
- * report `busy`, so the admin screen's button cannot race the nightly cron.
+ * report `busy`, so the admin screen's button cannot race the scheduled cron.
  */
 export async function runClubPostCleanup(
   now: Date = new Date(),
