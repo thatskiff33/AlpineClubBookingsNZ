@@ -7,7 +7,8 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { prisma } from "@/lib/prisma";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { NominationConfirmCard } from "@/components/nomination-confirm-card";
 import { CLUB_NAME } from "@/config/club-identity";
 
@@ -78,7 +79,12 @@ export default async function NominationPage({
 
   const application = nomination.application;
   const familyMembers = parseApplicationFamilyMembers(application.familyMembers);
+  // An instant-versus-instant comparison, which needs no zone at all: expiry is a
+  // moment, not a civil day, and `<` on two `Date`s is zone-free by construction.
   const expired = nomination.expiresAt < new Date();
+  // `createdAt` IS a moment, so the civil day it reads as comes from the club's
+  // PERSISTED timezone (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
   const canConfirm =
     !expired &&
     !nomination.confirmedAt &&
@@ -123,7 +129,7 @@ export default async function NominationPage({
                 Submitted
               </p>
               <p className="mt-1 text-sm">
-                {formatNZDate(application.createdAt)}
+                {club.instantDate(application.createdAt)}
               </p>
             </div>
           </div>
@@ -147,10 +153,14 @@ export default async function NominationPage({
                       {familyMember.firstName} {familyMember.lastName}
                     </div>
                     <div className="text-muted-foreground">
-                      {/* Date-only DOB (YYYY-MM-DD): pin to UTC midnight so the
-                          club-time formatter cannot roll it back a day. */}
-                      DOB{" "}
-                      {formatNZDate(new Date(`${familyMember.dateOfBirth}T00:00:00Z`))}
+                      {/* A date of birth is a CALENDAR DATE and takes no zone:
+                          21 March 1974 is 21 March 1974 in every zone on earth.
+                          `requireCalendarDate` rather than `parseCalendarDate`
+                          because the value has already passed `isoDateSchema` in
+                          `parseApplicationFamilyMembers`, which throws on this
+                          same page for a malformed stored blob, and there is no
+                          sensible fallback string to show in its place. */}
+                      DOB {formatClubDate(requireCalendarDate(familyMember.dateOfBirth))}
                     </div>
                   </li>
                 ))}

@@ -3,7 +3,8 @@
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
+import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
 import {
   computeFrequencyInfo,
   type FrequencyInfo,
@@ -68,8 +69,12 @@ const MAX_AGE_BY_TIER: Partial<Record<AgeTier, number>> = {
 
 // Not one of the shared helpers: the roster header names the DAY OF THE WEEK in
 // full ("Wednesday, 15 April 2026") because that is what a hut leader scans for.
+// A CALENDAR DAY, SO NO TIMEZONE AT ALL (CT-4, #2870). The kernel has no
+// `HOUSE_SHAPES` entry for this bag, so the formatter stays local and is pinned
+// to `UTC` over the UTC-midnight encoding, which is provably the identity for
+// every club. `APP_TIME_ZONE` cancelled only east of Greenwich.
 const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
+  timeZone: "UTC",
   weekday: "long",
   day: "numeric",
   month: "long",
@@ -77,9 +82,13 @@ const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
 });
 
 function displayDate(dateStr: string): string {
-  // Date-only roster night: parse at UTC midnight so the club-time formatter
-  // cannot roll it back a day for a viewer outside New Zealand.
-  return LONG_WEEKDAY_DATE.format(new Date(dateStr + "T00:00:00Z"));
+  // `parseCalendarDate`, not `requireCalendarDate`: this comes off the URL
+  // segment, so a hand-typed `/lodge/roster/banana/setup` would otherwise throw
+  // and blank the page. Echoing the raw segment is what it did before.
+  const date = parseCalendarDate(dateStr);
+  return date === null
+    ? dateStr
+    : LONG_WEEKDAY_DATE.format(dateOnlyInstantOf(date));
 }
 
 // `computeFrequencyInfo` — the "is this chore due tonight?" preview — lives in
