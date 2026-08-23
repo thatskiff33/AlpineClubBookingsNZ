@@ -77,17 +77,36 @@ import {
   type ManualPaymentTarget,
 } from "./_components/manual-payment-dialog";
 
-// CT-4 (#2870) DELIBERATELY LEFT THIS ALONE. It is a local copy of the shared
-// season rule, read from the BROWSER's clock at module-evaluation time, so a
-// treasurer abroad can land on the previous season on a boundary day. It is not
-// fixed here because every other season-year derivation in the product — the
-// shared `getSeasonYearForYearEndMonth`, seventeen call sites catalogued on
-// #2870 by group B, and two more admin screens in this group — has the same
-// clock, and moving one of them alone makes two admin screens DISAGREE on a
-// boundary day, which is worse than a consistent wrong answer. The measured fix
-// is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib` (a different lane's
-// file); passing a club-derived Date into these host-local getters was measured
-// on this epic to make a behind-UTC deployment worse, not better.
+// CT-4 (#2870) DELIBERATELY LEFT THIS ALONE, and it has TWO problems rather
+// than the one an earlier version of this comment named.
+//
+// 1. THE CLOCK. It reads the BROWSER's clock at module-evaluation time, so a
+//    treasurer abroad can land on the previous season on a boundary day. It is
+//    not fixed here because every other season-year derivation in the product —
+//    the shared `getSeasonYearForYearEndMonth`, seventeen call sites catalogued
+//    on #2870 by group B, and two more admin screens in this group — has the
+//    same clock, and moving one of them alone makes two admin screens DISAGREE
+//    on a boundary day, which is worse than a consistent wrong answer. The
+//    measured fix is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib` (a
+//    different lane's file); passing a club-derived Date into these host-local
+//    getters was measured on this epic to make a behind-UTC deployment worse,
+//    not better.
+//
+// 2. THE SEASON START, which this is NOT a copy of. Calling it "a local copy of
+//    the shared season rule" was wrong (CT-4 review): the shared rule derives
+//    the start month from the CONFIGURABLE financial year-end
+//    (`getFinancialYearEndMonth`), while the line below hard-codes April. It is
+//    a copy of the shipped DEFAULT, not of the rule — and a club that moves its
+//    year-end is exactly the deployment `INV-CONFIG-001` exists for.
+//
+//    It is not a live defect today, and the reason is worth writing down rather
+//    than trusting: `setFinancialYearEndMonth` has exactly one non-test caller,
+//    in `financial-year-server.ts`, which imports Prisma and is kept off the
+//    client graph by the client/server boundary census (`INV-OPS-013`). So a
+//    browser bundle never learns a configured value and the shared helper would
+//    return the same April start this hard-codes. It becomes a real divergence
+//    the moment the year-end reaches the client — which is what the
+//    `clubSeasonYear` work in (1) should carry with it.
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
 }

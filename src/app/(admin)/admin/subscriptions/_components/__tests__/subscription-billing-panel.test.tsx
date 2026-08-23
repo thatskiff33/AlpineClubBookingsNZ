@@ -301,6 +301,7 @@ describe("subscription billing panel", () => {
   it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
+      answerKey: "today",
       cases: CLUB_TODAY_CANDIDATES,
       // An INDEPENDENT oracle rather than `clubToday`, so a kernel-wide defect
       // cannot satisfy both sides of the comparison at once. `en-CA` numeric is

@@ -39,6 +39,21 @@
  * rather than a dozen.
  *
  * NO TIMEZONE IS INVOLVED anywhere below, and none should be.
+ *
+ * ## Its two siblings, and what tells them apart
+ *
+ * `admin/_lib/payload-instant.ts` is the OTHER half of this pair: it decodes a
+ * real instant, and it takes the club's bound zone because an instant has no
+ * civil date without one. Choosing between the two modules IS the
+ * classification of the value, which is why they are separate files.
+ *
+ * `admin/reports/_components/host-local-day.ts` decodes the same calendar day
+ * to the OPPOSITE encoding — a `Date` whose host-local clock face reads that
+ * day — because date-fns `format` reads with host-local getters. It was also
+ * called `calendar-day.ts` until the CT-4 review noted that nothing but the
+ * import path told them apart. Do not swap one for the other: pairing this
+ * module's UTC-encoded value with a host-local reader is a day out for every
+ * club behind UTC.
  */
 
 import {

@@ -26,7 +26,8 @@ import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 import { useClubTime } from "@/components/club-time-provider";
-import { calendarDayAsLocalDate } from "./_components/calendar-day";
+import { calendarDayAsLocalDate } from "./_components/host-local-day";
+import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
 import {
@@ -145,11 +146,36 @@ function getAdditionalLedgerGapWarning(summary: {
 }
 
 /**
- * A range bound (`yyyy-MM-dd`) through one of this page's date-fns patterns.
+ * A range bound (`yyyy-MM-dd`) in the house medium shape — "16 Apr 2026".
+ *
+ * WHICH FORMATTER, and the rule that decides it (CT-4 review, #2870). The
+ * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through
+ * `APP_LOCALE`, while a date-fns pattern string hard-codes English month names
+ * whatever the deployment is configured for. So a value in a house shape belongs
+ * on the kernel — which is also what `payments/page.tsx` and
+ * `subscriptions/page.tsx` did with this same "d MMM yyyy" shape, and leaving
+ * this one behind would have put two contradictory rules in one change. For
+ * `en-NZ` the two are byte-identical, so nothing visible changes here.
+ *
+ * The patterns that are NOT house shapes — the chart axes' `"MMM d"`,
+ * `"EEE, MMM d yyyy"`, `"MMM d, yyyy"`, and the `"d MMM"` below — stay on
+ * date-fns because the kernel has no equivalent to bend them onto. That IS a
+ * locale limitation and it is a pre-existing one; this change neither adds to it
+ * nor pretends it away.
+ *
  * The bounds come from the URL, so an unusable one renders as itself rather
- * than throwing a `RangeError` that blanks the report (CT-4, #2870).
+ * than throwing a `RangeError` that blanks the report.
  */
-function formatRangeDay(value: string, pattern: string): string {
+function formatRangeDay(value: string): string {
+  const day = parseCalendarDate(value);
+  return day === null ? value : formatClubDate(day);
+}
+
+/**
+ * The same bounds through a date-fns pattern that is NOT a house shape. See
+ * {@link formatRangeDay} for why these two exist side by side.
+ */
+function formatRangeDayPattern(value: string, pattern: string): string {
   const day = calendarDayAsLocalDate(value);
   return day === null ? value : format(day, pattern);
 }
@@ -513,8 +539,8 @@ export default function ReportsPage() {
           <div className="hidden print:block">
             <h1 className="text-2xl font-bold text-foreground">Reports</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Date range: {formatRangeDay(from, "d MMM yyyy")} to{" "}
-              {formatRangeDay(to, "d MMM yyyy")}
+              Date range: {formatRangeDay(from)} to{" "}
+              {formatRangeDay(to)}
             </p>
             <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
@@ -604,7 +630,7 @@ export default function ReportsPage() {
               <StatCard
                 title="New Members"
                 value={data.memberStats.newMembers}
-                subtitle={`Joined between ${formatRangeDay(from, "d MMM")} and ${formatRangeDay(to, "d MMM yyyy")}`}
+                subtitle={`Joined between ${formatRangeDayPattern(from, "d MMM")} and ${formatRangeDay(to)}`}
                 icon={UserPlus}
               />
             </div>

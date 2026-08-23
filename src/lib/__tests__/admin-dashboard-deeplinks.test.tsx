@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
+    // when it is ABSENT, and the page then falls back to the environment — the
+    // very defect CT-4 removes, silently, with nothing able to tell. Every test
+    // here leaves it resolving `null`, which reproduces the no-row fallback and
+    // keeps their expectations unchanged; the zone-authority test supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     member: { count: vi.fn(), findUnique: vi.fn() },
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
@@ -39,6 +45,8 @@ import {
   UPCOMING_CHECK_IN_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
@@ -104,6 +112,7 @@ function mockDashboardCounts({
 describe("admin dashboard deep links", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
   });
 
   it("links booking request alerts to the changes tab when only change requests are pending", async () => {
@@ -312,6 +321,111 @@ describe("admin dashboard deep links", () => {
       {
         where: { stayDate: { gte: today, lt: to } },
         select: { bookingGuestId: true, stayDate: true },
+      },
+    ]);
+  });
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * The window test above renders with NO persisted row, so the page falls back
+   * to the environment seed and its `getTodayDateOnly()`-derived expectations
+   * agree with it. That is a correct thing to pin — it is the no-row fallback —
+   * but it says nothing about AUTHORITY, and until this test existed the
+   * dashboard's whole `getStats` derivation (the seven-day window AND the
+   * month bounds behind "revenue this month") had never once been exercised
+   * against a persisted zone. Every assertion on this page would have passed
+   * against the `APP_TIME_ZONE` code CT-4 replaced.
+   *
+   * The zone is CHOSEN rather than written down, because a contributor or a CI
+   * image running with `TZ=America/Denver` would otherwise make the "divergent"
+   * literal the environment's own zone and quietly stop discriminating.
+   *
+   * Both halves are asserted because they fail differently: the seven-day
+   * window is date-only arithmetic on the club's day, while the month bounds
+   * are real instants bracketing the club's civil month — a zone-blind
+   * implementation of the second can still get the first right.
+   */
+  it("derives the seven-day window and the month bounds from the PERSISTED club zone", async () => {
+    const todayIn = (zone: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        // An INDEPENDENT oracle rather than `clubToday`: reading "what this zone
+        // would say" through the kernel under test lets one defect satisfy both
+        // sides of the comparison.
+      }).format(new Date());
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "today",
+      cases: [
+        {
+          // −6 at this date: still 30 June, so the civil month is JUNE while
+          // the environment's is July.
+          zone: "America/Denver",
+          today: "2026-06-30",
+          monthStart: "2026-06-01T06:00:00.000Z",
+          monthEnd: "2026-07-01T05:59:59.999Z",
+        },
+        {
+          // +14, no DST: already 1 July. Kept as the fallback candidate for a
+          // host whose own TZ is Denver.
+          zone: "Pacific/Kiritimati",
+          today: "2026-07-01",
+          monthStart: "2026-06-30T10:00:00.000Z",
+          monthEnd: "2026-07-31T09:59:59.999Z",
+        },
+      ],
+      answerFor: todayIn,
+      // NOT `["UTC"]` — see the note in the chooser: a "today" assertion has at
+      // most three calendar days to play with and adding UTC as a rival can
+      // leave a correct tree with no candidate.
+    });
+
+    mockDashboardCounts({
+      pendingBookingReviews: 0,
+      pendingBookingChangeRequests: 0,
+    });
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+      timeZone: chosen.zone,
+    } as never);
+
+    await AdminDashboardPage();
+
+    const clubToday = new Date(`${chosen.today}T00:00:00.000Z`);
+    const clubPlus7 = new Date(clubToday.getTime() + 7 * 86_400_000);
+    const environmentToday = new Date(`${todayIn(APP_TIME_ZONE)}T00:00:00.000Z`);
+
+    // The seven-day window: the upcoming-check-ins count is the cheapest place
+    // to read both bounds off one call.
+    expect(vi.mocked(prisma.booking.count).mock.calls).toContainEqual([
+      {
+        where: {
+          status: { in: [...UPCOMING_CHECK_IN_BOOKING_STATUSES] },
+          deletedAt: null,
+          checkIn: { gte: clubToday, lte: clubPlus7 },
+        },
+      },
+    ]);
+    // and it is NOT the environment's day, which is what makes this a proof of
+    // authority rather than of shape.
+    expect(clubToday.getTime()).not.toBe(environmentToday.getTime());
+
+    // The month bounds behind "revenue this month". Written out by hand rather
+    // than recomputed through the kernel, so a kernel defect cannot agree with
+    // itself here.
+    expect(vi.mocked(prisma.payment.aggregate).mock.calls).toContainEqual([
+      {
+        _sum: { amountCents: true },
+        where: {
+          status: "SUCCEEDED",
+          createdAt: {
+            gte: new Date(chosen.monthStart),
+            lte: new Date(chosen.monthEnd),
+          },
+        },
       },
     ]);
   });

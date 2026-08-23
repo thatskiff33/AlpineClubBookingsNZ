@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
+    // when it is ABSENT, and the page then falls back to the environment — the
+    // very defect CT-4 removes, silently, with nothing able to tell. Every test
+    // here leaves it resolving `null`, which reproduces the no-row fallback and
+    // keeps their expectations unchanged; the zone-authority test supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     member: { count: vi.fn(), findUnique: vi.fn() },
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
@@ -175,6 +181,7 @@ function mockActorMatrix(matrix: Partial<AdminPermissionMatrix>) {
 describe("admin dashboard officer key cards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     mockStats();
   });
 
@@ -269,6 +276,7 @@ describe("admin dashboard hut-leader coverage card", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     mockStats();
     mockActorMatrix({ overview: "view" });
   });

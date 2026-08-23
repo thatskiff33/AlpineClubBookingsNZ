@@ -37,16 +37,17 @@ import {
   listMemberGuestConsentExceptions,
   loadMemberGuestConsentQueueCounts,
 } from "@/lib/member-guest-consent-exceptions";
-import { formatConsentShortDate } from "@/lib/member-guest-consent-card";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
+import { APP_LOCALE } from "@/config/operational";
 import {
   calendarDateOfDateOnlyInstant,
   countClubNights,
   formatClubDate,
+  type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatBookingReference } from "@/lib/booking-reference";
@@ -78,6 +79,37 @@ export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuest
  */
 function stayDay(value: Date) {
   return calendarDateOfDateOnlyInstant(value);
+}
+
+/**
+ * The consent chip's response stamp — "7 Aug" — which is the OTHER kind of date
+ * on this page and three lines from `stayDay`.
+ *
+ * `statusAt` is a real INSTANT: the moment a guest declined, or the moment the
+ * request lapsed. It has no civil date until a zone is chosen, and that zone is
+ * the club's PERSISTED one (`INV-CONFIG-002`), never `APP_TIME_ZONE`. The
+ * shared consent short-date helper this replaces
+ * (`@/lib/member-guest-consent-card`) pins the environment's zone at module
+ * scope, so until now the stamp beside a correctly-decoded stay date was still
+ * the environment's answer.
+ *
+ * The year-less shape is NOT one of the kernel's house shapes — it is locked to
+ * the signed-off #2307 mockup pack — so it is built here, memoised per zone the
+ * way the audit console builds its seconds-bearing stamp, rather than bent onto
+ * a house shape that would change what the chip renders.
+ */
+const CONSENT_SHORT_DATE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function consentShortDate(zone: ClubTimeZone, value: Date) {
+  const cached = CONSENT_SHORT_DATE_FORMATTERS.get(zone);
+  if (cached) return cached.format(value);
+  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+    day: "numeric",
+    month: "short",
+    timeZone: zone,
+  });
+  CONSENT_SHORT_DATE_FORMATTERS.set(zone, created);
+  return created.format(value);
 }
 
 // Whole lodge nights between two date-only check-in/out values. This used to
@@ -561,8 +593,8 @@ export default async function AdminBookingsPage({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {row.status === "DECLINED"
-                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt)}` : ""}`
-                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt)}` : ""}, never answered`}
+                        ? `Said no${row.statusAt ? `, ${consentShortDate(club.zone, row.statusAt)}` : ""}`
+                        : `Lapsed${row.statusAt ? ` ${consentShortDate(club.zone, row.statusAt)}` : ""}, never answered`}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{row.why}</TableCell>

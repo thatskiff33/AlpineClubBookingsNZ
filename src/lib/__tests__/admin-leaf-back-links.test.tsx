@@ -97,7 +97,7 @@ import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components
 /**
  * Every admin leaf renders inside the app shell, which since CT-4 (#2870)
  * mounts `ClubTimeProvider` — so a leaf that formats an instant reads the
- * club.s persisted zone rather than the viewer.s. Rendering one bare here would
+ * club’s persisted zone rather than the viewer’s. Rendering one bare here would
  * throw, which is the provider doing its job; the shell is what the test is
  * standing in for.
  */

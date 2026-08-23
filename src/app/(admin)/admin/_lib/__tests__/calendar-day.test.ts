@@ -119,9 +119,13 @@ describe("calendarDayFromPayload / formatPayloadCalendarDay (CT-4, #2870)", () =
   );
 
   it("reads both spellings as the same day, so a caller never has to know which it holds", () => {
-    expect(calendarDayFromPayload(ISO_ENCODING)).toBe(
-      calendarDayFromPayload(BARE_DAY),
-    );
+    // Each spelling against the HAND-WRITTEN day, never against the other. A
+    // decoder comparing its own two outputs agrees with itself: one that
+    // returned the previous day — or a constant — for both inputs satisfies
+    // `A === B` and says nothing at all. The equivalence the test name claims
+    // follows from both matching the same literal.
+    expect(calendarDayFromPayload(ISO_ENCODING)).toBe(BARE_DAY);
+    expect(calendarDayFromPayload(BARE_DAY)).toBe(BARE_DAY);
   });
 
   it("returns null rather than throwing for anything that names no day", () => {

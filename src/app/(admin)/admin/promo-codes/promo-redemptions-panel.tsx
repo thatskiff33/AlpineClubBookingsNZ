@@ -27,14 +27,30 @@ import { useClubTime } from "@/components/club-time-provider";
 import {
   formatClubDate,
   parseCalendarDate,
+  parseInstant,
   type BoundClubTime,
 } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
-import {
-  buildPromoRedemptionsCsvContent,
-  formatRedeemedAt,
-} from "@/lib/promo-redemptions-csv";
+import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
+
+/**
+ * A redemption's "Redeemed" stamp — a real INSTANT, read in the club's
+ * PERSISTED zone (`INV-CONFIG-002`) rather than `APP_TIME_ZONE`.
+ *
+ * KNOWN SPLIT, and it is deliberate rather than an oversight. The CSV export
+ * below renders the same field through `@/lib/promo-redemptions-csv`, which
+ * formats it internally against the environment's zone and cannot be told a
+ * different one from here. The two agree on any deployment whose `TZ` matches
+ * its persisted zone — every deployment today — and diverge for one that does
+ * not. Zoning the CSV builder is a `src/lib` signature change, tracked on
+ * #2870 for the group that owns that surface; the screen is fixed here because
+ * the screen is this file's to fix.
+ */
+function redeemedAtLabel(clubTime: BoundClubTime, value: string): string {
+  const instant = parseInstant(value);
+  return instant === null ? value : clubTime.instantDateTime(instant);
+}
 
 const TYPE_LABELS: Record<string, string> = {
   PERCENTAGE: "Percentage",
@@ -647,7 +663,7 @@ export function PromoRedemptionsPanel({
                         ) : null}
                       </TableCell>
                       <TableCell className="text-xs">
-                        {formatRedeemedAt(row.createdAt)}
+                        {redeemedAtLabel(clubTime, row.createdAt)}
                       </TableCell>
                       <TableCell>
                         <Link

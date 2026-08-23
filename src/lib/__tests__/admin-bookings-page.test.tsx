@@ -860,6 +860,7 @@ describe("AdminBookingsPage", () => {
       }).format(UPDATED_AT);
     const chosen = chooseDivergentClubZone({
       subject: "the civil day of a booking's updatedAt",
+      answerKey: "day",
       cases: [
         { zone: "America/Denver", day: "31 May 2026" }, // −6: still 31 May
         { zone: "Pacific/Kiritimati", day: "1 Jun 2026" }, // +14: already 1 June

@@ -46,11 +46,17 @@ reason: the retroactive-stay rule was reading the BROWSER's calendar day, which 
   a separate job with its own review.
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 728
+lines: 760
 reason: this page renders a calendar date and an instant in adjacent columns and
   used to treat them alike; the docblock on `stayDay` is what stops the next
   edit merging them again. The night count also moved off a millisecond
   division onto calendar arithmetic.
+  CT-4 REVIEW: the consent chip's response stamp beside them was still
+  `APP_TIME_ZONE`'s, reached through a shared helper that pins the zone at
+  module scope. Its year-less shape is locked to the signed-off #2307 mockups
+  and is not a kernel house shape, so it is rebuilt here, memoised per zone, the
+  way the audit console builds its own — thirty lines, most of them the note
+  saying why the two dates three lines apart are different kinds of thing.
 
 file: src/app/(admin)/admin/config-transfer/page.tsx
 lines: 647
@@ -137,10 +143,15 @@ reason: one line. The two promo-window decoders collapsed onto the shared payloa
   to it; there is nothing here that splitting would help.
 
 file: src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx
-lines: 782
+lines: 798
 reason: the hand-rolled parts-to-UTC-midnight dance is gone and the export
   filename now carries the club's day; the note explains why a lodge night
   needs no zone at all.
+  CT-4 REVIEW: the on-screen "Redeemed" stamp still went through the CSV
+  module's environment-zone formatter while this same hunk had already moved
+  the export FILENAME onto the club's day. It reads the club's zone now, and the
+  note records the one half that cannot be fixed from here — the CSV cell
+  formats internally and would need a `src/lib` signature change.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885
@@ -148,11 +159,18 @@ reason: a booking's check-in and the request's review stamp are different concep
   and now have different helpers, each with a sentence saying so.
 
 file: src/app/(admin)/admin/reports/page.tsx
-lines: 712
+lines: 738
 reason: the range bounds come from the URL and used to reach date-fns through a
   local-midnight parse that threw a RangeError on a malformed one, blanking the
   report; the replacement is guarded and says why the encoding it builds is
   host-local on purpose.
+  CT-4 REVIEW: the printed range bounds were on a date-fns `"d MMM yyyy"`
+  pattern, which IS the house medium shape — and a pattern string hard-codes
+  English month names where the kernel formats through `APP_LOCALE`. They move
+  onto `formatClubDate` (byte-identical for `en-NZ`), which also settles a
+  contradiction this change had otherwise shipped: two other pages in it had
+  already moved that exact shape. The growth is the docblock stating the rule
+  and naming which patterns stay on date-fns and why.
 
 file: src/app/(admin)/admin/roster/page.tsx
 lines: 592
@@ -162,10 +180,16 @@ reason: the roster's opening day moved onto the club's zone, and the long-date
   the growth.
 
 file: src/app/(admin)/admin/subscriptions/page.tsx
-lines: 821
+lines: 840
 reason: `paidAt` was read with host-local getters. The rest of the addition is the
   note recording why the season-year derivation beside it was deliberately not
   moved, which is the more useful half for whoever picks that up.
+  CT-4 REVIEW: the note beside `getSeasonYear` called it "a local copy of the
+  shared season rule", which is wrong — the shared rule derives the season start
+  from the CONFIGURABLE financial year-end and this copy hard-codes April. The
+  extra lines record that second problem, why it is inert today (the setter is
+  reachable only from a Prisma-importing module the boundary census keeps off
+  the client graph) and what would make it live.
 
 file: src/app/(admin)/admin/waitlist/page.tsx
 lines: 1014
@@ -189,3 +213,18 @@ lines: 698
 reason: one import pair, one hook read, and a sentence naming the cache-refresh
   stamp as an instant. Three lines, and no seam here that a split would follow.
 
+file: src/app/(admin)/admin/family-groups/page.tsx
+lines: 871
+reason: CT-4 REVIEW found this page unmigrated: the partner-invite expiry and the
+  group creation stamp are real instants and were rendered through a shared
+  helper pinned to `APP_TIME_ZONE`. Eight lines — one hook read, one import pair
+  and a note — for a screen whose own existing comment already calls a
+  misread expiry "a real operational hazard". Splitting an 871-line queue page
+  is a separate refactor and would not shrink this hunk.
+
+file: src/app/(admin)/admin/members/[id]/page.tsx
+lines: 1352
+reason: two lines. `lifeMemberDate` is a `@db.Date` calendar day and was going
+  through the member-detail INSTANT formatter, so a club behind UTC named the
+  day before someone became a life member. The change is the decoder swap plus
+  the sentence saying which of the two kinds this field is.

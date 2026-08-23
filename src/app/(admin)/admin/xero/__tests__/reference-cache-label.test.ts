@@ -54,12 +54,14 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
     {
       zone: "America/Denver", // six hours behind UTC
       refreshed: "15 Apr 2026, 5:30 pm",
+      answer: "15 Apr 2026, 5:30 pm | 16 Apr 2026, 5:30 am",
       label:
         "Accounts: shared cache, refreshed 15 Apr 2026, 5:30 pm, expires 16 Apr 2026, 5:30 am",
     },
     {
       zone: "Pacific/Kiritimati", // fourteen hours ahead of UTC
       refreshed: "16 Apr 2026, 1:30 pm",
+      answer: "16 Apr 2026, 1:30 pm | 17 Apr 2026, 1:30 am",
       label:
         "Accounts: shared cache, refreshed 16 Apr 2026, 1:30 pm, expires 17 Apr 2026, 1:30 am",
     },
@@ -68,7 +70,10 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
   /**
    * The whole label is what the assertion pins, so the whole label is what the
    * choice has to diverge on — a candidate agreeing with a rival on one of the
-   * two stamps would leave half the assertion vacuous.
+   * two stamps would leave half the assertion vacuous. Both stamps are joined
+   * into one answer for exactly that reason, and each candidate carries that
+   * joined pair as its `answer` so `answerKey` can check the fixture against
+   * the zone it claims to describe.
    *
    * Deliberately an INDEPENDENT projection rather than `bindClubTime`, for two
    * reasons. It is an oracle: computing "what this zone would render" through
@@ -95,6 +100,7 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
 
   const chosen = chooseDivergentClubZone({
     subject: "the Xero reference-cache stamps",
+    answerKey: "answer",
     cases: CANDIDATES,
     answerFor,
     // The host, which the assertion pins to UTC so a host read is visible.

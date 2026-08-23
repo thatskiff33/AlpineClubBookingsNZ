@@ -17,10 +17,10 @@ import { Label } from "@/components/ui/label"
 import { Search } from "lucide-react"
 import {
   dedupeParentOptions,
-  formatMemberDateNz,
   MEMBER_SEARCH_TRUNCATED_HINT,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers"
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { useDependentEmailSource } from "@/hooks/use-dependent-email-source"
 import { DependentNotificationRoutingNotice } from "./dependent-notices"
 import type { LinkParentSearchResult, MemberDetail } from "../_types"
@@ -250,7 +250,7 @@ export function MemberParentLinkDialog({
                   <p className="mt-1 text-xs text-muted-foreground">{selected.email}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {selected.canLogin ? "Can login" : "Non-login"}
-                    {selected.dateOfBirth ? ` · DOB ${formatMemberDateNz(selected.dateOfBirth)}` : ""}
+                    {selected.dateOfBirth ? ` · DOB ${formatPayloadCalendarDay(selected.dateOfBirth)}` : ""}
                   </p>
                 </div>
                 <Button type="button" variant="outline" size="sm" onClick={onClearSelection} disabled={saving}>

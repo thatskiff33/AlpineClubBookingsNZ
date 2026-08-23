@@ -14,7 +14,7 @@
  */
 
 import { format } from "date-fns";
-import { calendarDayAsLocalDate } from "./calendar-day";
+import { calendarDayAsLocalDate } from "./host-local-day";
 import {
   BarChart,
   Bar,

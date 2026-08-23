@@ -310,6 +310,7 @@ describe("fee configuration page", () => {
   it("defaults the effective-from date to the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
     const chosen = chooseDivergentClubZone({
       subject: "the club's today at the frozen instant",
+      answerKey: "today",
       cases: [
         { zone: "America/Denver", today: "2026-06-30" }, // −6: still 30 June
         { zone: "Pacific/Kiritimati", today: "2026-07-01" }, // +14: already 1 July
@@ -335,9 +336,18 @@ describe("fee configuration page", () => {
       ),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-
     expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(chosen.today);
-    expect((document.querySelector("#entrance-from") as HTMLInputElement)?.value ?? chosen.today).toBe(chosen.today);
+
+    // The joining-fee default is a SEPARATE piece of state seeded from the same
+    // club day, and its field only exists once its own section is in edit mode.
+    // Asserting it behind `?.value ?? chosen.today` — as this line did until the
+    // CT-4 review — made it `expect(x).toBe(x)` for an element that was never
+    // rendered, so the joining fee, which is money a new member is charged, had
+    // no zone coverage at all. Open the section and assert unconditionally.
+    fireEvent.click(screen.getByRole("button", { name: "Edit joining fees" }));
+    const joiningFrom = document.querySelector("#entrance-from") as HTMLInputElement | null;
+    expect(joiningFrom).not.toBeNull();
+    expect(joiningFrom?.value).toBe(chosen.today);
   });
 
   it("commits an unchanged membership fee payload from edit mode", async () => {

@@ -234,6 +234,7 @@ describe("members list · 'Member since' reads two concepts, not one (CT-4, #287
     const MID_DAY_INSTANT = "2026-04-01T13:00:00.000Z";
     const chosen = chooseDivergentClubZone({
       subject: "the civil day of a mid-day createdAt",
+      answerKey: "civilDay",
       cases: [
         { zone: "America/Denver", civilDay: "1 Apr 2026" }, // −6, still 1 April
         { zone: "Pacific/Kiritimati", civilDay: "2 Apr 2026" }, // +14, already 2 April
