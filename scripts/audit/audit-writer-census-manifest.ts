@@ -318,7 +318,11 @@ export const AUDIT_CENSUS_TOTALS = {
   // 435, so the merged total is 453. Taken from `npm run audit:census` run on
   // the merged tree rather than by adding one branch's delta to the other's
   // total, which is how a published count goes wrong in a merge.
-  writeSites: 453,
+  // 453 -> 459 (#2992 merged with main): the six club message board writers
+  // (hide, show, edit, remove, retention settings, manual cleanup). Taken from
+  // `npm run audit:census` on the MERGED tree, by the method the #2780 note
+  // above sets out -- not by adding this branch's delta to main's total.
+  writeSites: 459,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -359,7 +363,8 @@ export const AUDIT_CENSUS_TOTALS = {
     // sign create/rotate/pause/resume, queue triage and photo disclosure/deletion,
     // and the two submit records. None sits inside the submit transaction, so a
     // failed audit write never fails a submitted report.
-    logAudit: { total: 255, uncategorised: 0 },
+    // 255 -> 261 (#2992): all six club-post moderation writers use `logAudit`.
+    logAudit: { total: 261, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -649,7 +654,11 @@ export const AUDIT_CENSUS_TOTALS = {
     // `communication` out of the support-only system entry into the membership
     // one (decision 7); under the old map this would have put bulk-email
     // evidence behind `support:view` alone.
-    communication: 14,
+    // 14 -> 20 (#2992): the six club message board writers. `communication` is
+    // a membership+support read, so a member-visible board moderation record
+    // lands where the other member-visible communication rows already are --
+    // this widens nobody's access.
+    communication: 20,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

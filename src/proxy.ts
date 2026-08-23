@@ -1178,6 +1178,13 @@ export const config = {
     // proxy would never run on the calendar API and that half of the rule would
     // be dead.
     "/api/calendar/:path*",
+    // Club message board (#2994): the commsPortal rule in
+    // src/config/feature-routes.ts gates "/api/club-posts", and the first
+    // matcher entry above excludes every "/api/..." path -- so without this
+    // entry the proxy never runs on it and that half of the rule is dead. The
+    // route handler checks the module itself as well, so the door is not left
+    // live either way; this restores the edge gate and the CSP header.
+    "/api/club-posts/:path*",
     "/api/chores/:path*",
     "/api/cron/xero/:path*",
     "/api/display/:path*",

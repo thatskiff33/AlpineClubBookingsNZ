@@ -404,12 +404,51 @@ export const memberFallbackHelp: HelpPageContent = {
   ],
 };
 
+// Source: docs/user-guide/the-message-board.md — keep in sync (see docs/user-guide/README.md)
+const messageBoardHelp: HelpPageContent = {
+  title: "Message Board",
+  summary:
+    "A board the members write themselves — a road report, a reminder, an offer of a lift. Everything posted here stays inside your own club. The newest few posts also appear on your dashboard.",
+  actions: [
+    "Write into the box at the top and click Post; it appears straight away with your name on it.",
+    "Use 'Older posts' at the bottom to move back through the board, and 'Back to the latest' to return.",
+    "Ask a club administrator if you need a post of yours hidden or removed.",
+  ],
+  questions: [
+    {
+      q: "Who can see what I post?",
+      a: "Every signed-in member of your own club, and nobody else. Nothing on the board leaves your club. The 'Share with all clubs' tickbox under the writing box is switched off and does nothing yet — it is there so you know the option is coming.",
+    },
+    {
+      q: "Can I edit or delete my own post?",
+      a: "No. Ask a club administrator, who can hide it — which is reversible and keeps the text — or remove it, which deletes the words permanently.",
+    },
+    {
+      q: "Why can I not find the message board?",
+      a: "Your club has not switched the Message board module on. Your club administrator can turn it on.",
+    },
+    {
+      q: "Can I post under a different name?",
+      a: "No. Your name is taken from your member record when you post, not from anything you type, so a post is always attributed to the person who wrote it.",
+    },
+    {
+      q: "Why was my post refused?",
+      a: "Posts are limited to ten an hour per member, and to 4000 characters. The counter under the box shows how much you have used. The limit is far above ordinary use — it is there so one person cannot fill the board.",
+    },
+    {
+      q: "Will formatting or links work?",
+      a: "No — the board is plain text, and what you type is exactly what everybody else sees. Line breaks are kept, so you can lay a post out over a few lines.",
+    },
+  ],
+};
+
 export const memberHelpEntries: HelpPageEntry[] = [
   entry("/book", bookHelp),
   entry("/bookings", bookingsListHelp),
   entry("/bookings/*", bookingDetailHelp),
   entry("/profile", profileHelp),
   entry("/dashboard", dashboardHelp),
+  entry("/message-board", messageBoardHelp),
   entry("/induction", inductionHelp),
   entry("/lodge-instructions", lodgeInstructionsHelp),
 ];

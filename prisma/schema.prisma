@@ -734,6 +734,8 @@ model Member {
   noticesCreated                             Notice[]                                   @relation("NoticeCreatedBy")
   noticesUpdated                             Notice[]                                   @relation("NoticeUpdatedBy")
   noticeAudienceTargets                      NoticeAudience[]                           @relation("NoticeAudienceMember")
+  clubPostsAuthored                          ClubPost[]                                 @relation("ClubPostAuthor")
+  clubPostReports                            ClubPostReport[]                           @relation("ClubPostReporter")
   noticeReadReceipts                         NoticeReadReceipt[]                        @relation("NoticeReadReceiptMember")
   // B5 (#2262): actor back-refs for manual booking-payment settlement and for
   // completing/dismissing the manual-refund tasks a cash cancellation raises.
@@ -4430,6 +4432,15 @@ model ClubModuleSettings {
   // central hub to upload/download shared data. Off by default; configured
   // under Admin → Integrations → Alpine Central Server.
   alpineCentralServer     Boolean  @default(false)
+  // Communication Portal (#2993, epic #2992). Default OFF, deliberately
+  // inverting the memberNotices precedent above: a member post shared from this
+  // module leaves the club and reaches every other connected club, so an
+  // upgrade must not start publishing member-written content because nobody
+  // opted out. The local board alone needs no central-server connection; only
+  // sharing does. Safe to add as a defaulted column because every read narrows
+  // to CLUB_MODULE_SETTINGS_COLUMN_SELECT, so the previously deployed client
+  // never names it.
+  commsPortal             Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -4934,6 +4945,149 @@ model NoticeReadReceipt {
   @@index([noticeId, readAt])
   @@index([memberId])
 }
+
+// ---------------------------------------------------------------------------
+// Communication Portal (#2993, epic #2992) — the member message board.
+//
+// CLUB-WIDE, NOT LODGE-SCOPED (decision D-C1). A post can be shared onto a
+// network of other CLUBS, which has no concept of this club's buildings, so a
+// lodge on the row would have nowhere to go and nothing to mean. This matches
+// ServerNzSettings, which docs/multi-lodge/lodge-scoping-contract.md records as
+// club-wide for the same reason, and Notice above, which carries no lodgeId.
+//
+// A post written here stays here unless a member ticks "share with all clubs".
+// Only then is it uploaded to the central server and mirrored to other clubs.
+// A club-only post is never transmitted at all — which is a stronger guarantee
+// than a visibility filter, because there is no filter to get wrong.
+// ---------------------------------------------------------------------------
+
+model ClubPost {
+  id             String    @id @default(cuid())
+  // NULL = written by this club. Non-null = mirrored from another club via the
+  // central server, which also means the content is READ-ONLY here (D-C4):
+  // editing another club's post while still showing their name and badge on it
+  // would misrepresent them to our members. Hiding and removing the local copy
+  // stay available and say what they actually do.
+  originClubCode String?   @db.VarChar(40)
+  originClubName String?   @db.VarChar(200)
+  // Both null until shared. serverPostId is the ONLY handle by which the
+  // network copy can ever be withdrawn, so it must never be cleared before the
+  // central server confirms the withdrawal. Capped at 64 for the same reason
+  // ServerNzSettings.otherLodgesCursor is: an over-long value fails AFTER rows
+  // are written and BEFORE the cursor advances, which wedges sync permanently.
+  sharedAt       DateTime?
+  serverPostId   String?   @unique @db.VarChar(64)
+  // Taken from the authenticated session at compose time, never from a form
+  // field. The central server cannot verify author identity — it trusts this
+  // club's API key — so that trust is only warranted if the value is a real
+  // session here. SetNull rather than Cascade: a post survives the member
+  // record going away, exactly as Notice.createdByMemberId does.
+  authorMemberId String?
+  authorName     String    @db.VarChar(200)
+  // Plain text, never HTML. Unlike Notice.bodyHtml there is no authoring
+  // toolbar and no sanitiser: React escapes it at render, and the only way to
+  // reintroduce an injection is to reach for dangerouslySetInnerHTML.
+  content        String    @db.VarChar(4000)
+  postedAt       DateTime  @default(now())
+  // Hidden is reversible with the content intact; removed is not. Both are
+  // local-only decisions and neither reaches another club.
+  hiddenAt       DateTime?
+  removedAt      DateTime?
+  // Cached count of non-dismissed reports, recomputed from the rows rather than
+  // incremented, so a dismissal actually stops counting.
+  reportCount    Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  author  Member?          @relation("ClubPostAuthor", fields: [authorMemberId], references: [id], onDelete: SetNull)
+  images  ClubPostImage[]
+  reports ClubPostReport[]
+
+  @@index([postedAt])
+  @@index([originClubCode])
+  @@index([sharedAt])
+  @@index([authorMemberId])
+}
+
+model ClubPostImage {
+  id       String   @id @default(cuid())
+  postId   String
+  post     ClubPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Path relative to the configured upload root, never absolute and never
+  // client-supplied.
+  storageKey String @db.VarChar(300)
+  width      Int
+  height     Int
+  bytes      Int
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([postId])
+}
+
+model ClubPostReport {
+  id       String   @id @default(cuid())
+  postId   String
+  post     ClubPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Single-club, so unlike the central server's equivalent table the uniqueness
+  // key needs no club: member ids are unique within this deployment.
+  reporterMemberId String?
+  reporterName     String   @db.VarChar(200)
+  reason           ClubPostReportReason
+  details          String?  @db.VarChar(1000)
+  // Stamped rather than deleted when an admin dismisses, so the history stays
+  // visible to the next admin and the post remains re-reportable by a fresh set
+  // of members. Zeroing a counter while these rows stayed would do neither.
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  reporter Member? @relation("ClubPostReporter", fields: [reporterMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, reporterMemberId])
+  @@index([postId])
+  @@index([reporterMemberId])
+}
+
+// Retention and cleanup policy for the club message board (#2999, epic #2992).
+// A singleton, like MaintenanceReportSettings: this is a club decision, not a
+// per-lodge one, for the same reason ClubPost itself carries no lodge (D-C1).
+model ClubPostSettings {
+  id String @id @default("default")
+
+  /// Days a post is kept before the cleanup pass deletes it permanently.
+  /// DEFAULT 0 = KEEP EVERYTHING, and that default is load-bearing: an upgrade
+  /// must never begin destroying member content because a default said so.
+  /// A club chooses a window deliberately (INV-CONFIG-001).
+  retentionDays Int @default(0)
+
+  /// Single-flight claim for the cleanup pass, held while one runs.
+  ///
+  /// A status-guarded claim rather than a Postgres advisory lock, for the
+  /// reason src/lib/servernz-sync-claim.ts sets out at length: a session-scoped
+  /// advisory lock is taken and released through Prisma's connection POOL, so
+  /// the unlock can execute on a different connection and wedge the job until
+  /// the pool recycles. An xact-scoped lock would mean holding a transaction
+  /// open across the whole pass. A conditional update whose matched-row count
+  /// IS the claim has neither problem, and a process killed mid-pass is reaped
+  /// by staleness rather than by a sweeper.
+  cleanupStartedAt DateTime?
+
+  /// When the last pass finished, and what it deleted, so the admin screen can
+  /// say what happened without keeping a separate history.
+  lastCleanupAt      DateTime?
+  lastCleanupDeleted Int       @default(0)
+
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedByMemberId String?
+}
+
+enum ClubPostReportReason {
+  SPAM
+  INAPPROPRIATE
+  HARASSMENT
+  OTHER
+}
+
 
 enum NotificationDeliveryMode {
   ALWAYS

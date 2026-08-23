@@ -94,6 +94,7 @@ const MODULES_ON = {
   aiDiagnostics: false,
   maintenanceReports: true,
   alpineCentralServer: false,
+  commsPortal: false,
 };
 
 function exceptionRow(overrides: Record<string, unknown> = {}) {

@@ -659,6 +659,21 @@ export const rateLimiters = {
    * fault report at the moment somebody is standing in front of the fault.
    */
   maintenanceReportMember: { id: "maintenance-report-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * Club message board: 10 posts per hour per member (#2994).
+   *
+   * The board is a conversation, so the limit is set to stop one member filling
+   * it rather than to make posting feel rationed - ten an hour is far above
+   * ordinary use and far below what it takes to bury everyone else's posts.
+   * Applied member-scoped, so the IP key carries ten times the budget and a
+   * household or a lodge on one connection is not throttled as if it were one
+   * person.
+   *
+   * Deliberately NOT `authSensitive`: there is no credential behind it, and
+   * quartering the allowance during a database blip would silence the board at
+   * the moment somebody is trying to tell the club something.
+   */
+  clubPostCreate: { id: "club-post-create", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // test seam

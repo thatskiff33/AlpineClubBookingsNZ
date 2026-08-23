@@ -65,6 +65,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `communications` | membership | `src/lib/email-message-registry.ts` | [guide](guides/communications.md) | 4 |
 | `config-transfer` | support | `config-transfer/README.md` (planned feature) | [guide](guides/config-transfer.md) | 4 |
 | `dashboard` | overview | `ARCHITECTURE.md` (Needs Attention / badges) | [guide](guides/dashboard.md) | 4 |
+| `message-board` | membership | `multi-lodge/lodge-scoping-contract.md` (club-wide scoping, D-C1) | [guide](guides/message-board.md) | — (commsPortal module, off by default) |
 | `notices` | membership | `src/lib/notices.ts` (audience resolution + visibility predicate) | [guide](guides/member-notices.md) | 5 |
 | `deletion-requests` | membership | `ARCHITECTURE.md` (member lifecycle delete) | [guide](guides/deletion-requests.md) | 2 |
 | `display` | content | `lobby-display/README.md`, `lobby-display/operating.md` | [guide](guides/display.md) (+ [feature hub](lobby-display/README.md), [operating](lobby-display/operating.md)) | 4 |

@@ -1,0 +1,188 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * #2998 (epic #2992) — club message board moderation.
+ *
+ * The load-bearing test here is that hiding a post actually removes it from the
+ * MEMBER reader. #2994 shipped the `hiddenAt`/`removedAt` filter before anything
+ * could set either column precisely so that would be true on the day moderation
+ * landed; this is where that is checked rather than assumed.
+ *
+ * Clock frozen at 2026-07-01T00:00:00.000Z.
+ */
+
+const mocks = vi.hoisted(() => ({
+  findUnique: vi.fn(),
+  findMany: vi.fn(),
+  update: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    clubPost: {
+      findUnique: mocks.findUnique,
+      findMany: mocks.findMany,
+      update: mocks.update,
+    },
+  },
+}));
+
+import { listClubPostsForMember } from "@/lib/club-posts";
+import {
+  ClubPostAlreadyRemovedError,
+  ClubPostNotFoundError,
+  editClubPostContent,
+  listClubPostsForAdmin,
+  parseAdminPostTab,
+  removeClubPost,
+  setClubPostHidden,
+} from "@/lib/club-posts-admin";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.findMany.mockResolvedValue([]);
+  mocks.update.mockResolvedValue({});
+  mocks.findUnique.mockResolvedValue({
+    id: "post-1",
+    content: "Hut book is back at the lodge.",
+    hiddenAt: null,
+    removedAt: null,
+  });
+});
+
+describe("moderation reaches members", () => {
+  it("the member reader excludes hidden and removed posts", async () => {
+    // The whole point of moderation. If this filter is ever dropped, hiding
+    // succeeds in the admin screen and changes nothing for members.
+    await listClubPostsForMember("member-1");
+    expect(mocks.findMany.mock.calls[0][0].where).toMatchObject({
+      hiddenAt: null,
+      removedAt: null,
+    });
+  });
+
+  it("hiding stamps hiddenAt; showing clears it", async () => {
+    await setClubPostHidden("post-1", true);
+    expect(mocks.update.mock.calls[0][0].data.hiddenAt).toBeInstanceOf(Date);
+
+    await setClubPostHidden("post-1", false);
+    expect(mocks.update.mock.calls[1][0].data.hiddenAt).toBeNull();
+  });
+
+  it("hiding never touches the content", async () => {
+    await setClubPostHidden("post-1", true);
+    expect(mocks.update.mock.calls[0][0].data).not.toHaveProperty("content");
+  });
+});
+
+describe("removal", () => {
+  it("blanks the content rather than only flagging the row", async () => {
+    // Behind-a-filter is not gone. A future query that forgets the filter would
+    // otherwise resurface words somebody asked to have removed.
+    await removeClubPost("post-1");
+    const data = mocks.update.mock.calls[0][0].data;
+    expect(data.content).toBe("");
+    expect(data.removedAt).toBeInstanceOf(Date);
+  });
+
+  it("keeps the author on the row, so a removal stays answerable for", async () => {
+    await removeClubPost("post-1");
+    const data = mocks.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty("authorMemberId");
+    expect(data).not.toHaveProperty("authorName");
+  });
+
+  it("is idempotent — removing twice is not an error", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      removedAt: new Date("2026-06-01T00:00:00.000Z"),
+    });
+    await expect(removeClubPost("post-1")).resolves.toBeUndefined();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown post", async () => {
+    mocks.findUnique.mockResolvedValue(null);
+    await expect(removeClubPost("nope")).rejects.toBeInstanceOf(
+      ClubPostNotFoundError,
+    );
+  });
+});
+
+describe("editing", () => {
+  it("returns the ORIGINAL so it can go into the audit row", async () => {
+    // After this write the audit row is the only place the member's own words
+    // still exist.
+    const result = await editClubPostContent("post-1", "Corrected text.");
+    expect(result.before).toBe("Hut book is back at the lodge.");
+    expect(result.after).toBe("Corrected text.");
+  });
+
+  it("applies the same content rules members are held to", async () => {
+    await expect(editClubPostContent("post-1", "   ")).rejects.toThrow();
+    await expect(
+      editClubPostContent("post-1", "x".repeat(4001)),
+    ).rejects.toThrow();
+  });
+
+  it("refuses to edit a removed post", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      content: "",
+      hiddenAt: null,
+      removedAt: new Date("2026-06-01T00:00:00.000Z"),
+    });
+    await expect(editClubPostContent("post-1", "anything")).rejects.toBeInstanceOf(
+      ClubPostAlreadyRemovedError,
+    );
+    await expect(setClubPostHidden("post-1", true)).rejects.toBeInstanceOf(
+      ClubPostAlreadyRemovedError,
+    );
+  });
+});
+
+describe("the moderation list", () => {
+  it("defaults to the all tab and rejects an unknown one", () => {
+    expect(parseAdminPostTab(null)).toBe("all");
+    expect(parseAdminPostTab("flagged")).toBe("all");
+    expect(parseAdminPostTab("hidden")).toBe("hidden");
+  });
+
+  it("excludes removed posts from both tabs", async () => {
+    await listClubPostsForAdmin({ tab: "all" });
+    expect(mocks.findMany.mock.calls[0][0].where).toMatchObject({
+      removedAt: null,
+    });
+
+    await listClubPostsForAdmin({ tab: "hidden" });
+    expect(mocks.findMany.mock.calls[1][0].where).toMatchObject({
+      removedAt: null,
+    });
+  });
+
+  it("the hidden tab shows only hidden posts", async () => {
+    await listClubPostsForAdmin({ tab: "hidden" });
+    expect(mocks.findMany.mock.calls[0][0].where.hiddenAt).toEqual({
+      not: null,
+    });
+  });
+
+  it("the all tab does not filter on hiddenAt at all", async () => {
+    await listClubPostsForAdmin({ tab: "all" });
+    expect(mocks.findMany.mock.calls[0][0].where.hiddenAt).toBeUndefined();
+  });
+
+  it("searches content and author name, case-insensitively", async () => {
+    await listClubPostsForAdmin({ tab: "all", q: "whitcombe" });
+    const where = mocks.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { content: { contains: "whitcombe", mode: "insensitive" } },
+      { authorName: { contains: "whitcombe", mode: "insensitive" } },
+    ]);
+  });
+
+  it("omits the search clause entirely when nothing was typed", async () => {
+    await listClubPostsForAdmin({ tab: "all" });
+    expect(mocks.findMany.mock.calls[0][0].where.OR).toBeUndefined();
+  });
+});

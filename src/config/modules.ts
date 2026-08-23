@@ -30,6 +30,7 @@ export const MODULE_KEYS = [
   "aiDiagnostics",
   "maintenanceReports",
   "alpineCentralServer",
+  "commsPortal",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -93,6 +94,10 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   // form: that is a separate, default-OFF setting (#2780).
   maintenanceReports: true,
   alpineCentralServer: false,
+  // Default OFF, inverting the general ON rule above on purpose: sharing a
+  // post from this module publishes member-written content to other clubs.
+  // An upgrade must not start doing that because nobody opted out (#2993).
+  commsPortal: false,
 };
 
 export interface ModuleDefinition {
@@ -368,6 +373,19 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Connect this club to the Alpine Central Server (ServerNZ) to upload and download data shared across clubs — starting with the Other Clubs registry. SHARES DATA OUTSIDE THIS CLUB: your lodges' names, locations, bed counts and booking-officer contact details are sent to the central server and redistributed to every other connected club. The booking-officer email is the committee role's shared address, never a member's personal one, and a member's phone is shared only if your club already publishes it on your own committee page. Nothing is sent until you also enable an item on the setup page.",
     dependencies: [
       "Request a connection and obtain an API key from the central server, then enter it under Admin → Integrations → Alpine Central Server.",
+    ],
+  },
+  commsPortal: {
+    key: "commsPortal",
+    label: "Message board",
+    description:
+      "A member-written message board for the club. Posts stay inside this club unless a member chooses to share one with every other connected club.",
+    dependencies: [
+      // Stated because the module is useful on its own and an admin reading
+      // this card should not think it needs the central server to work.
+      "The board works with no central-server connection: posts are club-only unless a member ticks 'share with all clubs'.",
+      "Sharing a post with other clubs additionally needs the Alpine Central Server module switched on and connected.",
+      "When off, the member board and its admin screens return Not Found. Existing posts are kept and reappear when it is switched back on.",
     ],
   },
 };

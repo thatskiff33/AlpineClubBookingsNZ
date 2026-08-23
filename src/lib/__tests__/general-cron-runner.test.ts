@@ -4,6 +4,10 @@ vi.mock("@/lib/booking-request", () => ({
   purgeExpiredBookingRequests: vi.fn(),
 }));
 
+vi.mock("@/lib/club-post-retention", () => ({
+  runClubPostCleanup: vi.fn(),
+}));
+
 vi.mock("@/lib/cron-additional-payment-reminders", () => ({
   sendAdditionalPaymentReminders: vi.fn(),
 }));
@@ -78,6 +82,13 @@ describe("general cron runner", () => {
           incidentsResolved: 0,
           notified: 0,
           failed: 0,
+        })),
+        // #2999. Stubbed like every other job here: unstubbed it would call the
+        // real cleanup, which reads settings through prisma -- so the suite
+        // would pass wherever a database happened to be running and fail in CI.
+        runClubPostCleanup: vi.fn(async () => ({
+          skipped: "disabled" as const,
+          deleted: 0,
         })),
         sendAdditionalPaymentReminders: vi.fn(async () => ({
           reminderDays: 3,
@@ -196,7 +207,13 @@ describe("general cron runner", () => {
     // same window (#2550's placeholder guest-name reminders and #2553's hold
     // reaper), and this literal is where a merge that keeps both branches' job
     // registrations but only one branch's count shows up.
-    expect(recordCronRun).toHaveBeenCalledTimes(10);
+    expect(recordCronRun).toHaveBeenCalledTimes(11);
+    expect(recordCronRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobName: "club-post-retention",
+        status: "SUCCESS",
+      })
+    );
     expect(recordCronRun).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "additional-payment-reminders",
@@ -327,6 +344,10 @@ describe("general cron runner", () => {
             incidentsResolved: 0,
             notified: 0,
             failed: 0,
+          })),
+          runClubPostCleanup: vi.fn(async () => ({
+            skipped: "disabled" as const,
+            deleted: 0,
           })),
           sendAdditionalPaymentReminders,
           confirmPendingBookings: vi.fn(async () => {

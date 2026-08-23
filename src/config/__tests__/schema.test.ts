@@ -243,6 +243,7 @@ describe("featureFlagsSchema", () => {
         aiDiagnostics: false,
         maintenanceReports: true,
         alpineCentralServer: false,
+        commsPortal: false,
       }),
     ).toBeDefined();
   });

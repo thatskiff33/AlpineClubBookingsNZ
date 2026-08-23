@@ -88,6 +88,7 @@ const MODULES_OFF = {
   aiDiagnostics: true,
   maintenanceReports: true,
   alpineCentralServer: false,
+  commsPortal: false,
 };
 
 /** Depth-first walk for the publisher element, wherever the page puts it. */

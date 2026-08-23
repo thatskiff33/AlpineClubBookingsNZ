@@ -27,6 +27,8 @@ import {
   ClipboardCheck,
   ChevronRight,
   Wrench,
+  MessageSquare,
+  Users,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
@@ -50,6 +52,8 @@ import {
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
 import { RecentNewsCard } from "@/components/recent-news-card";
+import { MessageBoardCard } from "@/components/message-board-card";
+import { countClubPostsSince } from "@/lib/club-posts";
 import {
   buildHrefWithReturnTo,
   buildProfilePathWithReturnTo,
@@ -408,6 +412,21 @@ export default async function DashboardPage() {
 
   const modules = await loadEffectiveModuleFlags();
 
+  // Headline for the message board tile.
+  //
+  // Skipped -- query included -- when the board module is off, following the
+  // events card below: the dashboard must not read for a surface it is not
+  // going to show.
+  //
+  // Seven CLUB days, stepped over the date-only value rather than derived from
+  // the process's own zone (INV-DATE-019), so every viewer is told about the
+  // same seven days no matter where they are reading from.
+  const recentPostCount = modules.commsPortal
+    ? await countClubPostsSince(
+        startOfDateOnlyForTimeZone(formatDateOnly(addDaysDateOnly(today, -7))),
+      )
+    : 0;
+
   // Upcoming club events for the next two weeks (Events card → /calendar).
   //
   // Skipped entirely — query included — when the club has the eventsCalendar
@@ -735,6 +754,51 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Message board tile. Gated on the same module as the board itself:
+            /message-board is feature-routed on `commsPortal`, so an ungated
+            tile would be a button to a blocked route. */}
+        {modules.commsPortal && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Message Board
+              </CardTitle>
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">
+                {recentPostCount} new message{recentPostCount === 1 ? "" : "s"}
+              </div>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/message-board">Open Message Board</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Kiosk tile. `/lodge` is feature-routed on `kiosk`, hence the gate.
+            Deliberately NOT gated on kiosk access tier: a member with no tier
+            gets the read-only lodge view rather than a refusal, which is the
+            "who is in the lodge" this card offers. */}
+        {modules.kiosk && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Lodge Kiosk</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">Who is in the lodge</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                The lodge kiosk will show you who is arriving and leaving the
+                lodge.
+              </p>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/lodge/kiosk">Open Kiosk</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Draft bookings */}
@@ -882,6 +946,11 @@ export default async function DashboardPage() {
           )}
         </Card>
       </div>
+
+      {/* Club message board (commsPortal module). Last on the page, below the
+          booking lists. Renders nothing when the board is empty, so a club
+          that has not started using it sees no empty shell. */}
+      {modules.commsPortal && <MessageBoardCard memberId={memberId} />}
     </div>
   );
 }

@@ -1,0 +1,195 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * #2999 (epic #2992) — club message board retention.
+ *
+ * This pass permanently deletes member content, so the tests here are weighted
+ * towards proving it deletes LESS than more: nothing at all when the window is
+ * 0, nothing when another pass holds the claim, and nothing on the boundary
+ * itself.
+ *
+ * Clock frozen at 2026-07-01T00:00:00.000Z, so `NOW` below is that instant and
+ * every cutoff is relative to it rather than to a real date.
+ */
+
+const mocks = vi.hoisted(() => ({
+  settingsFindUnique: vi.fn(),
+  settingsUpdateMany: vi.fn(),
+  settingsUpdate: vi.fn(),
+  settingsUpsert: vi.fn(),
+  postDeleteMany: vi.fn(),
+  postCount: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    clubPostSettings: {
+      findUnique: mocks.settingsFindUnique,
+      updateMany: mocks.settingsUpdateMany,
+      update: mocks.settingsUpdate,
+      upsert: mocks.settingsUpsert,
+    },
+    clubPost: {
+      deleteMany: mocks.postDeleteMany,
+      count: mocks.postCount,
+    },
+  },
+}));
+
+import {
+  assertValidRetentionDays,
+  ClubPostSettingsValidationError,
+  countPostsBeyondRetention,
+  loadClubPostSettings,
+  retentionCutoff,
+  runClubPostCleanup,
+  STALE_CLEANUP_CLAIM_MS,
+} from "@/lib/club-post-retention";
+
+const NOW = new Date("2026-07-01T00:00:00.000Z");
+
+function settings(retentionDays: number) {
+  return {
+    retentionDays,
+    lastCleanupAt: null,
+    lastCleanupDeleted: 0,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.settingsFindUnique.mockResolvedValue(settings(365));
+  mocks.settingsUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.settingsUpdate.mockResolvedValue({});
+  mocks.postDeleteMany.mockResolvedValue({ count: 3 });
+  mocks.postCount.mockResolvedValue(0);
+});
+
+describe("the retention window", () => {
+  it("defaults to keep-everything when no row exists", async () => {
+    mocks.settingsFindUnique.mockResolvedValue(null);
+    // An install that has never opened the screen must behave as though
+    // retention is off, never as though some window applies.
+    expect((await loadClubPostSettings()).retentionDays).toBe(0);
+  });
+
+  it("has no cutoff at all when the window is 0", () => {
+    expect(retentionCutoff(0, NOW)).toBeNull();
+    expect(retentionCutoff(-5, NOW)).toBeNull();
+  });
+
+  it("computes the cutoff from the frozen clock", () => {
+    const cutoff = retentionCutoff(365, NOW);
+    expect(cutoff?.toISOString()).toBe("2025-07-01T00:00:00.000Z");
+  });
+
+  it("accepts only the offered choices", () => {
+    for (const days of [0, 90, 183, 365, 730]) {
+      expect(assertValidRetentionDays(days)).toBe(days);
+    }
+    // A hand-crafted PUT must not be able to set a one-day window and empty
+    // the board.
+    for (const bad of [1, 7, -1, 4000, 1.5, "365", null, undefined]) {
+      expect(() => assertValidRetentionDays(bad)).toThrow(
+        ClubPostSettingsValidationError,
+      );
+    }
+  });
+
+  it("counts nothing as beyond retention when keeping everything", async () => {
+    expect(await countPostsBeyondRetention(0, NOW)).toBe(0);
+    expect(mocks.postCount).not.toHaveBeenCalled();
+  });
+});
+
+describe("the cleanup pass", () => {
+  it("deletes nothing and claims nothing when the window is 0", async () => {
+    mocks.settingsFindUnique.mockResolvedValue(settings(0));
+
+    const outcome = await runClubPostCleanup(NOW);
+
+    expect(outcome).toEqual({ skipped: "disabled", deleted: 0 });
+    expect(mocks.postDeleteMany).not.toHaveBeenCalled();
+    // Not even briefly held: a disabled window making a concurrent caller
+    // report `busy` would be a lie about why nothing happened.
+    expect(mocks.settingsUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("deletes strictly older than the cutoff, so the boundary is KEPT", async () => {
+    await runClubPostCleanup(NOW);
+
+    const where = mocks.postDeleteMany.mock.calls[0][0].where;
+    expect(where.postedAt.lt).toEqual(new Date("2025-07-01T00:00:00.000Z"));
+    // `lt`, never `lte`. A post exactly on the boundary survives — where the
+    // rule could be read two ways, this deletes less.
+    expect(where.postedAt.lte).toBeUndefined();
+  });
+
+  it("does nothing when another pass holds the claim", async () => {
+    mocks.settingsUpdateMany.mockResolvedValue({ count: 0 });
+
+    const outcome = await runClubPostCleanup(NOW);
+
+    expect(outcome).toEqual({ skipped: "busy", deleted: 0 });
+    expect(mocks.postDeleteMany).not.toHaveBeenCalled();
+    // Nothing was claimed, so nothing may be released — releasing here would
+    // free the claim the OTHER pass is holding.
+    expect(mocks.settingsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("claims a free or stale row, reaping one a killed process left behind", async () => {
+    await runClubPostCleanup(NOW);
+
+    const where = mocks.settingsUpdateMany.mock.calls[0][0].where;
+    expect(where.OR[0]).toEqual({ cleanupStartedAt: null });
+    expect(where.OR[1].cleanupStartedAt.lt).toEqual(
+      new Date(NOW.getTime() - STALE_CLEANUP_CLAIM_MS),
+    );
+  });
+
+  it("releases the claim after a pass that throws", async () => {
+    mocks.postDeleteMany.mockRejectedValue(new Error("database went away"));
+
+    await expect(runClubPostCleanup(NOW)).rejects.toThrow("database went away");
+
+    // A failed pass must not wedge the next one.
+    const release = mocks.settingsUpdate.mock.calls.at(-1)?.[0];
+    expect(release.data).toEqual({ cleanupStartedAt: null });
+  });
+
+  it("records what it deleted, then releases", async () => {
+    mocks.postDeleteMany.mockResolvedValue({ count: 7 });
+
+    const outcome = await runClubPostCleanup(NOW);
+
+    expect(outcome).toEqual({ deleted: 7 });
+    expect(mocks.settingsUpdate.mock.calls[0][0].data).toMatchObject({
+      lastCleanupAt: NOW,
+      lastCleanupDeleted: 7,
+    });
+    expect(mocks.settingsUpdate.mock.calls[1][0].data).toEqual({
+      cleanupStartedAt: null,
+    });
+  });
+
+  it("cannot report busy forever on an install with no settings row", async () => {
+    // The claim is an `updateMany`, which matches nothing when the row is
+    // absent — that would look like a permanently-held claim. The disabled
+    // check above it is what makes that unreachable: a non-zero window can only
+    // come from the upserting save, so a cutoff implies a row.
+    mocks.settingsFindUnique.mockResolvedValue(null);
+
+    const outcome = await runClubPostCleanup(NOW);
+
+    expect(outcome.skipped).toBe("disabled");
+    expect(outcome.skipped).not.toBe("busy");
+    expect(mocks.settingsUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("reports zero honestly rather than as a skip", async () => {
+    // "Ran and deleted nothing" and "did not run" are different answers, and
+    // the screen says different things about them.
+    mocks.postDeleteMany.mockResolvedValue({ count: 0 });
+    expect(await runClubPostCleanup(NOW)).toEqual({ deleted: 0 });
+  });
+});

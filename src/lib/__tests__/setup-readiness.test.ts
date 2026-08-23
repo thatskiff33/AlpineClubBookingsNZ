@@ -70,6 +70,7 @@ const completeDatabase: SetupDatabaseSnapshot = {
     aiDiagnostics: false,
     maintenanceReports: true,
     alpineCentralServer: false,
+    commsPortal: false,
   },
   ageTierSettingCount: 4,
   seasonCount: 2,

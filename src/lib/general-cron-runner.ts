@@ -1,6 +1,7 @@
 import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { drainHostingCoverageReevaluations } from "@/lib/adult-member-hosting-coverage-drain";
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
+import { runClubPostCleanup } from "@/lib/club-post-retention";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
 import {
   recordCronJobRunSafe,
@@ -16,6 +17,7 @@ import { reportCronError } from "@/lib/observability-bridge";
 
 const GENERAL_CRON_JOB_NAMES = [
   "additional-payment-reminders",
+  "club-post-retention",
   "confirm-pending",
   "group-settlement-reaper",
   "hosting-coverage-reevaluation",
@@ -33,6 +35,7 @@ export interface GeneralCronCycleResult {
   additionalPaymentReminders: Awaited<
     ReturnType<typeof sendAdditionalPaymentReminders>
   > | null;
+  clubPostRetention: Awaited<ReturnType<typeof runClubPostCleanup>> | null;
   confirmPending: Awaited<ReturnType<typeof confirmPendingBookings>> | null;
   groupSettlementReap: Awaited<ReturnType<typeof reapStaleGroupSettlements>> | null;
   hostingCoverageReevaluation: Awaited<
@@ -65,6 +68,7 @@ export interface GeneralCronRunnerDependencies {
   recordCronRun?: (input: RecordCronJobRunInput) => Promise<void> | void;
   tasks?: Partial<{
     sendAdditionalPaymentReminders: typeof sendAdditionalPaymentReminders;
+    runClubPostCleanup: () => ReturnType<typeof runClubPostCleanup>;
     confirmPendingBookings: typeof confirmPendingBookings;
     reapStaleGroupSettlements: typeof reapStaleGroupSettlements;
     drainHostingCoverageReevaluations: () => ReturnType<
@@ -149,6 +153,7 @@ export async function runGeneralCronCycle(
   const taskDependencies = dependencies.tasks ?? {};
   const result: GeneralCronCycleResult = {
     additionalPaymentReminders: null,
+    clubPostRetention: null,
     confirmPending: null,
     groupSettlementReap: null,
     hostingCoverageReevaluation: null,
@@ -168,6 +173,16 @@ export async function runGeneralCronCycle(
       work:
         taskDependencies.sendAdditionalPaymentReminders ??
         sendAdditionalPaymentReminders,
+    },
+    {
+      // #2999. Deletes club message board posts past the club's retention
+      // window. Idempotent and self-limiting: the window defaults to "keep
+      // everything", the pass takes a single-flight claim so it cannot race the
+      // admin screen's button, and a run with nothing to delete is a no-op.
+      jobName: "club-post-retention",
+      resultKey: "clubPostRetention",
+      failureMessage: "Club post retention cron error",
+      work: taskDependencies.runClubPostCleanup ?? runClubPostCleanup,
     },
     {
       jobName: "confirm-pending",

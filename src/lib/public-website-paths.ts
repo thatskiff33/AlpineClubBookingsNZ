@@ -169,6 +169,10 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   // like dashboard/induction — no session exists pre-setup, so it redirects to
   // login rather than being a public website page.
   "maintenance-report",
+  // #2994: the member message board. An `(authenticated)` route like
+  // dashboard/notices -- no session exists pre-setup, so it redirects to login
+  // rather than being a public website page.
+  "message-board",
   "nominations",
   "notices",
   "profile",

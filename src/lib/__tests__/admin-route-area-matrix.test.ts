@@ -225,6 +225,13 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/chores/[id]": "lodge",
   "/api/admin/club-contact": "content",
   "/api/admin/club-identity": "content",
+  // #2998: club message board moderation. `membership`, beside the notices
+  // routes -- and what each of these handlers already enforces for itself
+  // via requireAdmin({ area: "membership" }).
+  "/api/admin/club-posts": "membership",
+  "/api/admin/club-posts/[id]": "membership",
+  "/api/admin/club-posts/cleanup": "membership",
+  "/api/admin/club-posts/settings": "membership",
   "/api/admin/committee/assignments": "membership",
   "/api/admin/committee/assignments/[id]": "membership",
   "/api/admin/config-transfer/apply": "support",
