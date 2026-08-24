@@ -64,7 +64,7 @@ reason: four lines: the club's day for the export filename, and why it is not th
   operator's.
 
 file: src/app/(admin)/admin/dashboard/page.tsx
-lines: 895
+lines: 902
 reason: `getStats` now derives its month bounds with calendar arithmetic instead of
   string slicing plus `Date.UTC(y, m + 1, 0)`, and says which of the values it
   hands Prisma are date-only bounds and which are instants. The dashboard's
