@@ -1036,7 +1036,11 @@ export async function sendPreArrivalReminderEmail(params: {
   // body needs it to bring its own paragraph break, which is the composition
   // below rather than newlines in the default body — see the note there.
   const checkoutChoreSentence = checkoutDayChoreNote(modules.chores);
-  await sendEmail({
+  // RETURNS the mailer's outcome (#3035). It used to swallow it, and the
+  // pre-arrival cron consequently could not tell a send from a withhold — so an
+  // environment withhold burned `preArrivalReminderSentAt` permanently and the
+  // member arrived at a locked lodge with no door code. Its caller inspects this.
+  return sendEmail({
     to: params.email,
     subject: `Pre-arrival Information - ${EMAIL_DEFAULT_LODGE_NAME}`,
     html: await renderEmailHtml(() => preArrivalReminderTemplate({

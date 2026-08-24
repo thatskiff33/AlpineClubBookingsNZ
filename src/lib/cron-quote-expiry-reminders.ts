@@ -71,7 +71,7 @@ export async function sendQuoteExpiryReminders(): Promise<{
 
     try {
       const options = parseBookingRequestQuoteOptions(quote.options);
-      await sendBookingRequestQuoteEmail({
+      const outcome = await sendBookingRequestQuoteEmail({
         // A quote reminder is sent before any booking exists (#2258).
         bookingContext: "none",
         email: request.contactEmail,
@@ -92,24 +92,73 @@ export async function sendQuoteExpiryReminders(): Promise<{
         isReminder: true,
       });
 
-      await prisma.bookingRequestQuote.update({
-        where: { id: quote.id },
-        data: { reminderSentAt: now },
-      });
+      /*
+        NOTHING IS STAMPED AND NO SUCCESS IS AUDITED FOR A MESSAGE THAT DID NOT
+        GO OUT (#3035). `sendEmail` returns rather than throws when it withholds,
+        so this used to write `reminderSentAt` AND an audit row reading
+        `outcome: "success"`, "Sent a pre-expiry reminder" — a false record of a
+        reminder the requester never received, on a quote about to expire.
 
-      remindedCount += 1;
+        Leaving `reminderSentAt` null is the right shape for every fault: the
+        token was rotated before the send, so the next run rotates again and
+        re-sends, exactly as the pre-existing comment above promises for a
+        delivery failure.
+
+        THE ONE EXCEPTION is the confirmed copy, which DOES get its stamp. That
+        outcome is terminal — a copy is a copy until somebody re-declares it — and
+        without the stamp a staging box would re-claim, re-rotate and re-suppress
+        the same quote on every run, writing a new counted `SKIPPED_NON_PRODUCTION`
+        row each pass. That count is what tells a live club wrongly declared a copy
+        from an idle staging one (owner decision 1, 23 Aug 2026), so an idle copy
+        must not manufacture it.
+      */
+      const sent = outcome.status === "sent";
+      const terminalForThisInstallation =
+        outcome.status === "withheld_for_environment" &&
+        outcome.reason === "environment_non_production";
+
+      if (sent || terminalForThisInstallation) {
+        await prisma.bookingRequestQuote.update({
+          where: { id: quote.id },
+          data: { reminderSentAt: now },
+        });
+      }
+
+      if (sent) {
+        remindedCount += 1;
+      } else {
+        failedCount += 1;
+        logger.warn(
+          {
+            quoteId: quote.id,
+            bookingRequestId: quote.bookingRequestId,
+            outcome: outcome.status,
+            reason: "reason" in outcome ? outcome.reason : undefined,
+            willRetry: !terminalForThisInstallation,
+          },
+          "Booking request quote reminder was not transmitted",
+        );
+      }
+
       logAudit({
         action: "booking_request.quote_reminder_sent",
         targetId: request.id,
         entityType: "BookingRequest",
         entityId: request.id,
         category: "booking",
-        outcome: "success",
-        summary: "Sent a pre-expiry reminder for an outstanding quote",
+        outcome: sent ? "success" : "failure",
+        summary: sent
+          ? "Sent a pre-expiry reminder for an outstanding quote"
+          : "A pre-expiry quote reminder was not delivered, so the requester has not been reminded",
         metadata: {
           quoteId: quote.id,
           version: quote.version,
           expiresAt: expiresAt.toISOString(),
+          emailOutcome: outcome.status,
+          // The mailer's own reason, so an operator reading the audit trail can
+          // tell an environment withhold from a bounced address without going to
+          // the email log.
+          ...("reason" in outcome ? { emailWithheldReason: outcome.reason } : {}),
         },
       });
     } catch (err) {

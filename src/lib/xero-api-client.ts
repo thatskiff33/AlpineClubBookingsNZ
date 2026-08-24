@@ -24,6 +24,7 @@ import {
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
 import { getOperationalXeroConfig } from "@/lib/xero-config";
+import { assertXeroProviderWriteAllowed } from "@/lib/xero-environment-write-gate";
 import { createXeroClient } from "./xero-oauth";
 import {
   XERO_TOKEN_REFRESH_LEASE_MS,
@@ -576,6 +577,19 @@ export async function callXeroApi<T>(
   fn: () => Promise<T>,
   options: MeteredXeroCallOptions
 ): Promise<T> {
+  /*
+    INV-CONFIG-005 (#3036): an installation that has not declared whether it is
+    the club's live site or a copy writes NOTHING to Xero. This is the backstop
+    under the entry-point refusals rather than a replacement for them — those
+    refuse before an operation is reserved or a lock is taken, so nothing is left
+    half-written; this one catches the writer nobody has routed through a gate.
+
+    BEFORE `withXeroRetry` AND BEFORE THE USAGE ROW, because nothing was
+    attempted: a refused call is not an API call and must not appear in the
+    quota ledger. Reads are unaffected, deliberately — see
+    `xero-environment-write-gate.ts`.
+  */
+  await assertXeroProviderWriteAllowed(options.operation);
   const startedAt = Date.now();
   let observedRateLimitCategory: XeroRateLimitCategory = null;
 

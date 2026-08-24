@@ -128,6 +128,16 @@ publication completed, so retain and verify its printed SHA before deliberately
 starting the stack. Never start writers
 against a database whose reset or seed stage did not complete.
 
+**One key was ADDED to the reviewed exact set under #3035, so an existing private
+`.env.measure` needs one new line.** `USE_LOCAL_CAPTURE=true` joins `USE_AWS_SES`
+and `USE_SMTP_RELAY` there. Without it the contract check fails loudly with
+`measurement env key inventory differs from the reviewed exact set`, which is the
+intended behaviour rather than a bug — the key set is exact on purpose. The value
+in the file is inert for this stack (`docker-compose.measure.yml` hard-codes all
+three flags on the app service, exactly as it hard-codes `APP_ENVIRONMENT_ROLE`);
+what the entry buys is that an *ambient* `USE_LOCAL_CAPTURE` is refused rather
+than quietly ignored, the same protection its two siblings already had.
+
 `with-private-env` owns the same fixed machine-wide lock as final phase-2
 orchestration. It copies `measurement/stack/.env.measure` to a new restrictive
 private snapshot, HMAC-binds that snapshot with a fresh private key, exports the
