@@ -819,8 +819,15 @@ describe("membership nomination workflow", () => {
       )
     ).resolves.toBeUndefined();
     expect(findOrCreateXeroContact).toHaveBeenCalledTimes(2);
+    // `seasonYear` is REQUIRED alongside `store` (#2870, correctness review): the
+    // joining-fee chain under this enqueue would otherwise read the club's zone on
+    // the global client while the approval transaction holds the application and
+    // member-lifecycle advisory locks, and that season picks the fee amount written
+    // onto an immutable invoice. Asserted by value, not `objectContaining`, so a
+    // future edit that drops the threading fails here.
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("member-1", {
       createdByMemberId: "admin-1",
+      seasonYear: 2026,
       store: tx,
     });
     expect(sendMembershipApplicationApprovedEmail).toHaveBeenCalledWith(
@@ -1033,7 +1040,13 @@ describe("membership nomination workflow", () => {
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledTimes(1);
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith(
       "member-1",
-      expect.objectContaining({ createdByMemberId: "admin-1", store: tx })
+      expect.objectContaining({
+        createdByMemberId: "admin-1",
+        // Resolved BEFORE the transaction opened — see the note on the sibling
+        // assertion above.
+        seasonYear: 2026,
+        store: tx,
+      })
     );
     expect(enqueueCallsAtCommit).toBe(1);
 

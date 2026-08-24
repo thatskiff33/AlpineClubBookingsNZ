@@ -317,15 +317,34 @@ export function parseApplicationFamilyMembers(raw: unknown): ApplicationFamilyMe
   }));
 }
 
-async function computeTier(dateOfBirth?: string | null) {
+/**
+ * `seasonStart` is passed in, and that is a CONCURRENCY requirement rather than a
+ * style (#2870, correctness review).
+ *
+ * Both callers are inside `approveMemberApplication`'s transaction, which holds
+ * `pg_advisory_xact_lock('member-application:<id>')` plus one
+ * `member-lifecycle:<memberId>` lock per MAP target — and the second caller is
+ * inside a `for` loop over the family members. Resolving the club's zone here
+ * would put an UNCACHED `ClubTimeSettings` read, on the global client and so a
+ * second pool connection, under those locks once per person. `booking-request.ts`
+ * records the judgement in its own words: a settings query under them buys
+ * nothing.
+ *
+ * It also removes a straddle. `approveMemberApplication` ALREADY resolves the
+ * club's season before opening the transaction and derives `mappingSeasonStart`
+ * from it, so a self-resolving `computeTier` meant the MAP path and the all-CREATE
+ * path could answer from two different seasons in one approval — the shape this
+ * lane closed on the admin member page and the bulk role change.
+ */
+async function computeTier(
+  dateOfBirth: string | null | undefined,
+  seasonStart: Date,
+) {
   if (!dateOfBirth) {
     return AgeTier.ADULT;
   }
 
-  return computeAgeTier(
-    new Date(dateOfBirth),
-    getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
-  );
+  return computeAgeTier(new Date(dateOfBirth), seasonStart);
 }
 
 async function verifyNominator(email: string): Promise<VerifiedNominator> {
@@ -1457,7 +1476,8 @@ export async function approveMemberApplication(
           mappingAgeTierSettings
         )
       : await computeTier(
-          formatDateOnly(lockedApplication.applicantDateOfBirth)
+          formatDateOnly(lockedApplication.applicantDateOfBirth),
+          mappingSeasonStart
         );
     // The application form captures the booking-gate profile details, so
     // approval counts as initial confirmation for the applicant and dependents.
@@ -1759,7 +1779,7 @@ export async function approveMemberApplication(
             mappingSeasonStart,
             mappingAgeTierSettings
           )
-        : await computeTier(familyMember.dateOfBirth);
+        : await computeTier(familyMember.dateOfBirth, mappingSeasonStart);
 
       if (familyDecision.mode === "MAP") {
         const outcome = outcomeByRef.get(`family:${index}`);
@@ -2044,8 +2064,18 @@ export async function approveMemberApplication(
           createdByMemberId: string;
           amountCents?: number;
           description?: string;
+          seasonYear: number;
         } = {
           createdByMemberId: adminMemberId,
+          // The season resolved BEFORE this transaction opened. Required by the
+          // enqueue whenever a transaction client is supplied, because the
+          // joining-fee chain below it (`getEntranceFeeContext` ->
+          // `resolveMemberJoiningFeeClassification`) would otherwise read the
+          // club's zone from the database while this transaction holds the
+          // application and member-lifecycle locks — and that season selects the
+          // `JoiningFee` schedule row whose `amountCents` lands on an IMMUTABLE
+          // entrance-fee invoice (#2870, correctness review).
+          seasonYear,
         };
         if (entranceFeeDecision.amountCents) {
           entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;

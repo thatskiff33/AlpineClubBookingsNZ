@@ -225,10 +225,14 @@ export async function POST(
         }
 
         const queuedEntranceFeeInvoice =
-          await enqueueXeroEntranceFeeInvoiceOperation(
-            id,
-            entranceFeeInvoiceOptions
-          );
+          await enqueueXeroEntranceFeeInvoiceOperation(id, {
+            ...entranceFeeInvoiceOptions,
+            // No transaction here, so the enqueue would resolve the club's zone
+            // itself — but this route already holds it, React-cached for the
+            // render pass, so pass the season rather than paying for a second
+            // uncached read (#2870, correctness review).
+            seasonYear: clubSeasonYear(await clubTimeZone()),
+          });
 
         entranceFeeInvoiceQueued = Boolean(
           queuedEntranceFeeInvoice.queueOperationId

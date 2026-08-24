@@ -106,7 +106,35 @@ async function resolveMembershipTypeId(
 export async function resolveMemberJoiningFeeClassification(
   memberId: string,
   store: JoiningFeeStore = prisma,
+  /**
+   * The membership season to resolve the member's type policy in.
+   *
+   * REQUIRED WHENEVER `store` IS NOT THE GLOBAL CLIENT, and that is a concurrency
+   * rule (#2870, correctness review). A caller passing a transaction client is
+   * inside a transaction — on the approval path, one holding the application and
+   * member-lifecycle advisory locks — and resolving the club's zone here is an
+   * uncached read on the GLOBAL client, so a second pool connection under those
+   * locks. The season it produces selects the membership-type policy, which
+   * selects the `JoiningFee` schedule row, whose `amountCents` is written onto an
+   * immutable entrance-fee Xero invoice; and `readPersistedClubTimeZoneRow`
+   * swallows every throw, so a pool timeout would resolve the season from the
+   * environment seed and charge the wrong joining fee with one warn line as the
+   * only evidence.
+   *
+   * Omitted with the global client — a read-only preview route — it resolves the
+   * club's zone itself, which is correct and costs nothing under contention.
+   */
+  seasonYear?: number,
 ): Promise<MemberJoiningFeeClassification> {
+  if (store !== prisma && seasonYear === undefined) {
+    throw new Error(
+      "resolveMemberJoiningFeeClassification needs an explicit seasonYear when it is " +
+        "given a transaction client: resolving the club's timezone here would read " +
+        "ClubTimeSettings on the global client while that transaction holds the " +
+        "application and member-lifecycle advisory locks, and the season it produces " +
+        "selects the joining fee written onto an immutable invoice.",
+    );
+  }
   const member = await store.member.findUnique({
     where: { id: memberId },
     select: { ageTier: true },
@@ -136,7 +164,8 @@ export async function resolveMemberJoiningFeeClassification(
 
   const policy = await resolveMembershipTypePolicyForMember(store, {
     memberId,
-    seasonYear: clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+    seasonYear:
+      seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
   });
 
   if (!policy) {

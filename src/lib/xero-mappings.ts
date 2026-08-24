@@ -384,9 +384,20 @@ async function getJoiningFeeItemCode(
  */
 export async function getEntranceFeeContext(
   memberId: string,
-  store: Prisma.TransactionClient | typeof prisma = prisma
+  store: Prisma.TransactionClient | typeof prisma = prisma,
+  /**
+   * Threaded straight through to `resolveMemberJoiningFeeClassification`, which
+   * REQUIRES it whenever `store` is a transaction client — see its docblock for
+   * why (#2870): a zone read there sits on the global client under the approval
+   * path's advisory locks, and the season selects an immutable invoice's amount.
+   */
+  seasonYear?: number
 ): Promise<EntranceFeeContext> {
-  const classification = await resolveMemberJoiningFeeClassification(memberId, store);
+  const classification = await resolveMemberJoiningFeeClassification(
+    memberId,
+    store,
+    seasonYear
+  );
 
   if (classification.exempt) {
     // Exempt: no fee mapping is looked up and callers must not bill, even
