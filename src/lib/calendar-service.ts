@@ -7,6 +7,15 @@ import {
   generateOccurrenceStarts,
   type RecurrenceRule,
 } from "@/lib/calendar-recurrence";
+import {
+  clubCalendarDateOf,
+  clubWallTimeOf,
+  instantForClubWallTime,
+  type CalendarDate,
+  type ClubTimeZone,
+  type Instant,
+} from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
  * A Prisma "record required but not found" error (P2025). Thrown by
@@ -35,6 +44,23 @@ function isRecordNotFoundError(error: unknown): boolean {
  *    changes are propagated in place (each occurrence keeps its own date);
  *    changing the recurrence pattern (or the anchor date) regenerates the whole
  *    series from the edited occurrence, preserving detached exceptions.
+ *
+ * ## THE CLUB'S TIMEZONE IS THE PERSISTED ONE, NOT THE CONTAINER'S (CT-4, #2870)
+ *
+ * Three questions here have a different answer in different zones: which club day
+ * an occurrence lands on, what wall-clock time it keeps, and whether an edit
+ * changed the anchor DAY (which is what decides propagate-versus-regenerate).
+ * All three used to be answered with host-local `Date` component APIs, justified
+ * by the docker `TZ=Pacific/Auckland` pin — the second civil-time authority
+ * `INV-CONFIG-002` forbids, and one an operator cannot move from the admin panel.
+ *
+ * The zone is now resolved ONCE per exported entry point with `clubTimeZone()`
+ * (request-memoised) and threaded down as an argument, so no helper below can
+ * silently reach for a different one. It matters that they agree: a generator on
+ * the club’s calendar beside a `withClubTimeOfDay` on the container’s would MOVE
+ * every occurrence of a series on a details-only edit — the "frame pair" failure
+ * this epic has already produced three times by correcting one side of a
+ * comparison and not the other.
  */
 
 /** Field/time template shared by all occurrences of one create/edit. */
@@ -61,24 +87,45 @@ function nextMeetingRoom(
   return existingRoom ?? randomUUID();
 }
 
-/** Local Y-M-D key, for comparing "which day" two instants fall on. */
-function localDayKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+/** The CLUB calendar day an instant falls on — "which day is this occurrence?". */
+function clubDayKey(instant: Instant, zone: ClubTimeZone): CalendarDate {
+  return clubCalendarDateOf(instant, zone);
 }
 
-/** Combine a target day with a template's time-of-day (or midnight, all-day). */
-function withTimeOfDay(day: Date, time: Date, allDay: boolean): Date {
+/**
+ * Combine a target day with a template's club time-of-day (or the start of the
+ * club day, all-day).
+ *
+ * Both projections are the club's, taken once each: the day comes out of `day`
+ * and the wall time out of `time`, and the result is re-derived through the
+ * club's zone with its DST rules. So a 7pm series stays 7pm across a transition
+ * rather than sliding by an hour, and an all-day occurrence starts at the first
+ * instant of the club day even in a zone where midnight does not exist.
+ */
+function withClubTimeOfDay(
+  day: Instant,
+  time: Instant,
+  allDay: boolean,
+  zone: ClubTimeZone,
+): Instant {
+  const date = clubCalendarDateOf(day, zone);
   if (allDay) {
-    return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+    return instantForClubWallTime(date, { hour: 0 }, zone, {
+      skipped: "nextExistingInstant",
+      ambiguous: "earliest",
+    });
   }
-  return new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    time.getHours(),
-    time.getMinutes(),
-    time.getSeconds(),
-    time.getMilliseconds(),
+  const wall = clubWallTimeOf(time, zone);
+  return instantForClubWallTime(
+    date,
+    {
+      hour: wall.hour,
+      minute: wall.minute,
+      second: wall.second,
+      millisecond: wall.millisecond,
+    },
+    zone,
+    { skipped: "nextExistingInstant", ambiguous: "earliest" },
   );
 }
 
@@ -94,10 +141,11 @@ function seriesCount(rule: RecurrenceRule): number | null {
 function seriesMatchesRule(
   series: CalendarEventSeries,
   rule: RecurrenceRule,
+  zone: ClubTimeZone,
 ): boolean {
-  const storedUntilKey = series.until ? localDayKey(series.until) : null;
+  const storedUntilKey = series.until ? clubDayKey(series.until, zone) : null;
   const ruleUntil = seriesUntil(rule);
-  const ruleUntilKey = ruleUntil ? localDayKey(ruleUntil) : null;
+  const ruleUntilKey = ruleUntil ? clubDayKey(ruleUntil, zone) : null;
   return (
     series.frequency === rule.frequency &&
     series.interval === rule.interval &&
@@ -167,6 +215,7 @@ async function createSeriesRows(
   actorId: string,
   tx: Db,
   idempotencyKey: string | null,
+  zone: ClubTimeZone,
 ): Promise<CalendarEvent> {
   const series = await tx.calendarEventSeries.create({
     data: {
@@ -178,7 +227,11 @@ async function createSeriesRows(
     },
   });
 
-  const starts = generateOccurrenceStarts(data.startsAt, data.recurrence);
+  const starts = generateOccurrenceStarts(
+    data.startsAt,
+    data.recurrence,
+    zone,
+  );
   const rows = buildOccurrenceRows(starts, data, series.id, actorId);
   // The idempotency key is a per-CREATE dedup token, so it lives on the anchor
   // (earliest occurrence, rows[0]) ONLY — never on every row (which would
@@ -203,6 +256,7 @@ async function createSeriesRows(
 async function createSeriesWithOccurrences(
   data: ResolvedEventData & { recurrence: RecurrenceRule },
   actorId: string,
+  zone: ClubTimeZone,
   db: Db = prisma,
   idempotencyKey: string | null = null,
 ): Promise<CalendarEvent> {
@@ -211,7 +265,7 @@ async function createSeriesWithOccurrences(
   // case the outer transaction owns rollback; in the no-key case there is
   // nothing to make atomic beyond the individual writes.
   if (db !== prisma || !idempotencyKey) {
-    return createSeriesRows(data, actorId, db, idempotencyKey);
+    return createSeriesRows(data, actorId, db, idempotencyKey, zone);
   }
 
   // Top-level KEYED series create. Wrap in a transaction so a duplicate
@@ -220,7 +274,7 @@ async function createSeriesWithOccurrences(
   // erroring.
   try {
     return await prisma.$transaction((tx) =>
-      createSeriesRows(data, actorId, tx, idempotencyKey),
+      createSeriesRows(data, actorId, tx, idempotencyKey, zone),
     );
   } catch (error) {
     if (isPrismaUniqueConstraintError(error)) {
@@ -247,6 +301,8 @@ export async function createCalendarEvent(
 ): Promise<CalendarEvent> {
   const key = idempotencyKey ?? null;
   if (!data.recurrence) {
+    // A one-off event stores the instant it was handed: no calendar arithmetic,
+    // so no zone is needed and none is resolved.
     try {
       return await prisma.calendarEvent.create({
         data: {
@@ -275,6 +331,7 @@ export async function createCalendarEvent(
   return createSeriesWithOccurrences(
     { ...data, recurrence: data.recurrence },
     actorId,
+    await clubTimeZone(),
     prisma,
     key,
   );
@@ -321,6 +378,7 @@ async function updateSingleOccurrence(
 async function propagateSeriesFieldChanges(
   seriesId: string,
   data: ResolvedEventData,
+  zone: ClubTimeZone,
 ): Promise<void> {
   const durationMs = durationMsOf(data.startsAt, data.endsAt);
   // Read + write the occurrence set UNDER the per-series lock (inside the
@@ -352,7 +410,12 @@ async function propagateSeriesFieldChanges(
         select: { id: true, startsAt: true, meetingRoom: true },
       });
       for (const occ of occurrences) {
-        const start = withTimeOfDay(occ.startsAt, data.startsAt, data.allDay);
+        const start = withClubTimeOfDay(
+          occ.startsAt,
+          data.startsAt,
+          data.allDay,
+          zone,
+        );
         const endsAt =
           data.allDay || durationMs == null
             ? null
@@ -382,6 +445,7 @@ async function regenerateSeries(
   series: CalendarEventSeries,
   data: ResolvedEventData & { recurrence: RecurrenceRule },
   actorId: string,
+  zone: ClubTimeZone,
 ): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -412,7 +476,11 @@ async function regenerateSeries(
       await tx.calendarEvent.deleteMany({
         where: { seriesId: series.id, detachedFromSeries: false },
       });
-      const starts = generateOccurrenceStarts(data.startsAt, data.recurrence);
+      const starts = generateOccurrenceStarts(
+        data.startsAt,
+        data.recurrence,
+        zone,
+      );
       await tx.calendarEvent.createMany({
         data: buildOccurrenceRows(starts, data, series.id, actorId, preservedRooms),
       });
@@ -487,6 +555,11 @@ export async function updateCalendarEvent(
   })) as EventWithSeries | null;
   if (!existing) return null;
 
+  // One resolution of the club's persisted zone for this whole update, so the
+  // day comparison below, the regenerated series and the propagated
+  // time-of-day cannot disagree about what "the same day" means.
+  const zone = await clubTimeZone();
+
   // Converting a standalone (non-recurring) event INTO a recurring series:
   // replace the single row with a freshly generated series anchored at the
   // edited start. Runs before the single-edit path so "open the event, set it
@@ -502,6 +575,7 @@ export async function updateCalendarEvent(
         return createSeriesWithOccurrences(
           { ...data, recurrence: data.recurrence as RecurrenceRule },
           actorId,
+          zone,
           tx,
         );
       });
@@ -530,15 +604,16 @@ export async function updateCalendarEvent(
   }
 
   const dateChanged =
-    localDayKey(existing.startsAt) !== localDayKey(data.startsAt);
+    clubDayKey(existing.startsAt, zone) !== clubDayKey(data.startsAt, zone);
   const patternChanged =
-    dateChanged || !seriesMatchesRule(existing.series, data.recurrence);
+    dateChanged || !seriesMatchesRule(existing.series, data.recurrence, zone);
 
   if (patternChanged) {
     const regenerated = await regenerateSeries(
       existing.series,
       { ...data, recurrence: data.recurrence },
       actorId,
+      zone,
     );
     // A concurrent whole-series delete removed the series first → 404.
     if (!regenerated) return null;
@@ -546,7 +621,7 @@ export async function updateCalendarEvent(
     // No P2025 guard here: propagate reads its occurrence set INSIDE the
     // transaction, after taking the per-series lock that every series and
     // single delete also takes, so no row it updates can vanish under it.
-    await propagateSeriesFieldChanges(existing.seriesId, data);
+    await propagateSeriesFieldChanges(existing.seriesId, data, zone);
   }
 
   // Return the (possibly regenerated) anchor for the response.
