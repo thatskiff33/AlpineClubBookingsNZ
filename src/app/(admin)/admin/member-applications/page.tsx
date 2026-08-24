@@ -8,7 +8,9 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -102,11 +104,32 @@ const filters: Array<{ label: string; value: string }> = [
   { label: "All", value: "" },
 ];
 
-function formatDate(value: string | null) {
-  if (!value) {
+/**
+ * Submission, confirmation, review and token-expiry stamps — real INSTANTS,
+ * projected through the club's persisted zone (CT-4, #2870; INV-CONFIG-002).
+ * Named for what it formats: a family member's DATE OF BIRTH is a calendar
+ * date and does NOT come through here.
+ */
+function formatInstant(clubTime: BoundClubTime, value: string | null) {
+  const instant = value === null ? null : parseInstant(value);
+  if (instant === null) {
     return "Not yet";
   }
-  return formatNZDateTime(new Date(value));
+  return clubTime.instantDateTime(instant);
+}
+
+/**
+ * A family member's DATE OF BIRTH, which the application stores as a plain
+ * `yyyy-MM-dd` string (`isoDateSchema` in `nomination.ts`).
+ *
+ * A CALENDAR DATE, so no zone: 4 May 1990 is 4 May 1990 everywhere. The old
+ * code did `formatNZDate(new Date(dob))`, which parsed the bare day as UTC
+ * midnight and then projected it through APP_TIME_ZONE — right by accident for
+ * a club ahead of UTC, and one day EARLY for any club behind it. A birthday is
+ * one of the mandatory regression anchors on #2870 for exactly that reason.
+ */
+function formatDateOfBirth(value: string) {
+  return formatPayloadCalendarDay(value, value);
 }
 
 function statusLabel(status: ApplicationStatus) {
@@ -129,6 +152,7 @@ function replacementKey(applicationId: string, slot: NominatorSlot) {
 }
 
 export default function MemberApplicationsPage() {
+  const clubTime = useClubTime();
   // Approve/decline/refresh/replace all write membership-area routes; a
   // view-only membership admin browses applications but cannot act (#1997).
   const canEditMembership = useAdminAreaEditAccess("membership");
@@ -415,13 +439,13 @@ export default function MemberApplicationsPage() {
         </p>
         <p className="text-muted-foreground">{email}</p>
         <p className="mt-2 text-muted-foreground">
-          Confirmed: {formatDate(confirmedAt)}
+          Confirmed: {formatInstant(clubTime, confirmedAt)}
         </p>
 
         {!confirmedAt && application.status === "PENDING_NOMINATORS" && (
           <div className="mt-3 space-y-2 rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
-            <p>Link expires: {formatDate(tokenExpiresAt)}</p>
-            <p>Last sent: {formatDate(tokenLastSentAt)}</p>
+            <p>Link expires: {formatInstant(clubTime, tokenExpiresAt)}</p>
+            <p>Last sent: {formatInstant(clubTime, tokenLastSentAt)}</p>
             <p>
               Automatic reminders: {reminderCount}/{application.nominatorReminderLimit}
               {reminderExhausted ? " exhausted" : ""}
@@ -575,7 +599,7 @@ export default function MemberApplicationsPage() {
                       {application.applicantFirstName} {application.applicantLastName}
                     </CardTitle>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Submitted {formatDate(application.createdAt)}
+                      Submitted {formatInstant(clubTime, application.createdAt)}
                     </p>
                   </div>
                   <div className="inline-flex w-fit rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -645,7 +669,7 @@ export default function MemberApplicationsPage() {
                             {familyMember.firstName} {familyMember.lastName}
                           </p>
                           <p className="text-muted-foreground">
-                            DOB {formatNZDate(new Date(familyMember.dateOfBirth))}
+                            DOB {formatDateOfBirth(familyMember.dateOfBirth)}
                           </p>
                         </div>
                       ))}
@@ -677,7 +701,7 @@ export default function MemberApplicationsPage() {
                 {application.reviewedAt && (
                   <div className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
                     Reviewed by {application.reviewerName || "an administrator"} on{" "}
-                    {formatDate(application.reviewedAt)}
+                    {formatInstant(clubTime, application.reviewedAt)}
                   </div>
                 )}
 

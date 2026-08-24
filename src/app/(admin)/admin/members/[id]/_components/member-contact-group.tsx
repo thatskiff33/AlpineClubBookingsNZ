@@ -16,10 +16,12 @@ import {
 import { Pencil } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
 import {
-  formatMemberDateNz,
   formatMemberPhone,
   memberUsesSamePostalAddress,
 } from "@/lib/admin-member-detail-helpers";
+import { useClubTime } from "@/components/club-time-provider";
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant";
 import type { MemberContactEditForm } from "@/lib/admin-member-edit-groups";
 import { hasPrivilegedAccess } from "@/lib/access-roles";
 import {
@@ -95,6 +97,7 @@ export function MemberContactGroup({
   canEdit,
 }: MemberContactGroupProps) {
   const { showTitle, showGender, showOccupation } = useMemberFieldsSettings();
+  const clubTime = useClubTime();
   // Mirror of the server-side Full Admin gate: only a Full Admin may change a
   // privileged member's login email (self-service excepted).
   const emailLockedForActor =
@@ -460,15 +463,29 @@ export function MemberContactGroup({
         <div>
           <dt className="text-muted-foreground">Date of Birth</dt>
           <dd className="font-medium">
+            {/* A `@db.Date` CALENDAR DAY. It has no timezone, so it is decoded
+                from its UTC-midnight encoding and rendered with none —
+                projecting it through a zone is `INV-DATE-019`, and through a
+                zone behind UTC it names the day before the member was born. */}
             {member.dateOfBirth
-              ? formatMemberDateNz(member.dateOfBirth)
+              ? formatPayloadCalendarDay(member.dateOfBirth)
               : "Not set"}
           </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Member Since</dt>
           <dd className="font-medium">
-            {formatMemberDateNz(member.joinedDate || member.createdAt)}
+            {/* TWO DIFFERENT TEMPORAL CONCEPTS behind one readout, exactly as
+                on the members list (`member-table.tsx`, `formatMemberSince`).
+                `joinedDate` is a `@db.Date` calendar day sourced from Xero's
+                first invoice and takes no zone; `createdAt` is a real instant
+                and has no civil date until one is chosen — the club's persisted
+                zone (`INV-CONFIG-002`), never the viewer's. Feeding both
+                through one instant formatter is what made the branch you got
+                decide whether the day was right. */}
+            {member.joinedDate
+              ? formatPayloadCalendarDay(member.joinedDate)
+              : formatPayloadInstantDate(clubTime, member.createdAt)}
             {member.joinedDate && (
               <span className="ml-1 text-xs text-muted-foreground">(from Xero)</span>
             )}

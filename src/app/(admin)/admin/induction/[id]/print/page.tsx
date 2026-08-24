@@ -6,13 +6,39 @@ import { Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   type InductionDetailClient,
-  formatInductionDate,
   INDUCTION_KIND_LABELS,
   INDUCTION_SIGNER_ROLE_LABELS,
   INDUCTION_STATUS_LABELS,
 } from "@/lib/induction-display";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+
+/**
+ * A completion or sign-off stamp on the printed record sheet.
+ *
+ * Both are real INSTANTS, so they have no civil date until a zone is chosen —
+ * the club's PERSISTED one (`INV-CONFIG-002`). The shared
+ * `@/lib/induction-display` formatter this replaces pins `APP_TIME_ZONE` at
+ * module scope, so a sheet printed by an administrator abroad could carry the
+ * wrong day on a record that is then signed and filed.
+ *
+ * The long "16 April 2026" spelling is unchanged: `instantLongDate` is the
+ * kernel's shape for `dateStyle: "long"` in `en-NZ`, which is what this sheet
+ * already rendered. `null` is preserved for a missing or unreadable value —
+ * #2256 — because a template literal would otherwise print "null" on a printed
+ * record.
+ */
+function inductionStamp(
+  clubTime: BoundClubTime,
+  value: string | null,
+): string | null {
+  if (!value) return null;
+  const instant = parseInstant(value);
+  return instant === null ? null : clubTime.instantLongDate(instant);
+}
 
 export default function InductionPrintPage() {
+  const clubTime = useClubTime();
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const [induction, setInduction] = useState<InductionDetailClient | null>(null);
@@ -37,10 +63,7 @@ export default function InductionPrintPage() {
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!induction) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
-  // #2256: formatInductionDate returns null for a missing or unparseable value,
-  // which a template literal would print as the literal string "null" on the
-  // record sheet.
-  const completedOn = formatInductionDate(induction.completedAt);
+  const completedOn = inductionStamp(clubTime, induction.completedAt);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 bg-white p-2 text-slate-900">
@@ -113,7 +136,7 @@ export default function InductionPrintPage() {
               <li key={signOff.id}>
                 {signOff.signerName} (
                 {INDUCTION_SIGNER_ROLE_LABELS[signOff.signerRole]}) —{" "}
-                {formatInductionDate(signOff.signedAt)}
+                {inductionStamp(clubTime, signOff.signedAt)}
                 {signOff.comments ? ` · ${signOff.comments}` : ""}
               </li>
             ))}

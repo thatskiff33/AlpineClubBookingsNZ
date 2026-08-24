@@ -23,7 +23,8 @@ import {
   NoticeEditor,
   type AdminNoticeData,
 } from "@/components/admin/notice-editor";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 
 const READS_PAGE_SIZE = 25;
 
@@ -48,14 +49,16 @@ type ReadsResponse = {
   acknowledgedCount: number;
 };
 
-function formatDateTime(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return formatNZDateTime(d);
+// When a member read or acknowledged a notice — real INSTANTS, shown in the
+// club's persisted zone rather than the viewer's (CT-4, #2870).
+function formatDateTime(clubTime: BoundClubTime, iso: string | null): string {
+  const instant = iso === null ? null : parseInstant(iso);
+  if (instant === null) return "—";
+  return clubTime.instantDateTime(instant);
 }
 
 function ReadStatusTable({ noticeId }: { noticeId: string }) {
+  const clubTime = useClubTime();
   const [page, setPage] = useState(1);
   const [data, setData] = useState<ReadsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -135,11 +138,11 @@ function ReadStatusTable({ noticeId }: { noticeId: string }) {
                       {row.audienceVia}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {formatDateTime(row.readAt)}
+                      {formatDateTime(clubTime, row.readAt)}
                     </TableCell>
                     {showAck ? (
                       <TableCell className="text-muted-foreground">
-                        {formatDateTime(row.acknowledgedAt)}
+                        {formatDateTime(clubTime, row.acknowledgedAt)}
                       </TableCell>
                     ) : null}
                   </TableRow>

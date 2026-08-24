@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+// NOT bare `@testing-library/react`: since CT-4 (#2870) this tree reads the
+// club's zone from `ClubTimeProvider`, and `useClubTime()` throws without one —
+// deliberately, so a tree that forgot to mount it fails loudly instead of
+// rendering a plausible wrong day. The support wrapper mounts it with
+// `CLUB_TIME_TEST_ZONE`, which is the zone this suite's expectations already
+// assumed, so no assertion here changes meaning.
 import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

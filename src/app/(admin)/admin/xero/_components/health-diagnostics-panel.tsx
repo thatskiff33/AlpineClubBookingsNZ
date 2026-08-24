@@ -9,7 +9,9 @@ import { FocusedActionError } from "@/components/focused-action-error"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
-import { formatNZDate, formatNZDateTime, formatNZTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
+import { formatPayloadCalendarDay } from "../../_lib/calendar-day"
 import {
   AdminMemberXeroActionError,
   unlinkMemberXeroContact,
@@ -67,6 +69,9 @@ export function HealthAndDiagnosticsPanels({
   refreshToken,
   scrollToSection,
 }: Props) {
+  // The membership-refresh stamp below is a real INSTANT, so it projects
+  // through the club's persisted zone (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
   const [health, setHealth] = useState<XeroHealthSnapshot | null>(null)
   const [healthError, setHealthError] = useState("")
   const [loadingHealth, setLoadingHealth] = useState(false)
@@ -334,7 +339,7 @@ export function HealthAndDiagnosticsPanels({
               />
               <HealthStatCard
                 label="Last membership refresh"
-                value={<span className="text-base font-semibold">{health.lastMembershipRefresh.at ? formatNZDateTime(new Date(health.lastMembershipRefresh.at)) : "Never"}</span>}
+                value={<span className="text-base font-semibold">{health.lastMembershipRefresh.at ? clubTime.instantDateTime(requireInstant(health.lastMembershipRefresh.at)) : "Never"}</span>}
                 subtitle={health.lastMembershipRefresh.lastCronStatus ? `Last cron status: ${health.lastMembershipRefresh.lastCronStatus}` : "No cron run recorded yet."}
                 onClick={() => scrollToSection("membershipSync")}
               />
@@ -454,6 +459,12 @@ function MissingInvoicesList({
   details: MissingInvoicesResponse | null
   currentXeroPath: string
 }) {
+  // `createdAt` is a real INSTANT and needs the club's zone; `checkIn` and
+  // `checkOut` are CALENDAR DATES the API serialises as UTC-midnight `@db.Date`
+  // values, so they are decoded in UTC and formatted with no zone at all —
+  // projecting them through any zone is the INV-DATE-019 defect, and through a
+  // zone behind UTC it showed the night before (CT-4, #2870).
+  const clubTime = useClubTime()
   if (loading && !details) return <p className="mt-4 text-sm text-muted-foreground">Loading missing invoice details...</p>
   if (!details) return <p className="mt-4 text-sm text-muted-foreground">No missing invoice details loaded yet.</p>
   if (details.count === 0) return <p className="mt-4 text-sm text-success">No paid bookings are currently missing a Xero invoice.</p>
@@ -479,10 +490,10 @@ function MissingInvoicesList({
                 <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                {formatNZDate(new Date(booking.checkIn))} to {formatNZDate(new Date(booking.checkOut))} - Payment {shortId(booking.paymentId)}
+                {formatPayloadCalendarDay(booking.checkIn)} to {formatPayloadCalendarDay(booking.checkOut)} - Payment {shortId(booking.paymentId)}
               </p>
             </div>
-            <p className="text-xs text-muted-foreground">Created {formatNZDateTime(new Date(booking.createdAt))}</p>
+            <p className="text-xs text-muted-foreground">Created {clubTime.instantDateTime(requireInstant(booking.createdAt))}</p>
           </div>
         </div>
       ))}
@@ -509,6 +520,8 @@ function ContactGroupMismatchPanel({
   onToggle: ToggleSection
   onRefresh: () => Promise<void>
 }) {
+  // Cache-refresh and re-sync stamps are real INSTANTS (CT-4, #2870).
+  const clubTime = useClubTime()
   return (
     <SectionCard
       id="xero-section-contactGroupMismatches"
@@ -547,13 +560,13 @@ function ContactGroupMismatchPanel({
                 <p className="text-xs text-muted-foreground">{data.informationalCount} member{data.informationalCount === 1 ? "" : "s"} match no rule but sit in managed group{data.informationalCount === 1 ? "" : "s"} — information only, never re-synced automatically.</p>
               ) : null}
               <p className="text-xs text-muted-foreground">
-                {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${formatNZDateTime(new Date(data.lastRefreshedAt))}.` : "The shared Xero contact-group cache has not been refreshed yet."}
+                {data.cacheReady && data.lastRefreshedAt ? `Cache last refreshed ${clubTime.instantDateTime(requireInstant(data.lastRefreshedAt))}.` : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
               {data.resync ? (
                 <p className="text-xs text-success">
                   {data.resync.requestedContacts === 0
-                    ? `Nothing was flagged to re-sync; audit recomputed at ${formatNZTime(new Date(data.resync.resyncedAt))}.`
-                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${formatNZTime(new Date(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                    ? `Nothing was flagged to re-sync; audit recomputed at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}.`
+                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
                 </p>
               ) : null}
             </div>
@@ -619,6 +632,8 @@ function ContactLinkMismatchPanel({
   recoveryActive: boolean
   onUnlink: (memberId: string, memberName: string) => Promise<void>
 }) {
+  // Cache-refresh and re-sync stamps are real INSTANTS (CT-4, #2870).
+  const clubTime = useClubTime()
   return (
     <SectionCard
       id="xero-section-contactLinkMismatches"
@@ -646,13 +661,13 @@ function ContactLinkMismatchPanel({
               </div>
               <p className="text-sm text-muted-foreground">Compares linked members against the cached Xero contact snapshot. Use this to unlink bad email-based matches, then relink the correct contact from the member record.</p>
               <p className="text-xs text-muted-foreground">
-                {data.cacheReady && data.lastRefreshedAt ? `Contact cache last refreshed ${formatNZDateTime(new Date(data.lastRefreshedAt))}.` : "The shared Xero contact cache has not been refreshed yet."}
+                {data.cacheReady && data.lastRefreshedAt ? `Contact cache last refreshed ${clubTime.instantDateTime(requireInstant(data.lastRefreshedAt))}.` : "The shared Xero contact cache has not been refreshed yet."}
               </p>
               {data.resync ? (
                 <p className="text-xs text-success">
                   {data.resync.requestedContacts === 0
-                    ? `Nothing was flagged to re-sync; audit recomputed at ${formatNZTime(new Date(data.resync.resyncedAt))}.`
-                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${formatNZTime(new Date(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
+                    ? `Nothing was flagged to re-sync; audit recomputed at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}.`
+                    : `Re-synced ${data.resync.resyncedContacts} of ${data.resync.requestedContacts} flagged contact${data.resync.requestedContacts === 1 ? "" : "s"} from Xero at ${clubTime.instantTime(requireInstant(data.resync.resyncedAt))}${data.resync.removedContacts > 0 ? ` (${data.resync.removedContacts} no longer exist in Xero; their stale cache entries were removed)` : ""}.`}
                 </p>
               ) : null}
             </div>

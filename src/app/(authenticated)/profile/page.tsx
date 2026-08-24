@@ -47,7 +47,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 
 function singleSearchParam(value?: string | string[]) {
@@ -138,7 +138,23 @@ export default async function ProfilePage({
   const googleError = singleSearchParam(params.googleError);
   const returnTo = getSafeInternalReturnPath(params.returnTo);
 
+  /*
+    DELIBERATELY STILL THE HOST'S CLOCK, and the fix is not the obvious one.
+    `getSeasonYearForYearEndMonth` reads its argument with `date.getMonth()` and
+    `date.getFullYear()` — HOST-local getters — so no call site can correct
+    itself. Handing it a club-derived date was measured across a host x club
+    matrix on this epic (#2870, group A's report): it gives zero wrong days for a
+    host at or ahead of UTC and ONE ENTIRE WRONG DAY for any host behind UTC,
+    taking a self-consistent Denver deployment from right to wrong. The only
+    honest fix is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib`, which
+    belongs to CT-4's `src/lib` group. Do not "fix" this line in isolation.
+  */
   const currentSeasonYear = getSeasonYear(new Date());
+
+  // `createdAt` and `passwordChangedAt` are real INSTANTS, so the civil day each
+  // reads as comes from the club's PERSISTED timezone rather than the
+  // container's (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
 
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
@@ -365,7 +381,7 @@ export default async function ProfilePage({
             <div className="flex justify-between">
               <span className="text-muted-foreground">Member Since</span>
               <span className="font-medium">
-                {formatNZDate(new Date(member.createdAt))}
+                {club.instantDate(member.createdAt)}
               </span>
             </div>
             <Separator />
@@ -400,7 +416,7 @@ export default async function ProfilePage({
                 {member.passwordChangedAt ? (
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Last changed{" "}
-                    {formatNZDate(new Date(member.passwordChangedAt))}
+                    {club.instantDate(member.passwordChangedAt)}
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground mt-0.5">

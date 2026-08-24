@@ -14,7 +14,7 @@ import {
   shouldDefaultPostalSameAsPhysical,
   withDefaultNzCountry,
 } from "@/lib/member-address";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 
 /*
@@ -77,6 +77,18 @@ export function ProfileForm({
   showOccupation = false,
 }: ProfileFormProps) {
   const router = useRouter();
+  /*
+    The date-of-birth field's upper bound is the CLUB'S TODAY (CT-4, #2870;
+    epic #2988; INV-CONFIG-002) — the persisted `ClubTimeSettings.timeZone`,
+    delivered to this browser as data by `ClubTimeProvider`. It used to be
+    `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE` — the container's
+    `TZ` — and never the browser's clock, so the shape is unchanged and only the
+    authority moved. It must not become the VIEWER's today either: a member
+    filling this in from London would otherwise be offered a bound the server
+    guard behind `/api/profile` (which compares against the club's day) does not
+    agree with.
+  */
+  const clubTime = useClubTime();
   const safeReturnTo = getSafeInternalReturnPath(returnTo);
   // Occupation is collected for adults only, and only when the club has the
   // showOccupation field enabled.
@@ -294,7 +306,7 @@ export function ProfileForm({
           readOnly={readOnly}
           value={form.dateOfBirth}
           onChange={handleChange}
-          max={todayDateOnlyForTimeZone()}
+          max={clubTime.today()}
           required
         />
         <p className="text-xs text-muted-foreground">

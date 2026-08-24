@@ -16,7 +16,7 @@ import {
   participantStatusLabel,
   requestStatusLabel,
 } from "@/lib/membership-cancellation-status-labels";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 function relationshipLabel(candidate: MembershipCancellationCandidate) {
   switch (candidate.relationship) {
@@ -46,8 +46,20 @@ function statusTone(status: string) {
   return "border-border bg-muted text-muted-foreground";
 }
 
-function formatDate(value: string) {
-  return formatNZDate(new Date(value));
+/**
+ * When the member submitted the cancellation request — a real INSTANT, projected
+ * through the club's PERSISTED timezone (CT-4, #2870; epic #2988;
+ * INV-CONFIG-002).
+ *
+ * `submittedAt` is `DateTime @default(now())`: a moment, with no civil date
+ * until a zone is chosen. It used to be `APP_TIME_ZONE`, the container's `TZ`,
+ * which is the club's zone only by accident. Same shape; only the authority
+ * moved. A hook, because the setting reaches this browser as data through
+ * `ClubTimeProvider` rather than as a module constant.
+ */
+function useSubmittedAtFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
 }
 
 function RequestStatusList({
@@ -55,6 +67,8 @@ function RequestStatusList({
 }: {
   requests: SerializedMembershipCancellationRequest[];
 }) {
+  const formatDate = useSubmittedAtFormatter();
+
   if (requests.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">

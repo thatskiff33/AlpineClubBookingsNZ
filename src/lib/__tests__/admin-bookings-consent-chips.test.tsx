@@ -12,6 +12,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
+    // when it is ABSENT, and the page then falls back to the environment — the
+    // very defect CT-4 removes, silently, with nothing able to tell. Every test
+    // here leaves it resolving `null`, which reproduces the no-row fallback and
+    // keeps their expectations unchanged; the zone-authority test supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     booking: { findMany: vi.fn(), count: vi.fn() },
     bookingGuest: { count: vi.fn(), findMany: vi.fn() },
     hostingCoverageIncident: { count: vi.fn(), findMany: vi.fn() },
@@ -125,6 +131,7 @@ async function renderPage(searchParams: Record<string, string> = {}) {
 describe("the Admin › Bookings consent chips (#2307, MG2-M-3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     vi.mocked(loadEffectiveModuleFlags).mockResolvedValue(MODULES_ON);
     vi.mocked(prisma.lodge.findMany).mockResolvedValue([
       { id: "lodge-1", name: "Silverpeak" },

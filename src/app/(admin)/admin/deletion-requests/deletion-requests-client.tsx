@@ -50,7 +50,8 @@ import {
   DELETION_REQUEST_APPROVAL_RELEASED_CODE,
   deletionApprovalWasReleased,
 } from "@/lib/deletion-request-decision";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
@@ -135,6 +136,9 @@ export default function DeletionRequestsClient({
 }: {
   sessionMemberId: string;
 }) {
+  // Request, review and decision stamps are real INSTANTS, shown in the club's
+  // persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   // Approve/reject write the membership-area deletion routes; a view-only
   // membership admin browses the queues but cannot act (#1997).
   const canEdit = useAdminAreaEditAccess("membership");
@@ -754,7 +758,7 @@ export default function DeletionRequestsClient({
                         {statusBadge(req.status)}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Requested {formatNZDateTime(new Date(req.createdAt))}
+                        Requested {clubTime.instantDateTime(requireInstant(req.createdAt))}
                       </p>
                       {req.reason && (
                         <p className="text-sm text-muted-foreground">
@@ -779,7 +783,7 @@ export default function DeletionRequestsClient({
                       {req.reviewedAt && !releasedApproval && (
                         <p className="text-xs text-muted-foreground">
                           Reviewed{" "}
-                          {formatNZDate(new Date(req.reviewedAt))}
+                          {clubTime.instantDate(requireInstant(req.reviewedAt))}
                         </p>
                       )}
                       {releasedApproval && (
@@ -787,7 +791,7 @@ export default function DeletionRequestsClient({
                           <span className="font-medium">
                             Approval started and released back to pending
                             {req.reviewedAt
-                              ? ` ${formatNZDateTime(new Date(req.reviewedAt))}`
+                              ? ` ${clubTime.instantDateTime(requireInstant(req.reviewedAt))}`
                               : ""}
                             .
                           </span>{" "}
@@ -1125,6 +1129,7 @@ function AdminInitiatedDeletionSection({
   page: number;
   setPage: React.Dispatch<React.SetStateAction<number>>;
 }) {
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("membership");
   const [data, setData] = useState<LifecycleApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1308,7 +1313,7 @@ function AdminInitiatedDeletionSection({
                         {renderStatus(req.status)}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Requested by {requesterLabel} · {formatNZDateTime(new Date(req.requestedAt))}
+                        Requested by {requesterLabel} · {clubTime.instantDateTime(requireInstant(req.requestedAt))}
                       </p>
                       {req.reason && (
                         <p className="text-sm text-muted-foreground">

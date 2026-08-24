@@ -8,10 +8,10 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { BackLink } from "@/components/admin/back-link";
 import { AdminViewOnlySectionBanner } from "@/components/admin/view-only-action";
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog";
+import { formatPayloadCalendarDay } from "../../_lib/calendar-day";
 import {
   formatMemberAccountPreview,
   formatMemberAuditLogSummary as formatMemberAuditLogSummaryHelper,
-  formatMemberDateNz,
   formatMemberCommitteePreview,
   formatMemberContactPreview,
   formatMemberFamilyPreview,
@@ -1008,7 +1008,9 @@ export default function MemberDetailPage({
               <div className="p-6 text-sm">
                 <span className="text-muted-foreground">Life member since </span>
                 <span className="font-medium">
-                  {formatMemberDateNz(member.lifeMemberDate)}
+                  {/* `lifeMemberDate` is a `@db.Date` CALENDAR DAY — no
+                      timezone, so no projection. `INV-DATE-019`. */}
+                  {formatPayloadCalendarDay(member.lifeMemberDate)}
                 </span>
               </div>
             )}

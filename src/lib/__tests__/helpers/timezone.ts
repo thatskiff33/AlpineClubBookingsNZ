@@ -50,6 +50,38 @@
  *   expect(formatSomething(date)).toBe("...");
  * });
  * ```
+ *
+ * ## When the zone has to move BEFORE the file's imports run
+ *
+ * Two things in this tree are frozen at module load and cannot be moved by a
+ * `beforeEach`: `APP_TIME_ZONE` in `src/config/operational.ts`, and any
+ * module-level `new Intl.DateTimeFormat(...)` constant. A suite whose subject is
+ * either of those has to pin the zone from a `vi.hoisted` block, which Vitest
+ * runs above the imports — and therefore cannot call `captureHostTimeZone`,
+ * because the import binding does not exist yet.
+ *
+ * {@link readHostTimeZone} and {@link restoreHostTimeZone} are that case, split
+ * in two so the restore RULE still has exactly one home:
+ *
+ * ```ts
+ * const { ZONE, host } = vi.hoisted(() => {
+ *   const zone = "America/Denver";
+ *   // Inline, because `vi.hoisted` runs before this file's imports exist.
+ *   const host = {
+ *     envTz: process.env.TZ,
+ *     resolvedZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+ *   };
+ *   process.env.TZ = zone;
+ *   return { ZONE: zone, host };
+ * });
+ *
+ * afterAll(() => {
+ *   restoreHostTimeZone(host);
+ * });
+ * ```
+ *
+ * Note `afterAll`, not `afterEach`: the pin is installed once, at load, so
+ * restoring after every test would leave the second test on the host's zone.
  */
 
 export interface HostTimeZone {
@@ -62,24 +94,51 @@ export interface HostTimeZone {
 }
 
 /**
+ * The two readings a restore needs: what `process.env.TZ` held, and what the
+ * process was ACTUALLY resolving. Both, because they differ whenever `TZ` is
+ * unset — which is the case the naive restore gets wrong.
+ */
+export interface CapturedHostTimeZone {
+  readonly envTz: string | undefined;
+  readonly resolvedZone: string;
+}
+
+/** Both readings, as data. See the module doc's `vi.hoisted` note. */
+export function readHostTimeZone(): CapturedHostTimeZone {
+  return {
+    envTz: process.env.TZ,
+    resolvedZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
+/**
+ * Put `process.env.TZ` back to what {@link readHostTimeZone} saw.
+ *
+ * THE ONE COPY OF THE #2485 RULE. Everything else in this module delegates here,
+ * including a suite that had to take the reading by hand inside `vi.hoisted`.
+ */
+export function restoreHostTimeZone(captured: CapturedHostTimeZone): void {
+  if (captured.envTz === undefined) {
+    // An assignment is what invalidates Node's cached zone; deleting alone does
+    // not. Assign the resolved host zone first so the cache is correct, then
+    // remove the variable to match the original environment.
+    process.env.TZ = captured.resolvedZone;
+    delete process.env.TZ;
+  } else {
+    process.env.TZ = captured.envTz;
+  }
+}
+
+/**
  * Capture the process's current `TZ` environment value and its actually
  * resolved zone. Call this BEFORE anything assigns `process.env.TZ`.
  */
 export function captureHostTimeZone(): HostTimeZone {
-  const originalEnvTz = process.env.TZ;
-  const originalHostZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const captured = readHostTimeZone();
 
   return {
     restore(): void {
-      if (originalEnvTz === undefined) {
-        // An assignment is what invalidates Node's cached zone; deleting
-        // alone does not. Assign the resolved host zone first so the cache is
-        // correct, then remove the variable to match the original environment.
-        process.env.TZ = originalHostZone;
-        delete process.env.TZ;
-      } else {
-        process.env.TZ = originalEnvTz;
-      }
+      restoreHostTimeZone(captured);
     },
   };
 }

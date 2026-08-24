@@ -11,6 +11,7 @@ import {
   type PromoDiscountGuest,
   type SeasonRateData,
 } from "@/lib/policies";
+import { dateOnlyFromParts } from "@/lib/date-only";
 
 /**
  * Property-based tests (fast-check) for the pure pricing money math
@@ -77,8 +78,8 @@ function seasonFromRates(
 ): SeasonRateData {
   return {
     seasonId: `season-${type}`,
-    startDate: new Date(2026, 0, 1),
-    endDate: new Date(2026, 11, 31),
+    startDate: new Date("2026-01-01"),
+    endDate: new Date("2026-12-31"),
     type,
     rates,
   };
@@ -91,8 +92,8 @@ const stayArb = fc
     fc.integer({ min: 1, max: 5 })
   )
   .map(([startDay, nights]) => {
-    const checkIn = new Date(2026, 0, 1 + startDay);
-    const checkOut = new Date(2026, 0, 1 + startDay + nights);
+    const checkIn = dateOnlyFromParts(2026, 0, 1 + startDay);
+    const checkOut = dateOnlyFromParts(2026, 0, 1 + startDay + nights);
     return { checkIn, checkOut, nights };
   });
 
@@ -268,8 +269,8 @@ describe("calculateBookingPrice properties", () => {
         fc.integer({ min: 0, max: 360 }),
         fc.integer({ min: -3, max: 14 }),
         (startDay, nights) => {
-          const checkIn = new Date(2026, 0, 1 + startDay);
-          const checkOut = new Date(2026, 0, 1 + startDay + nights);
+          const checkIn = dateOnlyFromParts(2026, 0, 1 + startDay);
+          const checkOut = dateOnlyFromParts(2026, 0, 1 + startDay + nights);
           const stayNights = getStayNights(checkIn, checkOut);
           expect(stayNights).toHaveLength(Math.max(nights, 0));
           for (let i = 1; i < stayNights.length; i++) {

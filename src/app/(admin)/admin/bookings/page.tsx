@@ -37,13 +37,19 @@ import {
   listMemberGuestConsentExceptions,
   loadMemberGuestConsentQueueCounts,
 } from "@/lib/member-guest-consent-exceptions";
-import { formatConsentShortDate } from "@/lib/member-guest-consent-card";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { formatNZDate } from "@/lib/nzst-date";
+import { APP_LOCALE } from "@/config/operational";
+import {
+  calendarDateOfDateOnlyInstant,
+  countClubNights,
+  formatClubDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { formatBookingReference } from "@/lib/booking-reference";
 import {
   AlertTriangle,
@@ -62,14 +68,58 @@ export function formatAdminBookingGuestCount(totalGuests: number, nonMemberGuest
   return `${totalGuests} (${nonMemberGuests} non-member${nonMemberGuests === 1 ? "" : "s"})`;
 }
 
-// Whole lodge nights between two date-only check-in/out values. Both are stored
-// as midnight instants, so the raw millisecond span divides to exact nights —
-// this is a display-only derivation and never touches the query/money math.
+/**
+ * A booking's check-in or check-out as the CALENDAR DATE it is.
+ *
+ * Both columns are `@db.Date`, which Prisma hands back as UTC midnight — an
+ * encoding, not a moment. CT-4 (#2870) decodes it in UTC, which is the identity
+ * for every club; the previous `formatNZDate` projected it through
+ * `APP_TIME_ZONE` and named the night before for any club behind UTC
+ * (`INV-DATE-019`). The rendered "16 Apr 2026" shape is unchanged.
+ */
+function stayDay(value: Date) {
+  return calendarDateOfDateOnlyInstant(value);
+}
+
+/**
+ * The consent chip's response stamp — "7 Aug" — which is the OTHER kind of date
+ * on this page and three lines from `stayDay`.
+ *
+ * `statusAt` is a real INSTANT: the moment a guest declined, or the moment the
+ * request lapsed. It has no civil date until a zone is chosen, and that zone is
+ * the club's PERSISTED one (`INV-CONFIG-002`), never `APP_TIME_ZONE`. The
+ * shared consent short-date helper this replaces
+ * (`@/lib/member-guest-consent-card`) pins the environment's zone at module
+ * scope, so until now the stamp beside a correctly-decoded stay date was still
+ * the environment's answer.
+ *
+ * The year-less shape is NOT one of the kernel's house shapes — it is locked to
+ * the signed-off #2307 mockup pack — so it is built here, memoised per zone the
+ * way the audit console builds its seconds-bearing stamp, rather than bent onto
+ * a house shape that would change what the chip renders.
+ */
+const CONSENT_SHORT_DATE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function consentShortDate(zone: ClubTimeZone, value: Date) {
+  const cached = CONSENT_SHORT_DATE_FORMATTERS.get(zone);
+  if (cached) return cached.format(value);
+  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+    day: "numeric",
+    month: "short",
+    timeZone: zone,
+  });
+  CONSENT_SHORT_DATE_FORMATTERS.set(zone, created);
+  return created.format(value);
+}
+
+// Whole lodge nights between two date-only check-in/out values. This used to
+// divide the raw millisecond span by 86,400,000 — safe for UTC-midnight values
+// but the exact arithmetic `CLUB_TIME_KERNEL.md` bans, because across a DST
+// transition a night is 23 or 25 hours and the kernel has a test where that
+// division returns 0 nights for a stay the calendar says is 1. Display-only
+// either way; it never touches the query or the money math.
 function nightsBetween(checkIn: Date, checkOut: Date) {
-  return Math.max(
-    0,
-    Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000),
-  );
+  return countClubNights(stayDay(checkIn), stayDay(checkOut));
 }
 
 // The inline non-status signals (payment source, review, deleted) render through
@@ -148,6 +198,7 @@ export default async function AdminBookingsPage({
     page?: string;
   }>;
 }) {
+  const club = await clubTime();
   const params = await searchParams;
   const parsedQuery = adminBookingsQuerySchema.safeParse(params);
   const query = parsedQuery.success ? parsedQuery.data : adminBookingsQuerySchema.parse({});
@@ -407,8 +458,8 @@ export default async function AdminBookingsPage({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {incident.booking.lodge?.name ?? "Lodge"} ·{" "}
-                      {formatNZDate(incident.booking.checkIn)}–
-                      {formatNZDate(incident.booking.checkOut)}
+                      {formatClubDate(stayDay(incident.booking.checkIn))}–
+                      {formatClubDate(stayDay(incident.booking.checkOut))}
                       {uncovered === null
                         ? ""
                         : ` · ${uncovered} uncovered guest-night${uncovered === 1 ? "" : "s"}`}
@@ -529,7 +580,7 @@ export default async function AdminBookingsPage({
                     >
                       <span className="block text-sm font-medium text-foreground group-hover:text-primary group-hover:underline">
                         {row.lodgeName ? `${row.lodgeName} · ` : ""}
-                        {formatNZDate(row.checkIn)} – {formatNZDate(row.checkOut)}
+                        {formatClubDate(stayDay(row.checkIn))} – {formatClubDate(stayDay(row.checkOut))}
                       </span>
                       <span className="block text-xs text-muted-foreground">
                         {row.bookerName}
@@ -542,8 +593,8 @@ export default async function AdminBookingsPage({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {row.status === "DECLINED"
-                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt)}` : ""}`
-                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt)}` : ""}, never answered`}
+                        ? `Said no${row.statusAt ? `, ${consentShortDate(club.zone, row.statusAt)}` : ""}`
+                        : `Lapsed${row.statusAt ? ` ${consentShortDate(club.zone, row.statusAt)}` : ""}, never answered`}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{row.why}</TableCell>
@@ -618,10 +669,13 @@ export default async function AdminBookingsPage({
                         {booking.lodge?.name ?? "—"}
                       </TableCell>
                     ) : null}
-                    <TableCell className="text-sm">{formatNZDate(booking.updatedAt)}</TableCell>
+                    {/* `updatedAt` is a real INSTANT — it needs the club's
+                        persisted zone — where the two columns beside it are
+                        calendar dates that need none (CT-4, #2870). */}
+                    <TableCell className="text-sm">{club.instantDate(booking.updatedAt)}</TableCell>
                     <TableCell className="text-sm">
-                      <span className="block">{formatNZDate(booking.checkIn)}</span>
-                      <span className="block text-xs text-muted-foreground">to {formatNZDate(booking.checkOut)}</span>
+                      <span className="block">{formatClubDate(stayDay(booking.checkIn))}</span>
+                      <span className="block text-xs text-muted-foreground">to {formatClubDate(stayDay(booking.checkOut))}</span>
                       <span className="block text-xs text-muted-foreground">
                         {nights} night{nights === 1 ? "" : "s"}
                       </span>
@@ -664,7 +718,7 @@ export default async function AdminBookingsPage({
                             available to this admin. */}
                         <DiagnosticsRecordButton
                           recordId={booking.id}
-                          subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} from ${formatNZDate(booking.checkIn)}`}
+                          subject={`the booking for ${booking.member.firstName} ${booking.member.lastName} from ${formatClubDate(stayDay(booking.checkIn))}`}
                         />
                       </div>
                       {booking.requiresAdminReview && booking.adminReviewReason ? (

@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
 
 interface RequestGuest {
@@ -38,6 +38,21 @@ function emptyGuest(): RequestGuest {
  */
 export function BookingRequestForm({ club }: { club: ClubIdentity }) {
   const ageTierOptions = useAgeTierOptions();
+  /*
+    THE EARLIEST SELECTABLE LODGE NIGHT IS THE CLUB'S TODAY (CT-4, #2870; epic
+    #2988; INV-CONFIG-002).
+
+    It must be the club's day and not this browser's: a parent filling this in
+    from Sydney or from London would otherwise be offered a first night the
+    server behind `/api/booking-requests` — which resolves "today" against the
+    club — then refuses, and #2682 already fixed the same defect once when the
+    bound was the UTC day. The zone is now the PERSISTED
+    `ClubTimeSettings.timeZone`, reaching this browser as data through
+    `ClubTimeProvider`, where it used to be `APP_TIME_ZONE`: the container's
+    `TZ`, which is the club's zone only by accident. Same shape, same answer on
+    every deployment today; only the authority moved.
+  */
+  const clubTime = useClubTime();
   const [contactFirstName, setContactFirstName] = useState("");
   const [contactLastName, setContactLastName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
@@ -326,7 +341,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
                 id="checkIn"
                 type="date"
                 value={checkIn}
-                min={todayDateOnlyForTimeZone()}
+                min={clubTime.today()}
                 onChange={(e) => setCheckIn(e.target.value)}
                 required
               />
@@ -337,7 +352,7 @@ export function BookingRequestForm({ club }: { club: ClubIdentity }) {
                 id="checkOut"
                 type="date"
                 value={checkOut}
-                min={checkIn || todayDateOnlyForTimeZone()}
+                min={checkIn || clubTime.today()}
                 onChange={(e) => setCheckOut(e.target.value)}
                 required
               />
