@@ -79,7 +79,7 @@ import {
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * Booking-side integration for the adult-member hosting policy (#2364).
@@ -722,7 +722,7 @@ async function evaluateLoadedBookingAdultMemberHosting(
           : []),
       ],
       db,
-      seasonYear ?? getSeasonYear(booking.checkIn),
+      seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
       subscriptionLockoutMode,
       readAgeTierSettings,
     );
@@ -1671,7 +1671,7 @@ export async function evaluateProposedAdultMemberHosting(
     await withSubscriptionSettlement(
       participants,
       db,
-      getSeasonYear(input.checkIn),
+      seasonYearOfStoredDate(input.checkIn),
     ),
     resolved,
   );

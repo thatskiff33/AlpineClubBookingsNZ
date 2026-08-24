@@ -108,7 +108,7 @@ import {
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
   BookingModifyReviewJustificationRequiredError,
@@ -683,7 +683,7 @@ export async function prepareGuestPlan(
   // booking, and a cold cache, all at once.
   const otherLodgeEligibleGuestIds = requestCarriesOtherLodgeElection(input)
     ? await resolveOtherLodgeRateEligibleGuestIds(tx, {
-        seasonYear: getSeasonYear(booking.checkIn),
+        seasonYear: seasonYearOfStoredDate(booking.checkIn),
         guests: booking.guests,
       })
     : new Set<string>();
@@ -1020,7 +1020,7 @@ export async function prepareGuestPlan(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(newCheckIn),
+      seasonYear: seasonYearOfStoredDate(newCheckIn),
       checkIn: newCheckIn,
       checkOut: newCheckOut,
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
@@ -1390,7 +1390,7 @@ export async function calculateModifiedPricing(
     subscriptionLockoutMode?: SubscriptionLockoutMode;
   },
 ): Promise<PricingResult> {
-  const seasonYear = getSeasonYear(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: booking.memberId,
     guests: guestsForPricing,

@@ -126,7 +126,7 @@ import {
   calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
 } from "@/lib/club-time";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   findBookingMemberNightConflicts,
@@ -778,9 +778,9 @@ export async function POST(
   // the open: the read is cached but can reach Xero for the organisation's
   // accounting year when the Xero module is on, and — the reason the hoist is a
   // net improvement rather than a cost — it reseeds the financial-year cache
-  // BEFORE the `getSeasonYear(booking.checkIn)` calls below, so a cold process at
-  // a club with a non-March year end no longer judges the season against the
-  // March default.
+  // BEFORE the `seasonYearOfStoredDate(booking.checkIn)` calls below, so a cold
+  // process at a club with a non-March year end no longer judges the season
+  // against the March default.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
 
   let otherLodgeElection: OtherLodgeRateElection;
@@ -806,7 +806,7 @@ export async function POST(
     const otherLodgeEligibleGuestIds =
       isAdmin && requestCarriesOtherLodgeElection(otherLodgeInput)
         ? await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-            seasonYear: getSeasonYear(booking.checkIn),
+            seasonYear: seasonYearOfStoredDate(booking.checkIn),
             guests: booking.guests,
           })
         : new Set<string>();
@@ -1228,7 +1228,7 @@ export async function POST(
   if (partyThrottled) return partyThrottled;
 
   const totalGuestCount = guestsForPricing.length;
-  const seasonYear = getSeasonYear(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn);
 
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);

@@ -115,7 +115,7 @@ import {
   assertProposedDateEditClearsXeroLockDate,
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -525,7 +525,7 @@ export async function modifyBookingDates({
       // only the nights the new range adds price at current season rates.
       lockedNightPrices: lockedNightPricesForGuest(g),
     }));
-    const seasonYear = getSeasonYear(newCheckIn);
+    const seasonYear = seasonYearOfStoredDate(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {
       ownerMemberId: booking.memberId,
       guests: guestsForPricing,

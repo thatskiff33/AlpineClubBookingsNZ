@@ -35,7 +35,7 @@ import {
   type AgeTierSettingsReader,
   type MemberSubscriptionSettlement,
 } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * The ONE place the five booking write paths ask "what does this club's
@@ -732,7 +732,7 @@ export async function evaluateProposedPaidUpAdultPresence(
       ? { readAgeTierSettings: input.readAgeTierSettings }
       : {}),
     lodgeId: input.lodgeId,
-    seasonYear: input.seasonYear ?? getSeasonYear(input.checkIn),
+    seasonYear: input.seasonYear ?? seasonYearOfStoredDate(input.checkIn),
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     bookingOwnerMemberId: input.bookingOwnerMemberId ?? null,
