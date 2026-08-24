@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   dedupeParentOptions,
-  formatFamilyGroupDate,
+  formatFamilyGroupCalendarDay,
+  formatFamilyGroupInstantDate,
   getFamilyGroupRequestBadgeClass,
   getFamilyGroupRequestSubjectName,
   getFamilyGroupRequestSummary,
@@ -17,6 +18,7 @@ import {
   type ParentLinkSummary,
   type RequestMemberMatch,
 } from "@/lib/admin-family-group-ui-helpers";
+import type { BoundClubTime } from "@/lib/club-time";
 import { AgeTierBadge } from "@/components/admin/family-groups/age-tier-badge";
 import {
   MemberAgeChip,
@@ -25,6 +27,20 @@ import {
 
 export interface FamilyGroupRequestReviewCardProps {
   request: FamilyGroupRequest;
+  /*
+    The club's PERSISTED timezone, bound (CT-4, #2870; `INV-CONFIG-002`).
+
+    A PROP RATHER THAN A HOOK, deliberately. This card is a presentational
+    component with no state and no `"use client"` directive of its own — the
+    house shape in this folder — and `useClubTime` would make it a hook consumer
+    and pull the directive in behind it. Its only parent,
+    `request-review-section.tsx`, is already a client component and reads the
+    provider once for the whole list.
+
+    It dates ONE value: the request's `createdAt`. Every other date on this card
+    is a calendar day, which takes no zone at all.
+  */
+  clubTime: BoundClubTime;
   idPrefix?: string;
   requestSelection?: string;
   requestSearchTerm?: string;
@@ -52,6 +68,7 @@ export interface FamilyGroupRequestReviewCardProps {
 
 export function FamilyGroupRequestReviewCard({
   request,
+  clubTime,
   idPrefix = "",
   requestSelection,
   requestSearchTerm = "",
@@ -95,7 +112,10 @@ export function FamilyGroupRequestReviewCard({
               {getFamilyGroupRequestTypeLabel(request)}
             </Badge>
             <span className="text-xs text-muted-foreground">
-              Requested {formatFamilyGroupDate(request.createdAt)}
+              {/* A real INSTANT, in the club's persisted zone — the same
+                  authority the family-groups page beside this card reads the
+                  GROUP's own "Created" stamp under (CT-4, #2870). */}
+              Requested {formatFamilyGroupInstantDate(clubTime, request.createdAt)}
             </span>
           </div>
           <p className="text-sm font-semibold text-foreground">
@@ -164,8 +184,12 @@ export function FamilyGroupRequestReviewCard({
               </span>
             </p>
             <p>
+              {/* A `@db.Date` CALENDAR DAY, rendered with no zone. Projecting
+                  it is `INV-DATE-019`; for a club behind UTC this screen dated
+                  a child a day early, and the day decides their age tier
+                  (CT-4, #2870). */}
               Date of birth:{" "}
-              {formatFamilyGroupDate(
+              {formatFamilyGroupCalendarDay(
                 request.type === "ADULT_REQUEST"
                   ? request.requestedDateOfBirth
                   : request.childDateOfBirth
@@ -416,7 +440,7 @@ export function FamilyGroupRequestReviewCard({
           <p className="break-words text-xs text-muted-foreground">
             {request.requestedEmail || request.requester.email}
             {request.requestedDateOfBirth
-              ? ` - DOB ${formatFamilyGroupDate(request.requestedDateOfBirth)}`
+              ? ` - DOB ${formatFamilyGroupCalendarDay(request.requestedDateOfBirth)}`
               : ""}
           </p>
           {/* #2568: creating a brand-new record is the decision a duplicate
@@ -439,7 +463,7 @@ export function FamilyGroupRequestReviewCard({
           </p>
           <p className="break-words text-xs text-muted-foreground">
             {request.childDateOfBirth
-              ? `DOB ${formatFamilyGroupDate(request.childDateOfBirth)}`
+              ? `DOB ${formatFamilyGroupCalendarDay(request.childDateOfBirth)}`
               : "DOB not provided"}
             {/* #2568: same basis note as the tier line above — the ranged tier
                 label is as at the season start, the age below it is as at
