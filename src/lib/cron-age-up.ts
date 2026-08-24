@@ -6,7 +6,7 @@ import {
   getSeasonStartDate,
 } from "./age-tier";
 import { getSeasonYear } from "./utils";
-import { dateOnlyFromParts } from "./date-only";
+import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
 import {
   sendAgeUpInvitationEmail,
   sendAgeUpParentEmailHandoffEmail,
@@ -317,71 +317,14 @@ export async function checkAgeUpMembers(): Promise<{
   const targetAgeTierMinAge = adultAgeTierSetting?.minAge ?? 18;
 
   // Find non-login members whose DOB puts them in the ADULT tier on season start.
-  // We compute the cutoff DOB from the configured ADULT minimum age.
-  const cutoffDate = new Date(seasonStart);
-  cutoffDate.setFullYear(cutoffDate.getFullYear() - targetAgeTierMinAge);
-
-  // #2859: this comparison is instant-against-instant, and the two sides are
-  // encoded differently. `cutoffDate` derives from `getSeasonStartDate`, which
-  // is `new Date(year, month, 1)` — LOCAL midnight, so `(D-1)T11:00Z` or
-  // `(D-1)T12:00Z` under the `TZ=Pacific/Auckland` pin. A stored date of birth
-  // is a date-only value at UTC MIDNIGHT (INV-DATE-024). A member born on
-  // exactly the season-start anniversary therefore sits a few hours AFTER the
-  // cutoff instant and was filtered out here, one season late for their own
-  // age-up — the same off-by-one INV-DATE-013 names, on the one boundary where
-  // it decides a tier.
-  //
-  // This is not a defect #2859 introduced, and it is not rare: it was already
-  // reachable for EVERY correctly stored date of birth, which on the live site
-  // is 365 of the 375 members who hold one. (An earlier census reported the
-  // reverse — 364 wrong, 10 right — from a query that applied `AT TIME ZONE` to
-  // this naive column and read it back through the session zone; it is
-  // retracted. The ten rows #2859's migration repairs are re-encoded into this
-  // same correct shape, so they join the exposure rather than create it.)
-  //
-  // So the prefilter is widened to the END of the cutoff calendar day. Widening
-  // is the safe direction: this query only proposes candidates, and
-  // `computeAgeTierWithSettings` below is the authority that promotes or skips
-  // each one.
-  //
-  // #2872 (CT-3): THE BOUND IS THE CALENDAR DAY, NOT LOCAL MIDNIGHT ON IT.
-  // `Member.dateOfBirth` is now `DateTime @db.Date`, and `@prisma/adapter-pg`
-  // narrows a bound `Date` for such a column to its UTC calendar date and throws
-  // the time away (`formatDate` in `mapArg`; pinned by
-  // `prisma-date-column-binding.test.ts`). A local-midnight instant east of UTC
-  // is 11:00 or 12:00 on the PREVIOUS UTC day, so binding one here would narrow
-  // to the day BEFORE and drop the member born on exactly the season-start
-  // anniversary — reopening the #2859 off-by-one the widening above exists to
-  // close, on the one boundary that decides a tier and therefore a price.
-  //
-  // The calendar parts are read with the host-local getters, and the reason is
-  // narrower than "everything here is host-local". It is a ROUND TRIP:
-  // `getSeasonStartDate` builds `new Date(year, month, 1)` — host-local midnight
-  // — and reading `.getFullYear()/.getMonth()/.getDate()` back off that same
-  // value recovers exactly the parts it was constructed from, in every host
-  // zone. `dateOnlyFromParts` then re-encodes those parts as UTC midnight, so
-  // the value handed to Prisma names ONE calendar day and names the SAME day
-  // wherever the process runs. The instant it replaces did not: `cutoffDate`
-  // itself is a different moment in every zone, and once the column became
-  // `@db.Date` that moment was narrowed to whichever UTC day it happened to fall
-  // on.
-  //
-  // Do NOT read this as "so every side of the comparison agrees". It does not:
-  // `computeAge` reads a UTC-midnight date of birth with host-LOCAL getters, so
-  // west of UTC it sees the previous day. That is a separate matter and this
-  // prefilter is not where it would be fixed — the query only PROPOSES, and
-  // `computeAgeTierWithSettings` below is the authority. What this bound has to
-  // be is wide enough never to drop a candidate, and host-zone-independent so it
-  // is the same width everywhere.
-  //
-  // It is also behaviour-identical against the OLD column type — a stored date
-  // of birth is UTC midnight, so `< 2008-04-02T00:00:00Z` admits all of 1 April
-  // 2008 either way — which is what makes it safe to land beside the migration
-  // rather than after it.
-  const cutoffWindowEnd = dateOnlyFromParts(
-    cutoffDate.getFullYear(),
-    cutoffDate.getMonth(),
-    cutoffDate.getDate() + 1,
+  // The bound comes from the configured ADULT minimum age, and it deliberately
+  // OVER-ADMITS: `dateOfBirthPrefilterBoundForMinAge` carries the whole
+  // derivation and the two off-by-ones (#2859, #2872) that shaped it, including
+  // why `computeAgeTierWithSettings` below — not this query — decides who is
+  // actually promoted.
+  const cutoffWindowEnd = dateOfBirthPrefilterBoundForMinAge(
+    seasonStart,
+    targetAgeTierMinAge,
   );
 
   const candidates = await prisma.member.findMany({
