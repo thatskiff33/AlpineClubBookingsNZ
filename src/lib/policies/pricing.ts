@@ -1,11 +1,9 @@
 import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  formatDateOnlyForTimeZone,
-  parseDateOnly,
-} from "../date-only";
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
 import {
   countActiveGuestsForNight,
   type GuestNightInput,
@@ -156,21 +154,63 @@ export interface CalculatePromoDiscountOptions {
   remainingFreeNightsByMemberId?: Record<string, number>;
 }
 
-function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
-  // Shared per-timezone-cached formatter (#1146): pricing normalizes dates
-  // once per (guest, night), so a fresh Intl.DateTimeFormat per call
-  // dominated quote and edit repricing time.
-  return formatDateOnlyForTimeZone(date, timeZone);
-}
-
+/**
+ * The stored calendar day a booking date carries, re-encoded as the date-only
+ * value the rest of this engine compares and iterates.
+ *
+ * ## THE CONTRACT: EVERY INPUT IS A CALENDAR DAY, NEVER AN INSTANT
+ *
+ * Every value that reaches here is a lodge calendar day held as the UTC-midnight
+ * `Date` a `@db.Date` column round-trips through: `Booking.checkIn`/`checkOut`
+ * and `BookingRequest.checkIn`/`checkOut` (`INV-DATE-011`),
+ * `BookingGuest.stayStart`/`stayEnd` (`INV-DATE-012`),
+ * `BookingGuestNight.stayDate`, `Season.startDate`/`endDate`, and the
+ * `parseDateOnly` products the routes build from a `yyyy-MM-dd` night key. There
+ * is no `createdAt`, no `Date.now()`, and no club-local wall time on any path
+ * into this function — the whole-tree census is in #2870's group-F2 pull
+ * request. A caller that acquires a real instant must derive its club calendar
+ * day at its own boundary (`clubCalendarDateOf`, `INV-DATE-019`) and hand the
+ * day in; widening this helper to guess which kind it was handed is precisely
+ * how the two defects below become one function.
+ *
+ * ## WHAT THIS USED TO DO, AND WHY IT WAS A LIVE DEFECT (CT-4, #2870, finding 5)
+ *
+ * It read the value through `APP_TIME_ZONE` — the CONTAINER's zone, not even the
+ * club's persisted one (`INV-CONFIG-002`). `INV-DATE-010` says UTC midnight is
+ * the ENCODING of a calendar day and that no rule may be derived from reading
+ * those values in any other zone, which is exactly what projecting them did: for
+ * a club behind Greenwich, the stored day `2026-07-04T00:00:00.000Z` came back
+ * as `2026-07-03`. Measured, not inferred — `America/Denver` shifts it.
+ *
+ * Because `getStayNights` is built on this, the whole per-night surface moved
+ * with it: the policy-exception proposal's `envelopeNights` froze a party
+ * starting the night before the stay did, so the officer reviewed those nights,
+ * `recheckCapacity` asserted beds on those nights, and
+ * `proposalGuestToCreateInput` executed them (`INV-EXCEPT-016`/`INV-EXCEPT-017`)
+ * — while the season lookup priced them and `getMinimumStayViolations` read
+ * their weekday. It did not deadlock approval only because the freeze and the
+ * replay both came through here and therefore stayed wrong together.
+ *
+ * `dateOnlyInstantOf(calendarDateOfDateOnlyInstant(...))` is the kernel's
+ * decode-then-re-encode pair and reads the value in UTC by definition. For a
+ * well-formed `@db.Date` value it is the identity, which is why a club at or
+ * ahead of Greenwich sees no change at all.
+ *
+ * IT ALSO RETIRES #1146's PERFORMANCE CARVE-OUT. That issue added a zone-keyed
+ * formatter memo here because pricing normalises once per (guest, night) and
+ * constructing an `Intl.DateTimeFormat` per call dominated quote and edit
+ * repricing. The decode reads `getUTCFullYear`/`Month`/`Date`, so this path now
+ * builds no formatter at all and the memo it needed is gone with it.
+ */
 function normalizeBookingDate(date: Date): Date {
-  const normalized = parseDateOnly(getDateOnlyStringForTimeZone(date));
-
-  if (Number.isNaN(normalized.getTime())) {
-    throw new Error(`Invalid booking date: ${date.toISOString()}`);
+  // Ahead of the decode, so the message is reachable: the kernel refuses an
+  // unrepresentable value first, and `toISOString()` on an Invalid Date throws
+  // `RangeError: Invalid time value` rather than formatting one.
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid booking date: Invalid Date");
   }
 
-  return normalized;
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(date));
 }
 
 function getBookingDateKey(date: Date): string {
