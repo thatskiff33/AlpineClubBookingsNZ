@@ -365,6 +365,13 @@ export async function POST(req: NextRequest) {
     rowNote: string | null;
   }
   const validatedRows: ValidatedRow[] = [];
+  // ONE read of the club's season for the whole import (#2870, correctness
+  // review). It was derived inside the per-row loop below, and an import that
+  // straddles club midnight on a season boundary would then classify its early
+  // and late rows against different seasons — an age tier decides a price band.
+  const clubCurrentSeasonStart = getSeasonStartDate(
+    clubSeasonYear(await clubTimeZone()),
+  );
 
   for (let i = 0; i < rows.length; i++) {
     const rowNum = getImportRowNumber(rows[i], i);
@@ -484,10 +491,7 @@ export async function POST(req: NextRequest) {
     const isCancelled = cancelledAt !== null;
 
     if (dateOfBirth) {
-      ageTier = (await computeAgeTier(
-        dateOfBirth,
-        getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
-      )) as AgeTier;
+      ageTier = (await computeAgeTier(dateOfBirth, clubCurrentSeasonStart)) as AgeTier;
     }
 
     // Occupation is adult-only and gated by the club-wide field setting.

@@ -24,31 +24,6 @@ export type { AgeTierSettingData } from "./policies/age-tier";
 // ./policies/age-tier, the module that actually declares them — knip 6.29+
 // correctly flagged those two re-export specifiers as dead (#2502).
 
-/**
- * The club's current season year, resolved from the PERSISTED club timezone.
- *
- * A DYNAMIC import, for the same reason `getAgeTierSettings` below imports
- * `./prisma` dynamically: `club-time-zone-runtime` imports Prisma at module
- * scope, so a static edge here would pull the database client into this module's
- * load graph and undo that file's deliberate laziness.
- *
- * MEASURED, NOT ASSUMED, because this file's neighbour `membership-types.ts`
- * needed a stronger remedy for what looked like the same problem. This module is
- * NOT on the browser graph — `client-server-boundary-census.test.ts` follows
- * dynamic imports as well as static ones, and it passes, which it could not if
- * anything `"use client"` reached here. So the dynamic import is about load order,
- * not about the client boundary. `membership-types.ts` IS on that graph, and
- * there no import shape helps: the season year has to arrive as a value.
- */
-async function clubCurrentSeasonYear(): Promise<number> {
-  const [{ readClubTimeZoneOutsideRequest }, { clubSeasonYear }] =
-    await Promise.all([
-      import("./club-time-zone-runtime"),
-      import("./financial-year"),
-    ]);
-  return clubSeasonYear(await readClubTimeZoneOutsideRequest());
-}
-
 let _cachedSettings: AgeTierSettingData[] | null = null;
 let _cacheExpiry = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -187,28 +162,34 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
 }
 
 /**
- * Compute age tier for a date of birth.
+ * Compute age tier for a date of birth, against an explicit reference date.
  *
- * referenceDate defaults to April 1 of the current season year (the TAC
- * reference point for age classification). Reads boundaries from DB with a
- * 5-minute cache; falls back to hardcoded defaults if DB is unavailable.
+ * `referenceDate` IS REQUIRED, and that is a concurrency decision rather than a
+ * style one (#2870, correctness review). It used to default to the start of the
+ * club's current season, which meant resolving the club's PERSISTED timezone —
+ * an uncached `ClubTimeSettings` read on the global Prisma client — from
+ * whichever call site omitted it. Two of those turned out to be inside somebody
+ * else's transaction (`approveMemberApplication`, holding the application and
+ * member-lifecycle advisory locks) and one inside the Xero import's nested loops,
+ * where it ran per row.
+ *
+ * It also removed a straddle each time: every one of those callers ALREADY had
+ * the club's season in hand for something else, so a self-resolving default let
+ * one request judge an age tier — and therefore a price band — in a different
+ * season from the assignment it wrote.
+ *
+ * So the reference point arrives as a value. `getSeasonStartDate(seasonYear)` is
+ * what to pass, from a season the caller resolved once.
+ *
+ * Reads tier boundaries from the database with a 5-minute cache; falls back to
+ * the hard-coded defaults if the database is unavailable.
  */
 export async function computeAgeTier(
   dateOfBirth: Date,
-  referenceDate?: Date
+  referenceDate: Date
 ): Promise<AgeTier> {
-  // The club's CURRENT season start, from the club's PERSISTED zone rather than
-  // the container's month (CT-4, #2870; INV-CONFIG-002). Imported dynamically
-  // for the same reason `./prisma` below is: this module's synchronous exports
-  // (`computeAge`, `AGE_TIER_DEFAULTS`, the partition validator) are reachable
-  // from client code, and `club-time-zone-runtime` reaches Prisma.
-  const ref =
-    referenceDate ??
-    getSeasonStartDate(
-      await clubCurrentSeasonYear(),
-    );
   const settings = await getAgeTierSettings();
-  return computeAgeTierWithSettings(dateOfBirth, ref, settings);
+  return computeAgeTierWithSettings(dateOfBirth, referenceDate, settings);
 }
 
 // `computeSeasonYear` (an alias of the retired `getSeasonYear`) was re-exported

@@ -373,6 +373,22 @@ async function main() {
       updatedByMemberId: null,
     },
   });
+  // The season the CLUB is in, from the zone this seed has just written rather than
+  // from the host's month (CT-4 group F1, #2870), resolved ONCE here because three
+  // seeded rows below need it and `ensureDefaultSeasonSubscriptionForNewMember`
+  // requires it rather than defaulting — see its docblock. `clubTimeZoneBackfill` is
+  // create-only, so the row is read back: on a re-seed the stored zone is the club's
+  // real one and the freshly-decided value would be the environment's.
+  const seededClubTimeZone = await prisma.clubTimeSettings.findUnique({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    select: { timeZone: true },
+  });
+  const seedClubSeasonYear = clubSeasonYear(
+    requireClubTimeZone(
+      seededClubTimeZone?.timeZone ?? clubTimeZoneBackfill.timeZone,
+    ),
+  );
+
   if (clubTimeZoneBackfill.kind === "defaulted") {
     console.log(
       `Club time settings seeded (create-only) as ` +
@@ -485,7 +501,11 @@ async function main() {
       }),
     });
     // Admin accounts resolve to the NOT_REQUIRED built-in ADMIN type (#2149).
-    await ensureDefaultSeasonSubscriptionForNewMember(prisma, admin);
+    await ensureDefaultSeasonSubscriptionForNewMember(
+      prisma,
+      admin,
+      seedClubSeasonYear,
+    );
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: admin.id,
       role: admin.role,
@@ -521,7 +541,11 @@ async function main() {
         passwordHash: lodgePasswordHash,
       }),
     });
-    await ensureDefaultSeasonSubscriptionForNewMember(prisma, lodge);
+    await ensureDefaultSeasonSubscriptionForNewMember(
+      prisma,
+      lodge,
+      seedClubSeasonYear,
+    );
     await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
       memberId: lodge.id,
       role: lodge.role,
@@ -538,23 +562,8 @@ async function main() {
     });
   }
 
-  // The season the CLUB is in, from the zone this seed has just written rather
-  // than from the host's month (CT-4 group F1, #2870). `clubTimeZoneBackfill` is
-  // create-only, so read the row back: on a re-seed the stored zone is the club's
-  // real one and the freshly-decided value would be the environment's.
-  const seededClubTimeZone = await prisma.clubTimeSettings.findUnique({
-    where: { id: CLUB_TIME_SETTINGS_ID },
-    select: { timeZone: true },
-  });
   const membershipAssignmentBackfill =
-    await backfillCurrentSeasonMembershipAssignments(
-      prisma,
-      clubSeasonYear(
-        requireClubTimeZone(
-          seededClubTimeZone?.timeZone ?? clubTimeZoneBackfill.timeZone,
-        ),
-      ),
-    );
+    await backfillCurrentSeasonMembershipAssignments(prisma, seedClubSeasonYear);
   console.log(
     `Membership types seeded; current-season assignments created: ${membershipAssignmentBackfill.createdCount}`,
   );

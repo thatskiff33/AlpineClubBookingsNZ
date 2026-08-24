@@ -4,8 +4,6 @@ import type {
   Role,
 } from "@prisma/client";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 
 // Structural client type so the helper works with PrismaClient, a transaction
 // client, and the seed script alike.
@@ -41,22 +39,27 @@ export async function ensureDefaultSeasonSubscriptionForNewMember(
   db: MemberSubscriptionUpsertDb,
   member: { id: string; role: Role },
   /**
-   * Defaults to the club's CURRENT season year. It became optional rather than
-   * defaulted (CT-4, #2870) because resolving it needs the club's persisted
-   * zone, which is an await a parameter default cannot perform. Every caller
-   * that passed a value is unaffected.
+   * The club's current season year.
+   *
+   * REQUIRED since the correctness review of #2870. It was briefly optional, with
+   * the fallback resolving the club's zone here — but every read in this function
+   * goes through the caller's `db`, and its one caller passes a TRANSACTION client
+   * (`admin-members-service.ts`, inside `createAdminMember`'s transaction). A
+   * fallback would therefore have opened a second pool connection on the GLOBAL
+   * client from inside somebody else's transaction, which is the shape this lane
+   * closed in three other places. `createAdminMember` already resolves the club's
+   * season before that transaction opens, so the value simply arrives.
    */
-  seasonYear?: number
+  seasonYear: number
 ): Promise<void> {
   if (effectiveSubscriptionBehavior(null, member.role) !== "NOT_REQUIRED") {
     return;
   }
-  const season = seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
 
   await db.memberSubscription.upsert({
-    where: { memberId_seasonYear: { memberId: member.id, seasonYear: season } },
+    where: { memberId_seasonYear: { memberId: member.id, seasonYear } },
     update: {},
-    create: { memberId: member.id, seasonYear: season, status: "NOT_REQUIRED" },
+    create: { memberId: member.id, seasonYear, status: "NOT_REQUIRED" },
   });
 }
 

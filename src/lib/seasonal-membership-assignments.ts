@@ -438,6 +438,17 @@ export async function getSeasonalMembershipChangePreview(params: {
   applyFrom?: string | null;
   now?: Date;
   db?: SeasonalMembershipReadClient;
+  /**
+   * The club's CURRENT season year, when the caller already holds it.
+   *
+   * The bulk membership-type preview route calls this once per selected member in
+   * a loop, and resolving the club's zone here is an uncached `ClubTimeSettings`
+   * read — so a fifty-member preview made fifty of them, and a preview straddling
+   * club midnight on a season boundary could judge two members' age tiers in two
+   * different seasons (#2870, correctness review). Passing it makes the whole
+   * batch one answer and one read.
+   */
+  clubCurrentSeasonYear?: number;
 }): Promise<JsonRouteResult> {
   const db = params.db ?? prisma;
   const today = params.now ?? getTodayDateOnly();
@@ -607,7 +618,10 @@ export async function getSeasonalMembershipChangePreview(params: {
       : member.dateOfBirth
         ? await computeAgeTier(
             member.dateOfBirth,
-            getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
+            getSeasonStartDate(
+              params.clubCurrentSeasonYear ??
+                clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+            ),
           )
         : "ADULT";
   const resolvedAgeTier = resolveEnforcedAgeTier({

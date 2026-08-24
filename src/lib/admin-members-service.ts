@@ -1432,6 +1432,15 @@ export async function createAdminMember(
     }
   }
 
+  // ONE read of the club's season for this whole create, resolved BEFORE the
+  // transaction below opens (#2870, correctness review). The age tier and the
+  // NOT_REQUIRED subscription row seeded inside that transaction must agree, and a
+  // zone read from inside it would be an uncached query on the GLOBAL client while
+  // the transaction holds a connection.
+  const clubCurrentSeasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+  );
+  const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
   let dateOfBirth: Date | null = null;
@@ -1441,10 +1450,7 @@ export async function createAdminMember(
     if (isNaN(dateOfBirth.getTime())) {
       return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
     }
-    ageTier = await computeAgeTier(
-      dateOfBirth,
-      getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
-    );
+    ageTier = await computeAgeTier(dateOfBirth, clubCurrentSeasonStart);
   }
   // Organisation-type members have no age (#1440): force NOT_APPLICABLE for
   // ORG/SCHOOL accounts and refuse it on anyone else. requestedGrant is the
@@ -1645,10 +1651,11 @@ export async function createAdminMember(
       // membership type does not owe a subscription (operational/non-member
       // accounts). Derived from the shared type resolver, not the login role
       // (#2149).
-      await ensureDefaultSeasonSubscriptionForNewMember(tx, {
-        id: created.id,
-        role: created.role,
-      });
+      await ensureDefaultSeasonSubscriptionForNewMember(
+        tx,
+        { id: created.id, role: created.role },
+        clubCurrentSeasonYear,
+      );
 
       // Add to family groups if specified
       if (data.familyGroupIds && data.familyGroupIds.length > 0) {

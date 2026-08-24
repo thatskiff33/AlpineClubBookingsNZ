@@ -26,6 +26,7 @@ import { buildJoiningFeeNarration } from "@/lib/joining-fee-narration";
 import { getEffectiveJoiningFee, type JoiningFeeScheduleSource } from "@/lib/authoritative-fees";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import { computeAgeTier } from "@/lib/age-tier";
+import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { getTodayDateOnly } from "@/lib/date-only";
@@ -283,13 +284,26 @@ export interface JoiningFeeInputs {
  */
 export async function getJoiningFeePreviewForInputs(
   inputs: JoiningFeeInputs,
-  options?: { asOf?: Date; store?: JoiningFeeStore },
+  options?: { asOf?: Date; store?: JoiningFeeStore; seasonYear?: number },
 ): Promise<JoiningFeePreview> {
   const store = options?.store ?? prisma;
   const asOf = options?.asOf ?? getTodayDateOnly();
 
+  // `computeAgeTier` requires its reference date since #2870, so the season is
+  // resolved here — once, on the global client, outside any transaction, which is
+  // what this read-only preview route is. It was the LAST call site in the tree
+  // omitting it, and closing it is what let `age-tier.ts` drop the uncached
+  // zone-reading default that three other paths were reaching through a lock.
   const ageTier: AgeTier | null = inputs.ageTier
-    ?? (inputs.dateOfBirth ? await computeAgeTier(inputs.dateOfBirth) : null);
+    ?? (inputs.dateOfBirth
+      ? await computeAgeTier(
+          inputs.dateOfBirth,
+          getSeasonStartDate(
+            options?.seasonYear
+              ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+          ),
+        )
+      : null);
 
   // Resolve the membership type's key and id from whichever was supplied.
   let membershipTypeKey = inputs.membershipTypeKey ?? null;

@@ -75,6 +75,11 @@ import { issueActionToken } from "./action-tokens";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { computeAgeTier } from "@/lib/age-tier";
+// From the module that DECLARES it rather than the `age-tier.ts` re-export: it is
+// pure, and suites here mock `@/lib/age-tier` wholesale to control `computeAgeTier`,
+// so pulling the season-start helper through that mock would need every one of them
+// to complete its factory for a function none of them wants to fake.
+import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import {
   membershipTypeAgeExemption,
   type MembershipTypeAgeExemption,
@@ -229,6 +234,23 @@ async function resolveNewMemberAgeTier(params: {
   mappedTier: AgeTier | null | undefined;
   typeExemption: MembershipTypeAgeExemption | null | undefined;
   dateOfBirth: Date | null;
+  /**
+   * The season start to judge the date of birth against — PASSED IN, not derived
+   * (#2870, correctness review).
+   *
+   * `computeAgeTier` with no reference date resolves the club's zone itself, on the
+   * global client and uncached. This function is called from inside the nested
+   * import loops, so a first import of a few hundred contacts made a
+   * `ClubTimeSettings` query per row.
+   *
+   * The straddle mattered more than the queries. `importMembersFromXeroGroups`
+   * already pins `seasonYear` once for the whole run and uses it for every seasonal
+   * assignment, so a self-resolving age tier meant one import could assign every
+   * member to a pinned season while judging their age band — and therefore their
+   * price band — against a per-row one. An import running across club midnight on
+   * 31 March classified its early and late contacts differently.
+   */
+  seasonStart: Date;
 }): Promise<AgeTier> {
   if (params.typeExemption === "FORCED") {
     return "NOT_APPLICABLE";
@@ -237,7 +259,7 @@ async function resolveNewMemberAgeTier(params: {
     return params.mappedTier;
   }
   if (params.dateOfBirth) {
-    return computeAgeTier(params.dateOfBirth);
+    return computeAgeTier(params.dateOfBirth, params.seasonStart);
   }
   return "ADULT";
 }
@@ -292,6 +314,10 @@ export async function importMembersFromXeroGroups(
 
   // #2108 accumulators.
   const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  // Derived from the SAME pinned season as every seasonal assignment below, so one
+  // import cannot judge an age tier in one season and assign a membership in
+  // another (#2870).
+  const seasonStart = getSeasonStartDate(seasonYear);
   const adminMemberId = options.adminMemberId;
   const uniqueMembershipTypeIds = Array.from(
     new Set(
@@ -756,6 +782,7 @@ export async function importMembersFromXeroGroups(
             mappedTier: mapping.ageTier,
             typeExemption,
             dateOfBirth: depDob,
+            seasonStart,
           });
           const inheritEmailFromId = await resolveImportInheritance(
             existingPrimary,
@@ -893,6 +920,7 @@ export async function importMembersFromXeroGroups(
           mappedTier: mapping.ageTier,
           typeExemption,
           dateOfBirth,
+          seasonStart,
         });
 
         const member = await prisma.$transaction(async (tx) => {
