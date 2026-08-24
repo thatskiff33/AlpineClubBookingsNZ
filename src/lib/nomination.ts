@@ -40,7 +40,8 @@ import {
 } from "@/lib/member-parent-links";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { queueApprovedMembershipSubscriptionCharges } from "@/lib/membership-subscription-billing";
 import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import {
@@ -321,11 +322,14 @@ async function computeTier(dateOfBirth?: string | null) {
     return AgeTier.ADULT;
   }
 
-  return computeAgeTier(new Date(dateOfBirth), getSeasonStartDate(getSeasonYear()));
+  return computeAgeTier(
+    new Date(dateOfBirth),
+    getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
+  );
 }
 
 async function verifyNominator(email: string): Promise<VerifiedNominator> {
-  const seasonYear = getSeasonYear();
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const normalizedEmail = cleanString(email).toLowerCase();
 
   const nominator = await prisma.member.findFirst({
@@ -1370,7 +1374,7 @@ export async function approveMemberApplication(
     );
   }
 
-  const seasonYear = getSeasonYear();
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const preFamilyMembers = parseApplicationFamilyMembers(application.familyMembers);
   const resolution = resolvePersonDecisions(preFamilyMembers.length, personDecisions);
   if (!resolution.ok) {

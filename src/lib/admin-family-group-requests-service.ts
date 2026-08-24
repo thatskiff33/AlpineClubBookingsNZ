@@ -12,7 +12,8 @@ import {
   getSeasonStartDate,
   type AgeTierSettingData,
 } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   buildParentLinks,
   matchParentLinkIdForNotification,
@@ -116,9 +117,17 @@ function getRequestName(request: {
   return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ").trim();
 }
 
+/**
+ * `seasonStart` is passed in rather than derived here (CT-4, #2870): resolving
+ * the club's current season needs the club's PERSISTED zone, which is a database
+ * read, and this function is synchronous and called from a `.map`. The caller
+ * reads it once for the whole page, which also stops two rows on one screen
+ * being judged against two different seasons.
+ */
 function getChildRequestTierMetadata(
   request: { type: string; childDateOfBirth?: Date | null },
-  ageTierSettings: AgeTierSettingData[]
+  ageTierSettings: AgeTierSettingData[],
+  seasonStart: Date
 ) {
   if (request.type !== "CHILD_REQUEST" || !request.childDateOfBirth) {
     return {
@@ -130,7 +139,7 @@ function getChildRequestTierMetadata(
 
   const requestedAgeTier = computeAgeTierWithSettings(
     request.childDateOfBirth,
-    getSeasonStartDate(getSeasonYear()),
+    seasonStart,
     ageTierSettings
   );
   const setting = ageTierSettings.find((candidate) => candidate.tier === requestedAgeTier);
@@ -337,10 +346,17 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
     orderBy: { createdAt: "asc" },
   });
 
+  // ONE season start for the whole list, from the club's PERSISTED zone (CT-4,
+  // #2870). An age tier decides a price band, so every row on one screen must be
+  // judged against the same season.
+  const clubSeasonStart = getSeasonStartDate(
+    clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+  );
+
   const mapped = await Promise.all(
     requests.map(async (request) => ({
       ...request,
-      ...getChildRequestTierMetadata(request, ageTierSettings),
+      ...getChildRequestTierMetadata(request, ageTierSettings, clubSeasonStart),
       // #2568: swap each person's stored date of birth for the calculated age
       // before the payload leaves the server. The spread above would otherwise
       // carry `dateOfBirth` straight through on all three relations.
@@ -616,7 +632,11 @@ export async function reviewAdminFamilyGroupRequest(params: {
         }
 
         const ageTierSettings = await getAgeTierSettings();
-        const childRequestTier = getChildRequestTierMetadata(request, ageTierSettings);
+        const childRequestTier = getChildRequestTierMetadata(
+          request,
+          ageTierSettings,
+          getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
+        );
         if (
           !childRequestTier.requestedAgeTier ||
           !childRequestTier.canCreateMemberFromRequest
@@ -750,7 +770,7 @@ export async function reviewAdminFamilyGroupRequest(params: {
 
         const ageTier = await computeAgeTier(
           request.requestedDateOfBirth,
-          getSeasonStartDate(getSeasonYear())
+          getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest()))
         );
         if (ageTier !== "ADULT") {
           return jsonResult(

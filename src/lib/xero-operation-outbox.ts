@@ -7,7 +7,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -2010,7 +2011,7 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   participantId: string;
   createdByMemberId?: string;
 }) {
-  const seasonYear = getSeasonYear(new Date());
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const subscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: {

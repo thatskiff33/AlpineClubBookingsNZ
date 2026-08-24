@@ -769,8 +769,8 @@ export async function evaluateBookingAdultMemberHosting(
  *
  * `seasonYear` EXISTS BECAUSE THIS FORM HAS NO GATED REQUEST BEHIND IT. The
  * subscription bridge (#2543) judges settlement in a membership season, and the
- * season comes from `getSeasonYear`, which reads the process-level financial-year
- * cache in `financial-year.ts`. Writers reach this rule through routes that have
+ * season comes from `seasonYearOfStoredDate`, whose year-end month defaults to the
+ * process-level financial-year cache in `financial-year.ts`. Writers reach this rule through routes that have
  * already called `refreshFinancialYearConfig`; a read-only evidence caller has
  * not, so on a cold process the cache is still the March default and a club with
  * any other year-end month would have its hosts judged against a season row that

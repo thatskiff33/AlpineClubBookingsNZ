@@ -690,8 +690,8 @@ export async function evaluateProposedPaidUpAdultPresence(
      * The membership season these nights fall in, when the caller has already
      * resolved it AUTHORITATIVELY.
      *
-     * Omit it and the season comes from `getSeasonYear`, which reads the
-     * process-level financial-year cache in `financial-year.ts`. Every product
+     * Omit it and the season comes from `seasonYearOfStoredDate`, whose year-end
+     * month defaults to the process-level cache in `financial-year.ts`. Every product
      * caller of this function is a booking write behind a gated request that has
      * seeded that cache, so omitting it is correct for them and this parameter
      * changes nothing about their answer.

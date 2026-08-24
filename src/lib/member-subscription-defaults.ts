@@ -4,7 +4,8 @@ import type {
   Role,
 } from "@prisma/client";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 // Structural client type so the helper works with PrismaClient, a transaction
 // client, and the seed script alike.
@@ -39,16 +40,23 @@ interface MemberSubscriptionUpsertDb {
 export async function ensureDefaultSeasonSubscriptionForNewMember(
   db: MemberSubscriptionUpsertDb,
   member: { id: string; role: Role },
-  seasonYear: number = getSeasonYear()
+  /**
+   * Defaults to the club's CURRENT season year. It became optional rather than
+   * defaulted (CT-4, #2870) because resolving it needs the club's persisted
+   * zone, which is an await a parameter default cannot perform. Every caller
+   * that passed a value is unaffected.
+   */
+  seasonYear?: number
 ): Promise<void> {
   if (effectiveSubscriptionBehavior(null, member.role) !== "NOT_REQUIRED") {
     return;
   }
+  const season = seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
 
   await db.memberSubscription.upsert({
-    where: { memberId_seasonYear: { memberId: member.id, seasonYear } },
+    where: { memberId_seasonYear: { memberId: member.id, seasonYear: season } },
     update: {},
-    create: { memberId: member.id, seasonYear, status: "NOT_REQUIRED" },
+    create: { memberId: member.id, seasonYear: season, status: "NOT_REQUIRED" },
   });
 }
 

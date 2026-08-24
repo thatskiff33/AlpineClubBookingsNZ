@@ -26,7 +26,8 @@ import { buildJoiningFeeNarration } from "@/lib/joining-fee-narration";
 import { getEffectiveJoiningFee, type JoiningFeeScheduleSource } from "@/lib/authoritative-fees";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import { computeAgeTier } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { getTodayDateOnly } from "@/lib/date-only";
 
 type JoiningFeeStore = Prisma.TransactionClient | typeof prisma;
@@ -135,7 +136,7 @@ export async function resolveMemberJoiningFeeClassification(
 
   const policy = await resolveMembershipTypePolicyForMember(store, {
     memberId,
-    seasonYear: getSeasonYear(),
+    seasonYear: clubSeasonYear(await readClubTimeZoneOutsideRequest()),
   });
 
   if (!policy) {

@@ -15,7 +15,9 @@ import {
   getXeroContactIdsForGroup,
 } from "@/lib/xero";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
-import { getSeasonYear } from "@/lib/utils";
+import { fixedClubClock } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
 import {
   effectiveSubscriptionBehavior,
@@ -336,7 +338,13 @@ export async function listAdminMembers(
   }
 
   const now = new Date();
-  const currentSeasonYear = getSeasonYear(now);
+  // The season the club is in AT `now`, from the club's PERSISTED zone rather
+  // than the container's month (INV-CONFIG-002). `now` is pinned so the whole
+  // listing is judged against one moment.
+  const currentSeasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+    fixedClubClock(now),
+  );
   const ageTierSettings = await getAgeTierSettings();
   const notRequiredAgeTiers = new Set(
     ageTierSettings
@@ -1435,7 +1443,7 @@ export async function createAdminMember(
     }
     ageTier = await computeAgeTier(
       dateOfBirth,
-      getSeasonStartDate(getSeasonYear()),
+      getSeasonStartDate(clubSeasonYear(await readClubTimeZoneOutsideRequest())),
     );
   }
   // Organisation-type members have no age (#1440): force NOT_APPLICABLE for

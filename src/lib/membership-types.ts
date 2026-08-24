@@ -5,7 +5,8 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
@@ -594,8 +595,14 @@ export async function ensureBuiltInMembershipTypes(
 
 export async function backfillCurrentSeasonMembershipAssignments(
   db: MembershipTypeSeedClient,
-  seasonYear: number = getSeasonYear(),
+  /**
+   * Defaults to the club's CURRENT season year. Optional rather than defaulted
+   * (CT-4, #2870): resolving it needs the club's persisted zone, and a parameter
+   * default cannot await. Callers that pass a value are unaffected.
+   */
+  seasonYearInput?: number,
 ): Promise<{ createdCount: number; seasonYear: number }> {
+  const seasonYear = seasonYearInput ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
   await ensureBuiltInMembershipTypes(db);
 
   const [types, members] = await Promise.all([

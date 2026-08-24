@@ -1,5 +1,4 @@
 import type { AgeTier } from "@prisma/client";
-import { getSeasonYear } from "./utils";
 import {
   AGE_TIER_DEFAULTS,
   cloneAgeTierSettings,
@@ -24,6 +23,24 @@ export type { AgeTierSettingData } from "./policies/age-tier";
 // induction-baseline.ts) already imports them straight from
 // ./policies/age-tier, the module that actually declares them — knip 6.29+
 // correctly flagged those two re-export specifiers as dead (#2502).
+
+/**
+ * The club's current season year, resolved from the PERSISTED club timezone.
+ *
+ * A dynamic import for the same reason `getAgeTierSettings` dynamically imports
+ * `./prisma`: this module re-exports pure helpers that client code reaches, and
+ * `club-time-zone-runtime` pulls in Prisma. Keeping the edge dynamic keeps the
+ * client/server boundary census (`INV-OPS-013`) satisfied without splitting the
+ * module.
+ */
+async function clubCurrentSeasonYear(): Promise<number> {
+  const [{ readClubTimeZoneOutsideRequest }, { clubSeasonYear }] =
+    await Promise.all([
+      import("./club-time-zone-runtime"),
+      import("./financial-year"),
+    ]);
+  return clubSeasonYear(await readClubTimeZoneOutsideRequest());
+}
 
 let _cachedSettings: AgeTierSettingData[] | null = null;
 let _cacheExpiry = 0;
@@ -173,7 +190,16 @@ export async function computeAgeTier(
   dateOfBirth: Date,
   referenceDate?: Date
 ): Promise<AgeTier> {
-  const ref = referenceDate ?? getSeasonStartDate(getSeasonYear());
+  // The club's CURRENT season start, from the club's PERSISTED zone rather than
+  // the container's month (CT-4, #2870; INV-CONFIG-002). Imported dynamically
+  // for the same reason `./prisma` below is: this module's synchronous exports
+  // (`computeAge`, `AGE_TIER_DEFAULTS`, the partition validator) are reachable
+  // from client code, and `club-time-zone-runtime` reaches Prisma.
+  const ref =
+    referenceDate ??
+    getSeasonStartDate(
+      await clubCurrentSeasonYear(),
+    );
   const settings = await getAgeTierSettings();
   return computeAgeTierWithSettings(dateOfBirth, ref, settings);
 }

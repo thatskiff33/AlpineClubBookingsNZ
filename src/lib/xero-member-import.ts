@@ -72,7 +72,8 @@ async function resolveImportInheritance(
 import logger from "@/lib/logger";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { computeAgeTier } from "@/lib/age-tier";
 import {
   membershipTypeAgeExemption,
@@ -290,7 +291,7 @@ export async function importMembersFromXeroGroups(
   const groupsProcessed: string[] = [];
 
   // #2108 accumulators.
-  const seasonYear = getSeasonYear();
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const adminMemberId = options.adminMemberId;
   const uniqueMembershipTypeIds = Array.from(
     new Set(

@@ -5,7 +5,8 @@ import {
   getAgeTierSettings,
   getSeasonStartDate,
 } from "./age-tier";
-import { getSeasonYear } from "./utils";
+import { readClubTimeZoneOutsideRequest } from "./club-time-zone-runtime";
+import { clubSeasonYear } from "./financial-year";
 import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
 import {
   sendAgeUpInvitationEmail,
@@ -307,7 +308,7 @@ export async function checkAgeUpMembers(): Promise<{
   skipped: number;
   failed: number;
 }> {
-  const seasonYear = getSeasonYear();
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const seasonStart = getSeasonStartDate(seasonYear);
   const ageTierSettings = await getAgeTierSettings();
   const adultAgeTierSetting = ageTierSettings.find(
