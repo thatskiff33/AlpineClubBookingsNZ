@@ -6,7 +6,10 @@ import { useClubIdentity } from "@/components/club-identity-provider";
 import { useClubTime } from "@/components/club-time-provider";
 import {
   addCalendarDays,
+  calendarDateFromParts,
   calendarDateParts,
+  calendarDayOfWeek,
+  daysInCalendarMonth,
   formatClubLongWeekdayDate,
   formatClubMonthYear,
   requireCalendarDate,
@@ -119,8 +122,20 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     };
   }, [currentMonth.month, currentMonth.year, lodgeId]);
 
-  const daysInMonth = new Date(currentMonth.year, currentMonth.month + 1, 0).getDate();
-  const firstDay = new Date(currentMonth.year, currentMonth.month, 1).getDay();
+  // The grid's two facts are calendar-day facts, so the kernel answers both and
+  // no `Date` is built (CT-4, #2870). The spelling this replaces was
+  // host-local-midnight in and host-local out, which is self-consistent and
+  // therefore correct — but it is the shape from which the next author reaches
+  // for a UTC-midnight value and keeps `.getDay()`, shifting the whole grid by a
+  // column for every viewer west of Greenwich. `currentMonth.month` stays
+  // 0-based, matching `Date.getMonth()`; the kernel counts months 1-12.
+  const daysInMonth = daysInCalendarMonth(
+    currentMonth.year,
+    currentMonth.month + 1,
+  );
+  const firstDay = calendarDayOfWeek(
+    calendarDateFromParts(currentMonth.year, currentMonth.month + 1, 1),
+  );
   // Adjust for Monday start (0=Mon, 6=Sun)
   const startOffset = firstDay === 0 ? 6 : firstDay - 1;
 
