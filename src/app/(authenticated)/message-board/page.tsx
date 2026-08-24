@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { MessageSquare } from "lucide-react";
 
 import { auth } from "@/lib/auth";
+import { ClubPostBody } from "@/components/club-post-body";
 import { ClubPostComposer } from "@/components/club-post-composer";
+import { isServerNzConfigured } from "@/lib/servernz-config";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   listClubPostsForMember,
@@ -58,6 +60,11 @@ export default async function MessageBoardPage({
     beforeId,
   });
 
+  // Whether the composer may offer sharing at all. A tickbox that cannot do
+  // anything is worse than no tickbox: a member ticks it, posts, and reasonably
+  // believes other clubs can see it.
+  const canShare = await isServerNzConfigured();
+
   const isFirstPage = !before;
 
   return (
@@ -70,7 +77,10 @@ export default async function MessageBoardPage({
       {isFirstPage ? (
         <Card>
           <CardContent className="pt-6">
-            <ClubPostComposer maxLength={MAX_CLUB_POST_LENGTH} />
+            <ClubPostComposer
+              maxLength={MAX_CLUB_POST_LENGTH}
+              canShareToAllClubs={canShare}
+            />
           </CardContent>
         </Card>
       ) : null}
@@ -87,7 +97,20 @@ export default async function MessageBoardPage({
         <ul className="space-y-3">
           {posts.map((post) => (
             <li key={post.id}>
-              <Card>
+              {/* Anything on the network -- mirrored FROM another club, or this
+                  club's own post shared TO all clubs -- sits on the muted (light
+                  grey) ground as well as carrying its badge: colour is scannable
+                  at a glance in a way a badge is not. The class names are the
+                  contract: `club_message` / `server_message` are STYLE HOOKS for
+                  a club's own theme CSS to override, so they must stay stable
+                  even if the default styling changes. */}
+              <Card
+                className={
+                  post.originClubName || post.sharedToAllClubs
+                    ? "server_message bg-muted"
+                    : "club_message"
+                }
+              >
                 <CardContent className="space-y-2 pt-6">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
                     <span className="font-medium text-foreground">
@@ -105,11 +128,10 @@ export default async function MessageBoardPage({
                       {formatNZDate(new Date(post.postedAt))}
                     </span>
                   </div>
-                  {/* Plain text, escaped by React. `whitespace-pre-wrap` keeps
-                      the member's own line breaks without any markup. */}
-                  <p className="whitespace-pre-wrap text-sm text-foreground">
-                    {post.content}
-                  </p>
+                  <ClubPostBody
+                    content={post.content}
+                    bodyHtml={post.bodyHtml}
+                  />
                 </CardContent>
               </Card>
             </li>

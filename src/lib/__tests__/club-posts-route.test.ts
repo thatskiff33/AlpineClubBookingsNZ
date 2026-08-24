@@ -48,6 +48,15 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/audit", () => ({ logAudit: mocks.logAudit }));
 
+// The share path (epic #2992). Not configured in these tests, so the route's
+// club-local behaviour -- which is what this suite pins -- is unchanged.
+vi.mock("@/lib/servernz-config", () => ({
+  isServerNzConfigured: vi.fn(async () => false),
+}));
+vi.mock("@/lib/club-post-sharing", () => ({
+  shareOnePost: vi.fn(async () => ({ status: "skipped", reason: "not-requested" })),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
 }));

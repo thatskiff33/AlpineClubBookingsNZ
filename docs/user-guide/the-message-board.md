@@ -9,12 +9,18 @@ reminder that the hut book came home, an offer of a lift up on Friday. You find
 it at **Message board** (`/message-board`), and the newest few posts also appear
 on your dashboard.
 
-Everything you write here **stays inside your own club**. Nobody outside it can
-see the board.
+A post **stays inside your own club unless you say otherwise**. Ticking
+**Share with all clubs** under the writing box sends it to the central server,
+which passes it to every other club on the network — their members see it on
+their own boards, with your name and your club's name on it. Leave the box
+unticked, which is how it starts, and only your own club can see the post.
 
-You will see a **Share with all clubs** tickbox under the writing box. It is
-switched off and cannot be used yet — it is there so you know the option is
-coming. Until it works, every post is club-only.
+If the tickbox is greyed out with a note saying sharing is not set up, your
+club has no central-server connection, and every post is club-only.
+
+Posts shared **by other clubs** appear on your board too, on a differently
+shaded card carrying the club's name, so they are easy to tell from your own
+club's posts.
 
 The board appears only if your club has switched the **Message board** module
 on. If you cannot find it, that is why, and your club administrator can turn it
@@ -55,11 +61,19 @@ by. You cannot post under a different one.
 
 ### What you can write
 
-Plain text. What you type is exactly what everybody else sees — if you type
-something that looks like HTML or a web address, it appears as the characters
-you typed rather than being turned into a link or hidden formatting.
+Formatted text. The toolbar above the writing box offers headings, bold,
+italic, underline, a small set of text colours and sizes, alignment including
+justified, lists, and pictures.
 
-Line breaks are kept, so you can lay a post out over a few lines.
+The colours and sizes on offer are the whole menu — they are chosen to stay
+readable on both the light and dark themes, which is why there is no free
+colour picker. Anything pasted in that the board does not support is kept as
+its plain words rather than its formatting.
+
+**Pictures** are stored by your own club and shown only to signed-in members.
+Location data that phones embed in photographs is removed on upload, so
+posting a picture does not publish where it was taken. A picture can be up to
+8 MB, and a post can carry up to six.
 
 ## Good to know
 

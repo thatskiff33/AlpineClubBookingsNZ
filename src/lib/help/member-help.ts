@@ -408,7 +408,7 @@ export const memberFallbackHelp: HelpPageContent = {
 const messageBoardHelp: HelpPageContent = {
   title: "Message Board",
   summary:
-    "A board the members write themselves — a road report, a reminder, an offer of a lift. Everything posted here stays inside your own club. The newest few posts also appear on your dashboard.",
+    "A board the members write themselves — a road report, a reminder, an offer of a lift. A post stays inside your own club unless you tick Share with all clubs; posts other clubs have shared appear here on shaded cards. The newest few posts also appear on your dashboard.",
   actions: [
     "Write into the box at the top and click Post; it appears straight away with your name on it.",
     "Use 'Older posts' at the bottom to move back through the board, and 'Back to the latest' to return.",
@@ -417,7 +417,7 @@ const messageBoardHelp: HelpPageContent = {
   questions: [
     {
       q: "Who can see what I post?",
-      a: "Every signed-in member of your own club, and nobody else. Nothing on the board leaves your club. The 'Share with all clubs' tickbox under the writing box is switched off and does nothing yet — it is there so you know the option is coming.",
+      a: "Every signed-in member of your own club — and, only if you tick 'Share with all clubs' before posting, members of the other clubs on the network, who see it with your name and your club's name on it. Untick is the default, and if sharing is not set up for your club the tickbox says so and every post stays here.",
     },
     {
       q: "Can I edit or delete my own post?",
@@ -437,7 +437,7 @@ const messageBoardHelp: HelpPageContent = {
     },
     {
       q: "Will formatting or links work?",
-      a: "No — the board is plain text, and what you type is exactly what everybody else sees. Line breaks are kept, so you can lay a post out over a few lines.",
+      a: "Yes — the toolbar offers headings, bold, italic, underline, a fixed set of colours and sizes, alignment, lists and pictures. The colours on offer are the whole menu, chosen to stay readable on both themes. Pictures have their location data removed on upload, so a photo does not publish where it was taken.",
     },
   ],
 };

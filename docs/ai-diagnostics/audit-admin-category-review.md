@@ -584,11 +584,11 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  459
+row-producing sites:  460
 uncategorised:        0
 category values: admin 102, booking 101, xero 34, family 35, payment 37,
                  lodge 65, account 19, security 22, privacy 19,
-                 communication 20, system 4
+                 communication 21, system 4
 ```
 
 `admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
@@ -612,10 +612,11 @@ only one guaranteed to survive a restore that dies part-way — which is exactly
 the incident someone would need to reconstruct. And #2780 added the ten
 maintenance-report writers (`lodge` 55 → 65, 443 → 453). And the Communication
 Portal (epic #2992) added the six club message board moderation writers
-(`communication` 14 → 20, 453 → 459). That is the figure
+(`communication` 14 → 20, 453 → 459). The federation work then added the
+board image upload writer (`communication` 20 → 21, 459 → 460). That is the figure
 above, and it was taken from `npm run audit:census` on the merged tree rather
 than by adding one branch's delta to the other's total. The category values sum
-to 458 rather than 459 because one site forwards its category rather than
+to 459 rather than 460 because one site forwards its category rather than
 naming one.
 
 The 22 moves are pinned **per site**, not only by that

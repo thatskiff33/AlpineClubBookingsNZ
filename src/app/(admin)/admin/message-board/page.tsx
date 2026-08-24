@@ -68,14 +68,16 @@ export default async function AdminMessageBoardPage({
           deletes the text permanently.
         </p>
       </div>
-      <ClubPostsAdmin posts={posts} tab={tab} query={q ?? ""} />
-
+      {/* Retention first, messages below -- owner's requested order
+          (24 Aug 2026). */}
       <ClubPostRetentionSection
         initialRetentionDays={settings.retentionDays}
         initialBeyondRetention={beyondRetention}
         lastCleanupAt={settings.lastCleanupAt}
         lastCleanupDeleted={settings.lastCleanupDeleted}
       />
+
+      <ClubPostsAdmin posts={posts} tab={tab} query={q ?? ""} />
     </div>
   );
 }

@@ -322,7 +322,8 @@ export const AUDIT_CENSUS_TOTALS = {
   // (hide, show, edit, remove, retention settings, manual cleanup). Taken from
   // `npm run audit:census` on the MERGED tree, by the method the #2780 note
   // above sets out -- not by adding this branch's delta to main's total.
-  writeSites: 459,
+  // 459 -> 460 (epic #2992 federation): the board image upload writer.
+  writeSites: 460,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -364,7 +365,7 @@ export const AUDIT_CENSUS_TOTALS = {
     // and the two submit records. None sits inside the submit transaction, so a
     // failed audit write never fails a submitted report.
     // 255 -> 261 (#2992): all six club-post moderation writers use `logAudit`.
-    logAudit: { total: 261, uncategorised: 0 },
+    logAudit: { total: 262, uncategorised: 0 },
     // 101 -> 102 (#2627): the deletion-approval release, above.
     // 102 -> 104 (#2595): the two reviewed-move writes, above.
     // 104 -> 105 (#2649): the return-to-waitlist repair, above.
@@ -658,7 +659,10 @@ export const AUDIT_CENSUS_TOTALS = {
     // a membership+support read, so a member-visible board moderation record
     // lands where the other member-visible communication rows already are --
     // this widens nobody's access.
-    communication: 20,
+    // 20 -> 21 (epic #2992 federation): club_post_image.upload. Still a
+    // membership+support read; it records only who uploaded and how many
+    // bytes, never what the picture was of.
+    communication: 21,
     // 14 -> 15 (#2627): `member.deletion_approval_claim_released`. Still a
     // membership+support read, like every other deletion-decision row beside it,
     // so this widens nobody's access.

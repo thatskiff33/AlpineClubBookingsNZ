@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
+  imageFindMany: vi.fn(),
+  imageDeleteMany: vi.fn(),
+  transaction: vi.fn(),
+  deletePostImage: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,13 +28,25 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.findMany,
       update: mocks.update,
     },
+    clubPostImage: {
+      findMany: mocks.imageFindMany,
+      deleteMany: mocks.imageDeleteMany,
+    },
+    $transaction: mocks.transaction,
   },
+}));
+
+// Removal now unlinks the post's image files from the mount; mocked so the
+// suite stays about WHAT is deleted, not about a mount being present.
+vi.mock("@/lib/post-image-storage", () => ({
+  deletePostImage: mocks.deletePostImage,
 }));
 
 import { listClubPostsForMember } from "@/lib/club-posts";
 import {
   ClubPostAlreadyRemovedError,
   ClubPostNotFoundError,
+  ClubPostNotEditableError,
   editClubPostContent,
   listClubPostsForAdmin,
   parseAdminPostTab,
@@ -41,12 +57,17 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findMany.mockResolvedValue([]);
+  mocks.imageFindMany.mockResolvedValue([]);
+  mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.transaction.mockResolvedValue([]);
+  mocks.deletePostImage.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue({});
   mocks.findUnique.mockResolvedValue({
     id: "post-1",
     content: "Hut book is back at the lodge.",
     hiddenAt: null,
     removedAt: null,
+    originClubCode: null,
   });
 });
 
@@ -116,6 +137,46 @@ describe("editing", () => {
     const result = await editClubPostContent("post-1", "Corrected text.");
     expect(result.before).toBe("Hut book is back at the lodge.");
     expect(result.after).toBe("Corrected text.");
+  });
+
+  it("clears the rich body, so the edit is what members actually see", async () => {
+    // The board renders bodyHtml in preference to the text. An edit that only
+    // rewrote `content` would be invisible: the admin saves, the audit records
+    // a change, and every member keeps reading the unedited words.
+    await editClubPostContent("post-1", "Corrected text.");
+    expect(mocks.update.mock.calls[0][0].data).toMatchObject({
+      content: "Corrected text.",
+      bodyHtml: null,
+    });
+  });
+
+  it("refuses to rewrite another club's words (D-C4)", async () => {
+    // A mirror still shows the origin club's name and badge, so editing it
+    // here would misrepresent that club to this one's members. Hide and remove
+    // stay available; edit does not.
+    mocks.findUnique.mockResolvedValue({
+      id: "post-9",
+      content: "Written by Ruapehu.",
+      hiddenAt: null,
+      removedAt: null,
+      originClubCode: "RUAPEHU",
+    });
+    await expect(
+      editClubPostContent("post-9", "Rewritten"),
+    ).rejects.toBeInstanceOf(ClubPostNotEditableError);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("still allows hiding a mirror", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-9",
+      content: "Written by Ruapehu.",
+      hiddenAt: null,
+      removedAt: null,
+      originClubCode: "RUAPEHU",
+    });
+    await setClubPostHidden("post-9", true);
+    expect(mocks.update).toHaveBeenCalled();
   });
 
   it("applies the same content rules members are held to", async () => {

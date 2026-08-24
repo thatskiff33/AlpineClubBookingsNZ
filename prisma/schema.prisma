@@ -4582,7 +4582,21 @@ model ServerNzSettings {
   // safely here because Prisma pools connections and the unlock could land on a
   // different one, and an xact-scoped lock would mean holding a transaction open
   // across the central server's HTTP calls.
-  otherLodgesSyncStartedAt  DateTime?
+  otherLodgesSyncStartedAt DateTime?
+
+  // Shared item: the cross-club message board (epic #2992). The cursor is the
+  // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
+  // a tiebreak id — stored as strings because it is THEIR cursor, not a value
+  // this install computes or compares. Null means "never synced": the first
+  // pull is a full sync of visible posts, which is exactly what a new install
+  // wants (no backlog of tombstones for posts it never held).
+  commsCursorSince   String?   @db.VarChar(64)
+  commsCursorSinceId String?   @db.VarChar(64)
+  // Single-flight claim for a sync pass, same pattern and same reasoning as
+  // otherLodgesSyncStartedAt above: the webhook, the cron and a manual pull all
+  // drive the same writer.
+  commsSyncStartedAt DateTime?
+  commsLastSyncAt    DateTime?
 
   updatedByMemberId String?
   createdAt         DateTime @default(now())
@@ -4962,42 +4976,61 @@ model NoticeReadReceipt {
 // ---------------------------------------------------------------------------
 
 model ClubPost {
-  id             String    @id @default(cuid())
+  id               String    @id @default(cuid())
   // NULL = written by this club. Non-null = mirrored from another club via the
   // central server, which also means the content is READ-ONLY here (D-C4):
   // editing another club's post while still showing their name and badge on it
   // would misrepresent them to our members. Hiding and removing the local copy
   // stay available and say what they actually do.
-  originClubCode String?   @db.VarChar(40)
-  originClubName String?   @db.VarChar(200)
+  originClubCode   String?   @db.VarChar(40)
+  originClubName   String?   @db.VarChar(200)
   // Both null until shared. serverPostId is the ONLY handle by which the
   // network copy can ever be withdrawn, so it must never be cleared before the
   // central server confirms the withdrawal. Capped at 64 for the same reason
   // ServerNzSettings.otherLodgesCursor is: an over-long value fails AFTER rows
   // are written and BEFORE the cursor advances, which wedges sync permanently.
-  sharedAt       DateTime?
-  serverPostId   String?   @unique @db.VarChar(64)
+  // The member ASKED for this to go to the network. Distinct from sharedAt,
+  // which means the server actually took it, and the gap between them is the
+  // point: the central server can be down, mid-deploy or slow, and a post must
+  // never be lost or silently kept local because of that. A request that has
+  // not yet succeeded is retried by the cron; until it does, the post is live
+  // on this club's own board exactly as any other.
+  shareRequestedAt DateTime?
+  // Why the last attempt failed, for the member and the admin screen. Cleared
+  // on success. Bounded because it can carry the remote's own error text.
+  shareError       String?   @db.VarChar(300)
+  sharedAt         DateTime?
+  serverPostId     String?   @unique @db.VarChar(64)
   // Taken from the authenticated session at compose time, never from a form
   // field. The central server cannot verify author identity — it trusts this
   // club's API key — so that trust is only warranted if the value is a real
   // session here. SetNull rather than Cascade: a post survives the member
   // record going away, exactly as Notice.createdByMemberId does.
-  authorMemberId String?
-  authorName     String    @db.VarChar(200)
-  // Plain text, never HTML. Unlike Notice.bodyHtml there is no authoring
-  // toolbar and no sanitiser: React escapes it at render, and the only way to
-  // reintroduce an injection is to reach for dangerouslySetInnerHTML.
-  content        String    @db.VarChar(4000)
-  postedAt       DateTime  @default(now())
+  authorMemberId   String?
+  authorName       String    @db.VarChar(200)
+  // The plain-text form. Still authoritative: it is what search matches, what
+  // the dashboard card and moderation list show, and what a consumer that
+  // cannot render HTML falls back to. Never HTML, and never rendered as HTML.
+  content          String    @db.VarChar(4000)
+  // The rich form the WYSIWYG composer writes, SANITISED ON WRITE against the
+  // allowlist in post-html.ts and sanitised again on render. Null for every
+  // post written before the editor existed, and for anything whose HTML
+  // sanitised down to nothing — `content` covers both, which is why this is
+  // additive rather than a replacement (mirrors Notice.bodyHtml).
+  //
+  // Larger than `content` because the same words carry markup: 4000 characters
+  // of text with headings, alignment and colour does not fit in 4000 bytes.
+  bodyHtml         String?   @db.VarChar(20000)
+  postedAt         DateTime  @default(now())
   // Hidden is reversible with the content intact; removed is not. Both are
   // local-only decisions and neither reaches another club.
-  hiddenAt       DateTime?
-  removedAt      DateTime?
+  hiddenAt         DateTime?
+  removedAt        DateTime?
   // Cached count of non-dismissed reports, recomputed from the rows rather than
   // incremented, so a dismissal actually stops counting.
-  reportCount    Int       @default(0)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  reportCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   author  Member?          @relation("ClubPostAuthor", fields: [authorMemberId], references: [id], onDelete: SetNull)
   images  ClubPostImage[]
@@ -5006,21 +5039,43 @@ model ClubPost {
   @@index([postedAt])
   @@index([originClubCode])
   @@index([sharedAt])
+  @@index([shareRequestedAt])
   @@index([authorMemberId])
 }
 
 model ClubPostImage {
-  id       String   @id @default(cuid())
-  postId   String
-  post     ClubPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(cuid())
+  // NULL until the post is submitted. A member picks an image while still
+  // typing, so the file exists before the post does; the composer claims these
+  // rows on submit. An image nobody ever claims is swept by the retention job
+  // rather than lingering as an orphan on the mount.
+  postId             String?
+  post               ClubPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Who uploaded it. A BARE SCALAR with no @relation, exactly like
+  // MediaImage.uploadedByMemberId: it is the audit answer to "who put this
+  // here", so a member merge leaves it pointing at the id that actually did.
+  // It is also the only attribution an unclaimed upload has, since there is no
+  // post to ask.
+  uploadedByMemberId String?
   // Path relative to the configured upload root, never absolute and never
   // client-supplied.
-  storageKey String @db.VarChar(300)
-  width      Int
-  height     Int
-  bytes      Int
-  position   Int      @default(0)
-  createdAt  DateTime @default(now())
+  storageKey         String    @db.VarChar(300)
+  // What the serving route takes, so a storage key never appears in a URL and
+  // one image's address cannot be derived from another's.
+  publicId           String    @unique @db.VarChar(64)
+  // Sniffed from the file's own leading bytes on upload, never from the name
+  // or the browser-supplied type, and echoed back as the Content-Type.
+  mimeType           String    @db.VarChar(40)
+  // Of the stored bytes. Lets a shared copy be matched to its origin without
+  // re-uploading, and makes a truncated write detectable.
+  sha256             String    @db.VarChar(64)
+  // Nullable: dimensions are read opportunistically and a format this
+  // deployment cannot measure must not block a member's post.
+  width              Int?
+  height             Int?
+  bytes              Int
+  position           Int       @default(0)
+  createdAt          DateTime  @default(now())
 
   @@index([postId])
 }

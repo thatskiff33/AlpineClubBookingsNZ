@@ -8,6 +8,17 @@ vi.mock("@/lib/club-post-retention", () => ({
   runClubPostCleanup: vi.fn(),
 }));
 
+// Same reason as the retention stub above: unmocked this would reach the real
+// sharer, which reads posts through prisma and would then try to call the
+// central server.
+vi.mock("@/lib/club-post-sharing", () => ({
+  retryPendingShares: vi.fn(),
+}));
+
+vi.mock("@/lib/club-post-mirror", () => ({
+  runMirrorSync: vi.fn(),
+}));
+
 vi.mock("@/lib/cron-additional-payment-reminders", () => ({
   sendAdditionalPaymentReminders: vi.fn(),
 }));
@@ -89,6 +100,17 @@ describe("general cron runner", () => {
         runClubPostCleanup: vi.fn(async () => ({
           skipped: "disabled" as const,
           deleted: 0,
+        })),
+        retryPendingShares: vi.fn(async () => ({
+          attempted: 0,
+          shared: 0,
+          failed: 0,
+        })),
+        runMirrorSync: vi.fn(async () => ({
+          skipped: "not-configured" as const,
+          upserted: 0,
+          removed: 0,
+          pages: 0,
         })),
         sendAdditionalPaymentReminders: vi.fn(async () => ({
           reminderDays: 3,
@@ -207,7 +229,7 @@ describe("general cron runner", () => {
     // same window (#2550's placeholder guest-name reminders and #2553's hold
     // reaper), and this literal is where a merge that keeps both branches' job
     // registrations but only one branch's count shows up.
-    expect(recordCronRun).toHaveBeenCalledTimes(11);
+    expect(recordCronRun).toHaveBeenCalledTimes(13);
     expect(recordCronRun).toHaveBeenCalledWith(
       expect.objectContaining({
         jobName: "club-post-retention",
@@ -348,6 +370,17 @@ describe("general cron runner", () => {
           runClubPostCleanup: vi.fn(async () => ({
             skipped: "disabled" as const,
             deleted: 0,
+          })),
+          retryPendingShares: vi.fn(async () => ({
+            attempted: 0,
+            shared: 0,
+            failed: 0,
+          })),
+          runMirrorSync: vi.fn(async () => ({
+            skipped: "not-configured" as const,
+            upserted: 0,
+            removed: 0,
+            pages: 0,
           })),
           sendAdditionalPaymentReminders,
           confirmPendingBookings: vi.fn(async () => {

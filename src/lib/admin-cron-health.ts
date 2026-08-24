@@ -156,12 +156,42 @@ export function getAdminCronJobDefinitions(
   return [
     defineCronJob(
       {
+        // Epic #2992. The mirror's polling backstop. It appears here because
+        // the push path failing is designed to be SILENT (polling covers it),
+        // and this entry going stale is the one signal an operator gets that
+        // the covering poll itself has stopped.
+        jobName: "club-post-mirror-sync",
+        label: "Club message board mirror sync",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
         // #2999. Rides the shared general cron cycle, so it carries that
         // cycle's schedule rather than one of its own. It appears here because
         // it DELETES member content: an operator needs to see that it is still
         // running, and a stale entry is how they find out it is not.
         jobName: "club-post-retention",
         label: "Club message board retention",
+        schedule: "0 */3 * * *",
+        timezone: nzTimezone,
+        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
+      },
+      globalDisabledReason
+    ),
+    defineCronJob(
+      {
+        // Epic #2992. Rides the shared general cron cycle. It appears here
+        // because a member can tick "share with all clubs" and reasonably
+        // believe it happened: if this stops running, shares queue silently and
+        // a stale entry is how an operator finds out.
+        jobName: "club-post-share-retry",
+        label: "Club message board share retry",
         schedule: "0 */3 * * *",
         timezone: nzTimezone,
         expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",

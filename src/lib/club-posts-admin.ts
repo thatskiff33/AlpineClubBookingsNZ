@@ -2,7 +2,10 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { assertValidClubPostContent } from "@/lib/club-posts";
+import logger from "@/lib/logger";
+import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
+import { withdrawClubPost } from "@/lib/servernz-api";
 
 /**
  * Moderation for the club message board (#2998, epic #2992).
@@ -106,6 +109,15 @@ export class ClubPostNotFoundError extends Error {
   }
 }
 
+export class ClubPostNotEditableError extends Error {
+  constructor() {
+    super(
+      "That post was written by another club's member, so its words cannot be edited here. It can be hidden or removed.",
+    );
+    this.name = "ClubPostNotEditableError";
+  }
+}
+
 export class ClubPostAlreadyRemovedError extends Error {
   constructor() {
     super("That post has been removed and can no longer be changed.");
@@ -116,7 +128,13 @@ export class ClubPostAlreadyRemovedError extends Error {
 async function loadEditable(postId: string) {
   const post = await prisma.clubPost.findUnique({
     where: { id: postId },
-    select: { id: true, content: true, hiddenAt: true, removedAt: true },
+    select: {
+      id: true,
+      content: true,
+      hiddenAt: true,
+      removedAt: true,
+      originClubCode: true,
+    },
   });
   if (!post) throw new ClubPostNotFoundError();
   // A removed post has no content left to hide, restore or rewrite. Refusing
@@ -149,11 +167,22 @@ export async function editClubPostContent(
   rawContent: unknown,
 ): Promise<{ before: string; after: string }> {
   const post = await loadEditable(postId);
+  // D-C4, now ENFORCED rather than merely promised by the schema comment: a
+  // mirror still shows the origin club's name and badge, so rewriting its
+  // words here would misrepresent that club to this one's members. Hiding and
+  // removing the local copy stay available — they say what they actually do.
+  if (post.originClubCode !== null) throw new ClubPostNotEditableError();
+
   const after = assertValidClubPostContent(rawContent);
 
   await prisma.clubPost.update({
     where: { id: postId },
-    data: { content: after },
+    // bodyHtml is CLEARED, not kept: the board renders the rich body in
+    // preference to the text, so an edit that only rewrote `content` would be
+    // invisible — the admin saves, the audit records a change, and every
+    // member keeps reading the unedited words. The edited post renders as
+    // plain text; the member can repost with formatting if it matters.
+    data: { content: after, bodyHtml: null },
   });
 
   return { before: post.content, after };
@@ -172,15 +201,68 @@ export async function editClubPostContent(
 export async function removeClubPost(postId: string): Promise<void> {
   const post = await prisma.clubPost.findUnique({
     where: { id: postId },
-    select: { id: true, removedAt: true },
+    select: {
+      id: true,
+      removedAt: true,
+      serverPostId: true,
+      originClubCode: true,
+    },
   });
   if (!post) throw new ClubPostNotFoundError();
   // Idempotent: removing an already-removed post is a no-op rather than an
   // error, so a double-click or a retry does not report a failure.
   if (post.removedAt) return;
 
-  await prisma.clubPost.update({
-    where: { id: postId },
-    data: { content: "", removedAt: new Date() },
+  // The IMAGES go with the words. The serving route already refuses images on
+  // a removed post, but refusing to serve a file is not the same as the file
+  // being gone -- a removal that left the photographs on the mount until
+  // retention happened to sweep the row would keep exactly the content the
+  // admin asked to be rid of. Rows first, files second: the crash order that
+  // leaves invisible orphans for the sweep, never broken references.
+  const images = await prisma.clubPostImage.findMany({
+    where: { postId },
+    select: { storageKey: true },
   });
+  await prisma.$transaction([
+    prisma.clubPostImage.deleteMany({ where: { postId } }),
+    prisma.clubPost.update({
+      where: { id: postId },
+      data: {
+        content: "",
+        bodyHtml: null,
+        removedAt: new Date(),
+        // Stops the retry pass from carrying a post the admin has just taken
+        // down. Without this, removing a post whose share had not yet
+        // succeeded would publish it minutes later.
+        shareRequestedAt: null,
+      },
+    }),
+  ]);
+  for (const image of images) {
+    await deletePostImage(image.storageKey);
+  }
+
+  // A SHARED POST MUST COME DOWN EVERYWHERE, not just here. Removing it
+  // locally while it stays on every other club's board is the worst of both:
+  // the admin believes it is gone and the members who can see it are the ones
+  // it was taken down for.
+  //
+  // Deliberately AFTER the local write and deliberately not fatal: the local
+  // removal is the part the admin asked for and must not be undone because the
+  // central server is unreachable. `serverPostId` is kept so the withdrawal can
+  // be retried; the tombstone row is what a later sweep would use.
+  // Origin check as well as id check: a MIRROR row also carries a
+  // serverPostId, but the network copy belongs to the club that wrote it, and
+  // the server would refuse the withdrawal anyway (own-club only). Removing a
+  // mirror is a local act.
+  if (post.serverPostId && post.originClubCode === null) {
+    try {
+      await withdrawClubPost(post.serverPostId);
+    } catch (error) {
+      logger.error(
+        { postId, serverPostId: post.serverPostId, err: error },
+        "Removed a shared club post locally but could not withdraw it from the central server",
+      );
+    }
+  }
 }

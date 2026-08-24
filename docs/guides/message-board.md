@@ -18,9 +18,16 @@ Unlike [Member Notices](member-notices.md), which the committee writes and
 targets at chosen members, this is written by members and seen by all of them.
 Nobody targets a board post and nobody tracks who has read it.
 
-Everything on the board currently **stays inside your club**. Members see a
-"Share with all clubs" tickbox in the composer, switched off and not yet usable;
-until that ships, nothing posted here leaves your club.
+A post **stays inside your club unless its author shares it**. When your club
+has an Alpine Central Server connection (Admin → Integrations), members may
+tick **Share with all clubs** in the composer: the post is sent to the central
+server and appears on every other club's board. Without that connection the
+tickbox is disabled and says so, and every post is club-only.
+
+Posts **other clubs share** appear on your board too — on a differently shaded
+card with the origin club's name — and their pictures are copied to and served
+by your own installation, so your members' reading habits are not disclosed to
+anyone else and the board keeps working when the central server is down.
 
 ## When you'd use it
 
@@ -59,6 +66,23 @@ you want to take something out of view while you ask the author about it.
 You are rewriting somebody else's words under their name. Prefer asking the
 member to repost, and keep edits to obvious corrections.
 
+### Moderating another club's post
+
+You can **hide** or **remove** another club's post from your own board — both
+are local acts that change nothing anywhere else. You cannot **edit** its
+words: the post still carries the other club's name, and rewriting it here
+would misrepresent that club to your members. The Edit control refuses with
+exactly that explanation.
+
+### When a shared post is taken down on the network
+
+If the central server removes a post (its administrator acted, or enough clubs
+reported it), your board follows: another club's post disappears, and **your
+own club's post is hidden rather than deleted** — the words belong to your
+member, so takedown convergence is a moderation act, not an erasure. You can
+unhide it from the **Hidden** tab, at which point it is a club-only post that
+is no longer on the network.
+
 ### Remove a post
 
 1. Click **Remove** and confirm.
@@ -67,6 +91,11 @@ member to repost, and keep edits to obvious corrections.
    what was said.
 
 Use **Hide** unless you actually want the words gone.
+
+Removing a post **your club had shared** also withdraws it from the central
+server, so it comes off the other clubs' boards too. If the central server is
+unreachable at that moment the local removal still completes, and the
+withdrawal is retried.
 
 ### Set how long posts are kept
 
@@ -87,6 +116,17 @@ screen. A post exactly on the boundary is kept rather than deleted.
 **Run cleanup now** does the same job immediately and tells you how many posts
 it deleted. If the scheduled job happens to be running, it says so and does
 nothing rather than deleting twice.
+
+### How posts travel (for the technically curious)
+
+Sharing is push-with-a-polling-backstop. The central server notifies your
+installation the moment something changes, and a scheduled pull reconciles the
+board a few times a day regardless — so a missed notification delays a post,
+never loses one. Two rows on **Admin → Background jobs** watch this: **Club
+message board mirror sync** (the pull) and **Club message board share retry**
+(your own outbound shares). The push registration happens automatically the
+first time the sync runs; installations without a public https address simply
+stay on polling.
 
 ## Good to know
 

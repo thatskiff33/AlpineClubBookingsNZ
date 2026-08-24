@@ -167,5 +167,13 @@
     "tsx": "^4.23.11",
     "typescript": "^6",
     "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.9.1": true,
+    "@sentry/cli@2.58.6": true,
+    "core-js@3.49.0": true,
+    "esbuild@0.28.1": true,
+    "prisma@7.9.1": true,
+    "unrs-resolver@1.12.2": true
   }
 }

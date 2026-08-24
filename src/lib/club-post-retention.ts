@@ -1,5 +1,6 @@
 import "server-only";
 import { RETENTION_CHOICES } from "@/lib/club-post-retention-choices";
+import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -154,11 +155,49 @@ export async function runClubPostCleanup(
   if (claim.count === 0) return { skipped: "busy", deleted: 0 };
 
   try {
+    // The FILES first, while the rows that name them still exist. Deleting the
+    // rows first would cascade the image rows away and leave their bytes on the
+    // mount with nothing left pointing at them — a retention setting whose whole
+    // purpose is that the content is gone would quietly keep every photograph.
+    //
+    // Collected before the delete, deleted after: a crash between the two
+    // leaves files whose rows are gone, which the orphan sweep below reclaims
+    // on the next pass. The reverse order would leave rows whose files are
+    // gone, which is a broken image on a live post.
+    const doomedImages = await prisma.clubPostImage.findMany({
+      where: { post: { postedAt: { lt: cutoff } } },
+      select: { storageKey: true },
+    });
+
     // Strictly older than the cutoff. A post exactly ON the boundary is KEPT:
     // where the rule could be read two ways, this deletes less.
     const { count } = await prisma.clubPost.deleteMany({
       where: { postedAt: { lt: cutoff } },
     });
+
+    for (const image of doomedImages) {
+      // Never throws on a file that has already gone, so a retried pass cannot
+      // fail on its own previous success.
+      await deletePostImage(image.storageKey);
+    }
+
+    // Uploads nobody ever attached to a post. A member who picks an image and
+    // then abandons the composer leaves one behind, and without this they
+    // accumulate on the mount forever. An hour's grace so an upload that is
+    // still being composed is never swept out from under its author.
+    const abandonedBefore = new Date(now.getTime() - 60 * 60 * 1000);
+    const orphans = await prisma.clubPostImage.findMany({
+      where: { postId: null, createdAt: { lt: abandonedBefore } },
+      select: { id: true, storageKey: true },
+    });
+    if (orphans.length > 0) {
+      await prisma.clubPostImage.deleteMany({
+        where: { id: { in: orphans.map((o) => o.id) } },
+      });
+      for (const orphan of orphans) {
+        await deletePostImage(orphan.storageKey);
+      }
+    }
 
     await prisma.clubPostSettings.update({
       where: { id: CLUB_POST_SETTINGS_ID },
