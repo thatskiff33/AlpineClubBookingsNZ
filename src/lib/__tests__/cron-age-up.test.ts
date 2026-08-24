@@ -47,9 +47,6 @@ vi.mock("../logger", () => ({
   },
 }));
 
-vi.mock("../utils", () => ({
-  getSeasonYear: vi.fn(() => 2026),
-}));
 
 // Best-effort Xero contact-group trigger (E8, #1934): mocked so we can assert
 // it fires after a durable tier flip and never for skipped/handoff members.

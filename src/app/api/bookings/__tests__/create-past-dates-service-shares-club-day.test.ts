@@ -256,8 +256,6 @@ vi.mock("@/lib/member-credit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/member-credit")>()),
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
-vi.mock("@/lib/utils", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/utils")>()), getSeasonYear: () => 2026 }));
 vi.mock("@/lib/internet-banking-settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/internet-banking-settings")>()),
   checkInternetBankingLeadTime: () => ({ allowed: true }),

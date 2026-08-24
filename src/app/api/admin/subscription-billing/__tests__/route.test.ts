@@ -43,7 +43,6 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
   },
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: vi.fn().mockReturnValue(2026) }));
 
 import { GET, POST } from "@/app/api/admin/subscription-billing/route";
 

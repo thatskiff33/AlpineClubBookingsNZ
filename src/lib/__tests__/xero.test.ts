@@ -835,11 +835,11 @@ describe("buildInvoiceLineItems", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Season year (re-test the imported getSeasonYear via the Xero context)
+// Season year (re-test the imported season derivation via the Xero context)
 // ---------------------------------------------------------------------------
 
 describe("Season year logic for membership", () => {
-  // The getSeasonYear function is already tested in pricing.test.ts,
+  // The season derivation is already tested in club-season-year.test.ts,
   // but we test the boundary logic here in the context of subscription matching.
 
   it("April 1 belongs to same calendar year's season", () => {

@@ -36,10 +36,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/utils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/utils")>();
-  return { ...actual, getSeasonYear: () => 2026 };
-});
 
 // Minimal mocks so importing the Xero invoice line builder is side-effect-free.
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));

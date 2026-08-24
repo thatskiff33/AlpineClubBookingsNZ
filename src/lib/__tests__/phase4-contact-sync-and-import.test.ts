@@ -143,7 +143,6 @@ vi.mock("@/lib/email", () => ({
 }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 vi.mock("@/lib/pricing", () => ({
-  getSeasonYear: vi.fn(),
   getStayNights: vi.fn(),
 }));
 vi.mock("@/lib/phone", () => ({

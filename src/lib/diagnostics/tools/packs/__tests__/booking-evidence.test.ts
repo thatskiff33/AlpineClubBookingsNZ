@@ -87,7 +87,7 @@
  *
  * The repo-wide frozen clock (#2481) pins "now" at 2026-07-01T00:00:00Z, which is
  * midday 1 July 2026 in the club's zone, so NZ and UTC agree on the calendar day.
- * `getSeasonYear()` is therefore 2026 and `getTodayDateOnly()` is 2026-07-01.
+ * the club's season year is therefore 2026 and its calendar day 2026-07-01.
  * Every fixture date below is written relative to that and nothing here reads the
  * real calendar.
  *
@@ -3732,7 +3732,7 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
 
   it("moves the boundary with the CLUB's financial year-end rather than assuming April", async () => {
     // The assertion that separates "calls the platform's helper" from "hard-codes
-    // the NZ default". `getSeasonYear` reads `getSeasonStartMonth()`, which is the
+    // the NZ default". The season derivation reads `getSeasonStartMonth()`, which is the
     // month after the club's configured `financialYearEndMonth`; a club on a
     // December year-end starts its season in January, so the same January instant
     // belongs to the NEW season year there. A local re-derivation would have to

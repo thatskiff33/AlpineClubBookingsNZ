@@ -1072,7 +1072,7 @@ describe("the read-only form's season basis (#2376)", () => {
   it("derives the season from the check-in night when no caller supplies one", async () => {
     // Unchanged behaviour for every writer: they reach this rule through a gated
     // request that has already seeded the process-level financial-year cache, so
-    // `getSeasonYear(checkIn)` is correct for them. The fixture's check-in is
+    // `seasonYearOfStoredDate(checkIn)` is correct for them. The fixture's check-in is
     // 4 July 2026, which is season 2026 on the default 31-March year-end.
     const { db } = makeDb(bookingRow(), [CLUB_ON]);
     await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);

@@ -44,9 +44,6 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn(),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),

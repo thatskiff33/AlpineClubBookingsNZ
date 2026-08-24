@@ -12,7 +12,6 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: h.requireAdmin }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: () => 2026 }));
 vi.mock("@/lib/member-application-mapping", () => ({
   buildApprovalMappingPreview: h.buildApprovalMappingPreview,
 }));
