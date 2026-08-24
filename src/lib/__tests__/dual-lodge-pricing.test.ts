@@ -19,8 +19,8 @@ import { lodgeNullTolerantScope } from "../lodges";
 // Same season window and identical age tiers at both lodges; only the
 // pricePerNightCents differs, so any leakage between lodges would surface as a
 // wrong dollar figure rather than a scoping error.
-const WINTER_START = new Date(2026, 5, 1); // 1 Jun 2026
-const WINTER_END = new Date(2026, 8, 30); // 30 Sep 2026
+const WINTER_START = new Date("2026-06-01"); // 1 Jun 2026
+const WINTER_END = new Date("2026-09-30"); // 30 Sep 2026
 
 const MEMBER_TYPE = "type-member";
 const NONMEMBER_TYPE = "type-nonmember";

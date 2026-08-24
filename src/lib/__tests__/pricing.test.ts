@@ -21,8 +21,8 @@ const NONMEMBER_TYPE = "type-nonmember"
 function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
     seasonId: "season-winter-2026",
-    startDate: new Date(2026, 5, 1),  // June 1
-    endDate: new Date(2026, 8, 30),   // Sep 30
+    startDate: new Date("2026-06-01"),  // June 1
+    endDate: new Date("2026-09-30"),   // Sep 30
     rates: [
       { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
       { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 6500 },
@@ -38,8 +38,8 @@ function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
 function makeSummerSeason(): SeasonRateData {
   return {
     seasonId: "season-summer-2026",
-    startDate: new Date(2026, 10, 1),  // Nov 1
-    endDate: new Date(2027, 2, 31),    // Mar 31
+    startDate: new Date("2026-11-01"),  // Nov 1
+    endDate: new Date("2027-03-31"),    // Mar 31
     rates: [
       { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
       { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5000 },
@@ -89,18 +89,43 @@ describe("findSeasonForDate", () => {
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 
-  it("matches a season start date for browser-submitted NZ local dates", () => {
+  /*
+    WHAT THIS USED TO PIN, AND WHY IT WAS BACKWARDS (CT-4, #2870, group F2).
+
+    It was called "matches a season start date for browser-submitted NZ local
+    dates" and handed `findSeasonForDate` the INSTANT `2026-07-03T12:00:00.000Z`
+    — NZ-local midnight on 4 July — expecting a season starting 4 July to match.
+    The only reason it passed is the defect this lane removed: the engine
+    projected every date through `APP_TIME_ZONE`, so an instant half a day before
+    the stored season edge was read as being on it.
+
+    There is no such caller. Every API boundary that reaches pricing validates a
+    strict `yyyy-MM-dd` string and converts it with `parseDateOnly`
+    (`checkIn: dateOnlyString.transform(parseDateOnly)` in the quote, create and
+    modify-quote routes), so what arrives is always a date-only value at UTC
+    midnight — `INV-DATE-011`. The test was pinning a compensation for an input
+    shape the product refuses.
+
+    So it now asserts the real rule: a season edge is a stored calendar day, and
+    the day that matches it is that same stored day (`INV-DATE-010` — no rule may
+    be derived from reading these values in any zone but UTC).
+  */
+  it("matches a season start date by the stored calendar day, not a projection", () => {
     const boundarySeason = makeSeason({
       startDate: new Date("2026-07-04T00:00:00.000Z"),
       endDate: new Date("2026-09-30T00:00:00.000Z"),
     })
 
-    const season = findSeasonForDate(
-      new Date("2026-07-03T12:00:00.000Z"),
-      [boundarySeason]
-    )
+    expect(
+      findSeasonForDate(new Date("2026-07-04T00:00:00.000Z"), [boundarySeason])
+        ?.seasonId
+    ).toBe("season-winter-2026")
 
-    expect(season?.seasonId).toBe("season-winter-2026")
+    // The day BEFORE the edge is outside the season on every host and for every
+    // club. Under the old projection a club behind Greenwich matched it here.
+    expect(
+      findSeasonForDate(new Date("2026-07-03T00:00:00.000Z"), [boundarySeason])
+    ).toBeNull()
   })
 
   it("finds summer season for a December date", () => {
@@ -114,12 +139,12 @@ describe("findSeasonForDate", () => {
   })
 
   it("includes start date of season", () => {
-    const season = findSeasonForDate(new Date(2026, 5, 1), allSeasons)
+    const season = findSeasonForDate(new Date("2026-06-01"), allSeasons)
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 
   it("includes end date of season", () => {
-    const season = findSeasonForDate(new Date(2026, 8, 30), allSeasons)
+    const season = findSeasonForDate(new Date("2026-09-30"), allSeasons)
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 
@@ -189,7 +214,19 @@ describe("calculateBookingPrice - single guest", () => {
     ).toThrow("No rate found")
   })
 
-  it("prices a season-boundary stay from browser-submitted NZ local dates", () => {
+  /*
+    The pricing half of the same correction — see the long note on
+    `findSeasonForDate` above for why the old "browser-submitted NZ local dates"
+    framing described a caller that does not exist.
+
+    The night priced here is the season's FIRST night. The old test asked for the
+    night starting at NZ-local midnight on 4 July (`2026-07-03T12:00:00.000Z`)
+    and was answered with the 4 July rate only because the engine projected. Now
+    the stored day decides: the 4 July night is inside the season and the 3 July
+    night is not covered at all, which `calculateBookingPrice` refuses rather
+    than silently pricing at a neighbouring season's rate.
+  */
+  it("prices the season's first night from the stored calendar day", () => {
     const boundarySeason = makeSeason({
       startDate: new Date("2026-07-04T00:00:00.000Z"),
       endDate: new Date("2026-09-30T00:00:00.000Z"),
@@ -197,14 +234,24 @@ describe("calculateBookingPrice - single guest", () => {
     const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true, rateMembershipTypeId: MEMBER_TYPE, rateSource: "OWN_TYPE" }]
 
     const result = calculateBookingPrice(
-      new Date("2026-07-03T12:00:00.000Z"),
-      new Date("2026-07-04T12:00:00.000Z"),
+      new Date("2026-07-04T00:00:00.000Z"),
+      new Date("2026-07-05T00:00:00.000Z"),
       guests,
       [boundarySeason]
     )
 
     expect(result.totalPriceCents).toBe(4500)
     expect(result.guests[0].perNightCents).toEqual([4500])
+
+    // One night earlier is outside the season, so there is no rate to charge.
+    expect(() =>
+      calculateBookingPrice(
+        new Date("2026-07-03T00:00:00.000Z"),
+        new Date("2026-07-04T00:00:00.000Z"),
+        guests,
+        [boundarySeason]
+      )
+    ).toThrow("No rate found")
   })
 })
 
