@@ -24,7 +24,7 @@ reason: one line. The subscription-refresh season is the club's rather than the
   zone-aware one plus the server zone reader.
 
 file: src/app/api/admin/members/[id]/xero-push/route.ts
-lines: 384
+lines: 388
 reason: one line, and the same import swap as above.
 
 file: src/app/api/admin/members/export/route.ts
@@ -35,7 +35,7 @@ reason: four lines. The export's "current season" is pinned to one moment for th
   by inlining a fresh clock read into the loop.
 
 file: src/app/api/admin/members/import/route.ts
-lines: 765
+lines: 769
 reason: one line. The age tier an imported row lands in is judged against the
   club's season start rather than the host's.
 
@@ -70,14 +70,14 @@ reason: eighteen lines across two hoists plus their comments. The member payload
   comments are what stop the next author inlining them back.
 
 file: src/lib/admin-members-service.ts
-lines: 1734
+lines: 1741
 reason: eight lines. The member listing pins one moment for the whole page and
   derives the club's season from it, and the age tier on a created member is
   judged against the club's season start. The comment states that `now` is pinned
   deliberately.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
-lines: 2105
+lines: 2157
 reason: fifty-three lines, and they are the point of the change rather than
   overhead. ONE helper in this pack answered two different temporal questions — a
   booking's stored `checkIn`, and "now" — which is precisely what forced it to read
@@ -117,7 +117,7 @@ reason: fifty-four lines, of which about forty-five are two comments. The FIRST 
   is a rule nobody reads before adding the caller that breaks it.
 
 file: src/lib/nomination.ts
-lines: 2452
+lines: 2482
 reason: four lines. Two season reads and one age-tier reference day move onto the
   club's zone; the growth is the line wrapping the multi-argument call needs.
 
@@ -128,7 +128,7 @@ reason: eight lines. Both audience resolvers take a caller-supplied `now`, which
   three comment lines say that the pinnable moment is still pinnable.
 
 file: src/lib/seasonal-membership-assignments.ts
-lines: 1667
+lines: 1681
 reason: twelve lines. Three functions read the club's current season once at the
   top rather than at each comparison, and the roll-forward shares one value between
   its "is the target the current season?" test, its age-tier reconcile reference day
@@ -136,9 +136,20 @@ reason: twelve lines. Three functions read the club's current season once at the
   question differently at its start and its end. The comment says so.
 
 file: src/lib/xero-member-import.ts
-lines: 1231
+lines: 1259
 reason: one line. The season the import assigns comes from the club's calendar day.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2453
+lines: 2466
 reason: one line. The season stamped on a queued cancellation operation.
+
+file: src/app/api/admin/lodge/route.ts
+lines: 462
+reason: eight lines, added by the correctness review rather than by the migration.
+  `ensureDefaultSeasonSubscriptionForNewMember` REQUIRES the club's season now
+  instead of defaulting it, because its other caller passes a transaction client and
+  a defaulted zone read would have opened a second pool connection on the global
+  Prisma client from inside somebody else's transaction. This route holds no
+  transaction, so both of its two call sites simply pass the value — and the growth
+  is the comment saying why the parameter is required, which is the thing a future
+  reader would otherwise make optional again to save these eight lines.

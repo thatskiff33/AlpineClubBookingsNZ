@@ -59,3 +59,17 @@
   and the old code had silently substituted today's date — so a hosting check was
   being judged in whichever season the site happened to be in rather than the
   booking's.
+
+- **Approving a membership application, importing members from Xero and creating a
+  member by hand are all a little quicker, and none of them can now get the season
+  wrong under load.** Working out which season the club is in means reading the
+  club's timezone from the database, and in a handful of places that read had ended
+  up inside the same database transaction that approves the application — where it
+  competed for a connection with the work it was part of. Worse, that read is
+  written to keep going rather than fail if the database is momentarily busy, so a
+  slow moment could have produced a quietly wrong season, and on the membership
+  approval path the season chooses the joining fee written onto an invoice that
+  cannot be edited afterwards. The season is now worked out once, before that
+  transaction starts, and passed in. A Xero member import used to do the same read
+  once per contact; it now does it once for the whole import, which also means one
+  import can no longer classify its first and last contacts into different seasons.
