@@ -40,7 +40,8 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
-import { getSeasonYear } from "@/lib/utils";
+import { useClubTime } from "@/components/club-time-provider";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -1014,19 +1015,12 @@ function MembershipTypeList({
 }
 
 export default function AdminMembershipTypesPage() {
-  // CT-4 (#2870) DELIBERATELY LEFT THIS ALONE, and the reason is measured
-  // rather than an oversight. `getSeasonYear` reaches
-  // `getSeasonYearForYearEndMonth`, which reads its argument with
-  // `date.getMonth()` / `date.getFullYear()` — HOST-LOCAL getters, so in a
-  // browser this is the viewer's month, not the club's. No call site can fix
-  // that from here: passing a club-derived UTC-midnight Date into a host-local
-  // getter was measured on this epic to make it WORSE for anyone behind UTC,
-  // turning "correct by accident" into a whole wrong day. The only honest fix
-  // is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib`, which is a
-  // different lane's file; it is reported on #2870 with the other 17 sites.
-  // Left consistent with every other season-year derivation rather than
-  // half-fixed, so two admin screens cannot disagree on a boundary day.
-  const defaultSeasonYear = getSeasonYear(new Date());
+  // The club's season, from the zone the SERVER read and handed to the provider
+  // (CT-4 group F1, #2870). Before this it went through a helper that read a
+  // `Date`'s host-local components, so it answered from whatever zone the bundle
+  // was built with rather than the club's.
+  const clubTime = useClubTime();
+  const defaultSeasonYear = clubSeasonYear(clubTime.zone);
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
   const [newDraft, setNewDraft] = useState<DraftMembershipType>(() =>

@@ -1,11 +1,12 @@
 "use client";
 
 import type { AgeTier, SubscriptionStatus } from "@prisma/client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import {
   resetSubscriptionsDatasetSearchParams,
@@ -77,43 +78,33 @@ import {
   type ManualPaymentTarget,
 } from "./_components/manual-payment-dialog";
 
-// CT-4 (#2870) DELIBERATELY LEFT THIS ALONE, and it has TWO problems rather
-// than the one an earlier version of this comment named.
+// THE ACKNOWLEDGED DEFERRAL THIS FILE CARRIED IS CLOSED (CT-4 group F1, #2870),
+// and it had two problems rather than one.
 //
-// 1. THE CLOCK. It reads the BROWSER's clock at module-evaluation time, so a
-//    treasurer abroad can land on the previous season on a boundary day. It is
-//    not fixed here because every other season-year derivation in the product —
-//    the shared `getSeasonYearForYearEndMonth`, seventeen call sites catalogued
-//    on #2870 by group B, and two more admin screens in this group — has the
-//    same clock, and moving one of them alone makes two admin screens DISAGREE
-//    on a boundary day, which is worse than a consistent wrong answer. The
-//    measured fix is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib` (a
-//    different lane's file); passing a club-derived Date into these host-local
-//    getters was measured on this epic to make a behind-UTC deployment worse,
-//    not better.
+// 1. THE ZONE. A module-scope `getSeasonYear(new Date())` with host-local getters,
+//    evaluated once at import in a `"use client"` file. It never read the viewer's
+//    clock, as several comments on this epic claimed: `APP_TIME_ZONE` is
+//    `TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` and `next.config.ts` passes no
+//    `TZ` into the bundle, so what it actually read was the BUILD's zone — the
+//    same wrong answer for every viewer, which is harder to notice, not easier.
+//    It is now `clubSeasonYear(clubTime.zone)` inside the component, where the
+//    zone is the one the SERVER read from `ClubTimeSettings` and handed to the
+//    provider. It could not be fixed by passing a better `Date` in: the helper
+//    read the argument's host-local components, and measured across a host x club
+//    matrix that made a behind-UTC deployment WORSE.
 //
-// 2. THE SEASON START, which this is NOT a copy of. Calling it "a local copy of
-//    the shared season rule" was wrong (CT-4 review): the shared rule derives
-//    the start month from the CONFIGURABLE financial year-end
-//    (`getFinancialYearEndMonth`), while the line below hard-codes April. It is
-//    a copy of the shipped DEFAULT, not of the rule — and a club that moves its
-//    year-end is exactly the deployment `INV-CONFIG-001` exists for.
+// 2. THE SEASON START, which this was NOT a copy of. The hard-coded April was a
+//    copy of the shipped DEFAULT rather than of the rule — the shared rule derives
+//    the start month from the CONFIGURABLE financial year-end. Going through
+//    `clubSeasonYear` means a club that moves its year-end is followed here as
+//    soon as the value reaches the client. It still does not reach it today
+//    (`setFinancialYearEndMonth`'s one non-test caller imports Prisma and is kept
+//    off the client graph by `INV-OPS-013`), so the answer is unchanged for now —
+//    but the RULE is shared, so the divergence cannot reappear.
 //
-//    It is not a live defect today, and the reason is worth writing down rather
-//    than trusting: `setFinancialYearEndMonth` has exactly one non-test caller,
-//    in `financial-year-server.ts`, which imports Prisma and is kept off the
-//    client graph by the client/server boundary census (`INV-OPS-013`). So a
-//    browser bundle never learns a configured value and the shared helper would
-//    return the same April start this hard-codes. It becomes a real divergence
-//    the moment the year-end reaches the client — which is what the
-//    `clubSeasonYear` work in (1) should carry with it.
-function getSeasonYear(date: Date): number {
-  return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
-}
-
-const currentYear = getSeasonYear(new Date());
-const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
-
+// The "(Apr-Mar)" label on the season select below is still hard-coded and is
+// reported on #2870 rather than fixed here: rendering it needs a month name, and
+// `INV-DATE-015` requires an explicitly-pinned formatter for that.
 
 interface Subscription {
   id: string;
@@ -167,11 +158,16 @@ function parsePageParam(value: string | null) {
   return Number.isInteger(page) && page > 0 ? page : 1;
 }
 
-function parseSeasonYearParam(value: string | null) {
+/**
+ * `fallbackYear` is passed in rather than read from a module constant (CT-4,
+ * #2870): the club's current season now comes from the zone the provider carries,
+ * which only exists inside the component tree.
+ */
+function parseSeasonYearParam(value: string | null, fallbackYear: number) {
   const year = Number(value);
   return Number.isInteger(year) && year >= 2020 && year <= 2040
     ? year
-    : currentYear;
+    : fallbackYear;
 }
 
 function getSortBy(value: string | null): SubscriptionSortBy {
@@ -244,7 +240,16 @@ export default function SubscriptionsPage() {
     xeroConnected === true,
   );
   const { confirm, confirmDialog } = useConfirm();
-  const [seasonYear, setSeasonYear] = useState(() => parseSeasonYearParam(searchParams.get("seasonYear")));
+  // The CLUB's current season and the five-year window around it. See the note at
+  // the top of this file: the zone is the persisted one, arriving as data.
+  const currentYear = clubSeasonYear(clubTime.zone);
+  const yearOptions = useMemo(
+    () => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i),
+    [currentYear],
+  );
+  const [seasonYear, setSeasonYear] = useState(() =>
+    parseSeasonYearParam(searchParams.get("seasonYear"), currentYear),
+  );
   const [status, setStatus] = useState(searchParams.get("status") || "all");
   const [ageTier, setAgeTier] = useState<AgeTier | "all">(
     (searchParams.get("ageTier") as AgeTier | "all" | null) || "all"

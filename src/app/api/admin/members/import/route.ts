@@ -6,7 +6,8 @@ import { randomBytes } from "crypto";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { createAuditLog } from "@/lib/audit";
@@ -485,7 +486,7 @@ export async function POST(req: NextRequest) {
     if (dateOfBirth) {
       ageTier = (await computeAgeTier(
         dateOfBirth,
-        getSeasonStartDate(getSeasonYear()),
+        getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
       )) as AgeTier;
     }
 

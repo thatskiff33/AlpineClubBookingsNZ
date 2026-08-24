@@ -29,7 +29,7 @@ import {
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { getSeasonYear } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   AdminAccountGuardError,
   LAST_FULL_ADMIN_BULK_GUARD_MESSAGE,
@@ -324,6 +324,11 @@ export async function POST(req: NextRequest) {
       // day from the PERSISTED club timezone (CT-4, #2870), re-encoded to UTC midnight
       // for the bound (INV-DATE-026).
       const today = dateOnlyInstantOf((await clubTime()).today());
+      // ONE season for the whole batch, from the club's PERSISTED zone (CT-4,
+      // #2870). Read once outside the loop: an age tier decides a price band, so
+      // a bulk run must never be able to judge two members in two seasons.
+      const clubCurrentSeasonYear = clubSeasonYear((await clubTime()).zone);
+      const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
       for (const { member, nextAccessRoles } of setRoleTargets) {
         const wasOrg = isOrganisationMember({
           accessRoleTokens: resolveAccessRoleTokens(member),
@@ -342,13 +347,10 @@ export async function POST(req: NextRequest) {
         const typeExemption = await loadMemberCurrentSeasonTypeExemption(
           prisma,
           member.id,
-          getSeasonYear(),
+          clubCurrentSeasonYear,
         );
         const dobDerivedTier = member.dateOfBirth
-          ? await computeAgeTier(
-              member.dateOfBirth,
-              getSeasonStartDate(getSeasonYear()),
-            )
+          ? await computeAgeTier(member.dateOfBirth, clubCurrentSeasonStart)
           : "ADULT";
         const resolved = resolveEnforcedAgeTier({
           isOrganisation: willBeOrg,

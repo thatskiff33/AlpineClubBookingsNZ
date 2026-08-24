@@ -8,7 +8,8 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
@@ -77,7 +78,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const ageTier = await computeAgeTier(childDob, getSeasonStartDate(getSeasonYear()));
+  const ageTier = await computeAgeTier(
+    childDob,
+    getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
+  );
   if (ageTier === "ADULT") {
     return NextResponse.json(
       { error: "Use the same-email adult request flow for adult members" },

@@ -20,7 +20,7 @@ import {
   summarizeNetCollectedCash,
   summarizeOverlappingGuests,
 } from "@/lib/admin-reports";
-import { getSeasonYear } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   buildBookingDeletedWhere,
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const currentSeasonYear = getSeasonYear(new Date());
+    const currentSeasonYear = clubSeasonYear(zone);
     const currentSeasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
 
     const { capacity: lodgeCapacity, bookingLodgeWhere } =

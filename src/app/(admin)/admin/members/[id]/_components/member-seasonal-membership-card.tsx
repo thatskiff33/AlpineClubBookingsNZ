@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ROLE_LABELS } from "@/lib/member-roles";
-import { formatCents, getSeasonYear } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { useClubTime } from "@/components/club-time-provider";
 import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
@@ -203,20 +204,13 @@ export function MemberSeasonalMembershipCard({
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
   >([]);
-  // CT-4 (#2870) DELIBERATELY LEFT THIS ALONE, and the reason is measured
-  // rather than an oversight. `getSeasonYear` reaches
-  // `getSeasonYearForYearEndMonth`, which reads its argument with
-  // `date.getMonth()` / `date.getFullYear()` — HOST-LOCAL getters, so in a
-  // browser this is the viewer's month, not the club's. No call site can fix
-  // that from here: passing a club-derived UTC-midnight Date into a host-local
-  // getter was measured on this epic to make it WORSE for anyone behind UTC,
-  // turning "correct by accident" into a whole wrong day. The only honest fix
-  // is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib`, which is a
-  // different lane's file; it is reported on #2870 with the other 17 sites.
-  // Left consistent with every other season-year derivation rather than
-  // half-fixed, so two admin screens cannot disagree on a boundary day.
+  // The club's season, from the zone the SERVER read and handed to the provider
+  // (CT-4 group F1, #2870). Before this it went through a helper that read a
+  // `Date`'s host-local components, so the fallback answered from whatever zone
+  // the bundle was built with rather than the club's — and no better argument
+  // could have fixed that, which is why the helper was replaced instead.
   const effectiveCurrentSeasonYear =
-    member.currentSeasonYear ?? getSeasonYear(new Date());
+    member.currentSeasonYear ?? clubSeasonYear(clubTime.zone);
   const seasonalAssignments =
     member.seasonalMembershipAssignments ?? EMPTY_SEASONAL_ASSIGNMENTS;
   const [typesLoading, setTypesLoading] = useState(true);

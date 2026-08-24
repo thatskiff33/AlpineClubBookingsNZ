@@ -8,7 +8,8 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import {
@@ -221,7 +222,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Per-child DOB sanity, mirroring request-child.
-  const seasonStart = getSeasonStartDate(getSeasonYear());
+  const seasonStart = getSeasonStartDate(clubSeasonYear(await clubTimeZone()));
   // CT-4 (#2870): "in the future" means a later CLUB calendar day, taken from
   // the persisted ClubTimeSettings zone and not the container's TZ
   // (INV-CONFIG-002, INV-DATE-019). The date of birth takes no zone at all

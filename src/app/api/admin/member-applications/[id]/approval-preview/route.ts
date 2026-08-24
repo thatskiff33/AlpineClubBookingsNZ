@@ -4,7 +4,8 @@ import { buildApprovalMappingPreview } from "@/lib/member-application-mapping";
 import { personDecisionsSchema } from "@/lib/member-application-decisions";
 import { isFullAdmin } from "@/lib/access-roles";
 import { requireAdmin } from "@/lib/session-guards";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import logger from "@/lib/logger";
 
 const paramsSchema = z.object({ id: z.string().min(1) });
@@ -60,7 +61,7 @@ export async function POST(
     const result = await buildApprovalMappingPreview({
       applicationId: parsedParams.data.id,
       personDecisions: parsed.data.personDecisions ?? null,
-      seasonYear: getSeasonYear(),
+      seasonYear: clubSeasonYear(await clubTimeZone()),
       // #1026 gate: DB-verified session roles (requireAdmin re-reads them), so
       // the privileged-email block can never be dodged with a stale JWT claim.
       actor: {
