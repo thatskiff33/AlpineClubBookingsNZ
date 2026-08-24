@@ -413,6 +413,30 @@ describe("admin dashboard deep links", () => {
     // authority rather than of shape.
     expect(clubToday.getTime()).not.toBe(environmentToday.getTime());
 
+    /*
+      THE MONTH BOUNDS ARE NOT THE ENVIRONMENT'S EITHER — the same negative the
+      seven-day window carries above, and it has to come BEFORE the assertion
+      that uses these literals rather than after it.
+
+      `chooseDivergentClubZone` never checks this pair: `answerKey` is
+      `"today"`, so the chooser verifies `today` against an independent oracle
+      and takes `monthStart`/`monthEnd` on trust. A later edit that drifted
+      those literals into agreeing with the environment is the failure this
+      catches — and placed after the `toContainEqual` below it would never run,
+      because the first failing assertion ends the test. Here it also gives that
+      drift a legible message instead of an opaque deep-equal diff.
+
+      Denver is on 30 June at this instant and the environment on 1 July, so the
+      civil MONTHS differ, not merely the days.
+    */
+    expect(new Date(chosen.monthStart).getTime()).not.toBe(
+      Date.UTC(
+        environmentToday.getUTCFullYear(),
+        environmentToday.getUTCMonth(),
+        1,
+      ),
+    );
+
     // The month bounds behind "revenue this month". Written out by hand rather
     // than recomputed through the kernel, so a kernel defect cannot agree with
     // itself here.
@@ -428,27 +452,5 @@ describe("admin dashboard deep links", () => {
         },
       },
     ]);
-    /*
-      AND THE MONTH BOUNDS ARE NOT THE ENVIRONMENT'S EITHER — the same negative
-      the seven-day window carries above.
-
-      Without this, the month half rests on four hand-written literals that
-      `chooseDivergentClubZone` never checks: `answerKey` is `"today"`, so the
-      chooser verifies `today` against an independent oracle and takes
-      `monthStart`/`monthEnd` on trust. The pair would still be discriminating
-      today — a mutant that made ONLY the month bounds zone-blind was measured
-      as killed — but a later edit to those literals could quietly make them
-      agree with the environment and nothing here would notice.
-
-      Denver is on 30 June at this instant and the environment on 1 July, so
-      the civil MONTHS differ, not merely the days.
-    */
-    expect(new Date(chosen.monthStart).getTime()).not.toBe(
-      Date.UTC(
-        environmentToday.getUTCFullYear(),
-        environmentToday.getUTCMonth(),
-        1,
-      ),
-    );
   });
 });
