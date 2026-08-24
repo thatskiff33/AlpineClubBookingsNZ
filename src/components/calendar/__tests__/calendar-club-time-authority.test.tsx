@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 
@@ -17,6 +23,8 @@ import {
   endOfClubDayExclusive,
   formatClubInstantTime,
   formatClubMonthYear,
+  requireCalendarDate,
+  requireClubTimeZone,
   requireInstant,
   startOfClubDay,
   type ClubTimeZone,
@@ -242,6 +250,75 @@ describe("EventDialog reads and writes CLUB civil time", () => {
     expect(description).toContain(expected);
     expect(expected).not.toBe(environmentAnswer);
     expect(expected).not.toBe(hostAnswer);
+  });
+});
+
+/**
+ * The WIRING of the gap-tolerant end resolver, which the unit tests for
+ * `isoEndFromDateTimeInputs` cannot reach.
+ *
+ * A correctness lens found that both ends of a time inside a spring-forward gap
+ * resolved to the same instant, so the event was stored zero-length. The helper
+ * that fixes it is unit-tested in `calendar-client-club-time.test.ts`; this
+ * asserts the dialog actually calls it, by reading the body it POSTs. Without
+ * this, swapping the dialog back to the naive resolver is invisible.
+ *
+ * The club zone is PINNED, because the property is "this zone's clocks jump over
+ * 02:00 on this date". The premise is asserted rather than assumed.
+ */
+describe("EventDialog does not store a zero-length event inside a DST gap", () => {
+  const CLUB = requireClubTimeZone("Pacific/Auckland");
+  const GAP_DAY = "2026-09-27";
+
+  it("posts an end thirty minutes after the start for a 02:00-02:30 event", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+    const onSaved = vi.fn();
+
+    renderInClubZone(
+      <EventDialog
+        open
+        onOpenChange={vi.fn()}
+        event={null}
+        initialDate={requireCalendarDate(GAP_DAY)}
+        canCreate
+        canManage
+        canEditExisting
+        onSaved={onSaved}
+      />,
+      CLUB,
+    );
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Clocks-forward meeting" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Start time/i), {
+      target: { value: "02:00" },
+    });
+    fireEvent.change(screen.getByLabelText(/^End time/i), {
+      target: { value: "02:30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create event" }));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as { body: string }).body,
+    ) as { startsAt: string; endsAt: string };
+
+    // The premise: 02:00 and 02:30 do not exist on this day in this zone, so a
+    // naive resolution really would have collapsed them onto one instant.
+    expect(
+      clubWallTimeOf(requireInstant(body.startsAt), CLUB).hour,
+      "02:00 resolved to something other than the transition instant — check the tz data still puts New Zealand's spring-forward on 2026-09-27",
+    ).toBe(3);
+    expect(body.endsAt).not.toBe(body.startsAt);
+    expect(
+      (requireInstant(body.endsAt).getTime() -
+        requireInstant(body.startsAt).getTime()) /
+        60000,
+    ).toBe(30);
   });
 });
 

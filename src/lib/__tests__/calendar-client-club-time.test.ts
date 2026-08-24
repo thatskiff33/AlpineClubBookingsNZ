@@ -19,6 +19,7 @@ import {
   formatEventTime,
   formatInstantTime,
   isSameCalendarMonth,
+  isoEndFromDateTimeInputs,
   isoFromDateTimeInputs,
   monthGridRange,
   startOfCalendarMonth,
@@ -335,6 +336,18 @@ describe("the form inputs round-trip through CLUB civil time", () => {
     );
   });
 
+  it("treats an omitted OR EMPTY time as midnight", () => {
+    // `""` is what a cleared `<input type="time">` holds, and "no time given"
+    // and "time cleared" are the same request. A `??` here made the empty case
+    // return null; the sole caller's `|| "00:00"` hid it, and this is exported.
+    const midnight = startOfClubDay(
+      requireCalendarDate("2026-04-16"),
+      RULE_ZONE,
+    ).toISOString();
+    expect(isoFromDateTimeInputs("2026-04-16", RULE_ZONE)).toBe(midnight);
+    expect(isoFromDateTimeInputs("2026-04-16", RULE_ZONE, "")).toBe(midnight);
+  });
+
   it("refuses a malformed date or time instead of inventing a moment", () => {
     expect(isoFromDateTimeInputs("", RULE_ZONE, "19:00")).toBeNull();
     expect(isoFromDateTimeInputs("2026-4-16", RULE_ZONE, "19:00")).toBeNull();
@@ -346,6 +359,121 @@ describe("the form inputs round-trip through CLUB civil time", () => {
   it("hands back an empty input value for an instant it cannot read", () => {
     expect(toDateInputValue("not-an-instant", RULE_ZONE)).toBe("");
     expect(toTimeInputValue("not-an-instant", RULE_ZONE)).toBe("");
+  });
+});
+
+/**
+ * The spring-forward gap, where every wall-clock reading inside one hour resolves
+ * to the same instant.
+ *
+ * A correctness lens measured that resolving both ends of a timed event
+ * independently stored a ZERO-LENGTH event for a time inside the gap —
+ * "3:00 am – 3:00 am" — where the host-local version this migration replaced
+ * stored thirty minutes. It is a regression the migration introduced, one hour of
+ * one day a year, and `isoEndFromDateTimeInputs` exists to close it.
+ *
+ * The zone is PINNED here rather than chosen. The property is "this zone's clocks
+ * jump over 02:00 on this date", which no zone-agnostic chooser can know, and the
+ * premise that makes it meaningful is asserted instead: the gap has to be real.
+ */
+describe("a timed event inside a spring-forward gap keeps its length", () => {
+  // 27 September 2026 is the New Zealand spring-forward Sunday: 02:00 -> 03:00,
+  // so no reading from 02:00 to 02:59 exists.
+  const GAP_DAY = "2026-09-27";
+
+  function wall(iso: string): string {
+    const w = clubWallTimeOf(requireInstant(iso), RULE_ZONE);
+    return `${w.date} ${String(w.hour).padStart(2, "0")}:${String(w.minute).padStart(2, "0")}`;
+  }
+  function minutesBetween(startIso: string, endIso: string): number {
+    return (
+      (requireInstant(endIso).getTime() - requireInstant(startIso).getTime()) /
+      60000
+    );
+  }
+
+  it("has a real gap on the fixture day, or nothing below is being tested", () => {
+    // Both readings collapsing onto one instant IS the premise. If this ever
+    // stops holding — a tz-data change, a different zone — the assertions after
+    // it would pass for the wrong reason.
+    const at0200 = isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "02:00");
+    const at0230 = isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "02:30");
+    expect(at0200).not.toBeNull();
+    expect(at0200).toBe(at0230);
+    expect(wall(at0200 as string)).toBe("2026-09-27 03:00");
+  });
+
+  it("stores the typed duration when BOTH ends fall inside the gap", () => {
+    const start = isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "02:00") as string;
+    const end = isoEndFromDateTimeInputs(
+      GAP_DAY,
+      RULE_ZONE,
+      "02:00",
+      "02:30",
+    ) as string;
+    expect(minutesBetween(start, end)).toBe(30);
+    expect(wall(end)).toBe("2026-09-27 03:30");
+    // The naive resolution — the one this replaces — would have been zero.
+    expect(end).not.toBe(isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "02:30"));
+  });
+
+  it("holds for a gap reading that is not on the hour", () => {
+    const start = isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "02:15") as string;
+    const end = isoEndFromDateTimeInputs(
+      GAP_DAY,
+      RULE_ZONE,
+      "02:15",
+      "02:45",
+    ) as string;
+    expect(minutesBetween(start, end)).toBe(30);
+  });
+
+  it("keeps the EXACT typed end when it survives the transition", () => {
+    /*
+      The trade this makes, pinned so it cannot be undone by "simplifying" the
+      helper into a duration-first one. 01:30 to 03:30 spans two hours of wall
+      clock and one hour of real time; the officer typed 03:30 and must get
+      03:30, not the 04:30 a duration-first version would store.
+    */
+    const end = isoEndFromDateTimeInputs(
+      GAP_DAY,
+      RULE_ZONE,
+      "01:30",
+      "03:30",
+    ) as string;
+    expect(wall(end)).toBe("2026-09-27 03:30");
+    expect(end).toBe(isoFromDateTimeInputs(GAP_DAY, RULE_ZONE, "03:30"));
+  });
+
+  it("changes nothing on an ordinary day", () => {
+    for (const [startTime, endTime] of [
+      ["09:00", "10:30"],
+      ["00:00", "23:59"],
+      ["19:00", "19:01"],
+    ] as const) {
+      expect(
+        isoEndFromDateTimeInputs("2026-09-26", RULE_ZONE, startTime, endTime),
+      ).toBe(isoFromDateTimeInputs("2026-09-26", RULE_ZONE, endTime));
+    }
+  });
+
+  it("leaves a deliberately zero-length event alone, and one that ends early", () => {
+    // The same time typed twice is what the officer asked for, so it is not
+    // repaired into something else — this helper refuses nothing.
+    expect(
+      isoEndFromDateTimeInputs("2026-09-26", RULE_ZONE, "09:00", "09:00"),
+    ).toBe(isoFromDateTimeInputs("2026-09-26", RULE_ZONE, "09:00"));
+    // An end before the start is left to fail the route's own range check,
+    // exactly as before, rather than being silently turned into a duration.
+    expect(
+      isoEndFromDateTimeInputs("2026-09-26", RULE_ZONE, "10:00", "09:00"),
+    ).toBe(isoFromDateTimeInputs("2026-09-26", RULE_ZONE, "09:00"));
+  });
+
+  it("refuses a malformed date or either malformed time", () => {
+    expect(isoEndFromDateTimeInputs("2026-9-26", RULE_ZONE, "09:00", "10:00")).toBeNull();
+    expect(isoEndFromDateTimeInputs("2026-09-26", RULE_ZONE, "nope", "10:00")).toBeNull();
+    expect(isoEndFromDateTimeInputs("2026-09-26", RULE_ZONE, "09:00", "25:00")).toBeNull();
   });
 });
 
