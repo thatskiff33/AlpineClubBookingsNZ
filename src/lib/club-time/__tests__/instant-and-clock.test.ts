@@ -3,10 +3,12 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { requireCalendarDate } from "../calendar-date";
+import { addCalendarDays, requireCalendarDate } from "../calendar-date";
 import { clubToday, fixedClubClock, systemClubClock } from "../clock";
 import {
   calendarDateOfDateOnlyInstant,
+  calendarDateOfSerialisedDbDate,
+  calendarDateOfSerialisedDbDateOrNull,
   clubCalendarDateOf,
   clubWallTimeOf,
   clubZoneOffsetMs,
@@ -148,6 +150,119 @@ describe("projecting an instant into club time", () => {
         `${ms} ms`,
       ).toBe(whole);
     }
+  });
+});
+
+describe("the calendar day a SERIALISED @db.Date carries", () => {
+  it("reads both shapes a serialised date column arrives in", () => {
+    // The JSON form Prisma produces, and the bare day a client sends back.
+    expect(calendarDateOfSerialisedDbDate("2026-07-01T00:00:00.000Z")).toBe(
+      "2026-07-01",
+    );
+    expect(calendarDateOfSerialisedDbDate("2026-07-01")).toBe("2026-07-01");
+    expect(calendarDateOfSerialisedDbDate("2026-07-01T00:00:00Z")).toBe(
+      "2026-07-01",
+    );
+  });
+
+  it("agrees with the Date-taking inverse on every day of a year", () => {
+    /*
+      The two spellings this replaces, compared against each other over a full
+      year including both New Zealand transitions. `calendarDateOfDateOnlyInstant`
+      is the independent oracle: it goes through a `Date` and reads `getUTC*`,
+      where this reads the string prefix, so agreement is evidence rather than a
+      tautology.
+    */
+    let date = cd("2026-01-01");
+    for (let step = 0; step < 400; step += 1) {
+      const serialised = `${date}T00:00:00.000Z`;
+      expect(calendarDateOfSerialisedDbDate(serialised), serialised).toBe(
+        calendarDateOfDateOnlyInstant(new Date(serialised)),
+      );
+      expect(calendarDateOfSerialisedDbDate(date), date).toBe(date);
+      date = addCalendarDays(date, 1);
+    }
+  });
+
+  it("refuses a value whose day does not exist, and never rolls it", () => {
+    // The same no-rolling rule the calendar parser holds: `2026-02-30` is a
+    // refusal, not 2 March. A typo must not become a plausible wrong night.
+    expect(() => calendarDateOfSerialisedDbDate("2026-02-30T00:00:00.000Z")).toThrow(
+      /Not a club calendar date/,
+    );
+    expect(() => calendarDateOfSerialisedDbDate("2026-13-01")).toThrow();
+    expect(() => calendarDateOfSerialisedDbDate("not-a-date")).toThrow();
+    expect(() => calendarDateOfSerialisedDbDate("2026-7-1")).toThrow();
+    expect(() => calendarDateOfSerialisedDbDate("")).toThrow();
+  });
+
+  it("cannot be moved by the host machine's timezone", () => {
+    /*
+      The property that matters: this decode consults no clock and no zone, so a
+      behind-UTC host reads the same day. The premise — that the two host zones
+      really differ — is asserted first, because a vacuous host-zone pair is how a
+      guard in this repository stayed green while its defect was restored.
+    */
+    expect(
+      withTimeZone("America/Los_Angeles", () =>
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ),
+    ).toBe("America/Los_Angeles");
+
+    const answersIn = (hostZone: string) =>
+      withTimeZone(hostZone, () => [
+        calendarDateOfSerialisedDbDate("2026-07-01T00:00:00.000Z"),
+        calendarDateOfSerialisedDbDate("2026-01-01T00:00:00.000Z"),
+        calendarDateOfSerialisedDbDateOrNull("2026-12-31T00:00:00.000Z"),
+      ]);
+    expect(answersIn("UTC")).toEqual(answersIn("America/Los_Angeles"));
+    expect(answersIn("UTC")).toEqual(["2026-07-01", "2026-01-01", "2026-12-31"]);
+  });
+
+  it("answers null rather than throwing, for the client-render case", () => {
+    /*
+      A throw out of a client render blanks the screen; two public token landing
+      pages carried a local `try`/`catch` for exactly that. The null-safe form
+      also absorbs the absent case, so a nullable column needs no guard.
+    */
+    expect(calendarDateOfSerialisedDbDateOrNull(null)).toBeNull();
+    expect(calendarDateOfSerialisedDbDateOrNull(undefined)).toBeNull();
+    expect(calendarDateOfSerialisedDbDateOrNull("")).toBeNull();
+    expect(calendarDateOfSerialisedDbDateOrNull("2026-02-30")).toBeNull();
+    expect(calendarDateOfSerialisedDbDateOrNull("garbage")).toBeNull();
+    expect(calendarDateOfSerialisedDbDateOrNull("2026-07-01T00:00:00.000Z")).toBe(
+      "2026-07-01",
+    );
+  });
+
+  it("agrees with the throwing form wherever the throwing form answers", () => {
+    // Two functions that could drift into disagreeing about what a day is. The
+    // ONLY difference between them is the failure mode.
+    for (const value of [
+      "2026-07-01",
+      "2026-07-01T00:00:00.000Z",
+      "0001-01-01T00:00:00.000Z",
+      "9999-12-31",
+    ]) {
+      expect(calendarDateOfSerialisedDbDateOrNull(value), value).toBe(
+        calendarDateOfSerialisedDbDate(value),
+      );
+    }
+  });
+
+  it("reads a stored day, not an instant, and says so by example", () => {
+    /*
+      THE ONE INPUT ON WHICH THE TWO OLD SPELLINGS DISAGREE, pinned so the
+      docblock's claim is checkable. An offset-bearing string is not a `@db.Date`
+      serialisation, and reparsing one would project it into UTC — 30 June for a
+      value whose own day is 1 July. Reading the prefix cannot be moved that way.
+    */
+    const offsetBearing = "2026-07-01T12:00:00+13:00";
+    expect(calendarDateOfSerialisedDbDate(offsetBearing)).toBe("2026-07-01");
+    expect(
+      calendarDateOfDateOnlyInstant(new Date(offsetBearing)),
+      "the reparsing spelling projects into UTC and lands a day earlier",
+    ).toBe("2026-06-30");
   });
 });
 

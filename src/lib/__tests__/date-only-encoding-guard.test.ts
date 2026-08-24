@@ -117,6 +117,40 @@ const CANONICAL_ENCODERS = new Set([
  */
 const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
 
+/**
+ * Shared helpers that DECODE a stored calendar day and immediately RE-ENCODE it
+ * — the mirror image of {@link INSTANT_PASS_THROUGHS}, and here for the same
+ * reason: without an entry the scanner cannot see what is being handed in.
+ *
+ * `storedDateOnly` is `dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value))`.
+ * The canonical encoder is in there, but it FEEDS ANOTHER CALL rather than being
+ * the result, and `localEncoderAliases` deliberately refuses to follow that
+ * shape — a function that normalises is naming a decision, not hiding one, and
+ * treating every normaliser as a bare rename would ban `parseDateOnly(formatDateOnly(x))`
+ * wrappers wholesale. Correct for the ALIAS BAN, and wrong for the CENSUS: the
+ * 24 call sites written through this helper were classified as nothing at all,
+ * so `storedDateOnly(booking.createdAt)` — a real instant read as its UTC day,
+ * which is `INV-DATE-019` — would have been invisible here.
+ *
+ * NOT A REGRESSION BEING BLESSED: the six file-local clones this helper replaced
+ * (CT-4, #2870) were never classified either, and neither was
+ * `normalizeDateOnlyForTimeZone` before them. This closes a hole that predates
+ * the hoist; the hoist is only what made one entry able to close it.
+ *
+ * A LISTED NAME COUNTS ONLY WHERE IT IS DECLARED, which is what stops the set
+ * being a blanket permission: an unrelated local `storedDateOnly` in some other
+ * module is not silently followed, because {@link declaredRenormalisersIn} looks
+ * for the declaration rather than the call. The staleness assertion further down
+ * fails an entry that names nothing in the tree, so this cannot rot into a set
+ * of dead names the way a bare exclusion list does.
+ *
+ * THE SEQUENCING RULE for {@link CANONICAL_ENCODERS} applies here too, for the
+ * same reason: the census keys on the NAME, so add the new name here before
+ * renaming the function, or there is a window in which 24 sites are unclassified
+ * again.
+ */
+const DATE_ONLY_RENORMALISERS = new Set(["storedDateOnly"]);
+
 /** The helper module itself — the sanctioned home for the raw truncation. */
 const ENCODER_MODULE = "src/lib/date-only.ts";
 
@@ -824,6 +858,36 @@ function localEncoderAliases(sf: ts.SourceFile): {
   return { names, exported };
 }
 
+/**
+ * The {@link DATE_ONLY_RENORMALISERS} names this file DECLARES, top level.
+ *
+ * Keyed on the declaration rather than the call so that a listed name is
+ * followed only in the module that owns it. `localEncoderAliases` cannot answer
+ * this — it refuses the normaliser shape by design — so the two are asked
+ * separately and merged.
+ */
+function declaredRenormalisersIn(sf: ts.SourceFile): string[] {
+  const found: string[] = [];
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name && DATE_ONLY_RENORMALISERS.has(st.name.text)) {
+      found.push(st.name.text);
+    }
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) {
+        if (
+          ts.isIdentifier(d.name) &&
+          DATE_ONLY_RENORMALISERS.has(d.name.text) &&
+          d.initializer != null &&
+          (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))
+        ) {
+          found.push(d.name.text);
+        }
+      }
+    }
+  }
+  return found;
+}
+
 type Encoding = {
   /** `file:line`, for a human reading a failure. NEVER a key — see above. */
   site: string;
@@ -1017,7 +1081,11 @@ function readTreeSources(): Array<{ rel: string; text: string }> {
  */
 function scanEncodings(
   sources: Array<{ rel: string; text: string }> = readTreeSources(),
-): { encodings: Encoding[]; exportedAliases: string[] } {
+): {
+  encodings: Encoding[];
+  exportedAliases: string[];
+  declaredRenormalisers: string[];
+} {
   const encodings: Encoding[] = [];
   const exportedAliases: string[] = [];
 
@@ -1032,8 +1100,16 @@ function scanEncodings(
   // encoder. Collected for EVERY file, including the helper module, so pass 2
   // can follow one across a module boundary.
   const resolvableByFile = new Map<string, Set<string>>();
+  const declaredRenormalisers: string[] = [];
   for (const { rel, sf } of files) {
     const aliases = localEncoderAliases(sf);
+    // A listed renormaliser is resolvable in the module that DECLARES it, which
+    // then reaches its importers through the same named/namespace/dynamic import
+    // resolution every other wrapper uses. See DATE_ONLY_RENORMALISERS.
+    for (const name of declaredRenormalisersIn(sf)) {
+      aliases.names.add(name);
+      declaredRenormalisers.push(name);
+    }
     resolvableByFile.set(rel, aliases.names);
     if (rel !== ENCODER_MODULE) {
       for (const name of aliases.exported) exportedAliases.push(`${rel}: ${name}`);
@@ -1107,10 +1183,14 @@ function scanEncodings(
     ts.forEachChild(sf, visit);
   }
 
-  return { encodings, exportedAliases };
+  return { encodings, exportedAliases, declaredRenormalisers };
 }
 
-const { encodings: ENCODINGS, exportedAliases: EXPORTED_ALIASES } = scanEncodings();
+const {
+  encodings: ENCODINGS,
+  exportedAliases: EXPORTED_ALIASES,
+  declaredRenormalisers: DECLARED_RENORMALISERS,
+} = scanEncodings();
 
 // ---------------------------------------------------------------------------
 
@@ -1402,6 +1482,84 @@ export function due(booking: { createdAt: Date }) {
     expect(encodings.map((e) => `${e.kind}:${e.field}`)).toEqual([
       "instant:createdAt",
     ]);
+  });
+
+  it("follows a shared renormaliser to the value handed in", () => {
+    /*
+      `storedDateOnly` decodes a stored calendar day and re-encodes it, so the
+      canonical encoder inside it FEEDS ANOTHER CALL rather than being the
+      result — the one shape `localEncoderAliases` deliberately will not follow.
+      Correct for the alias ban and wrong for the census, which is why
+      DATE_ONLY_RENORMALISERS exists.
+
+      TWO FILES, because the real arrangement is cross-module: the helper lives in
+      `src/lib/stored-calendar-day.ts` and its callers import it. A one-file
+      fixture would pass through `resolvableByFile` for the same file and prove
+      nothing about the import hop.
+    */
+    const { encodings } = censusOfFiles([
+      {
+        rel: "src/lib/renormaliser-fixture.ts",
+        text: `import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+export function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+`,
+      },
+      {
+        rel: "src/lib/renormaliser-caller-fixture.ts",
+        text: `import { storedDateOnly } from "./renormaliser-fixture";
+export function nights(booking: { checkIn: Date; createdAt: Date }) {
+  return [storedDateOnly(booking.checkIn), storedDateOnly(booking.createdAt)];
+}
+`,
+      },
+    ]);
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `storedDateOnly(booking.createdAt)` reads a real instant as " +
+        "its UTC day, one call further round than `calendarDateOfDateOnlyInstant` " +
+        "written inline. Before DATE_ONLY_RENORMALISERS the census classified " +
+        "nothing written through that helper, so 24 `@db.Date` reads AND any " +
+        "instant that joined them were both invisible. `checkIn` is `@db.Date` " +
+        "and correctly produces no finding; `createdAt` is a bare `DateTime` and " +
+        "must.",
+    ).toEqual(["instant:createdAt"]);
+  });
+
+  it("does not follow an unrelated function that shares a listed name", () => {
+    // The set names a FUNCTION, not a spelling. A local helper elsewhere in the
+    // tree that happens to be called `storedDateOnly` and does something else
+    // must not be followed as if it were the shared one — which is what keys the
+    // set on the declaration rather than on the call.
+    const { encodings } = censusOfFiles([
+      {
+        rel: "src/lib/unrelated-caller-fixture.ts",
+        text: `import { storedDateOnly } from "some-package";
+export function nights(booking: { createdAt: Date }) {
+  return storedDateOnly(booking.createdAt);
+}
+`,
+      },
+    ]);
+
+    expect(encodings).toEqual([]);
+  });
+
+  it("names a renormaliser that really exists in the tree", () => {
+    // The mirror of the reviewed-list staleness rule. An entry naming nothing
+    // classifies nothing, and reads as coverage while covering nothing.
+    expect(
+      [...DATE_ONLY_RENORMALISERS].filter(
+        (name) => !DECLARED_RENORMALISERS.includes(name),
+      ),
+      "INV-DATE-019: a DATE_ONLY_RENORMALISERS entry names no function declared " +
+        "anywhere under src/. Either the helper was renamed — in which case the " +
+        "set must lead the rename, or every call site written through it is " +
+        "unclassified in the window — or it was deleted, and the entry should go " +
+        "with it.",
+    ).toEqual([]);
   });
 
   it("leaves a wrapper that adds MEANING alone", () => {

@@ -9,6 +9,7 @@ import {
   addCalendarMonths,
   calendarDateFromParts,
   calendarDateParts,
+  calendarDayOfWeek,
   calendarMonthOf,
   compareCalendarDates,
   countClubNights,
@@ -17,6 +18,7 @@ import {
   isCalendarDate,
   parseCalendarDate,
   requireCalendarDate,
+  startOfCalendarMonth,
 } from "../calendar-date";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 
@@ -257,6 +259,120 @@ describe("the integer civil-calendar arithmetic agrees with the platform", () =>
   });
 });
 
+describe("the first day of a month", () => {
+  it("floors to the first, and is already there for the first", () => {
+    expect(startOfCalendarMonth(cd("2026-04-16"))).toBe("2026-04-01");
+    expect(startOfCalendarMonth(cd("2026-04-01"))).toBe("2026-04-01");
+    expect(startOfCalendarMonth(cd("2026-12-31"))).toBe("2026-12-01");
+    expect(startOfCalendarMonth(cd("2028-02-29"))).toBe("2028-02-01");
+  });
+
+  it("holds at both ends of the range the brand can carry", () => {
+    // `compose` refuses a year outside 0001-9999, and flooring never leaves the
+    // month it was given, so neither end can throw. A guard that CAN throw here
+    // would be a helper a grid could not call on its own bounds.
+    expect(startOfCalendarMonth(cd("0001-01-01"))).toBe("0001-01-01");
+    expect(startOfCalendarMonth(cd("9999-12-31"))).toBe("9999-12-01");
+  });
+
+  it("agrees with Date.UTC on every month of a long span", () => {
+    /*
+      The independent oracle. `Date.UTC` is not what the implementation uses —
+      that is integer civil arithmetic — so this is a cross-check rather than the
+      tautology comparing the module with itself would be.
+    */
+    for (let year = 1970; year <= 2100; year += 1) {
+      for (let month = 1; month <= 12; month += 1) {
+        const days = daysInCalendarMonth(year, month);
+        for (const day of [1, 15, days]) {
+          const date = calendarDateFromParts(year, month, day);
+          const oracle = new Date(Date.UTC(year, month - 1, 1))
+            .toISOString()
+            .slice(0, 10);
+          expect(startOfCalendarMonth(date), date).toBe(oracle);
+        }
+      }
+    }
+  });
+});
+
+describe("the weekday of a calendar day", () => {
+  it("numbers Sunday 0 through Saturday 6, like getUTCDay", () => {
+    // 2026-04-12 is a Sunday; the week after it is the whole cycle.
+    const week = [
+      "2026-04-12",
+      "2026-04-13",
+      "2026-04-14",
+      "2026-04-15",
+      "2026-04-16",
+      "2026-04-17",
+      "2026-04-18",
+    ];
+    expect(week.map((day) => calendarDayOfWeek(cd(day)))).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ]);
+  });
+
+  it("agrees with getUTCDay on every day of a multi-century span", () => {
+    // The oracle is the reading the spellings this replaces used. Sweeping
+    // 1900-2100 covers the 1900 non-leap century, 2000's leap century, and the
+    // pre-epoch range where the day number is NEGATIVE.
+    let date = cd("1900-01-01");
+    const end = cd("2100-01-01");
+    while (date < end) {
+      const oracle = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+      expect(calendarDayOfWeek(date), date).toBe(oracle);
+      date = addCalendarDays(date, 1);
+    }
+  });
+
+  it("stays in 0-6 for a pre-epoch day, where the day number is negative", () => {
+    /*
+      THE MUTATION THIS CASE EXISTS FOR. `(n + 4) % 7` alone returns a NEGATIVE
+      remainder for a date before 1970, so `calendarDayOfWeek("0001-01-01")` came
+      out as -3 rather than 1 — a plausible-looking number that indexes a weekday
+      array to `undefined`. The double modulo is what fixes it, and JavaScript's
+      `%` is the reason it is needed at all.
+    */
+    for (const day of ["0001-01-01", "1000-06-15", "1969-12-31", "1900-02-28"]) {
+      const value = calendarDayOfWeek(cd(day));
+      expect(value, day).toBeGreaterThanOrEqual(0);
+      expect(value, day).toBeLessThanOrEqual(6);
+      expect(value, day).toBe(new Date(`${day}T00:00:00.000Z`).getUTCDay());
+    }
+  });
+
+  it("is not the host's weekday, which is what the plausible typo gives", () => {
+    /*
+      THE DEFECT THIS EXISTS TO MAKE UNWRITABLE, measured rather than described.
+      The spelling being replaced is `dateOnlyInstantOf(date).getUTCDay()`, and
+      the typo one keystroke away is `.getDay()` — the HOST's weekday for a
+      UTC-midnight encoding, which for any host west of Greenwich is the previous
+      day. A month grid built on it shifts by a whole column, and it is invisible
+      on a New Zealand machine and on a UTC CI runner, which is why the hazard is
+      pinned here rather than left to a comment.
+
+      The premise is asserted before the divergence, because two host zones that
+      resolve to the same zone would make the case pass vacuously.
+    */
+    const typo = (zone: string) =>
+      withTimeZone(zone, () => new Date("2026-04-01T00:00:00.000Z").getDay());
+    expect(
+      withTimeZone("America/Los_Angeles", () =>
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ),
+    ).toBe("America/Los_Angeles");
+
+    expect(typo("UTC")).toBe(3);
+    expect(typo("America/Los_Angeles"), "a behind-UTC host reads Tuesday").toBe(2);
+    // And the kernel answers Wednesday under either, because it reads no clock.
+    expect(calendarDayOfWeek(cd("2026-04-01"))).toBe(3);
+    expect(
+      withTimeZone("America/Los_Angeles", () => calendarDayOfWeek(cd("2026-04-01"))),
+    ).toBe(3);
+  });
+});
+
 describe("no host timezone can reach a calendar date", () => {
   /*
     The premise is asserted first. A host-zone test that pins two zones which
@@ -282,6 +398,8 @@ describe("no host timezone can reach a calendar date", () => {
         nights: countClubNights(cd("2026-04-03"), cd("2026-04-06")),
         range: eachCalendarDate(cd("2026-04-03"), cd("2026-04-06")),
         parts: calendarDateParts(cd("2026-04-16")),
+        monthStart: startOfCalendarMonth(cd("2026-04-16")),
+        weekday: calendarDayOfWeek(cd("2026-04-16")),
       }));
     expect(answersIn("UTC")).toEqual(answersIn("America/Los_Angeles"));
   });

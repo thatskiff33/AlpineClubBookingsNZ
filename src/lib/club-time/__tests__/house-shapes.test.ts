@@ -8,6 +8,7 @@ import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { addCalendarDays, requireCalendarDate } from "../calendar-date";
 import {
   formatClubDate,
+  formatClubDayMonth,
   formatClubInstantDate,
   formatClubInstantDateTime,
   formatClubInstantLongDate,
@@ -15,8 +16,11 @@ import {
   formatClubInstantTime,
   formatClubInstantWeekdayDate,
   formatClubLongDate,
+  formatClubLongWeekday,
+  formatClubLongWeekdayDate,
   formatClubLongWeekdayDayMonth,
   formatClubMonthYear,
+  formatClubShortMonthYear,
   formatClubWeekday,
   formatClubWeekdayDate,
   formatClubWeekdayDay,
@@ -127,6 +131,144 @@ describe("the six shapes are byte-identical to the helpers they replace", () => 
     expect(formatClubLongDate(cd("2026-04-16"))).not.toBe(
       formatClubDate(cd("2026-04-16")),
     );
+  });
+});
+
+describe("the four shapes CT-4 added, and the local formatters they retire", () => {
+  /*
+    EACH ONE EXISTED AS A LOCAL `Intl.DateTimeFormat` FIRST, with a comment saying
+    the kernel had no such shape. So the strongest evidence available is the same
+    as for the six originals: the old options written out BY HAND here — not
+    imported, which would compare the kernel with itself — and swept over 400
+    consecutive days that cross both New Zealand transitions and a leap year.
+
+    Every one is a CALENDAR-DATE shape, so the comparison feeds the old formatter
+    the UTC-midnight encoding under a `"UTC"` pin, which is what the call sites
+    they replace did.
+  */
+  const pinnedUtc = (options: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat(APP_LOCALE, { timeZone: "UTC", ...options });
+
+  it("reproduces each retired local formatter byte for byte, over 400 days", () => {
+    // booking-calendar.tsx, booking-editor.tsx, and the kiosk/chore-sheet pages.
+    const oldLongWeekdayDate = pinnedUtc({
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    // guest-night-grid.tsx, and the dashboard's tight slots.
+    const oldDayMonth = pinnedUtc({ day: "numeric", month: "short" });
+    // finance chart axes.
+    const oldShortMonthYear = pinnedUtc({ month: "short", year: "numeric" });
+    // the calendar subsystem's recurrence labels.
+    const oldLongWeekday = pinnedUtc({ weekday: "long" });
+
+    let date = cd("2026-01-01");
+    for (let step = 0; step < 400; step += 1) {
+      const encoded = new Date(`${date}T00:00:00.000Z`);
+      expect(formatClubLongWeekdayDate(date), date).toBe(
+        oldLongWeekdayDate.format(encoded),
+      );
+      expect(formatClubDayMonth(date), date).toBe(oldDayMonth.format(encoded));
+      expect(formatClubShortMonthYear(date), date).toBe(
+        oldShortMonthYear.format(encoded),
+      );
+      expect(formatClubLongWeekday(date), date).toBe(oldLongWeekday.format(encoded));
+      date = addCalendarDays(date, 1);
+    }
+  });
+
+  it("renders the strings the retired call sites rendered", () => {
+    expect(formatClubLongWeekdayDate(cd("2026-04-16"))).toBe(
+      "Thursday, 16 April 2026",
+    );
+    expect(formatClubDayMonth(cd("2026-04-16"))).toBe("16 Apr");
+    expect(formatClubShortMonthYear(cd("2026-04-16"))).toBe("Apr 2026");
+    expect(formatClubLongWeekday(cd("2026-04-16"))).toBe("Thursday");
+  });
+
+  it("the sweep is not vacuous: all four shapes really differ", () => {
+    /*
+      Four equalities pass perfectly if the four shapes are the same shape. They
+      must also differ from the SIX that already existed, because a new shape that
+      silently duplicated `longWeekdayDayMonth` or `monthYear` would satisfy every
+      assertion above while adding nothing.
+    */
+    const day = cd("2026-04-16");
+    const rendered = [
+      formatClubLongWeekdayDate(day),
+      formatClubDayMonth(day),
+      formatClubShortMonthYear(day),
+      formatClubLongWeekday(day),
+      formatClubDate(day),
+      formatClubLongDate(day),
+      formatClubMonthYear(day),
+      formatClubWeekdayDate(day),
+      formatClubWeekday(day),
+      formatClubWeekdayDay(day),
+      formatClubWeekdayDayMonth(day),
+      formatClubLongWeekdayDayMonth(day),
+    ];
+    expect(new Set(rendered).size).toBe(rendered.length);
+  });
+
+  it("is NOT the composed form, and the composition is what would drift", () => {
+    /*
+      `longWeekdayDayMonth` plus the year is byte-identical for `en-NZ` — which is
+      exactly why four authors were tempted by it, and exactly why this case
+      exists. It is a coincidence of THIS locale's punctuation, not a property:
+      `APP_LOCALE` is configurable, and a locale that ordered the pair differently
+      would silently change every day button in the product. So the equality is
+      pinned as a coincidence rather than relied on as a rule.
+    */
+    const day = cd("2026-04-16");
+    const composed = `${formatClubLongWeekdayDayMonth(day)} ${day.slice(0, 4)}`;
+    expect(formatClubLongWeekdayDate(day)).toBe("Thursday, 16 April 2026");
+    expect(composed, "en-NZ happens to agree; the shape is still declared whole").toBe(
+      "Thursday, 16 April 2026",
+    );
+    // And the declared shape asks Intl rather than assembling, which is the
+    // difference a non-en-NZ locale would expose.
+    expect(formatClubLongWeekdayDate(day)).not.toBe(
+      formatClubLongWeekdayDayMonth(day),
+    );
+  });
+
+  it("cannot be moved by the host machine's timezone", () => {
+    // The premise first: two host zones that resolve the same prove nothing.
+    expect(
+      withTimeZone("America/Los_Angeles", () =>
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ),
+    ).toBe("America/Los_Angeles");
+
+    const answersIn = (hostZone: string) =>
+      withTimeZone(hostZone, () => [
+        formatClubLongWeekdayDate(cd("2026-04-16")),
+        formatClubDayMonth(cd("2026-04-16")),
+        formatClubShortMonthYear(cd("2026-04-16")),
+        formatClubLongWeekday(cd("2026-04-16")),
+      ]);
+    expect(answersIn("UTC")).toEqual(answersIn("America/Los_Angeles"));
+    expect(answersIn("UTC")).toEqual([
+      "Thursday, 16 April 2026",
+      "16 Apr",
+      "Apr 2026",
+      "Thursday",
+    ]);
+  });
+
+  it("survives a day a club zone would have moved", () => {
+    // 2026-04-05 ends NZDT, 2026-03-08 is Havana's midnight jump, 2028-02-29 is a
+    // leap day. A shape that secretly projected through a zone would slip on one.
+    for (const day of ["2026-03-08", "2026-04-05", "2026-09-27", "2028-02-29"]) {
+      expect(formatClubLongWeekdayDate(cd(day)), day).toContain(day.slice(0, 4));
+      expect(formatClubDayMonth(cd(day)), day).toContain(
+        String(Number(day.slice(8, 10))),
+      );
+      expect(formatClubShortMonthYear(cd(day)), day).toContain(day.slice(0, 4));
+    }
   });
 });
 
