@@ -61,9 +61,6 @@ import {
   membershipCancellationInvoiceCheckCacheSizeForTests,
   resetMembershipCancellationInvoiceBlockerCacheForTests,
 } from "@/lib/membership-cancellation-invoice-blockers";
-import { fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
-import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
-import { clubSeasonYear } from "@/lib/financial-year";
 
 const NOW_MS = Date.UTC(2026, 6, 31, 3, 0, 0);
 
@@ -299,10 +296,10 @@ describe("membership cancellation unpaid-invoice blockers", () => {
     expect(mocks.memberSubscriptionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          seasonYear: clubSeasonYear(
-            requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK),
-            fixedClubClock(new Date(NOW_MS)),
-          ),
+          // 31 July 2026 in the club's zone is season 2026 on the default 31-March
+          // year-end. Written out rather than derived: an expectation computed by
+          // the function under test holds for any implementation (#2870).
+          seasonYear: 2026,
           status: { in: ["UNPAID", "OVERDUE"] },
         }),
       }),

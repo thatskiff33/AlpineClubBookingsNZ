@@ -39,23 +39,17 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
 }));
 
-import { requireClubTimeZone } from "@/lib/club-time";
-import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
-import { clubSeasonYear } from "@/lib/financial-year";
-
 /**
- * The season year the code under test will compute for "now".
+ * The season year the code under test computes for "now", WRITTEN OUT.
  *
- * The retired `getSeasonYear()` read the HOST's month; the production paths under
- * test now read the club's PERSISTED zone through
- * `readClubTimeZoneOutsideRequest()` (CT-4 group F1, #2870). With no
- * `ClubTimeSettings` row in these fakes that reader falls back to the documented
- * default, so the oracle names that zone explicitly rather than leaving the answer
- * to whatever the host resolves. `club-season-year.test.ts` is where the
- * discriminating zone assertions live; this is only a fixture oracle.
+ * It used to be derived by calling the same function the production paths call,
+ * which is an expectation that holds for any implementation — including one that
+ * returns a constant (#2870, correctness review). The frozen clock is
+ * 2026-07-01T00:00:00Z; in the club's zone that is 1 July 2026, season 2026 on the
+ * default 31-March year-end. `club-season-year.test.ts` proves the derivation;
+ * these are fixtures.
  */
-const clubCurrentSeasonYear = () =>
-  clubSeasonYear(requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK));
+const CLUB_CURRENT_SEASON_YEAR = 2026;
 
 import {
   getSeasonalMembershipChangePreview,
@@ -713,7 +707,7 @@ describe("seasonal membership assignment preview and save", () => {
   });
 
   it("fires the Xero contact-group trigger only for current-season saves", async () => {
-    const currentSeason = clubCurrentSeasonYear();
+    const currentSeason = CLUB_CURRENT_SEASON_YEAR;
 
     async function saveForSeason(seasonYear: number) {
       const db = makePreviewDb();
@@ -857,12 +851,17 @@ describe("seasonal membership assignment roll-forward", () => {
       db: db as never,
     });
 
-    expect(clubCurrentSeasonYear()).not.toBe(2027);
+    // The premise this case rests on, stated as a fact about the FROZEN CLOCK
+    // rather than as a property of the test's own helper. Asserting the helper
+    // against itself passed under every mutation, including one that returned 1999
+    // (#2870, correctness review).
+    expect(CLUB_CURRENT_SEASON_YEAR).toBe(2026);
+    expect(CLUB_CURRENT_SEASON_YEAR).not.toBe(2027);
     expect(mockTriggerGroupSync).not.toHaveBeenCalled();
   });
 
   it("fires the trigger only for actually-copied candidates when rolling forward to the current season", async () => {
-    const currentSeason = clubCurrentSeasonYear();
+    const currentSeason = CLUB_CURRENT_SEASON_YEAR;
     const priorSeason = currentSeason - 1;
     const candidates = ["member-copy", "member-race"].map((memberId, index) => ({
       id: `assignment-${memberId}`,
@@ -933,7 +932,7 @@ describe("seasonal membership assignment roll-forward", () => {
     mockSweep.mockResolvedValueOnce([
       { bookingId: "bk-1", stayDate: new Date("2099-08-01") },
     ]);
-    const currentSeason = clubCurrentSeasonYear();
+    const currentSeason = CLUB_CURRENT_SEASON_YEAR;
     const priorSeason = currentSeason - 1;
     const personTiers = [
       { ageTier: "INFANT" },
@@ -1075,7 +1074,7 @@ describe("seasonal membership assignment roll-forward", () => {
   });
 
   it("continues past a failed reconcile chunk without rolling back the copy", async () => {
-    const currentSeason = clubCurrentSeasonYear();
+    const currentSeason = CLUB_CURRENT_SEASON_YEAR;
     const priorSeason = currentSeason - 1;
     const ids = Array.from({ length: 30 }, (_, i) => `member-${i}`);
     const candidateMembers = ids.map((id) => ({

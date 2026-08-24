@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   settings: { findUnique: vi.fn() },
@@ -235,6 +235,13 @@ describe("membership subscription billing", () => {
    * environment, the host, or the UTC clock answers 2026-07-01 and fails.
    */
   describe("the default decision date", () => {
+    // One block below pins its own instant to put the club's day on a season edge;
+    // the root hook re-freezes the DEFAULT rather than a suite's pin, so hand it
+    // back explicitly (`AGENTS.md`).
+    afterEach(() => {
+      vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    });
+
     it("is the club's own calendar day, from the persisted zone", async () => {
       mocks.clubTimeSettings.findUnique.mockResolvedValue({
         timeZone: "America/Denver",
@@ -259,35 +266,50 @@ describe("membership subscription billing", () => {
     });
 
     /**
-     * THE HIGHEST-CONSEQUENCE LINE IN THIS LANE, and it needs a HOST sweep to be
-     * testable at all.
+     * THE HIGHEST-CONSEQUENCE LINE IN THIS LANE, and it needs TWO axes moved at
+     * once to be testable at all.
      *
      * Approving a membership application reaches
      * `queueApprovedMembershipSubscriptionCharges` with no decision date, and the
      * season it derives is written into an IMMUTABLE subscription charge and the
-     * Xero invoice queued from it. The retired derivation read that date's
-     * HOST-local month.
+     * Xero invoice queued from it. Two different mistakes produce a wrong season
+     * there, and a fixture that moves only one axis is blind to the other.
      *
-     * WHY THE ZONE ALONE CANNOT CATCH IT. Once the decision date is minted as the
-     * club's own day at UTC midnight, a host-local read gives the SAME answer on
-     * any host at or east of Greenwich — including the CI runner, which resolves
-     * `UTC`. That is precisely the class owner decision 3 (#2870) recorded as
-     * uncatchable without moving the host. So this pins `process.env.TZ` behind
-     * Greenwich and puts the club's day exactly ON a season boundary: with a June
-     * year-end the club's 1 July is the FIRST day of season 2026, while a Denver
-     * host reads that same UTC-midnight value as 30 June — the LAST day of season
-     * 2025.
+     * AXIS 1, THE ZONE. Reading `APP_TIME_ZONE` instead of the club's persisted
+     * setting. The first version of this test persisted `Pacific/Auckland`, which
+     * is exactly what `APP_TIME_ZONE` resolves to under vitest with no `TZ` — so
+     * persisted, environment and a hard-coded `"Pacific/Auckland"` were the same
+     * string. Measured by a review lens: swapping the read for the environment
+     * zone, and swapping it for that literal, each SURVIVED all tests. The club
+     * zone here is therefore `Pacific/Kiritimati` (UTC+14), which the environment
+     * does not hold.
      *
-     * The kill is loud rather than subtle: the wrong season fails
+     * AXIS 2, THE HOST. Once the decision date is minted as the club's own day at
+     * UTC midnight, a host-LOCAL read of it gives the same answer on any host at or
+     * east of Greenwich — including the CI runner, which resolves `UTC`. That is
+     * the class owner decision 3 (#2870) recorded as uncatchable without moving the
+     * host, so `process.env.TZ` is pinned behind Greenwich.
+     *
+     * ONE INSTANT COVERS BOTH. At 11:00Z on 30 June, with a June year-end:
+     *   - the club (UTC+14) is on 1 July — the FIRST day of season 2026;
+     *   - `APP_TIME_ZONE` (UTC+12) is still on 30 June — season 2025;
+     *   - UTC is on 30 June — season 2025;
+     *   - and a Denver host reading the minted `2026-07-01T00:00:00Z` with local
+     *     getters sees 30 June — season 2025.
+     * So every one of the four wrong implementations answers 2025 and the correct
+     * one answers 2026.
+     *
+     * The kill is loud rather than subtle: 2025 fails
      * `buildSubscriptionBillingPreview`'s own bounds check, so the approval throws
      * `Decision date must fall within membership year 2025.` instead of billing
      * quietly against the wrong year.
      */
-    it("bills an approval in the club's season, not the host's, on the boundary", async () => {
+    it("bills an approval in the club's season — not the environment's, the host's, or UTC's", async () => {
       __setFinancialYearEndMonthForTesting(6);
       mocks.clubTimeSettings.findUnique.mockResolvedValue({
-        timeZone: "Pacific/Auckland",
+        timeZone: "Pacific/Kiritimati",
       });
+      vi.setSystemTime(new Date("2026-06-30T11:00:00.000Z"));
 
       await withTimeZoneAsync("America/Denver", async () => {
         const result = await queueApprovedMembershipSubscriptionCharges({

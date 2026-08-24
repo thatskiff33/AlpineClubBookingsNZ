@@ -36,7 +36,6 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-
 // Minimal mocks so importing the Xero invoice line builder is side-effect-free.
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/xero-error-alert", () => ({ notifyXeroSyncError: vi.fn() }));

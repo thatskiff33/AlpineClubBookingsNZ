@@ -30,19 +30,16 @@ import {
   loadMembershipCancellationSubscriptionCreditPlansByMemberId,
   type MembershipCancellationSubscriptionCreditPlan,
 } from "@/lib/membership-cancellation-subscription-credit";
-import { fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
-import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
-import { clubSeasonYear } from "@/lib/financial-year";
 
 const NOW_MS = Date.UTC(2026, 6, 31, 3, 0, 0);
-// The season the CLUB is in at `NOW_MS`. The production path pins the same
-// moment as a clock and reads the club's persisted zone (CT-4 group F1, #2870);
-// with no `ClubTimeSettings` row in this fake that zone is the documented
-// default, named here rather than inherited from the host.
-const SEASON = clubSeasonYear(
-  requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK),
-  fixedClubClock(new Date(NOW_MS)),
-);
+// The season the club is in at the frozen instant, WRITTEN OUT rather than derived
+// (#2870, correctness review). Computing it by calling the same function the code
+// under test calls, with the same arguments, holds for any implementation at all —
+// including one that returns a constant. `club-season-year.test.ts` is where the
+// derivation itself is proved; here the literal is the oracle.
+// `NOW_MS` is 31 July 2026, which in the club's zone is season 2026 on the default
+// 31-March year-end.
+const SEASON = 2026;
 
 type SubscriptionRow = {
   id?: string;

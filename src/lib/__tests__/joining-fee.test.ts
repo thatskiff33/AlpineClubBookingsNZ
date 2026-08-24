@@ -83,6 +83,43 @@ describe("deriveJoiningFeeCategory", () => {
 });
 
 describe("resolveMemberJoiningFeeClassification", () => {
+  it("refuses a transaction client with no explicit season", async () => {
+    /*
+      A CONCURRENCY GUARD, tested directly because nothing else can reach it.
+
+      This function is three hops below `approveMemberApplication`
+      (`enqueueXeroEntranceFeeInvoiceOperation` -> `getEntranceFeeContext` -> here),
+      inside a transaction holding `pg_advisory_xact_lock('member-application:<id>')`
+      plus one `member-lifecycle:<memberId>` lock per MAP target. Resolving the
+      club's zone here is an UNCACHED read on the GLOBAL Prisma client, so a second
+      pool connection under those locks — and `readPersistedClubTimeZoneRow` swallows
+      every throw, so a pool timeout would resolve the season from the environment
+      seed and pick the `JoiningFee` row whose amount lands on an IMMUTABLE invoice.
+
+      The approval threads its pre-transaction season, so the refusal is unreachable
+      from any current caller — which is exactly why removing it SURVIVED the
+      approval suite (measured). A guard whose only protection is that today's
+      callers happen to be correct needs its own test, or the next caller reopens
+      the hole silently.
+    */
+    const txLike = { member: { findUnique: memberFindUnique } } as never;
+
+    await expect(
+      resolveMemberJoiningFeeClassification("m1", txLike),
+    ).rejects.toThrow(/needs an explicit seasonYear when it is given a transaction client/);
+    // It refuses BEFORE reading anything, so no query is made under the caller's locks.
+    expect(memberFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("accepts a transaction client when the season is supplied", async () => {
+    memberFindUnique.mockResolvedValue({ ageTier: "NOT_APPLICABLE" });
+    const txLike = { member: { findUnique: memberFindUnique } } as never;
+
+    await expect(
+      resolveMemberJoiningFeeClassification("org1", txLike, 2026),
+    ).resolves.toMatchObject({ exempt: true });
+  });
+
   it("exempts N/A members BEFORE resolving a membership type", async () => {
     memberFindUnique.mockResolvedValue({ ageTier: "NOT_APPLICABLE" });
 
