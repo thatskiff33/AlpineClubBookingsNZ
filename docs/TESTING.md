@@ -768,6 +768,29 @@ Two things this does *not* cover, so that the list stays honest:
   (`./helpers/migration-gate-timeouts.ts` holds the budgets and the reasoning) —
   it was simply never the reason they were failing.
 
+### A test that launches a process needs its own budget (#3083)
+
+The previous bullet is the general rule, and it applies outside the migration
+gates. `src/lib/__tests__/env-delivery-census.test.ts` renders the Compose
+stacks by running `docker compose config` for real, and it inherited the 5,000ms
+`testTimeout` — a default chosen for in-process work, not for a fork. It went
+red on #3081 with `Test timed out in 5000ms` while the same suite passed on two
+other pull requests minutes earlier at the same base, which is the "a different
+one fails each run" signature of a budget rather than a defect.
+
+So an `it()` that shells out carries an inline timeout, measured and reasoned
+where it is written. `COMPOSE_RENDER_TIMEOUT_MS` in that file is 30,000ms
+against a ~200ms idle render, because contention is the whole variable: the same
+render measured 530ms with 24 running at once and 2,104ms with 72, on a 20-core
+host. Like the migration-gate budgets, it is a **hang-catcher, not a pass mark**
+— on CI these finish in well under a second, so the number never decides a pull
+request.
+
+Raise it per test, never globally. `vitest.setup.ts` states `testTimeout` is
+5,000ms and calibrates the 4,000ms RTL window to sit a clear second below it, so
+a global change falsifies a documented constant in another file — and it would
+let thousands of ordinary tests hang six times as long to buy headroom for six.
+
 ## Census tests and the merge hazard
 
 A third convention that is load-bearing rather than stylistic, for the same
