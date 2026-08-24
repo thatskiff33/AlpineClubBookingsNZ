@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { APP_TIME_ZONE } from "@/config/operational";
 import {
@@ -23,6 +23,7 @@ import {
   type RecurrenceRule,
 } from "@/lib/calendar-recurrence";
 import { divergentClubZone } from "./helpers/club-time-zone";
+import { captureHostTimeZone } from "./helpers/timezone";
 
 /**
  * The zone for the blocks below whose subject is a ZONE-INDEPENDENT rule —
@@ -367,6 +368,86 @@ describe("generateOccurrenceStarts — DST in the club's zone", () => {
       .slice(1)
       .map((start, i) => start.getTime() - starts[i].getTime());
     expect(new Set(spans).size).toBe(2);
+  });
+});
+
+/**
+ * The `LONG_WEEKDAY` pin, and why it needs its own block.
+ *
+ * A calendar-date formatter is built at MODULE LOAD, pinned to `"UTC"` because
+ * that is an identity over the UTC-midnight encoding rather than a projection.
+ * Nothing in a normal run can tell that pin from `APP_TIME_ZONE`: this repository
+ * resolves `Pacific/Auckland` for `APP_TIME_ZONE`, and reading a UTC-midnight
+ * encoding anywhere east of Greenwich gives back the same day. Owner decision 3
+ * on #2870 recorded that class as uncatchable by running the suite once.
+ *
+ * A review lens then measured the consequence precisely: swapping this file's
+ * pin to `APP_TIME_ZONE` killed 0 of 124, while the identical swap in
+ * `calendar-client.ts` killed 1 — because that file had the re-imported-graph
+ * block below and this one did not. `LONG_WEEKDAY` is also the bare long-weekday
+ * shape reported as MISSING from `HOUSE_SHAPES`, so it is the newest formatter in
+ * the subsystem and was the only one with nothing guarding it.
+ *
+ * `vi.resetModules()` plus a dynamic import re-evaluates `@/config/operational`,
+ * so `APP_TIME_ZONE` really becomes a behind-UTC zone for that copy of the
+ * module. A `"UTC"` pin is unmoved by that; an `APP_TIME_ZONE` pin renders the
+ * day BEFORE the one it was handed, which turns Tuesday into Monday.
+ *
+ * This is not the whole of CT-6's hostile-zone proof (#2991) — it covers this
+ * module's one shape — but it is the shape that proof will take.
+ */
+describe("the weekday labels do not follow the ENVIRONMENT's zone", () => {
+  const hostTimeZone = captureHostTimeZone();
+
+  afterEach(() => {
+    hostTimeZone.restore();
+    vi.resetModules();
+  });
+
+  async function labelsUnderEnvironmentZone(environmentZone: string): Promise<{
+    appTimeZone: string;
+    weekly: string | undefined;
+    described: string;
+  }> {
+    process.env.TZ = environmentZone;
+    vi.resetModules();
+    const operational = await import("@/config/operational");
+    const recurrence = await import("@/lib/calendar-recurrence");
+    const kernel = await import("@/lib/club-time");
+    // 21 Jul 2026 is a Tuesday. Both entry points read the same formatter, so
+    // both are checked — the picker a manager chooses from, and the summary
+    // rendered beside a stored series.
+    const date = kernel.requireCalendarDate("2026-07-21");
+    return {
+      appTimeZone: operational.APP_TIME_ZONE,
+      weekly: recurrence
+        .recurrenceOptionsForDate(date)
+        .find((o) => o.value === "WEEKLY")?.label,
+      described: recurrence.describeRecurrence(
+        { frequency: "MONTHLY_NTH_WEEKDAY", interval: 1, endMode: "never" },
+        kernel.requireInstant("2026-07-21T00:00:00.000Z"),
+        kernel.requireClubTimeZone("Pacific/Auckland"),
+      ),
+    };
+  }
+
+  it("names Tuesday for a club whose environment zone is behind UTC", async () => {
+    const behind = await labelsUnderEnvironmentZone("America/Denver");
+    // The premise: the re-import really moved the environment's zone. Without
+    // this the assertions below would be proving nothing.
+    expect(
+      behind.appTimeZone,
+      "the re-imported module graph did not pick up the pinned TZ, so this assertion proves nothing",
+    ).toBe("America/Denver");
+    expect(behind.weekly).toBe("Weekly on Tuesday");
+    expect(behind.described).toBe("Monthly on the 3rd Tuesday");
+  });
+
+  it("names Tuesday for an environment zone far ahead of UTC too", async () => {
+    const ahead = await labelsUnderEnvironmentZone("Pacific/Kiritimati");
+    expect(ahead.appTimeZone).toBe("Pacific/Kiritimati");
+    expect(ahead.weekly).toBe("Weekly on Tuesday");
+    expect(ahead.described).toBe("Monthly on the 3rd Tuesday");
   });
 });
 
