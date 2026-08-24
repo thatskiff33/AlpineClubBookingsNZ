@@ -214,23 +214,34 @@ Two honest limits while both exist:
   a season year read with host-local getters, and the remaining half of the
   booking-date projection the policy-exception engine executes through.
 
-  That second one is **half closed, and the half that is left still reaches
-  execution.** The pricing engine now decodes a stored calendar day in UTC rather
-  than projecting it, which `INV-DATE-019`'s first exact boundary blesses for a
-  `@db.Date` value — so on the MODIFICATION path the officer, the capacity
-  recheck and the executor agree on the nights the member asked for. On the
-  NEW-BOOKING path they do not yet: `normalizeGuestStayRange`
-  (`src/lib/booking-guest-stay-range-input.ts`, #2870 item 6) still projects the
-  booking envelope through `APP_TIME_ZONE` before defaulting a guest who supplied
-  no dates of their own, which is what the member form sends unless multi-range
-  mode is open. For a club behind Greenwich that guest is still frozen, reviewed
-  and booked a night early. The error is halved, not removed, and the remaining
-  half is pinned by
-  `src/lib/__tests__/booking-exception-new-booking-guest-frame.test.ts`. So "is this
-  application running on the persisted zone?" has a different answer per surface
-  until CT-6 (#2991) retires the adapters, and until then no green suite settles
-  it: on a deployment where the environment and the persisted value agree —
-  which is every deployment today, and which
+  That second one is **now closed on both paths, and how it was reported is the
+  part worth keeping.** The pricing engine decodes a stored calendar day in UTC
+  rather than projecting it, which `INV-DATE-019`'s first exact boundary blesses
+  for a `@db.Date` value; group F4b then did the same for
+  `normalizeGuestStayRange` (`src/lib/booking-guest-stay-range-input.ts`), which
+  had still been projecting the booking envelope through `APP_TIME_ZONE` before
+  defaulting a guest who supplied no dates of their own — what the member form
+  sends unless multi-range mode is open. So the officer, the capacity recheck and
+  the executor now agree on the nights the member asked for.
+
+  **This entry used to say the defect was confined to the NEW-BOOKING path, and
+  that was wrong.** `resolveModificationStayRanges` normalises every ADDED guest
+  through that same helper, so a member adding a guest to an existing booking
+  without giving them dates hit it too — and the two passes of that one function
+  disagreed with each other, leaving the guest's resolved range a night outside
+  the envelope the same call returned. The claim originated in a code comment,
+  travelled into #2870's residual list, and was recorded as fact for two groups
+  before anyone read the call graph. It is the same lesson as the season year
+  above, from the other direction: **a published claim about which surfaces a
+  temporal defect reaches is only as good as the census behind it.** Both halves
+  are pinned — `booking-exception-new-booking-guest-frame.test.ts` for the
+  new-booking freeze and `booking-range-less-guest-frame.test.ts` for the
+  modification resolver, each on the environment and the host axis.
+
+  So "is this application running on the persisted zone?" still has a different
+  answer per surface until CT-6 (#2991) retires the adapters, and until then no
+  green suite settles it: on a deployment where the environment and the persisted
+  value agree — which is every deployment today, and which
   `club-time-zone-env-agreement.test.ts` pins — **no test can detect the
   difference.**
 - **The scheduled jobs read the zone once, at boot.** All 25 of them, plus the
