@@ -300,14 +300,29 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
       replay both reached it and therefore stayed wrong together, which is the
       one reason group B could leave it.
 
-      `normalizeBookingDate` now decodes the stored day in UTC
-      (`INV-DATE-010`: UTC midnight is the ENCODING of a calendar day, and no rule
-      may be derived from reading these values in another zone), so the nights are
-      the stored days: 4, 5 and 6 July for the requested `[04, 07)` envelope.
+      `normalizeBookingDate` now decodes the stored day in UTC, which
+      `INV-DATE-019`'s first exact boundary blesses by name — "truncating an
+      existing `@db.Date` value the same way is fine … it is not fine for a
+      `DateTime` column" — over the columns `INV-DATE-026` establishes as calendar
+      days. `INV-DATE-010` is why the value is an ENCODING rather than a moment,
+      and is NOT the citation for the decode: its closing clause says no rule may
+      be derived from the UTC READING of these values, which is the opposite
+      sentence, and this comment used to attribute the inverse to it. Either way
+      the nights are the stored days: 4, 5 and 6 July for the requested
+      `[04, 07)` envelope.
 
       This assertion is what keeps that closed. With the old projection restored
       it goes back to naming 3 July, on any host, because the zone is mocked
       rather than read from the machine.
+
+      WHAT IS NOT CLOSED, so that removing group B's pin does not remove the
+      warning with it: the MODIFICATION path resolves guest ranges through
+      `resolveModificationStayRanges`, which never reaches
+      `normalizeGuestStayRange`. The NEW-BOOKING path does, and a guest who
+      supplies no dates of their own is still defaulted from an envelope projected
+      through `APP_TIME_ZONE` (#2870 item 6). Group B's pin therefore moves rather
+      than disappearing — it is now
+      `src/lib/__tests__/booking-exception-new-booking-guest-frame.test.ts`.
     */
     const { proposed } = await freezeProposal();
     expect(proposed.guests[0].nights).toEqual([
@@ -346,9 +361,9 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
     ) as [string, Date, Date, { nights: string[] }[]];
 
     expect(lodgeId).toBe("lodge_1");
-    // Read in UTC, which is the only legal reading of a date-only value
-    // (INV-DATE-010). The window is half-open, so it ends the morning after the
-    // last night (INV-DATE-003).
+    // Read in UTC, which is the correct reading of a UTC-midnight column
+    // (INV-DATE-013, INV-DATE-019's first boundary). The window is half-open, so
+    // it ends the morning after the last night (INV-DATE-003).
     expect(formatDateOnly(checkIn)).toBe(STORED_CHECK_IN);
     expect(formatDateOnly(checkOut)).toBe(REQUESTED_CHECK_OUT);
     expect(ranges).toEqual([
