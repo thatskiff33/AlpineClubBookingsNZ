@@ -53,7 +53,7 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
 - **Server component or route** — `await clubTime()` from `club-time/server`,
   which is `server-only` and request-scoped through React `cache()`. It returns
   a bound API so you do not thread the zone through every call.
-- **A shared `src/lib` module — NOT `club-time/server`.** Use
+- **A shared `src/lib` module a CLI can reach — and only then.** Use
   `readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`.
   `server-only` is a bare `throw` that is inert only under the `react-server`
   condition, which `tsx` does not set, so a shared module importing
@@ -63,6 +63,27 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   seed the same way. `cli-server-only-reach-census.test.ts` is the guard, and it
   derives its entry points from where they are actually invoked rather than from
   a list somebody has to remember to extend.
+
+  **"Shared `src/lib` module" is not the test — being CLI-REACHABLE is**, and
+  the difference is one decision this file now makes once instead of leaving to a
+  per-file coin flip (#2870). A `src/lib` service that only a route and a React
+  render ever import should use `clubTime()` / `clubTimeZone()` from
+  `club-time/server`, because those are request-scoped through React `cache()`:
+  `readClubTimeZoneOutsideRequest()` is deliberately not memoised, so every call
+  is another `clubTimeSettings.findUnique`. `admin-payments-service.ts` is the
+  worked example — it takes the CLI-safe reader on a path that is only ever a
+  React request, and pays one extra settings query per payments-list request with
+  a date bound for a `server-only` hazard that module does not actually have.
+
+  **How to check, rather than guess.** Run
+  `cli-server-only-reach-census.test.ts`: it walks the real import graph from
+  every CLI entrypoint, so if your module is reachable from one it will say so.
+  If nothing reaches it, `club-time/server` is the right reader and the memo is
+  free. If something does — or if you are writing the module a diagnostics pack
+  is about to import — take the runtime reader and say in its docblock which
+  entrypoint made that necessary, so the next reader can re-measure the claim
+  rather than inherit it. A docblock asserting a hazard that no longer exists is
+  the pattern this repository keeps re-finding; measuring beats repeating.
 - **Client component** — `useClubTime()`, from `@/components/club-time-provider`.
   The zone is resolved on the server and delivered through a context mounted by
   exactly two components, `AppProviders` and `WebsiteChrome`, which between them
@@ -126,6 +147,41 @@ where midnight is skipped in 19 zones. It is **not** safe in principle. Over
 country crossing the line skips a whole calendar day, midday included, most
 recently Apia and Fakaofo on 30 December 2011. So `noonOfClubDay` still carries a
 policy, and the code handles that case rather than assuming it away.
+
+## Reaching for the right helper
+
+The kernel grew ten entry points during CT-4's last group (#2870), plus one
+bridge beside it, and every one arrived because several call sites had already
+written the line out by hand and said so in a comment. If you are about to write
+one of these, there is a function.
+
+| You are about to write | Use instead |
+| --- | --- |
+| `requireCalendarDate(v.slice(0, 10))`, or `calendarDateOfDateOnlyInstant(new Date(v))`, over a serialised `@db.Date` | `calendarDateOfSerialisedDbDate(v)` — and the `…OrNull` sibling inside a client render, where a throw blanks the screen |
+| `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)` | `endOfClubDayInclusive(d, zone)` — but prefer the half-open bound wherever a `lt` will do |
+| `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
+| `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
+| a month key with `-01` glued on, or `new Date(y, m, 1)` | `startOfCalendarMonth(date)` |
+| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
+| `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
+
+Two rules the table cannot express.
+
+**A new display shape is DECLARED WHOLE, never composed.**
+`formatClubLongWeekdayDayMonth` plus `" 2026"` really does produce
+"Thursday, 16 April 2026" for `en-NZ` — which is why four separate authors
+reached for it — and it is a coincidence of this locale's punctuation rather than
+a property. `APP_LOCALE` is configurable, so a locale ordering the pair
+differently would silently change every day button in the product. The one shape
+that IS assembled, `formatClubWeekdayDay`, appends a bare integer taken from the
+calendar-date string, which has no locale form to get wrong.
+
+**`storedDateOnly` is the one helper here that is not kernel-shaped, and it lives
+outside `src/lib/club-time/**` for that reason.** `Date` in and `Date` out keeps
+the working value a `Date`, where the kernel's own answer is that a stored day
+becomes a `CalendarDate` at the boundary and stays one. It exists because six
+modules' comparisons are still written in `Date`s; CT-6 (#2991) is where those
+become calendar-date comparisons and the bridge goes away.
 
 ## The stay window
 
@@ -210,6 +266,15 @@ Two honest limits while both exist:
   kernel has already been caught by twice. A stay window is arrival and departure
   instants; occupancy is nights, and the two must not be computed from each
   other.
+- `date-only-encoding-guard.test.ts` FOLLOWS the shared renormalisers by name,
+  through `DATE_ONLY_RENORMALISERS`. That census classifies a call site by the
+  Prisma field it reads, and it deliberately does not follow a wrapper whose
+  encoder feeds another call rather than being the result — correct for its alias
+  ban, and it left every site written through `storedDateOnly` classified as
+  nothing at all. Both that helper and `pricing.ts`'s stricter
+  `normalizeBookingDate` are listed, so `storedDateOnly(booking.createdAt)` is now
+  reported rather than invisible. **The set keys on the NAME**, so it has to lead
+  a rename, or there is a window in which two dozen sites are unclassified again.
 - `parseInstant` refuses an impossible date — `2026-02-30T00:00:00Z` is `null`,
   not 2 March. It is the provider boundary, so it holds the same no-rolling rule
   the calendar parser does.

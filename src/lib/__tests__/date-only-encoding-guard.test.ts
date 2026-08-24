@@ -149,7 +149,16 @@ const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
  * renaming the function, or there is a window in which 24 sites are unclassified
  * again.
  */
-const DATE_ONLY_RENORMALISERS = new Set(["storedDateOnly"]);
+const DATE_ONLY_RENORMALISERS = new Set([
+  "storedDateOnly",
+  // `pricing.ts`'s own strict-contract variant of the same expression (F2,
+  // #3076). Its docblock says this census "cannot cover this site" because the
+  // receiver at the DEFINITION is a bare parameter — true, and it stops there.
+  // Its CALL SITES are field accesses, and those are exactly what this set makes
+  // reachable, so `normalizeBookingDate(guest.stayStart)` is now classified and a
+  // future `normalizeBookingDate(booking.createdAt)` would be reported.
+  "normalizeBookingDate",
+]);
 
 /** The helper module itself — the sanctioned home for the raw truncation. */
 const ENCODER_MODULE = "src/lib/date-only.ts";
@@ -1526,6 +1535,57 @@ export function nights(booking: { checkIn: Date; createdAt: Date }) {
         "and correctly produces no finding; `createdAt` is a bare `DateTime` and " +
         "must.",
     ).toEqual(["instant:createdAt"]);
+  });
+
+  it("lists exactly the renormalisers this tree has, named explicitly", () => {
+    /*
+      THE CASE BELOW IS DRIVEN FROM THE SET, so deleting an entry also deletes its
+      own coverage — a guard whose only measured call comes from its own
+      scaffolding, which is the vacuity class this epic keeps re-finding. Measured:
+      removing `normalizeBookingDate` from the set left all 31 cases passing.
+
+      So the membership is named here as a literal. A DELETION fails this case; an
+      ADDITION without coverage fails the loop below; a rename fails the staleness
+      assertion further down. Between the three there is no way to change this set
+      quietly.
+    */
+    expect([...DATE_ONLY_RENORMALISERS].sort()).toEqual([
+      "normalizeBookingDate",
+      "storedDateOnly",
+    ]);
+  });
+
+  it("follows EVERY name in the set, not just the first", () => {
+    /*
+      Removing a name from DATE_ONLY_RENORMALISERS must break something, or the
+      entry is decoration. The case above covers `storedDateOnly`; this one covers
+      `normalizeBookingDate`, whose guards keep it a separate function in
+      `pricing.ts` and whose call sites are therefore classified only because its
+      name is listed too. Driven from the set itself, so a name added later
+      without a case fails here rather than going unverified.
+    */
+    for (const name of DATE_ONLY_RENORMALISERS) {
+      const { encodings } = censusOfFiles([
+        {
+          rel: "src/lib/set-driven-fixture.ts",
+          text: `import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+export function ${name}(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+export function read(booking: { createdAt: Date }) {
+  return ${name}(booking.createdAt);
+}
+`,
+        },
+      ]);
+      expect(
+        encodings.map((e) => `${e.kind}:${e.field}`),
+        `INV-DATE-019: DATE_ONLY_RENORMALISERS lists \`${name}\`, but the census does ` +
+          "not follow it, so every call site written through it is classified as " +
+          "nothing. Either the set entry does nothing or the scanner stopped " +
+          "reading it.",
+      ).toEqual(["instant:createdAt"]);
+    }
   });
 
   it("does not follow an unrelated function that shares a listed name", () => {

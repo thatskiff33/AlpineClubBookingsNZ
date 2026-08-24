@@ -45,6 +45,33 @@
  * quoted a date-change charge — so the whole set moves together and stays
  * together.
  *
+ * ## The seventh instance, and why it is NOT collapsed into this one
+ *
+ * `normalizeBookingDate` in `src/lib/policies/pricing.ts` (F2, #3076) has the
+ * same body wearing two pre-guards: it refuses an Invalid Date, and it refuses
+ * any value whose time is not an exact multiple of a day. Its docblock names this
+ * hoist and asks that whatever the hoist becomes keep those guards. It is
+ * deliberately still a separate function, and the reason is that the guards are
+ * not a strictness this helper can adopt:
+ *
+ * - **Adding the modulus guard here would change behaviour at 24 existing call
+ *   sites**, several of which normalise a value derived from request input rather
+ *   than read straight off a `@db.Date` column — `finalRequestedCheckIn` in the
+ *   modify-quote route, `guest.stayStart ?? booking.checkIn` in the stay-range
+ *   resolver. Any of those that ever carries a time of day floors today and would
+ *   throw instead, inside the largest money-adjacent route in the tree. That is a
+ *   behaviour change, not a hoist.
+ * - **Dropping the guards there** would remove a control F2 added on measured
+ *   evidence: removing the zone projection also removed a safety net that had been
+ *   making a mis-typed instant accidentally right for a New Zealand club.
+ *
+ * So the pricing engine holds the stricter contract its own inputs justify, and
+ * this holds the permissive one its callers already depend on. If a later lane
+ * DOES want one function, the question to answer first is whether all 24 sites can
+ * accept a throw — not whether the two bodies look alike. They do look alike; that
+ * is what makes this worth writing down. Both names are listed in
+ * `DATE_ONLY_RENORMALISERS` so the encoding census follows either.
+ *
  * ## It is a census participant, not just a helper
  *
  * `date-only-encoding-guard.test.ts` follows this function by name, so a call
