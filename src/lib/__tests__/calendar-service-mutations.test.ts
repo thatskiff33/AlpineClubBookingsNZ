@@ -267,6 +267,25 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
+/**
+ * The club's PERSISTED zone, pinned rather than left to fall out of the fake
+ * Prisma above (CT-4 group F5, #2870).
+ *
+ * `clubTimeZone()` falls back to the environment seed when there is no
+ * `ClubTimeSettings` row, and this fake has no such table — so without this mock
+ * the suite's club zone would silently be `APP_TIME_ZONE`, which is exactly the
+ * "cannot tell the persisted zone from the environment" trap the epic keeps
+ * finding. `America/Denver` is deliberately BEHIND UTC: this suite's subject is
+ * the single-versus-series edit semantics, and pinning a behind-UTC club proves
+ * those hold for the deployments where this epic's date defects show. Zone
+ * AUTHORITY is asserted in `calendar-service.test.ts`, which uses a zone chosen
+ * to diverge from both wrong answers.
+ */
+const CLUB_ZONE = "America/Denver";
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: vi.fn(async () => CLUB_ZONE),
+}));
+
 import {
   createCalendarEvent,
   updateCalendarEvent,
@@ -288,8 +307,11 @@ function data(overrides: Partial<ResolvedEventData> = {}): ResolvedEventData {
     details: null,
     allDay: false,
     isMeeting: false,
-    startsAt: new Date(2026, 7, 3, 18, 0), // Mon 3 Aug 2026, 6pm
-    endsAt: new Date(2026, 7, 3, 19, 0),
+    // Midday club time on Monday 3 Aug 2026, written as a real instant rather
+    // than host-local components so the club calendar day is the same on every
+    // machine that runs this.
+    startsAt: new Date("2026-08-03T18:00:00.000Z"),
+    endsAt: new Date("2026-08-03T19:00:00.000Z"),
     recurrence: null,
     ...overrides,
   };
