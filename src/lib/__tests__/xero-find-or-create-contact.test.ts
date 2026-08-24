@@ -27,6 +27,19 @@ const mocks = vi.hoisted(() => {
     xeroToken: {
       findFirst: vi.fn(),
     },
+    /*
+      #3034/#3036: `findOrCreateXeroContact` now asks which installation this is
+      before it does anything. A MISSING delegate here is an UNREADABLE override,
+      which resolves UNKNOWN whatever the declaration says — so without this the
+      whole suite would test the refusal path and every existing assertion below
+      would fail for the wrong reason. Declared inline rather than imported from a
+      helper because `vi.hoisted` runs above this file's imports.
+    */
+    environmentSafetySettings: { findUnique: vi.fn() },
+    xeroSandboxContactContainment: {
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
   };
 
   const xeroClientInstance = {
@@ -36,6 +49,9 @@ const mocks = vi.hoisted(() => {
     accountingApi: {
       createContacts: vi.fn(),
       getContacts: vi.fn(),
+      // #3036: read back and, on a copy, contain a contact's stored address.
+      getContact: vi.fn(),
+      updateContact: vi.fn(),
     },
   };
 
@@ -177,6 +193,16 @@ import {
   findOrCreateXeroContact,
   resetXeroRateLimitStateForTests,
 } from "@/lib/xero";
+import {
+  declareEnvironmentRole,
+  expectEnvironmentRolePremise,
+  undeclareEnvironmentRole,
+} from "@/lib/__tests__/helpers/environment-role";
+import {
+  toXeroSandboxContactEmail,
+  xeroSandboxContainmentTarget,
+} from "@/lib/xero-sandbox-contact-email";
+import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 
 describe("findOrCreateXeroContact", () => {
   beforeEach(() => {
@@ -186,6 +212,18 @@ describe("findOrCreateXeroContact", () => {
       "XERO_ENCRYPTION_KEY",
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     );
+    // Unless a test says otherwise this suite is the club's LIVE site, where
+    // #3036's containment is a no-op and everything below is what it always was.
+    declareEnvironmentRole("production");
+    mocks.prisma.environmentSafetySettings.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: { contacts: [{ contactID: "xero_existing", emailAddress: "member@example.com" }] },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
 
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.tx.$executeRaw.mockResolvedValue(undefined);
@@ -206,6 +244,7 @@ describe("findOrCreateXeroContact", () => {
   });
 
   it("trusts an existing member.xeroContactId without verifying it via Xero", async () => {
+    await expectEnvironmentRolePremise("PRODUCTION");
     mocks.tx.member.findUnique.mockResolvedValue({
       id: "mem_1",
       email: "member@example.com",
@@ -618,5 +657,404 @@ describe("findOrCreateXeroContact", () => {
       },
       { store: mocks.tx },
     );
+  });
+});
+
+/**
+ * INV-CONFIG-005 (ENV-SAFETY 3, #3036; epic #2986): what the funnel does about
+ * the address on the contact it is handing back.
+ *
+ * These sit in THIS file rather than a new one on purpose: this is the harness
+ * that already exercises the real `findOrCreateXeroContact`, and the whole point
+ * of the design is that the gate lives inside the funnel rather than in twelve
+ * callers, so the funnel is where it has to be proved.
+ */
+describe("findOrCreateXeroContact contains the contact's address on a copy (INV-CONFIG-005)", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    resetXeroRateLimitStateForTests();
+    vi.stubEnv(
+      "XERO_ENCRYPTION_KEY",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    );
+    mocks.prisma.$transaction.mockImplementation(async (callback) =>
+      callback(mocks.tx),
+    );
+    mocks.tx.$executeRaw.mockResolvedValue(undefined);
+    mocks.tx.member.findFirst.mockResolvedValue(null);
+    mocks.tx.xeroSyncOperation.findFirst.mockResolvedValue(null);
+    mocks.tx.xeroSyncOperation.findMany.mockResolvedValue([]);
+    mocks.tx.xeroSyncOperation.updateMany.mockResolvedValue({ count: 0 });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
+    mocks.recordProviderCreatedContactPendingLocalLink.mockResolvedValue(
+      undefined,
+    );
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue(null);
+    mocks.prisma.environmentSafetySettings.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(
+      null,
+    );
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContacts.mockResolvedValue({
+      body: { contacts: [] },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
+  });
+
+  async function tokenRow() {
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: await encryptToken("access"),
+      refreshToken: await encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+  }
+
+  it("THE RESTORED DATABASE: an already-linked member's contact is contained before the id comes back", async () => {
+    // This is the case the issue exists for. Every member in a copy restored
+    // from the live database is already linked, so this is the branch all twelve
+    // document writers take -- and before #3036 it returned the id with no look
+    // at what the contact held, while Xero went on emailing invoice reminders to
+    // that address from its own servers.
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "xero_existing",
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "xero_existing", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+
+    await expect(findOrCreateXeroContact("mem_1")).resolves.toBe(
+      "xero_existing",
+    );
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).toHaveBeenCalledWith(
+      "tenant_1",
+      "xero_existing",
+      {
+        contacts: [
+          {
+            contactID: "xero_existing",
+            emailAddress: toXeroSandboxContactEmail("member@example.com"),
+          },
+        ],
+      },
+      expect.stringContaining("xero_existing"),
+    );
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.upsert,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { xeroContactId: "xero_existing" },
+        create: {
+          xeroContactId: "xero_existing",
+          containedEmail: xeroSandboxContainmentTarget("member@example.com"),
+          rewroteAddress: true,
+          rewrittenAt: expect.any(Date),
+        },
+      }),
+    );
+  });
+
+  it("reuses the caller's authenticated client instead of building a second one", async () => {
+    /*
+      #3036 review P1-12. The steady-state path returns BEFORE
+      `getAuthenticatedXeroClient()`, which is right — a proof that matches costs
+      no provider call at all. But when the proof is stale or absent, containment
+      then authenticated for itself, even though every document writer built a
+      client two lines before calling this function. On a restored copy's first
+      pass that was one extra token read plus one extra `xero.initialize()` (an
+      OIDC discovery round trip, not cached) PER CONTACT.
+    */
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    // Deliberately NO token row: if containment authenticates for itself, it
+    // cannot, and the call fails. Passing the client is the only way through.
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue(null);
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "xero_existing",
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "xero_existing", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+
+    await expect(
+      findOrCreateXeroContact("mem_1", {
+        xero: mocks.xeroClientInstance as never,
+        tenantId: "tenant_1",
+      }),
+    ).resolves.toBe("xero_existing");
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact,
+    ).toHaveBeenCalledWith("tenant_1", "xero_existing");
+    expect(
+      mocks.prisma.xeroToken.findFirst,
+      "the caller's client was supplied, so nothing here may re-authenticate",
+    ).not.toHaveBeenCalled();
+  });
+
+  it("a restored link that CANNOT be contained blocks the caller, so no invoice follows", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "xero_existing",
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockRejectedValue(
+      new Error("503 from Xero"),
+    );
+
+    await expect(findOrCreateXeroContact("mem_1")).rejects.toThrow(
+      /cannot prove the contact is unable to reach a member/,
+    );
+    // And the contact still holds a real address, so nothing pretended it did
+    // not.
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.upsert,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("the steady state after containment costs no Xero call at all", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "xero_existing",
+    });
+    /*
+      A proof that matches AND IS FRESH. Both halves are required: the
+      fingerprint alone cannot notice a change made on the Xero side, so a proof
+      older than XERO_CONTAINMENT_PROOF_MAX_AGE_MS is re-verified against the
+      provider (INV-CONFIG-005). `new Date()` is the frozen test clock.
+    */
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue({
+      containedEmail: xeroSandboxContainmentTarget("member@example.com"),
+      updatedAt: new Date(),
+    });
+
+    await expect(findOrCreateXeroContact("mem_1")).resolves.toBe(
+      "xero_existing",
+    );
+
+    expect(mocks.prisma.xeroToken.findFirst).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("a NEW contact is created carrying the contained address, never the member's", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_new",
+      firstName: "New",
+      lastName: "Member",
+      email: "member@example.com",
+      xeroContactId: null,
+    });
+    mocks.tx.member.update.mockResolvedValue({
+      id: "mem_new",
+      xeroContactId: "xero_created",
+    });
+    mocks.xeroClientInstance.accountingApi.createContacts.mockResolvedValue({
+      body: { contacts: [{ contactID: "xero_created" }] },
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xero_created",
+            emailAddress: toXeroSandboxContactEmail("member@example.com"),
+          },
+        ],
+      },
+    });
+
+    await expect(findOrCreateXeroContact("mem_new")).resolves.toBe(
+      "xero_created",
+    );
+
+    const [, payload] =
+      mocks.xeroClientInstance.accountingApi.createContacts.mock.calls[0];
+    expect(payload.contacts[0].emailAddress).toBe(
+      toXeroSandboxContactEmail("member@example.com"),
+    );
+    expect(payload.contacts[0].emailAddress).not.toContain(
+      "member@example.com",
+    );
+    // Verified rather than assumed: the proof is written after reading Xero
+    // back, and nothing had to be rewritten because the create already
+    // contained it.
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact,
+    ).toHaveBeenCalledWith("tenant_1", "xero_created");
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.upsert,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ rewroteAddress: false }),
+      }),
+    );
+  });
+
+  it("a MATCHED existing contact is contained even though we did not create it", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      firstName: "Match",
+      lastName: "Me",
+      email: "member@example.com",
+      xeroContactId: null,
+    });
+    mocks.tx.member.update.mockResolvedValue({
+      id: "mem_1",
+      xeroContactId: "xero_matched",
+    });
+    mocks.xeroClientInstance.accountingApi.getContacts.mockResolvedValue({
+      body: { contacts: [{ contactID: "xero_matched" }] },
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xero_matched",
+            emailAddress: "someone.else@example.com",
+          },
+        ],
+      },
+    });
+
+    await expect(findOrCreateXeroContact("mem_1")).resolves.toBe(
+      "xero_matched",
+    );
+
+    // Contains what XERO holds, which on a matched contact may be somebody
+    // else's address entirely.
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).toHaveBeenCalledWith(
+      "tenant_1",
+      "xero_matched",
+      {
+        contacts: [
+          {
+            contactID: "xero_matched",
+            emailAddress: toXeroSandboxContactEmail(
+              "someone.else@example.com",
+            ),
+          },
+        ],
+      },
+      expect.any(String),
+    );
+  });
+
+  it("UNKNOWN refuses before any provider work, and transforms nothing", async () => {
+    undeclareEnvironmentRole();
+    await expectEnvironmentRolePremise("UNKNOWN");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      email: "member@example.com",
+      xeroContactId: "xero_existing",
+    });
+
+    await expect(findOrCreateXeroContact("mem_1")).rejects.toThrow(
+      XeroContactEnvironmentUnknownError,
+    );
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.createContacts,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.upsert,
+    ).not.toHaveBeenCalled();
+    // Nor did it fall back to the safer-looking option of containing anyway:
+    // UNKNOWN is not evidence of being a copy, and rewriting the club's real
+    // accounting on a guess is as wrong as emailing real members on one. It also
+    // refuses BEFORE the member row is read, so nothing local happened either.
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+    expect(mocks.tx.member.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("PRODUCTION is untouched: no proof read, no proof written, address verbatim", async () => {
+    declareEnvironmentRole("production");
+    await expectEnvironmentRolePremise("PRODUCTION");
+    await tokenRow();
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_new",
+      firstName: "Live",
+      lastName: "Member",
+      email: "member@example.com",
+      xeroContactId: null,
+    });
+    mocks.tx.member.update.mockResolvedValue({
+      id: "mem_new",
+      xeroContactId: "xero_created",
+    });
+    mocks.xeroClientInstance.accountingApi.createContacts.mockResolvedValue({
+      body: { contacts: [{ contactID: "xero_created" }] },
+    });
+
+    await expect(findOrCreateXeroContact("mem_new")).resolves.toBe(
+      "xero_created",
+    );
+
+    const [, payload] =
+      mocks.xeroClientInstance.accountingApi.createContacts.mock.calls[0];
+    expect(payload.contacts[0].emailAddress).toBe("member@example.com");
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.findUnique,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.upsert,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact,
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact,
+    ).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => {
     settlementUpdate,
     accountingApi,
     completeSync: vi.fn(),
+    // #3035: the withheld-send audit row. Exposed so a test can assert that an
+    // environment-safety withhold writes NO such row — that row asserts an
+    // administrator turned the booking's "No emails" switch on.
+    emailLogCreate: vi.fn().mockResolvedValue({ id: "emaillog_1" }),
     failSync: vi.fn(),
     upsertLink: vi.fn(),
     enqueueVoid: vi.fn(),
@@ -42,6 +46,7 @@ vi.mock("xero-node", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: mocks.transaction,
     groupBookingSettlement: {
       update: mocks.settlementUpdate,
@@ -49,7 +54,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: { findMany: vi.fn() },
     // #2258: the withheld-send audit row for the organiser's settlement invoice.
-    emailLog: { create: vi.fn().mockResolvedValue({ id: "emaillog_1" }) },
+    emailLog: { create: mocks.emailLogCreate },
     season: { findFirst: vi.fn().mockResolvedValue(null) },
     xeroSyncOperation: { update: vi.fn() },
   },
@@ -108,6 +113,7 @@ vi.mock("@/lib/xero-group-settlement-void-outbox", () => ({
 }));
 
 import { prisma } from "@/lib/prisma";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import {
   createXeroInvoiceForGroupSettlement,
   voidXeroInvoiceForCancelledGroupSettlement,
@@ -141,6 +147,17 @@ function settlementWithInvoice(status: GroupBookingStatus) {
     xeroInvoiceNumber: "INV-EXISTING",
   };
 }
+
+/*
+  #3035 (ENV-SAFETY 2): asking Xero to email an invoice is a provider SEND, so it
+  now goes through the environment-safety boundary. Both halves of the role have
+  to be declared or it resolves UNKNOWN and no invoice is emailed — a missing
+  `environmentSafetySettings` delegate is an UNREADABLE override, not "no
+  override". See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
   beforeEach(() => {
@@ -354,6 +371,143 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
 
     expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
     expect(mocks.enqueueVoid).not.toHaveBeenCalled();
+  });
+
+  /*
+    #3035 (ENV-SAFETY 2, INV-CONFIG-004). The invoice is still RAISED — it has to
+    be, so settlement stays testable on a copy and #3036 can keep it AUTHORISED —
+    and only the emailing is withheld.
+  */
+  describe("the environment-safety boundary", () => {
+    function organiserFence() {
+      return {
+        groupBooking: {
+          status: GroupBookingStatus.OPEN,
+          organiserBookingId: "organiser-booking-1",
+          organiserBooking: {
+            noEmails: false,
+            member: { email: "organiser@example.test" },
+          },
+        },
+      };
+    }
+
+    beforeEach(() => {
+      mocks.settlementFindUnique
+        .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+        .mockResolvedValueOnce(organiserFence())
+        .mockResolvedValueOnce(organiserFence());
+    });
+
+    it("raises the invoice but emails nobody on a confirmed copy, and reports SUCCEEDED", async () => {
+      declareEnvironmentRole("non-production");
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", {
+          syncOperationId: "op-1",
+        })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      const completion = mocks.completeSync.mock.calls.at(-1)?.[1];
+      // Nothing FAILED, so nothing may be reported as a failure. A staging run
+      // that reported PARTIAL on every invoice would train an operator to ignore
+      // PARTIAL.
+      expect(completion.status).toBe("SUCCEEDED");
+      expect(completion.responsePayload.invoiceEmailError).toBeNull();
+      expect(
+        completion.responsePayload.invoiceEmailWithheldForEnvironment
+      ).toBe(true);
+      // NOT the organiser's own "No emails" decision, and no withheld-email
+      // audit row claiming an administrator made one.
+      expect(
+        completion.responsePayload.invoiceEmailWithheldByNoEmails
+      ).toBe(false);
+      expect(mocks.emailLogCreate).not.toHaveBeenCalled();
+    });
+
+    it("reports PARTIAL when nobody has said what this installation is", async () => {
+      vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", {
+          syncOperationId: "op-1",
+        })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      const completion = mocks.completeSync.mock.calls.at(-1)?.[1];
+      expect(completion.status).toBe("PARTIAL");
+      expect(completion.responsePayload.invoiceEmailError).toBeTruthy();
+      expect(
+        completion.responsePayload.invoiceEmailWithheldForEnvironment
+      ).toBe(false);
+      expect(mocks.emailLogCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+    #3035 review: TWO WITHHOLD REASONS MUST NEVER BOTH CLAIM THE SAME EVENT.
+
+    The environment withhold used to be computed from the policy alone, outside
+    the advisory-locked transaction, and written into the payload
+    unconditionally — while the transaction checks the organiser's own "No emails"
+    switch FIRST. So on a copy whose organiser has that switch on, the payload
+    asserted `invoiceEmailWithheldByNoEmails: true` AND
+    `invoiceEmailWithheldForEnvironment: true`, only one of which happened.
+
+    Every existing case in the describe above sets `noEmails: false`, which is why
+    this went unnoticed: the two conditions were never true together. The
+    booking-invoice path already got this right by leaving its policy null once
+    something else had withheld.
+  */
+  it("attributes ONE reason when a copy's organiser also has No emails on", async () => {
+    declareEnvironmentRole("non-production");
+    mocks.settlementFindUnique
+      .mockResolvedValueOnce(settlement(GroupBookingStatus.OPEN))
+      .mockResolvedValueOnce({
+        groupBooking: {
+          status: GroupBookingStatus.OPEN,
+          organiserBookingId: "organiser-booking-1",
+          organiserBooking: {
+            noEmails: false,
+            member: { email: "organiser@example.test" },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        groupBooking: {
+          status: GroupBookingStatus.OPEN,
+          organiserBookingId: "organiser-booking-1",
+          organiserBooking: {
+            noEmails: true,
+            member: { email: "organiser@example.test" },
+          },
+        },
+      });
+
+    await expect(
+      createXeroInvoiceForGroupSettlement("settle-1", {
+        syncOperationId: "op-1",
+      })
+    ).resolves.toBe("inv-1");
+
+    expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+    const completion = mocks.completeSync.mock.calls.at(-1)?.[1];
+    // The club's own decision is what happened, and it is the only thing claimed.
+    expect(completion.responsePayload.invoiceEmailWithheldByNoEmails).toBe(true);
+    expect(
+      completion.responsePayload.invoiceEmailWithheldForEnvironment
+    ).toBe(false);
+    // And the withheld-email audit row still attributes it to the organiser's
+    // booking, because an administrator really did set that switch.
+    expect(vi.mocked(prisma.emailLog.create)).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: "organiser-booking-1",
+        status: "SKIPPED_NO_EMAILS",
+      }),
+      select: { id: true },
+    });
   });
 
   it("resolves each child's item-code season from that child's own lodge", async () => {

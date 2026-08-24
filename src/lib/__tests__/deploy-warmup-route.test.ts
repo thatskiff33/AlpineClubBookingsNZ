@@ -17,7 +17,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/health-check", () => ({
-  getRuntimeStatus: () => ({ cronEnabled: false, role: "web-green" }),
+  getRuntimeStatus: () => ({
+    cronEnabled: false,
+    role: "web-green",
+    // Kept complete against RuntimeStatusReport, as above.
+    environmentRole: "production",
+  }),
 }));
 
 vi.mock("@/lib/page-content-html", () => ({

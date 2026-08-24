@@ -96,6 +96,88 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### You must declare whether this deployment is the live site (#3034, epic #2986)
+
+**Do this before you deploy, or the deploy will refuse to run.** Add one line to
+the `.env` on the server:
+
+```
+APP_ENVIRONMENT_ROLE=production
+```
+
+On a staging site, a rehearsal copy or a developer's checkout, use
+`APP_ENVIRONMENT_ROLE=non-production` instead.
+
+**Why.** From this release the app has one explicit answer to "is this
+installation the club's live site, or a copy of it?", and it never infers it —
+not from `NODE_ENV`, not from the hostname, not from which database it is pointed
+at. That is because a copy restored from the live database contains the club's
+real members and their real email addresses, and every convention people
+otherwise rely on is right until somebody stands up the copy that breaks it. An
+installation that has not declared itself resolves **UNKNOWN**, and UNKNOWN fails
+closed: member email is held back, and **nothing is written to the club's Xero
+organisation at all** — no invoice, no credit note, no contact, no payment, no
+credit allocation — until it is declared. Reading from Xero is unaffected, so the
+Xero screens still load while an operator works out why. A copy that HAS declared
+itself does keep writing Xero documents, on purpose so settlement stays testable,
+but it replaces the email address on every Xero contact it touches with one that
+cannot be delivered, because Xero emails invoice reminders from its own servers to
+whatever the contact holds. See
+[`guides/environment-role.md`](guides/environment-role.md) -> "What a copy does to
+the club's Xero contacts" before pointing a copy at the real Xero organisation.
+
+**The supported deploy path will not let you discover this the hard way.**
+Because an existing deployment has no declaration, shipping the fail-closed
+behaviour alone would have turned a working live site into a silent mail outage.
+So `scripts/run-production-blue-green-deploy.sh` validates the entry in its
+preflight — **step 3 of 20**, before the migration (step 13), before the new
+release's first process starts (step 14) and long before the traffic cutover
+(step 17). An undeclared upgrade aborts with the **previous release still serving
+and nothing changed**: no migration applied, no container switched. Add the line
+and run the deploy again. It also refuses a `.env` that says
+`non-production` — see below — refuses a SECOND `APP_ENVIRONMENT_ROLE`
+assignment anywhere in the file (Compose would use the last one), and refuses a
+value set in your shell that disagrees with the file, because Compose would take
+the shell's. The usual `.env` shapes are all fine: an `export ` prefix, spaces
+around the `=`, quotes round the value, a leading indent.
+
+Then, at **step 14**, it asks each newly started container — by calling the
+application's own `GET /api/deploy/runtime-status` from inside it — which
+declaration the app read, and aborts before the cutover if any of them answers
+anything other than `production`. That second check exists because validating the
+file and validating what the containers received are different questions, and it
+asks the application rather than re-reading the container's settings so there is
+only ever one implementation of the rule.
+
+**What that promise does NOT cover, stated plainly:** a deployment brought up by
+hand — `docker compose up` — runs none of it. Such an installation comes up
+undeclared, resolves UNKNOWN, logs an error at start-up naming the specific
+cause, and reports the **Production Or Non-Production** step on `/admin/setup` as
+blocked. It will not quietly behave as production, but nothing stops it starting.
+
+**Do not confuse it with `APP_RUNTIME_ROLE`, which you already have.** They sit
+next to each other in the Compose environment and differ by one word, and on the
+staging stack `APP_RUNTIME_ROLE` holds the literal word `staging`.
+`APP_RUNTIME_ROLE` names which container *slot* a process is (`web-blue`,
+`web-green`, `cron-leader`) and is never read to decide whether this is the live
+site. Setting it to `production` changes nothing. Both plausible mistakes are
+made to fail safely: `APP_ENVIRONMENT_ROLE=staging` is refused (it is not one of
+the two accepted values) and leaves the site not configured.
+
+**A new empty table, and no backfill.** The migration
+`20260826010000_add_environment_safety_settings` creates
+`EnvironmentSafetySettings` and seeds no row — it is purely additive, the
+previous release reads nothing in it, and an absent row already means "no
+override". Nothing to do.
+
+**Afterwards.** Confirm the **Production Or Non-Production** step on
+`/admin/setup` reads *complete*, and that
+**Admin → Setup & Configuration → Environment Safety** (`/admin/environment`)
+says *Production*. A Full Administrator can force any installation to be treated
+as a copy from that page; it can only ever make the answer safer, and every
+change either way is audited (`ENVIRONMENT_SAFETY_OVERRIDE_UPDATED`). Full
+walkthrough: `docs/guides/environment-role.md`.
+
 ### The club's time zone moves into the database (#2989, epic #2988)
 
 **Nothing changes for your deployment at this upgrade. That is the point of how

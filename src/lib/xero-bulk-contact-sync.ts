@@ -19,6 +19,7 @@ import {
   type XeroContactLinkMismatchEntry,
 } from "@/lib/xero-contact-link-mismatches";
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import {
   applyInboundMemberContactPatch,
   type InboundMemberContactPatch,
@@ -523,6 +524,25 @@ export async function syncContactsFromXero(
         report.skippedNoEmail.push({
           name: contactName,
           xeroContactId: contact.contactID,
+        });
+        continue;
+      }
+
+      /*
+        INV-CONFIG-005 (#3036): on a copy, this contact's address may have been
+        REPLACED by containment — a hash on a reserved domain. Matching a member
+        by it cannot succeed, and reporting that as "No matching member by email"
+        below would be the same false reason this change fixed on the member-import
+        path: the contact has an address, it simply cannot be used, and an
+        operator reading the report would go looking for missing member data that
+        is perfectly fine. So it is skipped with a reason that says what happened.
+      */
+      if (isXeroSandboxContactEmail(cachedContact.emailAddress)) {
+        report.skippedOther.push({
+          name: contactName,
+          xeroContactId: contact.contactID,
+          reason:
+            "This contact's email address was replaced with a non-deliverable one because this installation is a copy, so it cannot be matched to a member here. Run this sync on the club's live site instead.",
         });
         continue;
       }

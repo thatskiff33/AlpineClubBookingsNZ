@@ -139,6 +139,7 @@ import {
   XeroDailyLimitError,
   XeroTransientOutageError,
 } from "@/lib/xero-api-client";
+import { XeroContactEnvironmentUnknownError } from "@/lib/xero-environment-write-gate";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 
 /** Seed one PENDING row into both the store and the initial scan result. */
@@ -312,6 +313,62 @@ describe("outbox processor fail-fast for all queue types (#1354)", () => {
       expect(row?.startedAt).toBeNull();
       expect(row?.completedAt).toBeNull();
     });
+  });
+
+  // #3036: the environment-role gate inside `callXeroApi` refuses a Xero
+  // MUTATION while nothing has declared whether this installation is the club's
+  // live site or a copy. Its refusal is pre-HTTP by construction — the gate sits
+  // ahead of `withXeroRetry` and ahead of the usage meter — so it belongs in
+  // exactly the same class as a cooldown refusal, and without it a whole
+  // in-flight cron batch was condemned to hand requeues. The sharpest trigger is
+  // a declared-PRODUCTION site: one failed `environmentSafetySettings.findUnique`
+  // during a blue/green overlap resolves UNKNOWN for an instant.
+  it("returns an environment-role refusal to PENDING: it never reached Xero", async () => {
+    queueOneRefundOperation();
+    mocks.createXeroCreditNote.mockImplementation(async () => {
+      const refusal = new XeroContactEnvironmentUnknownError(
+        "Nothing was written to Xero: this application cannot tell whether it is the club's live site or a copy of it.",
+      );
+      // The refusal must carry the marker the predicate verifies, not merely a
+      // recognised name — that is what keeps "never attempted" a property rather
+      // than a naming convention.
+      expect(refusal.preHttp).toBe(true);
+      await mocks.failXeroSyncOperation("op_refund_1", refusal);
+      throw refusal;
+    });
+
+    const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(result).toMatchObject({
+      found: 1,
+      processed: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    const row = mocks.rows.get("op_refund_1");
+    expect(row?.status).toBe("PENDING");
+    expect(row?.startedAt).toBeNull();
+    expect(row?.completedAt).toBeNull();
+  });
+
+  it("still FAILS an environment-role-shaped error that does not carry the marker", async () => {
+    // The name alone must not be enough. A hand-built error wearing the class
+    // name but no `preHttp` cannot prove nothing was sent, so it keeps the
+    // replayable FAILED path — the same boundary the day-limit cases below pin.
+    queueOneRefundOperation();
+    mocks.createXeroCreditNote.mockImplementation(async () => {
+      const err = Object.assign(new Error("looks like a refusal"), {
+        name: "XeroContactEnvironmentUnknownError",
+      });
+      await mocks.failXeroSyncOperation("op_refund_1", err);
+      throw err;
+    });
+
+    const result = await processQueuedXeroOutboxOperations({ limit: 1 });
+
+    expect(result).toMatchObject({ found: 1, failed: 1, skipped: 0 });
+    expect(mocks.rows.get("op_refund_1")?.status).toBe("FAILED");
   });
 
   // The boundary: only genuinely pre-HTTP refusals change class. A 429 that Xero
