@@ -191,7 +191,8 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 import { getInductionStatusForMember } from "@/lib/induction";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { asClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
 import {
   clubSeasonYear,
   seasonYearOfStoredDate,
@@ -453,21 +454,72 @@ async function resolveStoredNightSeasonYear(
 }
 
 /**
+ * The club's persisted timezone, READ THROUGH `tx` — and that is the whole point.
+ *
+ * The first version of this called `readClubTimeZoneOutsideRequest()`, which was
+ * wrong in four ways at once, and a correctness lens caught every one (#2870):
+ *
+ *  - it uses the GLOBAL Prisma client, so the read escaped the seam this pack's
+ *    entry opens — `withBoundedReadOnlyTransaction`, whose own contract says "DO
+ *    NOT NEST ... A sub-read that needs the database takes `tx` from its caller
+ *    instead";
+ *  - escaping it meant escaping `SET TRANSACTION READ ONLY`, the `RepeatableRead`
+ *    snapshot and the transaction-local 5s `statement_timeout` that this pack
+ *    advertises as "the one database bound, in one place";
+ *  - it needed a SECOND pool connection while the seam already held one;
+ *  - and `readPersistedClubTimeZoneRow` swallows every throw, so a pool timeout
+ *    would have resolved the zone from the environment seed and reported a
+ *    member's subscription state for a season that is not the club's, with one
+ *    throttled warn line as the only evidence.
+ *
+ * The pack's own guard could not see it, because the global client was one import
+ * away and the census matches the literal token `prisma.` — 374 tests passed while
+ * the rule was broken. `read-only-transaction.test.ts` now refuses an indirect
+ * reach as well.
+ *
+ * IT REFUSES RATHER THAN FALLING BACK, which is `requireStoredYearEndMonth`'s rule
+ * three lines below and the reason the two halves are now consistent. Guessing a
+ * zone for an evidence path is the same defect as guessing a year-end month: the
+ * answer would look freshly measured and be about the wrong season. The executor
+ * renders this rejection as `evidence_unavailable`.
+ *
+ * It duplicates six lines of QUERY and no judgement at all — the row id comes from
+ * CT-1's shared `CLUB_TIME_SETTINGS_ID` and the validation from CT-1's
+ * `asClubTimeZone` — which is the same trade `club-time-zone-runtime.ts` documents
+ * for the same reason: the canonical readers cannot be handed a `tx`.
+ */
+async function requireStoredClubTimeZone(tx: Prisma.TransactionClient) {
+  const row = await tx.clubTimeSettings.findUnique({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    select: { timeZone: true },
+  });
+  const zone = asClubTimeZone(row?.timeZone ?? null);
+  if (!zone) {
+    throw new Error(
+      "AI Diagnostics AID-6B: the club's timezone is not stored locally as a usable named zone, so the membership season the club is currently in cannot be resolved from stored state. Set the club's timezone at /admin/club-time (or run npm run setup) to make this evidence available.",
+    );
+  }
+  return zone;
+}
+
+/**
  * The season the club is in RIGHT NOW.
  *
  * TAKES THE CLUB'S PERSISTED ZONE (`INV-CONFIG-002`), because "now" is a club
  * business decision and the container's month is not the club's. This is the other
  * half of the split above: the two questions are not the same temporal kind, and
  * one function answering both is what made this pack's own answer host-dependent.
- * The year-end month still comes from STORED state through the same strict
- * resolution, so nothing here consults the process-level financial-year cache.
+ * BOTH halves come from STORED state through `tx` — the year-end month and the
+ * zone — so nothing here consults the process-level financial-year cache and
+ * nothing escapes the seam its caller opened. See `requireStoredClubTimeZone`
+ * above for why the zone half is not the canonical reader.
  */
 async function resolveStoredClubSeasonYear(
   tx: Prisma.TransactionClient,
 ): Promise<number> {
   const [yearEndMonth, zone] = await Promise.all([
     requireStoredYearEndMonth(tx),
-    readClubTimeZoneOutsideRequest(),
+    requireStoredClubTimeZone(tx),
   ]);
   return clubSeasonYear(zone, undefined, yearEndMonth);
 }
