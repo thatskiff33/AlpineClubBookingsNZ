@@ -1,7 +1,7 @@
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
-import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
-import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+import { BookingRequestFormEmbed } from "@/app/(website-dynamic)/booking-requests/booking-request-form-embed";
+import { SchoolBookingFormEmbed } from "@/app/(website-dynamic)/school-bookings/school-booking-form-embed";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
 import { PhotoGalleryToken } from "@/components/website/photo-gallery-token";
 import { SkifieldConditionsWidget } from "@/components/website/skifield-conditions-widget";
@@ -77,7 +77,7 @@ export function EmbeddedPageContentParts({
 
         if (part.type === "booking-requests") {
           return (
-            <BookingRequestForm
+            <BookingRequestFormEmbed
               key={`${keyPrefix}-booking-requests-${index}`}
               club={clubIdentity}
             />
@@ -86,7 +86,7 @@ export function EmbeddedPageContentParts({
 
         if (part.type === "school-bookings") {
           return (
-            <SchoolBookingForm
+            <SchoolBookingFormEmbed
               key={`${keyPrefix}-school-bookings-${index}`}
               club={clubIdentity}
             />

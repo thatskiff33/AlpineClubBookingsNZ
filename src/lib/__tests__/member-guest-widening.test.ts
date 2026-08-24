@@ -774,6 +774,14 @@ describe("consent columns have exactly one writer", () => {
       // writer, and the sweep the only automatic one.
       "src/lib/member-guest-consent-card.ts":
         "the member surfaces' shared brain: which card to show, the predictable-refusal prediction, the badge wording",
+      // Split out of the module above in the CT-4 group E fix round (#2870),
+      // because correcting two of these labels took that file over its size
+      // budget for the first time. It names `consentExpiresAt` and
+      // `consentRespondedAt` in a docblock explaining which of its shapes render
+      // a real INSTANT and therefore still read the environment's zone rather
+      // than the club's persisted one. It reads no row and writes nothing.
+      "src/lib/member-guest-consent-labels.ts":
+        "the consent surfaces' date, name and count label shapes",
       "src/lib/member-guest-delegate-page.ts":
         "the delegate page's authorization-first state resolver",
       "src/lib/member-guest-consent-exceptions.ts":

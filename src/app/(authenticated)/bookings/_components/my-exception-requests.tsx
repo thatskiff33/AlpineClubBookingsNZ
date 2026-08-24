@@ -16,7 +16,8 @@ import {
   type MemberExceptionRequestItem,
   type MemberExceptionRequestStatus,
 } from "@/lib/member-exception-requests";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 
 /**
  * "My booking-rule requests" — the member's request-management area (#2562).
@@ -53,10 +54,22 @@ const STATUS_BADGE_CLASS: Record<MemberExceptionRequestStatus, string> = {
   expired: "border-border bg-muted text-muted-foreground",
 };
 
+/**
+ * One proposed lodge night, which is a CALENDAR DAY and takes no timezone at all
+ * (CT-4, #2870). Every night on this DTO is a `YYYY-MM-DD` key
+ * (`src/lib/member-exception-requests.ts`), so it is already the day it means;
+ * the kernel's calendar-date formatter pins `UTC` over the UTC-midnight
+ * encoding, which is provably the identity for every club. `formatNZDate` used
+ * to project it through `APP_TIME_ZONE`, and that cancelled only because New
+ * Zealand is east of Greenwich.
+ *
+ * `parseCalendarDate` rather than `requireCalendarDate`: a malformed key here
+ * would throw inside a member's booking list and blank the whole page, where
+ * echoing the raw value shows the member something and loses nothing.
+ */
 function formatNight(value: string) {
-  // Date-only lodge nights: parse at UTC midnight so a viewer at UTC+13/+14 does
-  // not see the previous day.
-  return formatNZDate(new Date(`${value}T00:00:00Z`));
+  const night = parseCalendarDate(value);
+  return night === null ? value : formatClubDate(night);
 }
 
 /**
@@ -96,6 +109,14 @@ export function MyExceptionRequests({
   requests: MemberExceptionRequestItem[];
 }) {
   const router = useRouter();
+  /*
+    `createdAt`, `reviewedAt` and `lastConflictAt` are real INSTANTS, so they
+    have no civil date until a zone is chosen — and the one to choose is the
+    club's PERSISTED setting, delivered to this browser as data by
+    `ClubTimeProvider` (CT-4, #2870; INV-CONFIG-002). It used to be
+    `APP_TIME_ZONE`, the container's `TZ`. Same shape, only the AUTHORITY moved.
+  */
+  const clubTime = useClubTime();
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,9 +218,9 @@ export function MyExceptionRequests({
                         : ""}
                     </p>
                     <p className="text-muted-foreground">
-                      Asked on {formatNZDateTime(new Date(request.createdAt))}
+                      Asked on {clubTime.instantDateTime(new Date(request.createdAt))}
                       {request.reviewedAt
-                        ? ` · decided ${formatNZDateTime(new Date(request.reviewedAt))}`
+                        ? ` · decided ${clubTime.instantDateTime(new Date(request.reviewedAt))}`
                         : ""}
                     </p>
                   </div>
@@ -214,7 +235,7 @@ export function MyExceptionRequests({
                     <p className="rounded-md border border-warning-6 bg-warning-3 p-2 text-warning-11">
                       What the lodge said last time: {request.lastConflictReason}
                       {request.lastConflictAt
-                        ? ` (${formatNZDateTime(new Date(request.lastConflictAt))})`
+                        ? ` (${clubTime.instantDateTime(new Date(request.lastConflictAt))})`
                         : ""}
                     </p>
                   ) : null}

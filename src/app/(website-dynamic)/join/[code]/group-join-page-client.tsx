@@ -16,7 +16,52 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { ClubIdentity } from "@/config/club-identity-types";
 import { useAgeTierOptions } from "@/lib/use-age-tier-options";
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseInstant,
+} from "@/lib/club-time";
+
+/**
+ * One stay night, or the join deadline, rendered as the CALENDAR DAY it is
+ * (CT-4 group E, #2870; epic #2988; INV-CONFIG-002).
+ *
+ * ALL THREE VALUES THIS PAGE FORMATS ARE `@db.Date` COLUMNS — `GroupBooking`'s
+ * `checkIn`, `checkOut` and `joinDeadline` — serialised by
+ * `/api/group-bookings/[code]` with `.toISOString()`. A calendar day has no
+ * timezone: 16 April 2026 is a Thursday everywhere on earth. So this page needs
+ * NO club zone at all, and does not mount `useClubTime()`; the kernel decodes
+ * the UTC-midnight encoding back to the day it encodes and formats it pinned to
+ * `UTC`, which is provably the identity for every club.
+ *
+ * What it replaced was `formatNZDate(new Date(value))`, which projected the
+ * encoding through `APP_TIME_ZONE`. That cancels only because New Zealand is
+ * east of Greenwich; for a club west of it this page — which a guest reaches
+ * from a link the organiser texted them — named the night BEFORE the stay.
+ *
+ * `parseInstant` rather than a bare `new Date`, and the raw value rather than a
+ * throw, because nothing validates this payload on the way in and this is a
+ * public landing page: an unhandled throw in a client render
+ * replaces the whole screen with an error boundary. THE PREVIOUS CODE THREW
+ * TOO — `Intl.DateTimeFormat.format` on an invalid `Date` is a `RangeError`,
+ * not the string "Invalid Date", which only `toLocaleDateString` produces — so
+ * this fallback is a FIX rather than a preserved behaviour.
+ */
+function formatStayDay(value: string): string {
+  // NOT-A-STRING FIRST, and this order is the whole point: `parseInstant` calls
+  // `value.trim()` BEFORE its own nullish check, so `parseInstant(null)` throws a
+  // `TypeError` out of the guard that exists to stop a throw. The premise above
+  // is that nothing validates this payload on the way in, and a missing field is
+  // exactly what an unvalidated payload produces — so the guard has to cover it.
+  if (typeof value !== "string") return "";
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  try {
+    return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+  } catch {
+    return value;
+  }
+}
 
 interface GroupSummary {
   code: string;
@@ -160,7 +205,7 @@ export function GroupJoinPageClient({
             Join {summary.organiserFirstName}&apos;s group at {summary.lodgeName}
           </CardTitle>
           <CardDescription>
-            {formatNZDate(new Date(summary.checkIn))} to {formatNZDate(new Date(summary.checkOut))}
+            {formatStayDay(summary.checkIn)} to {formatStayDay(summary.checkOut)}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -170,7 +215,7 @@ export function GroupJoinPageClient({
               <p>
                 This group is no longer accepting new joiners
                 {summary.joinDeadline
-                  ? ` (the deadline was ${formatNZDate(new Date(summary.joinDeadline))})`
+                  ? ` (the deadline was ${formatStayDay(summary.joinDeadline)})`
                   : ""}
                 . Please contact the organiser if you think this is a mistake.
               </p>

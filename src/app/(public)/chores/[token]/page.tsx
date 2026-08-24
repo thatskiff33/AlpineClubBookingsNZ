@@ -4,12 +4,24 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, AlertTriangle, Mountain, Lock } from "lucide-react";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
 
 // Not one of the shared helpers: the chore sheet names the DAY OF THE WEEK in
 // full ("Wednesday, 15 April 2026"), matching the chore-roster email subject.
+/*
+  A CALENDAR DAY, SO NO TIMEZONE AT ALL (CT-4, #2870).
+
+  This bag has no `HOUSE_SHAPES` entry in the kernel, so the formatter stays
+  local; what changed is the zone it is pinned to. The value handed to it is a
+  `yyyy-MM-dd` day encoded at UTC midnight, so a UTC-pinned formatter over that
+  encoding is provably the identity — the club's setting is not consulted and
+  could not change the answer. Pinned to `APP_TIME_ZONE` it cancelled only
+  because New Zealand is east of Greenwich; for a club that is not, this named
+  the previous day.
+*/
 const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
+  timeZone: "UTC",
   weekday: "long",
   year: "numeric",
   month: "long",
@@ -86,10 +98,11 @@ export default function GuestChorePage() {
 
   if (!data) return null;
 
-  // Date-only chore night: parse at UTC midnight so the club-time formatter
-  // cannot roll it back a day for a viewer outside New Zealand.
+  // A date-only chore night. `requireCalendarDate` rather than
+  // `parseCalendarDate`: `data.date` is the `@db.Date` day this page was fetched
+  // for, and there is no sensible fallback heading to show in its place.
   const formattedDate = LONG_WEEKDAY_DATE.format(
-    new Date(data.date + "T00:00:00Z"),
+    dateOnlyInstantOf(requireCalendarDate(data.date)),
   );
 
   const groups: Record<string, Assignment[]> = { MORNING: [], EVENING: [], ANYTIME: [] };

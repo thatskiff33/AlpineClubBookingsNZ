@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import PayByLinkPage from "../page";
 import {
   EXISTING_CARD_TRANSACTION_STATUS_UNCONFIRMED_BODY,
@@ -352,5 +353,199 @@ describe("public payment-link confirmation names the booking's lodge", () => {
     expect(
       await screen.findByText(/Your booking with Test Lodge is confirmed/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("the public payment page survives a payload that omits its dates", () => {
+  /*
+    THE GUARD THAT WAS HALF THERE (CT-4, #2870 fix round).
+
+    Every date on this page is rendered through a helper whose own docblock says
+    the reason it never throws: "a public token landing page with no runtime
+    schema check on the payload". That premise is the world where a field can be
+    absent — and the first version of the helper called `parseInstant(value)`,
+    which does `value.trim()` BEFORE any nullish check. So `formatStayDay(null)`
+    threw a `TypeError` out of the very guard written to prevent a throw, and an
+    unhandled throw in a client render replaces the whole page with an error
+    boundary. A payer with a link in their hand gets a blank screen instead of
+    the amount, the reference and the card form.
+
+    MUTATION-VERIFIED: remove the `typeof value !== "string"` arm from
+    `formatStayDay` (or from `formatLinkExpiry`) and this case goes red with
+    "Cannot read properties of null (reading 'trim')".
+  */
+  const contextWithNoDates = {
+    ...payableContext,
+    payable: {
+      ...payableContext.payable,
+      checkIn: null,
+      checkOut: null,
+      expiresAt: null,
+    },
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token" && !init?.method) {
+          return { ok: true, json: async () => contextWithNoDates } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }) as typeof fetch,
+    );
+  });
+
+  it("still renders the amount and the card, with the dates simply blank", async () => {
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    // The part the payer actually needs is still on screen…
+    expect(screen.getByText(/Amount due/)).toBeInTheDocument();
+    // …and the dates degrade to nothing rather than to "1 Jan 1970", which is
+    // what the pre-CT-4 spelling rendered for a missing value: wrong, plausible,
+    // and impossible to tell from a real stay.
+    expect(screen.queryByText(/1 Jan 1970/)).toBeNull();
+    expect(screen.getByText(/^Dates:/)).toBeInTheDocument();
+  });
+});
+
+describe("the public payment page says when the link dies, in the CLUB's time", () => {
+  /*
+    THE ONE LINE ON THIS PAGE THAT NEEDS A ZONE, AND IT WAS ASSERTED NOWHERE
+    (#2870 fix round).
+
+    MEASURED before this block existed. Three mutants of `formatLinkExpiry`, run
+    against this file and its whole `vitest related` set — the only suite in the
+    repository that reaches the function at all:
+
+      * `return club.instantDate(instant)` -> `return
+        formatClubDate(calendarDateOfDateOnlyInstant(instant))`, i.e. read the
+        moment as if it were a lodge night: SURVIVED 9/9;
+      * `return "MUTANT-EXPIRY-NEVER-ASSERTED"`: SURVIVED 9/9;
+      * `useClubTime()` ignoring the provider and binding `APP_TIME_ZONE`:
+        SURVIVED 9/9.
+
+    The fixture already carried `expiresAt`. It was rendered and never read back,
+    on the only `useClubTime()`-bearing line of an UNAUTHENTICATED payment page.
+
+    THE PAIR IS WHAT KILLS THE THIRD MUTANT. One provider zone cannot: the shared
+    harness's default is `Pacific/Auckland`, deliberately equal to what
+    `APP_TIME_ZONE` resolves to under test, so a page that read the environment
+    gives the identical answer. The same fixture instant is rendered under two
+    persisted zones and required to produce DIFFERENT text; an implementation with
+    one answer to give fails a half whatever `TZ` this machine has.
+
+    The expected strings come from raw `Intl` rather than from the kernel: a
+    recomputation through the code under test would prove only that it is
+    deterministic. It also sidesteps the narrow no-break space `en-NZ` puts before
+    "pm", which is why nothing below writes a time out by hand.
+  */
+  const CLUB_ZONE = "America/Denver";
+  const LEGACY_REFERENCE_ZONE = "Pacific/Auckland";
+
+  /** The `expiresAt` the fixture at the top of this file carries. */
+  const EXPIRES_AT = new Date(payableContext.payable.expiresAt);
+
+  const deadlineIn = (zone: string) =>
+    new Intl.DateTimeFormat("en-NZ", {
+      timeZone: zone,
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(EXPIRES_AT);
+
+  function renderInClubZone(zone: string) {
+    return render(<PayByLinkPage />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>
+      ),
+    });
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/pay/public-token" && !init?.method) {
+          return { ok: true, json: async () => payableContext } as Response;
+        }
+        if (url === "/api/booking-messages") {
+          return { ok: true, json: async () => ({ messages: {} }) } as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response;
+      }) as typeof fetch,
+    );
+  });
+
+  it("the two clubs really read this moment as different deadlines", () => {
+    // PREMISE AS AN ANSWER. If a runtime or a fixture edit ever put the two
+    // clubs on the same reading, this fails here rather than leaving the pair
+    // below asserting the same thing twice. 2026-09-10T00:00:00Z is midday on
+    // the 10th in Auckland and the evening of the NINTH in Denver, so the day
+    // moves as well as the time.
+    expect(deadlineIn(LEGACY_REFERENCE_ZONE)).not.toBe(deadlineIn(CLUB_ZONE));
+    expect(deadlineIn(LEGACY_REFERENCE_ZONE)).toMatch(/^10 Sept 2026, 12:00\spm$/);
+    expect(deadlineIn(CLUB_ZONE)).toMatch(/^9 Sept 2026, 6:00\spm$/);
+  });
+
+  it("spells the deadline in a behind-UTC club's own time", async () => {
+    renderInClubZone(CLUB_ZONE);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      `This payment link expires on ${deadlineIn(CLUB_ZONE)}.`,
+    );
+    // Not the zone the environment resolves to, which is the answer a page that
+    // ignored the provider would give…
+    expect(document.body.textContent).not.toContain(
+      deadlineIn(LEGACY_REFERENCE_ZONE),
+    );
+    // …and not the bare civil day, which is what this line used to show. Two
+    // lines above it the stay reads "Dates: 1 Sept 2026 to 3 Sept 2026", so a
+    // second bare day read as a restatement of the stay while naming a day the
+    // link did not die on — the mint takes its boundary from the environment's
+    // zone, so on this deployment the link lasts most of a day longer than the
+    // old label claimed.
+    expect(document.body.textContent).not.toContain(
+      "This payment link expires on 9 Sept 2026.",
+    );
+  });
+
+  it("spells the SAME deadline differently for a club ahead of UTC", async () => {
+    renderInClubZone(LEGACY_REFERENCE_ZONE);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      `This payment link expires on ${deadlineIn(LEGACY_REFERENCE_ZONE)}.`,
+    );
+    expect(document.body.textContent).not.toContain(deadlineIn(CLUB_ZONE));
+  });
+
+  it("keeps the stay dates zone-free while the deadline follows the club", async () => {
+    /*
+      The two kinds on one render, which is the distinction this epic exists to
+      make. `checkIn`/`checkOut` are `@db.Date` lodge nights encoded at UTC
+      midnight and must read as the days they are for EVERY club; `expiresAt` is
+      a moment and must follow the club. Under Denver — behind Greenwich, where
+      the encoding reads as the previous evening — a page that pushed the stay
+      dates through the club's zone would name 31 August and 2 September.
+    */
+    renderInClubZone(CLUB_ZONE);
+
+    expect(await screen.findByText("Complete Your Payment")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      "Dates: 1 Sept 2026 to 3 Sept 2026",
+    );
+    expect(document.body.textContent).not.toContain("31 Aug 2026");
+    // And the deadline on that same render did move, so this case cannot be
+    // satisfied by a page that ignores zones altogether.
+    expect(document.body.textContent).toContain(deadlineIn(CLUB_ZONE));
   });
 });
