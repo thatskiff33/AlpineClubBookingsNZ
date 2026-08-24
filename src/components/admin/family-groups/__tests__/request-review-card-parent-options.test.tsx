@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
+// Testing Library directly rather than the club-time harness, for the reason
+// `request-review-card-age.test.tsx` states: the card takes its binding as a
+// prop and consumes no provider (CT-4, #2870).
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import type {
   FamilyGroupRequest,
   RequestMemberMatch,
@@ -22,6 +27,9 @@ import type {
  */
 
 afterEach(cleanup);
+
+/** The harness default zone; the option list this file asserts carries no date. */
+const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE));
 
 const noopHandlers = {
   onSelectMember: vi.fn(),
@@ -86,6 +94,7 @@ function renderCard(candidate: RequestMemberMatch) {
   return render(
     <FamilyGroupRequestReviewCard
       request={request}
+      clubTime={CLUB_TIME}
       searchedMembers={[candidate]}
       requestSelection={candidate.id}
       searching={false}

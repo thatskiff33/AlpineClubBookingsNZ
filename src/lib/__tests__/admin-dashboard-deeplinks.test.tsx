@@ -414,6 +414,21 @@ describe("admin dashboard deep links", () => {
     expect(clubToday.getTime()).not.toBe(environmentToday.getTime());
 
     /*
+      THE HUT-LEADER COVERAGE CARD IS WINDOWED FROM THE SAME DAY, and it is
+      asserted here because it is the one officer card on this page that has its
+      own fallback. `getUnassignedHutLeaderDates` defaults to
+      `getTodayDateOnly()` — `APP_TIME_ZONE` — when it is not told, so leaving
+      the argument off put TWO "today"s on one dashboard: on a boundary day the
+      coverage card counted a night the roster and bed-allocation cards beside it
+      had already dropped. A default that silently works is exactly the kind of
+      omission no other assertion on this page can see (CT-4, #2870).
+    */
+    expect(vi.mocked(getUnassignedHutLeaderDates)).toHaveBeenCalledWith({
+      scope: { kind: "all" },
+      today: clubToday,
+    });
+
+    /*
       THE MONTH BOUNDS ARE NOT THE ENVIRONMENT'S EITHER — the same negative the
       seven-day window carries above, and it has to come BEFORE the assertion
       that uses these literals rather than after it.
