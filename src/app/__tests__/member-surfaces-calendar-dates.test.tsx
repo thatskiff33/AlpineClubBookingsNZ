@@ -68,6 +68,18 @@ import { afterAll, describe, expect, it, vi } from "vitest";
  * the stubbed zone really would move the day. Both are checked out loud below,
  * against the raw `Intl` reading rather than against anything this repository
  * wrote, so a runtime that disagreed could not leave the file quietly green.
+ *
+ * ## Two of the five cases are over `src/lib`, deliberately
+ *
+ * `resolveDisplayText`'s `{{display-date}}` token and the member-guest consent
+ * card's two calendar-day labels are library functions, and `src/lib/**` is
+ * group F by the epic's published partition. They are pinned HERE because group
+ * E migrated the other half of each value — the lobby wall's header date line,
+ * and `bookings/[id]/page.tsx`'s stay dates — so leaving them behind put two
+ * different days on one screen. Their own docblocks record the exception and
+ * what group F still owns; this file is where the behaviour is held, because it
+ * is the one place in the tree with a behind-UTC club AND a behind-UTC host
+ * installed, which is what makes either mutant fail.
  */
 
 /**
@@ -114,6 +126,12 @@ import { NonMemberGuestsSection } from "@/app/(authenticated)/bookings/_componen
 import { KioskWeekView } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { restoreHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { resolveDisplayText } from "@/lib/lodge-display/display-text";
+import {
+  formatConsentNightsLabel,
+  formatConsentStayLabel,
+} from "@/lib/member-guest-consent-card";
+import type { DisplayState } from "@/lib/lodge-display-state";
 import type { KioskWeekDaySummary } from "@/app/(lodge)/lodge/kiosk/_components/kiosk-week-view";
 
 afterAll(() => {
@@ -227,5 +245,60 @@ describe("calendar dates on the member and public surfaces (CT-4, #2870)", () =>
     );
 
     expect(screen.getByText("16 Apr 2026 - 18 Apr 2026")).toBeInTheDocument();
+  });
+
+  it("the lobby wall's {{display-date}} token names the window's own night", () => {
+    /*
+      THE HALF GROUP E FIRST LEFT BEHIND (#2870 fix round).
+
+      `display-header-clock.tsx` was migrated to resolve the header's date line
+      to a `CalendarDate` and format it with no zone. This token renders the SAME
+      value — `window.start`, a date-only lodge night — and went on pushing it
+      through `APP_TIME_ZONE`. One lobby wall, two days, one line apart: under
+      the stub above the header read "Thu, 16 Apr" and a template carrying this
+      token read "Wednesday, 15 April".
+
+      MUTATION-VERIFIED: pin `displayDateToken`'s formatter back to
+      `APP_TIME_ZONE` (or drop the pin altogether, which the moved host catches)
+      and this goes red with "Wednesday, 15 April".
+    */
+    const state = {
+      window: { start: "2026-04-16" },
+    } as unknown as DisplayState;
+
+    expect(resolveDisplayText("Today is {{display-date}}.", state)).toBe(
+      "Today is Thursday, 16 April.",
+    );
+    expect(resolveDisplayText("{{display-date}}", state)).not.toContain(
+      "15 April",
+    );
+  });
+
+  it("the member-guest consent card lists the nights the guest is actually on", () => {
+    /*
+      THE SAME PAGE CONTRADICTING ITSELF (#2870 fix round).
+
+      `bookings/[id]/page.tsx` now decodes its stay line as the calendar days it
+      holds, while these two labels — rendered a few lines below it, from
+      `@db.Date` values of the same kind — still projected through
+      `APP_TIME_ZONE`. Under the stub above the stay line read "8 August 2026"
+      and the consent card beside it listed the guest's nights as
+      "Fri 7 Aug, Sat 8 Aug".
+
+      The fixtures are exactly the Prisma shape: `@db.Date` columns come back as
+      UTC midnight.
+
+      MUTATION-VERIFIED: send `consentCalendarNight` / `consentCalendarDay` back
+      through `CONSENT_WEEKDAY_DATE` / `CONSENT_FULL_DATE` and both assertions go
+      red a day early.
+    */
+    const night = (day: string) => new Date(`${day}T00:00:00.000Z`);
+
+    expect(
+      formatConsentNightsLabel([night("2026-08-08"), night("2026-08-09")]),
+    ).toBe("Sat 8 Aug, Sun 9 Aug");
+    expect(
+      formatConsentStayLabel(night("2026-08-08"), night("2026-08-10")),
+    ).toBe("Sat 8 Aug – Mon 10 Aug 2026 (2 nights)");
   });
 });
