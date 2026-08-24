@@ -17,7 +17,6 @@ import {
   Invoice,
   LineAmountTypes,
   LineItem,
-  RequestEmpty,
 } from "xero-node";
 import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -42,6 +41,10 @@ import {
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
 import {
+  resolveXeroInvoiceEmailPolicy,
+  sendXeroInvoiceEmail,
+} from "@/lib/xero-invoice-email";
+import {
   getHutFeeItemCodeMap,
   getResolvedAccountMapping,
 } from "./xero-mappings";
@@ -52,10 +55,7 @@ import {
 } from "./xero-contacts";
 import { buildInvoiceLineItems } from "./xero-booking-invoices";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import {
-  xeroDocumentDateFromDateOnlyColumn,
-  xeroDocumentDateFromInstant,
-} from "@/lib/xero-provider-dates";
+import { xeroDocumentDatesFromColumnAndInstant } from "@/lib/xero-provider-dates";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
@@ -274,7 +274,8 @@ export async function createXeroInvoiceForGroupSettlement(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(organiserMemberId, options);
+  // #3036 review P1-12: reuse the client built above rather than rebuilding one.
+  const contactId = await findOrCreateXeroContact(organiserMemberId, { ...options, xero, tenantId });
 
   const [hutFeeMapping, hutFeeItemCodeMap] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
@@ -333,25 +334,12 @@ export async function createXeroInvoiceForGroupSettlement(
     );
   }
 
-  // Two dates, two different kinds of value, so two different derivations.
-  //
-  // The ISSUE date is the organiser booking's check-in — a `@db.Date` lodge
-  // night, an abstract calendar day already pinned to UTC midnight, so
-  // truncating it reads back the day it encodes (INV-DATE-010).
-  //
-  // The DUE date is `GroupBookingSettlement.createdAt`, a `DateTime` — a real
-  // instant. Truncating an instant to its UTC day is the pattern INV-DATE-019
-  // forbids: New Zealand runs 12-13 hours ahead of UTC, so for roughly the first
-  // half of every club day the UTC day is still yesterday, and a settlement
-  // invoice raised at 09:00 NZ on 1 July carried a due date of 30 June (#2834).
-  // The issue date is the organiser booking's check-in, a `@db.Date` lodge night
-  // (a calendar day, read back in UTC — INV-DATE-010). The due date is derived
-  // from the settlement's `createdAt`, a real INSTANT, so it needs the club's
-  // calendar and gets it from the PERSISTED zone (CT-5, #2869; INV-DATE-019).
-  const issueDate = xeroDocumentDateFromDateOnlyColumn(
-    new Date(settlement.groupBooking.organiserBooking.checkIn)
-  );
-  const dueDate = xeroDocumentDateFromInstant(
+  // Two dates, two different kinds of value, so two different derivations. The
+  // whole reasoning — and the #2834 defect that a "simplification" here brings
+  // straight back — is the docblock on
+  // `xeroDocumentDatesFromColumnAndInstant`.
+  const { issueDate, dueDate } = xeroDocumentDatesFromColumnAndInstant(
+    new Date(settlement.groupBooking.organiserBooking.checkIn),
     new Date(settlement.createdAt),
     await readClubTimeZoneOutsideRequest(),
   );
@@ -499,6 +487,16 @@ export async function createXeroInvoiceForGroupSettlement(
       createdInvoice.invoiceID,
       "v1"
     );
+    // Environment-safety boundary (#3035; INV-CONFIG-004), resolved OUT HERE
+    // rather than inside the transaction below, which holds the exclusive
+    // `pg_advisory_xact_lock(1)`: a second Prisma connection taken from in there
+    // is a pool hazard while every other writer is queued behind that lock
+    // holding one of its own. See `xero-invoice-email.ts` for the whole rule.
+    const invoiceEmailPolicy = await resolveXeroInvoiceEmailPolicy();
+    // Recorded from what the GATE did, never from the policy alone (#3035
+    // review) — see `resolveXeroInvoiceEmailPolicy` on why two withhold reasons
+    // must never both claim one event.
+    let invoiceEmailWithheldForEnvironment = false;
     try {
       const emailGate = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -531,6 +529,7 @@ export async function createXeroInvoiceForGroupSettlement(
             cancelled: true,
             responseBody: null,
             withheld: false,
+            environmentWithheld: false,
             organiserBookingId: null as string | null,
             organiserEmail: null as string | null,
           };
@@ -557,36 +556,51 @@ export async function createXeroInvoiceForGroupSettlement(
             cancelled: false,
             responseBody: null,
             withheld: true,
+            environmentWithheld: false,
             organiserBookingId: fresh.groupBooking
               .organiserBookingId as string | null,
             organiserEmail: fresh.groupBooking.organiserBooking.member
               .email as string | null,
           };
         }
-        const emailResponse = await callXeroApi(
-          () =>
-            xero.accountingApi.emailInvoice(
-              tenantId,
-              createdInvoice.invoiceID!,
-              new RequestEmpty(),
-              invoiceEmailIdempotencyKey
-            ),
-          {
-            operation: "emailInvoice",
-            resourceType: "INVOICE",
-            workflow: "createXeroInvoiceForGroupSettlement",
-            context: `emailInvoice(group settlement ${settlementId})`,
-          }
-        );
+        // #3035: the club's own switch above is checked FIRST, so it stays
+        // recorded as the club's decision on a copy. No withheld-email audit row
+        // for this branch — that row asserts an administrator set the switch.
+        if (invoiceEmailPolicy.kind !== "allow") {
+          return {
+            cancelled: false,
+            responseBody: null,
+            withheld: false,
+            environmentWithheld: true,
+            organiserBookingId: null as string | null,
+            organiserEmail: null as string | null,
+          };
+        }
+        const emailResponse = await sendXeroInvoiceEmail({
+          clearance: invoiceEmailPolicy.clearance,
+          xero,
+          tenantId,
+          invoiceId: createdInvoice.invoiceID!,
+          idempotencyKey: invoiceEmailIdempotencyKey,
+          workflow: "createXeroInvoiceForGroupSettlement",
+          context: `emailInvoice(group settlement ${settlementId})`,
+        });
         return {
           cancelled: false,
-          responseBody: emailResponse.body ?? null,
+          responseBody: emailResponse.body,
           withheld: false,
+          environmentWithheld: false,
           organiserBookingId: null as string | null,
           organiserEmail: null as string | null,
         };
       });
       invoiceEmailWithheld = emailGate.withheld;
+      // Mutually exclusive by construction, and narrowed to the confirmed-copy
+      // case exactly as the booking path is: an UNKNOWN role is an ERROR below.
+      invoiceEmailWithheldForEnvironment =
+        emailGate.environmentWithheld &&
+        invoiceEmailPolicy.kind === "withhold" &&
+        invoiceEmailPolicy.suppressedForNonProduction;
       if (
         emailGate.withheld &&
         emailGate.organiserBookingId &&
@@ -614,6 +628,15 @@ export async function createXeroInvoiceForGroupSettlement(
           'Skipped the Xero group settlement invoice email for an organiser booking with "No emails" turned on'
         );
       }
+      if (emailGate.environmentWithheld && invoiceEmailPolicy.kind === "withhold") {
+        const context = { settlementId, invoiceId: createdInvoice.invoiceID };
+        if (invoiceEmailPolicy.error) {
+          invoiceEmailError = invoiceEmailPolicy.error;
+          logger.error(context, invoiceEmailPolicy.logMessage);
+        } else {
+          logger.info(context, invoiceEmailPolicy.logMessage);
+        }
+      }
       if (emailGate.cancelled) {
         await voidCancelledGroupSettlementInvoice({
           settlementId: settlement.id,
@@ -640,6 +663,9 @@ export async function createXeroInvoiceForGroupSettlement(
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
         invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
+        // #3035: a THIRD, distinct reason nothing was emailed — a confirmed
+        // copy. Never conflated with the switch above or a provider failure.
+        invoiceEmailWithheldForEnvironment,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: createdInvoice.invoiceID,

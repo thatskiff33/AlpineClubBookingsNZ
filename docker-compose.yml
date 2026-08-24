@@ -1,5 +1,24 @@
 x-app-environment: &app-environment
   TZ: Pacific/Auckland
+  # Is this installation the club's LIVE site, or a copy of it (ENV-SAFETY 1
+  # #3034, epic #2986)? Exactly `production` or `non-production`, and there is
+  # DELIBERATELY NO `:-` DEFAULT: a default here would be the silent inference
+  # this whole epic exists to remove — one that would be wrong for every fork and
+  # every restored copy, in the direction that emails the club's real members from
+  # a test system. An unset variable makes the app resolve UNKNOWN and hold back
+  # member email and Xero writes until an operator declares it, which is loud and
+  # safe; a `:-production` would be quiet and wrong.
+  #
+  # NOT the same thing as APP_RUNTIME_ROLE below, which names which container SLOT
+  # this is (web-blue / web-green / cron-leader / staging). That is a deployment
+  # naming convention and is never read to decide whether this is production.
+  #
+  # scripts/run-production-blue-green-deploy.sh refuses to deploy without it, at
+  # step 3 of 20 — before the migration and long before cutover. Compose itself
+  # will pass an empty value through with a warning; that is the correct outcome
+  # for an operator running `docker compose up` by hand, because the app then says
+  # exactly what is missing on /admin/setup rather than guessing.
+  APP_ENVIRONMENT_ROLE: ${APP_ENVIRONMENT_ROLE}
   # Default DATABASE_URL for the WEB slots (app_blue / app_green). Prisma's
   # connection_limit is the hard pool ceiling per container. Advisory-lock
   # waiters hold their connection while blocked, so a single-lodge booking
@@ -40,6 +59,15 @@ x-app-environment: &app-environment
   SMTP_PORT: ${SMTP_PORT}
   USE_AWS_SES: ${USE_AWS_SES:-true}
   USE_SMTP_RELAY: ${USE_SMTP_RELAY:-false}
+  # Declares that the SMTP relay above is a CAPTURE mailbox which forwards mail
+  # nowhere (mailpit, MailHog, a developer's sink) — ENV-SAFETY 2 (#3035),
+  # INV-CONFIG-004. It must be listed HERE, in the anchor, not only in an env
+  # file: `--env-file` feeds Compose INTERPOLATION only and injects nothing into
+  # a container, so a variable that is not named in this map does not exist for
+  # the app however carefully the env file sets it. That is exactly how the
+  # first cut of #3035 shipped an E2E stack whose mailbox stayed empty.
+  # Defaults false — a capture transport is a declaration, never an inference.
+  USE_LOCAL_CAPTURE: ${USE_LOCAL_CAPTURE:-false}
   EMAIL_SERVER_HOST: ${EMAIL_SERVER_HOST:-}
   EMAIL_SERVER_PORT: ${EMAIL_SERVER_PORT:-}
   EMAIL_SERVER_USER: ${EMAIL_SERVER_USER:-}
@@ -49,6 +77,12 @@ x-app-environment: &app-environment
   AWS_SES_SECRET_ACCESS_KEY: ${AWS_SES_SECRET_ACCESS_KEY}
   SES_SNS_TOPIC_ARN: ${SES_SNS_TOPIC_ARN}
   SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN: ${SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN:-false}
+  # Temporary opt-in to legacy SNS SignatureVersion 1 (SHA1) during a topic
+  # migration (#815), read in src/lib/ses-sns.ts. Documented in .env.example but
+  # named in no Compose file, so an operator mid-migration could not set it; the
+  # env-delivery census added under #3035 surfaced that. Behaviour-neutral:
+  # undefined already means "refuse SHA1", which is what `false` means here.
+  SES_SNS_ALLOW_SIGNATURE_V1: ${SES_SNS_ALLOW_SIGNATURE_V1:-false}
   # EMAIL_FROM is the only email-identity env var (besides transport secrets):
   # the envelope / Return-Path sender, which must be a provider-verified (SES)
   # address. From display name, support address, and contact-form recipient are
@@ -109,6 +143,47 @@ x-app-environment: &app-environment
   # server-side token/organisation calls; INTERNAL falls back to API_ORIGIN.
   XERO_MOCK_API_ORIGIN: ${XERO_MOCK_API_ORIGIN:-}
   XERO_MOCK_INTERNAL_ORIGIN: ${XERO_MOCK_INTERNAL_ORIGIN:-}
+  # ------------------------------------------------------------------
+  # Settings that were DOCUMENTED but not DELIVERED, until #3035.
+  #
+  # Every one of these is read by application code and was named in
+  # `.env.example` (some also in the CI E2E env blocks) but appeared in no
+  # Compose file — and `--env-file` feeds Compose INTERPOLATION only, it injects
+  # nothing into a container. So on every Compose deployment an operator could
+  # set them, see them in their `.env`, and have them do nothing at all. That is
+  # the same defect that made #3035's first cut ship an E2E stack with an empty
+  # mailbox, and `env-delivery-census.test.ts` is what surfaced the rest of the
+  # family.
+  #
+  # ALL OF THEM ARE BEHAVIOUR-NEUTRAL TO ADD. Each reader already treats an unset
+  # or empty value exactly as it treats the empty default written here, and every
+  # place that declares the three Xero flags declares `false`. Nothing about a
+  # deployment changes on upgrade; what changes is that setting one now works.
+  # ------------------------------------------------------------------
+  # Xero optional behaviours — src/lib/xero-feature-flags.ts (undefined = off).
+  XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: ${XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH:-false}
+  XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: ${XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS:-false}
+  XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: ${XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS:-false}
+  # Operational defaults — src/config/operational.ts falls back to NZD / en-NZ.
+  # Only the server-side spellings: the NEXT_PUBLIC_* twins are inlined into the
+  # browser bundle at BUILD time, so delivering those at runtime would make the
+  # server and the browser disagree. Club time zone is TZ, above.
+  CURRENCY: ${CURRENCY:-}
+  LOCALE: ${LOCALE:-}
+  # Optional separate archive database for AuditLogArchive rows —
+  # src/lib/audit-retention.ts (empty = archive to the primary database).
+  AUDIT_ARCHIVE_DATABASE_URL: ${AUDIT_ARCHIVE_DATABASE_URL:-}
+  AUDIT_LOG_ARCHIVE_DATABASE_URL: ${AUDIT_LOG_ARCHIVE_DATABASE_URL:-}
+  # Where Admin > System Health asks the cron leader for its runtime status —
+  # src/app/api/admin/health/route.ts, which defaults to the compose-internal
+  # http://app:3000/api/deploy/runtime-status when this is empty. `.env.example`
+  # already told operators Compose defaults to exactly that.
+  CRON_LEADER_RUNTIME_STATUS_URL: ${CRON_LEADER_RUNTIME_STATUS_URL:-}
+  # DR / clone bootstrap (ADR-003): a config-transfer bundle imported on boot
+  # ONLY when the database holds no non-seed configuration —
+  # src/lib/config-transfer/bootstrap-import.ts, which no-ops on an empty value.
+  # A container path, so it also needs a mount; empty disables it.
+  CONFIG_BUNDLE_IMPORT_PATH: ${CONFIG_BUNDLE_IMPORT_PATH:-}
 
 x-app-service: &app-service
   image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}
@@ -325,6 +400,11 @@ services:
         condition: service_healthy
     environment:
       TZ: Pacific/Auckland
+      # APP_ENVIRONMENT_ROLE is deliberately ABSENT here, and that is not an
+      # oversight: this service runs `prisma migrate deploy` and nothing else. It
+      # imports no application code, so it never resolves an environment role and
+      # has nothing to decide with one. Every service that runs the APP takes the
+      # variable through the x-app-environment anchor above.
       # Bound the deploy-window migrate pool to 2 so a blue/green overlap that
       # also runs migrations still fits: blue(10)+green(10)+cron(5)+migrate(2)
       # = 27, within the max_connections=40 ceiling. The headroom above 27 is

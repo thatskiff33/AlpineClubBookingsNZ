@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     booking: { findUnique: mocks.bookingFindUnique },
     emailLog: {
       create: mocks.emailLogCreate,
@@ -102,6 +103,9 @@ vi.mock("@/lib/email/internal", () => ({
     modeLabel: "test",
   }),
   shouldPersistEmailHtml: () => true,
+  // #3035: `sendEmail` names which transport carried a delivered message
+  // through this helper, so a factory that omits it dies at import.
+  logDeliveredTransport: () => {},
 }));
 
 vi.mock("nodemailer", () => ({
@@ -112,6 +116,10 @@ vi.mock("nodemailer", () => ({
 
 vi.mock("@/lib/email-delivery", () => ({
   resolveEmailDeliveryConfig: mocks.resolveEmailDeliveryConfig,
+  // #3035: the delivery policy reads the DECLARED transport kind through this
+  // same canonical parser, so a partial mock of the module has to name it or the
+  // whole file dies at import.
+  resolveEmailTransportKind: () => "live-provider",
 }));
 
 vi.mock("@/lib/email-sender", () => ({
@@ -136,6 +144,7 @@ vi.mock("@/lib/logger", () => ({
 import { retryFailedEmails } from "@/lib/cron-email-retry";
 import { prepareEmailMessage } from "@/lib/email-message-renderer";
 import { sendEmail } from "@/lib/email/core";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 const BOOKING_ID = "bk_detail_42";
 const CURRENT_ORIGIN = "https://bookings.example.test";
@@ -284,6 +293,20 @@ beforeEach(() => {
     issues: [],
   });
   mocks.sendMail.mockResolvedValue({ messageId: "message_1" });
+});
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
 });
 
 describe("booking override delivery-copy URL sanitation", () => {

@@ -31,6 +31,9 @@ const mocks = vi.hoisted(() => ({
   upsertXeroObjectLink: vi.fn(),
   syncManagedXeroContactGroupForMember: vi.fn(),
   recordProviderCreatedContactPendingLocalLink: vi.fn(),
+  environmentSafetySettingsFindUnique: vi.fn(),
+  containmentFindUnique: vi.fn(),
+  containmentUpsert: vi.fn(),
 }));
 
 vi.mock("@/lib/xero-contact-create-recovery", async (importOriginal) => {
@@ -49,6 +52,19 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.memberFindUnique,
     },
     $transaction: mocks.transaction,
+    // #3034/#3036: the funnel asks which installation this is before it does
+    // anything. A MISSING delegate is an UNREADABLE override, which resolves
+    // UNKNOWN whatever the declaration says, and #3036 then refuses every Xero
+    // write — so without this the suite would test the refusal path instead of
+    // the transaction boundary it is about. Inline, because `vi.mock` factories
+    // are hoisted above this file's imports.
+    environmentSafetySettings: {
+      findUnique: mocks.environmentSafetySettingsFindUnique,
+    },
+    xeroSandboxContactContainment: {
+      findUnique: mocks.containmentFindUnique,
+      upsert: mocks.containmentUpsert,
+    },
   },
 }));
 
@@ -83,6 +99,10 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { findOrCreateXeroContact } from "@/lib/xero-contacts";
+import {
+  declareEnvironmentRole,
+  expectEnvironmentRolePremise,
+} from "@/lib/__tests__/helpers/environment-role";
 
 const MEMBER = {
   id: "member-1",
@@ -98,6 +118,12 @@ const MEMBER = {
 describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The club's LIVE site, where #3036's containment is a no-op — so this
+    // suite still measures exactly the transaction boundary it always did.
+    declareEnvironmentRole("production");
+    mocks.environmentSafetySettingsFindUnique.mockResolvedValue(null);
+    mocks.containmentFindUnique.mockResolvedValue(null);
+    mocks.containmentUpsert.mockResolvedValue({});
     mocks.memberFindUnique.mockResolvedValue({ ...MEMBER });
     mocks.getAuthenticatedXeroClient.mockResolvedValue({
       xero: {
@@ -151,6 +177,7 @@ describe("findOrCreateXeroContact transaction boundary (#1355)", () => {
   });
 
   it("commits the reservation before create and keeps the provider outside both short transactions", async () => {
+    await expectEnvironmentRolePremise("PRODUCTION");
     await expect(findOrCreateXeroContact("member-1")).resolves.toBe(
       "contact-new"
     );

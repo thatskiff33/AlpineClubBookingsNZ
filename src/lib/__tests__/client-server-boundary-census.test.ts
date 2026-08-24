@@ -47,6 +47,18 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * exists to prevent. Its sibling `@/lib/club-time-zone` is pure validation with
  * no environment read and is deliberately NOT here: the admin panel needs its
  * zone list.
+ *
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
+ * epic #2986) are here for the same reason and a sharper one. Neither is
+ * `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
+ * entrypoint `npm run setup`, which such an import would abort — and the
+ * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
+ * component importing it would answer from whatever the bundler inlined at
+ * build time for a NON-public variable, which is `undefined`: the browser would
+ * read "nothing has declared this installation" while the server reads
+ * `production`. What is keyed on that answer is whether the club's real members
+ * get emailed (INV-CONFIG-003), so a second authority here is worse than the
+ * timezone one, not merely analogous.
  */
 const FORBIDDEN_MODULES = new Set(
   [
@@ -59,6 +71,8 @@ const FORBIDDEN_MODULES = new Set(
     "stripe",
     "env",
     "club-time-zone-env",
+    "environment-role-declaration",
+    "environment-role",
   ].map((name) => path.join(SRC, "lib", name)),
 );
 

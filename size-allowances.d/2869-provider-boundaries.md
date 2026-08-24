@@ -16,7 +16,7 @@ rather than folded into the modules that call them, which is why the two largest
 concentrations of new logic cost nothing here.
 
 file: src/instrumentation.node.ts
-lines: 1604
+lines: 1709
 reason: this is the change. The file is one declarative registration table for
   twenty-five scheduled jobs, and a cron expression is a club-local scheduled
   time — so the zone that resolves it has to be read once, at boot, before the
@@ -68,16 +68,16 @@ reason: two "today" reads move onto the persisted club timezone. Seven of the
   `ApplyContext` would be tidier and belongs with that machinery.
 
 file: src/lib/membership-cancellation-xero.ts
-lines: 1365
+lines: 1396
 reason: one line. The import of the environment-zoned date helper is replaced by
   two imports — the club-zone reader and the boundary's document-date helper.
 
 file: src/lib/xero-applied-credit-deallocation.ts
-lines: 956
+lines: 993
 reason: one line, and the same import swap as above.
 
 file: src/lib/xero-booking-invoices.ts
-lines: 1303
+lines: 1375
 reason: the invoice due date now takes the club's zone explicitly, so the zone is
   read ONCE outside the `buildInvoice` closure — that closure runs for the
   recorded request payload and again on every contact-repair attempt, and both
@@ -85,7 +85,7 @@ reason: the invoice due date now takes the club's zone explicitly, so the zone i
   it is hoisted, which is the property a future reader is most likely to undo.
 
 file: src/lib/xero-contacts.ts
-lines: 1714
+lines: 1890
 reason: `getContactFirstInvoiceDate` is the original defect this issue was filed
   for, and the fourteen lines are its docblock. The function body got SHORTER —
   a five-line parse became one call to the boundary. The explanation has to sit

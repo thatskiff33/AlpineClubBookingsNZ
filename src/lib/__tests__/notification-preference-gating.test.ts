@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 // #1285: preference-gating tests. These prove that the OPTIONAL categories are
 // honored before the send path. `bookingReminder` is gated in its cron caller
@@ -14,6 +15,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
     sendMail: vi.fn().mockResolvedValue({ messageId: "msg-1" }),
   };
   const mockPrisma = {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
@@ -93,6 +95,20 @@ beforeEach(() => {
 // ============================================================================
 // choreRoster — optional/operational, resolved via the Option C hybrid helper
 // ============================================================================
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("#1285 shouldSendChoreRoster resolves the effective preference (Option C hybrid)", () => {
   it("uses the guest's OWN preference row when present — opted out → suppress", async () => {

@@ -339,6 +339,23 @@ const ROUTE_AREA_PREFIXES: Array<{
       // routes), exactly like the backups credential + destination writes below.
       "/admin/club-time",
       "/api/admin/club-time-zone",
+      // Environment safety — whether this installation is the club's live site
+      // or a copy (ENV-SAFETY 1 #3034, epic #2986). Registered under support for
+      // the same reason as /admin/club-time and /admin/backups: so an
+      // unregistered path never falls back to the overview catch-all and the
+      // sidebar's matrix check resolves. The AREA only decides who can reach the
+      // surface; CHANGING the safer override is Full Admin regardless of area
+      // level, enforced in the route itself.
+      //
+      // Reading the role is NOT Full-Admin-only, and this comment used to say it
+      // was (#3034 review). The effective role, the declaration state and the
+      // sanitized refused value all reach `support:view` through
+      // `GET /api/admin/setup` -> `buildEnvironmentRoleCheck`, which is
+      // deliberate: the issue asks that authorized setup/admin UI show whether
+      // the role is production, non-production or unknown and why. What is
+      // Full-Admin-only is this page and this API, and the write.
+      "/admin/environment",
+      "/api/admin/environment-safety",
       // Login & Security page (epic #2030, child #2033): password policy today;
       // magic-link / Google sign-in cards land here in #2034/#2035. Pinned to
       // `support` alongside /admin/modules and the other system-config surfaces.

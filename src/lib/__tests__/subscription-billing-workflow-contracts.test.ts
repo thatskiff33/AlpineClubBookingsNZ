@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     membershipSubscriptionCharge: { findUnique: mocks.chargeFind, update: mocks.chargeUpdate },
     memberSubscription: { updateMany: mocks.memberSubscriptionUpdateMany },
     xeroObjectLink: { upsert: mocks.linkUpsert },
@@ -43,6 +44,7 @@ vi.mock("@/lib/xero-sync", () => ({
 vi.mock("@/lib/logger", () => ({ default: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 import { createXeroMembershipSubscriptionInvoice } from "@/lib/xero-subscription-invoices";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 function charge(overrides: Record<string, unknown> = {}) {
   return {
@@ -85,6 +87,17 @@ function providerInvoice(overrides: Partial<Invoice> = {}): Invoice {
     ...overrides,
   };
 }
+
+/*
+  #3035 (ENV-SAFETY 2): asking Xero to email an invoice is a provider SEND, so it
+  now goes through the environment-safety boundary. Both halves of the role have
+  to be declared or it resolves UNKNOWN and no invoice is emailed — a missing
+  `environmentSafetySettings` delegate is an UNREADABLE override, not "no
+  override". See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("subscription invoice delivery behavior", () => {
   beforeEach(() => {
@@ -147,6 +160,55 @@ describe("subscription invoice delivery behavior", () => {
     expect(mocks.transaction.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.emailInvoice.mock.invocationCallOrder[0]
     );
+  });
+
+  /*
+    #3035 (ENV-SAFETY 2, INV-CONFIG-004). The charge stays at INVOICE_CREATED and
+    its email attempt count is untouched: nothing was attempted, so EMAIL_FAILED
+    would be a lie, and INVOICE_CREATED is also the state the admin
+    subscription-billing panel already offers Retry on.
+  */
+  it("raises the invoice but emails nobody on a confirmed copy, and does not mark the charge EMAIL_FAILED", async () => {
+    declareEnvironmentRole("non-production");
+    mocks.chargeFind.mockResolvedValue(charge());
+    mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    for (const call of mocks.chargeUpdate.mock.calls) {
+      expect(call[0].data.status).not.toBe("EMAIL_FAILED");
+      expect(call[0].data.status).not.toBe("EMAILED");
+      expect(call[0].data).not.toHaveProperty("emailAttemptCount");
+    }
+    // Nothing failed, so nothing is reported as a failure.
+    expect(mocks.complete).toHaveBeenLastCalledWith("op-1", expect.objectContaining({
+      status: "SUCCEEDED",
+      responsePayload: expect.objectContaining({
+        emailError: null,
+        invoiceEmailWithheldForEnvironment: true,
+      }),
+    }));
+  });
+
+  it("reports PARTIAL, without an EMAIL_FAILED charge, when nobody has said what this installation is", async () => {
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+    mocks.chargeFind.mockResolvedValue(charge());
+    mocks.getInvoices.mockResolvedValue({ body: { invoices: [providerInvoice()] } });
+
+    await createXeroMembershipSubscriptionInvoice({ chargeId: "charge-1", syncOperationId: "op-1" });
+
+    expect(mocks.emailInvoice).not.toHaveBeenCalled();
+    for (const call of mocks.chargeUpdate.mock.calls) {
+      expect(call[0].data.status).not.toBe("EMAIL_FAILED");
+    }
+    expect(mocks.complete).toHaveBeenLastCalledWith("op-1", expect.objectContaining({
+      status: "PARTIAL",
+      responsePayload: expect.objectContaining({
+        emailError: expect.any(String),
+        invoiceEmailWithheldForEnvironment: false,
+      }),
+    }));
   });
 
   it("conflicts instead of invoicing when a covered subscription is already PAID (#1944)", async () => {

@@ -142,6 +142,52 @@ GRANDFATHERED_DUPLICATE_PREFIXES=(
 
 failures=0
 
+# ---------------------------------------------------------------------------
+# Exact-line membership, WITHOUT a pipeline.
+# ---------------------------------------------------------------------------
+# Two checks below ask "is this name one of these names", and both used to ask
+# it as `printf '%s\n' "$list" | grep -Fxq -- "$name"`. That construct returns
+# the WRONG ANSWER, in the direction that reads as "absent", for reasons that
+# have nothing to do with the strings:
+#
+#   `grep -q` exits at its FIRST match and closes the read end of the pipe. If
+#   the writer has not finished by then - which happens whenever the payload
+#   does not fit in the pipe's buffer - its next write gets EPIPE, `printf` dies
+#   with status 141, and `set -o pipefail` then makes the surrounding `if` FALSE
+#   even though the line was found. Measured on debian:bookworm-slim: a 38 KB
+#   payload answers FOUND, a 208 KB payload answers `NOT FOUND (status 141)` for
+#   a needle on its FIRST line. Nothing about the needle changed.
+#
+# So the answer depended on the payload's size against the pipe's capacity - and
+# a pipe's capacity is not a constant either: Linux hands out single-page (4 KB)
+# pipes once a user is over fs.pipe-user-pages-soft, which a full parallel test
+# run can reach. That is how the same committed tree passed on a developer
+# machine and failed in CI, printing "no such directory X" while listing X two
+# lines later in the same message - the self-contradiction was the tell (#3036).
+#
+# In check 4 the same shape fails in the QUIETER and more dangerous direction:
+# `is_added_on_this_branch` returning a false "no" makes the same-release
+# expand/contract check `continue` past a real pair and report a pass - the exact
+# silent-pass failure mode check 5 exists to prevent.
+#
+# Pure bash `case` has no writer, no reader, and no exit status to lose. The
+# needle is quoted inside the pattern so it is matched literally, and the newline
+# padding keeps it a whole-LINE match exactly as `grep -Fx` did. Any new
+# membership test in these gates must use this helper. The guard is in
+# scripts/__tests__/same-release-expand-contract.test.ts, which fails both a
+# reintroduced `printf | grep -q` and a helper that has lost its newline padding
+# (whole-line match degraded to substring).
+list_contains_line() {
+  # $1 = the exact line to look for, $2 = the newline-separated candidates.
+  [ -n "${1:-}" ] || return 1
+  local haystack
+  haystack=$'\n'"${2:-}"$'\n'
+  case "$haystack" in
+    *$'\n'"$1"$'\n'*) return 0 ;;
+  esac
+  return 1
+}
+
 if [ ! -f "$MIGRATION_SAFETY_LEDGER" ]; then
   echo "check-migration-safety-coverage: ledger not found at ${MIGRATION_SAFETY_LEDGER}" >&2
   exit 1
@@ -407,7 +453,7 @@ else
     )"
 
     is_added_on_this_branch() {
-      printf '%s\n' "$added_migrations" | grep -Fxq -- "$1"
+      list_contains_line "$1" "$added_migrations"
     }
 
     same_release_pairs=0
@@ -541,7 +587,7 @@ previous_release_missing=0
 while IFS=$'\t' read -r ledger_row_migration named_previous; do
   [ -n "${ledger_row_migration:-}" ] || continue
   previous_release_checked=$((previous_release_checked + 1))
-  if printf '%s\n' "$migration_dir_names" | grep -Fxq -- "${named_previous}"; then
+  if list_contains_line "${named_previous}" "$migration_dir_names"; then
     continue
   fi
 
