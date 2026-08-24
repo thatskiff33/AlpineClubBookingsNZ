@@ -1,8 +1,5 @@
 import { parseDateOnly } from "@/lib/date-only";
-import {
-  calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
-} from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   normalizeGuestStayRange,
   type NormalizedBookingGuestStayRange,
@@ -125,17 +122,6 @@ function toDate(value: Date | string | null | undefined, fallback: Date): Date {
     return parseDateOnly(value);
   }
   return fallback;
-}
-
-/**
- * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
- *
- * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
- * no timezone (`INV-DATE-010`, `INV-DATE-026`). Idempotent, so a caller that has
- * already decoded its rows this way hands in values this leaves alone.
- */
-function storedDateOnly(value: Date): Date {
-  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
 }
 
 /**
