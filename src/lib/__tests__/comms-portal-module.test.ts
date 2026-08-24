@@ -74,7 +74,7 @@ describe("commsPortal schema and migration", () => {
     process.cwd(),
     "prisma",
     "migrations",
-    "20260822010000_add_comms_portal",
+    "20260902010000_add_comms_portal",
   );
   const sql = fs.readFileSync(path.join(migrationDir, "migration.sql"), "utf8");
   const schema = fs.readFileSync(
@@ -118,7 +118,7 @@ describe("commsPortal schema and migration", () => {
     );
     const row = ledger
       .split("\n")
-      .find((line) => line.startsWith("20260822010000_add_comms_portal\t"));
+      .find((line) => line.startsWith("20260902010000_add_comms_portal\t"));
 
     expect(row).toBeDefined();
     const [, phase, , compatible] = row!.split("\t");
