@@ -202,7 +202,14 @@ export function postImageRoot(): string {
  */
 export function resolveStoredImage(storageKey: string): string | null {
   if (!storageKey || storageKey.includes("\0")) return null;
-  const root = postImageRoot();
+  // BOTH sides through the NATIVE resolver. `postImageRoot()` validates in
+  // posix terms (the deployment target), so on a Windows dev machine it
+  // returns "/images" while `path.resolve` answers a drive-letter path --
+  // and a prefix check that mixes the two spellings refuses every key. In
+  // the Linux container the two are identical and this changes nothing.
+  // Found live: the mirror sync could not store a single downloaded image
+  // on a Windows dev machine.
+  const root = path.resolve(postImageRoot());
   const absolute = path.resolve(root, storageKey);
   if (absolute !== root && !absolute.startsWith(root + path.sep)) return null;
   return absolute;
@@ -356,7 +363,9 @@ export async function deletePostImage(storageKey: string): Promise<void> {
  * write.
  */
 export async function ensurePostImageDirectory(): Promise<void> {
-  const root = postImageRoot();
+  // Native for the same reason resolveStoredImage is: probing "/images" on a
+  // Windows dev machine would test a different directory than the writes use.
+  const root = path.resolve(postImageRoot());
   await mkdir(root, { recursive: true });
   const probe = path.join(root, `.write-test-${process.pid}`);
   await writeFile(probe, "");

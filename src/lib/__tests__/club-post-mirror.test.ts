@@ -252,6 +252,35 @@ describe("runMirrorSync", () => {
     expect(data.bodyHtml).not.toContain("/api/images/posts/");
   });
 
+  it("gives a plain post with pictures a body, so the pictures are seen", async () => {
+    // The board renders images only through the body. Without this, a post
+    // that arrived as text-plus-attachments would have its pictures stored,
+    // counted and never shown to anyone.
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([
+        visiblePost({
+          bodyHtml: null,
+          images: [{ url: `/api/images/posts/${SERVER_IMAGE}.webp` }],
+        }),
+      ]),
+    );
+    mocks.fetchSharedPostImage.mockResolvedValue(new Uint8Array([1]));
+    mocks.writePostImage.mockResolvedValue({
+      publicId: "d".repeat(32),
+      storageKey: "posts/2026/07/local.webp",
+      mimeType: "image/webp",
+      sha256: "e".repeat(64),
+      width: 100,
+      height: 80,
+      bytes: 1,
+    });
+
+    await runMirrorSync(NOW);
+
+    const data = mocks.postCreate.mock.calls[0][0].data;
+    expect(data.bodyHtml).toContain(`/api/club-posts/images/${"d".repeat(32)}`);
+  });
+
   it("mirrors the words even when an image cannot be fetched", async () => {
     mocks.pullSharedPostSync.mockResolvedValue(
       envelope([

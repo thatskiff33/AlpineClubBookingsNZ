@@ -145,10 +145,27 @@ async function upsertMirror(post: SyncPost): Promise<void> {
   // Sanitised AGAIN on this side of the wire, after the rewrite so surviving
   // images point locally. The server sanitises too, but this install renders
   // the result to its own members and does not outsource that decision.
-  const bodyHtml = post.bodyHtml
+  let bodyHtml = post.bodyHtml
     ? sanitiseClubPostHtml(rewriteMirrorImageSources(post.bodyHtml, mapping)) ||
       null
     : null;
+
+  // A post can arrive with pictures but no rich body -- the server's own seed
+  // data, or a client that attached images to a plain post. The board renders
+  // pictures only through the body, so such a post gets a minimal one;
+  // without it the images are downloaded, stored, counted and never seen.
+  // Sanitised like any other body, so the write-side invariant holds.
+  if (!bodyHtml && storedImages.length > 0) {
+    bodyHtml =
+      sanitiseClubPostHtml(
+        storedImages
+          .map(
+            (image) =>
+              '<img src="/api/club-posts/images/' + image.publicId + '" alt="" />',
+          )
+          .join(""),
+      ) || null;
+  }
 
   const content = post.content.slice(0, 4000);
   const postedAt = new Date(post.createdAt);
