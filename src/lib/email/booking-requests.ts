@@ -203,7 +203,10 @@ export async function sendBookingRequestQuoteEmail(params: {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const respondUrl = `${baseUrl}/booking-requests/respond/${params.token}`;
 
-  await sendEmail({
+  // RETURNS the mailer's outcome (#3035). It used to swallow it, so both callers
+  // recorded a `success` audit row and told an officer the quote had gone out
+  // when the environment-safety boundary had held it back. Both now inspect it.
+  return sendEmail({
     to: params.email,
     lodgeId: params.lodgeId,
     subject: params.isReminder

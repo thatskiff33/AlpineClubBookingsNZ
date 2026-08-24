@@ -375,6 +375,8 @@ between the jobs is one sentence rather than a different message:
 | I want the original wording back | An override is in place | Click **Restore Default** for that template |
 | The change didn't reach a lodge-specific value | Lodge name/travel note/door code are per-lodge now | Set them in [Lodges](../multi-lodge/README.md), not here |
 | An email's colours are the platform default rather than our brand | Colours come from [Site Style](site-style.md), not from this page, and that style could not be read when the message was built | Nothing here needs re-saving. Check the server log for the warning that names the saved style as unreadable, and the database's health — see [Site Style](site-style.md) |
+| No email is going out at all, from anywhere | This installation is not the club's live site, or nothing has told it which it is | Nothing on this page is wrong. Open [Environment](environment-role.md): a **copy** deliberately sends nothing, and an installation nobody has declared holds mail back until you declare it. That page also shows how much has been held back |
+| Nothing is going out and this IS the live site | The deployment declares itself the live site *and* declares a local capture mailbox, which cannot both be true | Remove `USE_LOCAL_CAPTURE` (or set it to `false`) and set `USE_AWS_SES` or `USE_SMTP_RELAY` instead. Most held-back messages then go out by themselves; ones carrying a sign-in link, a door code or a payment link keep no stored copy and are listed for a manual re-send — see [Environment](environment-role.md) |
 
 ## Related links
 

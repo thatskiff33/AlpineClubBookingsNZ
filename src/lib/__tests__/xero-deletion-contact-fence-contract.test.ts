@@ -55,12 +55,18 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
     );
 
     expectOrdered(block, [
+      // #3036: the environment role is read BEFORE the reservation, so an
+      // undeclared installation opens no reservation and reaches no provider.
+      "resolveXeroContactEmailPolicy()",
       "reserveMemberContactCreateOperation(memberId",
-      "buildMemberXeroContactCreatePayload(locked)",
+      "buildMemberXeroContactCreatePayload(locked, emailPolicy)",
       "getAuthenticatedXeroClient()",
       "persistProviderCreatedContactProofOrThrow(",
       "lockMemberForXeroContactLink(tx, memberId)",
       "tx.member.update",
+      // #3036: and containment is proved after the local link commits, before
+      // the id is returned to anything that can raise a document.
+      "ensureXeroContactContained({",
     ]);
   });
 
@@ -143,6 +149,9 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       "async function syncContactGroupsBestEffort(",
     );
     expectOrdered(findOrCreate, [
+      // #3036: FIRST, before the member row is even read — an undeclared
+      // installation must reach nothing at all.
+      "resolveXeroContactEmailPolicy()",
       "isPlaceholderContactEmail(member.email)",
       "options?.repairExistingLink && previousXeroContactId",
       "findExistingXeroContactByExactName({",
@@ -198,6 +207,8 @@ describe("Xero contact/account-deletion lock topology mutation pins (#2597)", ()
       contactSource.indexOf("export async function updateXeroContact("),
     );
     expectOrdered(update, [
+      // #3036: the role is read before the reservation here too.
+      "resolveXeroContactEmailPolicy()",
       "reserveMemberContactUpdateOperation(",
       "try {",
       "getAuthenticatedXeroClient()",

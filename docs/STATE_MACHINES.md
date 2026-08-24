@@ -2469,10 +2469,30 @@ contact synchronization.
 
 ## Email Retry Lifecycle
 
-Known email log statuses: `QUEUED`, `SENT`, `FAILED`, `BOUNCED`.
+Known email log statuses: `QUEUED`, `SENT`, `FAILED`, `BOUNCED`,
+`SKIPPED_NO_EMAILS`, `SKIPPED_NON_PRODUCTION`.
+
+`SKIPPED_NON_PRODUCTION` (#3035) is the environment-safety suppression: this
+installation is a confirmed copy, so nothing was transmitted and no provider was
+contacted. It is TERMINAL and the retry cron never selects it — that job filters
+on `FAILED` alone. An installation whose role nobody has declared, and a live
+installation that has declared a local capture mailbox, both land on `FAILED`
+instead, carrying a `deliveryBlockReason`: those are configuration faults, so they
+stay retryable and go out by themselves once the deployment is corrected —
+PROVIDED the row still holds a rendered body. It does not for the twenty-six
+`SENSITIVE_EMAIL_LOG_TEMPLATES`, nor for any message whose logged recipient is
+redacted, because a live sign-in link, a door code or a payment link must not sit
+at rest; and the retry cron selects only rows that still hold one. Such a row is
+therefore written AT `attempts = 3`, which drops it out of the retry query and
+into the operator's email-failure review queue for a manual re-send, and its
+`errorMessage` says exactly that rather than promising it will self-heal.
+A copy that has explicitly declared a capture mailbox transmits into it normally
+and its rows are ordinary `SENT`.
 
 ```text
 email queued -> send attempted -> sent
+confirmed copy -> environment-safety suppression (terminal, no provider contacted)
+unconfirmed role or capture-in-production -> retryable failure carrying a block reason
 send failure -> retryable failed -> suppression + booking authority rechecked
 current authority + current mailbox -> delivery HTML re-finalized -> guarded claim -> retried by cron
 revoked authority or stale mailbox -> detail CTA removed, bearer/page action preserved -> retried
@@ -2483,8 +2503,11 @@ exhausted or suppressed -> admin-visible failure/suppression
 
 To verify: retry backoff, suppression handling, durable recipient identity,
 direct/inherited mailbox drift, revoked-authority fail-closed behavior,
-page-fragment/bearer preservation, rollback isolation, and which
-business-critical emails require admin alerts.
+page-fragment/bearer preservation, rollback isolation, which business-critical
+emails require admin alerts, and that the four reasons a message went unsent —
+the club's own "No emails" switch, an environment-safety suppression, an
+unconfirmed environment, and a provider failure — stay distinguishable
+(INV-CONFIG-004).
 
 ## Xero Outbox And Reconciliation Lifecycle
 

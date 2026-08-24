@@ -25,6 +25,12 @@
 #    /images handler and forwarded-header behaviour (TLS termination excluded).
 #  - mailpit SMTP capture so any incidental outbound email succeeds quietly
 #    instead of polluting the error-noise check. No live providers anywhere.
+#    NOTE from #3034: this stack declares APP_ENVIRONMENT_ROLE=non-production, so
+#    once #3035 lands its application-controlled sends are WITHHELD at the
+#    delivery boundary rather than relayed to mailpit. That keeps the
+#    error-noise premise (nothing is attempted against a live provider) and
+#    strengthens it; a scenario that ever needs a message to actually arrive here
+#    will need to say so rather than assume the relay.
 services:
   postgres:
     ports: !override
@@ -38,6 +44,19 @@ services:
     # stays the production mem_limit: 1g from the base file.
     cpus: 1.0
     environment:
+      # This stack is a COPY, always, by construction (ENV-SAFETY 1 #3034, epic
+      # #2986). It is used with the BASE docker-compose.yml, which passes
+      # ${APP_ENVIRONMENT_ROLE} through with no default, and there is no tracked
+      # .env.measure to supply one — so without this line the measurement app
+      # resolves UNKNOWN, the boot advisory logs an error on EVERY recreate, and
+      # MC-09 in measurement/current-main-refresh/run-log-noise.sh fails on a
+      # warning/error signature repeated three times. Eight of the eleven
+      # producers `--force-recreate app` inside their own `docker logs --since`
+      # window, so one line per boot is ten-plus occurrences of one signature.
+      # Hard-coded rather than interpolated, exactly as docker-compose.staging.yml
+      # does it: a stray value in an env file must not be able to make a
+      # measurement stack claim to be the club's live site.
+      APP_ENVIRONMENT_ROLE: non-production
       APP_RUNTIME_ROLE: web-measure
       CRON_ENABLED: "false"
       NEXTAUTH_URL: http://localhost:8027
@@ -46,7 +65,12 @@ services:
       KEEP_ALIVE_TIMEOUT: "65000"
       LOG_LEVEL: info
       USE_AWS_SES: "false"
-      USE_SMTP_RELAY: "true"
+      USE_SMTP_RELAY: "false"
+      # ENV-SAFETY 2 (#3035): this stack declares itself non-production, and a
+      # non-production installation suppresses every send unless its transport is
+      # DECLARED to be a capture mailbox. mailpit is one, so say so — otherwise
+      # this harness measures a stack that never sends anything.
+      USE_LOCAL_CAPTURE: "true"
       EMAIL_SERVER_HOST: mailpit
       EMAIL_SERVER_PORT: "1025"
       EMAIL_SERVER_USER: measurement
@@ -104,11 +128,19 @@ services:
     cpus: 0.2
 
   # Blue/green slots are the deploy runner's concern; the measurement runs one
-  # web-shaped app container. Parking them behind a profile disables them.
+  # web-shaped app container. Parking them behind a profile disables them — but
+  # they still DECLARE the role, because a profile is a switch somebody can turn
+  # on and an app service that runs here without a declaration is the same
+  # UNKNOWN-on-boot hole as the one above. Asserted by the compose census in
+  # src/lib/__tests__/deploy-environment-role-contract.test.ts.
   app_blue:
     profiles: ["production-bluegreen"]
+    environment:
+      APP_ENVIRONMENT_ROLE: non-production
   app_green:
     profiles: ["production-bluegreen"]
+    environment:
+      APP_ENVIRONMENT_ROLE: non-production
 
   caddy:
     ports: !override

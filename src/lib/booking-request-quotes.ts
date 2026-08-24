@@ -765,8 +765,9 @@ export async function sendBookingRequestQuote(input: {
   });
 
   let emailDelivered = true;
+  let emailOutcome = "sent";
   try {
-    await sendBookingRequestQuoteEmail({
+    const outcome = await sendBookingRequestQuoteEmail({
       // A quote is sent before any booking exists (#2258).
       bookingContext: "none",
       email: quote.bookingRequest.contactEmail,
@@ -782,8 +783,30 @@ export async function sendBookingRequestQuote(input: {
       message: quote.message,
       expiresAt,
     });
+    /*
+      A WITHHELD QUOTE IS NOT A DELIVERED ONE (#3035). `sendEmail` returns rather
+      than throws when nothing was transmitted — the environment-safety boundary,
+      a suppressed address, a placeholder recipient — so this used to record
+      `outcome: "success"`, "Booking request quote sent" and hand
+      `emailDelivered: true` back to the officer who pressed Send. The quote's
+      response token is live and the requester has never seen it.
+    */
+    emailOutcome = outcome.status;
+    if (outcome.status !== "sent") {
+      emailDelivered = false;
+      logger.warn(
+        {
+          bookingRequestId: quote.bookingRequestId,
+          quoteId: quote.id,
+          outcome: outcome.status,
+          reason: "reason" in outcome ? outcome.reason : undefined,
+        },
+        "Booking request quote email was not transmitted"
+      );
+    }
   } catch (err) {
     emailDelivered = false;
+    emailOutcome = "error";
     logger.error(
       { err, bookingRequestId: quote.bookingRequestId, quoteId: quote.id },
       "Failed to send booking request quote email"
@@ -807,6 +830,7 @@ export async function sendBookingRequestQuote(input: {
       version: quote.version,
       expiresAt: expiresAt.toISOString(),
       emailDelivered,
+      emailOutcome,
     },
   });
 
