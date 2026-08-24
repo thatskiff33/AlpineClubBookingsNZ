@@ -27,11 +27,18 @@ export type { AgeTierSettingData } from "./policies/age-tier";
 /**
  * The club's current season year, resolved from the PERSISTED club timezone.
  *
- * A dynamic import for the same reason `getAgeTierSettings` dynamically imports
- * `./prisma`: this module re-exports pure helpers that client code reaches, and
- * `club-time-zone-runtime` pulls in Prisma. Keeping the edge dynamic keeps the
- * client/server boundary census (`INV-OPS-013`) satisfied without splitting the
- * module.
+ * A DYNAMIC import, for the same reason `getAgeTierSettings` below imports
+ * `./prisma` dynamically: `club-time-zone-runtime` imports Prisma at module
+ * scope, so a static edge here would pull the database client into this module's
+ * load graph and undo that file's deliberate laziness.
+ *
+ * MEASURED, NOT ASSUMED, because this file's neighbour `membership-types.ts`
+ * needed a stronger remedy for what looked like the same problem. This module is
+ * NOT on the browser graph — `client-server-boundary-census.test.ts` follows
+ * dynamic imports as well as static ones, and it passes, which it could not if
+ * anything `"use client"` reached here. So the dynamic import is about load order,
+ * not about the client boundary. `membership-types.ts` IS on that graph, and
+ * there no import shape helps: the season year has to arrive as a value.
  */
 async function clubCurrentSeasonYear(): Promise<number> {
   const [{ readClubTimeZoneOutsideRequest }, { clubSeasonYear }] =

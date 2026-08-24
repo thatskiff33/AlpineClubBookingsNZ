@@ -9,6 +9,8 @@ import {
   clubDomainEmail,
 } from "../src/config/club-identity";
 import { CLUB_TIME_SETTINGS_ID } from "../src/lib/club-time-zone";
+import { requireClubTimeZone } from "../src/lib/club-time";
+import { clubSeasonYear } from "../src/lib/financial-year";
 import { decideClubTimeZoneBackfill } from "../src/lib/config-self-heal-steps";
 import { slugifyLodgeName } from "../src/lib/lodges";
 import { CLUB_CONFIG_LODGE_CAPACITY } from "../src/lib/lodge-capacity";
@@ -536,8 +538,23 @@ async function main() {
     });
   }
 
+  // The season the CLUB is in, from the zone this seed has just written rather
+  // than from the host's month (CT-4 group F1, #2870). `clubTimeZoneBackfill` is
+  // create-only, so read the row back: on a re-seed the stored zone is the club's
+  // real one and the freshly-decided value would be the environment's.
+  const seededClubTimeZone = await prisma.clubTimeSettings.findUnique({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    select: { timeZone: true },
+  });
   const membershipAssignmentBackfill =
-    await backfillCurrentSeasonMembershipAssignments(prisma);
+    await backfillCurrentSeasonMembershipAssignments(
+      prisma,
+      clubSeasonYear(
+        requireClubTimeZone(
+          seededClubTimeZone?.timeZone ?? clubTimeZoneBackfill.timeZone,
+        ),
+      ),
+    );
   console.log(
     `Membership types seeded; current-season assignments created: ${membershipAssignmentBackfill.createdCount}`,
   );

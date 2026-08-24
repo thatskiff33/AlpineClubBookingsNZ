@@ -5,8 +5,6 @@ import type {
   Prisma,
   Role,
 } from "@prisma/client";
-import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { clubSeasonYear } from "@/lib/financial-year";
 
 const MEMBERSHIP_TYPE_KEY_MAX_LENGTH = 80;
 
@@ -596,13 +594,19 @@ export async function ensureBuiltInMembershipTypes(
 export async function backfillCurrentSeasonMembershipAssignments(
   db: MembershipTypeSeedClient,
   /**
-   * Defaults to the club's CURRENT season year. Optional rather than defaulted
-   * (CT-4, #2870): resolving it needs the club's persisted zone, and a parameter
-   * default cannot await. Callers that pass a value are unaffected.
+   * REQUIRED since CT-4 group F1 (#2870). It used to default to
+   * `getSeasonYear()`, which read the HOST's month; the correct answer needs the
+   * club's PERSISTED zone, and THIS MODULE MAY NOT REACH IT. `admin/members/_utils.ts`
+   * imports the pure membership-type helpers here and six `"use client"`
+   * components import that, so an edge to `club-time-zone-runtime` — static OR
+   * dynamic, since `client-server-boundary-census.test.ts` follows both — would
+   * compile `club-time-zone-env` into the browser bundle (`INV-OPS-013`).
+   *
+   * So the season arrives as a value. Both callers are seeds that already hold
+   * the club's zone, which is the right place for the decision anyway.
    */
-  seasonYearInput?: number,
+  seasonYear: number,
 ): Promise<{ createdCount: number; seasonYear: number }> {
-  const seasonYear = seasonYearInput ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
   await ensureBuiltInMembershipTypes(db);
 
   const [types, members] = await Promise.all([
