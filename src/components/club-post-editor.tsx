@@ -166,6 +166,43 @@ export function ClubPostEditor({
   );
 
   /**
+   * Wrap the selection in a span carrying one of the post_message_* colour
+   * classes. A CLASS rather than an inline style because the browser
+   * serialises style colours to rgb() form, which is how every colour a
+   * member picked was being dropped by the hex-only sanitiser: the class
+   * has one spelling on both sides. The colours themselves live in
+   * globals.css, per theme.
+   */
+  const applyColourClass = useCallback(
+    (className: string) => {
+      if (disabled) return;
+      const editor = editorRef.current;
+      if (!editor) return;
+      editor.focus();
+      restoreSelection();
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (range.collapsed) return;
+      if (!editor.contains(range.commonAncestorContainer)) return;
+
+      const span = document.createElement("span");
+      if (className) span.className = className;
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+
+      selection.removeAllRanges();
+      const after = document.createRange();
+      after.selectNodeContents(span);
+      selection.addRange(after);
+
+      emit();
+    },
+    [disabled, emit, restoreSelection],
+  );
+
+  /**
    * Wrap the selection in a styled span.
    *
    * Not `execCommand("fontSize")`: that emits either a `<font>` element or a
@@ -306,13 +343,13 @@ export function ClubPostEditor({
           defaultValue=""
           onMouseDown={saveSelection}
           onChange={(event) => {
-            applyStyle("color", event.target.value);
+            applyColourClass(event.target.value);
             event.target.value = "";
           }}
         >
           <option value="">Colour</option>
-          {POST_COLOURS.filter((c) => c.value).map((colour) => (
-            <option key={colour.value} value={colour.value}>
+          {POST_COLOURS.filter((c) => c.className).map((colour) => (
+            <option key={colour.className} value={colour.className}>
               {colour.label}
             </option>
           ))}

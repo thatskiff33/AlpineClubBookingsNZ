@@ -36,21 +36,43 @@ export const POST_FONT_SIZES = [10, 12, 14, 16, 20, 24, 32] as const;
  * hold against both themes.
  */
 export const POST_COLOURS = [
-  { label: "Default", value: "" },
-  // Black at the owner's request (24 Aug 2026). The one entry that does
-  // NOT hold on the dark theme -- near-invisible against a dark card --
-  // accepted knowingly; the club_message/server_message style hooks let a
-  // club's theme CSS compensate if it bites.
-  { label: "Black", value: "#000000" },
-  { label: "Red", value: "#b42318" },
-  { label: "Orange", value: "#b54708" },
-  { label: "Green", value: "#067647" },
-  { label: "Blue", value: "#175cd3" },
-  { label: "Purple", value: "#6941c6" },
-  { label: "Grey", value: "#475467" },
+  { label: "Default", className: "" },
+  // CLASSES, NOT INLINE STYLES, and the change was forced by a real bug:
+  // the editor wrote `style="color:#b42318"`, the browser serialised it to
+  // `color: rgb(180, 35, 24)`, and the hex-only style allowlist dropped
+  // every colour a member ever picked. A class has one spelling, survives
+  // sanitising byte-identically, and doubles as the override hook the
+  // club_message/server_message scheme already promises: the actual
+  // colours live in globals.css, per theme, where a club's own CSS can
+  // replace them (owner request, 25 Aug 2026).
+  { label: "Black", className: "post_message_black" },
+  { label: "Red", className: "post_message_red" },
+  { label: "Orange", className: "post_message_orange" },
+  { label: "Green", className: "post_message_green" },
+  { label: "Blue", className: "post_message_blue" },
+  { label: "Purple", className: "post_message_purple" },
+  { label: "Grey", className: "post_message_grey" },
 ] as const;
 
-const ALLOWED_COLOUR_VALUES = POST_COLOURS.map((c) => c.value).filter(Boolean);
+/** The class names above, for the sanitiser and for other allowlists. */
+export const POST_COLOUR_CLASSES = POST_COLOURS.map(
+  (c) => c.className,
+).filter(Boolean);
+
+// The retired inline-colour spellings, kept ACCEPTED so posts written
+// before the class change -- and mirrors from clubs still on the older
+// composer -- keep their colour. Both the hex form the old editor wrote
+// and the rgb() form the browser serialised it to.
+const LEGACY_COLOUR_PATTERNS = [
+  /^#(000000|b42318|b54708|067647|175cd3|6941c6|475467)$/i,
+  /^rgb\(\s*0,\s*0,\s*0\s*\)$/,
+  /^rgb\(\s*180,\s*35,\s*24\s*\)$/,
+  /^rgb\(\s*181,\s*71,\s*8\s*\)$/,
+  /^rgb\(\s*6,\s*118,\s*71\s*\)$/,
+  /^rgb\(\s*23,\s*92,\s*211\s*\)$/,
+  /^rgb\(\s*105,\s*65,\s*198\s*\)$/,
+  /^rgb\(\s*71,\s*84,\s*103\s*\)$/,
+];
 
 /**
  * `sanitize-html` matches a style value against these regexes and drops the
@@ -59,11 +81,9 @@ const ALLOWED_COLOUR_VALUES = POST_COLOURS.map((c) => c.value).filter(Boolean);
  */
 const ALLOWED_STYLES: sanitizeHtml.IOptions["allowedStyles"] = {
   "*": {
-    // Only the seven offered colours, spelled exactly. A member cannot reach
-    // for white-on-white or a value that disappears in one of the two themes.
-    color: ALLOWED_COLOUR_VALUES.map(
-      (hex) => new RegExp(`^${hex}$`, "i"),
-    ),
+    // Legacy only -- new colour goes through classes. A member still cannot
+    // reach white-on-white: nothing outside this closed set survives.
+    color: LEGACY_COLOUR_PATTERNS,
     "font-size": [/^(10|12|14|16|20|24|32)pt$/],
     "font-family": [/^(sans-serif|serif|monospace)$/],
     "text-align": [/^(left|center|right|justify)$/],
@@ -108,6 +128,12 @@ const OPTIONS: sanitizeHtml.IOptions = {
     img: ["src", "alt", "width", "height"],
   },
   allowedStyles: ALLOWED_STYLES,
+  // The ONLY classes member HTML may carry. Listing them here (rather than
+  // adding `class` to allowedAttributes) is what makes every other class
+  // vanish -- a member cannot borrow arbitrary app or Tailwind classes.
+  allowedClasses: {
+    span: [...POST_COLOUR_CLASSES],
+  },
   // http/https only. Excluding `mailto` is deliberate: a board post asking
   // members to email an address can simply write it, and a live mailto is a
   // one-click way to harvest a reply-to from every reader.

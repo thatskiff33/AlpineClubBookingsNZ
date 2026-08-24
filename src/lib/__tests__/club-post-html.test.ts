@@ -26,6 +26,28 @@ describe("sanitiseClubPostHtml", () => {
     expect(out).toContain("text-align:justify");
   });
 
+  it("keeps a colour class, and strips every class that is not one", () => {
+    // Colour travels as post_message_* classes (owner request, 25 Aug 2026),
+    // because the browser serialises inline hex to rgb() and the style
+    // allowlist was silently dropping every colour a member picked. The class
+    // list is CLOSED: a member cannot borrow app or Tailwind classes.
+    const out = sanitiseClubPostHtml(
+      '<span class="post_message_red bg-destructive admin">Red</span>',
+    );
+    expect(out).toBe('<span class="post_message_red">Red</span>');
+  });
+
+  it("keeps legacy inline colour in both spellings the wild contains", () => {
+    // Posts written before the class change stored hex; the browser-serialised
+    // rgb() form also exists. Mirrors from older composers send both.
+    expect(
+      sanitiseClubPostHtml('<span style="color:#b42318">x</span>'),
+    ).toContain("#b42318");
+    expect(
+      sanitiseClubPostHtml('<span style="color: rgb(180, 35, 24);">x</span>'),
+    ).toContain("rgb(180, 35, 24)");
+  });
+
   it("keeps an offered colour, size and family", () => {
     const html =
       '<span style="color:#b42318;font-size:20pt;font-family:serif">x</span>';
