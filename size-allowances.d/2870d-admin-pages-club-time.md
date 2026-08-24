@@ -118,7 +118,7 @@ lines: 1216
 reason: one import pair, one hook, and the shared note on the stamp formatter.
 
 file: src/app/(admin)/admin/membership-types/page.tsx
-lines: 1865
+lines: 1859
 reason: no code changed here. The addition is a twelve-line note recording why the
   season-year derivation was left on its host-local clock — a measured
   decision, not an oversight, and this epic has already fixed the same thing
@@ -174,7 +174,7 @@ reason: the roster's opening day moved onto the club's zone, and the long-date
   the growth.
 
 file: src/app/(admin)/admin/subscriptions/page.tsx
-lines: 840
+lines: 845
 reason: `paidAt` was read with host-local getters. The rest of the addition is the
   note recording why the season-year derivation beside it was deliberately not
   moved, which is the more useful half for whoever picks that up.

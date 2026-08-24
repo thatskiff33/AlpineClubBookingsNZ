@@ -56,7 +56,7 @@ reason: three lines on a 1,275-line route, extending an existing comment to say
   three-line change to an irreversible anonymisation flow is not.
 
 file: src/app/api/admin/members/bulk-update/route.ts
-lines: 718
+lines: 720
 reason: four lines — the second club-time import, and three saying that the
   "future linked-guest booking" cut-off is a calendar day rather than an instant.
   The bound guards whether a member may be flipped to an age tier that cannot be
@@ -84,7 +84,7 @@ reason: five lines of comment across the two branches that build the member's
   with the right one in New Zealand.
 
 file: src/app/api/admin/subscription-billing/route.ts
-lines: 322
+lines: 328
 reason: four lines, two of them the club-time imports. The other two say why the
   default decision date is the club's calendar day rather than the container's:
   it decides which members the treasurer is about to invoice, so it is a finance

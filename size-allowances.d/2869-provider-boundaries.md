@@ -100,7 +100,7 @@ reason: four lines. Three "today" reads move onto the persisted zone, the fourth
   its inputs, and the import swap.
 
 file: src/lib/xero-membership-sync.ts
-lines: 1643
+lines: 1650
 reason: the largest, and the two changes in it are the two subscription defects
   this issue found. The season window compared a HOST-local midnight against a
   date whose meaning depended on which Xero wire shape arrived, so on a container

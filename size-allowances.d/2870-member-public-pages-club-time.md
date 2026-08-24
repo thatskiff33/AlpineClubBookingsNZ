@@ -35,7 +35,7 @@ reason: one local formatter here was being handed BOTH lodge nights and real
   reasoning that stops the next edit merging the two back together.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 683
+lines: 678
 reason: eleven of the sixteen lines are a warning left ON PURPOSE beside
   `getSeasonYear(new Date())`, which is deliberately NOT migrated: a sibling
   lane measured that handing it a club-derived date makes a behind-UTC

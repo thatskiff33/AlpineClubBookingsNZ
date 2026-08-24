@@ -152,11 +152,28 @@ Two honest limits while both exist:
   yet is still on the environment.** CT-2 made the persisted zone *reachable*.
   CT-5 (#2869) moved the provider, scheduled-job, export and email surfaces onto
   it; CT-3 (#2872) moved the temporal schema; CT-4 (#2870) has moved the admin
-  API, the member-facing API and the client components. **What remains is
-  `src/lib` itself**, which CT-4's last group takes, and the list of what is
-  known to be wrong there is on #2870 — including two that are reachable today:
-  a season year read with host-local getters, and the remaining half of the
-  booking-date projection the policy-exception engine executes through.
+  API, the member-facing API, the client components, the admin and member pages,
+  and — in group F1 — the membership **season year**. What remains in `src/lib` is
+  listed on #2870, and one of the two items that were reachable today is now
+  closed: the remaining one is the other half of the booking-date projection the
+  policy-exception engine executes through.
+
+  **The season year is worth recording here rather than only on the issue,
+  because the shape of the fix is the lesson.** `getSeasonYearForYearEndMonth`
+  read its `Date` argument with `date.getMonth()` and `date.getFullYear()` — the
+  HOST's calendar components — so `getSeasonYear(new Date())` answered from the
+  server's month and `getSeasonYear(booking.checkIn)` read a UTC-midnight
+  `@db.Date` encoding a day early for every club west of Greenwich. **Because it
+  read the argument that way, no call site could repair itself**, and handing it a
+  club-derived day was measured across a host x club matrix to make things WORSE:
+  zero wrong days for a host at or ahead of UTC, and one entire wrong day for any
+  host behind it. The remedy is two functions in `src/lib/financial-year.ts`,
+  divided by temporal kind rather than by caller —
+  `clubSeasonYear(zone, clock?)` for "what season is it now, for the club", which
+  takes the persisted zone, and `seasonYearOfStoredDate(value)` for a `@db.Date`
+  column value, which takes NO zone and refuses a value carrying a UTC time of
+  day. `getSeasonYear` was deleted rather than repaired, so the typechecker
+  enumerated every call site instead of leaving the wrong ones silently green.
 
   That second one is **half closed, and the half that is left still reaches
   execution.** The pricing engine now decodes a stored calendar day in UTC rather
