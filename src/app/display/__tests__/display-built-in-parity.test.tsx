@@ -3,6 +3,17 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * The club timezone these renders are about (CT-4, #2870).
+ *
+ * `DisplayScreen` takes the zone as a REQUIRED prop because `/display` sits
+ * outside both route-group chrome components and so has no shared provider above
+ * it: the server page resolves the club's persisted setting and hands it down.
+ * A test therefore has to say which club it is rendering for, which is what makes
+ * a zone assertion here capable of failing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // LTV-038 visual-parity smoke: the seeded everyday-board built-in, rendered end
 // to end through the REAL server assembler (buildLayoutRender) and the REAL
 // client layout engine (DisplayScreen → LayoutScreen), must reproduce the
@@ -129,7 +140,7 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
       body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
     });
 
-    const { container } = render(<DisplayScreen />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -205,7 +216,7 @@ describe("LTV-038 everyday-board built-in — visual parity", () => {
       body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
     });
 
-    const { container } = render(<DisplayScreen />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });

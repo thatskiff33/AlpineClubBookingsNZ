@@ -22,17 +22,24 @@ import {
   formatDollarsDisplay,
   formatFinancePercent,
 } from "@/lib/finance-format";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
 
-// Not one of the shared helpers: finance chart axes need the SHORT month
-// ("Apr 2026"), not the long month `formatNZMonthYear` renders. The zone was
-// already pinned to club time; it now says so through `APP_TIME_ZONE` rather
-// than a hardcoded "Pacific/Auckland", matching the `APP_LOCALE` beside it and
-// every other pinned formatter in the tree.
+/*
+  Not one of the shared helpers: finance chart axes need the SHORT month
+  ("Apr 2026"), and the kernel's `monthYear` shape is the long one ("April
+  2026"). So the formatter stays local; what changed is the zone (CT-4, #2870).
+
+  A MONTH IS A CALENDAR CONCEPT AND TAKES NO TIMEZONE. The only value handed to
+  this formatter is `${monthKey}-01T00:00:00.000Z` — the first day of a finance
+  month, encoded at UTC midnight — so pinning `UTC` over that encoding is
+  provably the identity, where `APP_TIME_ZONE` cancelled only because New
+  Zealand is east of Greenwich. For a club that is not, every axis label and
+  every range chip named the PREVIOUS month.
+*/
 const SHORT_MONTH_YEAR = new Intl.DateTimeFormat(APP_LOCALE, {
   month: "short",
   year: "numeric",
-  timeZone: APP_TIME_ZONE,
+  timeZone: "UTC",
 });
 
 const chartLoading = () => <div style={{ height: 300 }} />;

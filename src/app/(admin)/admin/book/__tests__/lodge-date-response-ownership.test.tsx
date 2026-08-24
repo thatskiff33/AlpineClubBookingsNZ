@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest"
 import { useEffect } from "react"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const LODGES = [

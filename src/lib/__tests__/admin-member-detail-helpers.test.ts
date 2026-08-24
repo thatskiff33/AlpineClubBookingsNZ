@@ -7,6 +7,7 @@ import {
   formatMemberAuditLogSummary,
   formatMemberCommitteePreview,
   formatMemberContactPreview,
+  formatMemberCalendarDay,
   formatMemberDateNz,
   formatMemberFamilyPreview,
   formatMemberFinancePreview,
@@ -403,12 +404,20 @@ describe("admin-member-detail-helpers", () => {
     })
 
     it("summarises booking history", () => {
+      // THE DAY IS PINNED, not matched loosely (CT-4, #2870). `lastStay` is the
+      // `_max` of the member's booking `checkOut` — a `@db.Date` lodge night —
+      // and the summary strip three lines above this preview on the member page
+      // renders the same value. A regex that stopped at "last stay " could not
+      // see the two disagree, which is the defect this line exists to catch.
+      // `admin-calendar-day-helpers-west-of-utc.test.ts` is where the same
+      // assertion runs under a configured zone that can tell a projection from
+      // a decode; here the shape is what is checked.
       expect(
         formatMemberHistoryPreview({
           totalBookings: 12,
           lastStay: "2026-07-04T00:00:00.000Z",
         })
-      ).toMatch(/^12 bookings · last stay /)
+      ).toBe("12 bookings · last stay 4 Jul 2026")
       expect(
         formatMemberHistoryPreview({ totalBookings: 0, lastStay: null })
       ).toBe("0 bookings")
@@ -437,6 +446,51 @@ describe("admin-member-detail-helpers", () => {
   describe("formatMemberDateNz", () => {
     it("formats a date as a short NZ date", () => {
       expect(formatMemberDateNz("2026-05-01T12:00:00.000Z")).toMatch(/May 2026/)
+    })
+  })
+
+  /*
+    `formatMemberCalendarDay` is the CALENDAR-DAY sibling of `formatMemberDateNz`
+    above, and the difference between them is the whole point (CT-4, #2870;
+    `INV-DATE-019`). `formatMemberDateNz` projects an instant through the
+    configured zone, which is right for a `createdAt` and wrong for a stored
+    lodge night or a date of birth: a calendar day has no timezone, and reading
+    the UTC-midnight encoding of one through a zone behind Greenwich names the
+    day before.
+
+    THESE CASES CHECK THE SHAPE AND THE CONTRACT, not the zone authority, and
+    saying so matters: `APP_TIME_ZONE` resolves to `Pacific/Auckland` under test,
+    which is ahead of Greenwich, so a projection of a UTC-midnight day lands on
+    club midday — the same day — and nothing here could tell the two apart.
+    `admin-calendar-day-helpers-west-of-utc.test.ts` mocks the config module to a
+    zone behind Greenwich and is the file that can.
+  */
+  describe("formatMemberCalendarDay", () => {
+    it("renders both spellings of a stored day as the same civil day", () => {
+      // Prisma's serialised `Date` and a bare day from a route that encoded it
+      // itself. A caller should not have to know which one it is holding.
+      expect(formatMemberCalendarDay("2026-07-04T00:00:00.000Z")).toBe(
+        "4 Jul 2026"
+      )
+      expect(formatMemberCalendarDay("2026-07-04")).toBe("4 Jul 2026")
+    })
+
+    it("degrades to the fallback rather than throwing on a value it cannot read", () => {
+      // These arrive from an API payload with no runtime schema check and render
+      // straight into a table row, so a throw here would blank the member page.
+      expect(formatMemberCalendarDay("not-a-date")).toBe("—")
+      expect(formatMemberCalendarDay("")).toBe("—")
+      // A day that does not exist is refused rather than rolled forward.
+      expect(formatMemberCalendarDay("2026-02-30")).toBe("—")
+      // A timestamp with no offset names a wall-clock reading in whichever zone
+      // reads it, which is the one thing a stored day must never become.
+      expect(formatMemberCalendarDay("2026-07-04T13:45:00")).toBe("—")
+    })
+
+    it("lets the caller choose what an unreadable value shows", () => {
+      expect(formatMemberCalendarDay("not-a-date", "Not recorded")).toBe(
+        "Not recorded"
+      )
     })
   })
 })

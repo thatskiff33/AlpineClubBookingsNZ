@@ -14,8 +14,8 @@ const NONMEMBER_TYPE = "type-nonmember";
 
 const winterSeason: SeasonRateData = {
   seasonId: "winter-2026",
-  startDate: new Date(2026, 5, 1),  // June 1
-  endDate: new Date(2026, 8, 30),   // Sep 30
+  startDate: new Date("2026-06-01"),  // June 1
+  endDate: new Date("2026-09-30"),   // Sep 30
   rates: [
     { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
     { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 7000 },
@@ -28,8 +28,8 @@ const winterSeason: SeasonRateData = {
 
 const summerSeason: SeasonRateData = {
   seasonId: "summer-2026",
-  startDate: new Date(2025, 9, 1),   // Oct 1
-  endDate: new Date(2026, 4, 31),    // May 31
+  startDate: new Date("2025-10-01"),   // Oct 1
+  endDate: new Date("2026-05-31"),    // May 31
   rates: [
     { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
     { ageTier: "ADULT", membershipTypeId: NONMEMBER_TYPE, pricePerNightCents: 5500 },
@@ -74,12 +74,12 @@ describe("findRateForNight", () => {
   });
 
   it("handles season boundary start date (inclusive)", () => {
-    const rate = findRateForNight(new Date(2026, 5, 1), "ADULT", MEMBER_TYPE, allSeasons);
+    const rate = findRateForNight(new Date("2026-06-01"), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(4500);
   });
 
   it("handles season boundary end date (inclusive)", () => {
-    const rate = findRateForNight(new Date(2026, 8, 30), "ADULT", MEMBER_TYPE, allSeasons);
+    const rate = findRateForNight(new Date("2026-09-30"), "ADULT", MEMBER_TYPE, allSeasons);
     expect(rate).toBe(4500);
   });
 });

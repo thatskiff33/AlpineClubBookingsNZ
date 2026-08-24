@@ -22,6 +22,7 @@ import {
   hutFeeCellsForType,
   type HutFeeRateType,
 } from "./hut-fee-grid"
+import { useClubTime } from "@/components/club-time-provider"
 import {
   ACCOUNT_MAPPING_KEYS,
   CREDIT_ITEM_MAPPING_KEYS,
@@ -86,6 +87,9 @@ export function MappingsPanel({
   onToggle: ToggleSection
   clubName: string
 }) {
+  // The reference-cache freshness stamps are real INSTANTS, read in the club's
+  // persisted zone (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
   const [accountMappings, setAccountMappings] = useState<AccountMappings | null>(null)
   const [savedMappings, setSavedMappings] = useState<AccountMappings | null>(null)
   const [chartOfAccounts, setChartOfAccounts] = useState<XeroAccount[]>([])
@@ -266,8 +270,8 @@ export function MappingsPanel({
           {saved ? <p className="text-sm text-success">Account mappings saved.</p> : null}
           <div className="flex flex-col gap-2 rounded-md border border-border bg-muted p-3 text-xs text-muted-foreground md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
-              <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
-              <p>{formatReferenceCacheLabel("Items", itemCacheMeta)}</p>
+              <p>{formatReferenceCacheLabel(clubTime, "Accounts", accountCacheMeta)}</p>
+              <p>{formatReferenceCacheLabel(clubTime, "Items", itemCacheMeta)}</p>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => void refreshReferenceData()} disabled={loading || refreshingReferenceData}>
               {refreshingReferenceData ? "Refreshing..." : "Refresh Xero reference data"}

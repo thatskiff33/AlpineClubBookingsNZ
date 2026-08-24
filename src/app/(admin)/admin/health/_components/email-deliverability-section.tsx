@@ -8,6 +8,7 @@ import {
   ADMIN_VIEW_ONLY_ACTION_REASON,
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
+import { useClubTime } from "@/components/club-time-provider";
 import { StatusBadge, formatDate } from "./shared";
 import type { HealthData } from "./types";
 
@@ -26,6 +27,9 @@ export function EmailDeliverabilitySection({
   onRefresh: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
+  // Bounce, failure and escalation stamps are real INSTANTS, shown in the
+  // club's persisted zone (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   // Clear-suppression, reissue, and archive write support-area email routes; a
   // view-only support admin browses deliverability but cannot act (#1997).
   const canEdit = useAdminAreaEditAccess("support");
@@ -183,7 +187,7 @@ export function EmailDeliverabilitySection({
                     <StatusBadge status={suppression.reason} />
                     <span className="text-muted-foreground">{suppression.eventCount}</span>
                     <span className="text-muted-foreground">
-                      {formatDate(suppression.lastEventAt)}
+                      {formatDate(clubTime, suppression.lastEventAt)}
                     </span>
                     <button
                       onClick={() =>
@@ -265,7 +269,7 @@ export function EmailDeliverabilitySection({
                     </span>
                     <StatusBadge status={failure.status} />
                     <span className="text-muted-foreground">
-                      {formatDate(failure.lastAttemptAt)}
+                      {formatDate(clubTime, failure.lastAttemptAt)}
                     </span>
                     <button
                       onClick={() => reissueTokenEmail(failure.id, failure.to)}
@@ -351,7 +355,7 @@ export function EmailDeliverabilitySection({
                     </span>
                     <span className="text-muted-foreground">{failure.attempts}</span>
                     <span className="text-muted-foreground">
-                      {formatDate(failure.lastAttemptAt)}
+                      {formatDate(clubTime, failure.lastAttemptAt)}
                     </span>
                     <button
                       onClick={() => archiveEmailFailure(failure.id, failure.to)}
@@ -434,7 +438,7 @@ export function EmailDeliverabilitySection({
                       {escalation.failedRecipientCount}
                     </span>
                     <span className="text-muted-foreground">
-                      {formatDate(escalation.createdAt)}
+                      {formatDate(clubTime, escalation.createdAt)}
                     </span>
                   </div>
                 ))}

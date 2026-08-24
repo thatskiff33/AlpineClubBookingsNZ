@@ -13,7 +13,7 @@
  * chip and a checkbox that cannot be ticked.
  */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@/lib/__tests__/support/club-time-render";
 import type { ReactNode } from "react";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

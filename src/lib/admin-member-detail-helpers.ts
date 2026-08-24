@@ -3,6 +3,12 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address"
 import { formatNZDate } from "@/lib/nzst-date"
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseCalendarDate,
+  parseInstant,
+} from "@/lib/club-time"
 
 export interface AdminActor {
   id: string
@@ -239,6 +245,39 @@ export function formatMemberDateNz(value: string) {
   return Number.isNaN(parsed.getTime()) ? "—" : formatNZDate(parsed)
 }
 
+/**
+ * A CALENDAR DAY from an admin payload, rendered with no timezone at all
+ * (CT-4, #2870; `INV-DATE-019`).
+ *
+ * NARROW, DECLARED `src/lib` EXCEPTION, and it exists because half of this
+ * value moved and half did not. `member-summary-strip.tsx` now decodes
+ * `stats.lastStay` — the `_max` of the member's booking `checkOut`, a `@db.Date`
+ * lodge night — as the stored day, while {@link formatMemberHistoryPreview}
+ * three lines away still projected the SAME value through `formatMemberDateNz`
+ * and `APP_TIME_ZONE`. For any club behind UTC that put the member's last stay
+ * on two different days on one screen.
+ *
+ * It accepts both spellings a `@db.Date` reaches the browser in — Prisma's
+ * UTC-midnight ISO instant and a bare `yyyy-MM-dd` — for the reason
+ * `admin/_lib/calendar-day.ts` states: a caller should not have to know which
+ * one the route happened to build. It degrades rather than throws for the same
+ * reason that helper does, and this file's own `formatMemberDateNz` already
+ * did: these values are fed straight from API payloads into a rendered row.
+ *
+ * The duplication with `admin/_lib/calendar-day.ts` is deliberate and
+ * temporary. That module is admin-scoped and `src/lib` cannot import from
+ * `src/app`; group F's `calendarDateOfSerialisedDbDate` (reported on #2870) is
+ * the one call site both should collapse onto.
+ */
+export function formatMemberCalendarDay(value: string, fallback = "—") {
+  const bare = parseCalendarDate(value)
+  if (bare !== null) return formatClubDate(bare)
+  const instant = parseInstant(value)
+  return instant === null
+    ? fallback
+    : formatClubDate(calendarDateOfDateOnlyInstant(instant))
+}
+
 export function formatMemberPhone(parts: {
   phoneCountryCode: string | null
   phoneAreaCode: string | null
@@ -352,7 +391,10 @@ export function formatMemberHistoryPreview(input: {
 }) {
   return [
     pluralize(input.totalBookings, "booking"),
-    input.lastStay ? `last stay ${formatMemberDateNz(input.lastStay)}` : null,
+    // `lastStay` is a `@db.Date` CALENDAR DAY, not an instant — see
+    // `formatMemberCalendarDay`. The summary strip on the same page renders it
+    // the same way, so the two can no longer name different days.
+    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay)}` : null,
   ]
     .filter(Boolean)
     .join(PREVIEW_SEPARATOR)

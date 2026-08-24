@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 
+// Testing Library DIRECTLY, not the shared club-time harness: this card takes
+// its binding as a required PROP and mounts no provider consumer, so wrapping it
+// in one would suggest a dependency the card deliberately does not have (CT-4,
+// #2870 — see the prop's own docblock). The zone is not this file's subject
+// either; `request-review-card-club-time.test.tsx` is where it is.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import type {
   FamilyGroupRequest,
   RequestMemberMatch,
@@ -19,6 +26,12 @@ import type {
  */
 
 afterEach(cleanup);
+
+/**
+ * The harness default zone, which is also what the environment resolves to — so
+ * nothing in this file can tell the two apart, and nothing in it tries to.
+ */
+const CLUB_TIME = bindClubTime(requireClubTimeZone(CLUB_TIME_TEST_ZONE));
 
 const noopHandlers = {
   onSelectMember: vi.fn(),
@@ -77,6 +90,7 @@ function renderCard(request: FamilyGroupRequest, props: Partial<Parameters<typeo
   return render(
     <FamilyGroupRequestReviewCard
       request={request}
+      clubTime={CLUB_TIME}
       searchedMembers={[]}
       searching={false}
       submitting={false}

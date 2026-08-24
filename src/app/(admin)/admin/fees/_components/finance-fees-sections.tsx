@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { XeroAccountSelect, XeroItemSelect } from "@/components/admin/xero-code-select";
@@ -67,7 +67,6 @@ const JOINING_TIERS = [
 ] as const;
 const tierLabel = (tier: string | null) =>
   JOINING_TIERS.find((option) => option.value === (tier ?? "FLAT"))?.label ?? (tier ?? "Flat");
-const today = formatDateOnly(getTodayDateOnly());
 const dollars = (cents: number | null) => cents == null ? "Not configured" : new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100);
 const memberName = (member: { firstName: string; lastName: string }) => `${member.firstName} ${member.lastName}`.trim();
 // The fee-level proration rule, in the same words as the editor's Proration
@@ -85,6 +84,15 @@ const componentIsProrated = (fee: Fee, component: FeeComponent) =>
   (fee.prorationRule ?? "NONE") !== "NONE" && component.prorate;
 
 export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boolean } = {}) {
+  // The default "effective from" for a new fee is the CLUB's today, and it has
+  // to be: the server reads these windows in club time, so seeding them from
+  // the build's `NEXT_PUBLIC_TZ` — fixed at build time, not read from the club's
+  // persisted setting — made a fee start a day early or late. It also moved
+  // from module scope into the
+  // component — evaluated at import, "today" was whatever day the tab was first
+  // opened, and stayed that day across midnight (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
+  const today: string = clubTime.today();
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cross-area read: /api/admin/fee-configuration is finance-gated, so a

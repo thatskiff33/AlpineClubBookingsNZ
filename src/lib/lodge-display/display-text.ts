@@ -1,18 +1,8 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import {
+  formatClubLongWeekdayDayMonth,
+  parseCalendarDate,
+} from "@/lib/club-time";
 import type { DisplayState } from "../lodge-display-state";
-
-// The `{{display-date}}` line: a long weekday + day + month, no year — the wall
-// shows "today" to people standing in the lodge, so the year is noise. None of
-// the shared `nzst-date` helpers render that shape, so it keeps its own
-// formatter, pinned to the club zone (#2264) because a display browser (or a
-// signage box) sitting outside New Zealand was otherwise rendering the wall's
-// date in its own timezone.
-const DISPLAY_DATE_FORMAT = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-});
 
 // Token resolution for display-authored copy (fork issue #31; value-token
 // resolution inside authored HTML added in LTV-028, ADR-003 §4).
@@ -43,6 +33,39 @@ const DISPLAY_DATE_FORMAT = new Intl.DateTimeFormat(APP_LOCALE, {
 
 const PLACEHOLDER_PATTERN = /\{\{\s*(config:([a-z0-9][a-z0-9-]{0,63})|lodge-name|display-date)\s*\}\}/gi;
 
+/**
+ * The `{{display-date}}` line: "Thursday, 16 April" — the wall shows the day to
+ * people standing in the lodge, so the year is noise.
+ *
+ * A DECLARED `src/lib` FIX INSIDE CT-4 GROUP E, and this is why (#2870).
+ * `src/lib/**` is group F by the epic's published partition, so group E does not
+ * normally touch it. It has to here, because group E migrated the OTHER half of
+ * this same value and leaving one half behind is worse than leaving both:
+ * `display-header-clock.tsx` now resolves the header's date line to a
+ * `CalendarDate` and formats it with no zone, while this token still pushed
+ * `window.start` — the SAME date-only lodge night — through `APP_TIME_ZONE`.
+ * One lobby wall, two days, one line apart: for a club in `America/Denver` with
+ * a window starting `2026-04-16` the header read "Thu, 16 Apr" and a template
+ * carrying this token read "Wednesday, 15 April".
+ *
+ * `window.start` IS A CALENDAR DATE, so this takes no zone at all.
+ * `formatClubLongWeekdayDayMonth` pins `UTC` over the UTC-midnight encoding,
+ * which is provably the identity for EVERY club rather than a projection that
+ * happens to cancel east of Greenwich — `club-time/__tests__/house-shapes.test.ts`
+ * pins it byte-for-byte against the exact `Intl` options this file used to hold,
+ * over a 400-day sweep, which is why the rendered string does not move for the
+ * club this codebase was written for.
+ *
+ * GROUP F STILL OWNS THE CONVERGENCE: `window.start` is typed as a `string` on
+ * the payload rather than a `CalendarDate`, which is why this parses it here
+ * instead of receiving one. The raw-value fallback is for the same reason — an
+ * unattended wall must render something rather than throw.
+ */
+function displayDateToken(state: DisplayState): string {
+  const day = parseCalendarDate(state.window.start);
+  return day === null ? state.window.start : formatClubLongWeekdayDayMonth(day);
+}
+
 /** Resolve one matched value token to its raw (unescaped) replacement string. */
 function resolveToken(
   token: string,
@@ -51,12 +74,7 @@ function resolveToken(
 ): string {
   const lower = token.toLowerCase();
   if (lower === "lodge-name") return state.lodge.name;
-  if (lower === "display-date") {
-    // UTC midnight (not local): `window.start` is a date-only lodge night, and a
-    // local-midnight parse read back in club time would slip a day.
-    const day = new Date(`${state.window.start}T00:00:00Z`);
-    return DISPLAY_DATE_FORMAT.format(day);
-  }
+  if (lower === "display-date") return displayDateToken(state);
   // configKey is always set for the remaining `config:<key>` alternative.
   const value = state.config[configKey!.toLowerCase()];
   // An unset key renders a VISIBLE placeholder so misconfiguration is obvious

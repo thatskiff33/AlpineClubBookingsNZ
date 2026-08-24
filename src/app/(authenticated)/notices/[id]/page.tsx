@@ -4,7 +4,7 @@ import { ArrowLeft, Pin } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { getNoticeForMember } from "@/lib/notices";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { MarkNoticeRead } from "@/components/mark-notice-read";
 import { NoticeAcknowledgeButton } from "@/components/notice-acknowledge-button";
@@ -43,6 +43,11 @@ export default async function NoticeDetailPage({
   // so a bypass in the save path can never reach the browser as live markup.
   const safeHtml = sanitizePageContentHtml(notice.bodyHtml);
 
+  // `publishedAt` is a real INSTANT (a nullable `DateTime`, serialised to ISO by
+  // `getNoticeForMember`), so the civil day it reads as comes from the club's
+  // PERSISTED timezone rather than the container's (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Client-side read receipt, fired on mount only (never on prefetch). */}
@@ -67,7 +72,7 @@ export default async function NoticeDetailPage({
           {notice.publishedAt ? (
             <p className="text-sm text-muted-foreground">
               Posted{" "}
-              {formatNZDate(new Date(notice.publishedAt))}
+              {club.instantDate(new Date(notice.publishedAt))}
             </p>
           ) : null}
         </CardHeader>

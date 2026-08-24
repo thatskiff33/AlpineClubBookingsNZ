@@ -226,13 +226,34 @@ describe("#21: Kiosk formatDate uses local date, not UTC", () => {
       "page.tsx"
     );
     const content = fs.readFileSync(kioskPath, "utf-8");
-    // #21 fixed a UTC bug by switching the kiosk to the DEVICE's local calendar day.
-    // #2474 supersedes that: the kiosk's "today" is now the CLUB's NZ day
-    // (todayDateOnlyForTimeZone), so a mis-set tablet clock/zone cannot select the
-    // wrong lodge night. The bespoke local formatDate helper was removed entirely.
-    expect(content).toContain("todayDateOnlyForTimeZone");
-    // The old device-local date derivation must be gone (getFullYear-based day
-    // extraction and the bespoke formatDate helper both removed by #2474).
+    /*
+      ONE INVARIANT, THREE MECHANISMS. The thing being protected has never
+      changed: a mis-set tablet clock or zone must not be able to select the
+      wrong lodge night. What has changed is where the kiosk gets its answer.
+
+        #21    fixed a UTC bug by using the DEVICE's local calendar day.
+        #2474  superseded that with `todayDateOnlyForTimeZone` — the club's day,
+               but resolved from `APP_TIME_ZONE`, which is a constant fixed at
+               BUILD time (`TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`).
+        #2870  supersedes THAT: the club's day now comes from the PERSISTED club
+               timezone, delivered to this browser as data by `ClubTimeProvider`
+               (CT-4, epic #2988; INV-CONFIG-002).
+
+      The #2474 step was a real improvement and the #2870 step is another: a
+      build-time constant is still not the club's setting, and a deployment that
+      set only `TZ` served this kiosk `Pacific/Auckland` regardless of where the
+      lodge is. So `todayDateOnlyForTimeZone` is now a NEGATIVE here — going back
+      to it would be a regression from the persisted setting to a build constant.
+
+      This test reads the page from DISK and has no import edge to it, which is
+      why `vitest related` cannot select it and why CI is where it fires.
+    */
+    expect(content).toContain("useClubTime");
+    expect(content).toContain("clubTime.today()");
+    // Not the build-time constant (#2474's mechanism, superseded by #2870)...
+    expect(content).not.toContain("todayDateOnlyForTimeZone");
+    // ...and not the device-local derivation (#21's, superseded by #2474):
+    // getFullYear-based day extraction and the bespoke formatDate helper.
     expect(content).not.toContain("date.getFullYear()");
     expect(content).not.toMatch(/function formatDate/);
   });

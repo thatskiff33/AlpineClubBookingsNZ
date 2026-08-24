@@ -48,7 +48,8 @@ import type {
   MembershipCancellationBlocker,
   MembershipCancellationSharedInvoiceNotice as SharedInvoiceNotice,
 } from "@/lib/membership-cancellation-blocker-messages";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { cn } from "@/lib/utils";
 
 type RequestFilter =
@@ -189,9 +190,15 @@ const filters: Array<{ value: RequestFilter; label: string }> = [
 
 const currentPath = "/admin/membership-cancellations";
 
-function formatDateTime(value: string | null) {
-  if (!value) return "Not recorded";
-  return formatNZDateTime(new Date(value));
+// Real INSTANTS, shown in the club's persisted zone rather than the viewer's
+// or the build's (CT-4, #2870; INV-CONFIG-002). `parseInstant` is stricter
+// than the `new Date()` it replaces: an offset-less ISO string names a
+// wall-clock reading in whichever zone happens to be reading it, so it now
+// falls to the placeholder instead of being read in the host's zone.
+function formatDateTime(clubTime: BoundClubTime, value: string | null) {
+  const instant = value === null ? null : parseInstant(value);
+  if (instant === null) return "Not recorded";
+  return clubTime.instantDateTime(instant);
 }
 
 function requestStatusLabel(status: string) {
@@ -326,6 +333,7 @@ function approvalUnavailableReason(
 }
 
 export default function MembershipCancellationsPage() {
+  const clubTime = useClubTime();
   const { data: session } = useSession();
   const currentAdminId = session?.user?.id;
   // Participant/archive review writes membership-area routes; a view-only
@@ -797,7 +805,7 @@ export default function MembershipCancellationsPage() {
                           ) : (
                             "Unknown admin"
                           )}{" "}
-                          on {formatDateTime(request.requestedAt)}
+                          on {formatDateTime(clubTime, request.requestedAt)}
                         </p>
                         <p className="text-sm text-muted-foreground">
                           <span className="font-medium">Reason:</span>{" "}
@@ -805,7 +813,7 @@ export default function MembershipCancellationsPage() {
                         </p>
                         {request.member?.cancelledAt && (
                           <p className="text-xs text-muted-foreground">
-                            Cancelled {formatDateTime(request.member.cancelledAt)}
+                            Cancelled {formatDateTime(clubTime, request.member.cancelledAt)}
                           </p>
                         )}
                       </div>
@@ -924,7 +932,7 @@ export default function MembershipCancellationsPage() {
                         ) : (
                           "Unknown member"
                         )}{" "}
-                        on {formatDateTime(request.submittedAt)}
+                        on {formatDateTime(clubTime, request.submittedAt)}
                       </p>
                       {request.reason && (
                         <p className="text-sm text-muted-foreground">
@@ -935,7 +943,7 @@ export default function MembershipCancellationsPage() {
                     </div>
                     {request.reviewedAt && (
                       <p className="text-xs text-muted-foreground">
-                        Reviewed {formatDateTime(request.reviewedAt)}
+                        Reviewed {formatDateTime(clubTime, request.reviewedAt)}
                       </p>
                     )}
                   </div>
@@ -1012,17 +1020,17 @@ export default function MembershipCancellationsPage() {
                                 <span>
                                   Confirmed:{" "}
                                   {participant.confirmedAt
-                                    ? formatDateTime(participant.confirmedAt)
+                                    ? formatDateTime(clubTime, participant.confirmedAt)
                                     : "Not confirmed"}
                                 </span>
                                 {participant.declinedAt && (
                                   <span>
-                                    Declined: {formatDateTime(participant.declinedAt)}
+                                    Declined: {formatDateTime(clubTime, participant.declinedAt)}
                                   </span>
                                 )}
                                 {participant.reviewedAt && (
                                   <span>
-                                    Reviewed: {formatDateTime(participant.reviewedAt)}
+                                    Reviewed: {formatDateTime(clubTime, participant.reviewedAt)}
                                   </span>
                                 )}
                               </div>

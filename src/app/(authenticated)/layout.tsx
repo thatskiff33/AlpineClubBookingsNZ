@@ -19,7 +19,8 @@ import {
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
 import { hasAccessRole } from "@/lib/access-roles";
-import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { addCalendarDays, dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { recordAuthBounce } from "@/lib/auth-diagnostics";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { REQUEST_PATH_HEADER } from "@/lib/internal-return-path";
@@ -128,8 +129,18 @@ export default async function AuthenticatedLayout({
   // else's guest therefore reaches the kiosk and sees the dashboard card, but
   // gets no nav link. Pre-existing and untouched by #2838, which changed only
   // the DAY this window asks about.
-  const today = getTodayDateOnly();
-  const tomorrow = addDaysDateOnly(today, 1);
+  //
+  // AND FROM THE CLUB'S OWN CALENDAR RATHER THAN THE CONTAINER'S (CT-4, #2870;
+  // INV-CONFIG-002): `getTodayDateOnly()` read `APP_TIME_ZONE`, so the nav bar
+  // asked the machine what day it was. The step is `addCalendarDays`, whole
+  // calendar days over the club's day, never 86 400 000 ms — one of these two
+  // ends crosses a DST transition twice a year and a fixed-millisecond step
+  // names the wrong day there. Both ends are re-encoded to UTC midnight because
+  // that is the only shape a `@db.Date` bind accepts (INV-DATE-026).
+  const club = await clubTime();
+  const todayDate = club.today();
+  const today = dateOnlyInstantOf(todayDate);
+  const tomorrow = dateOnlyInstantOf(addCalendarDays(todayDate, 1));
 
   let isStayingGuest = false;
   if (

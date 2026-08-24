@@ -35,8 +35,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { APP_TIME_ZONE } from "@/config/operational";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { calendarDayFromPayload } from "../_lib/calendar-day";
 import { formatCents } from "@/lib/pricing";
 
 interface WorkPartyEventRow {
@@ -98,8 +97,14 @@ const emptyForm: EventFormState = {
   lodgeId: "",
 };
 
+// CT-4 (#2870): a work-party day and a booking's check-in/check-out are
+// CALENDAR DATES, serialised from `@db.Date` columns as UTC midnight. Decoding
+// that encoding in UTC is the identity for every club; reading it through
+// APP_TIME_ZONE was a projection that named the previous day for any club
+// behind UTC (INV-DATE-019). The rendered shape — the stored `yyyy-MM-dd` — is
+// unchanged.
 function formatStoredDate(value: string) {
-  return formatDateOnlyForTimeZone(new Date(value), APP_TIME_ZONE);
+  return calendarDayFromPayload(value) ?? value;
 }
 
 export default function AdminWorkPartiesPage() {

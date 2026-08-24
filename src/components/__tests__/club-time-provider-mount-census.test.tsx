@@ -38,9 +38,9 @@ import { stripComments } from "../../../scripts/ci/check-website-render-modes.mj
  * 5. **And each of those surfaces is checked, not just named.** The reason on
  *    every row is "nothing in this tree reaches `useClubTime()`", so the census
  *    walks the import graph and proves it, stopping at any component that mounts
- *    a provider of its own. Measured today: 94 files from `/display` with no
- *    consumer, 94 from the root 404 with none and one mount boundary, and one
- *    file each from the four error/404 surfaces, which import nothing but
+ *    a provider of its own. Measured today: 97 files from `/display` with no
+ *    consumer, 92 from the root 404 with none and THREE mount boundaries, and
+ *    one file each from the four error/404 surfaces, which import nothing but
  *    packages. See below for why the list alone was not enough.
  *
  * ## Reading the source rather than matching it raw
@@ -146,22 +146,37 @@ const HOOK_DEFINITION = "src/components/club-time-provider.tsx";
  */
 const PROVIDERLESS_SURFACES: Record<string, string> = {
   "src/app/display/page.tsx":
-    "The lobby TV display. Its module components under " +
-    "`src/components/lodge-display/**` render only CALENDAR DAYS, carried as " +
-    "`yyyy-MM-dd` strings and formatted with no zone in the picture, so none of " +
-    "them reaches `useClubTime()`. The screen's own shell " +
-    "(`src/app/display/display-screen.tsx`) still reads `APP_TIME_ZONE` for its " +
-    "clock and belongs to the page groups of this migration — WHICH IS EXACTLY " +
-    "WHY THE WALK BELOW EXISTS: this row is true today and stops being true on " +
-    "the day that shell is converted, and the shell renders a live clock and two " +
-    "header stamps, so the failure would be a thrown error on the lobby screen.",
+    "The lobby TV display, and the one surface here that is providerless BY " +
+    "DESIGN rather than because nothing in it needs a zone. Its module " +
+    "components under `src/components/lodge-display/**` render only CALENDAR " +
+    "DAYS, carried as `yyyy-MM-dd` strings and formatted with no zone in the " +
+    "picture. The screen's own shell DOES need one — it renders a live clock " +
+    "and two header stamps, which are real instants — and CT-4 group E gave it " +
+    "one: `src/app/display/page.tsx` resolves `clubTimeZone()` on the server " +
+    "and hands it to `display-screen.tsx` as a REQUIRED PROP, which " +
+    "`display-header-clock.tsx` binds. So nothing under `/display` calls " +
+    "`useClubTime()` and this row stays true — for a different reason than the " +
+    "one it used to give, which was that the shell had not been migrated yet. " +
+    "A prop rather than a provider because `/display` shares none of the " +
+    "application's chrome and its sibling `error.tsx` is held at zero data " +
+    "dependencies on purpose, so a provider mounted here would cover two of the " +
+    "three `/display` surfaces and could not cover the third: Next renders an " +
+    "error boundary outside the layout whose subtree threw. Keeping the hook " +
+    "out is also what leaves this row — and therefore the walk below, which is " +
+    "what protects the lobby television — doing any work at all. See the " +
+    "reasoning block in `src/app/display/page.tsx`.",
   "src/app/not-found.tsx":
     "The root 404, which sits outside both public route groups and therefore " +
     "outside `WebsiteChrome`. It renders `EmbeddedPageContentParts` over " +
-    "whatever an admin published at that path, and the one embedded widget that " +
-    "needs a zone brings its own — see " +
-    "`src/components/website/skifield-whakapapa-embed.tsx`, which the walk below " +
-    "treats as a mount boundary for that reason.",
+    "whatever an admin published at that path, and each embedded part that " +
+    "needs a zone brings its own provider — `skifield-whakapapa-embed.tsx`, " +
+    "`booking-requests/booking-request-form-embed.tsx` and " +
+    "`school-bookings/school-booking-form-embed.tsx`, all three of which the " +
+    "walk below treats as mount boundaries for that reason. The two form " +
+    "wrappers were added by CT-4 group E and were NOT foresight: migrating the " +
+    "forms onto `useClubTime()` reddened this very row, which is the walk doing " +
+    "its job. Anything else published at `/404` renders no instant and derives " +
+    "no club today.",
   "src/app/(finance)/not-found.tsx":
     "The finance 404. `(finance)` has NO group-root layout — the only layout in " +
     "that group is `(finance)/finance/layout.tsx`, a segment deeper — so this " +
