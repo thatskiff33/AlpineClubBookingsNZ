@@ -20,8 +20,10 @@ import {
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDateOrNull,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-requests";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -188,7 +190,7 @@ function statusBadgeClass(status: string) {
  * day through a zone: correct east of Greenwich, a day early west of it.
  */
 function formatDate(value: string | null) {
-  const day = value ? parseCalendarDate(dateOnlyFromIsoString(value)) : null;
+  const day = calendarDateOfSerialisedDbDateOrNull(value);
   return day ? formatClubDate(day) : "—";
 }
 

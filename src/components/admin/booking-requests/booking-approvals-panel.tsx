@@ -26,8 +26,10 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -120,7 +122,7 @@ function buildBookingApprovalsPath(
  * identity for a club east of Greenwich and the PREVIOUS DAY west of it.
  */
 function formatStayDate(value: string): string {
-  return formatClubDate(requireCalendarDate(dateOnlyFromIsoString(value)));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 export function BookingApprovalsPanel({

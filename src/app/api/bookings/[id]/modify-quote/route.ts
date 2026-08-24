@@ -122,10 +122,7 @@ import {
   formatDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
-import {
-  calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
-} from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getSeasonYear } from "@/lib/utils";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
@@ -134,18 +131,6 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
-
-/**
- * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
- *
- * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
- * no timezone (INV-DATE-010, INV-DATE-026). `normalizeDateOnlyForTimeZone`, which
- * this replaces, projected it into the club zone first — the identity ahead of
- * Greenwich, the PREVIOUS day behind it, so every stay date came back a day early.
- */
-function storedDateOnly(value: Date): Date {
-  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
-}
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),

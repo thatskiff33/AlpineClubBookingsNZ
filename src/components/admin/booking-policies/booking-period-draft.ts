@@ -14,7 +14,10 @@ import {
   cancellationRuleSetsEqual,
   normalizeCancellationRule,
 } from "@/lib/cancellation-rules"
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time"
+import {
+  calendarDateOfSerialisedDbDateOrNull,
+  formatClubDate,
+} from "@/lib/club-time"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
 import type { BookingPeriod, PolicyRule } from "./types"
 
@@ -32,7 +35,7 @@ import type { BookingPeriod, PolicyRule } from "./types"
  * Greenwich, and a day early for any club west of it.
  */
 export function formatPeriodDate(value: string): string {
-  const day = parseCalendarDate(dateOnlyFromIsoString(value))
+  const day = calendarDateOfSerialisedDbDateOrNull(value)
   return day === null ? value : formatClubDate(day)
 }
 

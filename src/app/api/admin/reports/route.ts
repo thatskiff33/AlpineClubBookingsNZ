@@ -26,7 +26,7 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import { dateOnlyInstantOf, endOfClubDayExclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
+import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
   if (!from || !to || parsed.data.to >= "9999-12-31") return NextResponse.json({ error: "Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD" }, { status: 400 });
   const zone = await clubTimeZone();
   const fromInstant = startOfClubDay(from, zone);
-  const toInstant = new Date(endOfClubDayExclusive(to, zone).getTime() - 1);
+  const toInstant = endOfClubDayInclusive(to, zone);
   const fromDay = dateOnlyInstantOf(from);
   const toDay = dateOnlyInstantOf(to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);

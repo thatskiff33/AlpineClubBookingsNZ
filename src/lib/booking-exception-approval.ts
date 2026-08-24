@@ -1,10 +1,7 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
-import {
-  calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
-} from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
@@ -255,17 +252,6 @@ export async function reauthorizeBookingOfficerFromDb(
 // ---------------------------------------------------------------------------
 // Live-booking integrity
 // ---------------------------------------------------------------------------
-
-/**
- * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
- *
- * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
- * no timezone (`INV-DATE-010`, `INV-DATE-026`). The same three lines the request
- * route spells for the same columns.
- */
-function storedDateOnly(value: Date): Date {
-  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
-}
 
 /**
  * Load the live booking's guests in exactly the shape the request route froze

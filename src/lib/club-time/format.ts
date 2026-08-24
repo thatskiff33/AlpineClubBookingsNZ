@@ -53,6 +53,17 @@ export function formatClubMonthYear(date: CalendarDate): string {
   return formatCalendarDateShape("monthYear", date);
 }
 
+/**
+ * "Apr 2026" — the SHORT month with the year, for a chart axis.
+ *
+ * Deliberately distinct from {@link formatClubMonthYear}: a trend axis fits a
+ * dozen ticks side by side and the long month does not. Two call sites kept
+ * their own pinned formatter with a comment saying exactly that.
+ */
+export function formatClubShortMonthYear(date: CalendarDate): string {
+  return formatCalendarDateShape("shortMonthYear", date);
+}
+
 /** "Thu, 16 Apr 2026" — for lists scanned by day of the week. */
 export function formatClubWeekdayDate(date: CalendarDate): string {
   return formatCalendarDateShape("weekdayDate", date);
@@ -61,6 +72,22 @@ export function formatClubWeekdayDate(date: CalendarDate): string {
 /** "Thu" — the weekday alone. */
 export function formatClubWeekday(date: CalendarDate): string {
   return formatCalendarDateShape("weekday", date);
+}
+
+/** "Thursday" — the weekday alone, spelled out. */
+export function formatClubLongWeekday(date: CalendarDate): string {
+  return formatCalendarDateShape("longWeekday", date);
+}
+
+/**
+ * "16 Apr" — day and short month, no weekday and no year.
+ *
+ * The shape between {@link formatClubDate} ("16 Apr 2026") and a bare weekday
+ * that six call sites were keeping a local formatter for: a grid column head or
+ * a tight dashboard slot, where the year is already stated by the heading above.
+ */
+export function formatClubDayMonth(date: CalendarDate): string {
+  return formatCalendarDateShape("dayMonth", date);
 }
 
 /**
@@ -85,6 +112,25 @@ export function formatClubWeekdayDayMonth(date: CalendarDate): string {
 /** "Thursday, 16 April" — the lobby wall's long date, deliberately without a year. */
 export function formatClubLongWeekdayDayMonth(date: CalendarDate): string {
   return formatCalendarDateShape("longWeekdayDayMonth", date);
+}
+
+/**
+ * "Thursday, 16 April 2026" — the spelled-out weekday and month WITH the year.
+ *
+ * The most-asked-for missing shape of this epic: four call sites kept a local
+ * `Intl.DateTimeFormat` for it, each with a comment recording that the kernel
+ * had `longWeekdayDayMonth` and nothing carrying the year as well. It is chosen
+ * where a wrong day would be expensive to misread — a day button's screen-reader
+ * label, a member's stay dates, a hut leader's roster heading — because
+ * "Thursday, 16 April 2026" is harder to misread than "Thu, 16 Apr 2026".
+ *
+ * NOT covered by `INV-DATE-016`, which reserves the long SPELLED-OUT DATE
+ * (`formatClubLongDate`, "16 April 2026") for four named member-facing surfaces.
+ * That rule is about the date form; this shape leads with a weekday and answers
+ * a different question.
+ */
+export function formatClubLongWeekdayDate(date: CalendarDate): string {
+  return formatCalendarDateShape("longWeekdayDate", date);
 }
 
 // ---------------------------------------------------------------------------

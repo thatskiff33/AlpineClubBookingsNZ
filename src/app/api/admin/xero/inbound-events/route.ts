@@ -8,7 +8,7 @@ import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
 import {
-  endOfClubDayExclusive,
+  endOfClubDayInclusive,
   requireCalendarDate,
   startOfClubDay,
   type ClubTimeZone,
@@ -47,7 +47,7 @@ function startOfInputDate(date: string, zone: ClubTimeZone) {
 
 /** The last instant of that club day, INCLUSIVE — the filter uses `lte`. */
 function endOfInputDate(date: string, zone: ClubTimeZone) {
-  return new Date(endOfClubDayExclusive(requireCalendarDate(date), zone).getTime() - 1);
+  return endOfClubDayInclusive(requireCalendarDate(date), zone);
 }
 
 function eventCategoryForXeroObjectType(xeroObjectType: string) {

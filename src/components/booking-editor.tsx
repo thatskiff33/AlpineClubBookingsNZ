@@ -9,38 +9,30 @@ import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { useClubTime } from "@/components/club-time-provider";
-import { parseDateOnly } from "@/lib/date-only";
-import { APP_LOCALE } from "@/config/operational";
+import {
+  formatClubLongWeekdayDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 /**
  * The two headline stay dates, spelled out in full — long weekday, long month —
  * because they are the thing the member checks before agreeing to a change, and
  * "Friday 12 June 2026" is harder to misread than "Fri, 12 Jun 2026" (#2264).
  *
- * PINNED TO UTC, NOT TO A CLUB ZONE, AND THAT IS THE FIX (CT-4, #2870;
- * INV-DATE-010). `checkIn`/`checkOut` are `@db.Date` LODGE NIGHTS — calendar
- * days, which have no timezone — and they arrive at UTC midnight, so a
- * UTC-pinned formatter reads back exactly the day it was handed, for every
- * viewer and every club. The constant this replaces pinned `APP_TIME_ZONE`,
- * which is that same identity only for a club east of Greenwich; west of it,
- * every member's stay dates printed a day early.
+ * NO ZONE AT ALL, WHICH IS THE FIX (CT-4, #2870). `checkIn`/`checkOut` are
+ * `@db.Date` LODGE NIGHTS — calendar days, which have no timezone — so they are
+ * rendered by a calendar-date shape, which takes none. This file used to hold a
+ * local `Intl.DateTimeFormat` pinned to UTC over the UTC-midnight encoding, and
+ * before that one pinned to `APP_TIME_ZONE`, which was the identity only for a
+ * club east of Greenwich; west of it every member's stay dates printed a day
+ * early.
  *
- * IT IS STILL A LOCAL `Intl.DateTimeFormat` because the kernel declares no shape
- * carrying a long weekday, long month AND the year — `longWeekdayDayMonth` stops
- * at "Thursday, 16 April". Adding one means editing `src/lib/club-time/**`,
- * which belongs to the last group of this migration, and composing the year on
- * is byte-identical for `en-NZ` but not for a configurable `APP_LOCALE` (see
- * `formatClubWeekdayDay`'s docblock for the same hazard). The missing shape is
- * recorded on **#2870**, in this group's hand-off list to the kernel group; when
- * it lands this becomes one call.
+ * IT IS ONE CALL NOW because CT-4's `src/lib` group added the missing shape:
+ * `HOUSE_SHAPES.longWeekdayDate` is the long weekday, long month AND the year,
+ * declared as one shape rather than composed from `longWeekdayDayMonth` plus the
+ * year — which is byte-identical for `en-NZ` and not safe for a configurable
+ * `APP_LOCALE`.
  */
-const STAY_DATE_LONG = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
 
 interface Guest {
   id: string;
@@ -272,13 +264,13 @@ export function BookingEditor({
             <div>
               <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">
-                {STAY_DATE_LONG.format(parseDateOnly(booking.checkIn))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn))}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Check-out</p>
               <p className="font-medium">
-                {STAY_DATE_LONG.format(parseDateOnly(booking.checkOut))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut))}
               </p>
             </div>
             <div>
