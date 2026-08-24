@@ -315,6 +315,39 @@ export function xeroDocumentDateForClubToday(zone: ClubTimeZone): string {
 }
 
 /**
+ * AN INVOICE'S ISSUE AND DUE DATES, WHICH ARE TWO DIFFERENT KINDS OF VALUE.
+ *
+ * Two dates, two different kinds of value, so two different derivations. They
+ * are derived together, here, because they are only correct TOGETHER: side by
+ * side the asymmetry reads as deliberate, where a reader who meets one of them
+ * alone is most likely to "tidy" it into the shape of the other.
+ *
+ * The ISSUE date is a `@db.Date` column — for the group-settlement caller, the
+ * organiser booking's check-in: a lodge night, an abstract calendar day already
+ * pinned to UTC midnight, so truncating it reads back the day it encodes
+ * (INV-DATE-010).
+ *
+ * The DUE date is derived from a `DateTime` — for that caller,
+ * `GroupBookingSettlement.createdAt` — which is a real instant. Truncating an
+ * instant to its UTC day is the pattern INV-DATE-019 forbids: New Zealand runs
+ * 12-13 hours ahead of UTC, so for roughly the first half of every club day the
+ * UTC day is still yesterday, and a settlement invoice raised at 09:00 NZ on 1
+ * July carried a due date of 30 June (#2834). It therefore needs the club's
+ * calendar, and gets it from the PERSISTED zone (CT-5, #2869; INV-DATE-019 and
+ * INV-CONFIG-002) rather than from the container's.
+ */
+export function xeroDocumentDatesFromColumnAndInstant(
+  issuedOnColumn: Date,
+  dueFromInstant: Instant,
+  zone: ClubTimeZone,
+): { issueDate: string; dueDate: string } {
+  return {
+    issueDate: xeroDocumentDateFromDateOnlyColumn(issuedOnColumn),
+    dueDate: xeroDocumentDateFromInstant(dueFromInstant, zone),
+  };
+}
+
+/**
  * The season year a Xero invoice belongs to, decided from its CALENDAR DATE.
  *
  * `getSeasonYearForYearEndMonth` (`src/lib/financial-year.ts`) reads

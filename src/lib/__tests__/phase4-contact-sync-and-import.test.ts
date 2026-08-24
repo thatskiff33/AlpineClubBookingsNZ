@@ -16,6 +16,8 @@ function encryptForTest(plaintext: string) {
 
 const mocks = vi.hoisted(() => {
   const accountingApi = {
+    // #3036: containment reads the contact before this app overwrites it.
+    getContact: vi.fn(),
     getContactGroup: vi.fn(),
     getContactGroups: vi.fn(),
     getContacts: vi.fn(),
@@ -32,6 +34,30 @@ const mocks = vi.hoisted(() => {
     prisma: {
       xeroToken: {
         findFirst: vi.fn(),
+      },
+      /*
+        #3034/#3036: `updateXeroContact` asks which installation this is before
+        it puts an email address on a Xero contact. A MISSING delegate here is an
+        UNREADABLE override, which resolves UNKNOWN whatever the declaration
+        says, and #3036 then refuses the write — so without this the suite would
+        test the refusal instead of the payload it is about. Declared inline
+        because `vi.hoisted` runs above this file's imports.
+      */
+      environmentSafetySettings: {
+        findUnique: vi.fn(),
+      },
+      /*
+        #3036: on a copy `updateXeroContact` PROVES containment before its own
+        write, rather than writing and recording nothing. It has to be that way
+        round: every containment row is written after reading Xero's stored value
+        back, and after this function's own write the value read back is the
+        contained address it just sent — so a row written afterwards would say
+        "nothing was overwritten" about a real overwrite, and the operator
+        surface would report a reassuring zero.
+      */
+      xeroSandboxContactContainment: {
+        findUnique: vi.fn(),
+        upsert: vi.fn(),
       },
       xeroSyncCursor: {
         findUnique: vi.fn(),
@@ -209,11 +235,20 @@ import {
   CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
   CONTACT_GROUP_FULL_REFRESH_CURSOR_RESOURCE,
 } from "@/lib/xero-contact-cache";
+import {
+  declareEnvironmentRole,
+  expectEnvironmentRolePremise,
+} from "@/lib/__tests__/helpers/environment-role";
+import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 
 describe("Phase 4 contact sync and cached import", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("XERO_ENCRYPTION_KEY", TEST_KEY);
+    // The club's LIVE site, where #3036's containment is the identity function
+    // and every payload below is what it always was.
+    declareEnvironmentRole("production");
+    mocks.prisma.environmentSafetySettings.findUnique.mockResolvedValue(null);
 
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
@@ -266,9 +301,162 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.accountingApi.updateContact.mockResolvedValue({
       body: { contacts: [{ contactID: "contact_1" }] },
     });
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(
+      null,
+    );
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.accountingApi.getContact.mockResolvedValue({
+      body: { contacts: [{ contactID: "contact_1", emailAddress: "" }] },
+    });
+  });
+
+  /*
+    INV-CONFIG-005 (ENV-SAFETY 3, #3036). `updateXeroContact` is the third
+    email-carrying Xero contact writer — a member editing their profile, an
+    admin editing their record, a confirmed email change — and it does not go
+    through the funnel, so it needs its own proof.
+  */
+  it("on a COPY, a contact update carries the contained address and never the member's", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      passwordHash: "not-deleted",
+      xeroContactId: "contact_1",
+      phoneCountryCode: "64",
+      phoneAreaCode: "21",
+      phoneNumber: "1234567",
+    });
+
+    await updateXeroContact(
+      "contact_1",
+      undefined,
+      { localModel: "Member", localId: "member_1", preserveXeroName: false },
+    );
+
+    const hashPayload = (mocks.buildXeroPayloadHash.mock.calls as unknown as Array<
+      [{ contacts: Array<Record<string, unknown>> }]
+    >)[0][0];
+    expect(hashPayload.contacts[0].emailAddress).toBe(
+      toXeroSandboxContactEmail("jane@example.com"),
+    );
+    expect(hashPayload.contacts[0].emailAddress).not.toBe("jane@example.com");
+    // The name, phone and address still travel: containment is about the
+    // ADDRESS, and a copy that stopped syncing everything else would stop
+    // behaving like production.
+    expect(hashPayload.contacts[0]).toEqual(
+      expect.objectContaining({ name: "Jane Doe", firstName: "Jane" }),
+    );
+    const [, , sentPayload] = mocks.accountingApi.updateContact.mock
+      .calls[0] as unknown as [string, string, { contacts: Array<Record<string, unknown>> }];
+    expect(sentPayload.contacts[0].emailAddress).toBe(
+      toXeroSandboxContactEmail("jane@example.com"),
+    );
+    /*
+      AND THE PROOF IS RECORDED (#3036 review P0-3b). This path is reachable with
+      no invoice anywhere near it, and it overwrites what Xero holds. Recording
+      nothing let the operator surface say "no Xero contact has been touched yet"
+      while this installation had already edited real accounting records.
+    */
+    expect(mocks.prisma.xeroSandboxContactContainment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { xeroContactId: "contact_1" } }),
+    );
+  });
+
+  it("on a COPY, a contact update whose contact holds a REAL address records the overwrite", async () => {
+    /*
+      The under-count this closes. Containment runs BEFORE the update, so the
+      read-back still sees the deliverable address that was really there — and
+      `rewroteAddress` is therefore a measurement rather than a guess. Recording
+      after the update would have read back the contained address this function
+      just sent and concluded that nothing was overwritten.
+    */
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      passwordHash: "not-deleted",
+      xeroContactId: "contact_1",
+    });
+    mocks.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_1", emailAddress: "jane@example.com" },
+        ],
+      },
+    });
+
+    await updateXeroContact("contact_1", undefined, {
+      localModel: "Member",
+      localId: "member_1",
+      preserveXeroName: false,
+    });
+
+    expect(mocks.prisma.xeroSandboxContactContainment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ rewroteAddress: true }),
+      }),
+    );
+  });
+
+  it("on a COPY, a contact update that cannot prove containment writes nothing to Xero", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      passwordHash: "not-deleted",
+      xeroContactId: "contact_1",
+    });
+    mocks.accountingApi.getContact.mockRejectedValue(new Error("503 from Xero"));
+
+    await expect(
+      updateXeroContact("contact_1", undefined, {
+        localModel: "Member",
+        localId: "member_1",
+        preserveXeroName: false,
+      }),
+    ).rejects.toThrow(/cannot prove the contact is unable to reach a member/);
+    expect(mocks.accountingApi.updateContact).not.toHaveBeenCalled();
+    expect(mocks.failXeroSyncOperation).toHaveBeenCalled();
+  });
+
+  it("REFUSES a contact update when nobody has said what this installation is", async () => {
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+    await expectEnvironmentRolePremise("UNKNOWN");
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      passwordHash: "not-deleted",
+      xeroContactId: "contact_1",
+    });
+
+    await expect(
+      updateXeroContact("contact_1", undefined, {
+        localModel: "Member",
+        localId: "member_1",
+        preserveXeroName: false,
+      }),
+    ).rejects.toThrow(/APP_ENVIRONMENT_ROLE/);
+
+    expect(mocks.accountingApi.updateContact).not.toHaveBeenCalled();
+    // And it refuses before a reservation is even opened, so nothing local is
+    // left half-done either.
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 
   it("builds member contact updates from the locked row instead of stale caller PII", async () => {
+    await expectEnvironmentRolePremise("PRODUCTION");
     mocks.prisma.member.findUnique.mockResolvedValue({
       id: "member_1",
       firstName: "Jane",
@@ -1530,6 +1718,63 @@ describe("Phase 4 contact sync and cached import", () => {
         },
       ],
       errors: 0,
+    });
+  });
+
+  it("REFUSES to import a contained contact as a member (#3036)", async () => {
+    /*
+      INV-CONFIG-005. A contained address must never become a `Member.email`. It
+      is a hash of somebody's real address on a reserved domain, so a member
+      created from it would read as REACHABLE — `isPlaceholderContactEmail` says
+      nothing about this domain, deliberately — while being able to receive
+      nothing at all. That is the silent-unreachability defect #2716 exists to
+      prevent, arriving from a new direction.
+    */
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: new Date("2026-04-14T08:00:00.000Z"),
+      lastSuccessfulSyncAt: new Date("2026-04-14T08:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      {
+        contactGroupId: "group_1",
+        contactId: "contact_contained",
+        contactName: "Contained Person",
+      },
+    ]);
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_contained",
+            name: "Contained Person",
+            firstName: "Contained",
+            lastName: "Person",
+            emailAddress: toXeroSandboxContactEmail("real@example.com"),
+            contactStatus: "ACTIVE",
+          },
+        ],
+      },
+    });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" as any }],
+      false,
+      { allowLiveXeroFetch: true },
+    );
+
+    expect(mocks.prisma.member.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      created: 0,
+      skippedNoEmail: 1,
+      errors: 0,
+    });
+    // And it says WHY, rather than claiming the contact has no address — it has
+    // one, it just cannot be used.
+    expect(result.skippedNoEmailDetails[0]).toMatchObject({
+      xeroContactId: "contact_contained",
+      reason: expect.stringContaining("non-deliverable"),
     });
   });
 

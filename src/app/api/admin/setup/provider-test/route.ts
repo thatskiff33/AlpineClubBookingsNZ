@@ -6,7 +6,6 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { getStripe } from "@/lib/stripe";
 import { getOperationalStripeSecretKey } from "@/lib/stripe-config";
-import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
 
 const providerTestSchema = z.object({
   provider: z.enum(["stripe", "smtp", "sentry", "xero"]),
@@ -44,20 +43,21 @@ async function testStripe() {
   return "Stripe responded to a balance read using the configured key.";
 }
 
+/**
+ * A provider connection test that CANNOT send (#3035): `verifyEmailTransport`
+ * returns the mode label and no transport, so this route has nothing to mail a
+ * member with. It also inherits the ambiguous-configuration refusal — an
+ * installation that is not confirmed production and sets neither `USE_AWS_SES`
+ * nor `USE_SMTP_RELAY` is told to set one instead of quietly connecting to the
+ * club's live AWS SES account.
+ */
 async function testSmtp() {
-  const config = resolveEmailDeliveryConfig();
-  if (!config.ok || !config.transportOptions) {
-    throw new Error(
-      `Email delivery config invalid: ${config.issues.join("; ")}`,
-    );
-  }
-
-  const nodemailer = await import("nodemailer");
-  const transporter = nodemailer.default.createTransport(
-    config.transportOptions,
+  const { verifyEmailTransport } = await import("@/lib/email/internal");
+  const { modeLabel } = await withTimeout(
+    "SMTP verify",
+    verifyEmailTransport(),
   );
-  await withTimeout("SMTP verify", transporter.verify());
-  return `${config.modeLabel} verification completed successfully.`;
+  return `${modeLabel} verification completed successfully.`;
 }
 
 async function testSentry() {

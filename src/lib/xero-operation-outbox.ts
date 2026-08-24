@@ -99,6 +99,15 @@ import { formatDateOnly } from "@/lib/date-only";
  * a re-drive to collide with, whatever the queue type. `XeroTransientOutageError`
  * has only the pre-HTTP construction site, but is marked and checked the same
  * way for symmetry and to stay safe if a post-HTTP use is ever added.
+ *
+ * `XeroContactEnvironmentUnknownError` (#3036) joins them on the same terms: the
+ * environment-role gate that raises it runs before the request is built, so it
+ * cannot have reached Xero, and it carries the same `preHttp` marker so the
+ * requirement below is a check rather than a courtesy. The state it reports is
+ * transient in exactly the way a re-drive needs — an unreadable
+ * `EnvironmentSafetySettings` row, or a declaration that has since been set — so
+ * an operation refused by it is the clearest case there is of one that belongs
+ * back on PENDING rather than needing a hand requeue.
  */
 function isXeroCooldownRefusal(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -106,7 +115,19 @@ function isXeroCooldownRefusal(error: unknown): boolean {
   }
   const isCooldownName =
     error.name === "XeroTransientOutageError" ||
-    error.name === "XeroDailyLimitError";
+    error.name === "XeroDailyLimitError" ||
+    /*
+      #3036: the environment-role gate inside `callXeroApi` refuses a Xero
+      MUTATION while nothing has declared whether this installation is the club's
+      live site or a copy. It sits ahead of `withXeroRetry` and ahead of the
+      usage meter, so its refusal is pre-HTTP by construction and the class
+      carries `preHttp = true` — which is what the requirement below then
+      verifies rather than assumes. Without this name the refusal took the
+      ordinary path, and twelve of fifteen handlers have written `status: FAILED`
+      by that point, leaving never-attempted operations terminally failed: the
+      defect this predicate exists to prevent (#2423 F2).
+    */
+    error.name === "XeroContactEnvironmentUnknownError";
   return (
     isCooldownName && (error as { preHttp?: unknown }).preHttp === true
   );

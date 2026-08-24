@@ -97,6 +97,7 @@ import {
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 
 function request() {
   return new NextRequest(
@@ -160,6 +161,63 @@ describe("POST /api/admin/xero/import-member-contact deep links (#2314)", () => 
     expect(
       mocks.upsertXeroObjectLink.mock.calls[0][0].xeroObjectUrl,
     ).not.toContain("shortcode");
+  });
+
+  /*
+    INV-CONFIG-005 (#3036 review P1-8a). The guard that keeps a CONTAINED address
+    out of a `Member.email` had only a source-level presence check
+    (`toContain("isXeroSandboxContactEmail(")`), which cannot tell an inverted
+    condition, a guard moved below `tx.member.create`, or a guard reading the
+    wrong variable from a correct one. Its sibling inbound path (the bulk
+    importer) always had a behavioural test; this is the missing one.
+
+    Why it matters: `isPlaceholderContactEmail` deliberately says nothing about
+    the contained domain, so a member minted from a contained address would read
+    as REACHABLE on every screen — booking flows, reminder crons, admin surfaces
+    — while being able to receive nothing at all. That is #2716's
+    silent-unreachability defect arriving from a new direction.
+  */
+  it("refuses a contact whose address has been contained, and creates no member", async () => {
+    mocks.refreshXeroContactCachesFromContact.mockResolvedValue({
+      cachedContact: {
+        contactId: CONTACT_ID,
+        name: "Riley Chen",
+        firstName: "Riley",
+        lastName: "Chen",
+        emailAddress: toXeroSandboxContactEmail("riley@example.org"),
+      },
+    });
+
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(body.error).toMatch(/replaced with a non-deliverable one/);
+    expect(body.error).toMatch(/live site/);
+    expect(
+      mocks.memberCreate,
+      "a member must not exist at all: the refusal is BEFORE the create, not a " +
+        "cleanup after it",
+    ).not.toHaveBeenCalled();
+    expect(mocks.upsertXeroObjectLink).not.toHaveBeenCalled();
+  });
+
+  it("still imports an ordinary address, so the guard is not just refusing everything", async () => {
+    // The other half of the discrimination: a placeholder domain is NOT the
+    // contained domain, and the two predicates are disjoint by construction.
+    mocks.refreshXeroContactCachesFromContact.mockResolvedValue({
+      cachedContact: {
+        contactId: CONTACT_ID,
+        name: "Riley Chen",
+        firstName: "Riley",
+        lastName: "Chen",
+        emailAddress: "riley@example.org",
+      },
+    });
+
+    const response = await POST(request());
+    expect(response.status).toBe(201);
+    expect(mocks.memberCreate).toHaveBeenCalledTimes(1);
   });
 
   it("degrades the returned link when no short code is available", async () => {

@@ -11,6 +11,7 @@ import {
   xeroDocumentDateForClubToday,
   xeroDocumentDateFromDateOnlyColumn,
   xeroDocumentDateFromInstant,
+  xeroDocumentDatesFromColumnAndInstant,
   xeroInstant,
 } from "@/lib/xero-provider-dates";
 
@@ -230,6 +231,60 @@ describe("the outbound document dates", () => {
       expect(xeroDocumentDateForClubToday(CLUB_BEHIND_UTC), hostZone).toBe(
         "2026-06-30",
       );
+    });
+  });
+});
+
+describe("an invoice's issue and due dates together", () => {
+  const CLUB = requireClubTimeZone("Pacific/Auckland");
+  const CLUB_BEHIND_UTC = requireClubTimeZone("America/Denver");
+
+  // THE ASYMMETRY IS THE POINT, and it is the thing a reader is most likely to
+  // "tidy" away: one date takes no zone at all and the other requires one.
+  // Truncating the instant to its UTC day instead is the #2834 defect — a group
+  // settlement invoice raised at 09:00 NZ on 1 July carried a due date of
+  // 30 June.
+  it("reads the column in UTC and the instant in the club's calendar", () => {
+    const checkIn = new Date("2026-04-16T00:00:00.000Z");
+    const createdAt = new Date("2026-07-01T21:00:00.000Z"); // 09:00 on 2 July, NZ
+
+    onEveryHostZone((hostZone) => {
+      expect(
+        xeroDocumentDatesFromColumnAndInstant(checkIn, createdAt, CLUB),
+        hostZone,
+      ).toEqual({ issueDate: "2026-04-16", dueDate: "2026-07-02" });
+    });
+  });
+
+  it("follows the club west of Greenwich, not the container", () => {
+    const checkIn = new Date("2026-04-16T00:00:00.000Z");
+    const createdAt = new Date("2026-07-01T21:00:00.000Z");
+
+    onEveryHostZone((hostZone) => {
+      expect(
+        xeroDocumentDatesFromColumnAndInstant(
+          checkIn,
+          createdAt,
+          CLUB_BEHIND_UTC,
+        ),
+        hostZone,
+      ).toEqual({ issueDate: "2026-04-16", dueDate: "2026-07-01" });
+    });
+  });
+
+  it("agrees with the two single-value helpers it composes", () => {
+    // So the pair cannot drift from the derivations it exists to keep together.
+    const checkIn = new Date("2026-04-16T00:00:00.000Z");
+    const createdAt = new Date("2026-07-01T21:00:00.000Z");
+
+    onEveryHostZone((hostZone) => {
+      expect(
+        xeroDocumentDatesFromColumnAndInstant(checkIn, createdAt, CLUB),
+        hostZone,
+      ).toEqual({
+        issueDate: xeroDocumentDateFromDateOnlyColumn(checkIn),
+        dueDate: xeroDocumentDateFromInstant(createdAt, CLUB),
+      });
     });
   });
 });

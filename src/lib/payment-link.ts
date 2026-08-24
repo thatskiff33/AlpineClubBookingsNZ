@@ -467,6 +467,23 @@ export async function reissuePaymentLinkForToken(
     return { emailed: false };
   }
 
+  if (emailOutcome.status !== "sent") {
+    /*
+      FAIL CLOSED on anything else the mailer returns. This used to enumerate the
+      untransmitted outcomes and then `return { emailed: true }`, which meant the
+      environment-safety withhold added by #3035 would have reported a payment
+      link as emailed when nothing left the building — and so would the next new
+      outcome after it. The member is told the same neutral "we could not email
+      it" as for an undeliverable address; which internal reason applied is never
+      surfaced to them.
+    */
+    logger.warn(
+      { bookingId: booking.id, emailStatus: emailOutcome.status },
+      "Fresh payment link issued but the email was not transmitted"
+    );
+    return { emailed: false };
+  }
+
   return { emailed: true };
 }
 
@@ -1149,18 +1166,49 @@ export async function issueSplitGuestPaymentLink(
   }
 
   if (emailOutcome.status !== "sent") {
-    // Suppressed (or placeholder) recipient: nothing was delivered, so the
-    // link must not stay active suppressing every future send (F25, #1885).
+    // Nothing was delivered, so the link must not stay active suppressing every
+    // future send (F25, #1885). Revoked either way; only the OUTCOME differs.
     await revokePaymentLinkById(minted.paymentLinkId).catch((revokeErr) =>
       logger.error(
         { err: revokeErr, bookingId: booking.id, paymentLinkId: minted.paymentLinkId },
-        "Failed to revoke split guest payment link after suppressed email"
+        "Failed to revoke split guest payment link after an undelivered email"
       )
     );
     logger.warn(
-      { bookingId: booking.id, emailStatus: emailOutcome.status },
+      {
+        bookingId: booking.id,
+        emailStatus: emailOutcome.status,
+        emailReason:
+          "reason" in emailOutcome ? emailOutcome.reason : undefined,
+      },
       "Split guest payment link email not delivered; link revoked so a later attempt re-mints"
     );
+
+    /*
+      AN ENVIRONMENT WITHHOLD IS NOT AN UNDELIVERABLE ADDRESS (#3035 review), and
+      bucketing it as `suppressed` was wrong in the most expensive place this
+      epic has. The route turns `suppressed` into a 502 reading "your email
+      address is undeliverable" — shown to a MEMBER — and it does that on the
+      epic's own headline case: a live club upgraded without the declaration.
+      The member's address is perfectly fine, the club has just not told the
+      software what it is; and the same file already states this rule twenty lines
+      above for the unreadable-switch case, where it says in as many words that
+      "this address is undeliverable" is misinformation that points an officer at
+      the wrong diagnosis.
+
+      So the two faults map to `transient_failure` (503, "try again shortly"),
+      which is what they are — they clear the moment a person corrects the
+      deployment — and the confirmed COPY maps to `withheld`, which is the
+      deliberate, non-transient bucket. Neither tells a member anything untrue
+      about their own mailbox.
+    */
+    if (emailOutcome.status === "withheld_for_environment") {
+      return emailOutcome.reason === "environment_non_production"
+        ? { outcome: "withheld" }
+        : { outcome: "transient_failure" };
+    }
+
+    // Suppressed (or placeholder) recipient: the address really is the problem.
     return { outcome: "suppressed" };
   }
 

@@ -10,8 +10,15 @@ const { mockPrisma, mockSendPreArrivalReminderEmail, mockLogger } = vi.hoisted(
       },
     },
     mockSendPreArrivalReminderEmail: vi.fn(),
+    // Every level the cron actually calls. It used to hold `error` alone, and
+    // that was not merely incomplete: `logger.warn` was then `undefined`, so a
+    // withhold threw a TypeError inside the loop and every assertion about the
+    // withhold path measured the CATCH branch instead (#3035).
     mockLogger: {
       error: vi.fn(),
+      warn: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
     },
   }),
 );
@@ -26,7 +33,19 @@ vi.mock("@/lib/logger", () => ({
   default: mockLogger,
 }));
 
+import {
+  EMAIL_SENT,
+  emailWithheldForBooking,
+  emailWithheldForEnvironment,
+} from "@/lib/__tests__/helpers/email-outcomes";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
+
+/*
+  The mailer's outcome shapes come from a shared helper (#3035). The stub used to
+  be `undefined`, which was harmless while this cron ignored the outcome and is
+  not any more: the claim it writes BEFORE the send is the only thing that ever
+  selects a booking for this reminder, so it has to tell a send from a withhold.
+*/
 
 function booking(overrides: Record<string, unknown> = {}) {
   return {
@@ -51,7 +70,7 @@ describe("sendPreArrivalReminders", () => {
     vi.clearAllMocks();
     mockPrisma.booking.findMany.mockResolvedValue([]);
     mockPrisma.booking.updateMany.mockResolvedValue({ count: 1 });
-    mockSendPreArrivalReminderEmail.mockResolvedValue(undefined);
+    mockSendPreArrivalReminderEmail.mockResolvedValue(EMAIL_SENT);
   });
 
   afterEach(() => {
@@ -196,7 +215,7 @@ describe("sendPreArrivalReminders member-guest consent exclusion (D-12, #2307)",
     vi.clearAllMocks();
     mockPrisma.booking.findMany.mockResolvedValue([]);
     mockPrisma.booking.updateMany.mockResolvedValue({ count: 1 });
-    mockSendPreArrivalReminderEmail.mockResolvedValue(undefined);
+    mockSendPreArrivalReminderEmail.mockResolvedValue(EMAIL_SENT);
   });
 
   afterEach(() => {
@@ -232,5 +251,129 @@ describe("sendPreArrivalReminders member-guest consent exclusion (D-12, #2307)",
     expect(mockSendPreArrivalReminderEmail).toHaveBeenCalledWith(
       expect.objectContaining({ guestCount: 2 }),
     );
+  });
+});
+
+// --- #3035 (ENV-SAFETY 2): a withheld reminder must not consume its claim ----
+//
+// THE SHAPE OF THE DEFECT. This cron stamps `preArrivalReminderSentAt` in a
+// guarded claim BEFORE it sends, and the selecting query filters on
+// `preArrivalReminderSentAt: null`. So a stamp written for a message that never
+// went out is consumed permanently — and this is the message that carries the
+// door code and the arrival instructions, so the member arrives at a locked
+// lodge and nothing anywhere says why.
+//
+// `sendEmail` RETURNS rather than throws when it withholds, so the cron's
+// `catch` never saw any of it: the outcome has to be inspected.
+describe("sendPreArrivalReminders environment-safety withholds (#3035)", () => {
+  const CLAIMED_AT = new Date("2026-06-10T12:00:00.000Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(CLAIMED_AT);
+    vi.clearAllMocks();
+    mockPrisma.booking.findMany.mockResolvedValue([booking()]);
+    mockPrisma.booking.updateMany.mockResolvedValue({ count: 1 });
+    mockSendPreArrivalReminderEmail.mockResolvedValue(EMAIL_SENT);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The claim-restoring update, if the cron made one. */
+  function restoreCall() {
+    return mockPrisma.booking.updateMany.mock.calls.find(
+      (call) =>
+        (call[0] as { data?: { preArrivalReminderSentAt?: unknown } }).data
+          ?.preArrivalReminderSentAt === null,
+    );
+  }
+
+  it("hands the claim back when the installation's role is unknown", async () => {
+    mockSendPreArrivalReminderEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await sendPreArrivalReminders();
+
+    expect(restoreCall()?.[0]).toEqual({
+      // Guarded on the instant this pass stamped, so a concurrent run's claim is
+      // never cleared.
+      where: { id: "booking-1", preArrivalReminderSentAt: CLAIMED_AT },
+      data: { preArrivalReminderSentAt: null },
+    });
+    expect(result.sentBookingIds).toEqual([]);
+    expect(result.skippedBookingIds).toEqual(["booking-1"]);
+  });
+
+  it("hands the claim back when the live site declares a capture mailbox", async () => {
+    mockSendPreArrivalReminderEmail.mockResolvedValue(
+      emailWithheldForEnvironment("capture_transport_in_production"),
+    );
+
+    await sendPreArrivalReminders();
+
+    expect(restoreCall()).toBeDefined();
+  });
+
+  it("KEEPS the claim on a confirmed copy, so an idle copy writes no new row each run", async () => {
+    /*
+      The one outcome that is terminal rather than a fault. A copy is a copy until
+      somebody re-declares it, so there is nothing to retry — and re-claiming and
+      re-suppressing the same booking every run would write a new counted
+      SKIPPED_NON_PRODUCTION row per pass. That count is what tells a live club
+      wrongly declared a copy from an idle staging one (owner decision 1,
+      23 Aug 2026), so an idle copy must not manufacture it.
+    */
+    mockSendPreArrivalReminderEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    const result = await sendPreArrivalReminders();
+
+    expect(restoreCall()).toBeUndefined();
+    expect(result.sentBookingIds).toEqual([]);
+    expect(result.skippedBookingIds).toEqual(["booking-1"]);
+  });
+
+  it("hands the claim back for a booking whose 'No emails' switch could not be read", async () => {
+    /*
+      Not an environment case, but the same claim and — here — the same answer.
+      The additional-payment reminder KEEPS its stamp for this reason, because the
+      fail-closed booking withhold leaves a replayable FAILED EmailLog row. This
+      template cannot: `pre-arrival-reminder` carries the door code, so it is in
+      SENSITIVE_EMAIL_LOG_TEMPLATES, its body is never persisted, and the retry
+      cron only selects rows that still hold one. Nothing will replay it, so the
+      stamp comes back.
+    */
+    mockSendPreArrivalReminderEmail.mockResolvedValue(
+      emailWithheldForBooking("booking_flag_unreadable"),
+    );
+
+    await sendPreArrivalReminders();
+
+    expect(restoreCall()).toBeDefined();
+  });
+
+  it("hands the claim back when the send throws", async () => {
+    /*
+      A throw burns the same claim, and this template's body is deliberately not
+      retained (it carries a door code) so the email retry cron can never replay
+      the FAILED row. Before #3035 the stamp stayed and the reminder was gone.
+    */
+    mockSendPreArrivalReminderEmail.mockRejectedValue(new Error("smtp down"));
+
+    const result = await sendPreArrivalReminders();
+
+    expect(restoreCall()).toBeDefined();
+    expect(result.failedBookingIds).toEqual(["booking-1"]);
+  });
+
+  it("keeps the claim when the message really went out", async () => {
+    const result = await sendPreArrivalReminders();
+
+    expect(restoreCall()).toBeUndefined();
+    expect(result.sentBookingIds).toEqual(["booking-1"]);
   });
 });

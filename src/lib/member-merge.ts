@@ -472,6 +472,17 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   // full trail; this column is the settings row's own last-writer note.
   "ClubTimeSettings.updatedByMemberId",
 
+  // ENV-SAFETY 1 (#3034): who last switched the environment-safety override.
+  // The same ordinary settings-audit actor column as ClubTimeSettings' above,
+  // and a snapshot for the same reason: the answer to "who put this installation
+  // into copy mode" is the administrator who did it at the time, not whoever
+  // later absorbed their record. The AuditLog row for
+  // ENVIRONMENT_SAFETY_OVERRIDE_UPDATED is the full trail; this column is the
+  // settings row's own last-writer note. NOT moving it also keeps the merge
+  // incapable of touching a safety setting: this row decides whether real
+  // members can be emailed, and a member merge has no business changing that.
+  "EnvironmentSafetySettings.updatedByMemberId",
+
   // #2243 review sweep — bespoke-named FK-less member-id columns the detector
   // cannot see (their names appear nowhere in the schema as a Member FK column),
   // found by hand and previously in neither block. All eight are actor/audit

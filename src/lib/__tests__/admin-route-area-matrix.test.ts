@@ -272,6 +272,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/email-templates": "support",
   "/api/admin/email-templates/preview": "support",
   "/api/admin/email-templates/reset": "support",
+  // Environment safety (ENV-SAFETY 1 #3034). `support` for route-map
+  // resolution only; BOTH verbs enforce Full Admin in the route itself with
+  // `requireAdmin({ permission: false })`, exactly like club-time-zone above.
+  "/api/admin/environment-safety": "support",
   "/api/admin/family-groups": "membership",
   "/api/admin/family-groups/[id]": "membership",
   "/api/admin/family-groups/[id]/login-holder": "membership",

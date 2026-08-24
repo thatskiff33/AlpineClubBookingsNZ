@@ -6,7 +6,7 @@ import {
   getSeasonStartDate,
 } from "./age-tier";
 import { getSeasonYear } from "./utils";
-import { dateOnlyFromParts } from "./date-only";
+import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
 import {
   sendAgeUpInvitationEmail,
   sendAgeUpParentEmailHandoffEmail,
@@ -317,71 +317,14 @@ export async function checkAgeUpMembers(): Promise<{
   const targetAgeTierMinAge = adultAgeTierSetting?.minAge ?? 18;
 
   // Find non-login members whose DOB puts them in the ADULT tier on season start.
-  // We compute the cutoff DOB from the configured ADULT minimum age.
-  const cutoffDate = new Date(seasonStart);
-  cutoffDate.setFullYear(cutoffDate.getFullYear() - targetAgeTierMinAge);
-
-  // #2859: this comparison is instant-against-instant, and the two sides are
-  // encoded differently. `cutoffDate` derives from `getSeasonStartDate`, which
-  // is `new Date(year, month, 1)` — LOCAL midnight, so `(D-1)T11:00Z` or
-  // `(D-1)T12:00Z` under the `TZ=Pacific/Auckland` pin. A stored date of birth
-  // is a date-only value at UTC MIDNIGHT (INV-DATE-024). A member born on
-  // exactly the season-start anniversary therefore sits a few hours AFTER the
-  // cutoff instant and was filtered out here, one season late for their own
-  // age-up — the same off-by-one INV-DATE-013 names, on the one boundary where
-  // it decides a tier.
-  //
-  // This is not a defect #2859 introduced, and it is not rare: it was already
-  // reachable for EVERY correctly stored date of birth, which on the live site
-  // is 365 of the 375 members who hold one. (An earlier census reported the
-  // reverse — 364 wrong, 10 right — from a query that applied `AT TIME ZONE` to
-  // this naive column and read it back through the session zone; it is
-  // retracted. The ten rows #2859's migration repairs are re-encoded into this
-  // same correct shape, so they join the exposure rather than create it.)
-  //
-  // So the prefilter is widened to the END of the cutoff calendar day. Widening
-  // is the safe direction: this query only proposes candidates, and
-  // `computeAgeTierWithSettings` below is the authority that promotes or skips
-  // each one.
-  //
-  // #2872 (CT-3): THE BOUND IS THE CALENDAR DAY, NOT LOCAL MIDNIGHT ON IT.
-  // `Member.dateOfBirth` is now `DateTime @db.Date`, and `@prisma/adapter-pg`
-  // narrows a bound `Date` for such a column to its UTC calendar date and throws
-  // the time away (`formatDate` in `mapArg`; pinned by
-  // `prisma-date-column-binding.test.ts`). A local-midnight instant east of UTC
-  // is 11:00 or 12:00 on the PREVIOUS UTC day, so binding one here would narrow
-  // to the day BEFORE and drop the member born on exactly the season-start
-  // anniversary — reopening the #2859 off-by-one the widening above exists to
-  // close, on the one boundary that decides a tier and therefore a price.
-  //
-  // The calendar parts are read with the host-local getters, and the reason is
-  // narrower than "everything here is host-local". It is a ROUND TRIP:
-  // `getSeasonStartDate` builds `new Date(year, month, 1)` — host-local midnight
-  // — and reading `.getFullYear()/.getMonth()/.getDate()` back off that same
-  // value recovers exactly the parts it was constructed from, in every host
-  // zone. `dateOnlyFromParts` then re-encodes those parts as UTC midnight, so
-  // the value handed to Prisma names ONE calendar day and names the SAME day
-  // wherever the process runs. The instant it replaces did not: `cutoffDate`
-  // itself is a different moment in every zone, and once the column became
-  // `@db.Date` that moment was narrowed to whichever UTC day it happened to fall
-  // on.
-  //
-  // Do NOT read this as "so every side of the comparison agrees". It does not:
-  // `computeAge` reads a UTC-midnight date of birth with host-LOCAL getters, so
-  // west of UTC it sees the previous day. That is a separate matter and this
-  // prefilter is not where it would be fixed — the query only PROPOSES, and
-  // `computeAgeTierWithSettings` below is the authority. What this bound has to
-  // be is wide enough never to drop a candidate, and host-zone-independent so it
-  // is the same width everywhere.
-  //
-  // It is also behaviour-identical against the OLD column type — a stored date
-  // of birth is UTC midnight, so `< 2008-04-02T00:00:00Z` admits all of 1 April
-  // 2008 either way — which is what makes it safe to land beside the migration
-  // rather than after it.
-  const cutoffWindowEnd = dateOnlyFromParts(
-    cutoffDate.getFullYear(),
-    cutoffDate.getMonth(),
-    cutoffDate.getDate() + 1,
+  // The bound comes from the configured ADULT minimum age, and it deliberately
+  // OVER-ADMITS: `dateOfBirthPrefilterBoundForMinAge` carries the whole
+  // derivation and the two off-by-ones (#2859, #2872) that shaped it, including
+  // why `computeAgeTierWithSettings` below — not this query — decides who is
+  // actually promoted.
+  const cutoffWindowEnd = dateOfBirthPrefilterBoundForMinAge(
+    seasonStart,
+    targetAgeTierMinAge,
   );
 
   const candidates = await prisma.member.findMany({
@@ -448,7 +391,7 @@ export async function checkAgeUpMembers(): Promise<{
           continue;
         }
 
-        await sendAgeUpParentEmailHandoffEmail(
+        const handoffOutcome = await sendAgeUpParentEmailHandoffEmail(
           parentEmailHandoff.recipientEmail,
           {
             recipientName: parentEmailHandoff.recipientName,
@@ -460,22 +403,58 @@ export async function checkAgeUpMembers(): Promise<{
           }
         );
 
-        await recordAgeUpParentEmailHandoffAudit({
-          member,
-          handoff: parentEmailHandoff,
-          targetAgeTierLabel,
-          targetAgeTierMinAge,
-        });
+        /*
+          THE AUDIT ROW IS THE ONLY THING THAT STOPS THIS BEING ATTEMPTED AGAIN
+          (#3035) — `hasAgeUpParentEmailHandoffAudit` above reads it. `sendEmail`
+          returns rather than throws when it withholds, so writing the row
+          unconditionally recorded a handoff that never happened and closed the
+          door on ever asking the parent again.
 
-        handoff++;
-        logger.info(
-          {
-            memberId: member.id,
-            firstName: member.firstName,
-            handoffReason: parentEmailHandoff.reason,
-          },
-          "Age-up: parent email handoff sent; member login not enabled"
-        );
+          The confirmed-copy withhold DOES write the row, because that outcome is
+          terminal: a copy is a copy until somebody re-declares it, and without
+          the row an idle staging box would re-attempt this handoff on every run
+          and write a new counted `SKIPPED_NON_PRODUCTION` row each pass — which
+          is the number that tells a live club wrongly declared a copy from a
+          genuine one (owner decision 1, 23 Aug 2026).
+        */
+        const handoffSent = handoffOutcome.status === "sent";
+        const handoffTerminalHere =
+          handoffOutcome.status === "withheld_for_environment" &&
+          handoffOutcome.reason === "environment_non_production";
+
+        if (handoffSent || handoffTerminalHere) {
+          await recordAgeUpParentEmailHandoffAudit({
+            member,
+            handoff: parentEmailHandoff,
+            targetAgeTierLabel,
+            targetAgeTierMinAge,
+          });
+        }
+
+        if (handoffSent) {
+          handoff++;
+          logger.info(
+            {
+              memberId: member.id,
+              firstName: member.firstName,
+              handoffReason: parentEmailHandoff.reason,
+            },
+            "Age-up: parent email handoff sent; member login not enabled"
+          );
+        } else {
+          failed++;
+          logger.error(
+            {
+              memberId: member.id,
+              handoffReason: parentEmailHandoff.reason,
+              outcome: handoffOutcome.status,
+              reason:
+                "reason" in handoffOutcome ? handoffOutcome.reason : undefined,
+              willRetry: !handoffTerminalHere,
+            },
+            "Age-up: the parent email handoff was not transmitted, so nobody has been asked for this member's own address"
+          );
+        }
         continue;
       }
 
@@ -594,7 +573,7 @@ export async function checkAgeUpMembers(): Promise<{
       }
 
       // Send invitation email (fire-and-forget style within the loop)
-      await sendAgeUpInvitationEmail(
+      const invitation = await sendAgeUpInvitationEmail(
         member.email,
         member.firstName,
         upgradeResult.token,
@@ -604,13 +583,65 @@ export async function checkAgeUpMembers(): Promise<{
           targetAgeTierMinAge,
         }
       );
+
+      /*
+        A WITHHELD INVITATION IS ROLLED BACK, because the tier flip and the token
+        are already committed and nothing else will ever finish the job (#3035).
+
+        `sendEmail` RETURNS rather than throws when nothing was transmitted, so the
+        `catch` below never fired for any of these and `upgradeResult = null`
+        disarmed the rollback unconditionally. The member became an adult with a
+        login and no invitation — and it is permanent: the `alreadySent` guard
+        above only matches `SENT`/`QUEUED` rows so it does not stop a retry, but
+        the transaction's own re-check sees `canLogin: true` and `ageTier: ADULT`
+        and returns null, so every later run counts them as skipped. Nobody is
+        ever told they now have a login, and the reset token expires in a week.
+
+        Rolling back puts them back a tier with their inherited mailbox intact
+        (`rollbackAgeUpUpgrade` restores the choice column too), so the next run
+        tries again cleanly once an operator has fixed the configuration.
+
+        THE CONFIRMED COPY IS THE EXCEPTION and keeps the upgrade: that outcome is
+        terminal, and rolling back would have a staging box age the same member up
+        and down on every run, writing a new counted `SKIPPED_NON_PRODUCTION` row
+        each pass. That count is what distinguishes a live club wrongly declared a
+        copy from an idle one (owner decision 1, 23 Aug 2026), so an idle copy must
+        not manufacture it.
+      */
+      const invited = invitation.status === "sent";
+      const invitationTerminalHere =
+        invitation.status === "withheld_for_environment" &&
+        invitation.reason === "environment_non_production";
+
+      if (!invited && !invitationTerminalHere) {
+        await rollbackAgeUpUpgrade(member.id, upgradeResult);
+        upgradeResult = null;
+        failed++;
+        logger.error(
+          {
+            memberId: member.id,
+            outcome: invitation.status,
+            reason: "reason" in invitation ? invitation.reason : undefined,
+          },
+          "Age-up: the invitation was not transmitted, so the upgrade was rolled back and a later run will retry it"
+        );
+        continue;
+      }
+
       upgradeResult = null;
 
       upgraded++;
-      logger.info(
-        { memberId: member.id, firstName: member.firstName },
-        "Age-up: member upgraded to ADULT with login"
-      );
+      if (invited) {
+        logger.info(
+          { memberId: member.id, firstName: member.firstName },
+          "Age-up: member upgraded to ADULT with login"
+        );
+      } else {
+        logger.warn(
+          { memberId: member.id, firstName: member.firstName },
+          "Age-up: member upgraded to ADULT with login, but this installation is a copy so the invitation was held back and will not be retried"
+        );
+      }
 
       // Best-effort Xero contact-group re-sync after the tier flip (E8, #1934).
       // Non-fatal and idempotent on re-run; a no-op unless grouping is enabled

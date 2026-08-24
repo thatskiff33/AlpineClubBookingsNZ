@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/health-check", () => ({
-  getRuntimeStatus: () => ({ cronEnabled: false, role: "web-green" }),
+  getRuntimeStatus: () => ({
+    cronEnabled: false,
+    role: "web-green",
+    // Kept complete against RuntimeStatusReport: a double that omits a field
+    // the real report carries is how a route stops being tested for it.
+    environmentRole: "production",
+  }),
 }));
 
 import { GET } from "@/app/api/deploy/runtime-status/route";
@@ -36,6 +42,7 @@ describe("deploy runtime status route", () => {
     await expect(response.json()).resolves.toEqual({
       cronEnabled: false,
       role: "web-green",
+      environmentRole: "production",
     });
   });
 });
