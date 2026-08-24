@@ -90,6 +90,13 @@ export interface MemberClubPost {
   authorMemberId: string | null;
   content: string;
   /**
+   * True when this post is on (or headed to) the central server -- the
+   * member ticked "Share with all clubs". Drives the server_message
+   * styling, so a member can see at a glance that a post is not just for
+   * this club.
+   */
+  sharedToAllClubs: boolean;
+  /**
    * Sanitised rich body, or null for a post written before the editor existed.
    * ALREADY SANITISED when it reaches a renderer -- sanitised on write, and
    * sanitised AGAIN by the serializer below, so a row that predates a
@@ -116,6 +123,8 @@ export function serializeClubPostForMember(
     bodyHtml?: string | null;
     postedAt: Date;
     originClubName: string | null;
+    sharedAt?: Date | null;
+    shareRequestedAt?: Date | null;
   },
   viewerMemberId: string,
 ): MemberClubPost {
@@ -124,6 +133,7 @@ export function serializeClubPostForMember(
     authorName: post.authorName,
     authorMemberId: post.authorMemberId,
     content: post.content,
+    sharedToAllClubs: Boolean(post.sharedAt ?? post.shareRequestedAt),
     // Re-sanitised on the way OUT as well as on the way in. The allowlist can
     // tighten, and a post stored under a looser one must not keep rendering
     // under it just because it was accepted at the time.
@@ -183,6 +193,8 @@ export async function listClubPostsForMember(
       authorMemberId: true,
       content: true,
       bodyHtml: true,
+      sharedAt: true,
+      shareRequestedAt: true,
       postedAt: true,
       originClubName: true,
     },

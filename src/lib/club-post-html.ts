@@ -37,6 +37,11 @@ export const POST_FONT_SIZES = [10, 12, 14, 16, 20, 24, 32] as const;
  */
 export const POST_COLOURS = [
   { label: "Default", value: "" },
+  // Black at the owner's request (24 Aug 2026). The one entry that does
+  // NOT hold on the dark theme -- near-invisible against a dark card --
+  // accepted knowingly; the club_message/server_message style hooks let a
+  // club's theme CSS compensate if it bites.
+  { label: "Black", value: "#000000" },
   { label: "Red", value: "#b42318" },
   { label: "Orange", value: "#b54708" },
   { label: "Green", value: "#067647" },

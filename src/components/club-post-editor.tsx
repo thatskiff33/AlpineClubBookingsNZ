@@ -3,7 +3,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
   AlignCenter,
-  AlignJustify,
   AlignLeft,
   AlignRight,
   Bold,
@@ -98,8 +97,40 @@ export function ClubPostEditor({
 }: ClubPostEditorProps) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // The selection as it stood before a toolbar dropdown took focus. Opening
+  // a <select> collapses the editor's selection, so without this a colour
+  // or size chosen from a dropdown applied to NOTHING -- the member picked
+  // red, nothing happened, and nothing said why.
+  const savedRange = useRef<Range | null>(null);
   const [uploading, setUploading] = useState(false);
   const [empty, setEmpty] = useState(value.trim() === "");
+
+  const saveSelection = useCallback(() => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (editor.contains(range.commonAncestorContainer)) {
+      savedRange.current = range.cloneRange();
+    }
+  }, []);
+
+  /** Put the saved selection back when focus-stealing collapsed the live one. */
+  const restoreSelection = useCallback(() => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || !savedRange.current) return;
+    const current =
+      selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    const usable =
+      current &&
+      !current.collapsed &&
+      editor.contains(current.commonAncestorContainer);
+    if (!usable) {
+      selection.removeAllRanges();
+      selection.addRange(savedRange.current);
+    }
+  }, []);
 
   const emit = useCallback(() => {
     const html = editorRef.current?.innerHTML ?? "";
@@ -119,13 +150,19 @@ export function ClubPostEditor({
     (command: string, value?: string) => {
       if (disabled) return;
       editorRef.current?.focus();
-      // Emits `style="..."` instead of the deprecated presentational tags, so
-      // what comes out matches what the sanitiser allows.
-      document.execCommand("styleWithCSS", false, "true");
+      restoreSelection();
+      // styleWithCSS is FALSE, and this line is load-bearing: with it true,
+      // the browser emits bold as `<span style="font-weight:bold">`, and the
+      // sanitiser's style allowlist (colour/size/family/alignment only)
+      // strips that declaration -- so bold, italic and underline were being
+      // destroyed by the composer's own sanitise pass before ever being
+      // stored. As tags (<b>, <i>, <u>) they are allowlisted and survive.
+      // Alignment still comes out as a text-align style either way.
+      document.execCommand("styleWithCSS", false, "false");
       document.execCommand(command, false, value);
       emit();
     },
-    [disabled, emit],
+    [disabled, emit, restoreSelection],
   );
 
   /**
@@ -143,6 +180,7 @@ export function ClubPostEditor({
       const editor = editorRef.current;
       if (!editor) return;
       editor.focus();
+      restoreSelection();
 
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) return;
@@ -165,7 +203,7 @@ export function ClubPostEditor({
 
       emit();
     },
-    [disabled, emit],
+    [disabled, emit, restoreSelection],
   );
 
   const insertImage = useCallback(
@@ -210,6 +248,7 @@ export function ClubPostEditor({
           aria-label="Paragraph style"
           disabled={disabled}
           defaultValue=""
+          onMouseDown={saveSelection}
           onChange={(event) => {
             if (event.target.value) run("formatBlock", event.target.value);
             event.target.value = "";
@@ -227,6 +266,7 @@ export function ClubPostEditor({
           aria-label="Font"
           disabled={disabled}
           defaultValue=""
+          onMouseDown={saveSelection}
           onChange={(event) => {
             applyStyle("font-family", event.target.value);
             event.target.value = "";
@@ -245,6 +285,7 @@ export function ClubPostEditor({
           aria-label="Font size"
           disabled={disabled}
           defaultValue=""
+          onMouseDown={saveSelection}
           onChange={(event) => {
             applyStyle("font-size", event.target.value);
             event.target.value = "";
@@ -263,6 +304,7 @@ export function ClubPostEditor({
           aria-label="Text colour"
           disabled={disabled}
           defaultValue=""
+          onMouseDown={saveSelection}
           onChange={(event) => {
             applyStyle("color", event.target.value);
             event.target.value = "";
@@ -283,8 +325,11 @@ export function ClubPostEditor({
         <ToolbarButton label="Align left" icon={<AlignLeft className="h-4 w-4" />} disabled={disabled} onRun={() => run("justifyLeft")} />
         <ToolbarButton label="Align centre" icon={<AlignCenter className="h-4 w-4" />} disabled={disabled} onRun={() => run("justifyCenter")} />
         <ToolbarButton label="Align right" icon={<AlignRight className="h-4 w-4" />} disabled={disabled} onRun={() => run("justifyRight")} />
-        <ToolbarButton label="Justify" icon={<AlignJustify className="h-4 w-4" />} disabled={disabled} onRun={() => run("justifyFull")} />
-
+        {/* Justified alignment removed at the owner's request (24 Aug 2026). The
+            sanitiser still ACCEPTS text-align:justify, deliberately: posts written
+            while the button existed, and mirrored posts from clubs whose composer
+            still offers it, must keep rendering as authored. */}
+        
         <ToolbarButton label="Bulleted list" icon={<List className="h-4 w-4" />} disabled={disabled} onRun={() => run("insertUnorderedList")} />
         <ToolbarButton label="Numbered list" icon={<ListOrdered className="h-4 w-4" />} disabled={disabled} onRun={() => run("insertOrderedList")} />
 

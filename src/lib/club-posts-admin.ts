@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import { assertValidClubPostContent } from "@/lib/club-posts";
 import logger from "@/lib/logger";
+import { deletePostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
 import { withdrawClubPost } from "@/lib/servernz-api";
 
@@ -212,18 +213,34 @@ export async function removeClubPost(postId: string): Promise<void> {
   // error, so a double-click or a retry does not report a failure.
   if (post.removedAt) return;
 
-  await prisma.clubPost.update({
-    where: { id: postId },
-    data: {
-      content: "",
-      bodyHtml: null,
-      removedAt: new Date(),
-      // Stops the retry pass from carrying a post the admin has just taken
-      // down. Without this, removing a post whose share had not yet succeeded
-      // would publish it minutes later.
-      shareRequestedAt: null,
-    },
+  // The IMAGES go with the words. The serving route already refuses images on
+  // a removed post, but refusing to serve a file is not the same as the file
+  // being gone -- a removal that left the photographs on the mount until
+  // retention happened to sweep the row would keep exactly the content the
+  // admin asked to be rid of. Rows first, files second: the crash order that
+  // leaves invisible orphans for the sweep, never broken references.
+  const images = await prisma.clubPostImage.findMany({
+    where: { postId },
+    select: { storageKey: true },
   });
+  await prisma.$transaction([
+    prisma.clubPostImage.deleteMany({ where: { postId } }),
+    prisma.clubPost.update({
+      where: { id: postId },
+      data: {
+        content: "",
+        bodyHtml: null,
+        removedAt: new Date(),
+        // Stops the retry pass from carrying a post the admin has just taken
+        // down. Without this, removing a post whose share had not yet
+        // succeeded would publish it minutes later.
+        shareRequestedAt: null,
+      },
+    }),
+  ]);
+  for (const image of images) {
+    await deletePostImage(image.storageKey);
+  }
 
   // A SHARED POST MUST COME DOWN EVERYWHERE, not just here. Removing it
   // locally while it stays on every other club's board is the worst of both:

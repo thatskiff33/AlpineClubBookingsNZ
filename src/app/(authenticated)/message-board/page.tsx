@@ -97,12 +97,20 @@ export default async function MessageBoardPage({
         <ul className="space-y-3">
           {posts.map((post) => (
             <li key={post.id}>
-              {/* A mirrored post sits on a different ground (the theme's accent
-                  token, so it holds in dark mode too) as well as carrying the
-                  origin-club badge: colour is scannable at a glance in a way a
-                  badge is not, and a member skimming the board should never
-                  mistake another club's post for their own club's. */}
-              <Card className={post.originClubName ? "bg-accent" : undefined}>
+              {/* Anything on the network -- mirrored FROM another club, or this
+                  club's own post shared TO all clubs -- sits on the muted (light
+                  grey) ground as well as carrying its badge: colour is scannable
+                  at a glance in a way a badge is not. The class names are the
+                  contract: `club_message` / `server_message` are STYLE HOOKS for
+                  a club's own theme CSS to override, so they must stay stable
+                  even if the default styling changes. */}
+              <Card
+                className={
+                  post.originClubName || post.sharedToAllClubs
+                    ? "server_message bg-muted"
+                    : "club_message"
+                }
+              >
                 <CardContent className="space-y-2 pt-6">
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
                     <span className="font-medium text-foreground">

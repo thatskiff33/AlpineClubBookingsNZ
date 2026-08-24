@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
+  imageFindMany: vi.fn(),
+  imageDeleteMany: vi.fn(),
+  transaction: vi.fn(),
+  deletePostImage: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,7 +28,18 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.findMany,
       update: mocks.update,
     },
+    clubPostImage: {
+      findMany: mocks.imageFindMany,
+      deleteMany: mocks.imageDeleteMany,
+    },
+    $transaction: mocks.transaction,
   },
+}));
+
+// Removal now unlinks the post's image files from the mount; mocked so the
+// suite stays about WHAT is deleted, not about a mount being present.
+vi.mock("@/lib/post-image-storage", () => ({
+  deletePostImage: mocks.deletePostImage,
 }));
 
 import { listClubPostsForMember } from "@/lib/club-posts";
@@ -42,6 +57,10 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.findMany.mockResolvedValue([]);
+  mocks.imageFindMany.mockResolvedValue([]);
+  mocks.imageDeleteMany.mockResolvedValue({ count: 0 });
+  mocks.transaction.mockResolvedValue([]);
+  mocks.deletePostImage.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue({});
   mocks.findUnique.mockResolvedValue({
     id: "post-1",
