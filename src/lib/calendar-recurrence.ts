@@ -377,11 +377,21 @@ export function recurrenceUnitLabel(
  *
  * The anchor is a real instant (a stored `startsAt`), so it is projected into the
  * club's calendar ONCE here and every label below is derived from that calendar
- * day. Taking the weekday from a club-pinned formatter while taking the day
- * number from `anchor.getDate()` is how a label used to contradict itself for an
- * overseas admin — "Monthly on day 16 … on the 3rd Tuesday" where the 16th was a
- * Wednesday — and deriving both from one `CalendarDate` makes that impossible
- * rather than merely unlikely.
+ * day.
+ *
+ * WHAT WAS WRONG BEFORE, stated precisely, because the obvious guess is wrong.
+ * The label was never internally inconsistent: the version this replaces took the
+ * weekday AND the day number from a single `formatToParts` call, deliberately, and
+ * its own docblock explains that a split reading "would let a label contradict
+ * itself". That hazard was described hypothetically and avoided.
+ *
+ * The defect was cruder — the label could name the wrong day ENTIRELY, and be
+ * self-consistent about it. `recurrenceOptionsForDate` was handed a `Date` the
+ * dialog built at BROWSER-local midnight and then read it in the club's zone, so
+ * an overseas admin selecting a Tuesday could be offered "Weekly on Monday" with
+ * "Monthly on day 20" agreeing beside it. Deriving everything from the
+ * `CalendarDate` the officer actually picked removes the projection rather than
+ * making the two halves agree, since they already did.
  */
 export function describeRecurrence(
   rule: RecurrenceRule,

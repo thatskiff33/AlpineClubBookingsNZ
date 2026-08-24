@@ -43,9 +43,25 @@ export function MonthCalendar({
     CT-4 (#2870). The grid itself is CALENDAR DAYS and needs no zone — 16 April
     2026 is a Thursday in every browser. The two things here that DO need one are
     the club's "today" ring and an event's start time, because both come from a
-    real instant. This view used to take both from the viewer's clock, so a
-    member abroad saw the ring on the wrong cell and every chip an hour or twelve
-    out.
+    real instant — and they were wrong in two DIFFERENT ways, which is worth
+    keeping straight because the fix reads the same for both.
+
+    The ring came from the VIEWER's clock: `isToday` was `dateKey(new Date())`
+    on host-local getters, so a member reading the calendar from London had the
+    ring on the wrong cell.
+
+    The chip time did NOT. It went through `formatNZTime`, which pins
+    `APP_TIME_ZONE` — and `next.config.ts` passes no timezone into the client
+    bundle, so in a browser that resolves to the shipped default at BUILD time
+    and never to the reader's clock. A member abroad saw the club's own time. What
+    was wrong there is authority, not arithmetic: `INV-CONFIG-002` makes the
+    persisted `ClubTimeSettings.timeZone` the club's civil-time authority, and a
+    constant compiled into the bundle cannot follow an operator changing it in the
+    admin panel without a redeploy.
+
+    #2870 comment 11 records that the browser framing was over-applied to this
+    class six times in the earlier groups and asks group F not to copy it; both
+    halves are stated separately here for that reason.
   */
   const club = useClubTime();
   const today = club.today();

@@ -17,7 +17,12 @@ import {
  *
  * Extracted from `calendar-service.ts`, which keeps the database half — the
  * per-series advisory lock, the transactions, and the create/update/delete entry
- * points. Nothing in this module reads or writes anything: it takes a template
+ * points. The extraction was a PURE MOVE, and it is worth saying what that is
+ * measured against: byte-identical to these functions as they stood at
+ * `ee596dd50`, the commit that finished migrating them onto club time, differing
+ * only by the added `export` keywords. It is NOT byte-identical to the epic base
+ * ref — `clubDayKey`, `withClubTimeOfDay` and `seriesMatchesRule` were rewritten
+ * by that earlier commit, which is the change this file's docblock explains. Nothing in this module reads or writes anything: it takes a template
  * plus the club's zone and answers "which club day is this occurrence on, what
  * wall-clock time does it keep, and what row does it become". That is the half
  * every zone-dependent decision but one lives in, which is why the reasoning
