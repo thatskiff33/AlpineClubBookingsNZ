@@ -13,7 +13,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { isFullAdmin } from "@/lib/access-roles";
 import {
   ViewOnlyActionButton,
@@ -33,12 +34,15 @@ interface InitialState {
   otherLodgesLastDownloadAt: string | null;
 }
 
-function fmt(iso: string | null): string {
+// Upload/download stamps are real INSTANTS, shown in the club's persisted zone
+// rather than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+function fmt(clubTime: BoundClubTime, iso: string | null): string {
   if (!iso) return "never";
-  return formatNZDateTime(new Date(iso));
+  return clubTime.instantDateTime(requireInstant(iso));
 }
 
 export function AlpineServerSetup({ initialState }: { initialState: InitialState }) {
+  const clubTime = useClubTime();
   // Two different permissions, and the page says which is which rather than
   // presenting one dead button. The page lives in the finance area like the rest
   // of the Integrations hub, so the sync controls follow `finance: edit`; the
@@ -266,7 +270,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
             </div>
             {apiKeySet ? (
               <p className="text-xs text-muted-foreground">
-                Last updated {fmt(initialState.apiKeyUpdatedAt)}. The key is stored
+                Last updated {fmt(clubTime, initialState.apiKeyUpdatedAt)}. The key is stored
                 encrypted and never shown again.
               </p>
             ) : null}
@@ -326,7 +330,7 @@ export function AlpineServerSetup({ initialState }: { initialState: InitialState
                   officer, beds).
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Last upload {fmt(lastUpload)} · last download {fmt(lastDownload)}
+                  Last upload {fmt(clubTime, lastUpload)} · last download {fmt(clubTime, lastDownload)}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

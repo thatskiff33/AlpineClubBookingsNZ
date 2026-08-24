@@ -17,7 +17,8 @@ import { Label } from "@/components/ui/label"
 import { redactSensitiveText } from "@/lib/redact-sensitive-json"
 import { summarizeXeroOperation } from "@/lib/xero-operation-summaries"
 import { resetXeroOperationsDatasetSearchParams } from "@/lib/admin-dataset-reset-state"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { fetchJson, postJson } from "./api"
 import {
   FailureStateChip,
@@ -483,6 +484,9 @@ export function OperationItem({
   onMarkNonReplayable: () => void
   onResolve: () => void
 }) {
+  // `createdAt` is a real INSTANT: shown in the club's persisted zone, so the
+  // same operation reads identically wherever the admin is (CT-4, #2870).
+  const clubTime = useClubTime()
   const resolved = Boolean(operation.manuallyResolvedAt)
   const isFailedOrPartial = operation.status === "FAILED" || operation.status === "PARTIAL"
   const [showRaw, setShowRaw] = useState(false)
@@ -502,7 +506,7 @@ export function OperationItem({
           <FailureStateChip state={operation.failureState} />
         ) : null}
         <span className="text-sm font-medium">{operation.entityType} {operation.operationType}</span>
-        <span className="text-xs text-muted-foreground">{formatNZDateTime(new Date(operation.createdAt))}</span>
+        <span className="text-xs text-muted-foreground">{clubTime.instantDateTime(requireInstant(operation.createdAt))}</span>
       </div>
       <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
         <span>Direction: {operation.direction}</span>

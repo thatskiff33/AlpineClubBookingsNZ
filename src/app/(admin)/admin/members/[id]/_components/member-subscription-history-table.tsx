@@ -14,7 +14,8 @@ import {
   subscriptionStatusClass,
   subscriptionStatusLabel,
 } from "@/lib/status-colors"
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { buildXeroInvoiceUrl } from "@/lib/xero-links"
 import type { MemberDetail } from "../_types"
 
@@ -30,6 +31,9 @@ export function MemberSubscriptionHistoryTable({
    */
   xeroOrgShortCode: string | null
 }) {
+  // `paidAt` is a real INSTANT — the moment the subscription was settled — read
+  // in the club's persisted zone (`INV-CONFIG-002`), not the admin's browser.
+  const clubTime = useClubTime()
   if (subscriptions.length === 0) {
     return <p className="text-sm text-muted-foreground">No subscription records</p>
   }
@@ -58,7 +62,7 @@ export function MemberSubscriptionHistoryTable({
               </Badge>
             </TableCell>
             <TableCell>
-              {sub.paidAt ? formatMemberDateNz(sub.paidAt) : "-"}
+              {sub.paidAt ? formatPayloadInstantDate(clubTime, sub.paidAt) : "-"}
             </TableCell>
             <TableCell>
               {sub.xeroInvoiceId ? (

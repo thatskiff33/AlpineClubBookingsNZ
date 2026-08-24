@@ -24,7 +24,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   AdminForbiddenSaveNotice,
@@ -68,6 +69,9 @@ function dirDepth(rel: string): number {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ImageManagerClient() {
+  // An uploaded image's file modification time — real INSTANTS, projected through the club's persisted zone rather
+  // than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("content");
   const [forbidden, setForbidden] = useState(false);
   const [directories, setDirectories] = useState<string[]>([""]);
@@ -570,7 +574,7 @@ export function ImageManagerClient() {
                       {formatBytes(img.byteSize)}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {formatNZDate(new Date(img.modifiedAt))}
+                      {clubTime.instantDate(requireInstant(img.modifiedAt))}
                     </p>
                     {/* Copy URL */}
                     <button

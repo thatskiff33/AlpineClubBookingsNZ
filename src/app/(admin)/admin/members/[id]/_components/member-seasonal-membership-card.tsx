@@ -23,7 +23,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ROLE_LABELS } from "@/lib/member-roles";
 import { formatCents, getSeasonYear } from "@/lib/utils";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import type {
   MembershipTypeSummary,
   MemberDetail,
@@ -126,8 +128,24 @@ function formatSeasonLabel(seasonYear: number) {
   return `${seasonYear}/${seasonYear + 1}`;
 }
 
-function formatDate(date: string | null) {
-  return date ? formatNZDate(new Date(date)) : "-";
+/**
+ * A CALENDAR DATE from a `@db.Date` column — a lodge night, an assignment's
+ * `applyFrom`. No timezone, ever: the value arrives as UTC midnight and the
+ * calendar-date formatter pins "UTC" over that encoding, so the projection is
+ * the identity for every club (CT-4, #2870).
+ *
+ * Split from {@link formatInstantDate} deliberately. One helper used to serve
+ * both this and `paidAt`, which is a real instant — so whichever zone it chose
+ * was wrong for one of them.
+ */
+function formatCalendarDay(date: string | null) {
+  return formatPayloadCalendarDay(date, "-");
+}
+
+/** A real INSTANT, in the club's persisted zone (INV-CONFIG-002). */
+function formatInstantDate(clubTime: BoundClubTime, date: string | null) {
+  const instant = date === null ? null : parseInstant(date);
+  return instant === null ? "-" : clubTime.instantDate(instant);
 }
 
 function BookingSummaryBlock({
@@ -150,7 +168,7 @@ function BookingSummaryBlock({
           {summary.list.map((booking) => (
             <div key={booking.id} className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground">
-                {formatDate(booking.checkIn)} to {formatDate(booking.checkOut)}
+                {formatCalendarDay(booking.checkIn)} to {formatCalendarDay(booking.checkOut)}
               </span>{" "}
               - {booking.status} - {booking.guestCount} guest
               {booking.guestCount === 1 ? "" : "s"} -{" "}
@@ -180,10 +198,23 @@ export function MemberSeasonalMembershipCard({
   // Saving a change writes /api/admin/members/[id]/seasonal-membership
   // (membership area); a view-only membership admin may still preview but
   // cannot commit the change (#1997).
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("membership");
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
   >([]);
+  // CT-4 (#2870) DELIBERATELY LEFT THIS ALONE, and the reason is measured
+  // rather than an oversight. `getSeasonYear` reaches
+  // `getSeasonYearForYearEndMonth`, which reads its argument with
+  // `date.getMonth()` / `date.getFullYear()` — HOST-LOCAL getters, so in a
+  // browser this is the viewer's month, not the club's. No call site can fix
+  // that from here: passing a club-derived UTC-midnight Date into a host-local
+  // getter was measured on this epic to make it WORSE for anyone behind UTC,
+  // turning "correct by accident" into a whole wrong day. The only honest fix
+  // is a zone-aware `clubSeasonYear(zone, clock)` in `src/lib`, which is a
+  // different lane's file; it is reported on #2870 with the other 17 sites.
+  // Left consistent with every other season-year derivation rather than
+  // half-fixed, so two admin screens cannot disagree on a boundary day.
   const effectiveCurrentSeasonYear =
     member.currentSeasonYear ?? getSeasonYear(new Date());
   const seasonalAssignments =
@@ -492,7 +523,7 @@ export function MemberSeasonalMembershipCard({
             </div>
             {currentAssignment?.applyFrom && (
               <div className="mt-1 text-xs text-muted-foreground">
-                Applies from {formatDate(currentAssignment.applyFrom)}
+                Applies from {formatCalendarDay(currentAssignment.applyFrom)}
               </div>
             )}
           </div>
@@ -561,7 +592,7 @@ export function MemberSeasonalMembershipCard({
                 Subscription summary
               </div>
               <div className="mt-1 text-muted-foreground">
-                Applies from {preview.applyFrom ? formatDate(preview.applyFrom) : "season start"}
+                Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom) : "season start"}
               </div>
               <div className="mt-1 text-muted-foreground">
                 {formatSeasonLabel(preview.currentSeasonSubscription.seasonYear)}
@@ -570,7 +601,7 @@ export function MemberSeasonalMembershipCard({
                   ? ` - invoice ${preview.currentSeasonSubscription.xeroInvoiceNumber}`
                   : ""}
                 {preview.currentSeasonSubscription.paidAt
-                  ? ` - paid ${formatDate(preview.currentSeasonSubscription.paidAt)}`
+                  ? ` - paid ${formatInstantDate(clubTime, preview.currentSeasonSubscription.paidAt)}`
                   : ""}
               </div>
               {preview.subscriptionHistory.recent.length > 0 && (

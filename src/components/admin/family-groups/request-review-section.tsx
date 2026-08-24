@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useClubTime } from "@/components/club-time-provider";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,17 @@ export function FamilyGroupRequestReviewSection({
   showSearchGuidance = false,
   createMemberNoun = "member",
 }: FamilyGroupRequestReviewSectionProps) {
+  /*
+    The club's PERSISTED zone, read ONCE for the whole list (CT-4, #2870;
+    `INV-CONFIG-002`).
+
+    This is the only place in this feature that reads the provider. The card
+    below takes the binding as a prop instead of calling the hook itself, so a
+    queue of forty requests constructs one binding rather than forty — and the
+    card stays a presentational component with no directive of its own. Its
+    prop docblock carries the full reasoning.
+  */
+  const clubTime = useClubTime();
   // Seed the default selections/notification parents from the initial request
   // list so the first paint already shows the auto-selected records (the caller
   // only mounts this section once `requests` is non-empty).
@@ -323,6 +335,7 @@ export function FamilyGroupRequestReviewSection({
           key={request.id}
           idPrefix={idPrefix}
           request={request}
+          clubTime={clubTime}
           requestSelection={requestSelections[request.id]}
           requestSearchTerm={requestSearchTerms[request.id]}
           searchedMembers={requestSearchResults[request.id] ?? []}

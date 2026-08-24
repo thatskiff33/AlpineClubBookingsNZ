@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { SemanticTone } from "@/lib/chip-tones"
 import type { LucideIcon } from "lucide-react"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { ToneChip } from "./shared"
 import type { XeroConnectionProbe, XeroStatus, XeroTokenHealth } from "./types"
 
@@ -51,6 +52,9 @@ export function ConnectionStatusPanel({
    */
   canEdit?: boolean | undefined
 }) {
+  // The token expiry is a real INSTANT, shown in the club's persisted zone so
+  // an admin abroad reads the same moment as one at the lodge (CT-4, #2870).
+  const clubTime = useClubTime()
   const { confirm, confirmDialog } = useConfirm()
   // Disabled until we positively know editing is allowed, so the resolving
   // window (undefined) is a neutral disabled state, matching ViewOnlyActionButton.
@@ -110,7 +114,7 @@ export function ConnectionStatusPanel({
             {status.tokenExpiresAt ? (
               <div className="text-sm">
                 <span className="text-muted-foreground">Token expires:</span>{" "}
-                {formatNZDateTime(new Date(status.tokenExpiresAt))}
+                {clubTime.instantDateTime(requireInstant(status.tokenExpiresAt))}
                 <span className="ml-1 text-muted-foreground">(auto-refreshes)</span>
               </div>
             ) : null}

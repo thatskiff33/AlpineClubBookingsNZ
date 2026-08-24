@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it } from "vitest";
 import { OperationItem } from "@/app/(admin)/admin/xero/_components/operations-panel";
 import type { XeroOperation } from "@/app/(admin)/admin/xero/_components/types";

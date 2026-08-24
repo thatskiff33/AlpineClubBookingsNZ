@@ -17,7 +17,8 @@ import {
   useSectionEditState,
   ForbiddenSaveError,
 } from "@/hooks/use-section-edit-state";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import {
   CONFIG_URL,
   RUN_URL,
@@ -163,6 +164,8 @@ export function LocalBackupCard({
     isValid: (draft) => !draft.localEnabled || draft.localPath.trim().length > 0,
   });
 
+  // A backup file's modification time is a real INSTANT (CT-4, #2870).
+  const clubTime = useClubTime();
   const [running, setRunning] = useState(false);
   const [runMessage, setRunMessage] = useState("");
   const [runError, setRunError] = useState("");
@@ -437,7 +440,7 @@ export function LocalBackupCard({
                 >
                   {backups.map((backup, index) => (
                     <option key={backup.filename} value={backup.filename}>
-                      {formatNZDateTime(new Date(backup.modifiedAt))} ·{" "}
+                      {clubTime.instantDateTime(requireInstant(backup.modifiedAt))} ·{" "}
                       {formatBytes(backup.sizeBytes)}
                       {index === 0 ? " (latest)" : ""}
                     </option>

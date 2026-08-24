@@ -30,7 +30,9 @@ import {
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { parseInstant, type BoundClubTime } from "@/lib/club-time"
+import { formatPayloadCalendarDay } from "../_lib/calendar-day"
 import { parseDecimalDollarsToCents } from "@/lib/money-input"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
@@ -116,15 +118,26 @@ function formatAdminName(admin: AdminActor | null | undefined) {
   return admin ? `${admin.firstName} ${admin.lastName}` : "Unknown admin"
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) {
+// Submission, review and credit stamps are real INSTANTS, projected through
+// the club's persisted zone (CT-4, #2870; INV-CONFIG-002).
+function formatDateTime(clubTime: BoundClubTime, value: string | null) {
+  const instant = value === null ? null : parseInstant(value)
+  if (instant === null) {
     return null
   }
 
-  return formatNZDateTime(new Date(value))
+  return clubTime.instantDateTime(instant)
+}
+
+// A booking's check-in/check-out is a CALENDAR DATE — a `@db.Date` column the
+// API serialises as UTC midnight. It takes no zone; reading it through one
+// named the night before for any club behind UTC (INV-DATE-019).
+function formatStayDay(value: string) {
+  return formatPayloadCalendarDay(value)
 }
 
 export default function RefundRequestsPage() {
+  const clubTime = useClubTime()
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = searchParams.get("status")
@@ -479,11 +492,11 @@ export default function RefundRequestsPage() {
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Check-in:</span>{" "}
-                            {formatNZDate(new Date(req.booking.checkIn))}
+                            {formatStayDay(req.booking.checkIn)}
                           </div>
                           <div>
                             <span className="text-muted-foreground">Check-out:</span>{" "}
-                            {formatNZDate(new Date(req.booking.checkOut))}
+                            {formatStayDay(req.booking.checkOut)}
                           </div>
                           {payment && (
                             <>
@@ -527,7 +540,7 @@ export default function RefundRequestsPage() {
                         </div>
 
                         <p className="text-xs text-muted-foreground">
-                          Submitted {formatDateTime(req.createdAt)}
+                          Submitted {formatDateTime(clubTime, req.createdAt)}
                         </p>
 
                         {req.status !== "PENDING" && (
@@ -546,7 +559,7 @@ export default function RefundRequestsPage() {
                             )}
                             {req.reviewedAt && (
                               <p className="text-xs text-muted-foreground mt-1">
-                                Reviewed {formatDateTime(req.reviewedAt)}
+                                Reviewed {formatDateTime(clubTime, req.reviewedAt)}
                               </p>
                             )}
                           </div>
@@ -712,7 +725,7 @@ export default function RefundRequestsPage() {
                           </div>
                           <div>
                             <span className="text-muted-foreground">Requested:</span>{" "}
-                            {formatDateTime(request.createdAt)}
+                            {formatDateTime(clubTime, request.createdAt)}
                           </div>
                           <div>
                             <span className="text-muted-foreground">Member:</span>{" "}
@@ -741,7 +754,7 @@ export default function RefundRequestsPage() {
                             {request.reviewedAt && (
                               <p>
                                 <span className="text-muted-foreground">Reviewed:</span>{" "}
-                                {formatDateTime(request.reviewedAt)}
+                                {formatDateTime(clubTime, request.reviewedAt)}
                               </p>
                             )}
                             {request.approvedCredit && (
@@ -756,7 +769,7 @@ export default function RefundRequestsPage() {
                                 {request.approvedCredit.createdAt && (
                                   <span className="text-muted-foreground">
                                     {" "}
-                                    ({formatDateTime(request.approvedCredit.createdAt)})
+                                    ({formatDateTime(clubTime, request.approvedCredit.createdAt)})
                                   </span>
                                 )}
                               </p>

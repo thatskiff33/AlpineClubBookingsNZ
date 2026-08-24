@@ -17,7 +17,8 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import type { AdminNoticeData } from "@/components/admin/notice-editor";
 
 type NoticeGroups = {
@@ -56,14 +57,16 @@ function audienceLabel(audience: AdminNoticeData["audiences"][number]): string {
   return audience.targetName ?? AUDIENCE_KIND_LABELS[audience.kind] ?? "Target";
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return formatNZDate(d);
+// `publishedAt` and `updatedAt` are real INSTANTS, shown in the club's
+// persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
+function formatDate(clubTime: BoundClubTime, iso: string | null): string {
+  const instant = iso === null ? null : parseInstant(iso);
+  if (instant === null) return "—";
+  return clubTime.instantDate(instant);
 }
 
 function NoticeRow({ notice }: { notice: AdminNoticeData }) {
+  const clubTime = useClubTime();
   return (
     <li className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 space-y-1">
@@ -111,8 +114,8 @@ function NoticeRow({ notice }: { notice: AdminNoticeData }) {
         </Link>
         <span className="text-xs text-muted-foreground">
           {notice.status === "PUBLISHED"
-            ? `Published ${formatDate(notice.publishedAt)}`
-            : `Updated ${formatDate(notice.updatedAt)}`}
+            ? `Published ${formatDate(clubTime, notice.publishedAt)}`
+            : `Updated ${formatDate(clubTime, notice.updatedAt)}`}
         </span>
       </div>
     </li>

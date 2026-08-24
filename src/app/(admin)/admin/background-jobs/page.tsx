@@ -2,11 +2,15 @@
 
 import { BackLink } from "@/components/admin/back-link";
 import { RefreshCw } from "lucide-react";
-import { formatNZTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 import { useHealthData } from "../health/_components/use-health-data";
 import { BackgroundJobsSection } from "../health/_components/background-jobs-section";
 
 export default function BackgroundJobsPage() {
+  // `lastRefresh` is a real INSTANT — the moment the health payload was
+  // fetched — so it is shown in the club's persisted zone, not the viewer's
+  // (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   const { data, loading, error, lastRefresh, refresh } = useHealthData();
 
   return (
@@ -17,7 +21,7 @@ export default function BackgroundJobsPage() {
           <h1 className="text-2xl font-bold text-foreground">Background Jobs</h1>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground">
-              Last refresh: {formatNZTime(lastRefresh)}
+              Last refresh: {clubTime.instantTime(lastRefresh)}
             </span>
             <button
               onClick={refresh}
