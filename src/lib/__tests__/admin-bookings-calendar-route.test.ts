@@ -90,10 +90,13 @@ describe("Admin bookings calendar route — lodge scoping (#9)", () => {
   CT-4 (#2870), epic #2988 — the calendar-date half of the club-time boundary.
 
   `Booking.checkIn` / `checkOut` are `@db.Date` LODGE NIGHTS. Prisma hands them
-  back as their UTC-midnight encoding, and INV-DATE-010 says that encoding is
-  encoding, not meaning: nothing may read it in any zone but UTC. This route used
-  to read all four of them through `formatDateOnlyForTimeZone` /
-  `normalizeDateOnlyForTimeZone`, which project an instant into a zone.
+  back as their UTC-midnight encoding. INV-DATE-010 says that encoding is
+  encoding and not meaning; the authority for DECODING it in UTC is
+  INV-DATE-019's exact boundaries plus INV-DATE-026 — cite those rather than 010,
+  which an earlier version of this comment paraphrased as its own inverse
+  (see #3080). This route used to read all four of them through
+  `formatDateOnlyForTimeZone` / `normalizeDateOnlyForTimeZone`, which project an
+  instant into a zone.
 
   THAT IS THE IDENTITY FOR A ZONE AT OR AHEAD OF UTC, which is why it looked
   right for as long as this product only ran in New Zealand, and it is the
