@@ -78,12 +78,26 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   **How to check, rather than guess.** Run
   `cli-server-only-reach-census.test.ts`: it walks the real import graph from
   every CLI entrypoint, so if your module is reachable from one it will say so.
-  If nothing reaches it, `club-time/server` is the right reader and the memo is
-  free. If something does — or if you are writing the module a diagnostics pack
-  is about to import — take the runtime reader and say in its docblock which
+  If nothing reaches it, `club-time/server` is *usually* the right reader and the
+  memo is free. If something does — or if you are writing the module a diagnostics
+  pack is about to import — take the runtime reader and say in its docblock which
   entrypoint made that necessary, so the next reader can re-measure the claim
   rather than inherit it. A docblock asserting a hazard that no longer exists is
   the pattern this repository keeps re-finding; measuring beats repeating.
+
+  **"Usually", because a green census is not a licence to move a SCHEDULED JOB.**
+  Measured across the nine sites that compose the runtime reader (#2870, F4a):
+  only `booking-create.ts` is statically CLI-reachable, through
+  `e2e/setup/seed-second-lodge.ts`. The other seven files are the cron modules
+  and `config-transfer`, and the census cannot see their hazard **by design** —
+  `src/instrumentation.node.ts` loads each job through a LAZY
+  `await import(...)`, and the census counts static edges only, because counting
+  lazy ones would report every legitimate deferred import in the tree. Next
+  bundles instrumentation separately from routes, so a `server-only` import on
+  that graph throws when the job runs rather than at boot, and `cache()` gives a
+  cron tick no memo to win anyway. So the reader choice is: **static CLI reach,
+  or reach from instrumentation — either one means the runtime reader**, and only
+  a module that neither can touch should take `club-time/server`.
 - **Client component** — `useClubTime()`, from `@/components/club-time-provider`.
   The zone is resolved on the server and delivered through a context mounted by
   exactly two components, `AppProviders` and `WebsiteChrome`, which between them
@@ -161,7 +175,7 @@ one of these, there is a function.
 | `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)` | `endOfClubDayInclusive(d, zone)` — but prefer the half-open bound wherever a `lt` will do |
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
-| a month key with `-01` glued on, or `new Date(y, m, 1)` | `startOfCalendarMonth(date)` |
+| `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
 | a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 

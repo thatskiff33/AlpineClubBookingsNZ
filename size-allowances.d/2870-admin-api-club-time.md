@@ -47,7 +47,7 @@ reason: nine lines. One is the second club-time import; the rest explain why the
   that test deserves to be told the two are the same question.
 
 file: src/app/api/admin/bookings/[id]/force-confirm/route.ts
-lines: 370
+lines: 369
 reason: seven lines. Two are the club-time imports, one is the hoisted
   cut-off itself, and four say why it is hoisted: the transaction below takes
   `pg_advisory_xact_lock(1)`, so a settings read inside it would make the global
@@ -55,7 +55,7 @@ reason: seven lines. Two are the club-time imports, one is the hoisted
   thing this comment exists to stop.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1278
+lines: 1277
 reason: three lines on a 1,275-line route, extending an existing comment to say
   that the future-stay cut-off now comes from the persisted club timezone and is
   re-encoded to UTC midnight because that is the only bound shape a `@db.Date`
