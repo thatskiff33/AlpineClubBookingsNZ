@@ -1,4 +1,11 @@
 # File-size allowances for CT-4 group C (#2870, epic #2988)
+> **Line counts refreshed by CT-4 group F3 (#2870).** That group hoisted the
+> shared helpers these files each wrote out privately, so several of them are now
+> SHORTER than this file recorded and four are two or three lines longer where a
+> two-line import pair became one multi-line import. The gate requires
+> `lines:` to equal the file's real length, so the numbers below were reset to
+> what the tree holds; nothing about the reasoning above changed, and no file
+> here crossed a ceiling it was not already over.
 
 Seven already-oversized components grew, by between seven and twenty-two lines
 each. (An eighth, `booking-change-requests-panel.tsx`, was still INSIDE its
@@ -33,27 +40,27 @@ plumbing would leave a worse file behind. Their length is pre-existing debt this
 change neither created nor is the right place to repay.
 
 file: src/components/admin/booking-policies/minimum-night-stay-section.tsx
-lines: 868
+lines: 871
 reason: the minimum-stay boundary formatter moved off the zoned instant
   formatter onto the kernel's calendar-date one, which needs no zone at all, and
   the comment records why the value was never an instant. Splitting the section
   would separate the policy form from the draft model it edits.
 
 file: src/components/admin/booking-requests/policy-exception-requests-panel.tsx
-lines: 1032
+lines: 1034
 reason: same split of kinds - the proposed nights are calendar days, the three
   request stamps are instants - in a single officer decision queue whose length
   is its form fields and status branches rather than mixed responsibilities.
 
 file: src/components/admin/booking-requests/public-booking-requests-panel.tsx
-lines: 2236
+lines: 2239
 reason: the largest of the queue screens and the same fixed cost: one
   calendar-date helper, one instant hook, and the reasoning for each. It was
   already 2217 lines of one screen before this change; splitting it is a real
   refactor that this migration must not smuggle in beside a timezone fix.
 
 file: src/components/admin/manual-refund-task-queue.tsx
-lines: 738
+lines: 740
 reason: THREE distinct temporal kinds in one file, which is why this one grew
   most: the stay dates are calendar days, `refundedAt` is the payment task's
   `completedAt` and therefore an instant, and both appear in a sub-component that
