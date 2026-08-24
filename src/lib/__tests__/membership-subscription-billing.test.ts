@@ -19,6 +19,19 @@ const mocks = vi.hoisted(() => ({
   // mocked export), so the resolver's item code is supplied here.
   feeComponents: { findMany: vi.fn() },
   accountMapping: { findUnique: vi.fn() },
+  // CT-4 group F1 (#2870): the default decision date is now the CLUB's calendar
+  // day, read from this row. Present so the suite can set a zone the environment
+  // does NOT hold and see the difference.
+  clubTimeSettings: { findUnique: vi.fn() },
+  // The approval path (`queueApprovedMembershipSubscriptionCharges`) writes
+  // through a transaction; with no members in scope the only writers it reaches
+  // are the exception ones.
+  billingExceptions: { updateMany: vi.fn(), upsert: vi.fn() },
+  // `INV-LOCK-001`: the confirm step takes a global advisory lock inside its
+  // transaction, so the double has to answer the raw call.
+  executeRaw: vi.fn(),
+  audit: vi.fn(),
+  enqueueChargeOperation: vi.fn(),
   effectiveFee: vi.fn(),
   familyMode: vi.fn(),
   mapping: vi.fn(),
@@ -51,14 +64,48 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupSeasonInvoiceMarker: mocks.familyMarkers,
     membershipAnnualFeeComponent: mocks.feeComponents,
     xeroAccountMapping: mocks.accountMapping,
+    clubTimeSettings: mocks.clubTimeSettings,
+    membershipBillingException: mocks.billingExceptions,
+    $transaction: (
+      run: (tx: unknown) => unknown,
+    ) => run(billingTransactionClient()),
   },
 }));
+
+vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+vi.mock("@/lib/xero-subscription-invoices", () => ({
+  enqueueMembershipSubscriptionChargeOperation: mocks.enqueueChargeOperation,
+}));
+
+/**
+ * The delegates the confirm step reaches inside its transaction when NO member is
+ * in scope. Deliberately narrow: a wider double would let a future change write
+ * somewhere this suite is not watching and still pass.
+ */
+function billingTransactionClient() {
+  return {
+    $executeRaw: mocks.executeRaw,
+    membershipBillingException: mocks.billingExceptions,
+    membershipSubscriptionChargeCoverage: mocks.coverage,
+    memberSubscription: mocks.subscriptions,
+    membershipSubscriptionCharge: mocks.charges,
+    member: mocks.members,
+    membershipType: mocks.membershipTypes,
+    familyGroupMember: mocks.familyGroupMembers,
+    familyGroupSeasonInvoiceMarker: mocks.familyMarkers,
+    membershipAnnualFeeComponent: mocks.feeComponents,
+    membershipSubscriptionBillingSettings: mocks.settings,
+    xeroAccountMapping: mocks.accountMapping,
+  };
+}
 
 import {
   buildComponentLineDescription,
   buildSubscriptionBillingPreview,
   calculateMembershipCharge,
+  queueApprovedMembershipSubscriptionCharges,
 } from "@/lib/membership-subscription-billing";
+import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { getSubscriptionItemCodes } from "@/lib/xero-mappings";
 import {
   __setFinancialYearEndMonthForTesting,
@@ -160,7 +207,117 @@ describe("membership subscription billing", () => {
     mocks.effectiveFee.mockResolvedValue(fee());
     mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
+    mocks.clubTimeSettings.findUnique.mockResolvedValue(null);
+    mocks.billingExceptions.updateMany.mockResolvedValue({ count: 0 });
+    mocks.billingExceptions.upsert.mockResolvedValue({});
+    mocks.executeRaw.mockResolvedValue(0);
+    mocks.audit.mockResolvedValue(undefined);
+    mocks.enqueueChargeOperation.mockResolvedValue(undefined);
     __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  });
+
+  /**
+   * THE DEFAULT DECISION DATE IS THE CLUB'S DAY, NOT THE ENVIRONMENT'S.
+   *
+   * This is the money half of CT-4 group F1 (#2870). With no explicit decision
+   * date this value bounds the season a subscription charge — and the Xero invoice
+   * queued from it — is written against, and the charge is immutable once created.
+   * It used to come from `getTodayDateOnly()`, i.e. from `APP_TIME_ZONE`, which is
+   * the container's environment and not the club's persisted zone. A deployment
+   * that sets only `TZ` had the two disagree by up to a day.
+   *
+   * THE ASSERTION IS DISCRIMINATING BY CONSTRUCTION, which is the thing this epic
+   * keeps failing to achieve elsewhere. `APP_TIME_ZONE` resolves to
+   * `Pacific/Auckland` under test, so the fixture persists `America/Denver` — a
+   * zone the environment does NOT hold — and at the frozen instant
+   * (2026-07-01T00:00:00Z) the two zones are on DIFFERENT calendar days: Auckland
+   * is on 1 July, Denver still on 30 June. Any implementation that reads the
+   * environment, the host, or the UTC clock answers 2026-07-01 and fails.
+   */
+  describe("the default decision date", () => {
+    it("is the club's own calendar day, from the persisted zone", async () => {
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "America/Denver",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026 });
+
+      expect(preview.decisionDate).toBe("2026-06-30");
+    });
+
+    it("moves with the persisted zone rather than staying on the environment's day", async () => {
+      // The same instant, a club east of Greenwich: now the club really is on
+      // 1 July. Pinning both halves is what stops the assertion above passing for
+      // a wrong reason — a hard-coded "yesterday" would fail here.
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "Pacific/Auckland",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026 });
+
+      expect(preview.decisionDate).toBe("2026-07-01");
+    });
+
+    /**
+     * THE HIGHEST-CONSEQUENCE LINE IN THIS LANE, and it needs a HOST sweep to be
+     * testable at all.
+     *
+     * Approving a membership application reaches
+     * `queueApprovedMembershipSubscriptionCharges` with no decision date, and the
+     * season it derives is written into an IMMUTABLE subscription charge and the
+     * Xero invoice queued from it. The retired derivation read that date's
+     * HOST-local month.
+     *
+     * WHY THE ZONE ALONE CANNOT CATCH IT. Once the decision date is minted as the
+     * club's own day at UTC midnight, a host-local read gives the SAME answer on
+     * any host at or east of Greenwich — including the CI runner, which resolves
+     * `UTC`. That is precisely the class owner decision 3 (#2870) recorded as
+     * uncatchable without moving the host. So this pins `process.env.TZ` behind
+     * Greenwich and puts the club's day exactly ON a season boundary: with a June
+     * year-end the club's 1 July is the FIRST day of season 2026, while a Denver
+     * host reads that same UTC-midnight value as 30 June — the LAST day of season
+     * 2025.
+     *
+     * The kill is loud rather than subtle: the wrong season fails
+     * `buildSubscriptionBillingPreview`'s own bounds check, so the approval throws
+     * `Decision date must fall within membership year 2025.` instead of billing
+     * quietly against the wrong year.
+     */
+    it("bills an approval in the club's season, not the host's, on the boundary", async () => {
+      __setFinancialYearEndMonthForTesting(6);
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "Pacific/Auckland",
+      });
+
+      await withTimeZoneAsync("America/Denver", async () => {
+        const result = await queueApprovedMembershipSubscriptionCharges({
+          memberIds: [],
+          approvedByMemberId: "admin-1",
+        });
+        expect(result.chargeIds).toEqual([]);
+      });
+
+      // The season the preview was actually built for: 2026, the year the club's
+      // own 1 July belongs to under a June year-end.
+      expect(mocks.billingExceptions.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ seasonYear: 2026 }),
+        }),
+      );
+    });
+
+    it("still honours an explicit decision date", async () => {
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "America/Denver",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-05-15T00:00:00.000Z"),
+      });
+
+      expect(preview.decisionDate).toBe("2026-05-15");
+    });
   });
 
   // #2109 FIX-4d closed loop: drive the REAL billing line-builder for a type +
