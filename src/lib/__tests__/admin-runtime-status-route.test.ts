@@ -18,7 +18,12 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/health-check", () => ({
-  getRuntimeStatus: () => ({ cronEnabled: true, role: "web-blue" }),
+  getRuntimeStatus: () => ({
+    cronEnabled: true,
+    role: "web-blue",
+    // Kept complete against RuntimeStatusReport, as above.
+    environmentRole: "production",
+  }),
 }));
 
 import { GET } from "@/app/api/admin/runtime-status/route";
@@ -100,6 +105,7 @@ describe("admin runtime status route", () => {
     await expect(response.json()).resolves.toEqual({
       cronEnabled: true,
       role: "web-blue",
+      environmentRole: "production",
     });
   });
 });

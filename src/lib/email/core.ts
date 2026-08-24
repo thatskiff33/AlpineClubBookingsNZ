@@ -25,9 +25,14 @@ import {
 } from "@/lib/booking-email-html";
 import {
   getEmailTransporter,
+  logDeliveredTransport,
   shouldPersistEmailHtml,
   type EmailAttachment,
 } from "./internal";
+import {
+  resolveEmailEnvironmentGate,
+  type EmailEnvironmentWithheldReason,
+} from "./environment-gate";
 // A pure string builder, and `email-message-renderer` above already pulls the
 // template layer in, so this adds no failure mode to the alert that reports a
 // failure (#2689).
@@ -70,6 +75,31 @@ export type EmailSendOutcome =
       emailLogId: string | null;
       bookingId: string;
       reason: "booking_no_emails" | "booking_flag_unreadable";
+    }
+  // #3035 (ENV-SAFETY 2): the environment-safety delivery boundary held the
+  // message back. `reason` separates the two cases, which need opposite
+  // treatment and must never be collapsed into one another or into the
+  // booking-scoped withhold above:
+  //   environment_non_production — a confirmed copy pointed at a live provider. A
+  //                                terminal outcome (EmailLog
+  //                                SKIPPED_NON_PRODUCTION), nothing to retry,
+  //                                nothing wrong.
+  //   environment_unknown        — nothing has declared which installation this
+  //                                is. A FAULT: EmailLog FAILED with a
+  //                                deliveryBlockReason.
+  //   capture_transport_in_production — the live site declares a capture mailbox.
+  //                                Also a FAULT; it clears when the transport
+  //                                flags are corrected.
+  // BOTH FAULTS ARE REPLAYABLE ONLY IF THE ROW HOLDS A BODY — not so for the 26
+  // SENSITIVE_EMAIL_LOG_TEMPLATES or a redacted recipient, where the gate writes
+  // the retry ceiling instead so it lands in the review queue for a manual
+  // re-send. Reasoning: `environment-gate.ts`.
+  // A copy that has DECLARED a capture mailbox never appears here: it transmits
+  // into the capture and the outcome is an ordinary `sent`.
+  | {
+      status: "withheld_for_environment";
+      emailLogId: string | null;
+      reason: EmailEnvironmentWithheldReason;
     };
 
 function assertNoCrlf(value: string, field: string) {
@@ -455,6 +485,29 @@ export async function sendEmail({
     };
   }
 
+  // Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986). LAST of the
+  // four gates on purpose: the three above are facts about THIS message and
+  // recipient and are true on any installation, so each stays recorded as itself
+  // on a copy; this one is about the INSTALLATION and is the backstop underneath
+  // them. It sits ABOVE the dev-mode short-circuit below, which is now a local
+  // convenience and no longer the safety authority. Reasoning and the two
+  // EmailLog shapes: `environment-gate.ts`.
+  const environmentGate = await resolveEmailEnvironmentGate({
+    emailLogId,
+    templateName,
+    logRecipient: emailLogRecipient,
+    // #3035: does this row hold a body the retry cron could replay? The same
+    // value the EmailLog row was created with, so the two cannot disagree.
+    bodyRetainedForReplay: persistHtmlBody,
+  });
+  if (environmentGate.decision !== "send") {
+    return {
+      status: "withheld_for_environment",
+      emailLogId,
+      reason: environmentGate.reason,
+    };
+  }
+
   if (process.env.NODE_ENV === "development") {
     logger.info(
       { to: emailLogRecipient, subject: sanitizedSubject, templateName },
@@ -490,7 +543,9 @@ export async function sendEmail({
   }
 
   try {
-    const { transporter, modeLabel } = getEmailTransporter();
+    const { transporter, modeLabel } = await getEmailTransporter(
+      environmentGate.clearance,
+    );
     const result = await transporter.sendMail({
       from,
       to,
@@ -500,10 +555,13 @@ export async function sendEmail({
       attachments,
     });
 
-    logger.debug(
-      { templateName, to: emailLogRecipient, mode: modeLabel },
-      "Email delivered",
-    );
+    // Which transport carried it, at a level an operator sees when that matters
+    // (#3035 review). Reasoning in `logDeliveredTransport`.
+    logDeliveredTransport({
+      templateName,
+      to: emailLogRecipient,
+      modeLabel,
+    });
 
     // Update EmailLog to SENT
     if (emailLogId) {

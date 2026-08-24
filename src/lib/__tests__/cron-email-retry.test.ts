@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   memberFindUnique: vi.fn(),
   sendMail: vi.fn(),
   resolveEmailDeliveryConfig: vi.fn(),
+  // #3035: the delivery policy reads the DECLARED transport kind through this
+  // same canonical parser, so a partial mock of the module has to name it or the
+  // whole file dies at import.
+  resolveEmailTransportKind: vi.fn(() => "live-provider"),
   sendEmail: vi.fn(),
   getAdminEmails: vi.fn(),
   getActiveEmailSuppression: vi.fn(),
@@ -16,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: {
       findMany: mocks.findMany,
       update: mocks.update,
@@ -55,6 +60,7 @@ vi.mock("@/lib/email-text", () => ({
 
 vi.mock("@/lib/email-delivery", () => ({
   resolveEmailDeliveryConfig: mocks.resolveEmailDeliveryConfig,
+  resolveEmailTransportKind: mocks.resolveEmailTransportKind,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -69,6 +75,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 import { retryFailedEmails } from "@/lib/cron-email-retry";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 function failedEmail(overrides: Record<string, unknown> = {}) {
   return {
@@ -89,13 +96,39 @@ function failedEmail(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
+
 describe("retryFailedEmails (issue #820)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveEmailDeliveryConfig.mockReturnValue({
       ok: true,
-      transportOptions: { host: "smtp.example.test" },
+      mode: "smtp-relay",
+      modeSource: "explicit-flag",
+      modeLabel: "SMTP Relay",
+      // #3035: the retry cron now obtains its transport through
+      // getEmailTransporter, which builds a cache signature from the auth pair
+      // instead of reading transportOptions.host alone.
+      transportOptions: {
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        auth: { user: "relay-user", pass: "relay-pass" },
+      },
       issues: [],
+      warnings: [],
     });
     mocks.update.mockResolvedValue({});
     mocks.updateMany.mockResolvedValue({ count: 1 });
@@ -202,6 +235,10 @@ describe("retryFailedEmails (issue #820)", () => {
     // Never claimed — a suppressed skip is not a retry attempt.
     expect(mocks.updateMany).not.toHaveBeenCalled();
     // Mirrors core.ts's suppressed write: BOUNCED, body dropped, same reason string.
+    // Plus `deliveryBlockReason: null` (#3035): this row may have been failed by
+    // the environment gate before, and that column was cleared NOWHERE — so a
+    // stale value would keep a bounced address inside the environment-withheld
+    // count for the life of the installation.
     expect(mocks.update).toHaveBeenCalledWith({
       where: { id: "email_1" },
       data: {
@@ -209,6 +246,7 @@ describe("retryFailedEmails (issue #820)", () => {
         htmlBody: null,
         bookingRetryHtmlBody: null,
         errorMessage: "Email suppressed after SES bounce feedback",
+        deliveryBlockReason: null,
       },
     });
     expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
@@ -272,11 +310,20 @@ describe("retryFailedEmails (issue #820)", () => {
   it("throws when email delivery configuration is invalid", async () => {
     mocks.resolveEmailDeliveryConfig.mockReturnValue({
       ok: false,
+      mode: "invalid",
+      modeSource: "unresolved",
+      modeLabel: "Not configured",
       transportOptions: null,
       issues: ["missing EMAIL_FROM"],
+      warnings: [],
     });
 
-    await expect(retryFailedEmails()).rejects.toThrow(/delivery config invalid/);
+    // #3035: the refusal now comes from getEmailTransporter, the one accessor
+    // that builds a transport, rather than from a second copy of the same check
+    // in this job.
+    await expect(retryFailedEmails()).rejects.toThrow(
+      /Email delivery is not configured/,
+    );
     expect(mocks.findMany).not.toHaveBeenCalled();
   });
 });
@@ -286,8 +333,20 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     vi.clearAllMocks();
     mocks.resolveEmailDeliveryConfig.mockReturnValue({
       ok: true,
-      transportOptions: { host: "smtp.example.test" },
+      mode: "smtp-relay",
+      modeSource: "explicit-flag",
+      modeLabel: "SMTP Relay",
+      // #3035: the retry cron now obtains its transport through
+      // getEmailTransporter, which builds a cache signature from the auth pair
+      // instead of reading transportOptions.host alone.
+      transportOptions: {
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        auth: { user: "relay-user", pass: "relay-pass" },
+      },
       issues: [],
+      warnings: [],
     });
     mocks.update.mockResolvedValue({});
     mocks.updateMany.mockResolvedValue({ count: 1 });
@@ -662,5 +721,202 @@ describe('retryFailedEmails and the per-booking "No emails" switch (#2258)', () 
     expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
     expect(mocks.sendMail).toHaveBeenCalledTimes(2);
     expect(result.succeeded).toBe(2);
+  });
+});
+
+describe("retryFailedEmails and the environment-safety boundary (#3035)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveEmailDeliveryConfig.mockReturnValue({
+      ok: true,
+      mode: "smtp-relay",
+      modeSource: "explicit-flag",
+      modeLabel: "SMTP Relay",
+      transportOptions: {
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        auth: { user: "relay-user", pass: "relay-pass" },
+      },
+      issues: [],
+      warnings: [],
+    });
+    mocks.update.mockResolvedValue({});
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.getAdminEmails.mockResolvedValue([]);
+    mocks.getActiveEmailSuppression.mockResolvedValue(null);
+    mocks.bookingFindUnique.mockResolvedValue({ noEmails: false });
+    mocks.findMany.mockResolvedValue([failedEmail()]);
+  });
+
+  it("replays nothing and touches no row on a confirmed copy, and does not treat it as a failure", async () => {
+    /*
+      A copy declining to replay the club's mail is the job WORKING, so it returns
+      cleanly rather than throwing — a staging copy must not fill its cron history
+      with red runs every thirty minutes.
+
+      NO ROW IS TOUCHED, which is the part worth being careful about. A copy
+      restored from the club's live database holds the live site's genuinely-failed
+      rows; rewriting those as "held back by this copy" would lie about their
+      history and inflate the withheld count the admin panel reads. It also means
+      no attempt is burned, so nothing drifts towards the unretryable ceiling
+      while the installation is a copy.
+    */
+    declareEnvironmentRole("non-production");
+
+    await expect(retryFailedEmails()).resolves.toEqual({
+      retried: 0,
+      succeeded: 0,
+      failed: 0,
+    });
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+  });
+
+  it("throws on an unconfirmed environment, because that IS a fault", async () => {
+    // Unlike a copy, an installation nobody has declared has stopped sending mail
+    // its members may be waiting for. Something has to say so out loud, and the
+    // job already throws for an unusable delivery configuration.
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+
+    await expect(retryFailedEmails()).rejects.toThrow(
+      /Email retry skipped: Not sent/,
+    );
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.sendMail).not.toHaveBeenCalled();
+  });
+
+  it("never replays a row the boundary already held back terminally", async () => {
+    /*
+      Structural rather than incidental: the selection query filters
+      `status: "FAILED"`, and the guarded claim re-asserts it before any send, so a
+      SKIPPED_NON_PRODUCTION row is outside this job by construction. This test
+      pins that, because the tempting future edit — widening the filter to a status
+      list so "everything unsent" gets retried — would replay exactly the messages
+      a copy deliberately withheld.
+    */
+    declareEnvironmentRole("production");
+    await retryFailedEmails();
+
+    const where = mocks.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe("FAILED");
+    const claim = mocks.updateMany.mock.calls[0][0];
+    expect(claim.where.status).toBe("FAILED");
+  });
+
+  it("replays normally on the club's live site", async () => {
+    declareEnvironmentRole("production");
+    mocks.sendMail.mockResolvedValue({ messageId: "msg-1" });
+
+    await expect(retryFailedEmails()).resolves.toEqual({
+      retried: 1,
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- #3035 review: the block reason has to DRAIN, or the count cries wolf -----
+//
+// `deliveryBlockReason` was written in one place (the mail gate) and cleared in
+// NONE. So: the gate blocks an undeclared send and sets it; an operator declares
+// the role; this cron claims the row, the provider rejects it, and the failure
+// write left the stale block reason in place. `attempts` reaches 3, the row leaves
+// this cron's query, and it stays counted for the life of the installation —
+// `readWithheldApplicationEmail` selects exactly `FAILED` + a non-null reason.
+// Admin -> Environment then tells a healthy live club it is holding mail back,
+// which breaks owner decision 1: that count is the ONLY thing distinguishing a
+// live club wrongly declared a copy from a genuine one, so it has to drain after
+// the repair. The `SENT` path left it stale too.
+//
+// The lens that found this predicted that ADDING the fix would break no existing
+// test, which is what "entirely unguarded" looks like. These are the tests.
+describe("retryFailedEmails clears a stale environment block reason (#3035)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveEmailDeliveryConfig.mockReturnValue({
+      ok: true,
+      mode: "smtp-relay",
+      modeSource: "explicit-flag",
+      modeLabel: "SMTP Relay",
+      transportOptions: {
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        auth: { user: "relay-user", pass: "relay-pass" },
+      },
+      issues: [],
+      warnings: [],
+    });
+    mocks.update.mockResolvedValue({});
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.getAdminEmails.mockResolvedValue([]);
+    mocks.getActiveEmailSuppression.mockResolvedValue(null);
+    mocks.bookingFindUnique.mockResolvedValue({ noEmails: false });
+    // A row the environment gate failed earlier, now being replayed after the
+    // operator declared the role.
+    mocks.findMany.mockResolvedValue([
+      failedEmail({ deliveryBlockReason: "ENVIRONMENT_DECLARATION_MISSING" }),
+    ]);
+    declareEnvironmentRole("production");
+  });
+
+  /** The last write this cron made to the row. */
+  function lastWrite() {
+    return mocks.update.mock.calls.at(-1)?.[0] as {
+      data: Record<string, unknown>;
+    };
+  }
+
+  it("clears it when the replay succeeds", async () => {
+    mocks.sendMail.mockResolvedValue({ messageId: "msg-1" });
+
+    await retryFailedEmails();
+
+    expect(lastWrite().data.status).toBe("SENT");
+    expect(lastWrite().data.deliveryBlockReason).toBeNull();
+  });
+
+  it("clears it when the replay hits a GENUINE transport failure", async () => {
+    /*
+      The important half. This row is now failing for a provider reason and its
+      `errorMessage` says so, so keeping the environment block reason would make a
+      transport failure indistinguishable from a safety block by anything except a
+      message string — exactly what INV-CONFIG-004 and the column's own contract in
+      schema.prisma ("NULL for … a genuine transport failure") forbid.
+    */
+    mocks.sendMail.mockRejectedValue(new Error("SES said no"));
+
+    await retryFailedEmails();
+
+    expect(lastWrite().data.status).toBe("FAILED");
+    expect(lastWrite().data.errorMessage).toContain("SES said no");
+    expect(lastWrite().data.deliveryBlockReason).toBeNull();
+  });
+
+  it("clears it when the recipient turns out to be suppressed", async () => {
+    mocks.getActiveEmailSuppression.mockResolvedValue({
+      id: "sup_1",
+      reason: "BOUNCE",
+    });
+
+    await retryFailedEmails();
+
+    expect(lastWrite().data.status).toBe("BOUNCED");
+    expect(lastWrite().data.deliveryBlockReason).toBeNull();
+  });
+
+  it("clears it when the booking's No emails switch has since been turned on", async () => {
+    mocks.bookingFindUnique.mockResolvedValue({ noEmails: true });
+
+    await retryFailedEmails();
+
+    expect(lastWrite().data.status).toBe("SKIPPED_NO_EMAILS");
+    // A business withhold must never be counted as an environment-safety one:
+    // that is the exact conflation INV-CONFIG-004 forbids.
+    expect(lastWrite().data.deliveryBlockReason).toBeNull();
   });
 });

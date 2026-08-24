@@ -1,9 +1,12 @@
 import { prisma } from "./prisma";
-import nodemailer from "nodemailer";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
-import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
+import { getEmailTransporter } from "@/lib/email/internal";
+import {
+  describeDeliveryDecision,
+  resolveDeliveryPolicy,
+} from "@/lib/environment-delivery-policy";
 import { getActiveEmailSuppression } from "@/lib/email-suppression";
 import {
   ALWAYS_BOOKING_SCOPED_TEMPLATE_NAMES,
@@ -46,6 +49,11 @@ async function retireUnverifiableBookingEmail(params: {
         htmlBody: null,
         bookingRetryHtmlBody: null,
         errorMessage: params.errorMessage,
+        // #3035: whatever held this row back before, it is now retired for a
+        // different reason and `errorMessage` says which. A stale
+        // `deliveryBlockReason` would keep it inside the environment-withheld
+        // count for the life of the installation.
+        deliveryBlockReason: null,
       },
     })
     .catch((err) => {
@@ -86,21 +94,69 @@ export async function retryFailedEmails(): Promise<{
   succeeded: number;
   failed: number;
 }> {
-  const emailDelivery = resolveEmailDeliveryConfig();
-  if (!emailDelivery.ok || !emailDelivery.transportOptions) {
+  /*
+    Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986). INV-CONFIG-004.
+
+    This job used to build its own nodemailer transport, which is exactly why the
+    epic could not simply add a check to `sendEmail`: a replay never passed
+    through that function at all. It now asks the same policy and obtains its
+    transport through the same clearance-gated accessor, so there is one boundary
+    rather than two.
+
+    THE TWO NON-SEND ANSWERS ARE DIFFERENT SHAPES ON PURPOSE.
+
+    A confirmed copy returns cleanly with nothing retried. It is not a fault — a
+    copy declining to replay the club's mail is the job working — and throwing
+    every thirty minutes would fill a staging copy's cron history with red runs
+    that mean nothing.
+
+    A CONFIGURATION FAULT THROWS. Both remaining answers are one: an undeclared
+    installation, and a live site that has declared a capture mailbox.
+
+    A DECLARED CAPTURE COPY REPLAYS NORMALLY, into the capture. That is the one
+    case where a copy legitimately transmits, and it is what lets the browser
+    suite exercise this job at all.
+
+    NEITHER TOUCHES A ROW, and that is the part worth being careful about. The
+    rows are left exactly as found, so no attempt is burned and no retained body
+    is dropped: the moment the role is declared, the very next run replays them.
+    Marking them instead would have been the tempting shortcut and it destroys
+    information — a copy restored from the club's live database holds the live
+    site's genuinely-failed rows, and rewriting those as "held back by this copy"
+    would both lie about their history and inflate the withheld count that #3034's
+    panel reads.
+  */
+  const delivery = await resolveDeliveryPolicy();
+  if (delivery.kind === "suppress_non_production") {
+    logger.info(
+      { job: "retryFailedEmails" },
+      "Skipped the email retry run: this installation is not the club's live site, so no message was replayed and no provider was contacted. Every failed row is left untouched",
+    );
+    return { retried: 0, succeeded: 0, failed: 0 };
+  }
+  if (delivery.kind !== "allow") {
+    /*
+      Every remaining answer is a CONFIGURATION FAULT — nothing has said what this
+      installation is, or a live site has declared a capture mailbox — so it
+      throws, exactly as an unusable delivery configuration already did. Something
+      has to tell an operator that this installation has stopped sending mail and
+      cannot say why.
+    */
     throw new Error(
-      `Email retry skipped: delivery config invalid (${emailDelivery.issues.join("; ")})`,
+      `Email retry skipped: ${describeDeliveryDecision(delivery)}`,
     );
   }
-  const transporter = nodemailer.createTransport(
-    emailDelivery.transportOptions,
-  );
+  const { transporter } = await getEmailTransporter(delivery.clearance);
 
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
   const backoffThreshold = new Date(Date.now() - 15 * 60 * 1000);
 
   const failedEmails = await prisma.emailLog.findMany({
     where: {
+      // `FAILED` alone, which is also what keeps a safety-suppressed row out of
+      // this job for good (#3035): `SKIPPED_NON_PRODUCTION` is terminal and is
+      // not in this filter, and the guarded claim below re-asserts `FAILED`
+      // before any send. Do not widen this to a status list.
       status: "FAILED",
       attempts: { lt: MAX_ATTEMPTS },
       OR: [
@@ -151,6 +207,10 @@ export async function retryFailedEmails(): Promise<{
             htmlBody: null,
             bookingRetryHtmlBody: null,
             errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+            // #3035: the recipient's address is the reason now, not the
+            // environment. See the failure branch below on why the block reason
+            // must not persist past the thing it described.
+            deliveryBlockReason: null,
           },
         })
         .catch((err) => {
@@ -172,8 +232,11 @@ export async function retryFailedEmails(): Promise<{
       continue;
     }
 
-    // #2258: this cron replays a retained body through its OWN nodemailer
-    // transport, so it never passes back through sendEmail's gate. A FAILED row
+    // #2258: this cron replays a retained body directly through the shared
+    // transport rather than through `sendEmail`, so it never passes back through
+    // that function's gate. (It used to build a nodemailer transport of its own;
+    // since #3035 it obtains one from the single clearance-gated accessor, which
+    // is why the environment check at the top of this function exists.) A FAILED row
     // can easily predate the moment an admin turned the booking's "No emails"
     // switch on — including the fail-closed FAILED row the gate itself writes
     // when it cannot read the switch — so re-evaluate the switch from the row's
@@ -206,6 +269,9 @@ export async function retryFailedEmails(): Promise<{
             data: {
               attempts: MAX_ATTEMPTS,
               lastAttemptAt: new Date(),
+              // #3035: retired for a #2258 attribution reason, not an
+              // environment one.
+              deliveryBlockReason: null,
               errorMessage:
                 "Not retried: this booking email predates the per-booking \"No emails\" switch (#2258) and carries no booking, so it cannot be checked against it. Re-send it by hand if the booking still needs it.",
             },
@@ -254,6 +320,11 @@ export async function retryFailedEmails(): Promise<{
               bookingRetryHtmlBody: null,
               errorMessage:
                 'Withheld: this booking has the "No emails" switch turned on',
+              // #3035: the club's own decision is the reason now. Keeping an
+              // environment block reason here would also make a business
+              // withhold count as an environment-safety one, which is exactly
+              // the conflation INV-CONFIG-004 forbids.
+              deliveryBlockReason: null,
             },
           })
           .catch((err) => {
@@ -395,6 +466,7 @@ export async function retryFailedEmails(): Promise<{
             status: "SENT",
             sentAt: new Date(),
             errorMessage: null,
+            deliveryBlockReason: null,
           },
         })
         .catch((err) => {
@@ -433,6 +505,28 @@ export async function retryFailedEmails(): Promise<{
             attempts: newAttempts,
             lastAttemptAt: new Date(),
             errorMessage,
+            /*
+              AND CLEAR THE ENVIRONMENT BLOCK REASON (#3035 review). This row may
+              have been failed by the environment gate earlier — undeclared role,
+              or a live site in capture mode — and `deliveryBlockReason` was
+              written nowhere else and cleared nowhere at all. So once an operator
+              repaired the configuration and the replay then hit a genuine provider
+              failure, the row kept the stale block reason for the life of the
+              installation: counted forever by
+              `readWithheldApplicationEmail`, which selects
+              `FAILED` + `deliveryBlockReason NOT NULL`. Admin -> Environment would
+              go on telling a healthy live club it was holding mail back, which
+              breaks owner decision 1 — the count has to DRAIN after the repair,
+              because a count that never drains cannot distinguish anything.
+
+              It also falsifies the column's own documented contract in
+              `schema.prisma` ("NULL for … a genuine transport failure") and
+              INV-CONFIG-004's promise that a safety block is distinguishable from a
+              transport failure by more than a message string. This write is now
+              exactly that: a transport failure, so the reason is NULL and the
+              message string is the provider's.
+            */
+            deliveryBlockReason: null,
           },
         })
         .catch((updateErr) => {
@@ -494,6 +588,11 @@ export async function retryFailedEmails(): Promise<{
           sentAt: new Date(),
           messageId: result.messageId || null,
           errorMessage: null,
+          // #3035: the row is delivered, so nothing about it is being withheld.
+          // Leaving a stale `deliveryBlockReason` here would keep a SENT message
+          // inside the withheld population for good — see the failure branch
+          // above for why that count must drain.
+          deliveryBlockReason: null,
         },
       })
       .catch((err) => {

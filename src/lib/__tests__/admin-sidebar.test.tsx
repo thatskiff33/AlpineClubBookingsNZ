@@ -132,8 +132,40 @@ describe("AdminSidebar", () => {
       // Club Time Zone (CT-1 #2989): the one persisted IANA club time zone.
       // Full-Admin only, like the two entries above it.
       "Club Time Zone",
+      // Environment Safety (ENV-SAFETY 1 #3034): is this the club's live site
+      // or a copy of it. Full-Admin only, like the three entries above it.
+      "Environment Safety",
       "Committee",
     ]);
+  });
+
+  it("keeps Environment Safety out of the sidebar for an admin who is not a Full Admin", () => {
+    /*
+      Same argument as the Club Time Zone case below, and it matters more here: a
+      support EDITOR satisfies the /admin/environment prefix requirement on the
+      matrix, so `fullAdminOnly` is the only thing keeping the entry out — and
+      /api/admin/environment-safety refuses them on both verbs anyway, so showing
+      it would be an offer the app cannot honour.
+    */
+    const scoped = {
+      overview: "view" as const,
+      bookings: "none" as const,
+      membership: "none" as const,
+      finance: "none" as const,
+      lodge: "none" as const,
+      content: "none" as const,
+      support: "edit" as const,
+    };
+    expect(
+      getVisibleAdminNavSections(allOn, scoped, false).flatMap((section) =>
+        section.items.map((item) => item.href),
+      ),
+    ).not.toContain("/admin/environment");
+    expect(
+      getVisibleAdminNavSections(allOn, scoped, true).flatMap((section) =>
+        section.items.map((item) => item.href),
+      ),
+    ).toContain("/admin/environment");
   });
 
   it("keeps Club Time Zone out of the sidebar for an admin who is not a Full Admin", () => {

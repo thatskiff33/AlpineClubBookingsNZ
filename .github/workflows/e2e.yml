@@ -80,6 +80,15 @@ jobs:
           cat > .env.staging <<EOF
           STAGING_HTTP_PORT=3001
           STAGING_POSTGRES_PORT=5433
+          # Declare the stack a copy (ENV-SAFETY 1 #3034, epic #2986). The
+          # docker-compose.staging.yml `app` service hard-codes non-production, so
+          # this line is not what keeps the suite off the UNKNOWN fail-closed path
+          # — the override is. It is here because the BASE compose file passes
+          # ${APP_ENVIRONMENT_ROLE} through with no default, and an unset variable
+          # makes Compose emit four "variable is not set" warnings on every
+          # invocation (measured). A workflow log full of warnings that mean
+          # nothing is how a warning that means something gets missed.
+          APP_ENVIRONMENT_ROLE=non-production
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
@@ -105,7 +114,11 @@ jobs:
           # one provider flag is set, and all four SMTP_RELAY vars must be present
           # or every send throws.
           USE_AWS_SES=false
-          USE_SMTP_RELAY=true
+          USE_SMTP_RELAY=false
+          # ENV-SAFETY 2 (#3035): a non-production installation suppresses every
+          # send unless its transport is DECLARED to be a capture mailbox, so this
+          # flag — not USE_SMTP_RELAY — is what lets mailpit see anything at all.
+          USE_LOCAL_CAPTURE=true
           EMAIL_SERVER_HOST=mailpit
           EMAIL_SERVER_PORT=1025
           EMAIL_SERVER_USER=e2e
@@ -217,6 +230,15 @@ jobs:
           cat > .env.staging <<EOF
           STAGING_HTTP_PORT=3001
           STAGING_POSTGRES_PORT=5433
+          # Declare the stack a copy (ENV-SAFETY 1 #3034, epic #2986). The
+          # docker-compose.staging.yml `app` service hard-codes non-production, so
+          # this line is not what keeps the suite off the UNKNOWN fail-closed path
+          # — the override is. It is here because the BASE compose file passes
+          # ${APP_ENVIRONMENT_ROLE} through with no default, and an unset variable
+          # makes Compose emit four "variable is not set" warnings on every
+          # invocation (measured). A workflow log full of warnings that mean
+          # nothing is how a warning that means something gets missed.
+          APP_ENVIRONMENT_ROLE=non-production
           NEXTAUTH_URL=http://localhost:3001
           AUTH_TRUST_HOST=true
           DB_PASSWORD=e2e-ci-db-password
@@ -238,7 +260,11 @@ jobs:
           XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS=false
           SMTP_PORT=587
           USE_AWS_SES=false
-          USE_SMTP_RELAY=true
+          USE_SMTP_RELAY=false
+          # ENV-SAFETY 2 (#3035): a non-production installation suppresses every
+          # send unless its transport is DECLARED to be a capture mailbox, so this
+          # flag — not USE_SMTP_RELAY — is what lets mailpit see anything at all.
+          USE_LOCAL_CAPTURE=true
           EMAIL_SERVER_HOST=mailpit
           EMAIL_SERVER_PORT=1025
           EMAIL_SERVER_USER=e2e
