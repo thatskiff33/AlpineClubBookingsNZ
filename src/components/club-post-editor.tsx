@@ -18,6 +18,7 @@ import {
   POST_COLOURS,
   POST_FONT_FAMILIES,
   POST_FONT_SIZES,
+  sanitiseClubPostHtml,
 } from "@/lib/club-post-html";
 
 /**
@@ -104,6 +105,12 @@ export function ClubPostEditor({
   const savedRange = useRef<Range | null>(null);
   const [uploading, setUploading] = useState(false);
   const [empty, setEmpty] = useState(value.trim() === "");
+
+  // The seed, through the SAME allowlist as every rendered body. Today's
+  // callers only ever pass "", but this component's API accepts HTML, and an
+  // editor that trusted its seed would become the one unsanitised sink the
+  // moment an edit flow passes stored content in.
+  const safeSeed = sanitiseClubPostHtml(value);
 
   const saveSelection = useCallback(() => {
     const editor = editorRef.current;
@@ -420,7 +427,8 @@ export function ClubPostEditor({
           // Set once, uncontrolled thereafter: rewriting innerHTML on every
           // keystroke would move the caret to the start of the field on every
           // character typed.
-          dangerouslySetInnerHTML={{ __html: value }}
+          /* Member HTML, but the seed is sanitised through the board allowlist above, and today's only caller passes the empty string. */
+          dangerouslySetInnerHTML={{ __html: safeSeed }} /* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml */
         />
       </div>
     </div>
