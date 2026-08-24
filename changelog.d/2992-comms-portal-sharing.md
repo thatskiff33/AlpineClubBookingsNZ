@@ -23,3 +23,16 @@
   pictures. Pictures are stored on the club's own server and are only visible
   to signed-in members; location data in a photograph is removed when it is
   uploaded, so posting a picture does not publish where it was taken.
+
+- **Posts shared by other clubs now appear on your board.** They arrive within
+  moments of being shared — the central server notifies your club directly —
+  and a regular background check keeps the board complete even if a
+  notification is missed. Another club's post shows on a differently shaded
+  card with the club's name on it, so it cannot be mistaken for one of your
+  own, and its pictures are stored and served by your own club rather than
+  fetched from elsewhere while members read.
+
+  If the central server removes a shared post, it disappears from your board
+  too. If one of **your** club's shared posts is taken down on the network, it
+  is hidden here rather than deleted — your administrator can restore it as a
+  club-only post.

@@ -22,9 +22,12 @@ reason: one entry in MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS for
   not made materially worse by five lines.
 
 file: src/lib/admin-cron-health.ts
-lines: 817
-reason: one more entry in the list `getAdminCronJobDefinitions` returns, for the
-  share-retry job. The cron-recording contract test asserts that every job which
-  records a run appears in this exact list, so there is one correct place for it
-  and a second file holding one of a dozen sibling definitions is the drift that
-  contract exists to catch.
+lines: 832
+reason: two more entries in the list `getAdminCronJobDefinitions` returns — the
+  share-retry job and the mirror-sync poll. The cron-recording contract test
+  asserts that every job which records a run appears in this exact list, so
+  there is one correct place for each, and a second file holding two of a dozen
+  sibling definitions is the drift that contract exists to catch. The mirror
+  entry matters doubly: the push path failing is DESIGNED to be silent because
+  polling covers it, so this health row going stale is the one signal an
+  operator gets that the covering poll itself has stopped.

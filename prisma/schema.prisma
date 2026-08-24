@@ -4584,6 +4584,20 @@ model ServerNzSettings {
   // across the central server's HTTP calls.
   otherLodgesSyncStartedAt DateTime?
 
+  // Shared item: the cross-club message board (epic #2992). The cursor is the
+  // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
+  // a tiebreak id — stored as strings because it is THEIR cursor, not a value
+  // this install computes or compares. Null means "never synced": the first
+  // pull is a full sync of visible posts, which is exactly what a new install
+  // wants (no backlog of tombstones for posts it never held).
+  commsCursorSince   String?   @db.VarChar(64)
+  commsCursorSinceId String?   @db.VarChar(64)
+  // Single-flight claim for a sync pass, same pattern and same reasoning as
+  // otherLodgesSyncStartedAt above: the webhook, the cron and a manual pull all
+  // drive the same writer.
+  commsSyncStartedAt DateTime?
+  commsLastSyncAt    DateTime?
+
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @default(now()) @updatedAt

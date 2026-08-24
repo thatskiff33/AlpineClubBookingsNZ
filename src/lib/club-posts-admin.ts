@@ -174,7 +174,12 @@ export async function editClubPostContent(
 export async function removeClubPost(postId: string): Promise<void> {
   const post = await prisma.clubPost.findUnique({
     where: { id: postId },
-    select: { id: true, removedAt: true, serverPostId: true },
+    select: {
+      id: true,
+      removedAt: true,
+      serverPostId: true,
+      originClubCode: true,
+    },
   });
   if (!post) throw new ClubPostNotFoundError();
   // Idempotent: removing an already-removed post is a no-op rather than an
@@ -203,7 +208,11 @@ export async function removeClubPost(postId: string): Promise<void> {
   // removal is the part the admin asked for and must not be undone because the
   // central server is unreachable. `serverPostId` is kept so the withdrawal can
   // be retried; the tombstone row is what a later sweep would use.
-  if (post.serverPostId) {
+  // Origin check as well as id check: a MIRROR row also carries a
+  // serverPostId, but the network copy belongs to the club that wrote it, and
+  // the server would refuse the withdrawal anyway (own-club only). Removing a
+  // mirror is a local act.
+  if (post.serverPostId && post.originClubCode === null) {
     try {
       await withdrawClubPost(post.serverPostId);
     } catch (error) {

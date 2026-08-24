@@ -291,6 +291,145 @@ export async function withdrawClubPost(serverPostId: string): Promise<void> {
   if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
 }
 
+/**
+ * One post as the central server serialises it. Note what is absent: no
+ * author identifiers and no email — the server never sends another club's
+ * member identity, only the display name.
+ */
+const syncPostSchema = z.object({
+  id: z.string().min(1).max(64),
+  club: z.object({
+    id: z.string().min(1),
+    name: z.string().min(1).max(200),
+    code: z.string().min(1).max(40),
+  }),
+  authorName: z.string().min(1).max(200),
+  content: z.string().max(4000),
+  bodyHtml: z.string().max(20_000).nullable().optional(),
+  images: z
+    .array(
+      z.object({
+        url: z.string().min(1).max(2000),
+        width: z.number().int().nullable().optional(),
+        height: z.number().int().nullable().optional(),
+      }),
+    )
+    .max(12)
+    .default([]),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type SyncPost = z.infer<typeof syncPostSchema>;
+
+const syncChangeSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("visible"), post: syncPostSchema }),
+  z.object({
+    state: z.literal("removed"),
+    id: z.string().min(1).max(64),
+    reason: z.enum(["hidden", "removed"]),
+  }),
+]);
+
+const syncEnvelopeSchema = z.object({
+  changes: z.array(syncChangeSchema).max(200),
+  cursor: z
+    .object({ since: z.string().min(1), sinceId: z.string().min(1) })
+    .nullable()
+    .optional(),
+  hasMore: z.boolean().default(false),
+});
+export type SyncEnvelope = z.infer<typeof syncEnvelopeSchema>;
+
+/**
+ * Pull one page of the shared-post mirror cursor.
+ *
+ * `since`/`sinceId` are the server's own cursor handed back from the previous
+ * page — opaque here on purpose. Omitting them asks for a FULL sync, which the
+ * server answers with visible posts only and no tombstone backlog.
+ */
+export async function pullSharedPostSync(cursor: {
+  since?: string | null;
+  sinceId?: string | null;
+}): Promise<SyncEnvelope> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const url = new URL(`${baseUrl}/api/v1/feed/sync`);
+  if (cursor.since) {
+    url.searchParams.set("since", cursor.since);
+    if (cursor.sinceId) url.searchParams.set("sinceId", cursor.sinceId);
+  }
+  const res = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return syncEnvelopeSchema.parse(await res.json());
+}
+
+/**
+ * Fetch one mirrored image's bytes from the central server.
+ *
+ * The URL comes out of a sync page this client just validated, but it is still
+ * pinned to the configured base URL rather than fetched as given: a compromised
+ * or misbehaving server must not be able to point this install's sync pass at
+ * an arbitrary third host.
+ */
+export async function fetchSharedPostImage(
+  imageUrl: string,
+): Promise<Uint8Array | null> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const base = new URL(baseUrl);
+  let target: URL;
+  try {
+    target = new URL(imageUrl, baseUrl);
+  } catch {
+    return null;
+  }
+  if (target.origin !== base.origin) return null;
+  if (!/^\/api\/images\/posts\/[0-9a-f]{32}(\.webp)?$/.test(target.pathname)) {
+    return null;
+  }
+
+  const res = await fetch(target, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+const pushTargetResultSchema = z.object({
+  url: z.string(),
+  secretVersion: z.number().int().positive(),
+  secret: z.string().min(32),
+});
+export type PushTargetResult = z.infer<typeof pushTargetResultSchema>;
+
+/**
+ * Tell the central server where to push shared posts for this install.
+ *
+ * Returns the signing secret the webhook must verify pushes with. The caller
+ * stores it in the encrypted credential store — it is a secret exactly like
+ * the API key beside it, and it never belongs in a plain settings row.
+ */
+export async function registerPushTarget(
+  callbackUrl: string,
+): Promise<PushTargetResult> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const res = await fetch(`${baseUrl}/api/v1/push-target`, {
+    method: "PUT",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    body: JSON.stringify({ url: callbackUrl }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return pushTargetResultSchema.parse(await res.json());
+}
+
 /** Upload the club's Other Clubs entries to the central server. */
 export async function uploadOtherLodges(
   lodges: OtherLodgeUploadItem[],

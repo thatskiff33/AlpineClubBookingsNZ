@@ -1,6 +1,7 @@
 import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { drainHostingCoverageReevaluations } from "@/lib/adult-member-hosting-coverage-drain";
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
+import { runMirrorSync } from "@/lib/club-post-mirror";
 import { runClubPostCleanup } from "@/lib/club-post-retention";
 import { retryPendingShares } from "@/lib/club-post-sharing";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
@@ -18,6 +19,7 @@ import { reportCronError } from "@/lib/observability-bridge";
 
 const GENERAL_CRON_JOB_NAMES = [
   "additional-payment-reminders",
+  "club-post-mirror-sync",
   "club-post-retention",
   "club-post-share-retry",
   "confirm-pending",
@@ -37,6 +39,7 @@ export interface GeneralCronCycleResult {
   additionalPaymentReminders: Awaited<
     ReturnType<typeof sendAdditionalPaymentReminders>
   > | null;
+  clubPostMirrorSync: Awaited<ReturnType<typeof runMirrorSync>> | null;
   clubPostRetention: Awaited<ReturnType<typeof runClubPostCleanup>> | null;
   clubPostShareRetry: Awaited<ReturnType<typeof retryPendingShares>> | null;
   confirmPending: Awaited<ReturnType<typeof confirmPendingBookings>> | null;
@@ -72,6 +75,7 @@ export interface GeneralCronRunnerDependencies {
   tasks?: Partial<{
     sendAdditionalPaymentReminders: typeof sendAdditionalPaymentReminders;
     runClubPostCleanup: () => ReturnType<typeof runClubPostCleanup>;
+    runMirrorSync: () => ReturnType<typeof runMirrorSync>;
     retryPendingShares: () => ReturnType<typeof retryPendingShares>;
     confirmPendingBookings: typeof confirmPendingBookings;
     reapStaleGroupSettlements: typeof reapStaleGroupSettlements;
@@ -157,6 +161,7 @@ export async function runGeneralCronCycle(
   const taskDependencies = dependencies.tasks ?? {};
   const result: GeneralCronCycleResult = {
     additionalPaymentReminders: null,
+    clubPostMirrorSync: null,
     clubPostRetention: null,
     clubPostShareRetry: null,
     confirmPending: null,
@@ -178,6 +183,16 @@ export async function runGeneralCronCycle(
       work:
         taskDependencies.sendAdditionalPaymentReminders ??
         sendAdditionalPaymentReminders,
+    },
+    {
+      // Epic #2992. The POLLING BACKSTOP for the mirror: the central server
+      // pushes a doorbell when something changes, and this pass is what
+      // guarantees the mirror converges even if every push is lost. Skips
+      // itself when the integration is not configured.
+      jobName: "club-post-mirror-sync",
+      resultKey: "clubPostMirrorSync",
+      failureMessage: "Club post mirror sync cron error",
+      work: taskDependencies.runMirrorSync ?? runMirrorSync,
     },
     {
       // #2999. Deletes club message board posts past the club's retention
