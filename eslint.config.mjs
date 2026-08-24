@@ -1151,6 +1151,15 @@ const eslintConfig = defineConfig([
     // to be reported by `.semgrep/rules/**`; linting it would report the same
     // faults a second time, in a tool that cannot express why they are there.
     ".semgrep/**",
+    // #3078: local scratch space, not source. `.gitignore` already declares
+    // `/.artifacts/` non-source, so nothing here is ever committed or built,
+    // and `docs/agents/SCOPED_CONTEXT.md` describes it as ignored, local,
+    // bounded context. Linting it made an interrupted agent's half-written
+    // mutation harness the only "error" in an unrelated lane's `npm run lint`
+    // — a wrong signal at the exact moment the next agent is reconstructing
+    // state. The ignore is the whole directory rather than today's harness
+    // extension, so the next harness cannot bring the problem back.
+    ".artifacts/**",
   ]),
 ]);
 
