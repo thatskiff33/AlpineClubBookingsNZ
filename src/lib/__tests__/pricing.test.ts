@@ -11,6 +11,7 @@ import {
   type GuestInput,
   type PromoCodeInput,
 } from "../pricing"
+import { formatDateOnly } from "../date-only"
 
 // --- Test fixtures ---
 // Rates are keyed by membership type (#1930, E4): old member rows map to
@@ -56,12 +57,19 @@ const allSeasons: SeasonRateData[] = [makeSeason(), makeSummerSeason()]
 // --- Tests ---
 
 describe("getStayNights", () => {
+  // `formatDateOnly`, not `toLocaleDateString`, throughout this describe. A
+  // stay night is a calendar day encoded at UTC midnight, and reading it in the
+  // HOST's zone is the very thing this lane removed from the engine
+  // (`INV-DATE-013`: the correct reading of a UTC-midnight column is UTC getters
+  // or `formatDateOnly`). These six assertions were `toLocaleDateString("en-CA")`
+  // and failed on any host behind Greenwich, five lines above the fixtures this
+  // lane rewrote for the same reason.
   it("returns correct nights for a 3-night stay", () => {
     const nights = getStayNights(new Date("2026-07-10"), new Date("2026-07-13"))
     expect(nights).toHaveLength(3)
-    expect(nights[0].toLocaleDateString("en-CA")).toBe("2026-07-10")
-    expect(nights[1].toLocaleDateString("en-CA")).toBe("2026-07-11")
-    expect(nights[2].toLocaleDateString("en-CA")).toBe("2026-07-12")
+    expect(formatDateOnly(nights[0])).toBe("2026-07-10")
+    expect(formatDateOnly(nights[1])).toBe("2026-07-11")
+    expect(formatDateOnly(nights[2])).toBe("2026-07-12")
   })
 
   it("returns 1 night for consecutive dates", () => {
@@ -77,9 +85,9 @@ describe("getStayNights", () => {
   it("handles month boundaries", () => {
     const nights = getStayNights(new Date("2026-07-30"), new Date("2026-08-02"))
     expect(nights).toHaveLength(3)
-    expect(nights[0].toLocaleDateString("en-CA")).toBe("2026-07-30")
-    expect(nights[1].toLocaleDateString("en-CA")).toBe("2026-07-31")
-    expect(nights[2].toLocaleDateString("en-CA")).toBe("2026-08-01")
+    expect(formatDateOnly(nights[0])).toBe("2026-07-30")
+    expect(formatDateOnly(nights[1])).toBe("2026-07-31")
+    expect(formatDateOnly(nights[2])).toBe("2026-08-01")
   })
 })
 
@@ -99,16 +107,25 @@ describe("findSeasonForDate", () => {
     projected every date through `APP_TIME_ZONE`, so an instant half a day before
     the stored season edge was read as being on it.
 
-    There is no such caller. Every API boundary that reaches pricing validates a
-    strict `yyyy-MM-dd` string and converts it with `parseDateOnly`
-    (`checkIn: dateOnlyString.transform(parseDateOnly)` in the quote, create and
-    modify-quote routes), so what arrives is always a date-only value at UTC
-    midnight — `INV-DATE-011`. The test was pinning a compensation for an input
-    shape the product refuses.
+    There is no such caller, and the reason is worth stating precisely rather
+    than sweepingly. The envelope fields are validated: `checkIn`/`checkOut` are
+    `dateOnlyString.transform(parseDateOnly)` in the create and quote routes, and
+    a bare `parseDateOnly` plus a NaN guard in modify-quote. The per-guest
+    `nights` arrays are NOT all validated — only `bookings/route.ts` uses
+    `z.array(dateOnlyString)`; `bookings/quote`, `bookings/[id]/modify` and
+    `bookings/[id]/modify-quote` accept `z.array(z.string())`. What closes it is
+    the CONVERTER rather than the schema: `parseDateOnly` returns UTC midnight or
+    an Invalid Date, and `normalizeBookingDate` refuses both an Invalid Date and
+    any value carrying a UTC time of day. So an instant cannot arrive here from
+    outside, and the test was pinning a compensation for an input shape the
+    product cannot produce.
 
     So it now asserts the real rule: a season edge is a stored calendar day, and
-    the day that matches it is that same stored day (`INV-DATE-010` — no rule may
-    be derived from reading these values in any zone but UTC).
+    the day that matches it is that same stored day. Read in UTC, which
+    `INV-DATE-019`'s first exact boundary blesses by name for a `@db.Date` value
+    ("truncating an existing `@db.Date` value the same way is fine") and
+    `INV-DATE-026` establishes the columns for. NOT `INV-DATE-010`, which this
+    comment used to cite for the inverse of what it says.
   */
   it("matches a season start date by the stored calendar day, not a projection", () => {
     const boundarySeason = makeSeason({
