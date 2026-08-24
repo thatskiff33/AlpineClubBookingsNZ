@@ -178,6 +178,7 @@ export async function computeAgeTier(
   return computeAgeTierWithSettings(dateOfBirth, ref, settings);
 }
 
-// test seam
-// Re-export from canonical location for backwards compatibility
-export { getSeasonYear as computeSeasonYear } from "./utils";
+// `computeSeasonYear` (an alias of the retired `getSeasonYear`) was re-exported
+// here for backwards compatibility and is gone with it (CT-4 group F1, #2870).
+// A caller asking "what season is it now" wants `clubSeasonYear(zone)` from
+// `@/lib/financial-year`, which needs the club's persisted zone.
