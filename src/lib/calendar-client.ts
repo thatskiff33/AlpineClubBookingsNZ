@@ -38,8 +38,9 @@ import type { CalendarEventDTO } from "@/lib/calendar-events";
  * Until CT-4 the grid arithmetic (`startOfMonth`, `addMonths`, `dateKey`,
  * `buildMonthGrid`, `monthGridRange`, `isToday`) ran on host-local `Date`
  * component APIs, justified by "for a single-club NZ deployment the browser IS
- * the lodge's timezone". It is not: a member booking from London saw a different
- * grid, a different "today" and different day buckets from a member in Ohakune,
+ * the lodge's timezone". It is not: a member reading the calendar from London saw
+ * a different grid, a different "today" and different day buckets from a member
+ * in Ohakune,
  * and the display formatters beside it pinned `APP_TIME_ZONE` — the ENVIRONMENT's
  * zone — rather than the club's persisted one (`INV-CONFIG-002`).
  *

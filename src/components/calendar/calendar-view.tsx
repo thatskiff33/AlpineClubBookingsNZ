@@ -38,8 +38,10 @@ export function CalendarView({
     Everything below that touches a real instant — the fetch window, the day
     buckets, "today" in the grid — reads it from here. A browser must never
     answer "what day is it at the club?" from its own clock, which is exactly
-    what this view used to do: a member booking from London saw the current lodge
-    night greyed out and the wrong month's events.
+    what this view used to do: it opened on the READER's current month, asked the
+    API for the reader's own day window, and bucketed each event onto the reader's
+    calendar day. A member abroad was shown a grid a day out of step with the one
+    the lodge is on.
   */
   const club = useClubTime();
   /*
