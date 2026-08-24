@@ -6,10 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useClubTime } from "@/components/club-time-provider";
 import {
+  addCalendarMonths,
+  calendarDateFromParts,
   calendarDateOfDateOnlyInstant,
+  calendarDayOfWeek,
+  calendarMonthOf,
+  daysInCalendarMonth,
   formatClubMonthYear,
   formatClubWeekdayDayMonth,
+  parseCalendarDate,
   requireCalendarDate,
+  startOfCalendarMonth,
 } from "@/lib/club-time";
 import {
   formatMonthOnly,
@@ -103,28 +110,62 @@ function getMonthStart(date: Date) {
   return parseDateOnly(`${monthKey(date)}-01`);
 }
 
+/**
+ * Every `yyyy-MM` key a selected lodge-night range touches.
+ *
+ * CALENDAR-DAY ARITHMETIC END TO END, with no `Date` anywhere in it (CT-4,
+ * #2870). Both bounds arrive as `yyyy-MM-dd` strings, so the spelling this
+ * replaces parsed each to a UTC-midnight `Date`, floored it by reassembling a
+ * string, and stepped the month with `Date.UTC` — three round trips through an
+ * instant to answer a question about days. `parseCalendarDate` refuses a
+ * malformed bound where the old `Number.isNaN` guard caught the Invalid Date it
+ * produced, so the empty-list contract is unchanged.
+ *
+ * THE INVERTED-RANGE TEST COMPARES MONTH STARTS, not the raw bounds, which is
+ * what the old code did by flooring before comparing. A range that runs backwards
+ * INSIDE one month ("the 20th to the 10th") therefore still yields that month's
+ * key rather than nothing — the panel above has already refused a genuinely
+ * inverted selection, and changing this would silently stop loading a month.
+ *
+ * Plain string comparison is chronological for these values; that is the property
+ * the four-digit-year `CalendarDate` brand exists to guarantee (see
+ * `compareCalendarDates`).
+ */
 function monthKeysForDateRange(startDate: string, endDate: string) {
-  const start = getMonthStart(parseDateOnly(startDate));
-  const end = getMonthStart(parseDateOnly(endDate));
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
-    return [];
-  }
+  const start = parseCalendarDate(startDate);
+  const end = parseCalendarDate(endDate);
+  if (start === null || end === null) return [];
+
+  const last = startOfCalendarMonth(end);
+  let cursor = startOfCalendarMonth(start);
+  if (last < cursor) return [];
 
   const keys: string[] = [];
-  let cursor = start;
-  while (cursor <= end) {
-    keys.push(monthKey(cursor));
-    cursor = new Date(
-      Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1),
-    );
+  while (cursor <= last) {
+    keys.push(calendarMonthOf(cursor));
+    cursor = addCalendarMonths(cursor, 1);
   }
   return keys;
 }
 
+/**
+ * How long the month is, and how far into a Monday-first week its first day sits.
+ *
+ * BOTH HALVES ARE CALENDAR-DAY FACTS and the kernel answers them exactly, from
+ * integer civil-calendar arithmetic with no `Date` in the picture (CT-4, #2870).
+ * The spelling this replaces built two UTC instants — one of them the deliberate
+ * `day: 0` trick for "the last day of the previous month" — and read fields back
+ * off them. Correct, but it is the shape from which somebody eventually writes
+ * `new Date(year, monthIndex, 1).getDay()`: host-local midnight, whose weekday is
+ * the PREVIOUS day's for any host far enough west, which shifts the whole grid by
+ * a column and is invisible on a New Zealand machine and on CI.
+ *
+ * `monthIndex` stays 0-based because that is what `visibleMonth.getUTCMonth()`
+ * hands it; the kernel's months are 1-12, hence the `+ 1` on both calls.
+ */
 function getMonthGrid(year: number, monthIndex: number) {
-  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
-  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  const day = firstDay.getUTCDay();
+  const daysInMonth = daysInCalendarMonth(year, monthIndex + 1);
+  const day = calendarDayOfWeek(calendarDateFromParts(year, monthIndex + 1, 1));
   const startOffset = day === 0 ? 6 : day - 1;
   return { daysInMonth, startOffset };
 }
