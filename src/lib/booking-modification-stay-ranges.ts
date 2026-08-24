@@ -148,14 +148,18 @@ function toDate(value: Date | string | null | undefined, fallback: Date): Date {
  * Both consequences are invisible on a deployment at or ahead of UTC, which is
  * why they survived: `Pacific/Auckland` makes the projection the identity.
  *
- * WHAT THIS DOES NOT FIX, so nobody reads the resolver as fully converged. The
- * sibling path — `normalizeGuestStayRange` in `booking-guest-stay-range-input.ts`
- * — still projects, at three sites, and one of them is reachable from here: an
- * ADDED guest carrying no range of their own is defaulted from the envelope
- * through that helper, so on a club behind Greenwich they still land a night
- * early. It is not this pair, nothing here made it worse, and CT-6 (#2991) is
- * where those three go. Measured under `America/Denver`, correcting this line
- * took the resolver's own suites from 32 failures to 28.
+ * THE SIBLING PATH IS NOW CONVERGED TOO (group F4b). This docblock used to warn
+ * that `normalizeGuestStayRange` in `booking-guest-stay-range-input.ts` still
+ * projected, and that one of those sites was reachable from here: the `added`
+ * map below normalises every ADDED guest through it, so one carrying no range of
+ * their own was defaulted from the envelope a night early on a club behind
+ * Greenwich. Worse, the two passes below then disagreed with each other — pass 1
+ * defaults that same guest to `{ requestedCheckIn, requestedCheckOut }`
+ * unprojected, so the guest's resolved range could fall a night OUTSIDE the
+ * envelope the same call returned. F4b read those two calls as stored calendar
+ * days; `__tests__/booking-range-less-guest-frame.test.ts` pins it on the
+ * environment and the host axis. Measured under `America/Denver`, correcting
+ * this line took the resolver's own suites from 32 failures to 28.
  */
 function storedRange(
   guest: LiveGuestStayRow,
