@@ -117,6 +117,36 @@ export function formatStayDay(value: string): string {
  * are calendar days and take no zone at all, and merging the two is the defect
  * this epic exists to end.
  *
+ * ## Why the TIME is on it, and why that is a fix rather than a flourish
+ *
+ * This used to render the bare civil DAY. Two lines above it the stay reads
+ * "Dates: 16 Apr 2026 to 18 Apr 2026", so a second bare day underneath read as
+ * a restatement of the stay — and it could name a different one. `expiresAt` is
+ * minted as `endOfDateOnlyForTimeZone(checkIn)` (`src/lib/payment-link.ts`),
+ * whose zone DEFAULTS TO `APP_TIME_ZONE`, so for a club whose persisted zone is
+ * not the container's the instant lands on the following civil day: a club in
+ * `Pacific/Auckland` on a `TZ=UTC` host got "expires on 17 Apr 2026" beside a
+ * stay starting on the 16th, and the link in fact died at 11:59 AM on the 17th.
+ * A bare day therefore misstated the deadline by most of a day, in the direction
+ * that costs the payer their link.
+ *
+ * `instantDateTime` states the moment as a moment. It also makes this page AGREE
+ * WITH THE EMAIL THAT DELIVERED THE LINK: `email-templates/booking-requests.ts`
+ * renders the same value into the same sentence with `emailClubDateTime`, which
+ * is `instantDateTime` through the same persisted zone (CT-5, #2869). This page
+ * was the one surface spelling it short.
+ *
+ * WHAT IS STILL WRONG, AND WHOSE IT IS. The mint reads the environment's zone,
+ * so on a divergent deployment the deadline is not the end of the check-in day
+ * in the club's own reckoning. That is `src/lib`, it is nine call sites across
+ * four files — three of them inside `prisma.$transaction` callbacks holding the
+ * per-lodge capacity lock, and two of them capacity-releasing PENDING ->
+ * CANCELLED terminal-state decisions in `cron-confirm-pending.ts` whose own
+ * comment binds them to this boundary "so the two can never disagree" — and it
+ * needs an answer for links already minted. Group F's, recorded on #2870. It is
+ * not a straddle: page, email and cron gate all read the one value under the one
+ * authority, so nothing here contradicts anything there.
+ *
  * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
  * missing: this line sits nine below one whose docblock justifies its own
  * try/catch by "nothing validates this payload on the way in", and then handed
@@ -130,7 +160,7 @@ export function formatLinkExpiry(value: string, club: BoundClubTime): string {
   const instant = parseInstant(value);
   if (instant === null) return value;
   try {
-    return club.instantDate(instant);
+    return club.instantDateTime(instant);
   } catch {
     return value;
   }
