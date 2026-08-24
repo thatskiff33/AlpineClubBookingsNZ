@@ -328,6 +328,14 @@ export function toTimeInputValue(iso: string, zone: ClubTimeZone): string {
  * event stored 7pm THEIR time. The club's zone and its DST rules decide the
  * moment now, and a wall time the clocks jumped over resolves to the first
  * instant that does exist rather than throwing inside a form submit.
+ *
+ * AN OMITTED **OR EMPTY** `timeValue` MEANS MIDNIGHT, which is stated because it
+ * was briefly not true. `""` is what an `<input type="time">` holds when it has
+ * been cleared, and "no time given" and "time cleared" are the same request; the
+ * version this replaced used `??`, so an empty string reached `split(":")` and
+ * the function returned `null`. The sole caller in this repository passes
+ * `startTime || "00:00"` and so never saw it, but this is exported and the guard
+ * was in a different file.
  */
 export function isoFromDateTimeInputs(
   dateValue: string,
@@ -336,15 +344,91 @@ export function isoFromDateTimeInputs(
 ): string | null {
   const date = parseCalendarDate(dateValue);
   if (date === null) return null;
-  const [hour, minute] = (timeValue ?? "00:00").split(":").map(Number);
+  const parsed = parseWallTime(timeValue);
+  if (parsed === null) return null;
+  return instantForClubWallTime(date, parsed, zone, GAP_TOLERANT).toISOString();
+}
+
+/** `HH:MM` as whole hours and minutes in range, or null. Empty means midnight. */
+function parseWallTime(
+  timeValue: string | undefined,
+): { hour: number; minute: number } | null {
+  const [hour, minute] = (timeValue || "00:00").split(":").map(Number);
   if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-  return instantForClubWallTime(
-    date,
-    { hour, minute },
-    zone,
-    { skipped: "nextExistingInstant", ambiguous: "earliest" },
-  ).toISOString();
+  return { hour, minute };
+}
+
+/**
+ * The DST policy both ends of an event share: a wall time the clocks jumped over
+ * resolves to the first instant that does exist, and the earlier of a repeated
+ * pair wins.
+ */
+const GAP_TOLERANT = {
+  skipped: "nextExistingInstant",
+  ambiguous: "earliest",
+} as const;
+
+/**
+ * The END instant of a timed event, given the date and the two wall times the
+ * officer typed.
+ *
+ * ## Why this is not just `isoFromDateTimeInputs` twice
+ *
+ * Because on one morning a year that produces a ZERO-LENGTH event, and it is a
+ * regression this subsystem's migration introduced rather than a limit it
+ * inherited. Every wall-clock reading inside a spring-forward gap resolves to
+ * the same instant — the moment the clocks jumped to — so `02:00`-`02:30` on
+ * 27 September 2026 in `Pacific/Auckland` resolves to `03:00` at BOTH ends.
+ * `resolveCalendarEventDates` refuses only an end BEFORE the start, so the row
+ * persists and the panel reads "3:00 am – 3:00 am". The host-local version this
+ * replaced stored thirty minutes, because JavaScript slid each end
+ * independently.
+ *
+ * ## What it does instead, and what it deliberately does NOT do
+ *
+ * The exact wall time is kept wherever it survives the transition. Only when the
+ * typed end is LATER than the typed start and the resolved end is not later than
+ * the resolved start — which is precisely the both-ends-in-one-gap case — is the
+ * end re-derived as the start plus the typed wall duration, restoring the
+ * thirty minutes the officer asked for.
+ *
+ * Deriving the end from the duration ALWAYS was the obvious fix and is worse.
+ * A `01:30`-`03:30` event on that same morning spans two hours of wall clock and
+ * one hour of real time; duration-first would store it ending at `04:30`, an
+ * hour after the officer typed `03:30`. Exact-first keeps `03:30` and gives up
+ * only the elapsed length, which is the right trade for a form whose two fields
+ * are wall times. So the repair is scoped to the degenerate case and nothing
+ * else moves.
+ *
+ * A deliberately zero-length event — the same time typed twice — is left alone,
+ * so this refuses nothing the officer asked for.
+ */
+export function isoEndFromDateTimeInputs(
+  dateValue: string,
+  zone: ClubTimeZone,
+  startTime: string | undefined,
+  endTime: string,
+): string | null {
+  const date = parseCalendarDate(dateValue);
+  if (date === null) return null;
+  const start = parseWallTime(startTime);
+  const end = parseWallTime(endTime);
+  if (start === null || end === null) return null;
+
+  const startInstant = instantForClubWallTime(date, start, zone, GAP_TOLERANT);
+  const endInstant = instantForClubWallTime(date, end, zone, GAP_TOLERANT);
+
+  const typedMinutes = (t: { hour: number; minute: number }) =>
+    t.hour * 60 + t.minute;
+  const typedEndIsLater = typedMinutes(end) > typedMinutes(start);
+  const resolvedEndIsLater = endInstant.getTime() > startInstant.getTime();
+  if (typedEndIsLater && !resolvedEndIsLater) {
+    const durationMs =
+      (typedMinutes(end) - typedMinutes(start)) * 60 * 1000;
+    return new Date(startInstant.getTime() + durationMs).toISOString();
+  }
+  return endInstant.toISOString();
 }
 
 /**

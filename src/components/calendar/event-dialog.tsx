@@ -36,6 +36,7 @@ import {
 import {
   formatEventDateLong,
   formatInstantTime,
+  isoEndFromDateTimeInputs,
   isoFromDateTimeInputs,
   shouldIncludeRecurrence,
   toDateInputValue,
@@ -457,9 +458,18 @@ export function EventDialog({
       setScopePrompt(null);
       return;
     }
+    /*
+      The END goes through its own resolver rather than a second
+      `isoFromDateTimeInputs` call, because both ends of a time inside a
+      spring-forward gap resolve to the same instant and the event would be
+      stored zero-length. `isoEndFromDateTimeInputs` keeps the exact wall time
+      wherever it survives the transition and falls back to the typed duration
+      only in that degenerate case; its docblock carries the measurement and why
+      duration-first would be worse.
+    */
     const endsAt =
       !allDay && endTime
-        ? isoFromDateTimeInputs(date, club.zone, endTime)
+        ? isoEndFromDateTimeInputs(date, club.zone, startTime || "00:00", endTime)
         : null;
 
     // Send the recurrence rule EXCEPT when editing a single occurrence of an
