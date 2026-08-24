@@ -21,8 +21,10 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
 const NOTE_MAX_LENGTH = 500;
@@ -100,7 +102,7 @@ interface AutoRefundedNotice {
  * day early west of it.
  */
 function formatStayDate(value: string): string {
-  return formatClubDate(requireCalendarDate(dateOnlyFromIsoString(value)));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {

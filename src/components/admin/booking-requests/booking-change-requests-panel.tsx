@@ -19,8 +19,10 @@ import {
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
@@ -114,7 +116,7 @@ interface BookingChangeRequestData {
  * ZONE: the identity east of Greenwich, the PREVIOUS DAY west of it.
  */
 function formatDate(value: string) {
-  return formatClubDate(requireCalendarDate(dateOnlyFromIsoString(value)));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 /**
