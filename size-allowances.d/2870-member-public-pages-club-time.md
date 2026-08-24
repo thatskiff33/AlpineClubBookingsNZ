@@ -92,3 +92,38 @@ reason: twenty-nine lines on a page that was already 1151. Nine are the club-day
   strip, a day list, attendance, chores and a PIN login, and carving it up to buy
   back twenty-nine lines while also moving its temporal authority would put two
   unrelated risks in one diff.
+
+## Added in the fix round, for a straddle this group's own diff created
+
+Two adversarial lenses found four places where group E had moved one half of a
+value and left the other, so one screen showed two answers. Three were fixed
+here as declared `src/lib` exceptions, on the precedent group B set (#3056) when
+it took four of them: a straddle is worse than either consistent state. Two of
+the three cost no lines worth arguing about. This one did.
+
+`src/lib/member-guest-consent-card.ts` was the fourth, and it is NOT allowanced —
+it was 695 lines against a 700-line budget, so the correction took it over for
+the first time, which this gate refuses to allowance and rightly. Its
+`// Date labels ---` divider was already the seam, so everything below it plus
+the three formatters those labels are the only users of moved to
+`src/lib/member-guest-consent-labels.ts`. The card module re-exports them, so no
+call site moved — deliberately, because one importer is
+`src/app/(admin)/admin/bookings/page.tsx` and the sibling admin lane (#3067) has
+that file open.
+
+file: src/lib/lodge-display-state.ts
+lines: 1009
+reason: eighteen lines on a 991-line file, and seventeen of them are the comment.
+  The change itself is one line: the lobby board's window opened on
+  `getTodayDateOnly()` — the container's day — while group E had already moved the
+  wall's HEADER onto the club's persisted zone, so for a club in Pacific/Auckland
+  on a TZ=UTC host the header read "Fri, 17 Apr" above a board still showing 16
+  April's guests, arrivals and roster, for twelve hours of every day, on an
+  unattended screen with nobody to reload it. The note has to sit on that line:
+  `startDate` keys every query in the function, and the next reader will see a
+  one-line `?? dateOnlyInstantOf((await clubTime()).today())` with no way to know
+  that the obvious-looking `getTodayDateOnly()` it replaced was the defect rather
+  than the simplification. Splitting is not available in any useful form —
+  `buildDisplayState` is one privacy-enforcing serialiser whose whole point is
+  that every query in it is scoped to one lodge in one window, and the #28/LTV-003
+  matrix that guards it reads the assembled payload.

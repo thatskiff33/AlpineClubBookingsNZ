@@ -131,13 +131,46 @@ import type { MemberExceptionRequestItem } from "@/lib/member-exception-requests
  * these — `school-booking-form` of `booking-request-form`,
  * `hut-leader-instructions-client` of `lodge-instructions/page`,
  * `group-join-page-client` of `member-group-join-panel`, and
- * `membership-cancellation-panel`, `pay/[token]/page` and
- * `booking-request-respond-client` of the two instant cases — and each is held to
- * the same rule by `member-public-club-time-convergence.test.ts`, which is a
- * source census and says so. Two more files carry their own behavioural pairs
- * where their fixtures already live: the kiosk in
- * `(lodge)/lodge/kiosk/__tests__/kiosk-page-week.test.tsx`, and the finance CSV
- * stamp in `(finance)/finance/_components/__tests__/finance-dashboard-client.test.tsx`.
+ * `membership-cancellation-panel` and `booking-request-respond-client` of the two
+ * instant cases — and each is held to the same rule by
+ * `member-public-club-time-convergence.test.ts`, which is a source census and
+ * says so. Three more files carry their own behavioural pairs where their
+ * fixtures already live: the kiosk in
+ * `(lodge)/lodge/kiosk/__tests__/kiosk-page-week.test.tsx`, the finance CSV
+ * stamp in `(finance)/finance/_components/__tests__/finance-dashboard-client.test.tsx`,
+ * and — since the #2870 fix round — the public payment page in
+ * `(public)/pay/[token]/__tests__/page.test.tsx`.
+ *
+ * ## The twin claim, MEASURED rather than asserted (#2870 fix round)
+ *
+ * An adversarial lens took the sentence above at its word and then checked it.
+ * It measured that of the twelve files calling `useClubTime()`, FOUR were blind:
+ * a `useClubTime()` that ignored the provider entirely and bound `APP_TIME_ZONE`
+ * passed every test over them. `pay/[token]/page` was the highest-consequence of
+ * the four — the only such line on an UNAUTHENTICATED payment page — and it now
+ * has a pair of its own, in the suite named above. Measured over the whole diff's
+ * related set, that mutant went from **16 kills across 6 files** to **18 across
+ * 7**, the two new ones being the payment page.
+ *
+ * THE OTHER THREE ARE A STATED LIMIT, and the twin claim for each was verified by
+ * comparison rather than left standing on this docblock's word:
+ *
+ * - `hut-leader-instructions-client`'s `useUpdatedAtFormatter` is byte-for-byte
+ *   the same function as `lodge-instructions/page`'s, comment included, down to
+ *   the `clubTime.instantLongDate(new Date(value))` call and the falsy guard
+ *   above it. That page has a pair here, so a second one would assert the
+ *   identical body twice.
+ * - `membership-cancellation-panel`'s `useSubmittedAtFormatter` is the one-line
+ *   `clubTime.instantDate(new Date(value))`, and `instantDate` is one of the
+ *   mechanisms paired here.
+ * - `booking-request-respond-client` carries the same two formatters as the
+ *   payment page — a fail-soft `formatStayDay` and a `club.instantDateTime`
+ *   expiry — and both are now discriminated there. It never had the payment
+ *   page's straddle, because it already spelled its expiry as a date AND time.
+ *
+ * What that limit accepts: a future edit that changed one twin and not the other
+ * would not be caught here. The source census is what stands between that and a
+ * reintroduced environment read.
  */
 
 /** Neither the environment's zone nor CI's host zone. Behind UTC. */
