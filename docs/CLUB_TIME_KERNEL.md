@@ -154,12 +154,23 @@ Two honest limits while both exist:
   it; CT-3 (#2872) moved the temporal schema; CT-4 (#2870) has moved the admin
   API, the member-facing API and the client components. **What remains is
   `src/lib` itself**, which CT-4's last group takes, and the list of what is
-  known to be wrong there is on #2870 — including a season year read with
-  host-local getters, which is reachable today. The booking-date projection the
-  policy-exception engine used to execute through is CLOSED: the pricing engine
-  decodes a stored calendar day in UTC rather than projecting it
-  (`INV-DATE-010`), so the officer, the capacity recheck and the executor now
-  agree on the nights the member asked for. So "is this
+  known to be wrong there is on #2870 — including two that are reachable today:
+  a season year read with host-local getters, and the remaining half of the
+  booking-date projection the policy-exception engine executes through.
+
+  That second one is **half closed, and the half that is left still reaches
+  execution.** The pricing engine now decodes a stored calendar day in UTC rather
+  than projecting it, which `INV-DATE-019`'s first exact boundary blesses for a
+  `@db.Date` value — so on the MODIFICATION path the officer, the capacity
+  recheck and the executor agree on the nights the member asked for. On the
+  NEW-BOOKING path they do not yet: `normalizeGuestStayRange`
+  (`src/lib/booking-guest-stay-range-input.ts`, #2870 item 6) still projects the
+  booking envelope through `APP_TIME_ZONE` before defaulting a guest who supplied
+  no dates of their own, which is what the member form sends unless multi-range
+  mode is open. For a club behind Greenwich that guest is still frozen, reviewed
+  and booked a night early. The error is halved, not removed, and the remaining
+  half is pinned by
+  `src/lib/__tests__/booking-exception-new-booking-guest-frame.test.ts`. So "is this
   application running on the persisted zone?" has a different answer per surface
   until CT-6 (#2991) retires the adapters, and until then no green suite settles
   it: on a deployment where the environment and the persisted value agree —
