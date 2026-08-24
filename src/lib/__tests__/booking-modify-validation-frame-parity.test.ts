@@ -82,13 +82,15 @@ function makeBooking(
  * importing the route would drag its whole module graph in and prove nothing
  * about the text that actually ships there.
  */
+// `Role` has no `MEMBER`: an ordinary member is `USER`, and `isAdmin(role)` in
+// `booking-edit-policy.ts` is the only thing either function asks of it.
 function previewRefusesSelfServiceWindow(
   booking: LoadedBookingForModify,
   requestedCheckIn: Date,
 ): boolean {
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
-    role: "MEMBER",
+    role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
@@ -101,7 +103,7 @@ function previewRefusesInProgressExtension(
 ): boolean {
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
-    role: "MEMBER",
+    role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
   });
@@ -129,7 +131,7 @@ describe("preview and apply validate the same date window", () => {
 
     expect(previewRefusesSelfServiceWindow(booking, booking.checkIn)).toBe(false);
     expect(() =>
-      resolveTargetDates({ booking, role: "MEMBER", input }),
+      resolveTargetDates({ booking, role: "USER", input }),
     ).not.toThrow();
   });
 
@@ -147,7 +149,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesInProgressExtension(booking, day("2026-07-01"))).toBe(
       false,
     );
-    const result = resolveTargetDates({ booking, role: "MEMBER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input });
     expect(result.isInProgressEdit).toBe(true);
     expect(formatDateOnly(result.newCheckOut)).toBe("2026-07-01");
   });
@@ -162,7 +164,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesInProgressExtension(booking, day("2026-06-30"))).toBe(
       true,
     );
-    expect(() => resolveTargetDates({ booking, role: "MEMBER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
       "NZ today and earlier are locked for self-service changes",
     );
   });
@@ -177,7 +179,7 @@ describe("preview and apply validate the same date window", () => {
       pricingMode: "recalculate",
     };
 
-    expect(() => resolveTargetDates({ booking, role: "MEMBER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
       "Check-in cannot be changed for an in-progress booking",
     );
   });
@@ -190,7 +192,7 @@ describe("preview and apply validate the same date window", () => {
       pricingMode: "recalculate",
     };
 
-    const result = resolveTargetDates({ booking, role: "MEMBER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input });
     expect(result.isInProgressEdit).toBe(true);
     expect(result.checkInChanged).toBe(false);
   });
@@ -204,7 +206,7 @@ describe("preview and apply validate the same date window", () => {
     for (const zone of ["Pacific/Pago_Pago", "Pacific/Kiritimati"]) {
       withTimeZone(zone, () => {
         expect(() =>
-          resolveTargetDates({ booking, role: "MEMBER", input }),
+          resolveTargetDates({ booking, role: "USER", input }),
         ).not.toThrow();
       });
     }
@@ -225,7 +227,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesSelfServiceWindow(booking, day("2026-07-01"))).toBe(
       false,
     );
-    const result = resolveTargetDates({ booking, role: "MEMBER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input });
     expect(formatDateOnly(result.newCheckIn)).toBe("2026-07-01");
   });
 
@@ -238,7 +240,7 @@ describe("preview and apply validate the same date window", () => {
     };
 
     expect(previewRefusesSelfServiceWindow(booking, day("2026-06-30"))).toBe(true);
-    expect(() => resolveTargetDates({ booking, role: "MEMBER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
       "NZ today and earlier are locked for self-service changes",
     );
   });

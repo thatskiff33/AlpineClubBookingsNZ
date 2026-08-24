@@ -75,10 +75,12 @@ describe("a range-less guest is defaulted from the STORED envelope", () => {
   });
 
   it("the create/quote path: no dates supplied means the booking's own days", () => {
-    const [guest] = normalizeGuestStayRanges(
-      [{ stayStart: null, stayEnd: null }],
-      booking,
-    );
+    // `normalizeGuestStayRanges` intersects the guest type with the resolved
+    // range, so a literal `stayStart: null` collapses the intersection to
+    // `never`. A guest carrying no date fields at all is the shape the member
+    // form actually sends, and it types cleanly. The `stayStart: null` spelling
+    // is covered by `normalizeGuestStayRange` directly further down.
+    const [guest] = normalizeGuestStayRanges([{}], booking);
     expect(formatDateOnly(guest.stayStart)).toBe(CHECK_IN);
     expect(formatDateOnly(guest.stayEnd)).toBe(CHECK_OUT);
   });
@@ -115,6 +117,35 @@ describe("a range-less guest is defaulted from the STORED envelope", () => {
     ]);
     expect(formatDateOnly(range.stayStart)).toBe("2026-07-04");
     expect(formatDateOnly(range.stayEnd)).toBe("2026-07-06");
+  });
+
+  it("a range supplied as a Date is read as its stored day too", () => {
+    // `normalizeInputDate`'s `value instanceof Date` branch. No live producer
+    // reaches it today — every member-supplied field is typed `string`, and a
+    // stored delta arrives as JSON — but `StayRangeDeltaEntry.stayStart` is typed
+    // `Date | string | null`, so the branch is a typed hole a future caller can
+    // walk through. It surfaced as the ONE mutation survival in this lane: a
+    // projection reinstated there killed nothing, because nothing exercised it.
+    // Covered rather than explained away.
+    const range = normalizeGuestStayRange(
+      { stayStart: day(CHECK_IN), stayEnd: day(CHECK_OUT) },
+      booking,
+      0,
+    );
+    expect(formatDateOnly(range.stayStart)).toBe(CHECK_IN);
+    expect(formatDateOnly(range.stayEnd)).toBe(CHECK_OUT);
+  });
+
+  it("and so is an explicit night set supplied as Dates", () => {
+    const range = normalizeGuestStayRange(
+      { nights: [day("2026-07-05"), day("2026-07-04")] },
+      booking,
+      0,
+    );
+    expect((range.nights ?? []).map(formatDateOnly)).toEqual([
+      "2026-07-04",
+      "2026-07-05",
+    ]);
   });
 
   it("a stored value that is not a calendar day is REFUSED, not floored", () => {
