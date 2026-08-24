@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { RecurrenceRule } from "@/lib/calendar-recurrence";
+import {
+  clubCalendarDateOf,
+  requireClubTimeZone,
+  requireInstant,
+} from "@/lib/club-time";
+import { withTimeZoneAsync } from "./helpers/timezone";
 
 // In-memory Prisma fake for CalendarEvent / CalendarEventSeries. It implements
 // just the query surface calendar-service.ts uses, with enough where-clause
@@ -267,6 +273,25 @@ const h = vi.hoisted(() => {
 
 vi.mock("@/lib/prisma", () => ({ prisma: h.prisma }));
 
+/**
+ * The club's PERSISTED zone, pinned rather than left to fall out of the fake
+ * Prisma above (CT-4 group F5, #2870).
+ *
+ * `clubTimeZone()` falls back to the environment seed when there is no
+ * `ClubTimeSettings` row, and this fake has no such table — so without this mock
+ * the suite's club zone would silently be `APP_TIME_ZONE`, which is exactly the
+ * "cannot tell the persisted zone from the environment" trap the epic keeps
+ * finding. `America/Denver` is deliberately BEHIND UTC: this suite's subject is
+ * the single-versus-series edit semantics, and pinning a behind-UTC club proves
+ * those hold for the deployments where this epic's date defects show. Zone
+ * AUTHORITY is asserted in `calendar-service.test.ts`, which uses a zone chosen
+ * to diverge from both wrong answers.
+ */
+const CLUB_ZONE = "America/Denver";
+vi.mock("@/lib/club-time/server", () => ({
+  clubTimeZone: vi.fn(async () => CLUB_ZONE),
+}));
+
 import {
   createCalendarEvent,
   updateCalendarEvent,
@@ -288,8 +313,11 @@ function data(overrides: Partial<ResolvedEventData> = {}): ResolvedEventData {
     details: null,
     allDay: false,
     isMeeting: false,
-    startsAt: new Date(2026, 7, 3, 18, 0), // Mon 3 Aug 2026, 6pm
-    endsAt: new Date(2026, 7, 3, 19, 0),
+    // Midday club time on Monday 3 Aug 2026, written as a real instant rather
+    // than host-local components so the club calendar day is the same on every
+    // machine that runs this.
+    startsAt: new Date("2026-08-03T18:00:00.000Z"),
+    endsAt: new Date("2026-08-03T19:00:00.000Z"),
     recurrence: null,
     ...overrides,
   };
@@ -303,6 +331,149 @@ function occurrencesOf(seriesId: string) {
 }
 
 beforeEach(() => h.reset());
+
+/**
+ * `updateCalendarEvent`'s `dateChanged` comparison is the third of this
+ * subsystem's three zone-dependent questions (#2870), and the only one that
+ * stayed in `calendar-service.ts` — it is inseparable from the entry point that
+ * resolves the zone. A review lens measured that it had NO discriminating
+ * coverage at all: replacing it with a host-local day key killed 0 of 124, and
+ * so did pinning it to `false`. Only the `true` direction was caught, by one
+ * test, and by accident.
+ *
+ * Both directions and the club-versus-host distinction are covered below. What a
+ * wrong `false` costs, in the officer's words: they move a recurring event and
+ * the occurrences do not move.
+ */
+describe("updateCalendarEvent — dateChanged is the CLUB's day, in both directions", () => {
+  /*
+    Two instants two hours apart that the CLUB and the HOST disagree about.
+    Denver (this suite's persisted club zone, UTC-6 in August) rolls over at
+    06:00Z, so 05:00Z is 3 August and 07:00Z is 4 August — a day change. Every
+    host this repository runs on reads BOTH as the same day: 4 August in UTC, in
+    Europe/London, in Pacific/Auckland and in Asia/Tokyo, and 3 August in
+    Pacific/Pago_Pago. The host is pinned below anyway, so the disagreement is a
+    fact of the fixture rather than a fact of the machine.
+  */
+  const BEFORE = requireInstant("2026-08-04T05:00:00.000Z");
+  const AFTER = requireInstant("2026-08-04T07:00:00.000Z");
+  const CLUB = requireClubTimeZone(CLUB_ZONE);
+  /** A host that reads both instants as ONE day, so a host-local key sees no change. */
+  const HOST_THAT_SEES_NO_CHANGE = "Pacific/Auckland";
+
+  function clubDaysOf(seriesId: string): string[] {
+    return occurrencesOf(seriesId).map((o) =>
+      clubCalendarDateOf(o.startsAt, CLUB),
+    );
+  }
+
+  it("regenerates when the CLUB's day changes even though the host's does not", async () => {
+    const anchor = await createCalendarEvent(
+      data({ startsAt: BEFORE, endsAt: null, recurrence: WEEKLY_3 }),
+      "member-1",
+    );
+    const seriesId = h.events.get(anchor.id)!.seriesId!;
+    const before = clubDaysOf(seriesId);
+    const idsBefore = occurrencesOf(seriesId).map((o) => o.id);
+    expect(before).toEqual(["2026-08-03", "2026-08-10", "2026-08-17"]);
+
+    const result = await withTimeZoneAsync(HOST_THAT_SEES_NO_CHANGE, () => {
+      // The premise, asserted inside the pin so it describes the run that
+      // follows: the host really does read both instants as one day, so a
+      // host-local `dateChanged` would answer "unchanged" and propagate.
+      expect(BEFORE.getDate()).toBe(AFTER.getDate());
+      expect(BEFORE.getMonth()).toBe(AFTER.getMonth());
+      // …while the club reads them as two.
+      expect(clubCalendarDateOf(BEFORE, CLUB)).not.toBe(
+        clubCalendarDateOf(AFTER, CLUB),
+      );
+      return updateCalendarEvent(
+        anchor.id,
+        data({ startsAt: AFTER, endsAt: null, recurrence: WEEKLY_3 }),
+        "series",
+        "member-1",
+      );
+    });
+
+    expect(result?.scope).toBe("series");
+    /*
+      A REGENERATE rebuilds the occurrence set from the new anchor, so every club
+      day moves forward one. A propagate would have kept each occurrence's own
+      day and pushed only the time-of-day onto it — which is what an officer
+      moving a recurring event and finding the occurrences unmoved would be
+      looking at.
+    */
+    expect(clubDaysOf(seriesId)).toEqual([
+      "2026-08-04",
+      "2026-08-11",
+      "2026-08-18",
+    ]);
+    // A second, independent observable of the same decision: a regenerate
+    // DELETES the non-detached rows and inserts fresh ones, so not one id
+    // survives. Asserting both means neither can be weakened on its own.
+    expect(occurrencesOf(seriesId).map((o) => o.id)).not.toEqual(idsBefore);
+    for (const id of idsBefore) expect(h.events.has(id)).toBe(false);
+  });
+
+  it("does NOT regenerate a details-only edit: every occurrence row survives by id", async () => {
+    const anchor = await createCalendarEvent(
+      data({ startsAt: BEFORE, endsAt: null, recurrence: WEEKLY_3 }),
+      "member-1",
+    );
+    const seriesId = h.events.get(anchor.id)!.seriesId!;
+    const idsBefore = occurrencesOf(seriesId).map((o) => o.id);
+
+    await updateCalendarEvent(
+      anchor.id,
+      data({
+        startsAt: BEFORE,
+        endsAt: null,
+        recurrence: WEEKLY_3,
+        title: "Renamed standup",
+      }),
+      "series",
+      "member-1",
+    );
+
+    // Identity is the evidence: a regenerate DELETES the non-detached rows and
+    // inserts fresh ones, so surviving ids prove the propagate path ran. The
+    // titles alone would not — a regenerate carries the new title too.
+    expect(occurrencesOf(seriesId).map((o) => o.id)).toEqual(idsBefore);
+    expect(clubDaysOf(seriesId)).toEqual([
+      "2026-08-03",
+      "2026-08-10",
+      "2026-08-17",
+    ]);
+    for (const occ of occurrencesOf(seriesId)) {
+      expect(occ.title).toBe("Renamed standup");
+    }
+  });
+
+  it("regenerates on a same-day time-of-day change only when the rule changed", async () => {
+    // The pair above moves the club DAY. This one keeps it — 07:00Z and 08:00Z
+    // are both 4 August in Denver — so the day comparison must answer
+    // "unchanged" and the rows must survive, which is the same guard from the
+    // other side and pins that `dateChanged` reads a DAY rather than an instant.
+    const sameClubDayLater = requireInstant("2026-08-04T08:00:00.000Z");
+    expect(clubCalendarDateOf(AFTER, CLUB)).toBe(
+      clubCalendarDateOf(sameClubDayLater, CLUB),
+    );
+    const anchor = await createCalendarEvent(
+      data({ startsAt: AFTER, endsAt: null, recurrence: WEEKLY_3 }),
+      "member-1",
+    );
+    const seriesId = h.events.get(anchor.id)!.seriesId!;
+    const idsBefore = occurrencesOf(seriesId).map((o) => o.id);
+
+    await updateCalendarEvent(
+      anchor.id,
+      data({ startsAt: sameClubDayLater, endsAt: null, recurrence: WEEKLY_3 }),
+      "series",
+      "member-1",
+    );
+    expect(occurrencesOf(seriesId).map((o) => o.id)).toEqual(idsBefore);
+  });
+});
 
 describe("updateCalendarEvent — single vs series, exception survival", () => {
   it("returns null for an unknown id", async () => {

@@ -11,14 +11,16 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useClubTime } from "@/components/club-time-provider";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
+import type { CalendarDate } from "@/lib/club-time";
 import { formatDayKeyLong, formatEventTime } from "@/lib/calendar-client";
 
 interface DayEventsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The day being shown (YYYY-MM-DD), or null when closed. */
-  dayKey: string | null;
+  /** The calendar day being shown, or null when closed. */
+  dayKey: CalendarDate | null;
   /** Every event on this day, already sorted (all-day first, then by time). */
   events: CalendarEventDTO[];
   /** Whether the current member may create new events (managers only). */
@@ -26,7 +28,7 @@ interface DayEventsDialogProps {
   /** Open a single event's detail (closes this dialog first). */
   onSelectEvent: (event: CalendarEventDTO) => void;
   /** Start creating a new event on this day (managers only). */
-  onCreate: (dayKey: string) => void;
+  onCreate: (dayKey: CalendarDate) => void;
 }
 
 /**
@@ -34,6 +36,11 @@ interface DayEventsDialogProps {
  * "+N more" overflow. A month cell only renders the first few events; this
  * lists every one so members (and managers) can reach the 4th onward. Every
  * viewer gets it; only managers also get an "Add event" action.
+ *
+ * CT-4 (#2870): the heading is a CALENDAR DAY and needs no zone, but each row's
+ * time comes from a real instant and so reads the club's persisted zone from
+ * `ClubTimeProvider`. It used to read `APP_TIME_ZONE` — the environment's — which
+ * a club that changes its timezone in the admin panel cannot move.
  */
 export function DayEventsDialog({
   open,
@@ -44,6 +51,7 @@ export function DayEventsDialog({
   onSelectEvent,
   onCreate,
 }: DayEventsDialogProps) {
+  const club = useClubTime();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
@@ -78,7 +86,7 @@ export function DayEventsDialog({
                 <span className="min-w-0 flex-1">
                   <span className="block font-medium">{event.title}</span>
                   <span className="block text-xs opacity-80">
-                    {formatEventTime(event)}
+                    {formatEventTime(event, club.zone)}
                     {event.location && (
                       <span className="ml-1 inline-flex items-center gap-0.5">
                         <MapPin aria-hidden className="h-3 w-3" />

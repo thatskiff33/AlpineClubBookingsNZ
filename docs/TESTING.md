@@ -322,6 +322,76 @@ generalised.
    about the environment, instead of failing every test with a bare
    `expected '2026-06-14' to be '2026-06-15'` that reads like the product bug
    the suite exists to prove fixed (#2834).
+
+   **A suite whose subject is "the PERSISTED zone is the authority" needs the
+   other helper in that file, and needs it for a measured reason.**
+   `src/lib/__tests__/support/club-time-render.tsx` mounts `ClubTimeProvider`
+   with `CLUB_TIME_TEST_ZONE`, deliberately equal to what `APP_TIME_ZONE`
+   resolves to, so that moving 37 suites onto it changed no expected string.
+   The consequence is that a suite on that default **cannot tell the persisted
+   zone from the environment however much it asserts** — measured on #2870, a
+   mutant hook that ignored the provider entirely failed 0 of 460 assertions
+   across 34 such suites, and of one later group's 49 provider-reading
+   components, 46 were blind. Hand-picking `America/Denver` does not fix it
+   either: it stops discriminating, silently, on a developer whose own zone is
+   already Denver.
+
+   `divergentClubZone` takes the DERIVATION and returns the oracle with it,
+   refusing to return at all unless the answer differs from both wrong ones —
+   `APP_TIME_ZONE`'s (what a provider-blind implementation gives) and the host's
+   own resolved zone (what `getFullYear`/`getMonth`/`getDate` give). Those two
+   are different on the CI runner, which resolves `UTC` while `APP_TIME_ZONE`
+   falls back to `Pacific/Auckland`, so checking one is not checking the other.
+
+   ```ts
+   import { divergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+
+   const { zone, expected, environmentAnswer, hostAnswer } = divergentClubZone(
+     (z) => clubCalendarDateOf(instant, z),
+   );
+   expect(subjectUnderTest(instant, zone)).toBe(expected);
+   expect(expected).not.toBe(environmentAnswer);
+   expect(expected).not.toBe(hostAnswer);
+   ```
+
+   **Put a CALENDAR-DAY fixture instant in the 10:00-11:00 UTC hour.** Three
+   calendar days exist on earth simultaneously only while the UTC hour is 10
+   (`UTC+14` has turned over and `UTC-11` has not); at every other hour there are
+   two, and both can already be taken — one by `APP_TIME_ZONE`, one by the host —
+   leaving nothing for the helper to pick. Measured on the CI shape, a fixture at
+   21:00 UTC refuses every candidate and the same fixture at 10:30 UTC resolves on
+   the first. A derivation with more possible answers (a wall-clock hour, a
+   formatted time, an instant) works at any hour. A suite deriving the club's
+   TODAY pins its own instant, because the repository's frozen clock is at 00:00
+   UTC. `src/lib/__tests__/calendar-divergence-premise.test.ts` is the worked
+   example, and it also shows how to prove the premise holds on each host shape
+   rather than only the author's.
+
+   **The chooser's own guard has a test, and it needs a mocked environment zone
+   to have one.** `src/lib/__tests__/helpers/club-time-zone.test.ts` is the only
+   place that pins `APP_TIME_ZONE` through `vi.mock("@/config/operational")`, and
+   the reason is worth knowing before writing a similar guard: on a machine where
+   `TZ` is unset and the system zone is New Zealand, the host and `APP_TIME_ZONE`
+   resolve to the SAME zone, so the two halves of "differ from both rivals" are
+   the same assertion and dropping one changes nothing. Measured on #2870,
+   deleting the host half killed **0 of 124** across every importing suite. The
+   two rivals have to be made to disagree, and `APP_TIME_ZONE` is read once at
+   module load, so only a module mock moves it. Keep that mock in a file of its
+   own: group D's `club-zone-choice.ts` records that mocking that module inside a
+   COMPONENT suite changes what the file's other tests see, because `APP_LOCALE`
+   and `APP_CURRENCY` reach money and date formatting in the same render graph.
+
+   **A pin read at module load needs a re-imported graph, not `withTimeZone`.**
+   `withTimeZone` moves the process's zone for the duration of a call, which
+   catches arithmetic evaluated per call — but a module-level
+   `Intl.DateTimeFormat` is built once at import, so a wrong `timeZone` pin on one
+   survives it. `vi.resetModules()` plus a dynamic `import()` under a pinned `TZ`
+   re-evaluates `@/config/operational` and catches it; assert inside the block
+   that `APP_TIME_ZONE` really moved, or the test proves nothing. Both mechanisms
+   are used together in `calendar-client-club-time.test.ts` and
+   `calendar-recurrence.test.ts`, and a review measured what happens when only one
+   file has the second: the identical wrong pin killed 1 in the file that had it
+   and **0** in the file that did not.
 4. **Do not hand the clock back to the real calendar.** If your suite pins its
    own instant and wants to undo that, `vi.useRealTimers()` in an `afterEach` is
    safe — the root `beforeEach` re-freezes before the next test — but never rely

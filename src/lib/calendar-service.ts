@@ -7,6 +7,19 @@ import {
   generateOccurrenceStarts,
   type RecurrenceRule,
 } from "@/lib/calendar-recurrence";
+import {
+  buildOccurrenceRows,
+  clubDayKey,
+  durationMsOf,
+  nextMeetingRoom,
+  seriesCount,
+  seriesMatchesRule,
+  seriesUntil,
+  withClubTimeOfDay,
+  type ResolvedEventData,
+} from "@/lib/calendar-occurrences";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 
 /**
  * A Prisma "record required but not found" error (P2025). Thrown by
@@ -35,111 +48,24 @@ function isRecordNotFoundError(error: unknown): boolean {
  *    changes are propagated in place (each occurrence keeps its own date);
  *    changing the recurrence pattern (or the anchor date) regenerates the whole
  *    series from the edited occurrence, preserving detached exceptions.
+ *
+ * ## Where the club's timezone comes from, and where the reasoning lives
+ *
+ * `calendar-occurrences.ts` is this file's other half — the occurrence row shape
+ * and the two club-time questions that decide it — and its module docblock is
+ * the single home for WHY the club's persisted zone rather than the container's
+ * `TZ` is the authority here (`INV-CONFIG-002`, CT-4, #2870). Read it before
+ * changing anything below that touches a date; it is not restated here, so that
+ * the two cannot drift apart.
+ *
+ * What belongs to THIS file is the resolution and the third question. The zone is
+ * resolved ONCE per exported entry point with `clubTimeZone()` (request-memoised)
+ * and threaded down as an argument, so no helper can silently reach for a
+ * different one — and the third zone-dependent question, whether an edit changed
+ * the anchor DAY, is `updateCalendarEvent`'s `dateChanged` comparison. It uses
+ * `clubDayKey` from that module rather than its own reading, which is what stops
+ * the comparison and the generation disagreeing about what "the same day" is.
  */
-
-/** Field/time template shared by all occurrences of one create/edit. */
-interface ResolvedEventData {
-  title: string;
-  location: string | null;
-  details: string | null;
-  allDay: boolean;
-  isMeeting: boolean;
-  startsAt: Date;
-  endsAt: Date | null;
-  recurrence: RecurrenceRule | null;
-}
-
-function durationMsOf(startsAt: Date, endsAt: Date | null): number | null {
-  return endsAt ? endsAt.getTime() - startsAt.getTime() : null;
-}
-
-function nextMeetingRoom(
-  isMeeting: boolean,
-  existingRoom: string | null,
-): string | null {
-  if (!isMeeting) return null;
-  return existingRoom ?? randomUUID();
-}
-
-/** Local Y-M-D key, for comparing "which day" two instants fall on. */
-function localDayKey(date: Date): string {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
-
-/** Combine a target day with a template's time-of-day (or midnight, all-day). */
-function withTimeOfDay(day: Date, time: Date, allDay: boolean): Date {
-  if (allDay) {
-    return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
-  }
-  return new Date(
-    day.getFullYear(),
-    day.getMonth(),
-    day.getDate(),
-    time.getHours(),
-    time.getMinutes(),
-    time.getSeconds(),
-    time.getMilliseconds(),
-  );
-}
-
-function seriesUntil(rule: RecurrenceRule): Date | null {
-  return rule.endMode === "until" && rule.until ? new Date(rule.until) : null;
-}
-
-function seriesCount(rule: RecurrenceRule): number | null {
-  return rule.endMode === "count" && rule.count ? rule.count : null;
-}
-
-/** Does a stored series row already match this rule (frequency/interval/end)? */
-function seriesMatchesRule(
-  series: CalendarEventSeries,
-  rule: RecurrenceRule,
-): boolean {
-  const storedUntilKey = series.until ? localDayKey(series.until) : null;
-  const ruleUntil = seriesUntil(rule);
-  const ruleUntilKey = ruleUntil ? localDayKey(ruleUntil) : null;
-  return (
-    series.frequency === rule.frequency &&
-    series.interval === rule.interval &&
-    storedUntilKey === ruleUntilKey &&
-    (series.count ?? null) === seriesCount(rule)
-  );
-}
-
-function buildOccurrenceRows(
-  starts: Date[],
-  data: ResolvedEventData,
-  seriesId: string,
-  actorId: string,
-  // E2: a regenerate reuses the room slug of any occurrence that lands on the
-  // same start instant it had before (keyed by startsAt.getTime()), so editing a
-  // series' pattern does not silently break the join links of unchanged dates.
-  // Genuinely-new dates still get a fresh, unguessable room.
-  preservedRooms?: Map<number, string>,
-): Prisma.CalendarEventCreateManyInput[] {
-  const durationMs = durationMsOf(data.startsAt, data.endsAt);
-  return starts.map((start) => ({
-    title: data.title,
-    location: data.location,
-    details: data.details,
-    allDay: data.allDay,
-    startsAt: start,
-    endsAt:
-      data.allDay || durationMs == null
-        ? null
-        : new Date(start.getTime() + durationMs),
-    isMeeting: data.isMeeting,
-    // Each occurrence gets its own unguessable room, so a leaked link never
-    // opens a different week's meeting. A preserved room is reused only for an
-    // instant that already existed (never minted for a new date).
-    meetingRoom: data.isMeeting
-      ? (preservedRooms?.get(start.getTime()) ?? randomUUID())
-      : null,
-    createdById: actorId,
-    seriesId,
-    detachedFromSeries: false,
-  }));
-}
 
 /** Prisma client or an interactive-transaction client. */
 type Db = typeof prisma | Prisma.TransactionClient;
@@ -167,6 +93,7 @@ async function createSeriesRows(
   actorId: string,
   tx: Db,
   idempotencyKey: string | null,
+  zone: ClubTimeZone,
 ): Promise<CalendarEvent> {
   const series = await tx.calendarEventSeries.create({
     data: {
@@ -178,7 +105,11 @@ async function createSeriesRows(
     },
   });
 
-  const starts = generateOccurrenceStarts(data.startsAt, data.recurrence);
+  const starts = generateOccurrenceStarts(
+    data.startsAt,
+    data.recurrence,
+    zone,
+  );
   const rows = buildOccurrenceRows(starts, data, series.id, actorId);
   // The idempotency key is a per-CREATE dedup token, so it lives on the anchor
   // (earliest occurrence, rows[0]) ONLY — never on every row (which would
@@ -203,6 +134,7 @@ async function createSeriesRows(
 async function createSeriesWithOccurrences(
   data: ResolvedEventData & { recurrence: RecurrenceRule },
   actorId: string,
+  zone: ClubTimeZone,
   db: Db = prisma,
   idempotencyKey: string | null = null,
 ): Promise<CalendarEvent> {
@@ -211,7 +143,7 @@ async function createSeriesWithOccurrences(
   // case the outer transaction owns rollback; in the no-key case there is
   // nothing to make atomic beyond the individual writes.
   if (db !== prisma || !idempotencyKey) {
-    return createSeriesRows(data, actorId, db, idempotencyKey);
+    return createSeriesRows(data, actorId, db, idempotencyKey, zone);
   }
 
   // Top-level KEYED series create. Wrap in a transaction so a duplicate
@@ -220,7 +152,7 @@ async function createSeriesWithOccurrences(
   // erroring.
   try {
     return await prisma.$transaction((tx) =>
-      createSeriesRows(data, actorId, tx, idempotencyKey),
+      createSeriesRows(data, actorId, tx, idempotencyKey, zone),
     );
   } catch (error) {
     if (isPrismaUniqueConstraintError(error)) {
@@ -247,6 +179,8 @@ export async function createCalendarEvent(
 ): Promise<CalendarEvent> {
   const key = idempotencyKey ?? null;
   if (!data.recurrence) {
+    // A one-off event stores the instant it was handed: no calendar arithmetic,
+    // so no zone is needed and none is resolved.
     try {
       return await prisma.calendarEvent.create({
         data: {
@@ -275,6 +209,7 @@ export async function createCalendarEvent(
   return createSeriesWithOccurrences(
     { ...data, recurrence: data.recurrence },
     actorId,
+    await clubTimeZone(),
     prisma,
     key,
   );
@@ -321,6 +256,7 @@ async function updateSingleOccurrence(
 async function propagateSeriesFieldChanges(
   seriesId: string,
   data: ResolvedEventData,
+  zone: ClubTimeZone,
 ): Promise<void> {
   const durationMs = durationMsOf(data.startsAt, data.endsAt);
   // Read + write the occurrence set UNDER the per-series lock (inside the
@@ -352,7 +288,12 @@ async function propagateSeriesFieldChanges(
         select: { id: true, startsAt: true, meetingRoom: true },
       });
       for (const occ of occurrences) {
-        const start = withTimeOfDay(occ.startsAt, data.startsAt, data.allDay);
+        const start = withClubTimeOfDay(
+          occ.startsAt,
+          data.startsAt,
+          data.allDay,
+          zone,
+        );
         const endsAt =
           data.allDay || durationMs == null
             ? null
@@ -382,6 +323,7 @@ async function regenerateSeries(
   series: CalendarEventSeries,
   data: ResolvedEventData & { recurrence: RecurrenceRule },
   actorId: string,
+  zone: ClubTimeZone,
 ): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -412,7 +354,11 @@ async function regenerateSeries(
       await tx.calendarEvent.deleteMany({
         where: { seriesId: series.id, detachedFromSeries: false },
       });
-      const starts = generateOccurrenceStarts(data.startsAt, data.recurrence);
+      const starts = generateOccurrenceStarts(
+        data.startsAt,
+        data.recurrence,
+        zone,
+      );
       await tx.calendarEvent.createMany({
         data: buildOccurrenceRows(starts, data, series.id, actorId, preservedRooms),
       });
@@ -487,6 +433,11 @@ export async function updateCalendarEvent(
   })) as EventWithSeries | null;
   if (!existing) return null;
 
+  // One resolution of the club's persisted zone for this whole update, so the
+  // day comparison below, the regenerated series and the propagated
+  // time-of-day cannot disagree about what "the same day" means.
+  const zone = await clubTimeZone();
+
   // Converting a standalone (non-recurring) event INTO a recurring series:
   // replace the single row with a freshly generated series anchored at the
   // edited start. Runs before the single-edit path so "open the event, set it
@@ -502,6 +453,7 @@ export async function updateCalendarEvent(
         return createSeriesWithOccurrences(
           { ...data, recurrence: data.recurrence as RecurrenceRule },
           actorId,
+          zone,
           tx,
         );
       });
@@ -530,15 +482,16 @@ export async function updateCalendarEvent(
   }
 
   const dateChanged =
-    localDayKey(existing.startsAt) !== localDayKey(data.startsAt);
+    clubDayKey(existing.startsAt, zone) !== clubDayKey(data.startsAt, zone);
   const patternChanged =
-    dateChanged || !seriesMatchesRule(existing.series, data.recurrence);
+    dateChanged || !seriesMatchesRule(existing.series, data.recurrence, zone);
 
   if (patternChanged) {
     const regenerated = await regenerateSeries(
       existing.series,
       { ...data, recurrence: data.recurrence },
       actorId,
+      zone,
     );
     // A concurrent whole-series delete removed the series first → 404.
     if (!regenerated) return null;
@@ -546,7 +499,7 @@ export async function updateCalendarEvent(
     // No P2025 guard here: propagate reads its occurrence set INSIDE the
     // transaction, after taking the per-series lock that every series and
     // single delete also takes, so no row it updates can vanish under it.
-    await propagateSeriesFieldChanges(existing.seriesId, data);
+    await propagateSeriesFieldChanges(existing.seriesId, data, zone);
   }
 
   // Return the (possibly regenerated) anchor for the response.
@@ -645,4 +598,10 @@ export async function deleteCalendarEvent(
   return { title: existing.title, scope: "single", deletedCount: 1 };
 }
 
+/*
+  Re-exported so `calendar-service.ts` stays the one import for a caller shaping
+  a create/edit — the type belongs with the row builder that consumes it
+  (`calendar-occurrences.ts`), and the route and its tests should not have to
+  know which half of this pair holds which piece.
+*/
 export type { ResolvedEventData };
