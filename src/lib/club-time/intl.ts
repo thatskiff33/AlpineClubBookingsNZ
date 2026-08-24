@@ -51,9 +51,29 @@ import { APP_LOCALE } from "@/config/operational";
 /**
  * Every display shape the house uses, declared once.
  *
- * The six named after `nzst-date`'s exports reproduce those helpers exactly; the
- * last three are the lobby-display forms, which drop the year because a wall
- * screen only ever names days inside the current stay window.
+ * The six named after `nzst-date`'s exports reproduce those helpers exactly.
+ * `weekday`, `weekdayDayMonth` and `longWeekdayDayMonth` are the lobby-display
+ * forms, which drop the year because a wall screen only ever names days inside
+ * the current stay window.
+ *
+ * The last four arrived with CT-4's `src/lib` group (#2870), each because a call
+ * site was keeping a local `Intl.DateTimeFormat` for want of them and saying so
+ * in a comment: `longWeekdayDate` for the booking calendar's day-button label,
+ * the booking editor's stay dates and the kiosk and chore-sheet headings;
+ * `dayMonth` for the guest-night grid's night column and the dashboard's tight
+ * slots; `shortMonthYear` for the finance chart axes; `longWeekday` for a bare
+ * spelled-out weekday, which nothing had asked for until the calendar
+ * subsystem's recurrence labels needed one.
+ *
+ * NONE OF THE FOUR IS COMPOSED FROM AN EXISTING SHAPE, and that is deliberate.
+ * `longWeekdayDayMonth` plus `" 2026"` is byte-identical for `en-NZ` and is NOT
+ * safe in general: `APP_LOCALE` is configurable, and a locale that ordered or
+ * punctuated the pair differently would silently change every day button in the
+ * product. Declaring the whole shape asks `Intl` the question rather than
+ * assuming its answer — the same reasoning `formatClubWeekdayDay`'s docblock
+ * records for the one shape that IS assembled, where the assembled half is a
+ * bare integer taken from the calendar-date string and so has no locale form at
+ * all.
  */
 export const HOUSE_SHAPES = {
   /** "16 Apr 2026" */
@@ -73,12 +93,25 @@ export const HOUSE_SHAPES = {
     month: "short",
     year: "numeric",
   },
+  /** "Apr 2026" — a chart axis tick, where the long month will not fit. */
+  shortMonthYear: { month: "short", year: "numeric" },
   /** "Thu" */
   weekday: { weekday: "short" },
+  /** "Thursday" */
+  longWeekday: { weekday: "long" },
+  /** "16 Apr" — a grid column head, where the year is already stated above it. */
+  dayMonth: { day: "numeric", month: "short" },
   /** "Thu, 16 Apr" */
   weekdayDayMonth: { weekday: "short", day: "numeric", month: "short" },
   /** "Thursday, 16 April" */
   longWeekdayDayMonth: { weekday: "long", day: "numeric", month: "long" },
+  /** "Thursday, 16 April 2026" — the spelled-out form WITH the year. */
+  longWeekdayDate: {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  },
 } as const satisfies Record<string, Intl.DateTimeFormatOptions>;
 
 export type HouseShape = keyof typeof HOUSE_SHAPES;

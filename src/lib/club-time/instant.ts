@@ -24,7 +24,11 @@
  * one.
  */
 
-import { isCalendarDate, requireCalendarDate } from "./calendar-date";
+import {
+  isCalendarDate,
+  parseCalendarDate,
+  requireCalendarDate,
+} from "./calendar-date";
 import {
   clubZoneDateString,
   clubZoneParts,
@@ -144,11 +148,28 @@ export function clubCalendarDateOf(
  * THE PRISMA `@db.Date` ENCODER: a calendar day as the UTC-midnight `Date` a
  * `date` column round-trips through.
  *
- * This is an ENCODING and nothing else — `INV-DATE-010`'s rule that "UTC
- * midnight is encoding, not meaning" is exactly what it implements, and no rule
- * may be derived from reading the result in any zone but UTC. It exists because
- * Prisma's `date` mapping takes and returns a `Date`; the moment the value is
- * back in application code it should become a `CalendarDate` again.
+ * This is an ENCODING and nothing else. `INV-DATE-010` is the rule it
+ * implements, and only for what that rule says: the UTC-midnight pinning is an
+ * INTERNAL ENCODING of the calendar day and nothing more — not the midday
+ * boundary instant, and not a moment any rule may be read out of.
+ * `INV-DATE-026`'s corollary is why the encoding has to be exactly this one: the
+ * Prisma adapter narrows whatever instant you hand a `@db.Date` bound to its UTC
+ * calendar date, so a bound built as midnight in the club's zone — or, worse, on
+ * the host — silently becomes the PREVIOUS day.
+ *
+ * DO NOT CITE `INV-DATE-010` FOR THE DECODE. It says that no rule may be derived
+ * from **the UTC reading** of a stored value; a docblock in this file used to
+ * paraphrase it as its own inverse ("no rule may be derived from reading the
+ * result in any zone but UTC"), and four call sites plus two test files copied
+ * that inverse from here before it was caught. The authority for reading a
+ * `@db.Date` back in UTC is `INV-DATE-019`'s first exact boundary — truncating an
+ * existing `@db.Date` value is fine because it already encodes a calendar day —
+ * together with `INV-DATE-026`, which is what guarantees the column really is
+ * one. See {@link calendarDateOfDateOnlyInstant}.
+ *
+ * It exists because Prisma's `date` mapping takes and returns a `Date`; the
+ * moment the value is back in application code it should become a
+ * `CalendarDate` again.
  */
 export function dateOnlyInstantOf(date: CalendarDate): Instant {
   return new Date(`${date}T00:00:00.000Z`);
@@ -162,6 +183,16 @@ export function dateOnlyInstantOf(date: CalendarDate): Instant {
  * it in club time is the same defect from the other direction: for
  * `America/Denver`, `2026-04-05T00:00:00Z` reads back as 4 April.
  *
+ * THE RULE THIS IMPLEMENTS IS `INV-DATE-019`'s FIRST EXACT BOUNDARY — "truncating
+ * an existing `@db.Date` value the same way is fine; those are already pinned to
+ * UTC midnight and encode a calendar day, not an instant" — together with
+ * `INV-DATE-026`, which is what makes the column a `@db.Date` in the first place
+ * rather than a bare `DateTime` its writers merely agree to keep at midnight.
+ * **Do not cite `INV-DATE-010` for this direction**: that rule forbids deriving a
+ * rule from the UTC READING of a stored value, so citing it here states the
+ * opposite of what it says. {@link dateOnlyInstantOf} records where that inverse
+ * paraphrase came from and how far it spread.
+ *
  * Hand it a real `DateTime` and you get that column's UTC day, which is the
  * `INV-DATE-019` defect. Use {@link clubCalendarDateOf} for a moment.
  *
@@ -171,4 +202,64 @@ export function dateOnlyInstantOf(date: CalendarDate): Instant {
  */
 export function calendarDateOfDateOnlyInstant(value: Instant): CalendarDate {
   return requireCalendarDate(utcDateOnlyString(value));
+}
+
+/**
+ * The same inverse for a `@db.Date` that has already crossed a JSON boundary:
+ * the calendar day a SERIALISED date-only column carries.
+ *
+ * Once a `date` column reaches a client component or an API payload it is a
+ * string — `"2026-07-01T00:00:00.000Z"`, or already `"2026-07-01"` — and two
+ * spellings of this one operation grew up side by side across CT-4 (#2870):
+ * `requireCalendarDate(dateOnlyFromIsoString(v))` in nine files and
+ * `calendarDateOfDateOnlyInstant(new Date(v))` in six. Both are correct for both
+ * of those shapes; this is the one call that replaces them.
+ *
+ * The rule is the one {@link calendarDateOfDateOnlyInstant} implements —
+ * `INV-DATE-019`'s first exact boundary plus `INV-DATE-026`, and **not**
+ * `INV-DATE-010`, which is about the other direction.
+ *
+ * IT READS THE PREFIX RATHER THAN REPARSING, and the difference is worth one
+ * sentence because it is the only input on which the two spellings disagree. The
+ * UTC-midnight encoding puts the day in the first ten characters, so the prefix
+ * IS the decoding — no `Date`, no projection, nothing a zone could move. Reparse
+ * instead and an OFFSET-BEARING string would be projected into UTC:
+ * `"2026-07-01T12:00:00+13:00"` decodes as 30 June that way and as 1 July here.
+ * No serialisation of a `@db.Date` produces such a string, so this is a
+ * contract-boundary difference rather than a live one — but "the day this column
+ * holds" must not depend on a zone at all, and the prefix read is the spelling
+ * that cannot.
+ *
+ * WHAT IT DOES NOT DO is tell you whether the value was a `@db.Date` in the
+ * first place. Hand it a serialised `createdAt` and you get that instant's UTC
+ * day, which is the `INV-DATE-019` defect — the same warning
+ * {@link calendarDateOfDateOnlyInstant} carries, for the same reason. Use
+ * {@link clubCalendarDateOf} for a moment.
+ *
+ * Throws for a value whose first ten characters are not a real calendar day.
+ */
+export function calendarDateOfSerialisedDbDate(value: string): CalendarDate {
+  return requireCalendarDate(value.slice(0, 10));
+}
+
+/**
+ * {@link calendarDateOfSerialisedDbDate}, answering `null` instead of throwing —
+ * and also `null` for an absent value, so a nullable column needs no guard.
+ *
+ * A REAL DIFFERENCE IN FAILURE MODE, not a style preference. Two public token
+ * landing pages carried a local formatter wrapped in `try`/`catch` for exactly
+ * this: a throw out of a client render blanks the whole screen, where the code
+ * they replaced showed at worst "Invalid Date" beside a page that still worked.
+ * A member holding a link to a page whose stored date is malformed must still be
+ * able to read the rest of it.
+ *
+ * So the choice between the two is about what the caller can do with a refusal,
+ * and the parser half of the kernel already draws that line the same way —
+ * {@link parseInstant} and `parseCalendarDate` answer `null` where their
+ * `require*` siblings throw.
+ */
+export function calendarDateOfSerialisedDbDateOrNull(
+  value: string | null | undefined,
+): CalendarDate | null {
+  return value == null ? null : parseCalendarDate(value.slice(0, 10));
 }

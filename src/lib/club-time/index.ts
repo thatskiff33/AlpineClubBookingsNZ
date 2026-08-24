@@ -12,6 +12,7 @@
  * | I am holding                            | I want                                    |
  * | --------------------------------------- | ----------------------------------------- |
  * | a lodge night / DOB / season edge        | `CalendarDate` + `formatClubDate` and friends — no zone |
+ * | a `@db.Date` that crossed a JSON boundary | `calendarDateOfSerialisedDbDate` — or the `OrNull` form in a client render |
  * | a `createdAt` / `paidAt` / audit stamp   | `Instant` + `formatClubInstant*` — zone required        |
  * | "the club day D starts/ends when?"       | `startOfClubDay` / `endOfClubDayExclusive`              |
  * | "08:00 club time on D is when?"          | `instantForClubWallTime`                                |
@@ -49,6 +50,7 @@ export {
   addCalendarMonths,
   calendarDateFromParts,
   calendarDateParts,
+  calendarDayOfWeek,
   calendarMonthOf,
   compareCalendarDates,
   countClubNights,
@@ -57,10 +59,13 @@ export {
   isCalendarDate,
   parseCalendarDate,
   requireCalendarDate,
+  startOfCalendarMonth,
 } from "./calendar-date";
 
 export {
   calendarDateOfDateOnlyInstant,
+  calendarDateOfSerialisedDbDate,
+  calendarDateOfSerialisedDbDateOrNull,
   clubCalendarDateOf,
   clubWallTimeOf,
   clubZoneOffsetMs,
@@ -73,6 +78,7 @@ export {
 export {
   CLUB_STAY_BOUNDARY_HOUR,
   endOfClubDayExclusive,
+  endOfClubDayInclusive,
   instantForClubWallTime,
   noonOfClubDay,
   startOfClubDay,
@@ -84,6 +90,7 @@ export { clubToday, fixedClubClock, systemClubClock } from "./clock";
 
 export {
   formatClubDate,
+  formatClubDayMonth,
   formatClubInstantDate,
   formatClubInstantDateTime,
   formatClubInstantLongDate,
@@ -91,8 +98,11 @@ export {
   formatClubInstantTime,
   formatClubInstantWeekdayDate,
   formatClubLongDate,
+  formatClubLongWeekday,
+  formatClubLongWeekdayDate,
   formatClubLongWeekdayDayMonth,
   formatClubMonthYear,
+  formatClubShortMonthYear,
   formatClubWeekday,
   formatClubWeekdayDate,
   formatClubWeekdayDay,
