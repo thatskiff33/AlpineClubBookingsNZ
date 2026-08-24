@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { ClubPostValidationError } from "@/lib/club-posts";
 import {
   ClubPostAlreadyRemovedError,
+  ClubPostNotEditableError,
   ClubPostNotFoundError,
   editClubPostContent,
   removeClubPost,
@@ -52,6 +53,11 @@ function errorResponse(error: unknown): NextResponse | null {
   }
   if (error instanceof ClubPostAlreadyRemovedError) {
     return NextResponse.json({ error: error.message }, { status: 409 });
+  }
+  if (error instanceof ClubPostNotEditableError) {
+    // 403 rather than 400: the request is well-formed, the ACTION is what is
+    // refused — the words belong to another club's member.
+    return NextResponse.json({ error: error.message }, { status: 403 });
   }
   if (error instanceof ClubPostValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });

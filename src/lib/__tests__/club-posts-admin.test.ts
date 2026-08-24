@@ -31,6 +31,7 @@ import { listClubPostsForMember } from "@/lib/club-posts";
 import {
   ClubPostAlreadyRemovedError,
   ClubPostNotFoundError,
+  ClubPostNotEditableError,
   editClubPostContent,
   listClubPostsForAdmin,
   parseAdminPostTab,
@@ -47,6 +48,7 @@ beforeEach(() => {
     content: "Hut book is back at the lodge.",
     hiddenAt: null,
     removedAt: null,
+    originClubCode: null,
   });
 });
 
@@ -116,6 +118,46 @@ describe("editing", () => {
     const result = await editClubPostContent("post-1", "Corrected text.");
     expect(result.before).toBe("Hut book is back at the lodge.");
     expect(result.after).toBe("Corrected text.");
+  });
+
+  it("clears the rich body, so the edit is what members actually see", async () => {
+    // The board renders bodyHtml in preference to the text. An edit that only
+    // rewrote `content` would be invisible: the admin saves, the audit records
+    // a change, and every member keeps reading the unedited words.
+    await editClubPostContent("post-1", "Corrected text.");
+    expect(mocks.update.mock.calls[0][0].data).toMatchObject({
+      content: "Corrected text.",
+      bodyHtml: null,
+    });
+  });
+
+  it("refuses to rewrite another club's words (D-C4)", async () => {
+    // A mirror still shows the origin club's name and badge, so editing it
+    // here would misrepresent that club to this one's members. Hide and remove
+    // stay available; edit does not.
+    mocks.findUnique.mockResolvedValue({
+      id: "post-9",
+      content: "Written by Ruapehu.",
+      hiddenAt: null,
+      removedAt: null,
+      originClubCode: "RUAPEHU",
+    });
+    await expect(
+      editClubPostContent("post-9", "Rewritten"),
+    ).rejects.toBeInstanceOf(ClubPostNotEditableError);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("still allows hiding a mirror", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-9",
+      content: "Written by Ruapehu.",
+      hiddenAt: null,
+      removedAt: null,
+      originClubCode: "RUAPEHU",
+    });
+    await setClubPostHidden("post-9", true);
+    expect(mocks.update).toHaveBeenCalled();
   });
 
   it("applies the same content rules members are held to", async () => {

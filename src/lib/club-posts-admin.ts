@@ -108,6 +108,15 @@ export class ClubPostNotFoundError extends Error {
   }
 }
 
+export class ClubPostNotEditableError extends Error {
+  constructor() {
+    super(
+      "That post was written by another club's member, so its words cannot be edited here. It can be hidden or removed.",
+    );
+    this.name = "ClubPostNotEditableError";
+  }
+}
+
 export class ClubPostAlreadyRemovedError extends Error {
   constructor() {
     super("That post has been removed and can no longer be changed.");
@@ -118,7 +127,13 @@ export class ClubPostAlreadyRemovedError extends Error {
 async function loadEditable(postId: string) {
   const post = await prisma.clubPost.findUnique({
     where: { id: postId },
-    select: { id: true, content: true, hiddenAt: true, removedAt: true },
+    select: {
+      id: true,
+      content: true,
+      hiddenAt: true,
+      removedAt: true,
+      originClubCode: true,
+    },
   });
   if (!post) throw new ClubPostNotFoundError();
   // A removed post has no content left to hide, restore or rewrite. Refusing
@@ -151,11 +166,22 @@ export async function editClubPostContent(
   rawContent: unknown,
 ): Promise<{ before: string; after: string }> {
   const post = await loadEditable(postId);
+  // D-C4, now ENFORCED rather than merely promised by the schema comment: a
+  // mirror still shows the origin club's name and badge, so rewriting its
+  // words here would misrepresent that club to this one's members. Hiding and
+  // removing the local copy stay available — they say what they actually do.
+  if (post.originClubCode !== null) throw new ClubPostNotEditableError();
+
   const after = assertValidClubPostContent(rawContent);
 
   await prisma.clubPost.update({
     where: { id: postId },
-    data: { content: after },
+    // bodyHtml is CLEARED, not kept: the board renders the rich body in
+    // preference to the text, so an edit that only rewrote `content` would be
+    // invisible — the admin saves, the audit records a change, and every
+    // member keeps reading the unedited words. The edited post renders as
+    // plain text; the member can repost with formatting if it matters.
+    data: { content: after, bodyHtml: null },
   });
 
   return { before: post.content, after };
