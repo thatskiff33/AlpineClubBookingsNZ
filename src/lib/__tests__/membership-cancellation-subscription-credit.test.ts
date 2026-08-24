@@ -30,10 +30,19 @@ import {
   loadMembershipCancellationSubscriptionCreditPlansByMemberId,
   type MembershipCancellationSubscriptionCreditPlan,
 } from "@/lib/membership-cancellation-subscription-credit";
-import { getSeasonYear } from "@/lib/utils";
+import { fixedClubClock, requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 const NOW_MS = Date.UTC(2026, 6, 31, 3, 0, 0);
-const SEASON = getSeasonYear(new Date(NOW_MS));
+// The season the CLUB is in at `NOW_MS`. The production path pins the same
+// moment as a clock and reads the club's persisted zone (CT-4 group F1, #2870);
+// with no `ClubTimeSettings` row in this fake that zone is the documented
+// default, named here rather than inherited from the host.
+const SEASON = clubSeasonYear(
+  requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK),
+  fixedClubClock(new Date(NOW_MS)),
+);
 
 type SubscriptionRow = {
   id?: string;

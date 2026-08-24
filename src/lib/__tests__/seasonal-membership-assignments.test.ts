@@ -39,7 +39,23 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
 }));
 
-import { getSeasonYear } from "@/lib/utils";
+import { requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
+import { clubSeasonYear } from "@/lib/financial-year";
+
+/**
+ * The season year the code under test will compute for "now".
+ *
+ * The retired `getSeasonYear()` read the HOST's month; the production paths under
+ * test now read the club's PERSISTED zone through
+ * `readClubTimeZoneOutsideRequest()` (CT-4 group F1, #2870). With no
+ * `ClubTimeSettings` row in these fakes that reader falls back to the documented
+ * default, so the oracle names that zone explicitly rather than leaving the answer
+ * to whatever the host resolves. `club-season-year.test.ts` is where the
+ * discriminating zone assertions live; this is only a fixture oracle.
+ */
+const clubCurrentSeasonYear = () =>
+  clubSeasonYear(requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK));
 
 import {
   getSeasonalMembershipChangePreview,
@@ -697,7 +713,7 @@ describe("seasonal membership assignment preview and save", () => {
   });
 
   it("fires the Xero contact-group trigger only for current-season saves", async () => {
-    const currentSeason = getSeasonYear();
+    const currentSeason = clubCurrentSeasonYear();
 
     async function saveForSeason(seasonYear: number) {
       const db = makePreviewDb();
@@ -841,12 +857,12 @@ describe("seasonal membership assignment roll-forward", () => {
       db: db as never,
     });
 
-    expect(getSeasonYear()).not.toBe(2027);
+    expect(clubCurrentSeasonYear()).not.toBe(2027);
     expect(mockTriggerGroupSync).not.toHaveBeenCalled();
   });
 
   it("fires the trigger only for actually-copied candidates when rolling forward to the current season", async () => {
-    const currentSeason = getSeasonYear();
+    const currentSeason = clubCurrentSeasonYear();
     const priorSeason = currentSeason - 1;
     const candidates = ["member-copy", "member-race"].map((memberId, index) => ({
       id: `assignment-${memberId}`,
@@ -917,7 +933,7 @@ describe("seasonal membership assignment roll-forward", () => {
     mockSweep.mockResolvedValueOnce([
       { bookingId: "bk-1", stayDate: new Date("2099-08-01") },
     ]);
-    const currentSeason = getSeasonYear();
+    const currentSeason = clubCurrentSeasonYear();
     const priorSeason = currentSeason - 1;
     const personTiers = [
       { ageTier: "INFANT" },
@@ -1059,7 +1075,7 @@ describe("seasonal membership assignment roll-forward", () => {
   });
 
   it("continues past a failed reconcile chunk without rolling back the copy", async () => {
-    const currentSeason = getSeasonYear();
+    const currentSeason = clubCurrentSeasonYear();
     const priorSeason = currentSeason - 1;
     const ids = Array.from({ length: 30 }, (_, i) => `member-${i}`);
     const candidateMembers = ids.map((id) => ({

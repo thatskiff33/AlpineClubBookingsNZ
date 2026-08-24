@@ -42,7 +42,9 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
 }));
 
-import { getSeasonYear } from "@/lib/utils";
+import { requireClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   bulkSaveSeasonalMembershipAssignments,
   getSeasonalMembershipChangePreview,
@@ -241,7 +243,9 @@ async function tokenFor(
 }
 
 describe("bulkSaveSeasonalMembershipAssignments", () => {
-  const currentSeason = getSeasonYear();
+  const currentSeason = clubSeasonYear(
+    requireClubTimeZone(CLUB_TIME_ZONE_FALLBACK),
+  );
 
   beforeEach(() => {
     vi.clearAllMocks();
