@@ -37,7 +37,7 @@ import {
   calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
   formatClubDate,
-  type CalendarDate,
+  formatClubDayMonth,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -62,37 +62,26 @@ import {
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
-import { APP_LOCALE } from "@/config/operational";
 
 /*
-  Not one of the shared helpers: the three tightest slots on this page — the
-  upcoming-events list (a fixed-width `w-14` column), the "Next Stay" summary
-  pair and the draft "Expires" note — deliberately drop the year to stay
-  compact, and always have. The admin dashboard's twin cards do the same. There
-  is no `{ day, month: short }` shape in the kernel's `HOUSE_SHAPES`, so the
-  formatter stays local; what changed is WHAT IT IS ASKED TO FORMAT.
+  The three tightest slots on this page — the upcoming-events list (a fixed-width
+  `w-14` column), the "Next Stay" summary pair and the draft "Expires" note —
+  deliberately drop the year to stay compact, and always have. The admin
+  dashboard's twin cards do the same. F3 (#3079) declared that bag as the
+  kernel's `dayMonth` shape, so `formatClubDayMonth` replaces the local formatter
+  this file kept.
 
-  It now renders CALENDAR DAYS ONLY, and is therefore pinned to `UTC` (CT-4,
-  #2870). A calendar day is encoded at UTC midnight, so a UTC-pinned formatter
-  over that encoding is provably the identity — the club's zone is not consulted
-  and could not change the answer. Before this it was pinned to `APP_TIME_ZONE`
-  and handed BOTH lodge nights and real instants, which is one concept wearing
-  another's clothes: identical output in New Zealand, and for a club west of
-  Greenwich a lodge night rendered a day early.
+  IT RENDERS CALENDAR DAYS ONLY, and the shape takes no zone (CT-4, #2870): the
+  day is encoded at UTC midnight and read back pinned to `UTC`, which is provably
+  the identity for every club. Before CT-4 the local formatter was pinned to
+  `APP_TIME_ZONE` and handed BOTH lodge nights and real instants, which is one
+  concept wearing another's clothes: identical output in New Zealand, and for a
+  club west of Greenwich a lodge night rendered a day early.
 
   Every real instant on this page is projected to the club's calendar day first,
   by `club.calendarDateOf(...)`, which is the one operation allowed to decide
   which day a moment falls on (INV-DATE-019).
 */
-const COMPACT_DAY_MONTH = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  day: "numeric",
-  month: "short",
-});
-
-function compactDayMonth(date: CalendarDate): string {
-  return COMPACT_DAY_MONTH.format(dateOnlyInstantOf(date));
-}
 
 function formatPromoBenefitSummary(promo: AvailablePromoCode) {
   if (promo.type === "PERCENTAGE") {
@@ -548,9 +537,13 @@ export default async function DashboardPage() {
           {nextStay ? (
             <>
               <div className="text-lg font-semibold">
-                {compactDayMonth(calendarDateOfDateOnlyInstant(nextStay.checkIn))}
+                {formatClubDayMonth(
+                  calendarDateOfDateOnlyInstant(nextStay.checkIn),
+                )}
                 {" — "}
-                {compactDayMonth(calendarDateOfDateOnlyInstant(nextStay.checkOut))}
+                {formatClubDayMonth(
+                  calendarDateOfDateOnlyInstant(nextStay.checkOut),
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {nextStay._count.guests} guest
@@ -632,7 +625,7 @@ export default async function DashboardPage() {
                     className="flex items-baseline gap-2 text-sm"
                   >
                     <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">
-                      {compactDayMonth(club.calendarDateOf(event.startsAt))}
+                      {formatClubDayMonth(club.calendarDateOf(event.startsAt))}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-foreground">
                       {event.title}
@@ -814,7 +807,7 @@ export default async function DashboardPage() {
                         {booking.draftExpiresAt && (
                           <span className="text-warning-11 ml-2">
                             Expires{" "}
-                            {compactDayMonth(
+                            {formatClubDayMonth(
                               club.calendarDateOf(booking.draftExpiresAt),
                             )}
                           </span>
