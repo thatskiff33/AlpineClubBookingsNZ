@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { APP_TIME_ZONE } from "@/config/operational";
-import { startOfCalendarMonth } from "@/lib/calendar-client";
 import {
   clubCalendarDateOf,
   clubToday,
@@ -10,6 +9,7 @@ import {
   formatClubMonthYear,
   requireCalendarDate,
   requireInstant,
+  startOfCalendarMonth,
   startOfClubDay,
 } from "@/lib/club-time";
 import { divergentClubZone } from "./helpers/club-time-zone";

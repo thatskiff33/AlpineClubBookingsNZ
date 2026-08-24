@@ -13,10 +13,7 @@ import type { ReactElement } from "react";
 
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
-import {
-  buildMonthGrid,
-  startOfCalendarMonth,
-} from "@/lib/calendar-client";
+import { buildMonthGrid } from "@/lib/calendar-client";
 import {
   clubToday,
   clubWallTimeOf,
@@ -26,6 +23,7 @@ import {
   requireCalendarDate,
   requireClubTimeZone,
   requireInstant,
+  startOfCalendarMonth,
   startOfClubDay,
   type ClubTimeZone,
 } from "@/lib/club-time";

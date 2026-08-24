@@ -15,7 +15,14 @@ import { bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { getAdminCalendarBookingDayRange } from "@/lib/admin-booking-calendar-ranges";
 import { useClubTime } from "@/components/club-time-provider";
-import { calendarDateParts, formatClubDate, requireCalendarDate } from "@/lib/club-time";
+import {
+  calendarDateFromParts,
+  calendarDateParts,
+  calendarDayOfWeek,
+  daysInCalendarMonth,
+  formatClubDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 interface CalendarBooking {
   id: string;
@@ -65,15 +72,18 @@ const ROW_BOTTOM_PADDING = 4; // breathing room below the deepest bar in a row
 // busy week never grows without bound.
 const MAX_LANES = 6;
 
+// Both facts are CALENDAR-DAY facts, so the kernel answers both and no `Date` is
+// built (CT-4, #2870). The spelling this replaces was host-local-midnight in and
+// host-local out — self-consistent, and therefore right — but it is the shape from
+// which the next author reaches for a UTC-midnight value and keeps `.getDay()`,
+// shifting the whole grid by a column for every viewer west of Greenwich.
+// `booking-calendar.tsx` carries the same note over the same change.
 function getMonthDays(year: number, month: number) {
-  // month is 0-indexed
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  // Get day of week (0=Sun..6=Sat), convert to Mon-based (0=Mon..6=Sun)
-  let startDow = firstDay.getDay() - 1;
-  if (startDow < 0) startDow = 6;
-  const daysInMonth = lastDay.getDate();
-  return { startDow, daysInMonth };
+  // `month` stays 0-based, matching `Date.getMonth()`; the kernel counts 1-12.
+  const weekday = calendarDayOfWeek(calendarDateFromParts(year, month + 1, 1));
+  // 0=Sun..6=Sat converted to Mon-based (0=Mon..6=Sun).
+  const startDow = weekday === 0 ? 6 : weekday - 1;
+  return { startDow, daysInMonth: daysInCalendarMonth(year, month + 1) };
 }
 
 const ENABLED_STATUSES_STORAGE_KEY = "admin-calendar-enabled-statuses";

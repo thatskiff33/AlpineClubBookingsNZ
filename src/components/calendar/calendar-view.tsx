@@ -5,13 +5,13 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useClubTime } from "@/components/club-time-provider";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
-import { addCalendarMonths, formatClubMonthYear } from "@/lib/club-time";
-import type { CalendarDate } from "@/lib/club-time";
 import {
-  groupEventsByDay,
-  monthGridRange,
+  addCalendarMonths,
+  formatClubMonthYear,
   startOfCalendarMonth,
-} from "@/lib/calendar-client";
+} from "@/lib/club-time";
+import type { CalendarDate } from "@/lib/club-time";
+import { groupEventsByDay, monthGridRange } from "@/lib/calendar-client";
 import { MonthCalendar } from "./month-calendar";
 import { EventDialog } from "./event-dialog";
 import { DayEventsDialog } from "./day-events-dialog";

@@ -1,7 +1,6 @@
 import {
   addCalendarDays,
-  calendarDateFromParts,
-  calendarDateParts,
+  calendarDayOfWeek,
   calendarMonthOf,
   clubCalendarDateOf,
   clubWallTimeOf,
@@ -12,12 +11,12 @@ import {
   instantForClubWallTime,
   parseCalendarDate,
   parseInstant,
+  startOfCalendarMonth,
   startOfClubDay,
   type CalendarDate,
   type ClubTimeZone,
   type Instant,
 } from "@/lib/club-time";
-import { calendarDayOfWeek } from "@/lib/calendar-recurrence";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 
 /**
@@ -67,18 +66,6 @@ const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function weekdayLabels(): string[] {
   return WEEKDAY_LABELS;
-}
-
-/**
- * The first day of the calendar month `date` falls in — the month anchor the
- * grid, the heading and the fetch window are all derived from.
- *
- * Another helper the kernel could reasonably own; reported to group F3 rather
- * than added to `src/lib/club-time/**` from this lane.
- */
-export function startOfCalendarMonth(date: CalendarDate): CalendarDate {
-  const { year, month } = calendarDateParts(date);
-  return calendarDateFromParts(year, month, 1);
 }
 
 /** Whether a grid cell belongs to the month being displayed. */

@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import type { RosterDayStatus } from "@/lib/roster-status";
 import {
+  addCalendarDays,
+  calendarDayOfWeek,
   formatClubDate,
   formatClubDayMonth,
   formatClubLongWeekdayDayMonth,
@@ -135,11 +137,14 @@ export function addDaysToDateKey(dateKey: string, days: number): string {
   return formatDateOnly(date);
 }
 
+// `calendarDayOfWeek` numbers Sunday 0 .. Saturday 6, so Monday-first is `+6 % 7`.
+// The kernel answers both halves from the `yyyy-MM-dd` text and builds no `Date`
+// at all, which is what removes the `getDay()`-instead-of-`getUTCDay()` slip the
+// block above spends a paragraph warning about (CT-4, #2870).
 export function getWeekStartDateKey(dateKey: string): string {
-  const date = parseDateKey(dateKey);
-  const mondayOffset = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - mondayOffset);
-  return formatDateOnly(date);
+  const day = requireCalendarDate(dateKey);
+  const mondayOffset = (calendarDayOfWeek(day) + 6) % 7;
+  return addCalendarDays(day, -mondayOffset);
 }
 
 export function buildWeekDateKeys(weekStart: string): string[] {
