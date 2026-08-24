@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
   editPolicy: vi.fn(),
   bookingFindUnique: vi.fn(),
   createMod: vi.fn(),
+  checkCapacity: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
@@ -91,6 +92,13 @@ vi.mock("@/lib/admin-permissions", async (importOriginal) => {
 vi.mock("@/lib/booking-edit-policy", () => ({
   getBookingEditPolicy: (...a: unknown[]) => mocks.editPolicy(...a),
 }));
+vi.mock("@/lib/capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/capacity")>();
+  return {
+    ...actual,
+    checkCapacityForGuestRanges: (...a: unknown[]) => mocks.checkCapacity(...a),
+  };
+});
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: (...a: unknown[]) => mocks.bookingFindUnique(...a) },
@@ -112,8 +120,11 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
 });
 
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
-import { buildPolicyExceptionApprovalHooks } from "@/lib/booking-exception-approval";
+import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import {
+  buildPolicyExceptionApprovalHooks,
+  proposalGuestToCreateInput,
+} from "@/lib/booking-exception-approval";
 import type {
   ModificationProposalSnapshot,
   ProposalParty,
@@ -223,6 +234,7 @@ beforeEach(() => {
     aggregateCapacityMode: "HOLD",
   });
   mocks.sendAlert.mockResolvedValue(undefined);
+  mocks.checkCapacity.mockResolvedValue({ available: true });
 });
 
 /** Drive the real route and hand back exactly what it froze. */
@@ -268,37 +280,94 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
     expect(proposed.checkOut).toBe(REQUESTED_CHECK_OUT);
   });
 
-  it("DOCUMENTS A DEFECT THIS LANE DID NOT FIX: the per-night expansion still projects", async () => {
+  it("expands the per-night footprint on that same frame, all the way down", async () => {
     /*
-      READ THIS BEFORE "FIXING" THE ASSERTION. It pins today's WRONG answer on
-      purpose, because the cause is outside CT-4's reach and pretending otherwise
-      would hide it.
+      THE DEFECT THIS ASSERTION USED TO PIN, AND WHAT CLOSED IT.
+
+      Group B left this `it` asserting `["2026-07-03", "2026-07-04",
+      "2026-07-05"]` — a party starting a night EARLIER than the stay — under a
+      long comment saying "a red here is the fix arriving, not a regression".
+      This is that red, resolved.
 
       A guest whose range the delta reset has no explicit night set, so the
       proposal expands their envelope with `envelopeNights` -> `getStayNights` ->
-      `normalizeBookingDate` in `src/lib/policies/pricing.ts`, which projects
-      every date through `APP_TIME_ZONE`. For a club behind Greenwich that is one
-      day early, so the officer reviews — and the engine capacity-checks, and the
-      executor builds — a party starting the night before the stay does.
+      `normalizeBookingDate` in `src/lib/policies/pricing.ts`, which projected
+      every date through `APP_TIME_ZONE` (mocked to `America/Denver` at the top of
+      this file). For a club behind Greenwich that is one day early, so the
+      officer reviewed — and `recheckCapacity` asserted beds for, and
+      `proposalGuestToCreateInput` executed — a party starting the night before
+      the stay did. It did not deadlock approval only because the freeze and the
+      replay both reached it and therefore stayed wrong together, which is the
+      one reason group B could leave it.
 
-      NOT fixed here, deliberately. `normalizeBookingDate` has 47 non-test call
-      sites across pricing, minimum-stay, booking requests and three Xero invoice
-      builders, it is fed values that are not all stored calendar days, and
-      reading a real timestamp in UTC would be the `INV-DATE-019` defect from the
-      other side. It is one helper for CT-6 (#2991) to retire, not a line for this
-      lane to flip. Crucially it does NOT deadlock approval the way the pair above
-      did: both the freeze and the replay reach it, so they still agree.
+      `normalizeBookingDate` now decodes the stored day in UTC
+      (`INV-DATE-010`: UTC midnight is the ENCODING of a calendar day, and no rule
+      may be derived from reading these values in another zone), so the nights are
+      the stored days: 4, 5 and 6 July for the requested `[04, 07)` envelope.
 
-      When that lands, this expectation becomes the stored days
-      (`2026-07-04`..`2026-07-06`) and this `it` should be folded back into the
-      one above. A red here is the fix arriving, not a regression.
+      This assertion is what keeps that closed. With the old projection restored
+      it goes back to naming 3 July, on any host, because the zone is mocked
+      rather than read from the machine.
     */
     const { proposed } = await freezeProposal();
     expect(proposed.guests[0].nights).toEqual([
-      "2026-07-03",
       "2026-07-04",
       "2026-07-05",
+      "2026-07-06",
     ]);
+  });
+
+  /*
+    THE THREE SURFACES THE OLD PROJECTION MOVED TOGETHER (CT-4, #2870, group F2).
+
+    Naming the frozen nights correctly is only a third of the job. The party the
+    officer reviewed is also the party `recheckCapacity` asserts beds for
+    (`INV-EXCEPT-016`, `INV-EXCEPT-017`) and the one
+    `proposalGuestToCreateInput` executes (`INV-EXCEPT-003`). All three read the
+    frozen night strings, so a projected freeze moved all three a night early at
+    once — and no hash comparison could see it, because they moved together.
+
+    These two assertions pin the other two surfaces to the SAME stored days, so
+    the agreement is proved rather than assumed. The club zone here is
+    `America/Denver`, mocked at the top of this file, so this says the same thing
+    on any developer machine and on CI.
+  */
+  it("asserts capacity over exactly the nights it froze", async () => {
+    const { base, proposed } = await freezeProposal();
+
+    const outcome = await approvalHooks().recheckCapacity?.(
+      snapshotOf(base, proposed),
+      {} as PrismaTransactionClient,
+    );
+    expect(outcome).toEqual({ ok: true });
+
+    const [lodgeId, checkIn, checkOut, ranges] = mocks.checkCapacity.mock.calls.at(
+      -1,
+    ) as [string, Date, Date, { nights: string[] }[]];
+
+    expect(lodgeId).toBe("lodge_1");
+    // Read in UTC, which is the only legal reading of a date-only value
+    // (INV-DATE-010). The window is half-open, so it ends the morning after the
+    // last night (INV-DATE-003).
+    expect(formatDateOnly(checkIn)).toBe(STORED_CHECK_IN);
+    expect(formatDateOnly(checkOut)).toBe(REQUESTED_CHECK_OUT);
+    expect(ranges).toEqual([
+      { nights: ["2026-07-04", "2026-07-05", "2026-07-06"] },
+    ]);
+  });
+
+  it("executes exactly the nights it froze", async () => {
+    const { proposed } = await freezeProposal();
+
+    const created = proposalGuestToCreateInput(proposed.guests[0]);
+
+    expect(created.nights).toEqual([
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+    ]);
+    expect(formatDateOnly(created.stayStart)).toBe(STORED_CHECK_IN);
+    expect(formatDateOnly(created.stayEnd)).toBe(REQUESTED_CHECK_OUT);
   });
 
   it("replays to the SAME hash, so the approval is not refused as drift", async () => {
