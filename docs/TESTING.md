@@ -366,6 +366,32 @@ generalised.
    UTC. `src/lib/__tests__/calendar-divergence-premise.test.ts` is the worked
    example, and it also shows how to prove the premise holds on each host shape
    rather than only the author's.
+
+   **The chooser's own guard has a test, and it needs a mocked environment zone
+   to have one.** `src/lib/__tests__/helpers/club-time-zone.test.ts` is the only
+   place that pins `APP_TIME_ZONE` through `vi.mock("@/config/operational")`, and
+   the reason is worth knowing before writing a similar guard: on a machine where
+   `TZ` is unset and the system zone is New Zealand, the host and `APP_TIME_ZONE`
+   resolve to the SAME zone, so the two halves of "differ from both rivals" are
+   the same assertion and dropping one changes nothing. Measured on #2870,
+   deleting the host half killed **0 of 124** across every importing suite. The
+   two rivals have to be made to disagree, and `APP_TIME_ZONE` is read once at
+   module load, so only a module mock moves it. Keep that mock in a file of its
+   own: group D's `club-zone-choice.ts` records that mocking that module inside a
+   COMPONENT suite changes what the file's other tests see, because `APP_LOCALE`
+   and `APP_CURRENCY` reach money and date formatting in the same render graph.
+
+   **A pin read at module load needs a re-imported graph, not `withTimeZone`.**
+   `withTimeZone` moves the process's zone for the duration of a call, which
+   catches arithmetic evaluated per call — but a module-level
+   `Intl.DateTimeFormat` is built once at import, so a wrong `timeZone` pin on one
+   survives it. `vi.resetModules()` plus a dynamic `import()` under a pinned `TZ`
+   re-evaluates `@/config/operational` and catches it; assert inside the block
+   that `APP_TIME_ZONE` really moved, or the test proves nothing. Both mechanisms
+   are used together in `calendar-client-club-time.test.ts` and
+   `calendar-recurrence.test.ts`, and a review measured what happens when only one
+   file has the second: the identical wrong pin killed 1 in the file that had it
+   and **0** in the file that did not.
 4. **Do not hand the clock back to the real calendar.** If your suite pins its
    own instant and wants to undo that, `vi.useRealTimers()` in an `afterEach` is
    safe — the root `beforeEach` re-freezes before the next test — but never rely
