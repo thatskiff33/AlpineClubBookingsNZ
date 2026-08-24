@@ -1,7 +1,6 @@
 import {
   Invoice,
   LineAmountTypes,
-  RequestEmpty,
   type XeroClient,
 } from "xero-node";
 import logger from "@/lib/logger";
@@ -21,6 +20,10 @@ import {
   startXeroSyncOperation,
 } from "@/lib/xero-sync";
 import { XERO_OUTBOX_SUBSCRIPTION_INVOICE_TYPE } from "@/lib/xero-operation-outbox-payload";
+import {
+  resolveXeroInvoiceEmailPolicy,
+  sendXeroInvoiceEmail,
+} from "@/lib/xero-invoice-email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
 
 /**
@@ -467,21 +470,57 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   });
 
   const emailIdempotencyKey = buildXeroIdempotencyKey("membership-charge", charge.id, "invoice-email", invoiceId, "v1");
-  try {
-    const response = await callXeroApi(
-      () => xero.accountingApi.emailInvoice(tenantId, invoiceId!, new RequestEmpty(), emailIdempotencyKey),
-      {
-        operation: "emailInvoice", resourceType: "INVOICE",
-        workflow: "createXeroMembershipSubscriptionInvoice",
-        context: `email subscription invoice ${charge.id}`,
+  /*
+    Environment-safety boundary (#3035, ENV-SAFETY 2; epic #2986).
+    INV-CONFIG-004.
+
+    THE CHARGE IS DELIBERATELY LEFT AT `INVOICE_CREATED` and its
+    `emailAttemptCount` is not touched. `EMAIL_FAILED` would be a lie in both
+    non-allow cases — nothing was attempted, so nothing failed — and this issue
+    forbids moving business state as though a provider call had failed. It is also
+    the more useful state: the admin subscription-billing panel already offers
+    Retry on an `INVOICE_CREATED` charge, so once the role is declared an operator
+    can re-drive it, and the per-invoice idempotency key makes that a no-op rather
+    than a second email if Xero has in fact already sent it.
+  */
+  const emailPolicy = await resolveXeroInvoiceEmailPolicy();
+  if (emailPolicy.kind === "withhold") {
+    const context = { chargeId: charge.id, invoiceId };
+    if (emailPolicy.error) {
+      logger.error(context, emailPolicy.logMessage);
+    } else {
+      logger.info(context, emailPolicy.logMessage);
+    }
+    await completeXeroSyncOperation(input.syncOperationId, {
+      status: emailPolicy.error ? "PARTIAL" : "SUCCEEDED",
+      responsePayload: {
+        invoice: providerInvoice, adopted, email: null,
+        emailError: emailPolicy.error ? emailPolicy.error.message : null,
+        // A THIRD reason distinct from a provider failure and from the club's own
+        // choice: this installation is a confirmed copy.
+        invoiceEmailWithheldForEnvironment: emailPolicy.suppressedForNonProduction,
       },
-    );
+      xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
+      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+    });
+    return invoiceId;
+  }
+  try {
+    const response = await sendXeroInvoiceEmail({
+      clearance: emailPolicy.clearance,
+      xero,
+      tenantId,
+      invoiceId: invoiceId!,
+      idempotencyKey: emailIdempotencyKey,
+      workflow: "createXeroMembershipSubscriptionInvoice",
+      context: `email subscription invoice ${charge.id}`,
+    });
     await prisma.membershipSubscriptionCharge.update({
       where: { id: charge.id },
       data: { status: "EMAILED", emailAttemptCount: { increment: 1 }, emailLastAttemptAt: new Date(), emailSentAt: new Date(), lastErrorCode: null, lastErrorMessage: null },
     });
     await completeXeroSyncOperation(input.syncOperationId, {
-      responsePayload: { invoice: providerInvoice, adopted, email: response.body ?? null },
+      responsePayload: { invoice: providerInvoice, adopted, email: response.body },
       xeroObjectType: "INVOICE", xeroObjectId: invoiceId, xeroObjectNumber: invoiceNumber,
       xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
     });

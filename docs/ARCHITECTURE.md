@@ -3214,3 +3214,29 @@ The environment contract is documented in `.env.example` and
 `.env.staging.example`. Use test or demo service credentials outside production.
 Do not commit real `.env`, database dumps, generated reports, logs, or build
 artifacts.
+
+There is no general "installation settings" model in this schema, and that is a
+deliberate shape rather than an omission: configuration lives in one
+domain-scoped singleton per domain — a model whose `@id` scalar defaults to the
+literal `"default"`, with `updatedByMemberId` and timestamps, and a
+`src/lib/<domain>-settings.ts` reader beside it. `ClubModuleSettings`,
+`ClubIdentitySettings`, `LoginSecuritySetting`, `PublicContentSettings`,
+`MembershipLockoutSettings` and the rest are all that pattern, and
+`src/lib/config-transfer/singleton-models.ts` enumerates them mechanically from
+the schema so a new one cannot join config transfer's blind spot unnoticed. Add a
+new configuration domain as a new singleton of that shape; do not widen an
+existing one whose permission area, nullability contract or fallback chain does
+not match what you are adding.
+
+**The installation's club timezone** is one such singleton, `ClubTimeSettings`,
+and it is the sole civil-time authority for the product (CT-1 #2989,
+`INV-CONFIG-002`). `src/lib/club-time-zone.ts` holds the IANA validation and the
+precedence rule; `src/lib/club-time-zone-settings.ts` is the server-owned reader
+every business caller goes through; `/admin/club-time` is the Full-Admin
+maintenance surface. `TZ` / `NEXT_PUBLIC_TZ` seed it once, at the first boot after
+an upgrade, through `clubTimeZoneSelfHealStep` — which is the one self-heal step
+registered as **not** requiring a primary `config/club.json`, because the value it
+copies comes from the environment rather than from that file. The
+`APP_TIME_ZONE` constant in `src/config/operational.ts` is transitional: epic
+#2988's later children migrate the display call sites off it and CT-6 retires
+it.

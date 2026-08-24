@@ -225,6 +225,16 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/chores/[id]": "lodge",
   "/api/admin/club-contact": "content",
   "/api/admin/club-identity": "content",
+  // CT-1 (#2989): the club-timezone maintenance API. `support` is the area — it
+  // is installation configuration, alongside /api/admin/modules and
+  // /api/admin/config-transfer — but the AREA is not the gate here. Both verbs
+  // pass `requireAdmin({ permission: false })`, i.e. Full Admin only, the same
+  // shape /api/admin/backups/restore carries. This row records what the RESOLVER
+  // would say, so if that explicit override is ever removed the gate that
+  // silently springs into place (`support:view` on the read, `support:edit` on
+  // the write — both a WIDENING against #2989's decision) is at least the one
+  // adjudicated here.
+  "/api/admin/club-time-zone": "support",
   // #2998: club message board moderation. `membership`, beside the notices
   // routes -- and what each of these handlers already enforces for itself
   // via requireAdmin({ area: "membership" }).
@@ -269,6 +279,10 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   "/api/admin/email-templates": "support",
   "/api/admin/email-templates/preview": "support",
   "/api/admin/email-templates/reset": "support",
+  // Environment safety (ENV-SAFETY 1 #3034). `support` for route-map
+  // resolution only; BOTH verbs enforce Full Admin in the route itself with
+  // `requireAdmin({ permission: false })`, exactly like club-time-zone above.
+  "/api/admin/environment-safety": "support",
   "/api/admin/family-groups": "membership",
   "/api/admin/family-groups/[id]": "membership",
   "/api/admin/family-groups/[id]/login-holder": "membership",

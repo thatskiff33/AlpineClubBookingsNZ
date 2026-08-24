@@ -523,6 +523,40 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
     ),
   ),
   entry(
+    "/admin/club-time",
+    help(
+      "Club Time Zone",
+      "Club Time Zone records the single time zone this club runs on — the place whose clocks and daylight-saving rules the site keeps. It is the setting the whole product is moving onto; for now the times the site shows are still worked out from the TZ setting this deployment starts with, so keep the two the same.",
+      [
+        "Check the time zone here before launch, and again if the club ever moves.",
+        "Choose the named place the club keeps time by, such as Pacific/Auckland, rather than an abbreviation or a fixed offset.",
+        "Read the consequences and tick the acknowledgement before saving; only a Full Admin can change it, and every change is recorded in the audit log with the old and new zone.",
+      ],
+      [
+        {
+          name: "Club time zone",
+          description:
+            "The named place the club keeps time by, stored as an IANA identifier such as Pacific/Auckland. Daylight saving is handled for you, because the name carries the rules for that place.",
+        },
+        {
+          name: "Not the server's time zone",
+          description:
+            "This is a property of the club, not of the machine the site runs on and not of whoever is looking. A member reading the site from another country sees club time, not their own.",
+        },
+        {
+          name: "Last changed",
+          description:
+            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by npm run setup at the command line.",
+        },
+      ],
+      [
+        "Changing the time zone does not move anything already recorded. Dates and times in the database stay exactly as they are. What changes is which zone times are written in from then on, and the club-local hour overnight jobs run at — following the note above about TZ while both settings exist.",
+        "Lodge nights keep the calendar dates they already have. A booking for the 14th is still a booking for the 14th.",
+        "Abbreviations such as NZT or EST and fixed offsets such as +12:00 are refused. They name no place, so they carry no daylight-saving rules and would silently drift an hour twice a year.",
+      ],
+    ),
+  ),
+  entry(
     "/admin/access-roles",
     help(
       "Access roles and admin areas",

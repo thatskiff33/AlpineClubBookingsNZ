@@ -21,6 +21,28 @@ rules:
       `import type`, which is erased at compile time and is not matched by this
       rule. See docs/invariants/operations.md#inv-ops-013.
     patterns:
+      # The banned-module alternation below is a FIXED LIST, and it is the whole
+      # of the rule: a module that is not spelled in it is not covered, however
+      # server-only its own docblock says it is. `club-time-zone-env` (#2989) is
+      # in it because it reads `process.env.TZ` and is deliberately not marked
+      # `server-only` — two of its callers are `tsx` entrypoints that such an
+      # import would abort. Next inlines `NEXT_PUBLIC_*`, so importing it from a
+      # client component answers from the BUILD-TIME `NEXT_PUBLIC_TZ` instead of
+      # from the running server: the split-brain `INV-CONFIG-002` forbids. Its
+      # pure sibling `club-time-zone` is NOT in the list, on purpose — the admin
+      # panel needs its zone list. `environment-role-declaration` and
+      # `environment-role` (#3034) join it on the same grounds: neither is
+      # `server-only` (the `tsx` `npm run setup` entrypoint reaches the resolver
+      # through `setup-readiness-db.ts`), the declaration module reads
+      # `process.env.APP_ENVIRONMENT_ROLE`, and a non-public variable inlines as
+      # `undefined` in a browser — so a client import would read "nothing has
+      # declared this installation" while the server reads `production`, and what
+      # is keyed on that answer is whether real members get emailed
+      # (INV-CONFIG-003). Note the `$` anchor: `environment-role` cannot match
+      # `environment-role-declaration`, so both spellings are needed.
+      # Keep this alternation and `FORBIDDEN_MODULES`
+      # in `src/lib/__tests__/client-server-boundary-census.test.ts` in step.
+      #
       # The `"use client"` directive must be the module's first statement for
       # Next.js to honour it, so anchoring on it here is the same condition the
       # bundler applies.
@@ -45,7 +67,7 @@ rules:
               - metavariable-regex:
                   metavariable: $MOD
                   regex: >-
-                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
+                    ^(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)$
           # DYNAMIC forms. `await import("@/lib/prisma")` and
           # `require("@/lib/auth")` are not statements the static regex above
           # can see, and both put the module in the client bundle — `import()`
@@ -62,7 +84,7 @@ rules:
                   # quotes, so the quotes are optional-matched here rather than
                   # stripped.
                   regex: >-
-                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
+                    ^["']?(?:server-only|next/headers|(?:@/lib|\.{1,2}(?:/\.\.)*(?:/lib)?)/(?:prisma|auth|audit|session|email|xero|stripe|env|club-time-zone-env|environment-role-declaration|environment-role)|node:.+|(?:assert|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|domain|events|fs|http|http2|https|inspector|module|net|os|path|perf_hooks|process|punycode|querystring|readline|repl|sqlite|stream|string_decoder|sys|timers|tls|trace_events|tty|url|util|v8|vm|wasi|worker_threads|zlib)(?:/.*)?)["']?$
     paths:
       exclude:
         # Fixtures for this rule are deliberate violations. Anchored with a

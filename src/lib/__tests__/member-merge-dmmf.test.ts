@@ -298,6 +298,7 @@ model AttributeFirstThing {
     "CalendarEvent.createdById",
     "CalendarEventSeries.createdById",
     "ClubIdentitySettings.updatedByMemberId",
+    "ClubTimeSettings.updatedByMemberId",
     "ClubModuleSettings.updatedByMemberId",
     "EmailMessageSetting.updatedByMemberId",
     "EmailTemplateOverride.updatedByMemberId",

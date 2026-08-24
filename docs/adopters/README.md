@@ -231,6 +231,14 @@ procedure.
   operating the Xero member-grouping cutover.
 - [Backups](../guides/backups.md) — S3-backed PostgreSQL backups, configured
   in-app, run on demand or nightly, with a scripted restore drill.
+- [Club Time Zone](../guides/club-time.md) — the one time zone the club runs on,
+  recorded in-app rather than taken from the server's clock. Full Administrator
+  only, confirmed and audited, and it rewrites nothing already recorded.
+- [Environment Safety](../guides/environment-role.md) — whether this
+  installation is the club's live site or a copy of it, declared explicitly and
+  never inferred. What "not configured" means, why a copy of the live database is
+  the case that matters, and what an existing live site must add before it can be
+  upgraded.
 
 ## Releases
 

@@ -1,0 +1,175 @@
+name: Epic branch sync
+
+# Keeps every live `epic/**` integration branch current with `main` (#3002).
+#
+# WHY THIS EXISTS. Since #3002 an epic's children merge into
+# `epic/<issue>-<slug>` and the epic reaches `main` as one merge, so an
+# integration branch can live for weeks while other lanes and two forks keep
+# merging into `main`. A branch that only reconciles at the end reconciles once,
+# badly — and this repository has twice shipped a WRONG value out of a
+# hand-resolved long-lived conflict: #2979's file-size ceiling, and the
+# `CHANGELOG.md` churn that #2452 ended by replacing a shared list with per-pull-
+# request fragments. Small, frequent, REVIEWED merges are the mitigation.
+#
+# WHY IT OPENS A PULL REQUEST RATHER THAN PUSHING. The first draft of this
+# workflow merged locally and pushed to the epic branch, and that would have
+# failed on its first run: `epic/**` carries the same nine required status checks
+# as `main`, required checks gate pushes as well as merges, a freshly-created
+# merge commit has no checks on it yet, and `github-actions[bot]` is not an
+# administrator so `enforce_admins: false` does not rescue it. Opening a pull
+# request from `main` into the epic branch is both the thing that works and the
+# better design: the sync itself gets the full nine checks before it lands, and a
+# conflict shows up as an ordinary un-mergeable pull request instead of something
+# this workflow has to resolve.
+#
+# It never resolves a conflict itself, never force-pushes, and never merges in
+# the `epic -> main` direction. Auto-merge means a clean sync needs no human at
+# all; a conflicted one waits for one, which is correct.
+
+on:
+  schedule:
+    # 06:20 UTC daily — after the nightly jobs, before the working day in NZ.
+    - cron: "20 6 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "A single epic/** branch to sync (blank = all of them)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: epic-branch-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Open a main -> epic sync pull request per epic branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Open or refresh a sync pull request for each epic branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINGLE_BRANCH: ${{ inputs.branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          git fetch origin --prune
+
+          if [ -n "${SINGLE_BRANCH}" ]; then
+            branches="${SINGLE_BRANCH}"
+          else
+            branches="$(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/epic/*' \
+              | sed 's|^origin/||')"
+          fi
+
+          if [ -z "${branches}" ]; then
+            echo "No epic/** branches exist. Nothing to sync."
+            exit 0
+          fi
+
+          needs_a_human=""
+
+          for branch in ${branches}; do
+            echo "::group::${branch}"
+
+            if git merge-base --is-ancestor "origin/main" "origin/${branch}"; then
+              echo "${branch} already contains origin/main. Nothing to do."
+              echo "::endgroup::"
+              continue
+            fi
+
+            # One long-lived sync pull request per epic branch: reuse it rather
+            # than opening a new one every day.
+            existing="$(gh pr list --base "${branch}" --head main --state open \
+              --json number --jq '.[0].number // empty')"
+
+            if [ -z "${existing}" ]; then
+              # `gh pr create` PRINTS THE NEW PULL REQUEST'S URL and has no
+              # --json/--jq flags — it never has. The first draft of this
+              # workflow asked it for `--json number --jq .number`, which is
+              # `unknown flag: --json` and an exit 1 during flag parsing, before
+              # any network call: no pull request was created, the `||` fallback
+              # then found none either, and the job failed claiming a sync
+              # failure. Measured against gh 2.96.0.
+              #
+              # STDERR IS DELIBERATELY NOT DISCARDED. The same draft ended the
+              # create with `2>/dev/null`, which swallowed the single line that
+              # explained all of the above — the defect was not merely present,
+              # it was self-obscuring. A scheduled job nobody watches has to say
+              # why it failed in the log, or the log is worth nothing.
+              created_output="$(gh pr create \
+                --base "${branch}" \
+                --head main \
+                --title "Sync \`main\` into \`${branch}\`" \
+                --body "$(printf '%s\n' \
+                  "Automated daily sync of \`main\` into this epic's integration branch (#3002)." \
+                  "" \
+                  "It exists so the eventual \`${branch}\` → \`main\` merge is a series of small reconciles rather than one large one. This repository has twice shipped a **wrong value** out of a hand-resolved long-lived conflict — #2979's file-size ceiling, and the \`CHANGELOG.md\` churn #2452 ended — so the cost of letting this sit is not merely inconvenience." \
+                  "" \
+                  "**If it is green, it merges itself.** Auto-merge is armed." \
+                  "" \
+                  "**If it conflicts,** resolve it on \`${branch}\` by hand: \`git merge origin/main\`, resolve, commit, push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong." \
+                  "" \
+                  "Run: ${RUN_URL}")")" || created_output=""
+
+              created_url="$(printf '%s\n' "${created_output}" \
+                | grep -Eo 'https://[^[:space:]]+' | tail -n 1)" || created_url=""
+
+              if [ -n "${created_url}" ]; then
+                echo "${branch}: opened ${created_url}"
+                existing="$(gh pr view "${created_url}" --json number --jq .number)" || existing=""
+              fi
+
+              if [ -z "${existing}" ]; then
+                # Reached when the create failed OR when its output could not be
+                # read as a URL. Both are recoverable if the pull request exists
+                # anyway — another run of this job racing this one, or one opened
+                # by hand — so look it up rather than giving up on the branch.
+                existing="$(gh pr list --base "${branch}" --head main --state open \
+                  --json number --jq '.[0].number // empty')" || existing=""
+              fi
+            fi
+
+            if [ -z "${existing}" ]; then
+              echo "${branch}: could not open or find a sync pull request."
+              needs_a_human="${needs_a_human} ${branch}(no-pr)"
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Arm auto-merge so a clean sync needs nobody. A merge commit, never a
+            # squash: the epic branch must keep main's real history or the final
+            # epic -> main merge re-resolves everything.
+            # stdout only is discarded, never stderr — the same reason the create
+            # above keeps its own. "Could not be armed" is usually "already is",
+            # but it is equally what a repository with auto-merge disabled looks
+            # like, and only gh's own message tells the two apart.
+            gh pr merge "${existing}" --auto --merge >/dev/null \
+              || echo "${branch}: auto-merge could not be armed on #${existing} (it may already be)."
+
+            state="$(gh pr view "${existing}" --json mergeable --jq .mergeable || echo UNKNOWN)"
+            echo "${branch}: sync pull request #${existing}, mergeable=${state}"
+
+            if [ "${state}" = "CONFLICTING" ]; then
+              needs_a_human="${needs_a_human} ${branch}(#${existing})"
+            fi
+
+            echo "::endgroup::"
+          done
+
+          if [ -n "${needs_a_human}" ]; then
+            echo "::error::These epic branches cannot be synced automatically and need a hand-resolve:${needs_a_human}"
+            exit 1
+          fi
+
+          echo "All epic branches are in step with main, or have a green sync pull request in flight."

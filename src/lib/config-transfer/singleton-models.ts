@@ -109,6 +109,31 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "The photo-retention window and photo/contact toggles are equally an operational " +
     "posture; a fresh import keeps the target's own settings, and a target with none " +
     "stays fail-closed (anonymous OFF by default) — instance-local",
+  ClubTimeSettings:
+    "the installation's ONE club timezone (CT-1, #2989): the IANA identifier that " +
+    "is this club's sole civil-time authority. It does not travel for the same " +
+    "reason it is Full-Admin-only, confirmation-gated and audited in the first " +
+    "place — a bundle apply is none of those things, so importing it would move " +
+    "every displayed time and every club-local scheduled job on the target club " +
+    "with no acknowledgement of the consequences and no before/after audit row " +
+    "naming who did it. A fresh import keeps the target's own configured zone, and " +
+    "a target that has none keeps resolving the zone it is already effectively " +
+    "using (INV-CONFIG-002) — instance-local",
+  EnvironmentSafetySettings:
+    "the safer environment override (ENV-SAFETY 1, #3034; epic #2986): whether " +
+    "THIS installation has been forced to behave as a copy rather than as the " +
+    "club's live site. It describes the installation and never portable club " +
+    "policy, so it is instance-local by definition — and config transfer is " +
+    "precisely the path by which a bundle exported from a staging copy reaches " +
+    "the live site, where importing it is harmful in BOTH directions: the " +
+    "override ON would silently suppress a target club's live member email, and " +
+    "OFF would silently strip a copy's protection while it holds real members' " +
+    "real addresses. Either way it would bypass the Full-Admin server-side " +
+    "confirmation and the ENVIRONMENT_SAFETY_OVERRIDE_UPDATED audit row the " +
+    "admin route enforces — the same ground ClubTimeSettings is excluded on, " +
+    "because a bundle apply is none of those things. A fresh import keeps the " +
+    "target's own override, and a target with none keeps resolving from its own " +
+    "deployment declaration (INV-CONFIG-003) — instance-local",
   ClubPostSettings:
     "club message board retention (#2999) carries retentionDays, the window " +
     "after which a nightly job PERMANENTLY DELETES member posts. Like " +

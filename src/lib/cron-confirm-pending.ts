@@ -1340,12 +1340,12 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               lodgeId: resolution.booking.lodgeId ?? null,
             });
             delivered = emailOutcome.status === "sent";
-            // #2258: the switch can be flipped between the pre-mint gate and
-            // this send. The unreachable token is still revoked below, but a
-            // DELIBERATE withhold must not be reported as a retryable delivery
-            // failure — nothing changes until an admin clears the switch. A
-            // fail-closed withhold (the setting could not be READ) is the
-            // opposite: a transient fault, so it keeps retry semantics.
+            // #2258: the switch can be flipped between the pre-mint gate and this
+            // send. The token is revoked below either way, but a DELIBERATE
+            // withhold must not be reported as a retryable delivery failure, while
+            // a fail-closed one (the setting could not be READ) is transient and
+            // keeps retry semantics. The else-branch names NO cause: it said
+            // "(suppressed recipient)", false for an environment withhold (#3035).
             withheld =
               emailOutcome.status === "withheld_for_booking" &&
               emailOutcome.reason === "booking_no_emails";
@@ -1358,7 +1358,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
                 },
                 withheld
                   ? "Split-booking guest payment link email withheld by the booking's email gate; revoking the link"
-                  : "Split-booking guest payment link email not delivered (suppressed recipient); revoking the link so the next settlement run re-mints"
+                  : "Split-booking guest payment link email not delivered; revoking the link so the next settlement run re-mints. emailStatus says why"
               );
             }
           } catch (emailErr) {

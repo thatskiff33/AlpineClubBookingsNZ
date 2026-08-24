@@ -251,7 +251,7 @@ sites that passed no category** when #2581 opened: 69 through `logAudit`, 11 thr
 `createStructuredAuditLog`. Those same 82 were still uncategorised on `main`
 immediately before this change, out of **426** write sites in total.
 
-**All 82 have now been classified at the source.** The census reads **460 write sites and
+**All 82 have now been classified at the source.** The census reads **462 write sites and
 zero uncategorised**, so no *new* audit row is born invisible to these five entries. What
 each site was given is recorded site by site in `APPLIED_AUDIT_CATEGORIES`
 (`scripts/audit/audit-writer-census-manifest.ts`), and the contract test compares that
@@ -283,7 +283,7 @@ What the census still uniquely catches is the writer the compiler cannot see —
 reverted.
 
 **Scope the two compile-time and runtime layers honestly**: they cover writes that go
-through `src/lib/audit.ts`, which is every one of the 460 sites in the tree. A write that
+through `src/lib/audit.ts`, which is every one of the 462 sites in the tree. A write that
 never reaches the helper — hand-built Prisma, raw SQL, a migration — is outside them by
 construction, which is what the census is for, and the census is a heuristic AST walk
 rather than a proof.

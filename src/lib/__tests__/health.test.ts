@@ -290,12 +290,14 @@ describe("GET /api/admin/runtime-status", () => {
     const { response, data } = await callRuntimeStatusEndpoint({
       APP_RUNTIME_ROLE: "cron-leader",
       CRON_ENABLED: "true",
+      APP_ENVIRONMENT_ROLE: "production",
     });
 
     expect(response.status).toBe(200);
     expect(data).toEqual({
       cronEnabled: true,
       role: "cron-leader",
+      environmentRole: "production",
     });
   });
 });
@@ -340,6 +342,7 @@ describe("GET /api/deploy/runtime-status", () => {
         APP_RUNTIME_ROLE: "web-green",
         CRON_ENABLED: "false",
         CRON_SECRET: "deploy-secret",
+        APP_ENVIRONMENT_ROLE: "production",
       },
       headers: { "x-cron-secret": "deploy-secret" },
     });
@@ -348,6 +351,70 @@ describe("GET /api/deploy/runtime-status", () => {
     expect(data).toEqual({
       cronEnabled: false,
       role: "web-green",
+      environmentRole: "production",
     });
+  });
+
+  /*
+    THE CONTAINER'S OWN SELF-REPORT OF THE DECLARATION (ENV-SAFETY 1, #3034; epic
+    #2986; INV-CONFIG-003), which is what makes the production deploy able to
+    check what the container ACTUALLY GOT rather than what a file said.
+
+    The step-3 preflight validates `.env`. The containers receive whatever Docker
+    Compose resolved, and Compose prefers a value exported in the invoking shell
+    over the env file and takes the LAST duplicate line rather than the first — so
+    a first-match file check can pass while the container runs with the other
+    value. `assert_runtime_identity` in
+    `scripts/run-production-blue-green-deploy.sh` therefore asserts THIS field, at
+    step 14, with the old colour still serving.
+
+    It is the DECLARATION KIND and not the effective role, and that distinction is
+    the reason it is safe to assert at all: a correctly declared production
+    installation whose administrator has switched the safer override on
+    legitimately RESOLVES non-production, and asserting the resolved role would
+    refuse that legitimate release.
+  */
+  it("reports the DECLARATION this process parsed, with no database read", async () => {
+    /*
+      The prisma double in this file has no `environmentSafetySettings` delegate
+      at all, so anything that reached for the resolver rather than the pure
+      parser would throw here rather than answer. That is the assertion: this
+      field comes from `readEnvironmentRoleDeclaration()`, which is why it is safe
+      on a health endpoint.
+    */
+    const { data } = await callDeployRuntimeStatusEndpoint({
+      envOverrides: {
+        APP_RUNTIME_ROLE: "web-blue",
+        CRON_SECRET: "deploy-secret",
+        APP_ENVIRONMENT_ROLE: "non-production",
+      },
+      headers: { "x-cron-secret": "deploy-secret" },
+    });
+
+    expect(data.environmentRole).toBe("non-production");
+  });
+
+  it("distinguishes an undeclared container from one holding a refused value", async () => {
+    const absent = await callDeployRuntimeStatusEndpoint({
+      envOverrides: {
+        CRON_SECRET: "deploy-secret",
+        APP_ENVIRONMENT_ROLE: undefined,
+      },
+      headers: { "x-cron-secret": "deploy-secret" },
+    });
+    expect(absent.data.environmentRole).toBe("absent");
+
+    const refused = await callDeployRuntimeStatusEndpoint({
+      envOverrides: {
+        CRON_SECRET: "deploy-secret",
+        APP_ENVIRONMENT_ROLE: "staging",
+      },
+      headers: { "x-cron-secret": "deploy-secret" },
+    });
+    expect(refused.data.environmentRole).toBe("invalid");
+    // The four-value enum and NOT the refused value itself. The operator surfaces
+    // name the typo, because somebody has to fix it; a deploy-verification
+    // endpoint has no use for it and does not repeat deployment strings back.
+    expect(JSON.stringify(refused.data)).not.toContain("staging");
   });
 });

@@ -6,8 +6,10 @@
  * reload mid-flow at the right step by persisting a small cursor here — ONE row
  * per wizard id ("xero" here; "stripe"/"google" later). This is deliberately NOT
  * the setup-readiness progress store (SETUP_STEP_IDS in setup-readiness.ts):
- * that tracks 15 fixed checklist steps with complete/skip flags and has no
- * per-wizard cursor.
+ * that tracks the fixed first-install checklist steps with complete/skip flags and
+ * has no per-wizard cursor. (It used to say "15 steps"; the count is left out on
+ * purpose now — it was already wrong by two when #3034 added an eighteenth, and a
+ * number in a comment nobody updates is worse than no number.)
  *
  * IMPORTANT: the persisted `completedStepIds` are ADVISORY (an acknowledgement /
  * resume record). Whether a step is actually verified is always RE-DERIVED from

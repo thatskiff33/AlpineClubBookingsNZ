@@ -83,6 +83,23 @@ describe("contextual help registry", () => {
     ]);
   });
 
+  it("explains the club time zone, and that it is not the server's", () => {
+    // CT-1 (#2989). The three things an operator gets wrong about this setting
+    // are all in the help rather than only in the panel: what it is, that it is
+    // not the machine's timezone, and that changing it moves nothing already
+    // recorded.
+    const help = getContextualHelp("/admin/club-time", "admin");
+
+    expect(help.title).toBe("Club Time Zone");
+    expect(help.fields?.map((field) => field.name)).toEqual(
+      expect.arrayContaining(["Club time zone", "Not the server's time zone"]),
+    );
+    const notes = help.notes?.join(" ") ?? "";
+    expect(notes).toContain("does not move anything already recorded");
+    expect(notes).toContain("keep the calendar dates they already have");
+    expect(notes).toContain("Abbreviations such as NZT");
+  });
+
   it("explains membership-type Xero rule modes in context", () => {
     const help = getContextualHelp("/admin/membership-types", "admin");
 

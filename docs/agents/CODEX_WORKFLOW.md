@@ -92,6 +92,33 @@ not clash. The orchestrator must inspect open work and coordinate before
 claiming a lane. A small in-flight edit may stay with the orchestrator, but
 this does not remove the adversarial-review requirement for gated work.
 
+## `bash` on Windows is WSL, and WSL git cannot open a worktree on `/mnt/c`
+
+A generalisation of #2886, and it bites a whole class of gate rather than one
+suite, so it is worth knowing before you diagnose it a second time.
+
+Every lane here works in a **git worktree**, whose `.git` is a FILE containing
+`gitdir: C:/Users/…`. When a shell script shells out to `git`, and that script is
+run through the PowerShell tool, `bash` resolves to **WSL** — which reads that
+line as a POSIX path relative to its own cwd, does not find it, and reports
+`fatal: not a git repository`. WSL git reads a plain (non-worktree) checkout on
+`/mnt/c` perfectly well, which is exactly why this looks intermittent: it depends
+on whether you happen to be in a worktree.
+
+Two consequences:
+
+- **A bash gate that shells out to `git` must not fail closed on a developer
+  machine.** `scripts/check-migration-safety-coverage.sh`'s same-release check is
+  the worked example: it distinguishes "git cannot see a work tree here" from
+  "the base ref is unresolvable", **skips with a loud explanation** in the first
+  case on a developer machine, and **fails** in the second, and in either case
+  fails when `CI` is set. A gate that hard-failed here would be red on every
+  local run and would train its reader to ignore it.
+- **Run such a script through the Bash tool, not the PowerShell tool.** The Bash
+  tool is Git Bash, which reads the worktree correctly; PowerShell's `bash` is
+  WSL and will skip. If a gate reports SKIPPED locally and you need its real
+  answer, that is the reason and that is the fix.
+
 ## Windows worktree runtime and dependency preflight
 
 Run this before delegating validation in every new Windows worktree. The

@@ -1798,6 +1798,97 @@ describe("invariant baseline resolution and loading", () => {
     ).toThrow("PUSH_BASE_SHA is required");
   });
 
+  it("uses the exact before SHA for a push to an epic/** integration branch", () => {
+    // #3002 put `push: branches: [epic/**]` on ci.yml, which made this path
+    // reachable for the first time. Before the widening this threw, so `verify`
+    // — a required check — died about twenty seconds in on EVERY epic-branch
+    // push, every time.
+    const repoRoot = initGitRepo();
+    const before = commitFiles(repoRoot, "before", { "README.md": "before\n" });
+    git(repoRoot, "checkout", "-b", "epic/2988-club-time");
+    commitFiles(repoRoot, "a child merged", { "README.md": "after\n" });
+
+    expect(
+      resolveInvariantBaselineRef(
+        repoRoot,
+        checkerEnv({
+          GITHUB_EVENT_NAME: "push",
+          GITHUB_REF: "refs/heads/epic/2988-club-time",
+          GITHUB_REF_NAME: "epic/2988-club-time",
+          PUSH_BASE_SHA: before,
+        }),
+      ),
+    ).toBe(before);
+  });
+
+  it("takes the branch point when the push CREATED the epic branch", () => {
+    // A ref-creating push carries an all-zero `before`, and epic branches are
+    // created routinely now. Resolving that as a commit fails, so the branch
+    // point against main is used instead — which is exactly the set of ids the
+    // branch is answerable for retaining. It must NOT be HEAD^1, which can
+    // postdate a deletion made earlier in the same push.
+    const repoRoot = initGitRepo();
+    const branchPoint = commitFiles(repoRoot, "main tip", { "README.md": "main\n" });
+    git(repoRoot, "checkout", "-b", "epic/2988-club-time");
+    const firstChild = commitFiles(repoRoot, "child one", { "child.txt": "one\n" });
+    commitFiles(repoRoot, "child two", { "child.txt": "two\n" });
+
+    const epicPush = {
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REF: "refs/heads/epic/2988-club-time",
+      GITHUB_REF_NAME: "epic/2988-club-time",
+    };
+
+    const fromAllZero = resolveInvariantBaselineRef(
+      repoRoot,
+      checkerEnv({ ...epicPush, PUSH_BASE_SHA: "0".repeat(40) }),
+    );
+    expect(fromAllZero).toBe(branchPoint);
+    expect(fromAllZero).not.toBe(firstChild);
+    // Same answer when the workflow supplies no before at all.
+    expect(resolveInvariantBaselineRef(repoRoot, checkerEnv(epicPush))).toBe(branchPoint);
+  });
+
+  it("still refuses a push to a ref that is neither main nor epic/**", () => {
+    // The widening is precise, not an opening. A feature branch's push carries a
+    // `before` this check cannot interpret as an invariant-retention baseline,
+    // so it fails closed exactly as it did.
+    const repoRoot = initGitRepo();
+    const before = commitFiles(repoRoot, "before", { "README.md": "before\n" });
+    git(repoRoot, "checkout", "-b", "feature/x");
+    commitFiles(repoRoot, "work", { "README.md": "after\n" });
+
+    expect(() =>
+      resolveInvariantBaselineRef(
+        repoRoot,
+        checkerEnv({
+          GITHUB_EVENT_NAME: "push",
+          GITHUB_REF: "refs/heads/feature/x",
+          GITHUB_REF_NAME: "feature/x",
+          PUSH_BASE_SHA: before,
+        }),
+      ),
+    ).toThrow("supported only for pushes to main or an epic/** integration branch");
+  });
+
+  it("refuses an all-zero before on main, which a push cannot create", () => {
+    const repoRoot = initGitRepo();
+    commitFiles(repoRoot, "before", { "README.md": "before\n" });
+    commitFiles(repoRoot, "after", { "README.md": "after\n" });
+
+    expect(() =>
+      resolveInvariantBaselineRef(
+        repoRoot,
+        checkerEnv({
+          GITHUB_EVENT_NAME: "push",
+          GITHUB_REF: "refs/heads/main",
+          GITHUB_REF_NAME: "main",
+          PUSH_BASE_SHA: "0".repeat(40),
+        }),
+      ),
+    ).toThrow("PUSH_BASE_SHA is the all-zero object id");
+  });
+
   it("loads invariant files from the resolved revision and rejects a missing ref", () => {
     const repoRoot = initGitRepo();
     const base = commitFiles(repoRoot, "base", {

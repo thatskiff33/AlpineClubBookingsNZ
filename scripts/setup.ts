@@ -12,6 +12,7 @@ import { clubConfigSchema, type ClubConfig } from "../src/config/schema";
 // as its last-resort default — no duplicate default can drift out of sync.
 import { SAFE_DEFAULT_CONFIG } from "../src/config/safe-default-config";
 import type { AgeTier } from "@prisma/client";
+import { normaliseClubTimeZone } from "../src/lib/club-time-zone";
 import { prisma } from "../src/lib/prisma";
 import {
   buildSetupReadiness,
@@ -79,6 +80,35 @@ async function askInt(
     throw new Error(`${label} must be no greater than ${options.max}`);
   }
   return value;
+}
+
+/**
+ * Ask for the club's civil timezone and refuse anything that is not a usable
+ * named IANA zone (CT-1, #2989).
+ *
+ * The club timezone is NOT the server's or container's timezone: it is where the
+ * club is, and it decides which calendar day a lodge night falls on, so it has
+ * to be a place whose daylight-saving rules the platform can read. Rejecting
+ * rather than silently correcting mirrors the capacity prompt above, and matches
+ * the Full-Admin maintenance surface — an answer this CLI accepts must be one
+ * that surface would accept too.
+ */
+async function askTimeZone(
+  rl: ReturnType<typeof createInterface>,
+  label: string,
+  defaultValue: string,
+) {
+  const raw = await ask(rl, label, defaultValue);
+  const timeZone = normaliseClubTimeZone(raw);
+  if (!timeZone) {
+    throw new Error(
+      `${label} must be a named IANA timezone such as Pacific/Auckland, ` +
+        `Australia/Sydney or America/Denver. Abbreviations (NZT, NZST, EST) and ` +
+        `fixed offsets (+12:00, UTC+12, Etc/GMT-12) are not accepted: they name ` +
+        `no place, so they carry no daylight-saving rules for future bookings.`,
+    );
+  }
+  return timeZone;
 }
 
 async function askBoolean(
@@ -179,9 +209,9 @@ async function runWizard() {
   try {
     console.log("AlpineClubBookingsNZ setup wizard");
     console.log(
-      "This writes the club's configuration to the DATABASE (identity, capacity,\n" +
-        "and age tiers). It writes no files and stores no secrets — set secrets in\n" +
-        "environment variables and manage rates/seasons at /admin/setup.\n",
+      "This writes the club's configuration to the DATABASE (identity, timezone,\n" +
+        "capacity, and age tiers). It writes no files and stores no secrets — set\n" +
+        "secrets in environment variables and manage rates/seasons at /admin/setup.\n",
     );
 
     // Probe the DB first. A thrown error means it is unreachable or not yet
@@ -213,6 +243,16 @@ async function runWizard() {
       rl,
       "Short name",
       current.shortName ?? defaults.shortName ?? "",
+    );
+    // The club's civil timezone (CT-1, #2989) — the sole authority for what day
+    // and time it is for booking purposes. The default offered is the zone this
+    // deployment is ALREADY effectively using (persisted row, else TZ /
+    // NEXT_PUBLIC_TZ, else Pacific/Auckland), so an operator who just presses
+    // Enter changes nothing.
+    const timeZone = await askTimeZone(
+      rl,
+      "Club timezone, an IANA name such as Pacific/Auckland (not the server's timezone)",
+      current.timeZone,
     );
     const supportEmail = await ask(
       rl,
@@ -289,6 +329,10 @@ async function runWizard() {
       publicUrl: parsed.data.publicUrl,
       emailFromName: parsed.data.emailFromName,
       capacity: parsed.data.beds.reduce((total, bed) => total + bed.capacity, 0),
+      // Already normalised and validated by askTimeZone; it is not part of
+      // clubConfigSchema (the club timezone lives in the database, never in
+      // config/club.json), so it is carried straight through.
+      timeZone,
       ageTiers: parsed.data.ageTiers.map((tier, sortOrder) => ({
         tier: tier.id as AgeTier,
         minAge: tier.minAge,
@@ -316,7 +360,7 @@ async function runWizard() {
       );
       const overwrite = await askBoolean(
         rl,
-        "Overwrite the existing club identity, email/contact settings, capacity, and age tiers with the values above",
+        "Overwrite the existing club identity, timezone, email/contact settings, capacity, and age tiers with the values above",
         false,
       );
       if (!overwrite) {

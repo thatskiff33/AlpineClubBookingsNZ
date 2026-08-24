@@ -55,6 +55,8 @@ import {
   LockKeyhole,
   Search,
   Bot,
+  Globe,
+  ServerCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -539,6 +541,51 @@ const navSections: NavSection[] = [
         icon: ArrowRightLeft,
         fullAdminOnly: true,
         keywords: ["backup", "migration", "config transfer", "restore"],
+      },
+      {
+        // The one persisted IANA club timezone (CT-1 #2989, epic #2988). Full
+        // Admin like Access Roles and Export & Import beside it, and the route
+        // enforces that itself. The keywords carry the words an operator would
+        // actually type — "timezone" as one word and two, plus the daylight-saving
+        // vocabulary and "IANA" — because the label alone matches none of them and
+        // the palette index is built from these entries.
+        href: "/admin/club-time",
+        label: "Club Time Zone",
+        icon: Globe,
+        fullAdminOnly: true,
+        keywords: [
+          "timezone",
+          "time zone",
+          "clock",
+          "daylight saving",
+          "dst",
+          "iana",
+          "utc offset",
+          "nzst",
+          "nzdt",
+        ],
+      },
+      {
+        // Is this the club's live site or a copy (ENV-SAFETY 1 #3034, epic
+        // #2986)? Full Admin like Access Roles, Export & Import and Club Time
+        // Zone beside it, and the route enforces that itself. The keywords carry
+        // the words an operator would actually type — "staging", "test site",
+        // "copy", "live" — because the label matches none of them and the command
+        // palette index is built from these entries.
+        href: "/admin/environment",
+        label: "Environment Safety",
+        icon: ServerCog,
+        fullAdminOnly: true,
+        keywords: [
+          "production",
+          "non-production",
+          "staging",
+          "test site",
+          "copy",
+          "live site",
+          "environment",
+          "safe mode",
+        ],
       },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
     ],

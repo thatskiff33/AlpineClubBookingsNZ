@@ -23,14 +23,14 @@
  *
  * WHAT IT IS NOT. It is not a general "every reclassification ships a backfill"
  * gate, and INV-OPS-012 says plainly why one is not available: the census pins
- * only 127 of 460 write sites per-site by design, so a reclassification of any
+ * only 127 of 462 write sites per-site by design, so a reclassification of any
  * other site is invisible to any check that has no per-site baseline to compare
  * against. This is the enforceable half — the population the rule was invented
  * on — and the rest of INV-OPS-012 is a rule a reviewer applies.
  *
  * That figure is not transcribed twice by hand any more: it went stale after
  * #2755 (3 low) and again after #2765 (16 low), so `audit-writer-census.test.ts`
- * now counts the union of the four per-site maps and asserts 127 pinned / 333
+ * now counts the union of the four per-site maps and asserts 127 pinned / 335
  * unpinned. If this sentence and INV-OPS-012 disagree with each other, that test
  * is the one that measured it.
  */

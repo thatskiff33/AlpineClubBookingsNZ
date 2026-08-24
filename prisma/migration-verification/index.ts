@@ -1,3 +1,4 @@
+import addClubTimeSettings from "./20260822010000_add_club_time_settings";
 import addHutLeaderAssignmentSource from "./20260820020000_add_hut_leader_assignment_source";
 import addMemberEmailInheritanceChoice from "./20260813010000_add_member_email_inheritance_choice";
 import backfillBedAllocationAuditCategory from "./20260810020000_backfill_bed_allocation_audit_category";
@@ -36,4 +37,5 @@ export const DATA_MIGRATION_VERIFICATIONS: DataMigrationVerification[] = [
   addMemberEmailInheritanceChoice,
   repairLocalMidnightDatesOfBirth,
   addHutLeaderAssignmentSource,
+  addClubTimeSettings,
 ];

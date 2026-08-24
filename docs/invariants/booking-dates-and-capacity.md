@@ -693,6 +693,16 @@ derivation).
   `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant
   instead. That, not an `eslint-disable`, is the escape hatch, and there are no
   disables in the tree.
+- **Where the zone those formatters pin comes from is now a different
+  invariant.** Since CT-1 (#2989) the club's timezone is the persisted
+  `ClubTimeSettings.timeZone`, read through `getClubTimeZone()` — `INV-CONFIG-002`
+  in [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
+  the transitional constant these six helpers and the module-level formatters
+  still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2 to CT-5
+  migrate the call sites and CT-6 (#2991) retires it. Nothing about the rendering
+  seam changes here — this note exists so that the next reader of these helpers
+  knows the zone has an owner elsewhere, and does not conclude from
+  `APP_TIME_ZONE` that the environment is still the club's civil-time authority.
 
 ### INV-DATE-016
 

@@ -133,8 +133,11 @@ in. Cite rules by id, never by line number.
   dependency preflight, and lane-owned Docker teardown with the report-only
   `npm run stale-containers` debris check.
 - [`../agents/ISSUE_WORKFLOW.md`](../agents/ISSUE_WORKFLOW.md) — issue
-  contracts: claiming, recording a decision, and what never goes in a public
-  artifact.
+  contracts: the human-first issue-body order, the four-question test for
+  whether work is an atomic epic at all (and how an epic differs from a
+  programme, a standalone issue and a GitHub Project), how an epic ships from
+  its integration branch, claiming, recording a decision, and what never goes
+  in a public artifact.
 - [`../agents/CODEX_PROMPTS.md`](../agents/CODEX_PROMPTS.md) — invocation
   prompts, and the [skill definitions](../agents/codex/skills/README.md) they
   draw on.

@@ -318,13 +318,45 @@ credentials and forwards nothing.
 The wiring is entirely non-production and lives only in the staging override and
 the E2E env files:
 
-- The staging app sends over **SMTP relay** rather than SES: the env sets
-  `USE_AWS_SES=false`, `USE_SMTP_RELAY=true`, and
+- The staging app sends into a **declared local capture mailbox** rather than to
+  SES: the three provider flags resolve to `USE_AWS_SES=false`,
+  `USE_SMTP_RELAY=false`, `USE_LOCAL_CAPTURE=true`, and the relay itself is
   `EMAIL_SERVER_HOST=mailpit` / `EMAIL_SERVER_PORT=1025` with dummy
   `EMAIL_SERVER_USER` / `EMAIL_SERVER_PASSWORD` (see `.env.staging.example` and
-  the CI env writer in `.github/workflows/e2e.yml`). All four SMTP_RELAY vars
-  must be present and `USE_AWS_SES` must be false, or `resolveEmailDeliveryConfig`
-  returns `invalid` and every send throws.
+  the CI env writer in `.github/workflows/e2e.yml`). All four `EMAIL_SERVER_*`
+  vars must be present and exactly one provider flag may be true, or
+  `resolveEmailDeliveryConfig` returns `invalid`.
+
+  **The three flags are hard-coded in `docker-compose.staging.yml`**, not read
+  from the env file, for the same reason `APP_ENVIRONMENT_ROLE` is: a stray value
+  in whatever env file this stack is handed must not be able to point an
+  accessibility or browser run at a real provider. The lines in
+  `.env.staging.example` are documentation of what the stack resolves to, and are
+  overridden. `EMAIL_SERVER_*` and `EMAIL_FROM` still come from the env file,
+  through the base file's shared `x-app-environment` anchor.
+
+  **A variable must be NAMED in a compose file to reach the container at all.**
+  `--env-file` feeds Compose *interpolation* only; it injects nothing. #3035's
+  first cut set `USE_LOCAL_CAPTURE=true` in `.env.staging.example` and in both CI
+  heredocs while no compose file named it, so the container saw two false flags
+  and no capture declaration — mode `invalid`, transport `unresolved`, every send
+  suppressed as a *normal* outcome at info level with no error anywhere, and five
+  mail-reading specs failing on an empty mailbox.
+  `env-delivery-census.test.ts` now asserts the RENDERED environment of every app
+  service in every stack, which is the only check that can see this.
+
+  **`USE_LOCAL_CAPTURE`, not `USE_SMTP_RELAY`, and the difference is
+  load-bearing** (ENV-SAFETY 2, #3035; `INV-CONFIG-004`). The staging stack
+  declares `APP_ENVIRONMENT_ROLE=non-production`, and a non-production
+  installation SUPPRESSES every send rather than contacting a provider — that is
+  the whole point of epic #2986. An ordinary SMTP relay counts as a live provider
+  however it is configured, so a stack relaying to mailpit as
+  `USE_SMTP_RELAY=true` would capture nothing at all and every mail-reading spec
+  would fail with an empty mailbox and no explanation.
+  `USE_LOCAL_CAPTURE=true` declares that this transport is a sink which forwards
+  nothing, and such a copy is then allowed to transmit into it. Nothing is
+  inferred from the host name. `email-delivery-boundary-census.test.ts` fails any
+  tracked stack that points at mailpit without declaring it.
 - mailpit's HTTP API is published to the host on `MAILPIT_HTTP_PORT`
   (default 8025). `scripts/e2e-stack.sh` exports `E2E_MAILPIT_URL` so the
   Playwright process can reach it; `e2e/helpers/mailpit.ts` reads and clears

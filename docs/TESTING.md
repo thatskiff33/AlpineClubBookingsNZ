@@ -355,10 +355,24 @@ generalised.
    `process.hrtime.bigint()` for exactly that reason: the guard itself reads
    `performance.now()`, so the test deliberately measures with a different API.
 6. **Remember `APP_TIME_ZONE` follows `process.env.TZ`**
-   (`src/config/operational.ts:5-8`). Setting `TZ=UTC` to simulate the CI runner
+   (`src/config/operational.ts`). Setting `TZ=UTC` to simulate the CI runner
    also moves the *club* zone to UTC, so a timezone bug can silently pass. To
    reproduce a UTC runner with an NZ club, force
    `timeZone = "Pacific/Auckland"` explicitly as well.
+
+   **Since CT-1 (#2989) that is true of `APP_TIME_ZONE` and NOT of the club
+   timezone itself**, and the difference is the whole point of the change. The
+   club's civil time is now the persisted `ClubTimeSettings.timeZone`, read
+   through `getClubTimeZone()` (`src/lib/club-time-zone-settings.ts`), and
+   `process.env.TZ` cannot move it once a row exists — `INV-CONFIG-002`. So a
+   suite covering club-time behaviour sets the persisted value, and a suite
+   covering a *not-yet-migrated* display call site still has to force
+   `APP_TIME_ZONE` as above until CT-6 retires it. If you are writing a test that
+   proves the database beats the environment, **prove the environment read is
+   live in the same file**: assert that with no persisted row the reader really
+   does return the environment's zone. Without that leg the first assertion
+   cannot tell a real precedence rule from an environment read that never
+   happens — the same vacuous-pass shape rule 5 warns about for `Date.now()`.
 7. **Restoring `process.env.TZ` is never a bare `delete` (#2485).** Node only
    re-derives its resolved timezone when `process.env.TZ` is *assigned*;
    deleting the variable removes it from the environment but leaves the

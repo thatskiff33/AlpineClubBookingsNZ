@@ -1309,6 +1309,82 @@ describe("issueSplitGuestPaymentLink (#1967)", () => {
     );
   });
 
+  /*
+    #3035 review: AN ENVIRONMENT WITHHOLD IS NOT AN UNDELIVERABLE ADDRESS.
+
+    Every non-sent outcome used to fall into `suppressed`, and the route turns
+    that into a 502 reading "your email address is undeliverable" — shown to a
+    MEMBER. On the epic's headline case (a live club upgraded without the
+    declaration) the member's mailbox is perfectly fine and the club has simply
+    not told the software what the installation is. The same file already states
+    that rule for the unreadable-switch case: telling somebody their address is
+    undeliverable when it is not is misinformation, and it points an officer at
+    the wrong diagnosis.
+  */
+  it("reports an undeclared installation as a TRANSIENT failure, not an undeliverable address", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "environment_unknown",
+    } as never);
+
+    const result = await issueSplitGuestPaymentLink("child-1");
+
+    // 503 "try again shortly" rather than 502 "your address is undeliverable".
+    expect(result).toEqual({ outcome: "transient_failure" });
+    // The unreachable link is still revoked, exactly as for every other
+    // non-send: nothing minted may stay active.
+    expect(mockedUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "pl-fresh", revokedAt: null }),
+      })
+    );
+  });
+
+  it("reports a live site wrongly declaring a capture mailbox as transient too", async () => {
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "capture_transport_in_production",
+    } as never);
+
+    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+      outcome: "transient_failure",
+    });
+  });
+
+  it("reports a confirmed COPY as withheld, which is the deliberate bucket", async () => {
+    /*
+      Not transient: a copy is a copy until somebody re-declares it, so "try again
+      shortly" would be false. `withheld` is the non-transient, no-cause-disclosed
+      bucket the per-booking "No emails" switch already uses.
+    */
+    mockedBookingFindUnique
+      .mockResolvedValueOnce(splitChild() as never)
+      .mockResolvedValueOnce({ status: BookingStatus.PENDING } as never);
+    mockedPaymentLinkFindFirst.mockResolvedValue(null);
+    mockedPaymentLinkCreate.mockResolvedValue({ id: "pl-fresh" } as never);
+    vi.mocked(sendSplitGuestPaymentLinkEmail).mockResolvedValueOnce({
+      status: "withheld_for_environment",
+      emailLogId: "log-1",
+      reason: "environment_non_production",
+    } as never);
+
+    expect(await issueSplitGuestPaymentLink("child-1")).toEqual({
+      outcome: "withheld",
+    });
+  });
+
   it("revokes the just-minted link and rethrows when the email send throws (#1967 FIX-3)", async () => {
     mockedBookingFindUnique
       .mockResolvedValueOnce(splitChild() as never)

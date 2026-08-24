@@ -218,7 +218,8 @@ Effective capacity is decided in this order:
 booking capacity — `club.json` is no longer read at runtime. The default lodge
 carries an **explicit** `LodgeSettings.capacity`, backfilled from the current
 `club.json` bed total by the boot-time config self-heal
-(`src/lib/config-self-heal.ts`, epic #1943 C2 mechanism), so it normally
+(`src/lib/config-self-heal-steps.ts`, epic #1943 C2 mechanism; the runner
+stayed in `config-self-heal.ts` when #2989 split the step definitions out), so it normally
 resolves via step 2. `club.json beds[]` survives only as a **seed template**
 (the "import rooms & beds from config" affordance and the admin lodge-settings
 "config suggests N beds" hint). A default lodge that still resolves to 0 at

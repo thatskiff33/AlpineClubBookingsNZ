@@ -10,6 +10,9 @@ export const MEASURE_ENV_KEYS = Object.freeze([
   "SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD", "SEED_LODGE_PASSWORD", "SEED_THEME_COMPLETE", "SENTRY_AUTH_TOKEN", "SENTRY_DSN",
   "SENTRY_ORG", "SENTRY_PROJECT", "SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN", "SES_SNS_TOPIC_ARN", "SMTP_HOST", "SMTP_PORT",
   "USE_AWS_SES", "USE_SMTP_RELAY", "XERO_MOCK_API_ORIGIN", "XERO_MOCK_INTERNAL_ORIGIN",
+  // ENV-SAFETY 2 (#3035): the flag that decides whether this stack transmits at
+  // all belongs inside the frozen env contract, not outside it.
+  "USE_LOCAL_CAPTURE",
 ].sort());
 
 const fail = (message) => { throw new Error(message); };

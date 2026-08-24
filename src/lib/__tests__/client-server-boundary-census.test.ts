@@ -33,11 +33,47 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * The leaves a browser bundle must never reach. `@/lib/prisma` and `@/lib/auth`
  * are the two that do NOT fail the Next build today, because neither imports
  * `server-only` — so they are the two that would ship silently.
+ *
+ * THIS LIST IS THE GUARD. It is not a sample of the server-only modules and
+ * there is no rule that adds new ones automatically, so a module that is not
+ * named here is not protected by this census however plainly its own docblock
+ * says it is. `@/lib/club-time-zone-env` (#2989) is here for that reason: it
+ * reads `process.env.TZ` and is deliberately NOT marked `server-only`, because
+ * two of its callers are `tsx` entrypoints that a `server-only` import would
+ * abort. Next inlines `NEXT_PUBLIC_*` into the browser bundle, so a
+ * `"use client"` component importing it would silently answer from the
+ * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
+ * split-brain second authority `INV-CONFIG-002` forbids and the one that module
+ * exists to prevent. Its sibling `@/lib/club-time-zone` is pure validation with
+ * no environment read and is deliberately NOT here: the admin panel needs its
+ * zone list.
+ *
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
+ * epic #2986) are here for the same reason and a sharper one. Neither is
+ * `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
+ * entrypoint `npm run setup`, which such an import would abort — and the
+ * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
+ * component importing it would answer from whatever the bundler inlined at
+ * build time for a NON-public variable, which is `undefined`: the browser would
+ * read "nothing has declared this installation" while the server reads
+ * `production`. What is keyed on that answer is whether the club's real members
+ * get emailed (INV-CONFIG-003), so a second authority here is worse than the
+ * timezone one, not merely analogous.
  */
 const FORBIDDEN_MODULES = new Set(
-  ["prisma", "auth", "audit", "session", "email", "xero", "stripe", "env"].map(
-    (name) => path.join(SRC, "lib", name),
-  ),
+  [
+    "prisma",
+    "auth",
+    "audit",
+    "session",
+    "email",
+    "xero",
+    "stripe",
+    "env",
+    "club-time-zone-env",
+    "environment-role-declaration",
+    "environment-role",
+  ].map((name) => path.join(SRC, "lib", name)),
 );
 
 /** Everything Node-only, whatever spelling. `node:`-prefixed is always Node. */

@@ -14,10 +14,14 @@ a task-focused operator guide with screenshots. #2049 laid the foundation and
 #2050 filled every gap, so each admin row now links a guide (no `GAP` remains) —
 keep the links current as areas change.
 
-The area list is generated from the actual route directories (70 areas,
-excluding `__tests__`), so it is exhaustive and will not silently miss a
-surface. When a new admin area is added, add a row here in the same PR (this is
-part of the docs-lockstep rule in `AGENTS.md`).
+The area list is generated from the actual route directories (excluding
+`__tests__`), so it is exhaustive and will not silently miss a surface. The
+count that used to stand here said 70 and was measured once; it had already
+drifted from the table below by the time #2989 added a row, so it is stated as a
+rule rather than as a figure nobody re-measures.
+
+When a new admin area is added, add a row here in the same PR (this is part of
+the docs-lockstep rule in `AGENTS.md`).
 
 **Where the guides go:** every operator guide lands in **`docs/guides/`**, one
 file per area named after the route (`docs/guides/bookings.md`), per
@@ -61,6 +65,8 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `bookings` | bookings | `ARCHITECTURE.md` (booking/payment flow), `STATE_MACHINES.md` | [guide](guides/bookings.md) | 1 |
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
 | `chores` | lodge | — | [guide](guides/chores.md) | 3 |
+| `club-time` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-002`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-time.md) | — (CT-1 #2989, epic #2988; postdates #2050) |
+| `environment` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-003`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/environment-role.md) | — (ENV-SAFETY 1 #3034, epic #2986; postdates #2050) |
 | `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | [guide](guides/committee.md) | 2 |
 | `communications` | membership | `src/lib/email-message-registry.ts` | [guide](guides/communications.md) | 4 |
 | `config-transfer` | support | `config-transfer/README.md` (planned feature) | [guide](guides/config-transfer.md) | 4 |

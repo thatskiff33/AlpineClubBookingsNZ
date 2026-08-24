@@ -2,6 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
+import { decideClubTimeZoneBackfill } from "@/lib/config-self-heal-steps";
+import { decideEnvironmentRole } from "@/lib/environment-role";
+import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import {
   SETUP_STEP_IDS,
   buildSetupReadiness,
@@ -9,6 +13,37 @@ import {
   renderSetupCheckReport,
   type SetupDatabaseSnapshot,
 } from "@/lib/setup-readiness";
+
+/**
+ * A resolved environment role for the fixtures below, built by the REAL
+ * `decideEnvironmentRole` rather than hand-assembled (ENV-SAFETY 1, #3034).
+ *
+ * Hand-writing the resolution object here would let this suite assert readiness
+ * wording against a state the resolver cannot actually produce — the readiness
+ * step would then keep passing after a precedence change that made its input
+ * impossible.
+ */
+function environmentRoleResolution(
+  declaration: EnvironmentRoleDeclaration["kind"],
+  override: "on" | "off" | "unreadable" = "off",
+) {
+  const declared: EnvironmentRoleDeclaration =
+    declaration === "invalid"
+      ? { kind: "invalid", raw: "staging" }
+      : { kind: declaration };
+  return decideEnvironmentRole(
+    declared,
+    override === "on"
+      ? {
+          kind: "force-non-production",
+          updatedAt: new Date("2026-06-15T09:30:00.000Z"),
+          updatedByMemberId: "member-full-admin",
+        }
+      : override === "unreadable"
+        ? { kind: "unreadable" }
+        : { kind: "none" },
+  );
+}
 
 const baseEnv = {
   DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
@@ -89,6 +124,13 @@ const completeDatabase: SetupDatabaseSnapshot = {
   xeroAccountMappingCount: 5,
   xeroHutFeeItemMappingCount: 16,
   xeroEntranceFeeMappingCount: 4,
+  // The club's persisted timezone (CT-1, #2989). A configured install has one;
+  // its absence is a BLOCK, so a "complete setup" fixture has to carry it.
+  clubTimeZone: "Pacific/Auckland",
+  // The resolved environment role (ENV-SAFETY 1, #3034). UNKNOWN is a BLOCK, so
+  // a "complete setup" fixture has to carry a resolved one. This is the shape
+  // `resolveEnvironmentRole()` returns for a live club deployment.
+  environmentRole: environmentRoleResolution("production"),
 };
 
 const validClubConfig = {
@@ -757,5 +799,979 @@ describe("setup-readiness club-config DB-first gate (#1987, C8)", () => {
       .flatMap((c) => c.checks)
       .find((c) => c.id === "age-tiers");
     expect(ageCheck?.status).toBe("complete");
+  });
+});
+
+/**
+ * The club-timezone readiness step (CT-1, #2989).
+ *
+ * Setup is not finished until the club's timezone is stored explicitly, so the
+ * not-yet-stored state is a BLOCK — but a friendly one: it has to name the zone
+ * actually in force and say that the app stores it on the next boot, or an
+ * operator reads a normal post-migration state as a broken site.
+ *
+ * The one exception is an environment that names no place (`TZ=UTC`): the owner
+ * decided on 23 Aug 2026 (#2989) that such a deployment is DEFAULTED to
+ * `Pacific/Auckland` rather than blocked — and warned about, both before the
+ * first boot records it and after, because the row carries no provenance and the
+ * boot backfill always runs before anybody can open `/admin/setup`.
+ *
+ * Every case below pins `process.env.TZ` rather than inheriting the host's or the
+ * CI runner's zone, and restores it by ASSIGNING the captured value back (#2485).
+ * Nothing here formats a date, so the frozen clock is not involved.
+ */
+/**
+ * Environment-role readiness (ENV-SAFETY 1, #3034; epic #2986; INV-CONFIG-003).
+ *
+ * The precedence rule itself is proved in `environment-role-precedence.test.ts`.
+ * What is proved here is the OPERATOR SURFACE: that an undeclared installation
+ * blocks setup rather than passing quietly, that the details name both sources
+ * and the exact variable to repair, and that the checklist never states a role
+ * it was not given.
+ */
+describe("setup-readiness environment role (ENV-SAFETY 1, #3034)", () => {
+  function environmentRoleCheck(database?: SetupDatabaseSnapshot) {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database,
+    });
+    const foundation = readiness.categories.find(
+      (category) => category.id === "foundation",
+    );
+    const check = foundation?.checks.find(
+      (candidate) => candidate.id === "environment-role",
+    );
+    if (!check) throw new Error("environment-role check missing");
+    return check;
+  }
+
+  it("is a required foundation step pointing at the environment page", () => {
+    const check = environmentRoleCheck(completeDatabase);
+    expect(check.required).toBe(true);
+    expect(check.href).toBe("/admin/environment");
+    expect(SETUP_STEP_IDS).toContain("environment-role");
+  });
+
+  it("is complete and says PRODUCTION for the club's live installation", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production"),
+    });
+
+    expect(check.status).toBe("complete");
+    /*
+      `toMatch`, NOT `toContain("PRODUCTION")` (#3034 review). The
+      non-production message — "This installation is declared NON-PRODUCTION — a
+      copy, a staging site or a developer's checkout." — CONTAINS the string
+      "PRODUCTION". So swapping this branch's message for that one left the
+      assertion green: the status is still `complete` and the details assertion
+      below reads the unchanged sources line. The checklist would then tell an
+      operator that their live club installation is a copy, which is the single
+      most consequential sentence on this surface.
+    */
+    expect(check.message).toMatch(/is declared PRODUCTION/);
+    expect(check.details.join(" ")).toContain(
+      "APP_ENVIRONMENT_ROLE=production",
+    );
+  });
+
+  it("is complete and says NON-PRODUCTION for a declared copy", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("non-production"),
+    });
+
+    expect(check.status).toBe("complete");
+    // Precise for the same reason as its sibling above: the
+    // administrator-forced message also contains "NON-PRODUCTION", so only the
+    // full phrase distinguishes a DECLARED copy from a forced one.
+    expect(check.message).toMatch(/is declared NON-PRODUCTION/);
+    expect(check.details.join(" ")).toContain(
+      "APP_ENVIRONMENT_ROLE=non-production",
+    );
+  });
+
+  /*
+    THE WITHHELD-EMAIL LINE, in all three of its states (owner decision, 23 Aug
+    2026).
+
+    It exists because it is the ONLY thing that separates a live club wrongly
+    declared a copy from a copy nobody is using: a copy is restored FROM
+    production, so no property of its data can tell them apart, while the amount
+    of member mail being held back can. The three states must therefore read
+    differently — and in particular "none held back" and "the count could not be
+    read" must not read the same, because they look identical and mean opposite
+    things. (#3035 renamed the third state: the delivery boundary has landed, so an
+    absent number no longer means "not counted yet" — it means the count could not
+    be read, usually an unapplied migration.)
+  */
+  it("says the withheld count is UNREADABLE, distinctly from none", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("non-production"),
+      // No `withheldEmail` at all — an older caller, or a `setup:check` run.
+    });
+
+    const details = check.details.join(" ");
+    expect(details).toContain("could not be read");
+    // The distinction is stated, not left for the reader to infer.
+    expect(details).toContain("NOT the same as none");
+    // And it must not claim an amount it does not have.
+    expect(details).not.toContain("Held back email: none");
+    // It says what to DO about it, which "not counted yet" could not.
+    expect(details).toContain("pending migrations");
+  });
+
+  /*
+    #3035 review: A LIVE SITE IN CAPTURE MODE IS A TOTAL MAIL OUTAGE, AND IT WAS
+    INVISIBLE HERE.
+
+    This step reported "complete — emails go to real members" for any PRODUCTION
+    installation, and the withheld line was rendered only under NON_PRODUCTION and
+    UNKNOWN. But a live club that declares USE_LOCAL_CAPTURE=true has every
+    message refused with CAPTURE_TRANSPORT_IN_PRODUCTION, so the count climbs
+    while the checklist says all is well.
+  */
+  it("warns a PRODUCTION installation that is refusing every message as a capture", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production"),
+      withheldEmail: {
+        available: true,
+        count: 31,
+        mostRecentAt: "2026-08-23T09:15:00.000Z",
+        captureInProduction: 31,
+      },
+    });
+
+    expect(check.status).toBe("warning");
+    expect(check.message).toContain("no member email at all");
+    const details = check.details.join(" ");
+    expect(details).toContain("31 message(s)");
+    // The repair is the TRANSPORT flags, not the declaration — which is correct
+    // here and must not be what the operator is sent to change.
+    expect(details).toContain("USE_LOCAL_CAPTURE");
+    expect(details).toContain("USE_AWS_SES");
+    // And it does not repeat the wording that blames the declaration.
+    expect(details).not.toContain("wrongly declared a copy");
+  });
+
+  it("leaves a healthy PRODUCTION installation complete, with no withheld line", () => {
+    /*
+      The discriminating half. Terminal SKIPPED_NON_PRODUCTION rows survive an
+      afternoon spent as a forced copy, so a live site can carry a non-zero TOTAL
+      for ever — and a permanent banner there is a line an operator learns to
+      scroll past. Only the capture count, which cannot be non-zero once the flags
+      are right, raises the warning.
+    */
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production"),
+      withheldEmail: {
+        available: true,
+        count: 31,
+        mostRecentAt: "2026-08-23T09:15:00.000Z",
+        captureInProduction: 0,
+      },
+    });
+
+    expect(check.status).toBe("complete");
+    expect(check.details.join(" ")).not.toContain("Held back email");
+  });
+
+  it("says NONE when the count is available and zero", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("non-production"),
+      withheldEmail: { available: true, count: 0, mostRecentAt: null, captureInProduction: 0 },
+    });
+
+    const details = check.details.join(" ");
+    expect(details).toContain("Held back email: none");
+    expect(details).not.toContain("could not be read");
+  });
+
+  it("reports the count and the most recent one, and says what it means", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("non-production"),
+      withheldEmail: {
+        available: true,
+        count: 47,
+        mostRecentAt: "2026-08-23T09:15:00.000Z",
+        captureInProduction: 0,
+      },
+    });
+
+    const details = check.details.join(" ");
+    expect(details).toContain("47 message(s)");
+    expect(details).toContain("2026-08-23T09:15:00.000Z");
+    // The sentence that makes the number actionable rather than trivia — and it
+    // names BOTH reasons a live club stops sending, because the same line renders
+    // under both and either one alone is wrong half the time (#3035).
+    expect(details).toMatch(/wrongly declared a copy/);
+    expect(details).toMatch(/undeclared/);
+  });
+
+  it("shows the count on an UNDECLARED installation too, where it matters most", () => {
+    /*
+      UNKNOWN fails closed — no member email, no Xero writes — so it holds
+      delivery back exactly as a declared copy does, and it is the state a LIVE
+      installation reaches simply by upgrading without adding the declaration.
+      That is the scenario this whole issue exists for, so it is the worst place to
+      withhold the one number that would tell the operator what it is costing.
+
+      The first version rendered this only for NON_PRODUCTION, on a premise this
+      same file contradicts two sentences later (#3034 second review).
+    */
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("absent"),
+      withheldEmail: {
+        available: true,
+        count: 312,
+        mostRecentAt: "2026-08-23T09:15:00.000Z",
+        captureInProduction: 0,
+      },
+    });
+
+    expect(check.status).toBe("blocked");
+    const details = check.details.join(" ");
+    expect(details).toContain("312 message(s)");
+    expect(details).toContain("2026-08-23T09:15:00.000Z");
+    // And the unreadable-count wording reaches this branch as well, so an
+    // installation that cannot read the number does not read it as "nothing held
+    // back".
+    const notCounted = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("absent"),
+    });
+    expect(notCounted.details.join(" ")).toContain("could not be read");
+  });
+
+  /*
+    AND THE LINE MUST NOT TELL EITHER STATE THE OTHER'S REASON (#3035).
+
+    It renders under TWO states now. Its first version said the count was held
+    back "because it is treated as a copy", which is false on an UNDECLARED
+    installation — and false in the direction that costs the most: an operator of
+    a live site they know is live, reading that sentence, goes hunting for the
+    safer override on Admin -> Environment instead of the missing declaration in
+    their deployment. The override is not what is holding their mail.
+
+    The rule is symmetric and is asserted as such. The line may name BOTH reasons
+    (the non-zero sentence does, and that is useful — it tells the operator which
+    two things to check), and it may name NEITHER. What it may not do is attribute
+    the withholding to one of them, because whichever it picks is wrong half the
+    time. Isolated to the "Held back email:" detail on purpose: the surrounding
+    UNDECLARED message legitimately contains the word "copy" — "the club's live
+    site or a copy" is the whole point of that step — so a blanket search over the
+    details would either fail for a good reason or have to be weakened into
+    something that discriminates nothing.
+  */
+  const withheldStates = [
+    { label: "unavailable", withheldEmail: undefined },
+    {
+      label: "zero",
+      withheldEmail: { available: true as const, count: 0, mostRecentAt: null, captureInProduction: 0 },
+    },
+    {
+      label: "counted",
+      withheldEmail: {
+        available: true as const,
+        count: 312,
+        mostRecentAt: "2026-08-23T09:15:00.000Z",
+        captureInProduction: 0,
+      },
+    },
+  ];
+
+  it.each(withheldStates)(
+    "never blames one state for the other, in the $label state, under either role",
+    ({ withheldEmail }) => {
+      for (const declaration of ["absent", "non-production"] as const) {
+        const check = environmentRoleCheck({
+          ...completeDatabase,
+          environmentRole: environmentRoleResolution(declaration),
+          ...(withheldEmail ? { withheldEmail } : {}),
+        });
+        const line = check.details.find((detail) =>
+          detail.startsWith("Held back email:"),
+        );
+        expect(line, `${declaration}: the withheld line should render`).toBeDefined();
+        const sentence = line ?? "";
+
+        // 1. The exact claim that was wrong: attributing it to being a copy.
+        expect(
+          sentence,
+          `${declaration}: "treated as a copy" is false on an undeclared installation, and sends its operator to the override instead of the declaration`,
+        ).not.toMatch(/treated as a copy|because it is a copy|since it is a copy/i);
+
+        // 2. Symmetrically, it must not blame ONLY the missing declaration either.
+        expect(
+          sentence,
+          `${declaration}: blaming only a missing declaration is false on a declared copy`,
+        ).not.toMatch(/because nothing has (?:said|declared)/i);
+
+        // 3. If it names one reason, it must name the other. Naming both is what
+        //    the non-zero sentence does, and it is the useful shape.
+        const namesCopy = /declared a copy/i.test(sentence);
+        const namesUndeclared = /undeclared/i.test(sentence);
+        expect(
+          namesCopy,
+          `${declaration}: this line names one reason without the other — "${sentence}"`,
+        ).toBe(namesUndeclared);
+      }
+    },
+  );
+
+  it("leaves the line off a production installation, where it means nothing", () => {
+    // Nothing is held back for environment-safety reasons on a production
+    // installation, so the line would be noise beside the one setting on this
+    // step that matters.
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production"),
+      withheldEmail: { available: true, count: 47, mostRecentAt: null, captureInProduction: 0 },
+    });
+
+    expect(check.details.join(" ")).not.toContain("Held back email");
+  });
+
+  it("distinguishes an administrator-forced copy from a declared one", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production", "on"),
+    });
+
+    expect(check.status).toBe("complete");
+    expect(check.message).toContain("safer override");
+    // Both facts are on the page: the deployment still says production, and an
+    // administrator has overridden it.
+    expect(check.details.join(" ")).toContain("APP_ENVIRONMENT_ROLE=production");
+    expect(check.details.join(" ")).toContain("Safer override: ON");
+  });
+
+  it("BLOCKS when nothing has declared the installation", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("absent"),
+    });
+
+    // A block, not a warning: an UNKNOWN role is the state in which #3035/#3036
+    // stop sending email at all, so the site is not doing its job.
+    expect(check.status).toBe("blocked");
+    expect(check.details.join(" ")).toContain(
+      "APP_ENVIRONMENT_ROLE is not set",
+    );
+    expect(check.details.join(" ")).toContain(
+      "APP_ENVIRONMENT_ROLE=production",
+    );
+  });
+
+  it("never reports an undeclared installation as production", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("absent"),
+    });
+    expect(check.status).not.toBe("complete");
+    expect(check.message).not.toMatch(/is declared PRODUCTION/);
+  });
+
+  it("BLOCKS on a refused value and QUOTES it, so the typo is visible", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("invalid"),
+    });
+
+    expect(check.status).toBe("blocked");
+    expect(check.details.join(" ")).toContain('set to "staging"');
+    // The two situations that both land on UNKNOWN read differently, because
+    // "you have not set it" and "I refuse to interpret what you set" need
+    // different instructions.
+    expect(check.details.join(" ")).not.toContain(
+      "APP_ENVIRONMENT_ROLE is not set",
+    );
+  });
+
+  it("BLOCKS when the safer override cannot be read, even under a declared production", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution("production", "unreadable"),
+    });
+
+    expect(check.status).toBe("blocked");
+    expect(check.details.join(" ")).toContain("could not be read");
+    expect(check.details.join(" ")).toContain("prisma migrate deploy");
+  });
+
+  it("keeps a declared non-production complete when the override cannot be read", () => {
+    const check = environmentRoleCheck({
+      ...completeDatabase,
+      environmentRole: environmentRoleResolution(
+        "non-production",
+        "unreadable",
+      ),
+    });
+    expect(check.status).toBe("complete");
+  });
+
+  it("says 'not checked' rather than guessing when there is no snapshot", () => {
+    expect(environmentRoleCheck(undefined).status).toBe("warning");
+    expect(environmentRoleCheck(undefined).message).toContain(
+      "was not checked",
+    );
+  });
+
+  it("says 'not checked' for a snapshot taken before this field existed", () => {
+    const snapshot: SetupDatabaseSnapshot = { ...completeDatabase };
+    delete snapshot.environmentRole;
+    expect(environmentRoleCheck(snapshot).status).toBe("warning");
+  });
+
+  it("names APP_ENVIRONMENT_ROLE in full and warns off APP_RUNTIME_ROLE, in every state", () => {
+    /*
+      The two variables sit in the same Compose environment block and differ by
+      one word, and on the staging stack APP_RUNTIME_ROLE literally holds
+      "staging". An operator who repairs the wrong one changes nothing and has no
+      way to tell why, so every state of this step has to say which is which.
+    */
+    const states: SetupDatabaseSnapshot[] = [
+      { ...completeDatabase, environmentRole: environmentRoleResolution("production") },
+      { ...completeDatabase, environmentRole: environmentRoleResolution("non-production") },
+      { ...completeDatabase, environmentRole: environmentRoleResolution("absent") },
+      { ...completeDatabase, environmentRole: environmentRoleResolution("invalid") },
+      { ...completeDatabase, environmentRole: environmentRoleResolution("production", "unreadable") },
+    ];
+    for (const database of states) {
+      const details = environmentRoleCheck(database).details.join(" ");
+      expect(details).toContain("APP_ENVIRONMENT_ROLE");
+      expect(details).toContain("APP_RUNTIME_ROLE");
+    }
+    const noSnapshot = environmentRoleCheck(undefined).details.join(" ");
+    expect(noSnapshot).toContain("APP_RUNTIME_ROLE");
+  });
+
+  it("leaks no connection string or credential into the operator surface", () => {
+    for (const declaration of ["production", "non-production", "absent", "invalid"] as const) {
+      const check = environmentRoleCheck({
+        ...completeDatabase,
+        environmentRole: environmentRoleResolution(declaration),
+      });
+      const text = `${check.message} ${check.details.join(" ")}`;
+      expect(text).not.toContain(baseEnv.DATABASE_URL);
+      expect(text).not.toContain(baseEnv.AUTH_SECRET);
+      expect(text).not.toContain(baseEnv.CRON_SECRET);
+    }
+  });
+
+  it("an acknowledgement resolves the CHECKLIST and not the role", () => {
+    /*
+      `applyProgress` moves `progress` to "completed" and never touches `status`,
+      exactly as it does for `runtime-env`. So ticking the box cannot make an
+      UNKNOWN installation start emailing members: nothing outside the checklist
+      reads the checklist.
+    */
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: {
+        ...completeDatabase,
+        environmentRole: environmentRoleResolution("absent"),
+      },
+      progress: { completedStepIds: ["environment-role"] },
+    });
+    const check = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((candidate) => candidate.id === "environment-role");
+    expect(check?.progress).toBe("completed");
+    expect(check?.status).toBe("blocked");
+  });
+});
+
+describe("setup-readiness club timezone (CT-1, #2989)", () => {
+  const hostTimeZone = captureHostTimeZone();
+  const originalNextPublicTz = process.env.NEXT_PUBLIC_TZ;
+
+  afterEach(() => {
+    hostTimeZone.restore();
+    if (originalNextPublicTz === undefined) {
+      delete process.env.NEXT_PUBLIC_TZ;
+    } else {
+      process.env.NEXT_PUBLIC_TZ = originalNextPublicTz;
+    }
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function pinEnvironmentZone(zone: string | null) {
+    if (zone === null) {
+      // Assign before deleting: only an assignment invalidates Node's cached
+      // zone. `hostTimeZone.restore()` puts the original back the same way.
+      process.env.TZ = "Pacific/Auckland";
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = zone;
+    }
+    delete process.env.NEXT_PUBLIC_TZ;
+  }
+
+  function clubTimeZoneCheck(database?: SetupDatabaseSnapshot) {
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database,
+      now: new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const check = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((candidate) => candidate.id === "club-time-zone");
+    if (!check) throw new Error("club-time-zone check is missing");
+    return check;
+  }
+
+  it("is a required foundation step pointing at the club time page", () => {
+    pinEnvironmentZone("Pacific/Auckland");
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: completeDatabase,
+    });
+    const foundation = readiness.categories.find(
+      (category) => category.id === "foundation",
+    );
+
+    const check = foundation?.checks.find(
+      (candidate) => candidate.id === "club-time-zone",
+    );
+    expect(check).toBeDefined();
+    expect(check?.required).toBe(true);
+    expect(check?.href).toBe("/admin/club-time");
+    expect(SETUP_STEP_IDS).toContain("club-time-zone");
+  });
+
+  it("is complete and NAMES the stored zone", () => {
+    pinEnvironmentZone("America/Denver");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "Australia/Sydney",
+    });
+
+    expect(check.status).toBe("complete");
+    // Naming it is the point: an upgraded club has to be able to see at a glance
+    // that it was not moved.
+    expect(check.message).toContain("Australia/Sydney");
+    expect(check.details.join(" ")).toContain("Australia/Sydney");
+  });
+
+  it("reports the canonical spelling of a stored alias", () => {
+    pinEnvironmentZone("Pacific/Auckland");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "australia/sydney",
+    });
+
+    expect(check.status).toBe("complete");
+    expect(check.message).toContain("Australia/Sydney");
+    expect(check.details.join(" ")).toContain("australia/sydney");
+  });
+
+  it("blocks when nothing is stored, naming the zone in force and how it gets stored", () => {
+    // The state a fresh install, and an existing install between
+    // `prisma migrate deploy` and its first boot, is in.
+    pinEnvironmentZone("Australia/Sydney");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: null,
+    });
+
+    expect(check.status).toBe("blocked");
+    const text = `${check.message} ${check.details.join(" ")}`;
+    expect(text).toContain("Australia/Sydney");
+    expect(text).toMatch(/has not been stored yet/i);
+    expect(text).toMatch(/next time it starts|next boot/i);
+    expect(text).toContain("npm run config:self-heal");
+  });
+
+  it("blocks when the snapshot simply omits the field (an older caller)", () => {
+    pinEnvironmentZone("Australia/Sydney");
+    const withoutTimeZone: SetupDatabaseSnapshot = { ...completeDatabase };
+    delete withoutTimeZone.clubTimeZone;
+
+    const check = clubTimeZoneCheck(withoutTimeZone);
+
+    expect(check.status).toBe("blocked");
+  });
+
+  it("names the built-in default as the zone to be stored when the environment says nothing", () => {
+    pinEnvironmentZone(null);
+
+    const check = clubTimeZoneCheck({ ...completeDatabase, clubTimeZone: null });
+
+    expect(check.status).toBe("blocked");
+    const text = `${check.message} ${check.details.join(" ")}`;
+    expect(text).toContain("Pacific/Auckland");
+    expect(text).toMatch(/No TZ or NEXT_PUBLIC_TZ is set/i);
+  });
+
+  it.each([
+    ["GB", "Europe/London"],
+    ["NZ-CHAT", "Pacific/Chatham"],
+  ])(
+    "names the place TZ=%s actually means (%s) as the zone about to be stored",
+    (raw, expected) => {
+      // The readiness message has to agree with what the next boot will really
+      // record. Before the #2989 review both this step and the backfill ran the
+      // operator-input validator over the environment, so this said
+      // "Pacific/Auckland" to a London club and then the backfill wrote it.
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: null,
+      });
+
+      expect(check.status).toBe("blocked");
+      const text = `${check.message} ${check.details.join(" ")}`;
+      expect(text).toContain(expected);
+      expect(text).not.toContain("Pacific/Auckland");
+      // And it shows the raw value too, so the interpretation is visible.
+      expect(text).toContain(raw);
+    },
+  );
+
+  it.each(["UTC", "Etc/GMT-12", "SystemV/EST5"])(
+    "warns rather than blocking when TZ=%s names no place, and says what will be stored instead",
+    (raw) => {
+      // Owner decision, 23 Aug 2026 (#2989). This state used to be blocked with
+      // nothing recorded. It is now a WARNING — the owner said not to block
+      // setup — and it must still be honest about the two things that make it a
+      // warning rather than a clean step: the environment value could not be
+      // used, and the zone about to be recorded is a DEFAULT rather than the one
+      // this deployment was running on.
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: null,
+      });
+
+      expect(check.status).toBe("warning");
+      const text = `${check.message} ${check.details.join(" ")}`;
+      expect(text).toContain(raw);
+      expect(text).toContain("Pacific/Auckland");
+      expect(text).toMatch(/not a place|name no place/i);
+      expect(text).toMatch(/default/i);
+      expect(text).toContain("/admin/club-time");
+    },
+  );
+
+  it.each(["UTC", "Etc/GMT-12"])(
+    "keeps warning AFTER the boot has recorded the default, for TZ=%s",
+    (raw) => {
+      // The state an operator actually meets. The boot backfill runs from
+      // `instrumentation.node.ts` before anybody can open /admin/setup, so by
+      // the time this page renders the row exists — and without this branch a
+      // club that has been on UTC for years reads a clean "complete" naming a
+      // zone nobody chose, which is exactly what the owner's decision says must
+      // not happen.
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: "Pacific/Auckland",
+      });
+
+      expect(check.status).toBe("warning");
+      const text = `${check.message} ${check.details.join(" ")}`;
+      expect(text).toContain(raw);
+      expect(text).toContain("Pacific/Auckland");
+      // It does not claim to know whether the zone was chosen or defaulted — the
+      // row records no provenance — so it asks, and names both ways out.
+      expect(text).toMatch(/acknowledge/i);
+      expect(text).toContain("/admin/club-time");
+    },
+  );
+
+  it("PREMISE: the same stored default is COMPLETE once the environment names a place", () => {
+    // Without this leg the two assertions above cannot tell a real condition
+    // from a step that warns whenever Pacific/Auckland is stored.
+    pinEnvironmentZone("Europe/London");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "Pacific/Auckland",
+    });
+
+    expect(check.status).toBe("complete");
+  });
+
+  it("does not warn about a stored zone that is not the default, whatever TZ says", () => {
+    // The other half of the condition: the post-boot warning is about the value
+    // the backfill would have invented, so a club on any other zone has plainly
+    // configured itself and must not be nagged.
+    pinEnvironmentZone("UTC");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "Australia/Sydney",
+    });
+
+    expect(check.status).toBe("complete");
+    expect(check.message).toContain("Australia/Sydney");
+  });
+
+  it("reports 'not checked' rather than a remedy when the timezone row could not be READ", () => {
+    // An un-migrated database: every other setting answered and this one query
+    // failed. "The app stores it on the next start" is the remedy for an absent
+    // row and is no remedy at all for an absent table, so this state gets its
+    // own message.
+    pinEnvironmentZone("Australia/Sydney");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: null,
+      clubTimeZoneUnreadable: true,
+    });
+
+    expect(check.status).toBe("warning");
+    const text = `${check.message} ${check.details.join(" ")}`;
+    expect(text).toMatch(/could not be read/i);
+    expect(text).toMatch(/migrate/i);
+    expect(text).not.toMatch(/next time it starts/i);
+    // It does not answer the question from the environment either.
+    expect(text).not.toContain("Australia/Sydney");
+  });
+
+  it("blocks on a stored value that does not validate, and says what the app is using meanwhile", () => {
+    // Only database surgery or an ICU that dropped the zone gets you here. The
+    // app keeps answering from the fallback, so the details must not imply the
+    // stored value is in force.
+    pinEnvironmentZone("Europe/London");
+
+    const check = clubTimeZoneCheck({
+      ...completeDatabase,
+      clubTimeZone: "NZT",
+    });
+
+    expect(check.status).toBe("blocked");
+    const text = `${check.message} ${check.details.join(" ")}`;
+    expect(text).toContain("NZT");
+    expect(text).toContain("Europe/London");
+  });
+
+  it.each([
+    ["GB", "Europe/London"],
+    ["NZ-CHAT", "Pacific/Chatham"],
+    ["EST5EDT", "America/New_York"],
+  ])(
+    "does not contradict itself about the fallback when TZ=%s is a legacy alias",
+    (raw, expected) => {
+      // #2989 fix round, finding F1b. The step names the zone the reader is
+      // falling back to — which comes from `resolveClubTimeZone`, whose
+      // environment leg uses the PRESERVATION rule — and then explained where it
+      // came from using the OPERATOR-INPUT validator. For all thirty-six legacy
+      // aliases the two disagree, so the details said, in consecutive sentences,
+      // "falling back to Europe/London" and then "the TZ value ("GB") is not a
+      // named place either, so the built-in New Zealand default applies".
+      pinEnvironmentZone(raw);
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: "NZT",
+      });
+      const text = `${check.message} ${check.details.join(" ")}`;
+
+      expect(check.status).toBe("blocked");
+      expect(text).toContain(expected);
+      // The contradiction, in the exact words it used to appear in.
+      expect(text).not.toMatch(/is not a named place either/i);
+      expect(text).not.toMatch(
+        /built-in New Zealand default applies until the club's timezone is set again/i,
+      );
+      // And the raw spelling is still shown, so the interpretation is visible.
+      expect(text).toContain(raw);
+    },
+  );
+
+  it("PREMISE: it DOES say the environment is no help when TZ really names no place", () => {
+    // The leg that makes the assertions above mean something: with an
+    // environment value that neither rule can use, the sentence they refuse to
+    // see is the correct one and must still be printed.
+    pinEnvironmentZone("Etc/GMT-12");
+
+    const check = clubTimeZoneCheck({ ...completeDatabase, clubTimeZone: "NZT" });
+    const text = `${check.message} ${check.details.join(" ")}`;
+
+    expect(check.status).toBe("blocked");
+    expect(text).toMatch(/is not a named place either/i);
+    expect(text).toContain("Pacific/Auckland");
+  });
+
+  it("blocks on a stored fixed offset", () => {
+    pinEnvironmentZone("Pacific/Auckland");
+
+    expect(
+      clubTimeZoneCheck({ ...completeDatabase, clubTimeZone: "Etc/GMT-12" })
+        .status,
+    ).toBe("blocked");
+    expect(
+      clubTimeZoneCheck({ ...completeDatabase, clubTimeZone: "" }).status,
+    ).toBe("blocked");
+  });
+
+  it("renders an unusable stored value bounded and printable", () => {
+    // The report is printed into an operator's terminal by `setup:check`, and a
+    // value that failed validation never came through the validated write path,
+    // so nothing bounds its bytes. Naming what is stored is what makes the
+    // failure fixable, so it is sanitised rather than withheld.
+    pinEnvironmentZone("Pacific/Auckland");
+    const hostile = `Pacific/\u0007${"x".repeat(300)}`;
+
+    const readiness = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database: { ...completeDatabase, clubTimeZone: hostile },
+    });
+    const check = readiness.categories
+      .flatMap((category) => category.checks)
+      .find((candidate) => candidate.id === "club-time-zone");
+    const rendered = renderSetupCheckReport(readiness);
+
+    expect(check?.status).toBe("blocked");
+    // The control character never reaches the terminal, and the value is capped
+    // so one stored string cannot flood the report.
+    expect(rendered).not.toContain("\u0007");
+    expect(rendered).not.toContain("x".repeat(100));
+    expect(rendered).toContain("Pacific/?xxx");
+  });
+
+  it("reports 'not checked' rather than an answer when the database was not reached", () => {
+    // `setup:check` before the database is up. The environment cannot answer
+    // this question, because the environment is exactly what this setting stops
+    // being authoritative.
+    pinEnvironmentZone("Australia/Sydney");
+
+    const check = clubTimeZoneCheck(undefined);
+
+    expect(check.status).toBe("warning");
+    expect(check.message).toBe("Database state was not checked.");
+    expect(check.details.join(" ")).not.toContain("Australia/Sydney");
+  });
+
+  it("says in plain English that this is not the server's timezone, in every state", () => {
+    // The single most common operator misunderstanding, so it is stated on the
+    // step whatever state the step is in.
+    pinEnvironmentZone("Australia/Sydney");
+
+    for (const database of [
+      undefined,
+      { ...completeDatabase, clubTimeZone: null },
+      { ...completeDatabase, clubTimeZone: "NZT" },
+      { ...completeDatabase, clubTimeZone: "Australia/Sydney" },
+      { ...completeDatabase, clubTimeZone: null, clubTimeZoneUnreadable: true },
+    ]) {
+      const details = clubTimeZoneCheck(database).details.join(" ");
+      expect(details).toMatch(/not the server/i);
+      expect(details).toMatch(/database/i);
+    }
+    // Including the two states that depend on the environment rather than on the
+    // snapshot: an unusable TZ, and an alias that names a real place.
+    for (const raw of ["UTC", "GB"]) {
+      pinEnvironmentZone(raw);
+      const details = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: null,
+      }).details.join(" ");
+      expect(details).toMatch(/not the server/i);
+      expect(details).toMatch(/database/i);
+    }
+  });
+
+  it.each([
+    "GB",
+    "NZ-CHAT",
+    "EST5EDT",
+    "Australia/Sydney",
+    "australia/sydney",
+    "UTC",
+    "Etc/GMT-12",
+    null,
+  ])(
+    "promises exactly what the next boot will record, for TZ=%s",
+    (raw) => {
+      // The checklist and the backfill are two descriptions of one fact. They
+      // read the environment through the same classification but they are
+      // different code, and this is the assertion that stops them drifting: the
+      // zone the step NAMES has to be the zone `decideClubTimeZoneBackfill`
+      // would write. Before the #2989 review both were wrong in the same way,
+      // which is exactly why agreement alone is not enough — the two
+      // it.each blocks above pin what the right answer IS.
+      pinEnvironmentZone(raw);
+      const decision = decideClubTimeZoneBackfill();
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: null,
+      });
+
+      expect(check.message).toContain(decision.timeZone);
+      expect(check.details.join(" ")).toContain(decision.timeZone);
+    },
+  );
+
+  it.each(["UTC", "Etc/GMT-12"])(
+    "agrees with the backfill that TZ=%s is a DEFAULT and not a preserved zone",
+    (raw) => {
+      // The other half of the agreement. Both sides now record
+      // `Pacific/Auckland` for this input, so "they name the same zone" is no
+      // longer discriminating on its own — what has to agree is that neither
+      // presents it as the zone the deployment was using.
+      pinEnvironmentZone(raw);
+      expect(decideClubTimeZoneBackfill().kind).toBe("defaulted");
+
+      const check = clubTimeZoneCheck({
+        ...completeDatabase,
+        clubTimeZone: null,
+      });
+      const text = `${check.message} ${check.details.join(" ")}`;
+
+      expect(check.status).toBe("warning");
+      expect(text).toMatch(/default/i);
+      // And it never claims the value came out of the environment, which is the
+      // sentence state 5 uses and the one thing that is not true here.
+      expect(text).not.toMatch(/keeping exactly the timezone this deployment/i);
+      expect(text).not.toContain("Australia/Sydney");
+    },
+  );
+
+  it("does not depend on the wall clock", () => {
+    // Two different `now` values, one identical answer.
+    pinEnvironmentZone("Australia/Sydney");
+    const database = { ...completeDatabase, clubTimeZone: null };
+
+    const early = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database,
+      now: new Date("2020-01-01T00:00:00.000Z"),
+    });
+    const late = buildSetupReadiness({
+      env: baseEnv,
+      configDir: makeConfigDir(),
+      database,
+      now: new Date("2031-12-31T23:59:59.000Z"),
+    });
+    const pick = (readiness: typeof early) =>
+      readiness.categories
+        .flatMap((category) => category.checks)
+        .find((candidate) => candidate.id === "club-time-zone");
+
+    expect(pick(early)).toEqual(pick(late));
   });
 });

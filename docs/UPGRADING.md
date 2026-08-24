@@ -96,6 +96,228 @@ as a red flag and check the release notes before deploying.
 
 ## Unreleased
 
+### You must declare whether this deployment is the live site (#3034, epic #2986)
+
+**Do this before you deploy, or the deploy will refuse to run.** Add one line to
+the `.env` on the server:
+
+```
+APP_ENVIRONMENT_ROLE=production
+```
+
+On a staging site, a rehearsal copy or a developer's checkout, use
+`APP_ENVIRONMENT_ROLE=non-production` instead.
+
+**Why.** From this release the app has one explicit answer to "is this
+installation the club's live site, or a copy of it?", and it never infers it —
+not from `NODE_ENV`, not from the hostname, not from which database it is pointed
+at. That is because a copy restored from the live database contains the club's
+real members and their real email addresses, and every convention people
+otherwise rely on is right until somebody stands up the copy that breaks it. An
+installation that has not declared itself resolves **UNKNOWN**, and UNKNOWN fails
+closed: member email is held back, and **nothing is written to the club's Xero
+organisation at all** — no invoice, no credit note, no contact, no payment, no
+credit allocation — until it is declared. Reading from Xero is unaffected, so the
+Xero screens still load while an operator works out why. A copy that HAS declared
+itself does keep writing Xero documents, on purpose so settlement stays testable,
+but it replaces the email address on every Xero contact it touches with one that
+cannot be delivered, because Xero emails invoice reminders from its own servers to
+whatever the contact holds. See
+[`guides/environment-role.md`](guides/environment-role.md) -> "What a copy does to
+the club's Xero contacts" before pointing a copy at the real Xero organisation.
+
+**The supported deploy path will not let you discover this the hard way.**
+Because an existing deployment has no declaration, shipping the fail-closed
+behaviour alone would have turned a working live site into a silent mail outage.
+So `scripts/run-production-blue-green-deploy.sh` validates the entry in its
+preflight — **step 3 of 20**, before the migration (step 13), before the new
+release's first process starts (step 14) and long before the traffic cutover
+(step 17). An undeclared upgrade aborts with the **previous release still serving
+and nothing changed**: no migration applied, no container switched. Add the line
+and run the deploy again. It also refuses a `.env` that says
+`non-production` — see below — refuses a SECOND `APP_ENVIRONMENT_ROLE`
+assignment anywhere in the file (Compose would use the last one), and refuses a
+value set in your shell that disagrees with the file, because Compose would take
+the shell's. The usual `.env` shapes are all fine: an `export ` prefix, spaces
+around the `=`, quotes round the value, a leading indent.
+
+Then, at **step 14**, it asks each newly started container — by calling the
+application's own `GET /api/deploy/runtime-status` from inside it — which
+declaration the app read, and aborts before the cutover if any of them answers
+anything other than `production`. That second check exists because validating the
+file and validating what the containers received are different questions, and it
+asks the application rather than re-reading the container's settings so there is
+only ever one implementation of the rule.
+
+**What that promise does NOT cover, stated plainly:** a deployment brought up by
+hand — `docker compose up` — runs none of it. Such an installation comes up
+undeclared, resolves UNKNOWN, logs an error at start-up naming the specific
+cause, and reports the **Production Or Non-Production** step on `/admin/setup` as
+blocked. It will not quietly behave as production, but nothing stops it starting.
+
+**Do not confuse it with `APP_RUNTIME_ROLE`, which you already have.** They sit
+next to each other in the Compose environment and differ by one word, and on the
+staging stack `APP_RUNTIME_ROLE` holds the literal word `staging`.
+`APP_RUNTIME_ROLE` names which container *slot* a process is (`web-blue`,
+`web-green`, `cron-leader`) and is never read to decide whether this is the live
+site. Setting it to `production` changes nothing. Both plausible mistakes are
+made to fail safely: `APP_ENVIRONMENT_ROLE=staging` is refused (it is not one of
+the two accepted values) and leaves the site not configured.
+
+**A new empty table, and no backfill.** The migration
+`20260826010000_add_environment_safety_settings` creates
+`EnvironmentSafetySettings` and seeds no row — it is purely additive, the
+previous release reads nothing in it, and an absent row already means "no
+override". Nothing to do.
+
+**Afterwards.** Confirm the **Production Or Non-Production** step on
+`/admin/setup` reads *complete*, and that
+**Admin → Setup & Configuration → Environment Safety** (`/admin/environment`)
+says *Production*. A Full Administrator can force any installation to be treated
+as a copy from that page; it can only ever make the answer safer, and every
+change either way is audited (`ENVIRONMENT_SAFETY_OVERRIDE_UPDATED`). Full
+walkthrough: `docs/guides/environment-role.md`.
+
+### If any copy of your site uses a capture mailbox, check `EMAIL_SERVER_HOST` (#3071)
+
+**This is for installations that already had `USE_SMTP_RELAY=true` working before
+they declared a capture mailbox. If that is you, one of your copies may have been
+emailing real members while its logs said otherwise, and this release refuses that
+configuration rather than obeying it.**
+
+**What was wrong.** `USE_LOCAL_CAPTURE=true` declares that `EMAIL_SERVER_HOST` is
+a sink that forwards mail nowhere, which is what lets a copy transmit at all. But
+the two settings were read as one pair with no check between them, so an
+installation that flipped the flag and left the host pointed at its real relay got
+the *permission* without the *sink*. The delivery boundary answered "allowed —
+capture", the mail went to the relay, the relay delivered it to real members, and
+the log recorded that the message had reached nobody. Our own repair messages made
+that easy to walk into: they said to declare `USE_LOCAL_CAPTURE=true` and did not
+mention the host.
+
+**What to do, on every copy** — staging, rehearsal stacks, developer machines.
+Look at the two settings together:
+
+```
+USE_LOCAL_CAPTURE=true
+EMAIL_SERVER_HOST=<must be the capture, not your relay>
+```
+
+Point `EMAIL_SERVER_HOST` (and `EMAIL_SERVER_PORT`, `EMAIL_SERVER_USER`,
+`EMAIL_SERVER_PASSWORD`) at the capture mailbox itself. A container or service
+name (`mailpit`, `mailhog`), `localhost`, or any private address is accepted with
+nothing further to do. If that host really does deliver mail, set
+`USE_SMTP_RELAY=true` instead — the copy then holds every message back, which is
+the correct behaviour for a copy pointed at a live provider.
+
+**If you leave it as it was, nothing is sent.** From this release the combination
+is refused: each message is recorded as failed, carrying a reason that names
+`EMAIL_SERVER_HOST`, and it goes out by itself once the host is corrected. Mail is
+delayed rather than lost — except for the messages that keep no stored copy (a
+sign-in link, a door code, a payment link), which are listed under **Admin →
+Email** for a manual re-send, as they always are.
+
+**If your capture genuinely has a public name.** Some sinks legitimately do — a
+mailpit reachable only at a public DNS name. Declare
+`EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true` alongside the capture flag. Only do that
+once you have confirmed the host cannot deliver onward; nothing checks it, and
+nothing can. Note that a mail server on a *private* address can relay outward too,
+so the private-address case is accepted rather than proven safe — the declaration
+is what carries it either way.
+
+**The club's live site is unaffected**, and cannot reach this state: a deployment
+declaring `APP_ENVIRONMENT_ROLE=production` together with `USE_LOCAL_CAPTURE=true`
+was already refused before this release, for its own reason.
+
+**One new enum value, no data change.** The migration
+`20260901010000_add_capture_transport_public_host_block_reason` registers one
+label on an existing type so the new refusal can be recorded distinguishably from
+every other reason a message was not sent. It writes no rows and alters no table.
+Full analysis, including the one old-code read window during a blue/green drain,
+is in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
+
+Reported by an external reviewer running the only real staging deployment of this
+application — the failure needs an *existing* relay configuration to upgrade from,
+which no fresh install and no test fixture reproduces.
+
+### The club's time zone moves into the database (#2989, epic #2988)
+
+**Nothing changes for your deployment at this upgrade. That is the point of how
+it was built, and it is worth reading anyway, because one operator action follows
+and one habit stops working.**
+
+**What changes.** The time zone every date and time is shown in is now recorded
+in the database, in-app, at **Admin → Setup & Configuration → Club Time Zone**
+(`/admin/club-time`), instead of being taken from the `TZ` environment variable
+the container was started with. It is stored as a place — `Pacific/Auckland` —
+so the platform keeps its own daylight-saving rules.
+
+**What the migration does to your data.** Nothing. It creates one empty table.
+It deliberately does **not** write a time zone into it, because SQL cannot read
+your container's environment and guessing `Pacific/Auckland` would silently
+reassign the civil time of any club running on another zone. Instead, **the first
+time the upgraded application starts, it records the zone you are already
+effectively using**, read from your existing `TZ` or `NEXT_PUBLIC_TZ`.
+
+**Displayed times do not change at this upgrade, on any deployment.** They are
+still worked out from `TZ` for now; this release records the setting that takes
+over as the remaining time-zone work ships. No stored timestamp and no lodge
+night is touched, now or ever, by a time zone change.
+
+Three outcomes on that first start, and it is worth knowing which one you get:
+
+- **Your `TZ` names a place** — `Pacific/Auckland`, `Australia/Sydney`, and also
+  older spellings such as `GB` or `NZ-CHAT`. That place is recorded, an older
+  spelling under its modern name: `GB` is recorded as `Europe/London`, `NZ-CHAT`
+  as `Pacific/Chatham`. Same zone, current name.
+- **Neither variable is set** — `Pacific/Auckland` is recorded, the generic New
+  Zealand default.
+- **Your `TZ` names no place** — `UTC`, `Etc/UTC` (a common container default),
+  `Etc/GMT-12`. No place on earth has "UTC" as its civil time, so there is nothing
+  to preserve. **`Pacific/Auckland` is recorded** (owner decision, 23 Aug 2026:
+  default rather than block), and because that is a guess rather than a
+  preservation it is not done quietly — a warning is logged at startup naming
+  what your `TZ` said, and the setup checklist reports the step as a **warning**
+  asking a Full Administrator to confirm the zone at `/admin/club-time`.
+  **If your club is not in New Zealand, this is the case to check.** Displayed
+  times are unaffected in the meantime, but from the release that completes this
+  work the recorded zone is what members see.
+
+**Between `prisma migrate deploy` and that first start** the setting is empty, and
+displayed times keep coming from `TZ` exactly as before — so the draining old
+colour and the new colour agree on the club's time throughout the deploy. The old
+colour does not know the table exists. (Strictly, the new reader answers
+`Pacific/Auckland` in that window for a `TZ` that names no place, which is the
+third case above; nothing displays from that reader yet, so nobody sees it.)
+
+**The post-upgrade action.** Open `/admin/setup` after cutover and read the
+**Club Time Zone** step.
+
+- ***Complete***, naming the zone you expect — done, nothing to do.
+- A ***warning*** saying the zone could not be confirmed from your environment —
+  that is the third case above: your `TZ` named no place, `Pacific/Auckland` was
+  recorded, and the checklist is asking you to confirm it. **If your club is not
+  in New Zealand this is the one to act on**; set the real zone at
+  `/admin/club-time`. If `Pacific/Auckland` is right, acknowledge the step.
+- Saying the zone has **not been recorded** — the app has not restarted since the
+  migration. Restart it, or run `npm run config:self-heal`, which does the same
+  backfill without a restart.
+
+**Do not remove `TZ` yet, and this is the one thing that can bite you.** It is
+becoming a seed rather than the authority, but it still drives displayed times
+today, and it is what the first start after this upgrade copies the club's zone
+*from*. An operator who tidies `TZ=Australia/Sydney` out of the environment in the
+same deploy hands the upgrade nothing to copy, and gets `Pacific/Auckland`
+recorded instead. Leave it exactly as it is, confirm the setup checklist after
+cutover, and keep it in step with the in-app setting from then on.
+
+The two remain genuinely different things: the club's time zone is a club
+setting, and the container's own clock is not the club's civil time.
+
+**Who may change it.** Full Administrators only, with an explicit confirmation,
+and every change is audited (`CLUB_TIME_ZONE_UPDATED`) with the administrator and
+the before and after zone.
+
 ### Family email inheritance becomes direct-parent only, and re-resolves itself (#2716)
 
 **Expect a list of members needing an email address on the first day, and expect

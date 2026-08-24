@@ -181,6 +181,17 @@ deeper reference for what each category contains and the import safety model.
     - `AiAssistantSettings` — the deployment-specific AI monthly spend cap; an
       operational spend control a source club must never reset on a target
       (a fresh import keeps the target's own cap, #2211).
+    - `ClubTimeSettings` — the installation's one club time zone (#2989). It does
+      not travel for the same reason changing it in-app is Full-Admin-only,
+      confirmation-gated and audited: a bundle apply is none of those things, so
+      importing it would move every displayed time and every club-local scheduled
+      job on the target club with no acknowledgement and no before/after audit
+      row naming who did it. A fresh import keeps the target's own zone, and a
+      target that has none keeps resolving the zone it is already effectively
+      using. **This matters for disaster recovery and clones:** a restored clone
+      takes its time zone from the NEW container's environment, not from the
+      source club's bundle, so confirm the Club Time Zone step on its setup
+      checklist before opening it to members.
 
   Both `ClubTheme` and the twelve original singletons remain accounted for
   (registered); `ClubTheme` is registered in the site-content category and listed
@@ -232,7 +243,7 @@ deeper reference for what each category contains and the import safety model.
     fields are ordinary allowlisted fields and **travel normally** — which is
     the intended behaviour, and why applying a bundle refreshes the DB-first
     club-identity cache. On any booted install the row usually does exist:
-    `clubIdentitySelfHealStep` (`src/lib/config-self-heal.ts`) creates it at
+    `clubIdentitySelfHealStep` (`src/lib/config-self-heal-steps.ts`) creates it at
     boot from `config/club.json`.
   - **An all-null file never creates a row.** `carriesNoValue` in
     `club-settings.ts` skips the create branch (and the plan reports

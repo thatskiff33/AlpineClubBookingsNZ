@@ -318,12 +318,42 @@ export const AUDIT_CENSUS_TOTALS = {
   // 435, so the merged total is 453. Taken from `npm run audit:census` run on
   // the merged tree rather than by adding one branch's delta to the other's
   // total, which is how a published count goes wrong in a merge.
+  // 453 -> 454 (CT-1, #2989): `CLUB_TIME_ZONE_UPDATED`, the one writer on the
+  // Full-Admin club-timezone maintenance route. It records the before and after
+  // IANA identifier and nothing else — the issue's requirement 6 says in so many
+  // words "do not audit unrelated settings payload" — inside the same
+  // transaction as the `ClubTimeSettings` upsert, so a rolled-back save records
+  // nothing and a pristine re-save (the dirty gate) never reaches the write at
+  // all. Category `admin`, the same installation-configuration answer
+  // `CLUB_IDENTITY_SETTINGS_UPDATED` gives, so it does not join
+  // `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npx tsx scripts/audit/audit-writer-census.ts` on this tree (454 sites,
+  // 2109 files scanned), not by adding one to the literal above — which is the
+  // only way this file has ever been right after a merge.
+  // 454 -> 455 (ENV-SAFETY 1, #3034): the environment-safety override writer.
+  // `ENVIRONMENT_SAFETY_OVERRIDE_UPDATED` records who forced this installation to
+  // be treated as a copy, or stopped forcing it, and the before/after value of the
+  // one flag. Written with `buildStructuredAuditLogCreateArgs` through
+  // `tx.auditLog.create` in the same Serializable transaction as the
+  // `EnvironmentSafetySettings` upsert, so a rolled-back save records nothing and
+  // a no-op (the dirty gate, which counts an absent row as `false`) never reaches
+  // the write at all. Category `admin`, the same installation-configuration answer
+  // `CLUB_TIME_ZONE_UPDATED` and `CLUB_IDENTITY_SETTINGS_UPDATED` give — NOT
+  // `security`, because this changes what the installation DOES rather than who may
+  // sign in or what they may reach; the read gate is identical for both anyway. So
+  // it does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
+  // `npx tsx scripts/audit/audit-writer-census.ts` on this tree (455 sites, 2116
+  // files scanned), not by adding one to the literal below.
   // 453 -> 459 (#2992 merged with main): the six club message board writers
   // (hide, show, edit, remove, retention settings, manual cleanup). Taken from
   // `npm run audit:census` on the MERGED tree, by the method the #2780 note
   // above sets out -- not by adding this branch's delta to main's total.
   // 459 -> 460 (epic #2992 federation): the board image upload writer.
-  writeSites: 460,
+  // 455/460 -> 462 (upstream merge, 25 Aug 2026): both lanes' additions are
+  // disjoint -- upstream's two auditLog.create writers and this branch's seven
+  // communication writers -- and the figure is from `npm run audit:census` on
+  // the MERGED tree, the method this file prescribes.
+  writeSites: 462,
   /**
    * Of those, sites whose event object carries no `category` key.
    *
@@ -415,7 +445,16 @@ export const AUDIT_CENSUS_TOTALS = {
     // 70 -> 69 (#2581 child 2 review): the age-up handoff write, above. No
     // hand-built `auditLog.create` remains outside a declared wrapper.
     // 69 -> 72 (#2749): the three Other Lodges admin CRUD writers, above.
-    "auditLog.create": { total: 72, uncategorised: 0 },
+    // 72 -> 73 (CT-1, #2989): the club-timezone writer. `tx.auditLog.create`
+    // with `buildStructuredAuditLogCreateArgs`, matching the sibling settings
+    // singleton it was cloned from (`/api/admin/club-identity`) rather than
+    // introducing a fourth form on a route that does exactly the same job.
+    // 73 -> 74 (ENV-SAFETY 1, #3034): the environment-safety override writer.
+    // `tx.auditLog.create` with `buildStructuredAuditLogCreateArgs`, the same form
+    // as the club-timezone writer beside it, inside the route's own Serializable
+    // transaction — so the two-table contract that route's test enumerates stays
+    // enumerable.
+    "auditLog.create": { total: 74, uncategorised: 0 },
   },
   /**
    * Literal category values written, and by how many sites. The three `membership`
@@ -588,7 +627,26 @@ export const AUDIT_CENSUS_TOTALS = {
     // in an audit row (see docs/SECURITY-ATTACK-SURFACE.md), so this widens what
     // a support-only operator can correlate by the fact of a connection change,
     // never by its secret.
-    admin: 102,
+    // 102 -> 103 (CT-1, #2989): `CLUB_TIME_ZONE_UPDATED`. `admin` is the answer
+    // the sibling club-identity settings writer already gives, and it is the
+    // honest one: this is installation configuration, not a security event and
+    // not a member's own business. It is readable with `support:view` alone, so
+    // the derived weakest-gate total moves 128 -> 129 — by one row saying which
+    // timezone the club now keeps, which is exactly what a support operator
+    // investigating "why did the nightly job run an hour late" needs to find.
+    // Retention is unchanged from every other `admin` row: `critical`, seven
+    // years, because the action name normalises to no access-event word.
+    // 103 -> 104 (ENV-SAFETY 1, #3034): ENVIRONMENT_SAFETY_OVERRIDE_UPDATED. THIS
+    // IS A WIDENING OF WHO CAN READ WHAT, by one site, and it is stated rather than
+    // counted: `admin` is readable with `support:view` ALONE, so one more write site
+    // becomes correlatable at support level. What that row contains is the
+    // before/after value of a boolean and the id of the administrator who changed
+    // it — no member data, no environment values, no connection details — so the
+    // widening is one operational configuration event, not a member-record
+    // disclosure. `security` was considered and rejected: this changes what the
+    // installation DOES, not who may sign in or what they may reach, and its read
+    // gate is `support:view` either way.
+    admin: 104,
     // 16 -> 19 (#2581 child 2): `member.password-reset-sent` and
     // `member.setup-invite-sent` (decision 3 — the affected domain is the
     // CREDENTIAL, not the mailing), plus the `member.bulk-set-role` branch

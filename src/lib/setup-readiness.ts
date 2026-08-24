@@ -1,6 +1,32 @@
 import fs from "node:fs";
 import path from "node:path";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import {
+  CLUB_TIME_ZONE_FALLBACK,
+  CLUB_TIME_ZONE_MAX_LENGTH,
+  normaliseClubTimeZone,
+  resolveClubTimeZone,
+} from "@/lib/club-time-zone";
+import {
+  classifyEnvironmentClubTimeZoneSeed,
+  type EnvironmentClubTimeZoneSeed,
+} from "@/lib/club-time-zone-env";
+/*
+  TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
+  `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
+  `npm run setup` / `npm run setup:check` as well as by the admin API. An
+  `import type` is erased before anything runs, so the resolution arrives here as
+  DATA on the injected snapshot (`SetupDatabaseSnapshot.environmentRole`,
+  resolved in `setup-readiness-db.ts`) and `buildSetupReadiness` stays
+  synchronous over injected data. Making it async to call the resolver from in
+  here would ripple through every caller and every test that builds a readiness
+  report.
+*/
+import type { EnvironmentRoleResolution } from "@/lib/environment-role";
+import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
+// Type-only for the same reason as the line above, so this module keeps no
+// runtime edge to anything that reads a database.
+import type { WithheldApplicationEmail } from "@/lib/environment-safety-withheld";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
@@ -17,6 +43,8 @@ import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 
 export const SETUP_STEP_IDS = [
   "club-config",
+  "club-time-zone",
+  "environment-role",
   "runtime-env",
   "auth-secret-strength",
   "seed-admin",
@@ -115,6 +143,36 @@ export interface SetupDatabaseSnapshot {
   // config/club.json is normal — the file is only an optional seed now.
   clubIdentityName?: string | null;
   configuredCapacity?: number | null;
+  // The persisted club timezone (CT-1, #2989): `ClubTimeSettings.timeZone`, or
+  // null when no row exists yet. Optional so an older caller — and a DB-less
+  // `setup:check` run, which passes no snapshot at all — still compiles; on a
+  // snapshot that WAS taken, undefined and null both mean "no row", which the
+  // club-time-zone check reports as not-yet-configured. This is the CLUB's
+  // timezone, never the server's or the container's `TZ`.
+  clubTimeZone?: string | null;
+  // True when the `ClubTimeSettings` read itself FAILED (CT-1, #2989) — an
+  // un-migrated schema, or a database that answered every sibling query and not
+  // this one. Distinct from `clubTimeZone: null` on purpose: "no row yet" is a
+  // normal state with a known remedy ("the app records it on the next start"),
+  // and telling an operator that when the table does not exist sends them to
+  // wait for something that cannot happen. Undefined (older callers, a snapshot
+  // taken before this field existed) means the read succeeded.
+  clubTimeZoneUnreadable?: boolean;
+  // Whether this installation is production, non-production or not yet declared
+  // (ENV-SAFETY 1, #3034; epic #2986), already RESOLVED by
+  // `resolveEnvironmentRole()` in `setup-readiness-db.ts`. It is carried as data
+  // rather than resolved here because the resolver reads the database and this
+  // file is deliberately synchronous over an injected snapshot. Optional so an
+  // older caller — and a DB-less `setup:check` run, which passes no snapshot at
+  // all — still compiles; undefined means the question was not asked, which the
+  // check below reports as "not checked" rather than guessing at an answer.
+  environmentRole?: EnvironmentRoleResolution;
+  // How much application email this installation has held back for
+  // environment-safety reasons (ENV-SAFETY 1, #3034), read in
+  // `setup-readiness-db.ts`. Optional so an older caller and a DB-less
+  // `setup:check` still compile; undefined is reported the same way
+  // `{ available: false }` is, because neither one is a count.
+  withheldEmail?: WithheldApplicationEmail;
   // Resolved booking capacity of the club's DEFAULT lodge
   // (getDefaultLodgeCapacity). Since #1982 the club-config check warns when this
   // is 0 — a default lodge with no active beds AND no capacity override accepts
@@ -575,6 +633,583 @@ function buildClubConfigCheck(
       details: [
         "Source: none (config/club.json is an optional seed; club.example.json does not count)",
         "Database state was not checked.",
+      ],
+    },
+    progress,
+  );
+}
+
+/**
+ * The one sentence every detail list below repeats, because it is the single
+ * thing an operator most often gets wrong: the club timezone and the machine's
+ * timezone are different settings with different owners.
+ */
+const CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL =
+  "This is the club's timezone, not the server's or container's timezone. They are separate settings: the club's timezone decides which day a lodge night belongs to and what time members see, and it is stored in the database, so changing TZ on the host does not change it.";
+
+/**
+ * Render a timezone value that did NOT come through the validated write path
+ * safely enough to print — a stored value that failed validation, or the raw
+ * `TZ` / `NEXT_PUBLIC_TZ` string.
+ *
+ * Neither is bounded: a stored bad value reaches this path only through database
+ * surgery or an ICU that no longer knows the zone, and an environment variable is
+ * whatever the operator's deployment tooling put there. The readiness report is
+ * rendered into an operator's terminal by `setup:check`, so control characters
+ * are replaced and the value is capped — naming what is actually there is what
+ * makes the failure fixable.
+ */
+function printableTimeZoneValue(value: string): string {
+  const printable = value.replace(/[^\x20-\x7E]/g, "?");
+  return printable.length > CLUB_TIME_ZONE_MAX_LENGTH
+    ? `${printable.slice(0, CLUB_TIME_ZONE_MAX_LENGTH)}…`
+    : printable;
+}
+
+/**
+ * Plain-English provenance of the zone the app will RECORD for a club that has
+ * none stored yet — for the two states where there is one. See
+ * `decideClubTimeZoneBackfill` in `config-self-heal-steps.ts` for the decision
+ * itself; this only puts it into words, and `club-time-zone-backfill-agreement`
+ * in the tests pins the two together so the words cannot describe a different
+ * zone from the one the next boot writes.
+ */
+function describeClubTimeZoneToRecord(
+  raw: string | null,
+  toRecord: string,
+): string {
+  if (raw === null) {
+    return "No TZ or NEXT_PUBLIC_TZ is set, so the built-in New Zealand default applies.";
+  }
+  if (raw === toRecord) {
+    return "Taken from the TZ / NEXT_PUBLIC_TZ environment variable, which seeds this setting once and is then no longer consulted.";
+  }
+  return `Taken from the TZ / NEXT_PUBLIC_TZ environment variable, which says "${printableTimeZoneValue(raw)}" — the same place, named the way this runtime spells it. The variable seeds this setting once and is then no longer consulted.`;
+}
+
+/**
+ * Where the zone the app is ANSWERING with came from, for a club whose stored
+ * value cannot be used.
+ *
+ * This describes `resolveClubTimeZone`, the canonical reader's rule. A row
+ * exists, so no backfill will ever touch it; the app is on its documented
+ * fallback path until somebody stores a usable zone.
+ *
+ * IT IS JUDGED FROM THE CLASSIFIED SEED, not from the raw string (#2989 fix
+ * round). The first version asked `normaliseClubTimeZone(raw) === fallback` —
+ * the OPERATOR-INPUT validator — while the value it was describing came out of
+ * `resolveClubTimeZone`, whose environment leg uses the PRESERVATION rule. On any
+ * deployment whose `TZ` is one of the thirty-six legacy aliases the two disagree,
+ * and the step printed two adjacent contradicting sentences: "falling back to
+ * Europe/London", then "the TZ value ("GB") is not a named place either, so the
+ * built-in New Zealand default applies". Taking `seed.kind` makes it impossible
+ * to answer this question with a different rule from the one that produced the
+ * answer.
+ */
+function describeReaderFallback(seed: EnvironmentClubTimeZoneSeed): string {
+  if (seed.kind === "absent") {
+    return "No TZ or NEXT_PUBLIC_TZ is set, so the built-in New Zealand default applies.";
+  }
+  if (seed.kind === "unusable") {
+    return `The TZ / NEXT_PUBLIC_TZ value in the environment ("${printableTimeZoneValue(seed.raw)}") is not a named place either, so the built-in New Zealand default applies until the club's timezone is set again.`;
+  }
+  if (seed.raw === seed.timeZone) {
+    return "That is the TZ / NEXT_PUBLIC_TZ value from the environment, which stands in only while nothing usable is stored.";
+  }
+  return `That is the TZ / NEXT_PUBLIC_TZ value from the environment, which says "${printableTimeZoneValue(seed.raw)}" — the same place, named the way this runtime spells it. It stands in only while nothing usable is stored.`;
+}
+
+/**
+ * Club-timezone gate (CT-1, #2989; epic #2988). The club has exactly one
+ * persisted IANA timezone and it is the sole civil-time authority
+ * (INV-CONFIG-002), so setup is not finished until it is stored explicitly.
+ *
+ * Seven states:
+ * 1. **No snapshot** — `setup:check` ran before the database was reachable. The
+ *    same "not checked" warning the sibling DB-backed steps use; it cannot be
+ *    answered from the environment, because the environment is precisely what
+ *    this setting stops being authoritative.
+ * 2. **The row could not be READ** — the table is missing, or that one query
+ *    failed. Also "not checked", and deliberately not the same message as state
+ *    5: the remedy for an absent row is "wait for the next start", which is not
+ *    a remedy for a table that does not exist.
+ * 3. **A stored zone that validates** → complete, and the message NAMES it, so a
+ *    club that has been running on `Australia/Sydney` can see at a glance that
+ *    the upgrade did not move it.
+ * 4. **A stored zone that does not validate** → blocked. Only DB surgery or an
+ *    ICU that dropped the zone can produce this; the app keeps answering from the
+ *    environment fallback meanwhile, and the details say so rather than implying
+ *    the stored value is in force. This is `persisted-unusable` in
+ *    `ClubTimeZoneSource`, and the maintenance panel says the same thing about
+ *    it — one state, one instruction, wherever the operator meets it.
+ * 5. **No row, and the environment names a place** (or says nothing at all) →
+ *    blocked, naming the zone the next start will record. A fresh install and a
+ *    just-migrated existing install are both here, and it is deliberately a block
+ *    rather than a warning: it is what stops setup finishing without an explicit
+ *    timezone (issue AC). It is also not an emergency — the message names what
+ *    will be recorded — so the block reads as "confirm this", not "the site is
+ *    broken".
+ * 6. **No row, and the environment names NO place** (`TZ=UTC`, `Etc/GMT-12`) →
+ *    **warning**, naming the raw value and the `Pacific/Auckland` the next start
+ *    will record in its place. Owner decision, 23 Aug 2026 (#2989): such a
+ *    deployment is defaulted rather than blocked, because the zone it is
+ *    effectively using is not a storable club timezone and refusing to record
+ *    anything just leaves the setting empty. Not a block, because the owner said
+ *    not to block setup; not silence, because the club may be up to thirteen
+ *    hours from the zone it is about to be handed.
+ * 7. **`Pacific/Auckland` is stored, and the environment STILL names no place**
+ *    → **warning**, the post-boot form of state 6 and the state an operator
+ *    actually meets. The boot backfill runs before anybody can open
+ *    `/admin/setup`, so by the time this page renders the row exists and states 6
+ *    and 3 would otherwise be indistinguishable — a club that has been on `UTC`
+ *    for years would read a clean "complete" naming a zone nobody chose, which is
+ *    exactly what the owner's decision says must not happen.
+ *
+ *    IT CANNOT KNOW whether that `Pacific/Auckland` was defaulted or chosen: the
+ *    row records no provenance, and the setup CLI writes the same
+ *    `updatedByMemberId: null` a boot does. So the wording does not claim to
+ *    know — it says what is stored, says the environment could not confirm it,
+ *    and asks. The operator clears it either way: Acknowledge on this step if the
+ *    zone is right, or set the real one at `/admin/club-time` if it is not. That
+ *    a club deliberately on `Pacific/Auckland` with a `UTC` container sees this
+ *    once is the accepted cost of the club that was moved thirteen hours seeing
+ *    it at all.
+ *
+ * Deliberately clock-free: nothing here formats a date, so the answer is the same
+ * at every instant.
+ */
+function buildClubTimeZoneCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const base = {
+    id: "club-time-zone" as const,
+    title: "Club Timezone",
+    description:
+      "The one timezone the club runs on — which day a lodge night falls on, and what time members see.",
+    required: true,
+    href: "/admin/club-time",
+  };
+
+  // 1. The database was not checked at all.
+  if (!db) {
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: "Database state was not checked.",
+        details: [
+          "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
+          "The club's timezone is stored in the database, so it cannot be read without a database connection.",
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 2. The row could not be read — see state 2 in the docblock.
+  if (db.clubTimeZoneUnreadable) {
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: "The club's timezone could not be read from the database.",
+        details: [
+          "Every other setting answered, so this is not simply a database outage: the ClubTimeSettings table is most likely missing because the migration has not been applied on this database yet.",
+          "Run prisma migrate deploy (or npm run db:migrate in development), then check again. Nothing is stored automatically until this read succeeds.",
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  const stored = db.clubTimeZone ?? null;
+
+  // The environment, judged exactly as the boot backfill judges it
+  // (`decideClubTimeZoneBackfill`): its value is being PRESERVED, not approved,
+  // so `GB` is Europe/London and `NZ-CHAT` is Pacific/Chatham — while `UTC` and
+  // `Etc/GMT-12` name no place at all and are defaulted instead.
+  const seed = classifyEnvironmentClubTimeZoneSeed();
+
+  // 5 / 6. No row yet — a fresh install, or an existing one between
+  //         `prisma migrate deploy` and its first boot on the new release.
+  if (stored === null) {
+    // 6. The environment names no place, so the next start records the
+    //    documented default and says so. See the docblock.
+    if (seed.kind === "unusable") {
+      const raw = printableTimeZoneValue(seed.raw);
+      return applyProgress(
+        {
+          ...base,
+          status: "warning",
+          message: `The club's timezone has not been stored yet, and TZ / NEXT_PUBLIC_TZ is set to "${raw}", which is not a place — so the app will store ${CLUB_TIME_ZONE_FALLBACK}. Confirm that, or set the club's timezone at /admin/club-time.`,
+          details: [
+            "Source: none — nothing is stored in the database yet.",
+            `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so they carry no daylight-saving rules and no club's civil time can be read from one.`,
+            `To be stored: ${CLUB_TIME_ZONE_FALLBACK}, the built-in New Zealand default — there was nothing in the environment to preserve, so this is a default and not the zone this deployment was using. If the club is somewhere else, set it at /admin/club-time (or run npm run setup) before or after the next start; a stored zone is never overwritten.`,
+            CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+          ],
+        },
+        progress,
+      );
+    }
+
+    // 5. The environment names a place (or says nothing, and the documented New
+    //    Zealand default applies), so the next start records it.
+    const toRecord =
+      seed.kind === "preserved" ? seed.timeZone : CLUB_TIME_ZONE_FALLBACK;
+    const raw = seed.kind === "preserved" ? seed.raw : null;
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message: `The club's timezone has not been stored yet, so the app will store ${toRecord}. Confirm or change it, then it is fixed for good.`,
+        details: [
+          "Source: none — nothing is stored in the database yet.",
+          `To be stored: ${toRecord}. ${describeClubTimeZoneToRecord(raw, toRecord)}`,
+          "The app stores this zone automatically the next time it starts, keeping exactly the timezone this deployment already used. To store it now without a restart, run npm run config:self-heal.",
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  const canonical = normaliseClubTimeZone(stored);
+
+  // 4. Something is stored that this runtime cannot use (`persisted-unusable`).
+  if (canonical === null) {
+    // What the app answers meanwhile: the same precedence the canonical reader
+    // uses, reached through the same resolver, so readiness cannot describe a
+    // different zone from the one in force.
+    const fallback = resolveClubTimeZone(
+      null,
+      seed.kind === "absent" ? null : seed.raw,
+    );
+    return applyProgress(
+      {
+        ...base,
+        status: "blocked",
+        message: `The stored club timezone is not a timezone this app can use, so it is falling back to ${fallback}. Set the club's timezone again.`,
+        details: [
+          "Source: database (ClubTimeSettings)",
+          `Stored value: "${printableTimeZoneValue(stored)}" — not a named IANA timezone such as Pacific/Auckland. Abbreviations (NZT, EST) and fixed offsets (+12:00, Etc/GMT-12) are refused because they carry no daylight-saving rules.`,
+          `Until it is fixed the app answers with ${fallback}. ${describeReaderFallback(seed)}`,
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 7. The documented default is stored and the environment STILL names no
+  //    place, so this may be the zone the boot backfill invented rather than one
+  //    anybody chose. It cannot be told apart from a deliberate choice, so the
+  //    wording asks instead of asserting. See the docblock.
+  if (canonical === CLUB_TIME_ZONE_FALLBACK && seed.kind === "unusable") {
+    const raw = printableTimeZoneValue(seed.raw);
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: `The club's timezone is ${canonical}, but nothing has confirmed it: TZ / NEXT_PUBLIC_TZ is "${raw}", which is not a place, so ${canonical} is what the app records by default. Confirm it, or set the club's timezone at /admin/club-time.`,
+        details: [
+          "Source: database (ClubTimeSettings)",
+          `Club timezone: ${canonical}`,
+          `The TZ / NEXT_PUBLIC_TZ value in the environment is "${raw}". UTC, GMT and fixed offsets such as Etc/GMT-12 name no place, so nothing in this deployment's configuration says which timezone the club is actually in — ${canonical} is the built-in New Zealand default, recorded so setup could finish rather than because anything confirmed it.`,
+          `If the club is in ${canonical}, press Acknowledge on this step. If it is not, set the club's timezone at /admin/club-time: it decides which day a lodge night falls on and what time members see, and once CT-2 lands it drives every time this site displays.`,
+          CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 3. Configured.
+  return applyProgress(
+    {
+      ...base,
+      status: "complete",
+      message: `The club's timezone is ${canonical}.`,
+      details: [
+        "Source: database (ClubTimeSettings)",
+        `Club timezone: ${canonical}`,
+        ...(canonical === stored
+          ? []
+          : [
+              `Stored as "${stored}", which this runtime knows as ${canonical} — the same place, the current spelling.`,
+            ]),
+        CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+      ],
+    },
+    progress,
+  );
+}
+
+/**
+ * Plain-English state of the deployment declaration, for the readiness details.
+ *
+ * The raw value in the `invalid` case has ALREADY been stripped of control
+ * characters and capped by `sanitizeEnvironmentRoleRawValue`, which is why it can
+ * be quoted straight into a line that ends up in an operator's terminal.
+ */
+function describeEnvironmentRoleDeclaration(
+  declaration: EnvironmentRoleDeclaration,
+): string {
+  switch (declaration.kind) {
+    case "production":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE=production.";
+    case "non-production":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE=non-production.";
+    case "invalid":
+      return `Deployment declaration: APP_ENVIRONMENT_ROLE is set to "${declaration.raw}", which is not one of the two accepted values (production, non-production), so it is refused rather than guessed at.`;
+    case "absent":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE is not set.";
+  }
+}
+
+/** Plain-English state of the database safer override. */
+function describeEnvironmentRoleOverride(
+  resolution: EnvironmentRoleResolution,
+): string {
+  switch (resolution.databaseOverride.kind) {
+    case "force-non-production":
+      return "Safer override: ON — an administrator has forced this installation to behave as non-production. It can be switched off at /admin/environment, which hands the decision back to the deployment declaration and never makes an installation production on its own.";
+    case "none":
+      return "Safer override: off — nothing in the database is forcing this installation to be treated as non-production.";
+    case "unreadable":
+      return "Safer override: could not be read. The EnvironmentSafetySettings table is most likely missing because the migration has not been applied on this database yet — run prisma migrate deploy (or npm run db:migrate in development), then check again.";
+  }
+}
+
+/**
+ * The withheld-email line, which is the ONLY signal that separates a live club
+ * that is not sending from a copy nobody is using (ENV-SAFETY 1, #3034).
+ *
+ * Rendered for NON_PRODUCTION **and** UNKNOWN, because both hold delivery back —
+ * UNKNOWN is the fail-closed state, and it is the one a live installation reaches
+ * by upgrading without adding the declaration. Not rendered for PRODUCTION, where
+ * nothing is held back for this reason and the line would be noise.
+ *
+ * The reasoning, and why a database-content heuristic cannot do this job, is in
+ * `environment-safety-withheld.ts`. What matters here is that the three states
+ * read differently, because two of them look identical on a checklist and mean
+ * opposite things: "nothing has been held back" says nobody is using this
+ * installation, while "the count could not be read" says nobody knows.
+ *
+ * NO SENTENCE HERE MAY NAME ONE STATE'S REASON, because this line renders under
+ * two. Telling the operator of an UNDECLARED live site that mail is held back
+ * "because it is treated as a copy" sends them hunting for the safer override
+ * instead of the missing declaration (#3035). The step's own message already
+ * says which state applies; this line says only how much, and how lately.
+ */
+function describeWithheldEmail(
+  withheldEmail: WithheldApplicationEmail | undefined,
+): string {
+  if (!withheldEmail || !withheldEmail.available) {
+    return "Held back email: the count could not be read on this installation. That is NOT the same as none — one says nothing has been held back, the other says nobody knows — so this line cannot tell you whether this installation is quietly holding back mail the club's members are waiting for. Apply any pending migrations, then check again.";
+  }
+  if (withheldEmail.count === 0) {
+    return "Held back email: none. Nothing has been held back on this installation for environment-safety reasons, which is what an installation nobody is using looks like.";
+  }
+  const mostRecent = withheldEmail.mostRecentAt
+    ? ` The most recent was ${withheldEmail.mostRecentAt}.`
+    : "";
+  return `Held back email: ${withheldEmail.count} message(s) have been held back on this installation for environment-safety reasons.${mostRecent} A steady and recent count is what a LIVE club looks like when it has been wrongly declared a copy, or left undeclared — if members are waiting for that mail, the answer above is wrong.`;
+}
+
+/**
+ * The line that stops an operator repairing the WRONG variable.
+ *
+ * `APP_RUNTIME_ROLE` already exists in the same Compose environment block, and on
+ * the staging stack it holds the literal word "staging". Two variables whose
+ * names differ by one word, one of which looks like it answers this question and
+ * does not, is a mistake worth naming rather than hoping about.
+ */
+const ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL =
+  "This is APP_ENVIRONMENT_ROLE, not APP_RUNTIME_ROLE. APP_RUNTIME_ROLE names which container slot this is (web-blue, web-green, cron-leader, staging) and is never read to decide whether this installation is production — setting it to production changes nothing here.";
+
+/**
+ * Environment-role gate (ENV-SAFETY 1, #3034; epic #2986). INV-CONFIG-003.
+ *
+ * WHY THIS IS A BLOCK AND NOT A WARNING when nothing has declared the
+ * installation. An UNKNOWN role is the state in which #3035 and #3036 refuse to
+ * send email and refuse to write to Xero, because neither can tell whether the
+ * recipients are the club's real members. So an operator meeting UNKNOWN is
+ * looking at a site that is not doing its job, and a warning would be the wrong
+ * volume for that. It is also entirely fixable in one line of deployment
+ * configuration, which is what the details say.
+ *
+ * THE STATES:
+ * 1. **No snapshot** — `setup:check` ran with no database access. "Not checked",
+ *    the same as its DB-backed siblings. It deliberately does not answer from the
+ *    environment alone: the safer override is half of the answer, and reporting
+ *    "production" from a declaration whose override could not be read is exactly
+ *    the confident-wrong answer the resolver itself refuses to give.
+ * 2. **The snapshot predates this field** — an older caller. Also "not checked",
+ *    for the same reason.
+ * 3. **PRODUCTION** — complete, and the message SAYS production, because an
+ *    operator who has just stood up a copy needs to see at a glance that they
+ *    are looking at the live club and not at their copy.
+ * 4. **NON_PRODUCTION** — complete, naming which source decided it. A declared
+ *    non-production and an administrator-forced one are both fine and are
+ *    different facts, so the message distinguishes them.
+ * 5. **UNKNOWN** — blocked, naming both sources, the repair, and the
+ *    APP_RUNTIME_ROLE trap. Two quite different situations land here — nothing
+ *    declared, and a declaration this app refuses to interpret — so the
+ *    declaration line says which.
+ *
+ * AN OPERATOR MAY ACKNOWLEDGE THIS STEP, exactly as they may acknowledge
+ * `runtime-env`, and that changes the CHECKLIST and nothing else: `applyProgress`
+ * moves `progress` to `completed` and never touches `status`. So a ticked box
+ * cannot make an UNKNOWN installation start sending email — the resolver is the
+ * only thing #3035 and #3036 read, and it has never heard of the checklist.
+ *
+ * Deliberately clock-free: nothing here formats a date, so the answer is the
+ * same at every instant.
+ */
+function buildEnvironmentRoleCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const base = {
+    id: "environment-role" as const,
+    title: "Production Or Non-Production",
+    description:
+      "Whether this installation is the club's live site or a copy — which decides whether real members can be emailed.",
+    required: true,
+    href: "/admin/environment",
+  };
+
+  // 1 / 2. Nothing to report on.
+  if (!db || !db.environmentRole) {
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: "Database state was not checked.",
+        details: [
+          "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
+          "Half of this answer is a database setting (the safer override), so it cannot be reported from the deployment environment alone.",
+          ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  const resolution = db.environmentRole;
+  const sources = [
+    describeEnvironmentRoleDeclaration(resolution.declaration),
+    describeEnvironmentRoleOverride(resolution),
+  ];
+
+  // 3. Confirmed production.
+  if (resolution.role === "PRODUCTION") {
+    /*
+      THE ONE WAY A LIVE SITE HOLDS MAIL BACK, and it used to be invisible here
+      (#3035 review). A live club that declares `USE_LOCAL_CAPTURE=true` is in a
+      total mail outage: every message lands `FAILED` carrying
+      `CAPTURE_TRANSPORT_IN_PRODUCTION`, and this step reported "complete —
+      emails go to real members" with no withheld line at all, because the line
+      was rendered only under NON_PRODUCTION and UNKNOWN.
+
+      Keyed on the capture-in-production count specifically, not on the total:
+      `SKIPPED_NON_PRODUCTION` rows are terminal, so an installation that spent an
+      afternoon as a forced copy carries them for ever and a permanent banner on a
+      healthy live site is a line operators learn to scroll past. This number can
+      only be non-zero while the transport flags are wrong.
+    */
+    const captureInProduction =
+      db.withheldEmail?.available === true
+        ? db.withheldEmail.captureInProduction
+        : 0;
+    if (captureInProduction > 0) {
+      return applyProgress(
+        {
+          ...base,
+          status: "warning",
+          message:
+            "This installation is declared PRODUCTION — the club's live site — but it ALSO declares a local capture mailbox, so it is sending no member email at all.",
+          details: [
+            `Held back email: ${captureInProduction} message(s) were refused because this deployment says it is the club's live site AND that its mail goes to a capture mailbox that forwards nothing. Those cannot both be true, so nothing was sent rather than every message being silently swallowed.`,
+            "Set USE_AWS_SES or USE_SMTP_RELAY and remove USE_LOCAL_CAPTURE (or set it to false). Messages whose contents are stored then go out by themselves; ones carrying a sign-in link, a door code or a payment link keep no stored copy and are listed for a manual re-send under Admin -> Email.",
+            ...sources,
+            ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+          ],
+        },
+        progress,
+      );
+    }
+    return applyProgress(
+      {
+        ...base,
+        status: "complete",
+        message:
+          "This installation is declared PRODUCTION — the club's live site. Emails go to real members and accounting goes to the club's real Xero organisation.",
+        details: [...sources, ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL],
+      },
+      progress,
+    );
+  }
+
+  // 4. Confirmed non-production.
+  if (resolution.role === "NON_PRODUCTION") {
+    return applyProgress(
+      {
+        ...base,
+        status: "complete",
+        message:
+          resolution.decidedBy === "database-safer-override"
+            ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
+            : "This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout.",
+        /*
+          THE WITHHELD COUNT GOES FIRST. It answers the question an operator
+          meeting an unexpected non-production installation actually has — "is
+          this costing my members their mail?" — and it is the only signal that
+          can answer it, because a copy restored from the live database is
+          indistinguishable from the live site by its data (#3034).
+        */
+        details: [
+          describeWithheldEmail(db.withheldEmail),
+          ...sources,
+          ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 5. Nothing has said.
+  return applyProgress(
+    {
+      ...base,
+      status: "blocked",
+      message:
+        "Nothing says whether this installation is the club's live site or a copy, so it is treated as neither. Set APP_ENVIRONMENT_ROLE to production or non-production in this deployment's environment.",
+      /*
+        AND THE WITHHELD COUNT HERE TOO, which a third review lens was right to
+        insist on. The first version rendered it only for NON_PRODUCTION,
+        reasoning that "on a PRODUCTION or UNKNOWN installation nothing is being
+        held back for this reason" — and this file's own next sentence contradicts
+        that: UNKNOWN fails closed, so no email is sent to members and nothing is
+        written to Xero. The boot advisory and the deploy script say the same.
+
+        Which makes UNKNOWN the case the count matters MOST for: it is exactly the
+        live installation that upgraded without adding the declaration, the
+        scenario this whole issue exists to prevent. That operator needs to see
+        "312 held back, most recently four minutes ago" rather than have it
+        withheld from them on a premise the rest of the code denies.
+      */
+      details: [
+        describeWithheldEmail(db.withheldEmail),
+        ...sources,
+        "Until it is declared, anything whose safety depends on knowing which installation this is does not run: no email is sent to members and nothing is written to the club's Xero organisation. That is deliberate — a copy of the live database holds real members' real email addresses, and guessing wrong emails them.",
+        "It is NOT assumed to be production, and it is NOT assumed to be a copy either. Both would be a guess, and one of them is a guess that contacts the club's members from a test system.",
+        "Set APP_ENVIRONMENT_ROLE=production in the .env of the club's live deployment, or APP_ENVIRONMENT_ROLE=non-production on a copy, then restart. A production deploy through scripts/run-production-blue-green-deploy.sh refuses to start without it (step 3 of 20), so a live site cannot reach this state through that path.",
+        ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
       ],
     },
     progress,
@@ -1442,6 +2077,8 @@ export function buildSetupReadiness(
   const checksByCategory: Record<SetupCategoryId, SetupStepCheck[]> = {
     foundation: [
       buildClubConfigCheck(club, input.database, progress),
+      buildClubTimeZoneCheck(input.database, progress),
+      buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),

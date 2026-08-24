@@ -20,6 +20,16 @@ const {
     booking: { findMany: vi.fn(), findUnique: vi.fn() },
     payment: { updateMany: vi.fn() },
     cronJobRun: { findFirst: vi.fn() },
+    /*
+      #3035: this cron asks the delivery policy BEFORE it claims anything, and
+      that resolver reads the environment-safety override. A missing delegate is
+      an UNREADABLE override, not "no override", so it resolves UNKNOWN and the
+      whole run returns early — every assertion below would then be about a job
+      that did nothing. `null` is the ordinary state of an installation that has
+      never touched the safer switch. Written inline because `vi.hoisted` runs
+      above the file's imports.
+    */
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
   },
   mockSendAdditionalPaymentReminderEmail: vi.fn(),
   mockReadBookingNoEmails: vi.fn(),
@@ -40,6 +50,10 @@ vi.mock("@/lib/email-suppression", () => ({
 vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 
 import { sendAdditionalPaymentReminders } from "@/lib/cron-additional-payment-reminders";
+import {
+  declareEnvironmentRole,
+  expectEnvironmentRolePremise,
+} from "@/lib/__tests__/helpers/environment-role";
 
 // NZ today for the frozen clock below is 2026-10-11 (NZST is UTC+12).
 const NOW = new Date("2026-10-10T22:00:00.000Z");
@@ -100,6 +114,9 @@ describe("sendAdditionalPaymentReminders", () => {
       emailLogId: "log-1",
       messageId: "msg-1",
     });
+    // #3035: which installation this suite is pretending to be. Without it the
+    // role resolves UNKNOWN and the run returns before it claims anything.
+    declareEnvironmentRole("production");
   });
 
   afterEach(() => {
@@ -706,5 +723,88 @@ describe("sendAdditionalPaymentReminders", () => {
 
     expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
     expect(rerun.initialSentBookingIds).toEqual([]);
+  });
+});
+
+// --- #3035 review: an idle copy must not manufacture the "live club" signal ---
+//
+// The stamp-restoring path this suite already covers is correct, and it is also
+// why this early return exists. Without it a copy re-claims every eligible
+// booking on every run, has each message suppressed, restores each stamp, and
+// starts again three hours later — writing N NEW counted
+// `SKIPPED_NON_PRODUCTION` rows per pass with `mostRecentAt` always minutes old.
+// That is precisely the signature owner decision 1 asks the withheld-email count
+// to MEAN ("a live club is being held back, steadily and right now"), so an
+// ordinary staging box would produce it forever and the detector would be
+// useless.
+//
+// The pre-existing justification for restoring a stamp is that the checks above
+// the claim already skip an unreachable recipient, so reaching the restore means
+// the state changed under this very pass. An environment withhold is not a race —
+// it is a standing fact about the installation — so it is answered before any
+// work.
+describe("sendAdditionalPaymentReminders on an installation that cannot send (#3035)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    vi.clearAllMocks();
+    mockPrisma.booking.findMany.mockResolvedValue([booking()]);
+    mockPrisma.booking.findUnique.mockResolvedValue(null);
+    mockPrisma.payment.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.cronJobRun.findFirst.mockResolvedValue({
+      startedAt: FIRST_RUN_AT,
+    });
+    mockReadBookingNoEmails.mockResolvedValue(false);
+    mockGetActiveEmailSuppression.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("claims nothing and sends nothing on a confirmed copy", async () => {
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+
+    const result = await sendAdditionalPaymentReminders();
+
+    // The load-bearing assertion: no CLAIM. A claim is what produces the
+    // suppression row, and a suppression row per booking per run is the false
+    // signal.
+    expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+    expect(result.initialSentBookingIds).toEqual([]);
+    expect(result.suppressedBookingIds).toEqual([]);
+    // And it is not reported as a failure: a copy declining to chase the club's
+    // money is the job working.
+    expect(result.failedBookingIds).toEqual([]);
+  });
+
+  it("claims nothing when nobody has declared what this installation is", async () => {
+    declareEnvironmentRole("");
+    await expectEnvironmentRolePremise("UNKNOWN");
+
+    const result = await sendAdditionalPaymentReminders();
+
+    expect(mockPrisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(mockSendAdditionalPaymentReminderEmail).not.toHaveBeenCalled();
+    expect(result.suppressedBookingIds).toEqual([]);
+  });
+
+  it("still claims and sends on the club's live site", async () => {
+    // The discriminating half: the early return must not swallow a real run.
+    declareEnvironmentRole("production");
+    await expectEnvironmentRolePremise("PRODUCTION");
+    mockSendAdditionalPaymentReminderEmail.mockResolvedValue({
+      status: "sent",
+      emailLogId: "log-1",
+      messageId: "msg-1",
+    });
+
+    const result = await sendAdditionalPaymentReminders();
+
+    expect(mockPrisma.payment.updateMany).toHaveBeenCalled();
+    expect(mockSendAdditionalPaymentReminderEmail).toHaveBeenCalledTimes(1);
+    expect(result.initialSentBookingIds).toEqual(["booking-1"]);
   });
 });
