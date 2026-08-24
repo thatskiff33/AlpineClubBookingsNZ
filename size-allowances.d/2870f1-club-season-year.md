@@ -92,9 +92,9 @@ reason: fifty-three lines, and they are the point of the change rather than
   is a real piece of work and cannot ride along with a season-year correction.
 
 file: src/lib/membership-subscription-billing.ts
-lines: 1437
-reason: thirty-five lines, of which about thirty are one comment — and that comment
-  is the most load-bearing thing in this pull request. Approving a membership
+lines: 1456
+reason: fifty-four lines, of which about forty-five are two comments. The FIRST is
+  the most load-bearing thing in this pull request. Approving a membership
   application reaches `queueApprovedMembershipSubscriptionCharges` with no decision
   date, so the default decides which season an IMMUTABLE subscription charge and the
   Xero invoice queued from it are written against. Two things were wrong and only
@@ -106,6 +106,15 @@ reason: thirty-five lines, of which about thirty are one comment — and that co
   deployment from zero wrong hours to a whole wrong day. Group A's own report named
   this file as the trap wearing an easy disguise. A note that lives anywhere but on
   these two lines is a note the next author will not read before "simplifying" them.
+
+  The second comment, and the eight-line refusal under it, are a CONCURRENCY rule.
+  `getTodayDateOnly()` was pure; resolving the club's zone is a `ClubTimeSettings`
+  read, and both in-module callers that pass a transaction client hold
+  `pg_advisory_xact_lock` on the season. They both already supply an explicit
+  decision date, so the read never happens under that lock — but that was a
+  coincidence, and the refusal makes it a contract a future caller cannot break
+  silently. The reasoning has to sit on the branch it guards; in a separate file it
+  is a rule nobody reads before adding the caller that breaks it.
 
 file: src/lib/nomination.ts
 lines: 2452

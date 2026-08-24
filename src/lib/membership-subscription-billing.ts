@@ -285,6 +285,25 @@ export async function buildSubscriptionBillingPreview(input: {
   // stood here and answered from `APP_TIME_ZONE` — the container's environment,
   // which for a deployment that sets only `TZ` is not the club's zone at all.
   // This value bounds a season and is written into immutable charges.
+  //
+  // THE DEFAULT IS REFUSED INSIDE A TRANSACTION, and that is a concurrency rule
+  // rather than tidiness. `getTodayDateOnly()` was pure; resolving the club's zone
+  // is a `ClubTimeSettings` read. Both in-module callers that pass `store` are
+  // inside `prisma.$transaction` holding `pg_advisory_xact_lock` on this season,
+  // and both already supply an explicit `decisionDate` — so today the read never
+  // happens under that lock. Refusing makes that an ENFORCED contract instead of a
+  // coincidence a future caller can break silently: a settings query under a
+  // held lock buys nothing and lengthens the hold (`booking-request.ts` records
+  // the same judgement in its own words), and the confirm path must in any case
+  // re-derive from the FROZEN preview's date rather than from a fresh "today".
+  if (input.store && !input.decisionDate) {
+    throw new SubscriptionBillingError(
+      "A preview built inside a transaction must be given its decision date. " +
+        "Defaulting it here would read the club's timezone from the database while " +
+        "this transaction holds the season's advisory lock, and a confirm must " +
+        "re-derive from the frozen preview's date rather than from a fresh today.",
+    );
+  }
   const decisionDate =
     input.decisionDate ??
     dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));

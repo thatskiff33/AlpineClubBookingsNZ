@@ -306,6 +306,19 @@ describe("membership subscription billing", () => {
       );
     });
 
+    it("refuses to default it inside a transaction, where the zone read would sit under the season lock", async () => {
+      // The zone is a database read; `getTodayDateOnly()` was pure. Both
+      // in-module callers that pass `store` hold `pg_advisory_xact_lock` on the
+      // season and both already supply the date, so this refusal turns a
+      // coincidence into a contract rather than changing any live behaviour.
+      await expect(
+        buildSubscriptionBillingPreview({
+          seasonYear: 2026,
+          store: billingTransactionClient() as never,
+        }),
+      ).rejects.toThrow(/must be given its decision date/);
+    });
+
     it("still honours an explicit decision date", async () => {
       mocks.clubTimeSettings.findUnique.mockResolvedValue({
         timeZone: "America/Denver",
