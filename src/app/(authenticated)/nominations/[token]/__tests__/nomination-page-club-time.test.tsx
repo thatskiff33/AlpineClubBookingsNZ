@@ -198,4 +198,55 @@ describe("the nomination page's two kinds of date (CT-4, #2870)", () => {
     expect(html).not.toContain("15 Apr 2026");
     expect(html).toContain("DOB 16 Apr 2014");
   });
+
+  it("still renders when a stored dependent birthday names no real day", async () => {
+    /*
+      THE CRASH THE FIRST VERSION OF THIS MIGRATION SHIPPED (#2870 fix round).
+
+      `requireCalendarDate` was justified in the diff by "the value has already
+      passed `isoDateSchema`". It had — and that schema is
+      `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`, a SHAPE check. The
+      UNAUTHENTICATED `/api/applications` POST validates the same field with the
+      same bare regex, so `1990-02-31` is accepted on the way in and stored.
+      `requireCalendarDate` then threw out of this async server component; there
+      is no `error.tsx` under `(authenticated)`, so the nominating member lost
+      the ability to confirm OR decline.
+
+      MUTATION-VERIFIED: swap `parseCalendarDate` back for `requireCalendarDate`
+      in `formatDependentDateOfBirth` and this case goes red with
+      `Not a club calendar date: "1990-02-31". Expected YYYY-MM-DD naming a real
+      day.`
+
+      The assertions are about the PAGE, not the date: the two buttons the member
+      needs are the thing the throw took away. 31 February is echoed rather than
+      rolled to 3 March, which is what the pre-CT-4 spelling silently did.
+    */
+    mocks.nominationFindUnique.mockResolvedValue({
+      id: "nom-1",
+      nominatorMemberId: "member-1",
+      confirmedAt: null,
+      expiresAt: new Date("2026-08-01T00:00:00.000Z"),
+      application: {
+        id: "app-1",
+        status: "PENDING_NOMINATORS",
+        applicantFirstName: "Ana",
+        applicantLastName: "Applicant",
+        applicantEmail: "ana@example.test",
+        createdAt: SUBMITTED_AT,
+        familyMembers: [
+          { firstName: "Kiri", lastName: "Applicant", dateOfBirth: "1990-02-31" },
+        ],
+      },
+    });
+
+    const html = await renderFor(DENVER);
+
+    expect(html).toContain("Kiri Applicant");
+    expect(html).toContain("DOB 1990-02-31");
+    // Not rolled forward into a plausible day that was never anybody's birthday.
+    expect(html).not.toContain("3 Mar 1990");
+    // And the stamp above it still rendered, so the page is whole rather than
+    // half-built: the member can still act on the nomination.
+    expect(html).toContain("15 Apr 2026");
+  });
 });
