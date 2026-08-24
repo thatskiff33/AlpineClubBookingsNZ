@@ -30,7 +30,7 @@ reason: one import pair, two hook reads, and a sentence saying the backup stamps
   the natural split.
 
 file: src/app/(admin)/admin/bed-allocation/page.tsx
-lines: 1959
+lines: 1961
 reason: the board's opening night now comes from the club's day rather than the
   operator's browser, and the note explaining why is worth more than the four
   lines it costs. The date arithmetic it replaces got shorter; the growth is
@@ -59,7 +59,7 @@ reason: this page renders a calendar date and an instant in adjacent columns and
   saying why the two dates three lines apart are different kinds of thing.
 
 file: src/app/(admin)/admin/config-transfer/page.tsx
-lines: 647
+lines: 649
 reason: four lines: the club's day for the export filename, and why it is not the
   operator's.
 
@@ -91,7 +91,7 @@ reason: a season edge is a calendar date and was being projected through a zone;
   of the three call sites.
 
 file: src/app/(admin)/admin/hut-leaders/page.tsx
-lines: 1176
+lines: 1179
 reason: the two clock reads moved onto the club's zone, and the import block now
   states plainly which of the remaining date helpers are zone-free arithmetic
   and why they stay — without that, the next reader has to work out for
@@ -137,7 +137,7 @@ reason: two adjacent columns, one an instant read host-locally by date-fns and o
   which. The comment between them is the point of the change.
 
 file: src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx
-lines: 798
+lines: 801
 reason: the hand-rolled parts-to-UTC-midnight dance is gone and the export
   filename now carries the club's day; the note explains why a lodge night
   needs no zone at all.
@@ -167,7 +167,7 @@ reason: the range bounds come from the URL and used to reach date-fns through a
   and naming which patterns stay on date-fns and why.
 
 file: src/app/(admin)/admin/roster/page.tsx
-lines: 592
+lines: 594
 reason: the roster's opening day moved onto the club's zone, and the long-date
   heading is now pinned to UTC over the date-only encoding — an identity for
   every club rather than a projection. The note explaining that pin is most of

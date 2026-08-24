@@ -319,10 +319,12 @@ describe("fee configuration page", () => {
       // say" through the kernel under test would let one defect satisfy both
       // sides. `en-CA` numeric is `yyyy-MM-dd`, the shape this field holds.
       answerFor: (zone) => todayIn(zone),
-      // NOT `["UTC"]`. At one instant there are only two calendar days on
+      // NOT `["UTC"]`. At THIS instant there are exactly two calendar days on
       // earth, both already taken by the two candidates, so a second rival
       // would leave nothing to choose and the chooser would refuse a correct
-      // tree. It is not needed either: `clubToday` consults only the zone it is
+      // tree. Two is a fact about this fixture, not the world: the inhabited
+      // span is 25 hours (-11 to +14), so at UTC hour 10 there are THREE. This
+      // fixture is at UTC hour 0; re-derive the count if you move it. It is not needed either: `clubToday` consults only the zone it is
       // handed, so "read the machine's clock" is not a reachable mutation — the
       // reachable one is "read APP_TIME_ZONE", which the environment excludes.
     });

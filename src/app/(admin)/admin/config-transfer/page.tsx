@@ -87,9 +87,11 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export default function ConfigTransferPage() {
-  // The exported bundle is stamped with the CLUB's day, so two operators in
-  // different countries downloading the same configuration get the same
-  // filename (CT-4, #2870; INV-CONFIG-002).
+  // The exported bundle is stamped with the CLUB's PERSISTED day. Two operators
+  // in different countries already got the same filename — the build's
+  // `NEXT_PUBLIC_TZ` is fixed at build time, not read from the viewer. The
+  // defect was that the shared answer could be the wrong day for the club
+  // (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({

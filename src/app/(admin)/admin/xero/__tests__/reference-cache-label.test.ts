@@ -117,7 +117,15 @@ describe("formatReferenceCacheLabel (#2256, CT-4 #2870)", () => {
     expect(answerFor(chosen.zone)).not.toBe(answerFor("UTC"));
   });
 
-  it("renders both stamps in the club's persisted zone, not the host's and not APP_TIME_ZONE", () => {
+  // The name says "not the host's" and stops there ON PURPOSE. This formatter
+  // is handed a bound `clubTime` and has no path to `APP_TIME_ZONE` at all, so
+  // "not APP_TIME_ZONE" would be unreachable-by-construction rather than
+  // something this test excludes — a claim no mutation could ever falsify. What
+  // the zone-authority premise above DOES establish is that the chosen zone
+  // differs from `APP_TIME_ZONE`'s answer, which is what makes the binding
+  // handed in meaningful; proving the plumbing that supplies it is the
+  // provider suites' job, not this one's.
+  it("renders both stamps in the club's persisted zone, not the host's", () => {
     // Pinned to UTC so the host is a third zone again: if the binding were
     // ignored in favour of the host, the refreshed stamp would read 11:30 pm.
     const label = withTimeZone("UTC", () =>

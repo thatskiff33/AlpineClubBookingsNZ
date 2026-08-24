@@ -97,10 +97,11 @@ type BillingData = {
 export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number }) {
   const { confirm, confirmDialog } = useConfirm();
   const canEditFinance = useAdminAreaEditAccess("finance");
-  // The default decision date is the CLUB's today, not the operator's browser
-  // day — the server interprets it in club time, so seeding it from the viewer
-  // hides or invents a day for anyone whose clock is not the club's
-  // (CT-4, #2870; INV-CONFIG-002).
+  // The default decision date is the CLUB's today, not the build's
+  // `NEXT_PUBLIC_TZ` — the server interprets it in club time, so seeding it from
+  // a constant fixed at build time hides or invents a day whenever that constant
+  // is not the club's persisted zone, which includes every deployment that sets
+  // only `TZ` (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
   const [decisionDate, setDecisionDate] = useState<string>(() =>
     clubTime.today(),

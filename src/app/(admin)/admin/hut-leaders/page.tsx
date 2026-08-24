@@ -715,8 +715,11 @@ export default function HutLeadersPage() {
   }, [target, selection.startDate, selection.endDate, assignments, redDatesByMonth]);
 
   // The club's day decides whether a coverage block reads as active or past —
-  // not the browser's, which for an admin abroad could mark a block finished a
-  // day early (CT-4, #2870; INV-CONFIG-002).
+  // not the build's `NEXT_PUBLIC_TZ`, which is fixed at compile time rather than
+  // read from the club's persisted setting, and which falls back to
+  // `Pacific/Auckland` for every viewer on a deployment that sets only `TZ`.
+  // Either way a block could read finished a day early (CT-4, #2870;
+  // INV-CONFIG-002).
   const today: string = clubTime.today();
 
   /*

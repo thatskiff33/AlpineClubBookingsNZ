@@ -170,8 +170,11 @@ function formatCount(value: number): string {
 // says so in its own name. The suffix is the only truncation marker outside the
 // UI: the CSV body stays a plain row set, since a trailing "truncated" line
 // would corrupt every spreadsheet and parser that reads it.
-// The club's day, not the operator's: an admin exporting at 8am in London must
-// get the same filename as one exporting at the lodge (CT-4, #2870).
+// The club's PERSISTED day, not the build's `NEXT_PUBLIC_TZ`. Two admins never
+// disagreed about this filename — that constant is fixed at build time, so they
+// already shared an answer. The defect was that the shared answer could be the
+// wrong day for the club, and is `Pacific/Auckland` for everyone on a deployment
+// that sets only `TZ` (CT-4, #2870).
 function csvFilename(
   clubTime: BoundClubTime,
   code: string,

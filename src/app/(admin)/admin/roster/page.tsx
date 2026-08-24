@@ -116,9 +116,11 @@ function isEmailActionResult(
 export default function RosterPage() {
   const canEdit = useAdminAreaEditAccess("lodge")
   // The roster opens on the CLUB's today. The chore roster is a lodge-night
-  // surface and the API windows it in club time, so seeding from the operator's
-  // browser day opened the wrong day for anyone whose clock is not the club's
-  // (CT-4, #2870; INV-CONFIG-002).
+  // surface and the API windows it in club time, so seeding it from the build's
+  // `NEXT_PUBLIC_TZ` opened the wrong day. That constant is not the viewer's
+  // clock and never was -- it is fixed at build time, and on a deployment that
+  // sets only `TZ` it falls back to `Pacific/Auckland` for every viewer while
+  // the server uses `TZ` (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime()
   const [selectedDate, setSelectedDate] = useState<string>(() => clubTime.today())
   const [roster, setRoster] = useState<RosterData | null>(null)

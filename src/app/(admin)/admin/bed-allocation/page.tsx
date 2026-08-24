@@ -371,9 +371,11 @@ export default function AdminBedAllocationPage() {
   const { hutLeaderLabel } = useClubIdentity();
 
   // The board opens on the CLUB's today when the deep link carries no date —
-  // the API windows these nights in club time, so seeding from the operator's
-  // browser day showed the wrong first night for anyone whose clock is not the
-  // club's (CT-4, #2870; INV-CONFIG-002).
+  // the API windows these nights in club time, so seeding it from the build's
+  // `NEXT_PUBLIC_TZ` showed the wrong first night. That constant is fixed at
+  // build time rather than read from the club's persisted setting, and falls
+  // back to `Pacific/Auckland` for every viewer on a deployment that sets only
+  // `TZ` (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
   const initialFrom: string = isCalendarDate(requestedFrom ?? "")
     ? (requestedFrom as string)

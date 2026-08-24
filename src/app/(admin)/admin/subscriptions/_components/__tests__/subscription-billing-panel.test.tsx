@@ -42,11 +42,17 @@ const CLUB_TODAY = "2026-07-01";
  * The two candidate club zones for the zone-authority test at the bottom of this
  * file, with the day each of them is on at the frozen instant.
  *
- * AT ANY ONE INSTANT THERE ARE ONLY EVER TWO CALENDAR DAYS ON EARTH, and that
- * bounds what this test can do: one candidate for each of them, and the choice
- * is whichever one the environment is NOT on. It also means `"UTC"` must not be
+ * AT THIS INSTANT THERE ARE EXACTLY TWO CALENDAR DAYS ON EARTH, and that bounds
+ * what this test can do: one candidate for each of them, and the choice is
+ * whichever one the environment is NOT on. It also means `"UTC"` must not be
  * added as a rival — with the environment on one day and UTC on the other, no
  * candidate could contradict both and the chooser would refuse a correct tree.
+ *
+ * Two is a fact about THIS fixture, not about the world. The inhabited zone span
+ * is 25 hours, -11 (Pacific/Midway) to +14 (Pacific/Kiritimati), so at UTC hour
+ * 10 there are THREE calendar days at once. This fixture is at UTC hour 0. If
+ * you move it, re-derive the count before reusing the reasoning above — see
+ * `chooseDivergentClubZone` in `admin/_lib/__tests__/club-zone-choice.ts`.
  *
  * Not needing that rival is a fact about the code, not a convenience: the only
  * zone `clubToday` consults is the one it is handed, so "the panel read the

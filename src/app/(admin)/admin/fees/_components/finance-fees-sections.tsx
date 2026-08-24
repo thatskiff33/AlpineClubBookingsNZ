@@ -86,8 +86,9 @@ const componentIsProrated = (fee: Fee, component: FeeComponent) =>
 export function FinanceFeesSections({ financeCanEdit }: { financeCanEdit?: boolean } = {}) {
   // The default "effective from" for a new fee is the CLUB's today, and it has
   // to be: the server reads these windows in club time, so seeding them from
-  // the operator's browser day made a fee start a day early or late for anyone
-  // whose clock is not the club's. It also moved from module scope into the
+  // the build's `NEXT_PUBLIC_TZ` — fixed at build time, not read from the club's
+  // persisted setting — made a fee start a day early or late. It also moved
+  // from module scope into the
   // component — evaluated at import, "today" was whatever day the tab was first
   // opened, and stayed that day across midnight (CT-4, #2870; INV-CONFIG-002).
   const clubTime = useClubTime();
