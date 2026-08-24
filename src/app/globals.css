@@ -1469,10 +1469,16 @@
 .post_message_blue { color: #175cd3; }
 .post_message_purple { color: #6941c6; }
 .post_message_grey { color: #475467; }
-.dark .post_message_black { color: #f2f4f7; }
-.dark .post_message_red { color: #f97066; }
-.dark .post_message_orange { color: #fd853a; }
-.dark .post_message_green { color: #32d583; }
-.dark .post_message_blue { color: #528bff; }
-.dark .post_message_purple { color: #9b8afb; }
-.dark .post_message_grey { color: #98a2b3; }
+/* @media not print, per the #2146 contract: print always renders the light
+   palette, so a page printed from dark mode must not carry near-white text
+   onto white paper. The print-light-palette test fails any .dark rule
+   reachable from print. */
+@media not print {
+  .dark .post_message_black { color: #f2f4f7; }
+  .dark .post_message_red { color: #f97066; }
+  .dark .post_message_orange { color: #fd853a; }
+  .dark .post_message_green { color: #32d583; }
+  .dark .post_message_blue { color: #528bff; }
+  .dark .post_message_purple { color: #9b8afb; }
+  .dark .post_message_grey { color: #98a2b3; }
+}

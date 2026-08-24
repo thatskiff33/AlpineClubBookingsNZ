@@ -113,6 +113,12 @@ function hasWebhookSignatureBoundary(routePath: string, contents: string) {
       /x-xero-signature/.test(contents) && /timingSafeEqual/.test(contents)
     );
   }
+  if (routePath.endsWith("/webhooks/servernz-posts/route.ts")) {
+    // Epic #2992: HMAC with the registration-issued secret, compared in
+    // constant time. Both markers must be present -- a signature check that
+    // lost its timingSafeEqual would still "verify".
+    return /x-acs-signature/.test(contents) && /timingSafeEqual/.test(contents);
+  }
   if (routePath.endsWith("/webhooks/ses-sns/route.ts")) {
     return /verifySnsWebhookMessage/.test(contents);
   }

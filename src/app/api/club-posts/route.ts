@@ -143,13 +143,7 @@ export async function POST(request: NextRequest) {
       // pending forever against a server it can never reach.
       shareToAllClubs: wantsShare && (await isServerNzConfigured()),
     });
-
-    const stored = (
-      await prisma.clubPost.findUnique({
-        where: { id: post.id },
-        select: { content: true },
-      })
-    )?.content ?? "";
+    const stored = post.content;
 
     // Attempted inline so an ordinary share lands immediately rather than
     // waiting for the next cron pass. Deliberately NOT awaited into the

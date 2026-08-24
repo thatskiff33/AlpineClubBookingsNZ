@@ -231,7 +231,7 @@ export async function createClubPost(input: {
   bodyHtml?: string | null;
   /** The member ticked "share with all clubs". Recorded, not acted on here. */
   shareToAllClubs?: boolean;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; content: string }> {
   // SANITISED SERVER-SIDE, ALWAYS. The composer sanitises too, but that copy
   // runs in the member's own browser and anyone can post to this endpoint
   // directly, so the client pass is a courtesy and this one is the control.
@@ -280,7 +280,10 @@ export async function createClubPost(input: {
     });
   }
 
-  return post;
+  // The content RETURNED is the content STORED -- with a rich body it was
+  // derived from the sanitised HTML above, not taken from the request -- so
+  // the route can audit the real length without a second query.
+  return { id: post.id, content };
 }
 
 /**
