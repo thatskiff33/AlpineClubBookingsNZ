@@ -95,7 +95,7 @@ function streamedRequest(body: Buffer, contentLength?: string) {
 
 describe("readBundleUpload — streamed multipart cap (#2235)", () => {
   it("reads a valid bundle upload into bytes + mode", async () => {
-    const fileBytes = Buffer.from("PK pretend zip bytes", "latin1");
+    const fileBytes = Buffer.from("PK\x03\x04 pretend zip bytes", "latin1");
     const result = await readBundleUpload(
       bufferedRequest(buildBundleMultipart(fileBytes, "overwrite")),
     );
