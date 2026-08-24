@@ -61,12 +61,21 @@ export function getMonthStart(date: Date): Date {
  * arithmetic, with no `Date` constructed (CT-4, #2870; see
  * `docs/CLUB_TIME_KERNEL.md`).
  *
- * TWO LOCAL CONTRACTS THIS KEEPS. `parseCalendarDate` returning `null` replaces
- * the old Invalid-Date-plus-`isNaN` guard, so the empty-list answer for a
- * malformed bound is unchanged. And the inverted-range test compares MONTH
- * STARTS, not the raw bounds, which is what the old code did by flooring first:
- * a range running backwards inside one month still yields that month's key, and
- * changing that would silently stop loading a month.
+ * THE MALFORMED-BOUND ANSWER CHANGED, AND THE OLD ONE WAS UNREACHABLE. The
+ * spelling this replaces read `Number.isNaN(start.getTime())` — but it could never
+ * evaluate that test, because reaching it went through `formatMonthOnly`, which is
+ * `date.toISOString().slice(0, 10)`, and `new Date(NaN).toISOString()` throws
+ * `RangeError: Invalid time value` first. So the old behaviour for a malformed
+ * bound was a THROW out of a `useMemo`, and the guard beside it was dead code that
+ * read as the answer. `parseCalendarDate` returning `null` gives the empty list
+ * that guard was written to give. Both are academic from the one production call
+ * site, which is fed by the panel above from values it has already validated —
+ * which is why nobody ever saw the throw.
+ *
+ * THE INVERTED-RANGE TEST COMPARES MONTH STARTS, not the raw bounds, which is what
+ * the old code did by flooring before comparing. A range running backwards inside
+ * one month still yields that month's key, and changing that would silently stop
+ * loading a month.
  *
  * Plain `<`/`<=` on these values IS chronological order — the property the
  * four-digit-year `CalendarDate` brand exists to guarantee.

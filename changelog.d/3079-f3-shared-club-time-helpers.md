@@ -22,7 +22,7 @@
   only that one file knew about, so a correction made anywhere else would not
   have reached them.
 
-- **A guard that had been unable to see two dozen date reads can now see
+- **A guard that had been unable to see thirty-two date reads can now see
   them.** The check that stops a real timestamp being mistaken for a calendar
   day works by recognising the helpers that do the converting. A wrapper six
   files had each written privately was not on its list, so every date read

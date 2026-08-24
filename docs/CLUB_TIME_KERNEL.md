@@ -274,7 +274,7 @@ Two honest limits while both exist:
   nothing at all. Both that helper and `pricing.ts`'s stricter
   `normalizeBookingDate` are listed, so `storedDateOnly(booking.createdAt)` is now
   reported rather than invisible. **The set keys on the NAME**, so it has to lead
-  a rename, or there is a window in which two dozen sites are unclassified again.
+  a rename, or there is a window in which thirty-two sites are unclassified again.
 - `parseInstant` refuses an impossible date — `2026-02-30T00:00:00Z` is `null`,
   not 2 March. It is the provider boundary, so it holds the same no-rolling rule
   the calendar parser does.

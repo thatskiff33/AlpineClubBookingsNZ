@@ -128,7 +128,7 @@ const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
  * shape — a function that normalises is naming a decision, not hiding one, and
  * treating every normaliser as a bare rename would ban `parseDateOnly(formatDateOnly(x))`
  * wrappers wholesale. Correct for the ALIAS BAN, and wrong for the CENSUS: the
- * 24 call sites written through this helper were classified as nothing at all,
+ * 32 call sites written through this helper were classified as nothing at all,
  * so `storedDateOnly(booking.createdAt)` — a real instant read as its UTC day,
  * which is `INV-DATE-019` — would have been invisible here.
  *
@@ -146,7 +146,7 @@ const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
  *
  * THE SEQUENCING RULE for {@link CANONICAL_ENCODERS} applies here too, for the
  * same reason: the census keys on the NAME, so add the new name here before
- * renaming the function, or there is a window in which 24 sites are unclassified
+ * renaming the function, or there is a window in which 32 sites are unclassified
  * again.
  */
 const DATE_ONLY_RENORMALISERS = new Set([
@@ -1530,7 +1530,7 @@ export function nights(booking: { checkIn: Date; createdAt: Date }) {
       "INV-DATE-019: `storedDateOnly(booking.createdAt)` reads a real instant as " +
         "its UTC day, one call further round than `calendarDateOfDateOnlyInstant` " +
         "written inline. Before DATE_ONLY_RENORMALISERS the census classified " +
-        "nothing written through that helper, so 24 `@db.Date` reads AND any " +
+        "nothing written through that helper, so 32 `@db.Date` reads AND any " +
         "instant that joined them were both invisible. `checkIn` is `@db.Date` " +
         "and correctly produces no finding; `createdAt` is a bare `DateTime` and " +
         "must.",
@@ -1675,6 +1675,54 @@ export function due(booking: { createdAt: Date }) {
 
     expect(encodings.map((e) => `${e.kind}:${e.field}`)).toEqual([
       "instant:createdAt",
+    ]);
+  });
+
+  it("classifies an instant that reaches the kernel through parseInstant", () => {
+    /*
+      THE SECOND NAME IN THE SET, which had no fixture at all until #2870's F3
+      lane. `requireInstant` above was covered and `parseInstant` was not, so
+      dropping it from INSTANT_PASS_THROUGHS left the whole suite green — measured,
+      32 of 32 passing. That is the same vacuity DATE_ONLY_RENORMALISERS was given
+      a named roster to prevent, in the set this file describes as its mirror
+      image, and it was inherited rather than noticed.
+    */
+    const { encodings } = censusOf(
+      `import { calendarDateOfDateOnlyInstant, parseInstant } from "@/lib/club-time";
+export function due(booking: { createdAt: Date }) {
+  const instant = parseInstant(booking.createdAt);
+  return instant ? calendarDateOfDateOnlyInstant(instant) : null;
+}
+export function dueDirect(booking: { createdAt: Date }) {
+  return calendarDateOfDateOnlyInstant(parseInstant(booking.createdAt)!);
+}
+`,
+    );
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `parseInstant` is the nullable half of the kernel's " +
+        "Date-to-Instant pass-through. It changes the type and not the value, so a " +
+        "field read through it must stay visible to this census — otherwise " +
+        "`calendarDateOfDateOnlyInstant(parseInstant(booking.createdAt))` is the " +
+        "#2697 defect written one call further round.",
+    ).toEqual(["instant:createdAt"]);
+  });
+
+  it("lists exactly the instant pass-throughs this kernel has, named explicitly", () => {
+    /*
+      The roster for the SIBLING set, added for the reason its mirror needed one.
+      A fixture proves a listed name is followed; only a literal list proves a name
+      cannot be quietly DELETED. Measured before this case existed: removing
+      `parseInstant` from the set passed 32 of 32.
+
+      If the kernel renames or retires one of these, this case is the thing that
+      says so, and the fixture above is the thing that says the survivor still
+      works.
+    */
+    expect([...INSTANT_PASS_THROUGHS].sort()).toEqual([
+      "parseInstant",
+      "requireInstant",
     ]);
   });
 
