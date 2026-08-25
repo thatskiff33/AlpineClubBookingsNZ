@@ -177,6 +177,7 @@ one of these, there is a function.
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
 | a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
+| the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, and #3100 shipped both: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 
 Two rules the table cannot express.
@@ -208,6 +209,17 @@ nothing else should compute one.
 Do not count nights by dividing elapsed milliseconds by 24 hours. Across a DST
 transition a night is 23 or 25 hours, and the kernel has a test where that
 arithmetic gives **0** nights for a stay the calendar says is 1.
+
+**And do not STEP a lodge night by adding 24 hours to an instant either** — the
+same 25-hour day sends the step back to where it started. Measured:
+`America/Denver` local midnight on 2026-11-01 plus 24 hours reads back as
+2026-11-01. `addCalendarDays` is the step, and #3100 is what happens without it:
+the operational-day helpers shifted a `yyyy-MM-dd` key by building a UTC-midnight
+instant, adding `days * 24h`, and reading the result back through the
+environment zone — where for a club behind Greenwich the projection ATE the
+shift, so "the next night" was the same night and "the previous night" skipped
+one, on every call. Swapping only the reader is not the fix: it is correct until
+the next person changes the encoder.
 
 ## The legacy adapters
 
