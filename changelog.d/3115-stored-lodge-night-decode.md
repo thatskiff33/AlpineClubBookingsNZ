@@ -8,14 +8,24 @@
   day early.
 
   The most serious consequence was on the capacity check that decides whether a
-  policy-exception proposal has the beds. Because a proposal carries its nights
-  as plain dates while a saved booking carries them as database dates, the two
-  were being read in different ways, and the check could count no beds at all on
-  nights the party had actually asked for. A proposal that should have been
-  refused for want of beds could be admitted. The same mismatch made the
-  occupancy, whole-lodge-hold and shared-bed windows each land a day out, and on
-  a booking edited while the stay was already under way it could store the
-  guest's nights a day early.
+  booking or a policy-exception proposal has the beds. Because a proposal carries
+  its nights as plain dates while a saved booking carries them as database dates,
+  the two were being read in different ways, and the check could count no beds at
+  all on nights the party had actually asked for. A booking or proposal that
+  should have been refused for want of beds could be admitted.
+
+  Making a new booking was affected the same way, and it also stored the wrong
+  days. The stay range a booking is saved with is worked out from the nights its
+  guests are staying, and that calculation read the server's timezone too — so
+  the dates written on the booking were a day early, and the bed check then ran
+  over that same wrong range. For a three-night stay the check looked at four
+  nights, none of them the last one asked for, and found nobody in two of them.
+  The nights recorded against each guest were written correctly, so the booking
+  disagreed with its own guest nights.
+
+  The same mismatch made the occupancy, whole-lodge-hold and shared-bed windows
+  each land a day out, and on a booking edited while the stay was already under
+  way it could store the guest's nights a day early.
 
   All of it now reads the stored day directly and consults no timezone, so the
   answer cannot be moved by where the club, the server or the viewer happens to
