@@ -17,14 +17,6 @@ reason: this file's own night-key derivation has to move in the same commit as
   Splitting a 1,369-line in-progress-edit pricing planner is a real job with its
   own review, and it would not shrink this hunk.
 
-file: src/lib/booking-modify-plan.ts
-lines: 2371
-reason: one import and a six-line note on the single projection that reached the
-  database — `syncGuestNights` writes these values into
-  `BookingGuestNight.stayDate`, and the note is what tells the next reader why
-  the in-progress branch changed and the ordinary branch did not. Splitting a
-  2,371-line modify planner is out of scope for a merge-blocking fix.
-
 file: src/lib/capacity.ts
 lines: 1048
 reason: one import, and four lines recording that the occupancy index keys and
