@@ -27,7 +27,7 @@ import {
   lateCapturePaymentLabel,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
-import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
@@ -54,8 +54,8 @@ export function adminPaymentFailureTemplate(data: {
     ${alertBox("A payment has failed and may require manual attention.", "warning")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Amount", value: formatCents(data.amountCents) },
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },
@@ -117,8 +117,8 @@ export function adminDuplicateCaptureRefundTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       {
         label: data.refundFailed ? "Amount to refund" : "Amount refunded",
         value: formatCents(data.amountCents),
@@ -208,8 +208,8 @@ export function adminLateCaptureAutoRefundTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Amount refunded", value: formatCents(data.amountCents) },
       {
         label: "Booking status",
@@ -298,8 +298,8 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Amount captured", value: formatCents(data.amountCents) },
       ...(data.handBackAmountCents === null
         ? []
@@ -357,8 +357,8 @@ export function adminManualSettlementConflictTemplate(data: {
     )}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Booking status", value: escapeHtml(data.bookingStatus) },
       { label: "Amount recorded as cash", value: formatCents(data.amountCents) },
@@ -406,8 +406,8 @@ export function adminManualRefundTaskTemplate(data: {
     )}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Amount to refund", value: formatCents(data.refundAmountCents) },
       { label: "Reason", value: escapeHtml(data.reason) },
@@ -509,8 +509,8 @@ export function adminRefundRequestTemplate(data: {
     ${paragraph(escapeHtml(data.memberName) + " has submitted a refund appeal.")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Paid", value: "$" + (data.paidAmountCents / 100).toFixed(2) },
       { label: "Already Refunded", value: "$" + (data.refundedAmountCents / 100).toFixed(2) },
       { label: "Remaining", value: "$" + (remaining / 100).toFixed(2) },
