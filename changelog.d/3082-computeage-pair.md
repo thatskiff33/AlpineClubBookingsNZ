@@ -25,10 +25,25 @@
 
   **No stored information has been changed, and no member's recorded age band has
   been altered.** This corrects how the age is worked out from now on; a band
-  already recorded against a member stays exactly as recorded. An affected club
-  would want to re-check members born on the day after its season start — the
-  release notes for this change explain how — but for this deployment there is
-  nothing to review.
+  already recorded against a member stays exactly as recorded. Rewriting them was
+  deliberately not attempted: an age band on a member's record also carries
+  administrator overrides and the "not applicable" setting organisations and
+  schools use, so a blanket recalculation would erase decisions somebody made on
+  purpose.
+
+  **For this deployment there is nothing to review** — its server is east of
+  Greenwich, so every band already recorded was worked out correctly.
+
+  **A club whose server is west of Greenwich should check one small group**, and it
+  will not correct itself: look at members whose birthday is the day *after* the
+  club's season starts (2 April on the default financial year) and who are now 5,
+  10 or 18 — the ages just past a band boundary. Any of them may have been moved
+  up a band one season early, and any who were moved to Adult early will also have
+  been sent their own login early. Open each member in **Admin → Members**, check
+  the age band shown against the age, and re-save the record if it is wrong —
+  saving recalculates the band from the date of birth using the corrected rule.
+  Nothing else needs doing, and members outside that group cannot have been
+  affected.
 
   **The season start moved with it, because the two could not be separated.** The
   first day of the membership season was also being built from the server's
