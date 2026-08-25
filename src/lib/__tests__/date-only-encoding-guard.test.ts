@@ -115,7 +115,16 @@ const CANONICAL_ENCODERS = new Set([
  * being read — `calendarDateOfDateOnlyInstant(requireInstant(booking.createdAt))`
  * is `INV-DATE-019` written the long way round.
  */
-const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
+const INSTANT_PASS_THROUGHS = new Set([
+  "parseInstant",
+  "requireInstant",
+  // #3082's strict sibling. It PROVES the `Date` is a `@db.Date` encoding rather
+  // than a moment and returns that same value, so it changes what is guaranteed
+  // and not which value is read. Without an entry here it would be the
+  // `formatDate` blind spot one call further round: a rule that exists to refuse
+  // an instant would be the thing hiding one from this census.
+  "requireStoredCalendarDay",
+]);
 
 /**
  * Shared helpers that DECODE a stored calendar day and immediately RE-ENCODE it
@@ -1723,7 +1732,42 @@ export function dueDirect(booking: { createdAt: Date }) {
     expect([...INSTANT_PASS_THROUGHS].sort()).toEqual([
       "parseInstant",
       "requireInstant",
+      "requireStoredCalendarDay",
     ]);
+  });
+
+  it("classifies an instant that reaches the kernel through requireStoredCalendarDay", () => {
+    /*
+      THE THIRD NAME IN THE SET (#3082), with its own fixture for the reason the
+      `parseInstant` case above records: a listed name with no fixture can be
+      dropped from the set with the whole suite still green.
+
+      This one is worth stating twice over, because it is the pass-through most
+      likely to be read as unnecessary. `requireStoredCalendarDay` REFUSES a value
+      carrying a UTC time of day, so it looks like the one wrapper through which an
+      instant cannot reach the encoder — and `createdAt` here would indeed throw at
+      runtime. What the census reports is the SHAPE, not the outcome: a source line
+      asking for a `createdAt` to be encoded as a calendar day is the INV-DATE-019
+      defect whether it throws or answers, and it has to be visible here rather
+      than discovered by a production stack trace.
+    */
+    const { encodings } = censusOf(
+      `import { calendarDateOfDateOnlyInstant, requireStoredCalendarDay } from "@/lib/club-time";
+export function due(booking: { createdAt: Date }) {
+  return calendarDateOfDateOnlyInstant(
+    requireStoredCalendarDay(booking.createdAt, { subject: "due", instead: "no" }),
+  );
+}
+`,
+    );
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `requireStoredCalendarDay` is the kernel's strict " +
+        "Date-to-Instant pass-through. It changes what is GUARANTEED and not which " +
+        "value is read, so a field read through it must stay visible to this " +
+        "census.",
+    ).toEqual(["instant:createdAt"]);
   });
 
   it("classifies an encoder reached through a namespace import", () => {

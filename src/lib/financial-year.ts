@@ -47,9 +47,10 @@
  */
 
 import {
-  calendarDateOfStoredCalendarDay,
+  calendarDateOfDateOnlyInstant,
   calendarDateParts,
   clubToday,
+  requireStoredCalendarDay,
   type CalendarDate,
   type ClubClock,
   type ClubTimeZone,
@@ -144,11 +145,12 @@ export function seasonYearOfStoredDate(
   yearEndMonth?: number,
 ): number {
   return seasonYearOfCalendarDate(
-    calendarDateOfStoredCalendarDay(value, {
-      subject: "seasonYearOfStoredDate",
-      instead:
-        `If you meant "the club's season year now", call clubSeasonYear(zone) instead.`,
-    }),
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "seasonYearOfStoredDate",
+        instead: `If you meant "the club's season year now", call clubSeasonYear(zone) instead.`,
+      }),
+    ),
     yearEndMonth,
   );
 }

@@ -268,34 +268,45 @@ export function calendarDateOfSerialisedDbDateOrNull(
 }
 
 /**
- * {@link calendarDateOfDateOnlyInstant}, REFUSING a value that carries a UTC
- * time of day instead of flooring it.
+ * `value`, PROVED to be a `@db.Date` calendar-day encoding rather than a moment.
  *
- * The lenient decoder above cannot tell a `@db.Date` encoding from a real
- * timestamp, and it says so — hand it a `createdAt` and you get that instant's
- * UTC day, which for a club east of Greenwich is the right answer for most of
- * the day and the wrong one for the rest. That is the hardest kind of wrong to
- * notice, so a caller whose whole contract is "this argument is a stored
- * calendar day" declines to answer rather than guessing which kind it was
- * handed. F2 (#3076) established the shape on `normalizeBookingDate`, and
- * `seasonYearOfStoredDate` and `computeAge` are the two derivations that now
- * share it — a `@db.Date` column round-trips as UTC midnight, so a time of day
- * means the value is not from one.
+ * The precondition {@link calendarDateOfDateOnlyInstant} cannot check for
+ * itself. That decoder takes an `Instant`, which is a bare `Date`, so it cannot
+ * tell a stored calendar day from a real timestamp — and it says so: hand it a
+ * `createdAt` and you get that instant's UTC day, which for a club east of
+ * Greenwich is the right answer for most of the day and the wrong one for the
+ * rest. That is the hardest kind of wrong to notice, so a caller whose whole
+ * contract is "this argument is a stored calendar day" states the precondition
+ * here and declines to answer when it does not hold. F2 (#3076) established the
+ * shape on `normalizeBookingDate`; `seasonYearOfStoredDate` and `computeAge` are
+ * the two derivations that now share it.
  *
- * IT IS A GUARD, NOT A CONVERTER: there is no repair for a moment handed to a
- * calendar-day rule, because the caller has to decide whose calendar the day
- * should come from. `refusal.instead` is that sentence, supplied by the caller
- * because only the caller knows what it should have been asked instead.
+ * IT RETURNS THE INSTANT RATHER THAN THE CALENDAR DAY, deliberately, and that is
+ * the same decision {@link requireInstant} makes. Wrapping the decode would put
+ * a second name in front of it, and `date-only-encoding-guard.test.ts` bans that
+ * for a measured reason: `xero-invoice-helpers` once exported `formatDate`, and
+ * the thirty-three Xero document dates behind that one-line rename were
+ * invisible to the spelling census that was supposed to audit them. Composing
+ * instead — `calendarDateOfDateOnlyInstant(requireStoredCalendarDay(v, ...))` —
+ * keeps the encoder's own name at every call site, where the census can see what
+ * is being encoded.
+ *
+ * `refusal.instead` is the sentence naming what the caller should have been
+ * asked for, supplied by the caller because only the caller knows it. There is
+ * no repair to offer: a moment handed to a calendar-day rule needs somebody to
+ * decide whose calendar the day comes from, and that is not a decision a guard
+ * can make.
  *
  * On today's schema the throw is unreachable from the database — PostgreSQL will
  * not keep a time in a `date` column — so it fires for a value some code path
  * built wrong, which is exactly when a loud failure is worth more than an
- * answer.
+ * answer. It has already found four such values in this repository's own test
+ * fixtures.
  */
-export function calendarDateOfStoredCalendarDay(
+export function requireStoredCalendarDay(
   value: Date,
   refusal: { subject: string; instead: string },
-): CalendarDate {
+): Instant {
   if (!isInstant(value)) {
     throw new RangeError(
       `${refusal.subject} needs a valid Date holding a @db.Date calendar-day ` +
@@ -310,5 +321,5 @@ export function calendarDateOfStoredCalendarDay(
         `and would be silently right for a club east of Greenwich. ${refusal.instead}`,
     );
   }
-  return calendarDateOfDateOnlyInstant(value);
+  return value;
 }

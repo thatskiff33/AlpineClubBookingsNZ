@@ -112,6 +112,21 @@ import {
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
 } from "@/lib/financial-year";
 
+/**
+ * A stored `@db.Date` date of birth: the calendar day, at UTC midnight
+ * (INV-DATE-024).
+ *
+ * THESE FIXTURES USED TO BE `new Date(2016, 3, 1)`, host-local midnight — the
+ * spelling INV-DATE-024 names as forbidden for this column, and one that means a
+ * DIFFERENT day for a run on a UTC container and a run on this repository's own
+ * `Pacific/Auckland` pin. `computeAge`'s stored-day guard now refuses it (#3082),
+ * which is how thirteen of them were found: they had been passing on CI and
+ * describing an age-tier price boundary with a value no writer produces.
+ */
+function storedDateOfBirth(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
 function fee(overrides: Record<string, unknown> = {}) {
   return {
     id: "fee-1",
@@ -1443,10 +1458,10 @@ describe("membership subscription billing", () => {
     it("charges a Youth-at-season-start and skips a Child-at-season-start (owner boundary: 01 Apr vs 31 Mar 10th birthday)", async () => {
       mocks.members.findMany.mockResolvedValue([
         // Turns 10 on 01 Apr -> Youth for the whole 2026 season -> required.
-        ageTierMember("youth-01apr", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth-01apr", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
         // Turns 10 on 31 Mar (2027, mid-season) -> still a Child at 1 Apr 2026
         // season start -> exempt all season.
-        ageTierMember("child-31mar", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child-31mar", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1466,7 +1481,7 @@ describe("membership subscription billing", () => {
       vi.setSystemTime(new Date("2026-12-01T00:00:00.000Z"));
       try {
         mocks.members.findMany.mockResolvedValue([
-          ageTierMember("late-birthday", { dateOfBirth: new Date(2016, 4, 1) }), // 01 May 2016 -> 9 at 1 Apr 2026
+          ageTierMember("late-birthday", { dateOfBirth: storedDateOfBirth("2016-05-01") }), // 01 May 2016 -> 9 at 1 Apr 2026
         ]);
         const preview = await buildSubscriptionBillingPreview({
           seasonYear: 2026,
@@ -1495,7 +1510,7 @@ describe("membership subscription billing", () => {
 
     it("a liable Youth mints the SAME charge a REQUIRED type would — key and amount byte-unchanged", async () => {
       mocks.members.findMany.mockResolvedValue([
-        ageTierMember("youth", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
       ]);
       const ageTierPreview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1503,7 +1518,7 @@ describe("membership subscription billing", () => {
       });
       mocks.members.findMany.mockResolvedValue([
         member("youth", {
-          dateOfBirth: new Date(2016, 3, 1),
+          dateOfBirth: storedDateOfBirth("2016-04-01"),
           ageTier: "YOUTH",
           seasonalMembershipAssignments: [{
             membershipType: { id: "type-full", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee()] },
@@ -1521,7 +1536,7 @@ describe("membership subscription billing", () => {
 
     it("does not resolve a Xero mapping when the only members are tier-exempt (no invoice entries)", async () => {
       mocks.members.findMany.mockResolvedValue([
-        ageTierMember("child", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1536,7 +1551,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
       mocks.members.findMany.mockResolvedValue([
         member("child-in-family", {
-          dateOfBirth: new Date(2017, 2, 31),
+          dateOfBirth: storedDateOfBirth("2017-03-31"),
           ageTier: "CHILD",
           familyGroupMemberships: [familyMembership()],
           seasonalMembershipAssignments: [{
@@ -1570,7 +1585,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
         // Child at 1 Apr 2026 season start -> exempt; no fee resolves for CHILD.
-        ageTierMember("child-no-fee", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child-no-fee", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1592,7 +1607,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
         // Youth at season start -> liable; no fee resolves for YOUTH.
-        ageTierMember("youth-no-fee", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth-no-fee", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1641,7 +1656,7 @@ describe("membership subscription billing", () => {
       tierPricedFees();
       mocks.members.findMany.mockResolvedValue([
         // Turns 10 on 01 Apr 2026 -> YOUTH at season start; stored tier still CHILD.
-        basedMember("drifted-up", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+        basedMember("drifted-up", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "CHILD" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       // Resolved by the season-start tier, never the stored CHILD tier.
@@ -1656,7 +1671,7 @@ describe("membership subscription billing", () => {
       mocks.members.findMany.mockResolvedValue([
         // At 1 Apr 2026 season start they were 10 -> YOUTH; the stored tier has
         // since aged up to ADULT. Billing 2026 must charge the YOUTH price.
-        basedMember("drifted-adult", { dateOfBirth: new Date(2016, 3, 1), ageTier: "ADULT" }),
+        basedMember("drifted-adult", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "ADULT" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
@@ -1666,7 +1681,7 @@ describe("membership subscription billing", () => {
     it("stored == season-start tier: resolves that tier unchanged (no regression)", async () => {
       tierPricedFees();
       mocks.members.findMany.mockResolvedValue([
-        basedMember("aligned-youth", { dateOfBirth: new Date(2016, 3, 1), ageTier: "YOUTH" }),
+        basedMember("aligned-youth", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "YOUTH" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
@@ -1689,7 +1704,7 @@ describe("membership subscription billing", () => {
     it("MISSING_FEE_SCHEDULE names the season-start tier actually used, not the stored tier", async () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
-        basedMember("no-youth-fee", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+        basedMember("no-youth-fee", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "CHILD" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(preview.exceptions.map((r) => r.code)).toEqual(["MISSING_FEE_SCHEDULE"]);

@@ -1,9 +1,10 @@
 import type { AgeTier } from "@prisma/client";
 import {
   calendarDateFromParts,
-  calendarDateOfStoredCalendarDay,
+  calendarDateOfDateOnlyInstant,
   calendarDateParts,
   dateOnlyInstantOf,
+  requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
 import { getSeasonStartMonth } from "@/lib/financial-year";
@@ -106,29 +107,34 @@ export function computeAgeOnCalendarDays(
  * sites hold: a `@db.Date` date of birth, and a season start from
  * {@link getSeasonStartDate}.
  *
- * BOTH ARGUMENTS ARE DECODED IN UTC AND BOTH REFUSE A TIME OF DAY, which is the
- * only reading of a UTC-midnight encoding that answers the same on every host
- * (`INV-DATE-024`). The refusal is `seasonYearOfStoredDate`'s, shared: a value
- * carrying a time of day is a real moment, and flooring one to its UTC day is
- * right for a club east of Greenwich and wrong for the rest, which is worse than
- * being wrong everywhere. On today's schema both columns are `@db.Date`, so
- * PostgreSQL cannot hand this a time - it fires for a value some code path built
- * rather than read.
+ * BOTH ARGUMENTS ARE DECODED IN UTC AND BOTH STATE THE PRECONDITION FIRST, which
+ * is the only reading of a UTC-midnight encoding that answers the same on every
+ * host (`INV-DATE-024`). `requireStoredCalendarDay` is `seasonYearOfStoredDate`'s
+ * guard, shared: a value carrying a time of day is a real moment, and flooring
+ * one to its UTC day is right for a club east of Greenwich and wrong for the
+ * rest, which is worse than being wrong everywhere. On today's schema both
+ * columns are `@db.Date`, so PostgreSQL cannot hand this a time - it fires for a
+ * value some code path built rather than read, and it has already found four in
+ * this repository's own test fixtures.
  */
 export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
   return computeAgeOnCalendarDays(
-    calendarDateOfStoredCalendarDay(dateOfBirth, {
-      subject: "computeAge's dateOfBirth",
-      instead:
-        "A date of birth is a calendar day: build it with parseDateOnly or an explicit " +
-        "T00:00:00.000Z (INV-DATE-024), never from the clock.",
-    }),
-    calendarDateOfStoredCalendarDay(referenceDate, {
-      subject: "computeAge's referenceDate",
-      instead:
-        "Pass getSeasonStartDate(seasonYear) - the season start at UTC midnight - from a " +
-        "season the caller resolved once.",
-    }),
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(dateOfBirth, {
+        subject: "computeAge's dateOfBirth",
+        instead:
+          "A date of birth is a calendar day: build it with parseDateOnly or an explicit " +
+          "T00:00:00.000Z (INV-DATE-024), never from the clock.",
+      }),
+    ),
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(referenceDate, {
+        subject: "computeAge's referenceDate",
+        instead:
+          "Pass getSeasonStartDate(seasonYear) - the season start at UTC midnight - from a " +
+          "season the caller resolved once.",
+      }),
+    ),
   );
 }
 

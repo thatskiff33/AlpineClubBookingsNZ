@@ -66,7 +66,6 @@ export {
   calendarDateOfDateOnlyInstant,
   calendarDateOfSerialisedDbDate,
   calendarDateOfSerialisedDbDateOrNull,
-  calendarDateOfStoredCalendarDay,
   clubCalendarDateOf,
   clubWallTimeOf,
   clubZoneOffsetMs,
@@ -74,6 +73,7 @@ export {
   isInstant,
   parseInstant,
   requireInstant,
+  requireStoredCalendarDay,
 } from "./instant";
 
 export {
