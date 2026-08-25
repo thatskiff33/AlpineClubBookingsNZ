@@ -1,4 +1,9 @@
 import {
+  addCalendarDays,
+  requireCalendarDate,
+  type CalendarDate,
+} from "@/lib/club-time";
+import {
   addDaysDateOnly,
   formatDateOnlyForTimeZone,
   getTodayDateOnly,
@@ -155,19 +160,34 @@ export function isGuestActiveOnNight(
 // that capacity, pricing and the whole-lodge rules are built on — is untouched
 // and deliberately separate; do not conflate the two.
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 /**
- * Shift a `yyyy-mm-dd` NZ date-only key by whole days.
+ * Shift a `yyyy-mm-dd` lodge-night key by whole days.
  *
- * The key is re-anchored at UTC midnight, which is midday NZ (UTC+12/+13), so
- * adding or subtracting whole days can never land on an NZ daylight-saving
- * transition and roll the calendar day the wrong way.
+ * A lodge-night key IS a calendar day, so this is integer civil-calendar
+ * arithmetic on that day and nothing else. `addCalendarDays` constructs no
+ * `Date` and reads no zone, so the answer cannot be moved by where the club or
+ * the host sits — and a fractional step or one leaving the four-digit year
+ * range throws there rather than returning a key that is not one.
+ *
+ * IT USED TO ROUND-TRIP THROUGH AN INSTANT, and the comment that justified
+ * doing so was the disproved premise this epic exists to remove (#3100). It said
+ * the key was re-anchored at "UTC midnight, which is midday NZ (UTC+12/+13)" and
+ * so could never roll the calendar day the wrong way. That holds only for a club
+ * at or ahead of Greenwich; `INV-DATE-010` no longer asserts it. The body it
+ * justified added `days * 24h` to that instant and read the result back through
+ * `APP_TIME_ZONE`, which for a club behind Greenwich ATE THE SHIFT: `+1` came
+ * back as the same day and `-1` skipped one, on every call rather than at a
+ * boundary, and {@link expandStayEnvelopeToNightKeys} — which steps with this
+ * function — did not terminate at all.
+ *
+ * `operational-day-shift-club-zone.test.ts` holds the measurements, and the two
+ * near-miss spellings that are also wrong: adding 24 hours to an instant, which
+ * breaks on a 25-hour day even with the zone read correctly, and keeping the
+ * round trip with a UTC reader, which is correct only until somebody changes the
+ * encoder.
  */
-function shiftDateOnlyKey(key: string, days: number): string {
-  return formatDateOnlyForTimeZone(
-    new Date(new Date(`${key}T00:00:00.000Z`).getTime() + days * MS_PER_DAY)
-  );
+function shiftDateOnlyKey(key: string, days: number): CalendarDate {
+  return addCalendarDays(requireCalendarDate(key), days);
 }
 
 /**
