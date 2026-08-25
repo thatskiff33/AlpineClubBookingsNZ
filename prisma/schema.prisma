@@ -5347,6 +5347,14 @@ enum EmailDeliveryBlockReason {
   // a silent total mail outage, which is the same harm as a wrongly-declared copy
   // arriving from the opposite direction.
   CAPTURE_TRANSPORT_IN_PRODUCTION
+  // A COPY declares a local capture mailbox (USE_LOCAL_CAPTURE) while
+  // EMAIL_SERVER_HOST names a host on the public internet, so the "capture" would
+  // have delivered the message to a real member (#3071 review). Deliberately NOT
+  // the value above: that one asserts this installation is the club's live site,
+  // and environment-safety-withheld.ts counts it separately as precisely that
+  // alarm, so writing it from a copy would report a live-site emergency that is
+  // not happening.
+  CAPTURE_TRANSPORT_PUBLIC_HOST
 }
 
 enum EmailSuppressionReason {

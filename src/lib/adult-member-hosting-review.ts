@@ -79,7 +79,7 @@ import {
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * Booking-side integration for the adult-member hosting policy (#2364).
@@ -722,7 +722,7 @@ async function evaluateLoadedBookingAdultMemberHosting(
           : []),
       ],
       db,
-      seasonYear ?? getSeasonYear(booking.checkIn),
+      seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
       subscriptionLockoutMode,
       readAgeTierSettings,
     );
@@ -769,8 +769,8 @@ export async function evaluateBookingAdultMemberHosting(
  *
  * `seasonYear` EXISTS BECAUSE THIS FORM HAS NO GATED REQUEST BEHIND IT. The
  * subscription bridge (#2543) judges settlement in a membership season, and the
- * season comes from `getSeasonYear`, which reads the process-level financial-year
- * cache in `financial-year.ts`. Writers reach this rule through routes that have
+ * season comes from `seasonYearOfStoredDate`, whose year-end month defaults to the
+ * process-level financial-year cache in `financial-year.ts`. Writers reach this rule through routes that have
  * already called `refreshFinancialYearConfig`; a read-only evidence caller has
  * not, so on a cold process the cache is still the March default and a club with
  * any other year-end month would have its hosts judged against a season row that
@@ -1671,7 +1671,7 @@ export async function evaluateProposedAdultMemberHosting(
     await withSubscriptionSettlement(
       participants,
       db,
-      getSeasonYear(input.checkIn),
+      seasonYearOfStoredDate(input.checkIn),
     ),
     resolved,
   );

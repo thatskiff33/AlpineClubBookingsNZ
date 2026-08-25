@@ -5,7 +5,8 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -75,7 +76,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
+  const ageTier = await computeAgeTier(
+    dateOfBirth,
+    getSeasonStartDate(clubSeasonYear(await clubTimeZone())),
+  );
   if (ageTier !== "ADULT") {
     return NextResponse.json(
       { error: "Use the infant/child/youth request flow for members under 18" },

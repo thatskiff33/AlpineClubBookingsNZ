@@ -4,8 +4,21 @@ import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 const mocks = vi.hoisted(() => {
   const settlementFindUnique = vi.fn();
   const settlementUpdate = vi.fn();
+  /*
+    #3071: the transaction client carries the environment-safety delegate,
+    because the invoice-email policy is re-read on `tx` inside
+    `pg_advisory_xact_lock(1)` immediately before the provider call. Reading on
+    the transaction client is what makes that re-read cost no second Prisma
+    connection, which was the stated objection to re-reading at all.
+
+    It is a SEPARATE mock from the global client's, which is what lets a test
+    prove the read goes through the transaction rather than around it: give the
+    two different answers and see which one the code obeys.
+  */
+  const txEnvironmentSafetyFindUnique = vi.fn();
   const tx = {
     $executeRaw: vi.fn(),
+    environmentSafetySettings: { findUnique: txEnvironmentSafetyFindUnique },
     groupBookingSettlement: {
       findUnique: settlementFindUnique,
       update: settlementUpdate,
@@ -18,6 +31,8 @@ const mocks = vi.hoisted(() => {
   };
   return {
     tx,
+    txEnvironmentSafetyFindUnique,
+    globalEnvironmentSafetyFindUnique: vi.fn(),
     settlementFindUnique,
     settlementUpdate,
     accountingApi,
@@ -46,7 +61,9 @@ vi.mock("xero-node", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    environmentSafetySettings: {
+      findUnique: mocks.globalEnvironmentSafetyFindUnique,
+    },
     $transaction: mocks.transaction,
     groupBookingSettlement: {
       update: mocks.settlementUpdate,
@@ -157,6 +174,11 @@ function settlementWithInvoice(status: GroupBookingStatus) {
 */
 beforeEach(() => {
   declareEnvironmentRole("production");
+  // No override on either client: the ordinary state of an installation that has
+  // never used the safer switch. `vi.clearAllMocks()` clears calls, not
+  // implementations, so these survive into every test below.
+  mocks.globalEnvironmentSafetyFindUnique.mockResolvedValue(null);
+  mocks.txEnvironmentSafetyFindUnique.mockResolvedValue(null);
 });
 
 describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
@@ -443,6 +465,100 @@ describe("createXeroInvoiceForGroupSettlement cancellation fence", () => {
         completion.responsePayload.invoiceEmailWithheldForEnvironment
       ).toBe(false);
       expect(mocks.emailLogCreate).not.toHaveBeenCalled();
+    });
+
+    /*
+      #3071 external review. The clearance was minted BEFORE the transaction
+      opened, and the transaction's first act is `pg_advisory_xact_lock(1)` — an
+      exclusive lock every other invoice run is queued on, so the wait has no
+      bound. The send then went ahead behind a witness-only check, which proves
+      the token was genuine and says nothing about whether it is still true.
+
+      So an administrator who switched the safer override on while this workflow
+      was queued for the lock had their click ignored, and the invoice was emailed
+      to a real member on a copy.
+
+      The fix re-reads on the TRANSACTION client. That was the whole difficulty:
+      the original code deliberately did not re-resolve because a second Prisma
+      CONNECTION taken from inside that lock is a genuine pool-timeout hazard. A
+      read on `tx` uses the connection the transaction already holds.
+    */
+    it("refuses the send when the override is switched on during the lock wait", async () => {
+      // Before the lock: nothing has been switched on, so the outer policy is a
+      // clean allow and a clearance is minted.
+      mocks.globalEnvironmentSafetyFindUnique.mockResolvedValue(null);
+      // While queued for lock(1): an administrator switches the safer override
+      // on. Only the in-transaction read can see this.
+      mocks.txEnvironmentSafetyFindUnique.mockResolvedValue({
+        forceNonProduction: true,
+        updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+        updatedByMemberId: "member-admin",
+      });
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", {
+          syncOperationId: "op-1",
+        })
+      ).resolves.toBe("inv-1");
+
+      // The provider is never asked, which is the whole point.
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+
+      // AND THE READ REALLY WENT THROUGH THE TRANSACTION. Without this the test
+      // would pass just as well if the code had re-read on the global client,
+      // which is the thing that would take a second connection inside the lock.
+      expect(mocks.txEnvironmentSafetyFindUnique).toHaveBeenCalled();
+
+      // The invoice still exists and is untouched: only the emailing is withheld,
+      // and a copy withholding is not a failure.
+      const completion = mocks.completeSync.mock.calls.at(-1)?.[1];
+      expect(completion.status).toBe("SUCCEEDED");
+      expect(completion.responsePayload.invoiceEmailError).toBeNull();
+      expect(
+        completion.responsePayload.invoiceEmailWithheldForEnvironment
+      ).toBe(true);
+      // Recorded from what the GATE did, never from the outer policy, so two
+      // withhold reasons never both claim one event (#3035 review).
+      expect(
+        completion.responsePayload.invoiceEmailWithheldByNoEmails
+      ).toBe(false);
+      expect(mocks.emailLogCreate).not.toHaveBeenCalled();
+    });
+
+    it("still emails when nothing changed during the lock wait", async () => {
+      // The counterpart, so the re-read cannot become an unconditional refusal.
+      // A guard that withheld everything would pass the test above and break
+      // every settlement invoice on the club's live site.
+      mocks.globalEnvironmentSafetyFindUnique.mockResolvedValue(null);
+      mocks.txEnvironmentSafetyFindUnique.mockResolvedValue(null);
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", {
+          syncOperationId: "op-1",
+        })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).toHaveBeenCalledTimes(1);
+      expect(mocks.txEnvironmentSafetyFindUnique).toHaveBeenCalled();
+    });
+
+    it("does not spend a second read when the outer answer was already a withhold", async () => {
+      /*
+        A confirmed copy is decided before the lock is taken, and re-asking could
+        only confirm it: the override is one-directional, so the answer can never
+        become MORE permissive. Asking anyway would spend a read inside an
+        exclusive lock to change nothing.
+      */
+      declareEnvironmentRole("non-production");
+
+      await expect(
+        createXeroInvoiceForGroupSettlement("settle-1", {
+          syncOperationId: "op-1",
+        })
+      ).resolves.toBe("inv-1");
+
+      expect(mocks.accountingApi.emailInvoice).not.toHaveBeenCalled();
+      expect(mocks.txEnvironmentSafetyFindUnique).not.toHaveBeenCalled();
     });
   });
 

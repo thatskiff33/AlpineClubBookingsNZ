@@ -42,7 +42,7 @@ import {
   evaluateNonMemberPricingRequirements,
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
@@ -427,7 +427,7 @@ export async function confirmCrossLodgeWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offeredLodgeId,
-      seasonYear: getSeasonYear(preflight.checkIn),
+      seasonYear: seasonYearOfStoredDate(preflight.checkIn),
       checkIn: preflight.checkIn,
       checkOut: preflight.checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial

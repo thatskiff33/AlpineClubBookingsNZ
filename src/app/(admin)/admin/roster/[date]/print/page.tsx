@@ -4,26 +4,18 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
-import { APP_LOCALE } from "@/config/operational"
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time"
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 
 // #2264: deliberately not one of the shared house shapes — the printed chore
 // roster heads the page with the full weekday and month, matching the
 // on-screen roster and the chore-roster email.
 //
 // CT-4 (#2870): the roster day is a CALENDAR DATE and calendar dates have no
-// timezone — 16 April 2026 is a Thursday everywhere on earth. Pinning the
-// formatter to "UTC" over the kernel's UTC-midnight encoding is therefore the
-// IDENTITY for every club rather than a projection, which is why this needs no
-// zone plumbing at all. It used to read APP_TIME_ZONE, which for a club behind
-// UTC named the previous day.
-const ROSTER_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-})
+// timezone — 16 April 2026 is a Thursday everywhere on earth. The kernel's
+// `longWeekdayDate` shape pins "UTC" over its own UTC-midnight encoding, which
+// is the IDENTITY for every club rather than a projection, so this needs no zone
+// plumbing at all. The local copy of the same options this replaces was one of
+// six.
 
 interface Assignment {
   id: string
@@ -106,9 +98,7 @@ export default function PrintRosterPage() {
   const rosterDay = parseCalendarDate(dateStr)
   // The day comes from the URL, so a malformed one renders as itself rather
   // than throwing and blanking the print view behind an error boundary.
-  const formattedDate = rosterDay
-    ? ROSTER_LONG_DATE.format(dateOnlyInstantOf(rosterDay))
-    : dateStr
+  const formattedDate = rosterDay ? formatClubLongWeekdayDate(rosterDay) : dateStr
 
   return (
     <>

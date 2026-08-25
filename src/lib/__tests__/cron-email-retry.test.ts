@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   bookingFindUnique: vi.fn(),
+  // #3071: controllable per call, so a test can have an administrator switch the
+  // safer override on WHILE a batch is running.
+  environmentSafetyFindUnique: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
@@ -20,7 +23,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    environmentSafetySettings: {
+      findUnique: mocks.environmentSafetyFindUnique,
+    },
     emailLog: {
       findMany: mocks.findMany,
       update: mocks.update,
@@ -108,6 +113,10 @@ function failedEmail(overrides: Record<string, unknown> = {}) {
 */
 beforeEach(() => {
   declareEnvironmentRole("production");
+  // No override, the ordinary state of an installation that has never used the
+  // safer switch. `vi.clearAllMocks()` in the describes below clears calls, not
+  // implementations, so this survives into every test.
+  mocks.environmentSafetyFindUnique.mockResolvedValue(null);
 });
 
 describe("retryFailedEmails (issue #820)", () => {
@@ -918,5 +927,152 @@ describe("retryFailedEmails clears a stale environment block reason (#3035)", ()
     // A business withhold must never be counted as an environment-safety one:
     // that is the exact conflation INV-CONFIG-004 forbids.
     expect(lastWrite().data.deliveryBlockReason).toBeNull();
+  });
+});
+
+// --- #3071 external review: the override has to stop a batch ALREADY RUNNING ---
+//
+// The run-level check above resolves the policy ONCE, and this job then works
+// through `take: 50` rows. So a single check covered up to fifty messages: an
+// administrator who switched the safer override on stopped `sendEmail`
+// immediately — it asks per message — but every remaining queued retry in this
+// job went out anyway. Two docblocks shipped in #3035 described per-message
+// protection this job did not have.
+//
+// Our own verify-fix review saw this and recorded it as "a bounded limit worth
+// stating rather than fixing". That was the wrong call, and the reviewer's framing
+// is the right one: the override exists so an operator can stop mail NOW — it is
+// the click somebody makes the moment they realise a copy is about to email the
+// club's real members — so "it takes effect on the next batch" is not a limit, it
+// is the feature not working.
+describe("retryFailedEmails re-asks the boundary per message (#3071)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolveEmailDeliveryConfig.mockReturnValue({
+      ok: true,
+      mode: "smtp-relay",
+      modeSource: "explicit-flag",
+      modeLabel: "SMTP Relay",
+      captureHost: "not-applicable",
+      transportOptions: {
+        host: "smtp.example.test",
+        port: 587,
+        secure: false,
+        auth: { user: "relay-user", pass: "relay-pass" },
+      },
+      issues: [],
+      warnings: [],
+    });
+    mocks.update.mockResolvedValue({});
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.getAdminEmails.mockResolvedValue([]);
+    mocks.getActiveEmailSuppression.mockResolvedValue(null);
+    mocks.bookingFindUnique.mockResolvedValue({ noEmails: false });
+    mocks.sendMail.mockResolvedValue({ messageId: "msg" });
+    declareEnvironmentRole("production");
+    mocks.environmentSafetyFindUnique.mockResolvedValue(null);
+  });
+
+  /**
+   * The override is switched on the instant the FIRST message goes out, which is
+   * expressed as a condition on `sendMail` rather than as a call-count sequence
+   * on the override read. Counting reads would pin the number of database reads
+   * per message as though it were the contract, and this test would then fail the
+   * next time that number legitimately changes while the behaviour it exists to
+   * guard stayed correct.
+   */
+  it("stops mid-batch when an administrator switches the safer override on", async () => {
+    mocks.findMany.mockResolvedValue([
+      failedEmail({ id: "email_1" }),
+      failedEmail({ id: "email_2" }),
+      failedEmail({ id: "email_3" }),
+    ]);
+    mocks.environmentSafetyFindUnique.mockImplementation(async () =>
+      mocks.sendMail.mock.calls.length > 0
+        ? {
+            forceNonProduction: true,
+            updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+            updatedByMemberId: "member_admin",
+          }
+        : null,
+    );
+
+    const result = await retryFailedEmails();
+
+    // Exactly one message left, not three.
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+    expect(result.retried).toBe(1);
+
+    /*
+      AND THE REMAINING ROWS ARE UNTOUCHED, which matters as much as the stop.
+      The run-level check's own rule is "NEITHER TOUCHES A ROW": no attempt is
+      burned and no retained body is dropped, so the very next run replays them
+      once the installation may send again. A stop that marked the rest would
+      destroy that.
+    */
+    const touched = [
+      ...mocks.update.mock.calls.map((call) => call[0]?.where?.id),
+      ...mocks.updateMany.mock.calls.map((call) => call[0]?.where?.id),
+    ].filter(Boolean);
+    expect(touched).not.toContain("email_2");
+    expect(touched).not.toContain("email_3");
+  });
+
+  it("stops CLEANLY rather than throwing, because a copy is not a fault", async () => {
+    mocks.findMany.mockResolvedValue([
+      failedEmail({ id: "email_1" }),
+      failedEmail({ id: "email_2" }),
+    ]);
+    mocks.environmentSafetyFindUnique.mockImplementation(async () =>
+      mocks.sendMail.mock.calls.length > 0
+        ? {
+            forceNonProduction: true,
+            updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+            updatedByMemberId: null,
+          }
+        : null,
+    );
+
+    // The run-level check returns cleanly for a confirmed copy so a staging box
+    // does not fill its cron history with red runs. Mid-batch keeps that shape:
+    // an operator's deliberate action is not an error to be alerted on.
+    await expect(retryFailedEmails()).resolves.toMatchObject({ retried: 1 });
+  });
+
+  it("throws mid-batch for a CONFIGURATION fault, matching the run-level shape", async () => {
+    mocks.findMany.mockResolvedValue([
+      failedEmail({ id: "email_1" }),
+      failedEmail({ id: "email_2" }),
+    ]);
+    // The role becomes unreadable once the first message is out: nothing can say
+    // whether this is the live site any more, which IS a fault and has to be
+    // loud, exactly as it is at the top of the run.
+    mocks.environmentSafetyFindUnique.mockImplementation(async () => {
+      if (mocks.sendMail.mock.calls.length > 0) {
+        throw new Error("database unreachable");
+      }
+      return null;
+    });
+
+    await expect(retryFailedEmails()).rejects.toThrow(
+      /Email retry stopped part-way/,
+    );
+    expect(mocks.sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps replaying the whole batch while the installation may still send", async () => {
+    // The counterpart assertion: the per-message check must not become a
+    // per-message BLOCK. A guard that stopped everything would pass the three
+    // tests above and break the job.
+    mocks.findMany.mockResolvedValue([
+      failedEmail({ id: "email_1" }),
+      failedEmail({ id: "email_2" }),
+      failedEmail({ id: "email_3" }),
+    ]);
+
+    const result = await retryFailedEmails();
+
+    expect(mocks.sendMail).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ retried: 3, succeeded: 3, failed: 0 });
   });
 });

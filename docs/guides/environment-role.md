@@ -106,6 +106,34 @@ equally audited, and it **does not** make an installation the live site: the
 deployment's own setting decides again, so an undeclared installation goes back
 to *not configured*.
 
+### Restoring a database dump carries the override with it
+
+The override lives **in the database**, so it travels in a `pg_dump` like any
+other row. Restoring a copy's dump into the club's live site therefore restores
+its *"treat this as a copy"* switch as well — and because the deployment setting
+can never overrule it in the unsafe direction, the live site would come up
+declaring itself production and behaving as a copy: **member email held back,
+and every Xero contact it touches given a replaced address.** The Admin →
+Environment page would say so, but nothing would stop the restore.
+
+This is not a hypothetical direction to restore in. It is what a restore drill,
+a "copy staging back over production to reproduce a bug" and a rollback from a
+rehearsal all do.
+
+**So after restoring any dump that did not come from this same installation,
+open Admin → Environment before letting the site send anything**, and switch the
+override off if it is on. Two smaller things travel the same way and are worth
+knowing about rather than being surprised by: the count of held-back email
+includes whatever the source installation held back, and the record of which
+Xero contacts have had their address replaced describes the source's contacts,
+not this one's — on the live site nothing new is contained, so that list only
+ever shrinks in relevance, but it is not empty just because you restored.
+
+The reverse direction — the live site's dump into a copy — is the normal one and
+is what this whole page is about. Declare the copy `non-production` before its
+first start, and see [Backups and restores](../MAINTENANCE.md#quarterly-backup-restore-drill)
+for the drill itself.
+
 ## What "not configured" means
 
 It means **nothing has said**, and the site refuses to pick for you.
@@ -120,6 +148,42 @@ organisation.
 If you meet this on a live site, the fix is one line in the deployment's `.env`
 (above) and a restart. The setup checklist reports it as a **blocked** step with
 that instruction, and the app logs an error at start-up naming the setting.
+
+### Where you will and will not be told about it
+
+There are **three** places, deliberately, and they are the whole list: the
+**start-up log**, the **Production Or Non-Production** step on `/admin/setup`,
+and the **Admin → Environment** page itself. There is no banner across the admin
+area, no notice on the dashboard, and no marker on the pages whose behaviour is
+actually affected.
+
+That is a decision rather than an omission, and it is worth saying so plainly
+because the absence of a warning on a booking screen is otherwise easy to read as
+"nothing is wrong here". Three reasons:
+
+- **An emailed alert is the one thing that cannot work here.** The obvious
+  "warn the administrators" mechanism is a message — and on an undeclared
+  installation that message is held back by the very boundary being warned about,
+  while on a copy it would mail the club's real administrators from a copy, which
+  is the thing this whole page exists to prevent. A warning channel that is
+  disabled exactly when it is needed is worse than none, because somebody will
+  rely on it.
+- **A banner would be shown mostly to people who cannot act on it.** The repair
+  is a line in `.env` and a restart. An admin-wide banner would follow every
+  administrator around every page while being actionable only by whoever
+  administers the deployment — noise that trains people to dismiss banners.
+- **It is already loud where it *can* be acted on.** The operator who can fix it
+  is the one reading the start-up log or working through the setup checklist.
+
+Separately from all three, the supported deploy path refuses to proceed at all —
+see [Upgrading an existing live site](#upgrading-an-existing-live-site) below.
+That is a gate rather than a signal: it stops the release instead of telling
+somebody about it afterwards.
+
+What is *not* silent is the consequence. Every message the boundary holds back is
+recorded against the installation and counted, so "is anything actually being
+lost?" has an answer on the Admin → Environment page — see the next section — and
+each held-back message says why on its own log row.
 
 Held-back email is **not** lost while you sort this out. A message the site
 refused to send because it could not tell what this installation is is recorded
@@ -305,13 +369,27 @@ what this installation is, so it earns nothing until that is answered.
 
 Three things worth knowing:
 
-- **It is a declaration, not a detection.** The app does not look at the host name
-  and decide that something called `mailpit` must be safe. You say it is a
-  capture; nothing infers it. The flip side is that declaring capture mode against
-  a relay that really can deliver would send real mail from a copy, and the
-  application cannot tell. That is the same family of mistake as declaring the
-  live site a copy, and it has the same answer: the deployment says what it is,
-  explicitly, and somebody reads it back.
+- **It is a declaration, not a detection — but an obviously wrong one is
+  refused.** The app does not look at the host name and decide that something
+  called `mailpit` must be safe: you say it is a capture, and nothing infers it.
+  What it *does* do is refuse the declaration when `EMAIL_SERVER_HOST` names a
+  host on the public internet, because a "capture" at `smtp.sendgrid.net` would
+  deliver to real members. Nothing is sent in that case, and the message on the
+  held-back mail tells you to point the host at the capture.
+
+  The two rules point in opposite directions on purpose. No host name can *earn*
+  capture mode; a host name can *lose* it. Accepted without comment are a
+  container or service name (`mailpit`, `mailhog`), `localhost`, any private or
+  loopback address, and the reserved suffixes `.local`, `.internal`,
+  `.home.arpa`, `.test`, `.invalid` and `.example`. If your capture genuinely is a
+  sink that forwards nothing but simply has a public name, declare
+  `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true` — and only do that once you have checked
+  it cannot deliver onward, because nothing can check it for you.
+
+  **What is still on you**, stated so you are not left with a false sense of
+  cover: a mail server on a private address *can* forward to the internet, and no
+  check here can see that. A Postfix on `10.0.0.5` that relays outward will send
+  real mail, and the declaration is what says it does not.
 - **The club's live site refuses it.** An installation declaring
   `APP_ENVIRONMENT_ROLE=production` *and* `USE_LOCAL_CAPTURE=true` is refused
   outright, because a live site in capture mode would accept every message,
@@ -417,6 +495,7 @@ answer*, and on the club's live site the only correct one is production.
 | --- | --- | --- | --- |
 | `APP_ENVIRONMENT_ROLE` | Whether this installation is the club's live site or a copy | **None — required** | Exactly `production` or `non-production`. Case and surrounding spaces are ignored, and the deploy check also accepts the shapes `.env` files normally carry: an `export ` prefix, spaces around the `=`, quotes round the value, and a leading indent. Anything that is not one of the two words is refused, not interpreted. Set in the deployment's environment, never in the app. Passed through `docker-compose.yml` with **no default** on purpose. |
 | Safer override | Forces this installation to be treated as a copy, whatever the deployment says | Off | Full Administrator only, confirmed, and audited. Can only ever make the answer *safer*; there is no setting anywhere in the app that can declare an installation to be the live site. |
+| `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST` | Allows `USE_LOCAL_CAPTURE=true` when `EMAIL_SERVER_HOST` is a host on the public internet | `false` | Only for a capture mailbox that genuinely forwards nothing but has a public name. Without it, that combination is **refused** and mail is held back — which is what stops a copy that flipped only the flag from emailing real members through its old relay. Nothing checks, or can check, that the host really is a sink. |
 
 ## Troubleshooting
 
@@ -426,6 +505,8 @@ answer*, and on the club's live site the only correct one is production.
 | It says a value was **refused**, and quotes it | The setting holds something other than the two accepted words — commonly `prod`, `staging`, or a value copied from `APP_RUNTIME_ROLE` | Correct it to exactly `production` or `non-production` |
 | I set `APP_RUNTIME_ROLE` and nothing changed | Wrong setting — that one names the container slot | Set `APP_ENVIRONMENT_ROLE` instead |
 | Members stopped receiving email after an upgrade | The installation is *not configured*, so delivery is being held back | Declare the role as above; check the **Production Or Non-Production** step on `/admin/setup` |
+| A copy sends nothing, and the log says `EMAIL_SERVER_HOST` is a public mail host | `USE_LOCAL_CAPTURE=true` was set without moving `EMAIL_SERVER_HOST` off the real relay — commonly after an upgrade on an installation that already had a relay configured | Point `EMAIL_SERVER_HOST` (and its three companions) at the capture mailbox. Use `USE_SMTP_RELAY=true` instead if that host really does deliver, in which case the copy holds every message back. If the host truly is a sink with a public name, set `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true` |
+| Our copy emailed real members even though the log said it reached nobody | The defect fixed in this release: capture mode inherited the relay host unchecked | Upgrade. Then check `EMAIL_SERVER_HOST` on every copy — see [`UPGRADING.md`](../UPGRADING.md) |
 | The deploy aborted at step 3 saying the entry must be exactly `production` | Working as designed — the declaration is missing, or it says `non-production` on the live site | Set `APP_ENVIRONMENT_ROLE=production` in `.env` on the server and run the deploy again. Nothing was migrated or switched |
 | The deploy refused a `.env` I copied from `.env.example` | That template holds `non-production`, which is right for a laptop and wrong for the live site | Change the value to `production`. The template is not meant to be copied wholesale into a live deployment |
 | The setup step shows a green tick but members still get no email | The tick means "declared", not "declared production" — read the message | If it says non-production, set `APP_ENVIRONMENT_ROLE=production` and restart |

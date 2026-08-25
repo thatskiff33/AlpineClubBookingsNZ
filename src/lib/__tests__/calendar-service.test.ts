@@ -1,16 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
+  calendarDayOfWeek,
   clubCalendarDateOf,
   clubWallTimeOf,
   requireInstant,
   type ClubTimeZone,
 } from "@/lib/club-time";
 import type { RecurrenceRule } from "@/lib/calendar-recurrence";
-import {
-  calendarDayOfWeek,
-  weekdayOrdinalInMonth,
-} from "@/lib/calendar-recurrence";
+import { weekdayOrdinalInMonth } from "@/lib/calendar-recurrence";
 import { divergentClubZone } from "./helpers/club-time-zone";
 
 const mocks = vi.hoisted(() => ({

@@ -4,7 +4,8 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { parseDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
@@ -247,14 +248,19 @@ export async function PUT(
   // #2106: recompute the tier from the DOB, then apply enforcement so a FORCED
   // membership type (or an org account) keeps N/A and an ALLOWED-type manual N/A
   // is preserved. The delegate never submits a tier directly.
+  // ONE season for both halves of this decision, from the club's PERSISTED zone
+  // (CT-4, #2870): the tier the date of birth implies and the exemption that may
+  // override it must be judged in the same season, and that tier decides a price
+  // band.
+  const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
   const dobDerivedTier = await computeAgeTier(
     dob,
-    getSeasonStartDate(getSeasonYear()),
+    getSeasonStartDate(clubCurrentSeasonYear),
   );
   const typeExemption = await loadMemberCurrentSeasonTypeExemption(
     prisma,
     target.id,
-    getSeasonYear(),
+    clubCurrentSeasonYear,
   );
   const enforced = resolveEnforcedAgeTier({
     isOrganisation: isOrganisationMember({

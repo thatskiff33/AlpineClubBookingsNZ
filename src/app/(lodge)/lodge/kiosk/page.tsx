@@ -5,9 +5,8 @@ import { CalendarDays, RefreshCw } from "lucide-react";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
-import { APP_LOCALE } from "@/config/operational";
 import { useClubTime } from "@/components/club-time-provider";
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
 // #2621: one 12-hour rendering of the expected arrival time, shared with the
 // booking page editor and the lobby wall. Three private copies of the same six
 // lines is how three surfaces end up disagreeing about midnight.
@@ -134,27 +133,12 @@ type KioskView = "week" | "day";
 // suite advances its fake clock by this many ms with a comment pointing back.
 const CLUB_DAY_TICK_MS = 60000;
 
-// Not one of the shared helpers: the kiosk header names the DAY OF THE WEEK in
-// full ("Wednesday, 15 April 2026") because that is what a hut leader scans for.
-/*
-  A CALENDAR DAY, SO NO TIMEZONE AT ALL (CT-4, #2870).
-
-  This bag has no `HOUSE_SHAPES` entry in the kernel, so the formatter stays
-  local; what changed is the zone it is pinned to. The value handed to it is a
-  `yyyy-MM-dd` lodge night encoded at UTC midnight, so a UTC-pinned formatter
-  over that encoding is provably the identity — the club's setting is not
-  consulted and could not change the answer. Pinned to the environment zone it
-  cancelled only because New Zealand is east of Greenwich; for a club that is
-  not, this header named the previous night while every fetch and every check-in
-  below it stayed on the right one.
-*/
-const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
+// The kiosk header names the DAY OF THE WEEK in full ("Wednesday, 15 April
+// 2026") because that is what a hut leader scans for. A CALENDAR DAY, SO NO
+// TIMEZONE AT ALL (CT-4, #2870): the kernel's `longWeekdayDate` shape is that
+// exact bag, pinned to `UTC` over the UTC-midnight encoding, which is provably
+// the identity for every club. The local formatter this replaces was the fourth
+// copy of the same options in the same locale.
 
 function displayDate(dateStr: string): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this is the night the whole
@@ -164,9 +148,7 @@ function displayDate(dateStr: string): string {
   // value` out of the render, which on a lodge wall screen nobody is watching is
   // the worst available outcome.
   const night = parseCalendarDate(dateStr);
-  return night === null
-    ? dateStr
-    : LONG_WEEKDAY_DATE.format(dateOnlyInstantOf(night));
+  return night === null ? dateStr : formatClubLongWeekdayDate(night);
 }
 
 export default function KioskPage() {

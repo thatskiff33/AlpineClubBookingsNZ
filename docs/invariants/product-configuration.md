@@ -189,6 +189,15 @@ home for that explanation and is not repeated here.
   cannot reach a provider without asking the policy — a compile-time property,
   not a convention. The token is re-validated at runtime as well, so a cast past
   the type fails closed.
+- **The boundary is asked once per MESSAGE, never once per batch, run or lock
+  wait.** A clearance says what was true when it was minted, so a sender that
+  resolves once and then transmits many times has one check covering all of them —
+  and the safer override exists precisely so an operator can stop mail *now*. So
+  `sendEmail` asks for every message it renders, the email retry cron asks inside
+  its loop rather than above it, and the Xero group-settlement workflow re-asks
+  inside its `pg_advisory_xact_lock(1)` transaction — on the transaction client, so
+  no second database connection is taken while that exclusive lock is held. Both
+  of the latter two were once-per-run and were found by #3071's external review.
 - **Confirmed PRODUCTION delivers, and is behaviourally unchanged** apart from
   passing through the boundary, including the legacy "no provider flag set means
   AWS SES" fallback that existing deployments rely on.
@@ -241,11 +250,29 @@ home for that explanation and is not repeated here.
   would remove the one diagnostic an operator setting a staging relay up needs. A
   copy holding the club's real provider credentials is forbidden by `AGENTS.md`
   for the larger reason that such a copy could then send.
-- **A capture transport is an explicit declaration and never an inference.**
-  `USE_LOCAL_CAPTURE=true` declares that the configured SMTP relay is a sink that
-  forwards nothing, and a confirmed non-production installation may then transmit
-  into it — recorded as an ordinary `SENT`, because it was sent. Nothing infers
-  this from a host name. The club's live site declaring it is **refused**
+- **A capture transport is an explicit declaration and never an inference — and a
+  declaration contradicted by its own host is refused.** `USE_LOCAL_CAPTURE=true`
+  declares that the configured SMTP relay is a sink that forwards nothing, and a
+  confirmed non-production installation may then transmit into it — recorded as an
+  ordinary `SENT`, because it was sent. Nothing infers this from a host name.
+
+  The two directions are not the same rule, and the asymmetry is load-bearing: no
+  host name can GRANT capture mode, and a host name CAN refuse it. A declared
+  capture whose `EMAIL_SERVER_HOST` is a public-internet host resolves the
+  distinct transport kind `capture-public-host` and the distinct outcome
+  `block_capture_public_host` — refused, retryable, with a reason naming the host.
+  Loopback, RFC 1918/6598/4193/3927 addresses, `localhost`, a single-label
+  container name and the RFC 6761/8375/2606 reserved suffixes are accepted;
+  anything unrecognised fails closed; and `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true`
+  is the one explicit override, for a sink that forwards nothing but has a public
+  name. What the check CANNOT establish is stated wherever it is relied on: a mail
+  server on a private address can relay outward, so this is a necessary and never
+  a sufficient condition, and no operator sentence may claim the capture was
+  verified. Added on #3071's external review, where an installation that flipped
+  only the flag on upgrade kept its live relay host and emailed real members while
+  the log recorded that the message reached nobody.
+
+  The club's live site declaring it is **refused**
   (`CAPTURE_TRANSPORT_IN_PRODUCTION`), because a live installation in capture mode
   accepts every message and delivers none, which is the same harm as a
   wrongly-declared copy arriving from the opposite direction. A capture does not

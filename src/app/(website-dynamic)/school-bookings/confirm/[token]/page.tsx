@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSchoolAttendeeConfirmation } from "@/lib/school-attendee-confirmation";
-import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 
 // The attendee-confirmation link carries a one-time token and must never be
@@ -45,8 +45,8 @@ export default async function SchoolAttendeeConfirmationPage({
         {/*
           `checkIn`/`checkOut` are `@db.Date` LODGE NIGHTS serialised to ISO by
           `getSchoolAttendeeConfirmation`, so they are CALENDAR DATES and take no
-          zone at all: the kernel's decoder reads the UTC-midnight encoding back
-          as the day it encodes, and the formatter pins `UTC` over it, so the
+          zone at all: the kernel's decoder reads the day out of the value's first
+          ten characters, and the formatter pins `UTC` over it, so the
           projection is provably the identity (CT-4, #2870; INV-DATE-010). The
           old `formatNZDate` projected them through `APP_TIME_ZONE`, which is the
           identity only for a club east of Greenwich and a day early for one that
@@ -60,7 +60,7 @@ export default async function SchoolAttendeeConfirmationPage({
               </p>
               <p className="mt-1 text-sm">
                 {formatClubDate(
-                  calendarDateOfDateOnlyInstant(new Date(details.booking.checkIn)),
+                  calendarDateOfSerialisedDbDate(details.booking.checkIn),
                 )}
               </p>
             </div>
@@ -70,7 +70,7 @@ export default async function SchoolAttendeeConfirmationPage({
               </p>
               <p className="mt-1 text-sm">
                 {formatClubDate(
-                  calendarDateOfDateOnlyInstant(new Date(details.booking.checkOut)),
+                  calendarDateOfSerialisedDbDate(details.booking.checkOut),
                 )}
               </p>
             </div>

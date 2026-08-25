@@ -2161,6 +2161,15 @@ describe("approveBookingRequest", () => {
       lodgeId: "lodge-1",
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
+      // CT-4 group F1 (#2870): the reconcile judges the hosting party in the
+      // BOOKING's season, and the real query selects `checkIn`/`checkOut`. These
+      // doubles omitted them, and the retired `getSeasonYear(date = new Date())`
+      // quietly substituted "now" for the missing value — so this reconcile was
+      // being judged in whatever season the process was in rather than the
+      // booking's. `seasonYearOfStoredDate` refuses instead of guessing, which is
+      // what surfaced the gap.
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
       // #2364: the accept reconciles the held booking's hosting review from
       // the guest rows it just rewrote. This double models the CONVERSION, not
       // the guest list, so an empty party is the honest answer here — the
@@ -2228,6 +2237,15 @@ describe("approveBookingRequest", () => {
       lodgeId: "lodge-1",
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
+      // CT-4 group F1 (#2870): the reconcile judges the hosting party in the
+      // BOOKING's season, and the real query selects `checkIn`/`checkOut`. These
+      // doubles omitted them, and the retired `getSeasonYear(date = new Date())`
+      // quietly substituted "now" for the missing value — so this reconcile was
+      // being judged in whatever season the process was in rather than the
+      // booking's. `seasonYearOfStoredDate` refuses instead of guessing, which is
+      // what surfaced the gap.
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
       // #2364: the accept reconciles the held booking's hosting review from
       // the guest rows it just rewrote. This double models the CONVERSION, not
       // the guest list, so an empty party is the honest answer here — the
@@ -2292,6 +2310,15 @@ describe("approveBookingRequest", () => {
       lodgeId: "lodge-1",
       memberId: "held-member",
       status: BookingStatus.AWAITING_REVIEW,
+      // CT-4 group F1 (#2870): the reconcile judges the hosting party in the
+      // BOOKING's season, and the real query selects `checkIn`/`checkOut`. These
+      // doubles omitted them, and the retired `getSeasonYear(date = new Date())`
+      // quietly substituted "now" for the missing value — so this reconcile was
+      // being judged in whatever season the process was in rather than the
+      // booking's. `seasonYearOfStoredDate` refuses instead of guessing, which is
+      // what surfaced the gap.
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
       // #2364: the accept reconciles the held booking's hosting review from
       // the guest rows it just rewrote. This double models the CONVERSION, not
       // the guest list, so an empty party is the honest answer here — the
@@ -2354,6 +2381,15 @@ describe("approveBookingRequest", () => {
       lodgeId: "lodge-1",
       memberId: "held-invalid",
       status: BookingStatus.AWAITING_REVIEW,
+      // CT-4 group F1 (#2870): the reconcile judges the hosting party in the
+      // BOOKING's season, and the real query selects `checkIn`/`checkOut`. These
+      // doubles omitted them, and the retired `getSeasonYear(date = new Date())`
+      // quietly substituted "now" for the missing value — so this reconcile was
+      // being judged in whatever season the process was in rather than the
+      // booking's. `seasonYearOfStoredDate` refuses instead of guessing, which is
+      // what surfaced the gap.
+      checkIn: new Date("2026-08-01T00:00:00.000Z"),
+      checkOut: new Date("2026-08-03T00:00:00.000Z"),
       // #2364: the accept reconciles the held booking's hosting review from
       // the guest rows it just rewrote. This double models the CONVERSION, not
       // the guest list, so an empty party is the honest answer here — the

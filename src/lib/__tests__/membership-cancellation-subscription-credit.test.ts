@@ -30,10 +30,16 @@ import {
   loadMembershipCancellationSubscriptionCreditPlansByMemberId,
   type MembershipCancellationSubscriptionCreditPlan,
 } from "@/lib/membership-cancellation-subscription-credit";
-import { getSeasonYear } from "@/lib/utils";
 
 const NOW_MS = Date.UTC(2026, 6, 31, 3, 0, 0);
-const SEASON = getSeasonYear(new Date(NOW_MS));
+// The season the club is in at the frozen instant, WRITTEN OUT rather than derived
+// (#2870, correctness review). Computing it by calling the same function the code
+// under test calls, with the same arguments, holds for any implementation at all —
+// including one that returns a constant. `club-season-year.test.ts` is where the
+// derivation itself is proved; here the literal is the oracle.
+// `NOW_MS` is 31 July 2026, which in the club's zone is season 2026 on the default
+// 31-March year-end.
+const SEASON = 2026;
 
 type SubscriptionRow = {
   id?: string;

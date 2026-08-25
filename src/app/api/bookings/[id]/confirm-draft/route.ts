@@ -8,7 +8,7 @@ import {
   acquireLodgeCapacityLock,
   checkCapacityForGuestRanges,
 } from "@/lib/capacity";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -115,7 +115,7 @@ export async function POST(
     );
   }
 
-  const seasonYear = getSeasonYear(new Date(booking.checkIn));
+  const seasonYear = seasonYearOfStoredDate(new Date(booking.checkIn));
   try {
     await assertMembershipTypeBookingAllowed(prisma, {
       ownerMemberId: booking.memberId,

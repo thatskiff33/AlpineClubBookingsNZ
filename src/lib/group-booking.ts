@@ -115,7 +115,7 @@ import {
 } from "@/lib/internet-banking-settings";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
 import { describeUniqueConstraintTarget } from "@/lib/prisma-errors";
 
@@ -764,7 +764,7 @@ export async function joinGroupBookingAsMember(
     );
   }
 
-  const seasonYear = getSeasonYear(checkIn);
+  const seasonYear = seasonYearOfStoredDate(checkIn);
   await assertMembershipTypeBookingAllowed(prisma, {
     ownerMemberId: sessionUserId,
     guests,

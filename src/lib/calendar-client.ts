@@ -1,24 +1,22 @@
-import { APP_LOCALE } from "@/config/operational";
 import {
   addCalendarDays,
-  calendarDateFromParts,
-  calendarDateParts,
+  calendarDayOfWeek,
   calendarMonthOf,
   clubCalendarDateOf,
   clubWallTimeOf,
   countClubNights,
-  dateOnlyInstantOf,
   endOfClubDayExclusive,
   formatClubInstantTime,
+  formatClubLongWeekdayDate,
   instantForClubWallTime,
   parseCalendarDate,
   parseInstant,
+  startOfCalendarMonth,
   startOfClubDay,
   type CalendarDate,
   type ClubTimeZone,
   type Instant,
 } from "@/lib/club-time";
-import { calendarDayOfWeek } from "@/lib/calendar-recurrence";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 
 /**
@@ -64,51 +62,10 @@ import type { CalendarEventDTO } from "@/lib/calendar-events";
  * from the browser's own clock.
  */
 
-/**
- * Long weekday-bearing calendar date, e.g. "Thursday, 16 April 2026".
- * Deliberately wordier than the kernel's `formatClubWeekdayDate`
- * ("Thu, 16 Apr 2026") because these are single-day/single-event headings, not
- * scannable list rows.
- *
- * PINNED TO `UTC`, WHICH IS AN IDENTITY AND NOT A PROJECTION — the calendar day
- * is encoded at UTC midnight and read back in UTC, which has no transitions, so
- * the club's zone is not consulted and could not change the answer. The
- * mechanism is documented in full on `formatCalendarDateShape`
- * (`club-time/intl.ts`).
- *
- * STILL A LOCAL `Intl.DateTimeFormat` BECAUSE THE KERNEL HAS NO SUCH SHAPE.
- * `HOUSE_SHAPES` declares `longWeekdayDayMonth` ("Thursday, 16 April") but
- * nothing carrying the YEAR as well, and composing one on is byte-identical for
- * `en-NZ` and NOT safe in general, because `APP_LOCALE` is configurable. Adding a
- * shape means editing `src/lib/club-time/**`, which is another lane's surface in
- * this migration (#2870, group F3); `booking-calendar.tsx`, `booking-editor.tsx`
- * and `guest-night-grid.tsx` carry the identical note, and this is the fourth
- * caller of the same missing shape.
- */
-const CALENDAR_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
-
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function weekdayLabels(): string[] {
   return WEEKDAY_LABELS;
-}
-
-/**
- * The first day of the calendar month `date` falls in — the month anchor the
- * grid, the heading and the fetch window are all derived from.
- *
- * Another helper the kernel could reasonably own; reported to group F3 rather
- * than added to `src/lib/club-time/**` from this lane.
- */
-export function startOfCalendarMonth(date: CalendarDate): CalendarDate {
-  const { year, month } = calendarDateParts(date);
-  return calendarDateFromParts(year, month, 1);
 }
 
 /** Whether a grid cell belongs to the month being displayed. */
@@ -281,9 +238,18 @@ export function formatEventDateLong(
   return formatCalendarDateLong(clubCalendarDateOf(instant, zone));
 }
 
-/** "Thursday, 16 April 2026" for a calendar day. No zone: a day has none. */
+/**
+ * "Thursday, 16 April 2026" for a calendar day. No zone: a day has none.
+ *
+ * Deliberately wordier than `formatClubWeekdayDate` ("Thu, 16 Apr 2026") because
+ * these are single-day/single-event headings rather than scannable list rows.
+ * F3 (#3079) declared this bag as the kernel's `longWeekdayDate` shape — the
+ * fourth caller was what earned it — so the local formatter this file carried is
+ * gone rather than composed from `longWeekdayDayMonth` plus the year, which is
+ * byte-identical for `en-NZ` and not safe for a configurable `APP_LOCALE`.
+ */
 function formatCalendarDateLong(date: CalendarDate): string {
-  return CALENDAR_LONG_DATE.format(dateOnlyInstantOf(date));
+  return formatClubLongWeekdayDate(date);
 }
 
 /**

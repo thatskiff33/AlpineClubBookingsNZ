@@ -1,2 +1,2 @@
 export * from "./policies/pricing";
-export { formatCents, getSeasonYear } from "./utils";
+export { formatCents } from "./utils";

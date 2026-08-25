@@ -6,12 +6,12 @@ import {
   calculateBookingPrice,
   calculatePromoDiscount,
   formatCents,
-  getSeasonYear,
   type SeasonRateData,
   type GuestInput,
   type PromoCodeInput,
 } from "../pricing"
 import { formatDateOnly } from "../date-only"
+import { seasonYearOfStoredDate } from "../financial-year"
 
 // --- Test fixtures ---
 // Rates are keyed by membership type (#1930, E4): old member rows map to
@@ -459,20 +459,23 @@ describe("formatCents", () => {
   })
 })
 
-describe("getSeasonYear", () => {
+// The retired `getSeasonYear` read its argument with host-local getters; these
+// fixtures are all UTC-midnight date-only strings, so the successor for them is
+// `seasonYearOfStoredDate`, which takes no zone (CT-4 group F1, #2870).
+describe("seasonYearOfStoredDate", () => {
   it("returns current year for April (month index 3)", () => {
-    expect(getSeasonYear(new Date("2026-04-15"))).toBe(2026)
+    expect(seasonYearOfStoredDate(new Date("2026-04-15"))).toBe(2026)
   })
 
   it("returns current year for December", () => {
-    expect(getSeasonYear(new Date("2026-12-01"))).toBe(2026)
+    expect(seasonYearOfStoredDate(new Date("2026-12-01"))).toBe(2026)
   })
 
   it("returns previous year for January", () => {
-    expect(getSeasonYear(new Date("2026-01-15"))).toBe(2025)
+    expect(seasonYearOfStoredDate(new Date("2026-01-15"))).toBe(2025)
   })
 
   it("returns previous year for March", () => {
-    expect(getSeasonYear(new Date("2026-03-31"))).toBe(2025)
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025)
   })
 })

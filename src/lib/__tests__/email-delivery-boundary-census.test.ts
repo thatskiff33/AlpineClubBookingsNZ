@@ -38,17 +38,27 @@ import {
  */
 
 /**
- * The roots scanned, widened past `src/` (#3035 review).
+ * The roots scanned, widened past `src/` (#3035 review) and then past those
+ * four (#3071 review, hoppers99).
  *
  * `scripts/`, `prisma/` and `e2e/` were outside the scan, so a mail transport
  * built in a maintenance script or a seed would have been invisible to every case
  * in this file. Measured free to add: none of those roots names `createTransport`,
- * `sendMail` or `emailInvoice` today. Nothing beyond these four is scanned, which
- * is the stated limit — a transport built inside `node_modules` or generated code
- * is not something this census can see, and the clearance TYPE is what covers
- * that case.
+ * `sendMail` or `emailInvoice` today.
+ *
+ * `measurement/` was the remaining gap, and it is a real one rather than a
+ * theoretical one: that tree stands up its own application stack with its own
+ * mail configuration (`measurement/stack/docker-compose.measure.yml` sets
+ * `EMAIL_SERVER_HOST: mailpit`) and it holds executable `.mjs` under
+ * `measurement/phase2/bin/`, so a transport built there would have been invisible
+ * to every case in this file. It was hand-verified clean when the gap was
+ * reported, which this scan now keeps true rather than re-establishing by hand.
+ *
+ * Nothing beyond these five is scanned, which is the stated limit — a transport
+ * built inside `node_modules` or generated code is not something this census can
+ * see, and the clearance TYPE is what covers that case.
  */
-const SCAN_ROOTS = ["src", "scripts", "prisma", "e2e"]
+const SCAN_ROOTS = ["src", "scripts", "prisma", "e2e", "measurement"]
   .map((dir) => path.resolve(process.cwd(), dir))
   .filter((dir) => existsSync(dir));
 const SRC = path.resolve(process.cwd(), "src");

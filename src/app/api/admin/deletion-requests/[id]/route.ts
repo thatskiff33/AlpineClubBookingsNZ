@@ -13,8 +13,7 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/session-guards";
-import { dateOnlyInstantOf } from "@/lib/club-time";
-import { clubTime } from "@/lib/club-time/server";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { createAuditLog, logAudit } from "@/lib/audit";
@@ -693,7 +692,7 @@ export async function POST(
     // future for the whole club day, not just the first ~13h (F32, #1888) — now from
     // the PERSISTED club timezone (CT-4, #2870), re-encoded to UTC midnight because
     // that is the only bound shape a `@db.Date` column accepts (INV-DATE-026).
-    const today = dateOnlyInstantOf((await clubTime()).today());
+    const today = await clubTodayDateOnlyInstant();
 
     // 1. Block approval while future paid stays still need financial/lodge follow-up.
     const futurePaidBookings = await prisma.booking.findMany({

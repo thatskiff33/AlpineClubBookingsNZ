@@ -37,18 +37,18 @@
  * therefore need no zone at all — 16 April 2026 is a Thursday everywhere.
  */
 
-import { APP_LOCALE } from "@/config/operational";
 import {
   addCalendarDays,
   addCalendarMonths,
   calendarDateFromParts,
   calendarDateParts,
+  calendarDayOfWeek,
   clubCalendarDateOf,
   clubWallTimeOf,
-  dateOnlyInstantOf,
   daysInCalendarMonth,
   endOfClubDayExclusive,
   formatClubDate,
+  formatClubLongWeekday,
   instantForClubWallTime,
   parseInstant,
   type CalendarDate,
@@ -102,31 +102,6 @@ const OCCURRENCE_WALL_TIME_POLICY: WallTimePolicy = {
   skipped: "nextExistingInstant",
   ambiguous: "earliest",
 };
-
-/**
- * The day of the week a calendar date falls on, `0` = Sunday .. `6` = Saturday.
- *
- * The numbering is `Date.prototype.getDay()`'s on purpose, so the Monday-first
- * conversion in the month grid and the nth-weekday rule below both read exactly
- * as they did before this migration.
- *
- * IT IS A UTC READ OVER THE UTC-MIDNIGHT ENCODING, NOT A ZONE READ. UTC has no
- * transitions ever, so the projection provably cancels and the answer is the same
- * on every host — the identical argument `formatCalendarDateShape` makes in
- * `club-time/intl.ts`, and the reason `dateOnlyInstantOf` is the encoder used
- * here rather than a hand-built `Date`. `policies/minimum-stay.ts` is the
- * comparable existing site.
- *
- * IT BELONGS IN THE KERNEL. `club-time/calendar-date.ts` already holds the
- * integer civil-calendar arithmetic (`daysFromCivil`) that would answer this with
- * no `Date` at all, which is strictly better than an encoding round-trip. It is
- * not added there by this change because `src/lib/club-time/**` is another lane's
- * surface in this epic (#2870, group F3); the need is reported rather than
- * smuggled in.
- */
-export function calendarDayOfWeek(date: CalendarDate): number {
-  return dateOnlyInstantOf(date).getUTCDay();
-}
 
 /** The 1-based ordinal of a date's weekday within its month (1st..5th). */
 export function weekdayOrdinalInMonth(date: CalendarDate): number {
@@ -307,21 +282,13 @@ function ordinal(n: number): string {
  * constant this replaces pinned `APP_TIME_ZONE` — the identity only for a club
  * east of Greenwich, and a day early for any club west of it.
  *
- * STILL A LOCAL `Intl.DateTimeFormat` BECAUSE THE KERNEL HAS NO SUCH SHAPE.
- * `HOUSE_SHAPES` carries `weekday` (short, "Thu") and several weekday+date
- * combinations, but nothing that is a LONG weekday on its own, and adding a shape
- * means editing `src/lib/club-time/**`, which is another lane's surface in this
- * migration (#2870, group F3). The missing shape is reported there; when it
- * lands this becomes one call. `booking-calendar.tsx` carries the same note for
- * the same reason.
+ * IT IS ONE CALL NOW: the kernel's `longWeekday` shape is a long weekday on its
+ * own, so the local `Intl.DateTimeFormat` this file kept while
+ * `src/lib/club-time/**` belonged to another lane (#2870, group F3) is gone.
+ * `booking-calendar.tsx` carried the same note and lost its copy the same way.
  */
-const LONG_WEEKDAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-});
-
 function longWeekdayOf(date: CalendarDate): string {
-  return LONG_WEEKDAY.format(dateOnlyInstantOf(date));
+  return formatClubLongWeekday(date);
 }
 
 /** The 1-based ordinal of a weekday within its month, from a day number. */

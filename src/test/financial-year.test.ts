@@ -6,7 +6,7 @@ import {
   getSeasonStartMonth,
   normalizeYearEndMonth,
 } from "@/lib/financial-year";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getSeasonStartDate } from "@/lib/policies/age-tier";
 
 // The financial-year cache is module-level mutable state shared across the
@@ -47,25 +47,28 @@ describe("getSeasonStartMonth", () => {
   });
 });
 
-describe("getSeasonYear with a configurable year-end", () => {
+// `getSeasonYear` is retired (CT-4 group F1, #2870); every fixture here is a
+// UTC-midnight date-only string, so this exercises the stored-calendar-day half.
+// The zone-aware half is `clubSeasonYear`, in `club-season-year.test.ts`.
+describe("seasonYearOfStoredDate with a configurable year-end", () => {
   it("matches the March default (April -> current year, March -> previous)", () => {
-    expect(getSeasonYear(new Date("2026-04-01"))).toBe(2026);
-    expect(getSeasonYear(new Date("2026-12-15"))).toBe(2026);
-    expect(getSeasonYear(new Date("2026-03-31"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025);
   });
 
   it("handles a June year-end (season starts July)", () => {
     __setFinancialYearEndMonthForTesting(6);
-    expect(getSeasonYear(new Date("2026-07-01"))).toBe(2026); // start boundary
-    expect(getSeasonYear(new Date("2026-12-31"))).toBe(2026);
-    expect(getSeasonYear(new Date("2026-06-30"))).toBe(2025); // last day of season
+    expect(seasonYearOfStoredDate(new Date("2026-07-01"))).toBe(2026); // start boundary
+    expect(seasonYearOfStoredDate(new Date("2026-12-31"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-06-30"))).toBe(2025); // last day of season
   });
 
   it("handles a December year-end (calendar-year financial year)", () => {
     __setFinancialYearEndMonthForTesting(12);
-    expect(getSeasonYear(new Date("2026-01-01"))).toBe(2026);
-    expect(getSeasonYear(new Date("2026-12-31"))).toBe(2026);
-    expect(getSeasonYear(new Date("2027-01-01"))).toBe(2027);
+    expect(seasonYearOfStoredDate(new Date("2026-01-01"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-31"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2027-01-01"))).toBe(2027);
   });
 });
 

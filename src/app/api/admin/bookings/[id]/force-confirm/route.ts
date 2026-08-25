@@ -12,8 +12,7 @@ import {
 import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import { dateOnlyInstantOf } from "@/lib/club-time";
-import { clubTime } from "@/lib/club-time/server";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
@@ -71,7 +70,7 @@ export async function POST(
   // as the UTC-midnight value `Booking.checkOut` (`@db.Date`) compares against. Resolved
   // before the transaction, which holds the global advisory lock and must not wait on a
   // settings read over a second connection.
-  const clubTodayDateOnly = dateOnlyInstantOf((await clubTime()).today());
+  const clubTodayDateOnly = await clubTodayDateOnlyInstant();
 
   try {
     const result = await prisma.$transaction(async (tx) => {

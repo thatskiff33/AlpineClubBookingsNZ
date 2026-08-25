@@ -39,7 +39,7 @@ import {
 } from "@/lib/membership-type-policy";
 import { getStayNights } from "@/lib/policies/pricing";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { formatDateOnly } from "@/lib/date-only";
 
 /** A held booking's owner failed re-validation and a fresh contact was
@@ -268,7 +268,7 @@ export async function buildApprovalGuestCreates(
   });
   await assertMembershipTypeBookingAllowed(tx, {
     guests: unratedGuestCreates,
-    seasonYear: getSeasonYear(checkIn),
+    seasonYear: seasonYearOfStoredDate(checkIn),
     // Finding 2 (privacy re-review of MG3 #2308). Both approval pipelines are
     // admin-only — the converted booking has no member owner yet, which is also
     // why no family boundary could be computed here — so this keeps the detailed
@@ -284,7 +284,7 @@ export async function buildApprovalGuestCreates(
   // persisted on the guest row.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(tx, {
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       guests: unratedGuestCreates,
     })
   ).map((guest, index) => ({

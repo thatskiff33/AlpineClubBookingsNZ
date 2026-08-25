@@ -347,25 +347,10 @@ export function xeroDocumentDatesFromColumnAndInstant(
   };
 }
 
-/**
- * The season year a Xero invoice belongs to, decided from its CALENDAR DATE.
- *
- * `getSeasonYearForYearEndMonth` (`src/lib/financial-year.ts`) reads
- * `date.getMonth()` and `date.getFullYear()`, which are the HOST's calendar
- * components. Handing it a Xero invoice date therefore made the season boundary
- * move with the container's timezone: on a deployment west of Greenwich an
- * invoice dated the first day of a season resolved to the PREVIOUS season,
- * because that day's UTC-midnight encoding reads as the previous evening there.
- * Deciding from the calendar day's own parts removes the host from the question.
- *
- * `seasonStartMonth` is 1-based and supplied by the caller: this module applies
- * the club's financial-year configuration and never reads it.
- */
-export function seasonYearOfCalendarDate(
-  date: CalendarDate,
-  seasonStartMonth: number,
-): number {
-  const year = Number(date.slice(0, 4));
-  const month = Number(date.slice(5, 7));
-  return month >= seasonStartMonth ? year : year - 1;
-}
+// `seasonYearOfCalendarDate(date, seasonStartMonth)` USED TO LIVE HERE (#2869) and
+// has converged into `seasonYearOfCalendarDate` in `@/lib/financial-year` (CT-4
+// group F1, #2870). Two functions of the same name whose second argument was the
+// season START month in one and the financial YEAR-END month in the other is a
+// silent off-by-one-month waiting for the first caller to import the wrong one, and
+// the season rule belongs beside the year-end configuration that decides it. This
+// module still applies the club's financial-year configuration and never reads it.

@@ -45,10 +45,6 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
-
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { GET as getSubscriptions } from "@/app/api/admin/subscriptions/route";

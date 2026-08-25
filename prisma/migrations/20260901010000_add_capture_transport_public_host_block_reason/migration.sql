@@ -1,0 +1,25 @@
+-- #3071 external review (hoppers99), under epic #2986. INV-CONFIG-004.
+--
+-- A COPY that declares a local capture mailbox (USE_LOCAL_CAPTURE=true) while
+-- EMAIL_SERVER_HOST still names a host on the public internet is refused: the
+-- "capture" would deliver to a real member while every log line said the message
+-- had reached nobody. That refusal needs its own recorded reason.
+--
+-- WHY NOT REUSE 'CAPTURE_TRANSPORT_IN_PRODUCTION': that value asserts the
+-- installation is the club's LIVE SITE, and src/lib/environment-safety-withheld.ts
+-- counts it as its own population for exactly that alarm. Writing it from a copy
+-- would report a live-site mail emergency that is not happening, which is the
+-- outcome-conflation INV-CONFIG-004 exists to forbid.
+--
+-- Blue/green EXPAND migration (see docs/BLUE_GREEN_MIGRATION_SAFETY.tsv): ONE
+-- statement, additive, registering a label on an existing enum type. Nothing is
+-- dropped, renamed, retyped, backfilled or indexed, and there is no DML of any
+-- kind, so every existing row in every existing table is byte-identical
+-- afterwards.
+--
+-- The migration only REGISTERS the label and never USES it, so Prisma's
+-- per-migration transaction is safe -- the same pattern as 20260827010000, which
+-- registered SKIPPED_NON_PRODUCTION on "EmailLogStatus", and 20260727120000
+-- before it. ALTER TYPE ... ADD VALUE is additive and is deliberately not matched
+-- by BREAKING_SQL_REGEX, unlike RENAME VALUE.
+ALTER TYPE "EmailDeliveryBlockReason" ADD VALUE IF NOT EXISTS 'CAPTURE_TRANSPORT_PUBLIC_HOST';

@@ -26,7 +26,7 @@ reason: the stay dates are calendar days and the audit, expiry and hold stamps
   explanation elsewhere makes that likelier, not less.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 924
+lines: 917
 reason: one local formatter here was being handed BOTH lodge nights and real
   instants — one concept wearing another's clothes, identical output in New
   Zealand and a day early anywhere west of Greenwich. It is now pinned to UTC
@@ -35,13 +35,17 @@ reason: one local formatter here was being handed BOTH lodge nights and real
   reasoning that stops the next edit merging the two back together.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 683
-reason: eleven of the sixteen lines are a warning left ON PURPOSE beside
-  `getSeasonYear(new Date())`, which is deliberately NOT migrated: a sibling
-  lane measured that handing it a club-derived date makes a behind-UTC
-  deployment worse, not better, and the honest fix is a zone-aware helper in
-  `src/lib` that another group owns. Without that note the next reader makes
-  exactly the change that was measured and rejected.
+lines: 678
+reason: SUPERSEDED IN PLACE, and the correction matters more than the number. This
+  entry used to justify eleven lines of warning left beside
+  `getSeasonYear(new Date())`, "which is deliberately NOT migrated" — true when
+  group E wrote it, and false now: CT-4 group F1 built the zone-aware helper that
+  warning pointed at, migrated this line onto `clubSeasonYear(club.zone)`, and
+  deleted the warning. The file is SHORTER than when the allowance was written. It
+  is kept rather than deleted because it still covers the rest of group E's growth
+  in this page — the instant/calendar-day split on the profile stamps — and because
+  an allowance whose prose asserts the opposite of what shipped is worse than a
+  stale line count: the count a gate checks, the prose only a reader does.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
 lines: 976
@@ -57,14 +61,11 @@ reason: six lines, being the night count moving onto `countClubNights` and the
   form whose two dates are half-entered most of the time. Splitting this hook is
   a real piece of work and belongs to whoever does it deliberately.
 
-file: src/app/(lodge)/lodge/roster/[date]/setup/page.tsx
-lines: 833
-reason: eleven lines. The roster header's long-weekday formatter has no house
-  shape in the kernel, so it stays local and is now pinned to UTC over the
-  UTC-midnight encoding; the date also comes straight off a URL segment, so the
-  decode gained a fallback rather than a throw that would blank the page — and
-  the note beside it now says plainly that the fallback is NEW, because the
-  previous spelling produced an invalid `Date` and `Intl` threw on it.
+The entry this group held for `(lodge)/lodge/roster/[date]/setup/page.tsx` is
+gone: F4a (#2870) deleted that page's local long-weekday formatter in favour of
+the kernel's `longWeekdayDate` shape, and the file is back inside its ceiling. An
+allowance is one-shot, so it is deleted rather than left recording a length the
+file no longer has.
 
 ## Added when the fourteen deferred client files were finished
 
@@ -79,7 +80,7 @@ The other thirteen are all inside their budgets and stay there — including
 route-page budget and was watched for exactly that reason.
 
 file: src/app/(lodge)/lodge/kiosk/page.tsx
-lines: 1180
+lines: 1162
 reason: twenty-nine lines on a page that was already 1151. Nine are the club-day
   binding and the note saying the wall tablet's own clock has never been the
   authority and must not become one; eleven are the header formatter's, which
@@ -112,7 +113,7 @@ call site moved — deliberately, because one importer is
 that file open.
 
 file: src/lib/lodge-display-state.ts
-lines: 1009
+lines: 1007
 reason: eighteen lines on a 991-line file, and seventeen of them are the comment.
   The change itself is one line: the lobby board's window opened on
   `getTodayDateOnly()` — the container's day — while group E had already moved the

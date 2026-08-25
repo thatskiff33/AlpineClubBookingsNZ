@@ -1,5 +1,5 @@
 import { FinanceSnapshotType } from "@prisma/client";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { formatClubDayMonth, requireCalendarDate } from "@/lib/club-time";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -64,13 +64,16 @@ import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
-// rows already scoped to one range, and widening it to the shared
-// `formatNZDate` medium form would change an exported report column.
-const EXPORT_SHORT_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-});
+// rows already scoped to one range, and widening it to the shared medium form
+// would change an exported report column. That bag is the kernel's `dayMonth`
+// shape (F3, #3079), so the local formatter this file kept is gone.
+//
+// CT-4 (#2870): THIS ALSO CORRECTS THE DAY. Every value reaching it is a
+// `yyyy-MM-dd` metric key minted by `buildIsoDateRange`, i.e. a CALENDAR DATE,
+// which takes no zone — and the local formatter was still pinned to
+// `APP_TIME_ZONE`. That projection cancelled only because New Zealand is east of
+// Greenwich; for a club west of it every trend point on the finance dashboard,
+// and every exported row label, named the PREVIOUS day (INV-DATE-019).
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type FinanceDashboardViewModel = Pick<
@@ -236,7 +239,7 @@ function formatDateTime(value: string | Date) {
 }
 
 function formatShortDate(dateOnly: string) {
-  return EXPORT_SHORT_DATE.format(new Date(`${dateOnly}T00:00:00.000Z`));
+  return formatClubDayMonth(requireCalendarDate(dateOnly));
 }
 
 function cardRows(cards: FinanceDashboardKpiCard[]) {

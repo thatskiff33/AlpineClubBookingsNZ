@@ -27,8 +27,7 @@ import {
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
 import { isRosterData, RosterEditor, type RosterData } from "@/components/admin/roster-editor"
 import { useClubTime } from "@/components/club-time-provider"
-import { APP_LOCALE } from "@/config/operational"
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time"
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
@@ -38,23 +37,16 @@ import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 // on-screen roster and the chore-roster email.
 //
 // CT-4 (#2870): the roster day is a CALENDAR DATE and calendar dates have no
-// timezone — 16 April 2026 is a Thursday everywhere on earth. Pinning the
-// formatter to "UTC" over the kernel's UTC-midnight encoding is therefore the
-// IDENTITY for every club rather than a projection, which is why this needs no
-// zone plumbing at all. It used to read APP_TIME_ZONE, which for a club behind
-// UTC named the previous day.
-const ROSTER_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-})
+// timezone — 16 April 2026 is a Thursday everywhere on earth. The kernel's
+// `longWeekdayDate` shape pins "UTC" over its own UTC-midnight encoding, which
+// is the IDENTITY for every club rather than a projection, so this needs no zone
+// plumbing at all. The local copy of the same options this replaces was one of
+// six.
 
 /** The roster day as a heading. Falsy/malformed renders as itself, not a throw. */
 function formatRosterDay(date: string): string {
   const day = parseCalendarDate(date)
-  return day ? ROSTER_LONG_DATE.format(dateOnlyInstantOf(day)) : date
+  return day ? formatClubLongWeekdayDate(day) : date
 }
 
 const ROSTER_STATUS_OVERLAY: Record<

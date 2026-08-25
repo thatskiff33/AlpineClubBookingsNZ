@@ -129,7 +129,7 @@ import { loadMemberGuestSettings } from "@/lib/member-guest-settings";
 import { resolveMemberGuestNameSearchAccess } from "@/lib/member-guest-find";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getPublicOtherLodges } from "@/lib/booking-request";
 // The two ZONE-FREE date-only helpers this page still needs: `formatDateOnly`
 // (imported above) is the canonical `@db.Date` encoder the #2684 census keys on
@@ -893,13 +893,13 @@ export default async function BookingDetailPage({
    * #2978: the season the other-lodge eligibility fence is judged in — resolved
    * AUTHORITATIVELY rather than from whatever happened to warm the cache.
    *
-   * `getSeasonYear` reads the process-level financial-year cache in
+   * `seasonYearOfStoredDate` reads the process-level financial-year cache in
    * `financial-year.ts`, which serves the March default until a server path
    * seeds it. Every WRITE path reaches `refreshFinancialYearConfig` through
    * `resolveSubscriptionLockoutMode`; a page render does not, so on a cold
    * process a club with any other year-end month would have this page offer
    * ticks judged in one season while `modify-quote` — which reseeds before its
-   * own `getSeasonYear` — fences them in another. The officer would see a tick
+   * own season derivation — fences them in another. The officer would see a tick
    * box and be refused when they used it, which is exactly what acceptance
    * criterion 2 of #2978 exists to prevent. No money is at stake (pricing
    * re-checks eligibility itself), but `subscription-lockout-enforcement.ts` and
@@ -1013,7 +1013,7 @@ export default async function BookingDetailPage({
           // booking, which the helper short-circuits.
           otherLodgeRateEligibleGuestIds: [
             ...(await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-              seasonYear: getSeasonYear(booking.checkIn),
+              seasonYear: seasonYearOfStoredDate(booking.checkIn),
               guests: booking.guests,
             })),
           ],

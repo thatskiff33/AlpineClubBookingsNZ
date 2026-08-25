@@ -10,7 +10,7 @@
 import { Invoice, type XeroClient } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
-import { getSeasonYear } from "./pricing";
+import { clubSeasonYear } from "./financial-year";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -27,7 +27,11 @@ import {
   getResolvedAccountMapping,
   getSubscriptionItemCodes,
 } from "./xero-mappings";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import {
+  getFinancialYearEndMonth,
+  getSeasonStartMonth,
+  seasonYearOfCalendarDate,
+} from "@/lib/financial-year";
 import {
   clubToday,
   compareCalendarDates,
@@ -35,7 +39,6 @@ import {
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
-  seasonYearOfCalendarDate,
   xeroCalendarDate,
   xeroCalendarDateAsDateOnly,
   xeroInstant,
@@ -327,7 +330,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
     new Set(
       (options?.seasonYears?.length
         ? options.seasonYears
-        : [getSeasonYear(new Date())]
+        : [clubSeasonYear(await readClubTimeZoneOutsideRequest())]
       ).filter(
         (seasonYear): seasonYear is number =>
           Number.isInteger(seasonYear) &&
@@ -492,7 +495,8 @@ export async function checkMembershipStatus(
   });
   if (!member) throw new Error(`Member not found: ${memberId}`);
 
-  const year = seasonYear ?? getSeasonYear(new Date());
+  const year =
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
 
   // #1944 non-clobber guard: never let Xero discovery downgrade a subscription
   // that was manually marked paid outside the Xero pipeline. The finance:edit
@@ -1087,7 +1091,9 @@ export function collectSubscriptionInvoiceMatches(
     textFallbackEnabled = true,
   } = options;
   const itemCodeSet = new Set(itemCodes.filter((code): code is string => Boolean(code)));
-  const startMonth = getSeasonStartMonth(); // 1-12
+  // The club's configured financial year-end, read once for the whole sweep so a
+  // single batch cannot classify two invoices against two different windows.
+  const yearEndMonth = getFinancialYearEndMonth();
 
   const matches: SubscriptionInvoiceMatch[] = [];
 
@@ -1105,7 +1111,7 @@ export function collectSubscriptionInvoiceMatches(
     const invoiceDate = xeroCalendarDate(invoice.date);
     if (!invoiceDate) return;
 
-    if (seasonYearOfCalendarDate(invoiceDate, startMonth) !== seasonYear) return;
+    if (seasonYearOfCalendarDate(invoiceDate, yearEndMonth) !== seasonYear) return;
 
     // Match on the configured chart-of-account code (e.g. 203 "Annual Subs").
     const hasAccountCode = Boolean(
@@ -1357,7 +1363,8 @@ export async function refreshAllMembershipStatuses(
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
 }> {
-  const year = seasonYear ?? getSeasonYear(new Date());
+  const year =
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const syncStartedAt = new Date();
   const cursor = await getXeroSyncCursor(
     MEMBERSHIP_SYNC_CURSOR_RESOURCE,

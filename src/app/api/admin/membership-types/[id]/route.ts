@@ -23,7 +23,8 @@ import {
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 const membershipTypeSelect = {
   id: true,
@@ -244,7 +245,7 @@ export async function PATCH(
     const affectedAssignments = await db.seasonalMembershipAssignment.findMany({
       where: {
         membershipTypeId: existing.id,
-        seasonYear: { gte: getSeasonYear() },
+        seasonYear: { gte: clubSeasonYear(await clubTimeZone()) },
       },
       select: {
         member: {

@@ -117,9 +117,6 @@ vi.mock("@/lib/member-credit", () => ({
 vi.mock("@/lib/audit", () => ({
   logAudit: vi.fn(),
 }));
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
 vi.mock("@/lib/booking-policies", () => ({
   validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
   formatViolationsDetail: vi.fn().mockReturnValue(""),

@@ -733,8 +733,12 @@ describe("#28: Xero Push API", () => {
     expect(data.entranceFeeInvoiceQueued).toBe(true);
     expect(data.entranceFeeInvoiceMessage).toBe("queued");
     expect(mockFindPotentialXeroContactsForMember).not.toHaveBeenCalled();
+    // The route passes the club's season explicitly rather than letting the
+    // enqueue resolve the zone a second time (#2870): it already holds the zone,
+    // React-cached for this render pass. 2026 is the frozen clock's club season.
     expect(mockEnqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("m1", {
       createdByMemberId: "a1",
+      seasonYear: 2026,
     });
   });
 });

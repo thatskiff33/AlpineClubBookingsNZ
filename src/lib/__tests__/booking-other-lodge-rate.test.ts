@@ -497,14 +497,18 @@ describe("who the booking page tells about eligibility, and in which season", ()
   });
 
   it("reseeds the financial-year cache BEFORE it derives the season", () => {
-    // `getSeasonYear` reads a process-level cache that serves the March default
-    // until something seeds it, and nothing on a page render otherwise does.
-    // `modify-quote` reseeds before its own `getSeasonYear`, so without this the
-    // page and the quote can disagree about the season for a club whose year end
-    // is not March — the screen offers a tick the save then refuses.
+    // The season helpers default their year-end month to a process-level cache
+    // that serves March until something seeds it, and nothing on a page render
+    // otherwise does. `modify-quote` reseeds before its own derivation, so without
+    // this the page and the quote can disagree about the season for a club whose
+    // year end is not March — the screen offers a tick the save then refuses.
+    //
+    // THIS SUITE READS THE PAGE FROM DISK, so `vitest related` cannot reach it
+    // through the module graph and a rename in the page is CI-caught by design.
+    // CT-4 group F1 (#2870) renamed the derivation to `seasonYearOfStoredDate`.
     const reseed = bookingPage.indexOf("await refreshFinancialYearConfig()");
     const seasonForFence = bookingPage.indexOf(
-      "seasonYear: getSeasonYear(booking.checkIn)",
+      "seasonYear: seasonYearOfStoredDate(booking.checkIn)",
     );
     expect(reseed).toBeGreaterThan(-1);
     expect(seasonForFence).toBeGreaterThan(reseed);

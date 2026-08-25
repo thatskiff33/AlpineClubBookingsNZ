@@ -195,7 +195,7 @@ describe("resolveSubscriptionLockoutMode (#2543)", () => {
    * through this function (the booking write paths, `findUnpaidMemberGuests`, the
    * member notice builder), so gating it on `mode !== "NO_BLOCK"` left a club that
    * has deliberately switched the lockout OFF — with Xero still on — without a
-   * request-path reseed at all. After a container restart, `getSeasonYear` and
+   * request-path reseed at all. After a container restart, the season helpers and
    * `computeAgeTier` then resolve against the module-level March default instead of
    * the club's real year-end month, and the rate resolved for a booking can differ
    * from the correct one. `NO_BLOCK` is exactly what the #2561 migration

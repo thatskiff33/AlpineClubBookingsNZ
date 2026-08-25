@@ -19,7 +19,7 @@ import { ApiError } from "@/lib/api-error";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   assertMembershipTypeBookingAllowed,
   getMembershipTypeBookingPolicyErrorBody,
@@ -702,7 +702,7 @@ export async function POST(request: NextRequest) {
     await assertMembershipTypeBookingAllowed(prisma, {
       ownerMemberId: effectiveMemberId,
       guests: guestInputs,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       // Finding 2 (privacy re-review of MG3 #2308).
       skipAuthorization: isAuthorizedOnBehalf,
     });
@@ -746,11 +746,11 @@ export async function POST(request: NextRequest) {
     !isAuthorizedOnBehalf &&
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       ageTier: effectiveMemberAgeTier,
     })
   ) {
-    const seasonYear = getSeasonYear(checkIn);
+    const seasonYear = seasonYearOfStoredDate(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
       where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
     });
@@ -842,7 +842,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial
