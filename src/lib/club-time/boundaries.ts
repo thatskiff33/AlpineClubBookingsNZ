@@ -18,7 +18,10 @@
  *
  * `endOfDateOnlyForTimeZone` is built on top of it, so an activity window for
  * 8 March started on 7 March and the window for 7 March lost its last hour.
- * Fifty-eight call sites in sixteen files use that pair.
+ * When this was written that pair had **31 production call sites in 16 files** —
+ * an earlier draft of this sentence said "fifty-eight", which no predicate
+ * reproduces; `date-only.ts` carries the measurement, the predicate and the
+ * command, and is the one place either figure should be read from.
  *
  * Swept across every one of the 418 zones this runtime knows, 2015-2036, the
  * old algorithm returns the WRONG CALENDAR DAY in **eleven** of them —
@@ -421,8 +424,8 @@ export function endOfClubDayExclusive(
  *
  * IT THROWS WHERE ITS EXCLUSIVE SIBLING THROWS, which is the one day whose
  * successor has no `CalendarDate`: `9999-12-31`. `date-only.ts`'s legacy adapter
- * catches that `RangeError` and answers `new Date(NaN)`, because fifty-eight
- * call sites already behave correctly against an Invalid Date; the kernel does
+ * catches that `RangeError` and answers `new Date(NaN)`, because its call sites
+ * already behave correctly against an Invalid Date; the kernel does
  * not, because a new caller should be told rather than handed a value that
  * fails silently three modules later.
  */

@@ -1,5 +1,3 @@
-### Fixed
-
 - Screens now show dates and times in the club's own time zone regardless of
   where the person viewing them is. Three of these were doing real harm to
   anyone away from New Zealand: the booking calendar worked out "today" from

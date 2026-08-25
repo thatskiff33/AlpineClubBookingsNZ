@@ -1,5 +1,3 @@
-### Documentation
-
 - Corrected the multi-lodge notes, which stated the club runs two lodges when it
   runs one, and still described a world with no `Lodge` model at all. The
   locking guide's cost analysis for a member merge was reasoning from that

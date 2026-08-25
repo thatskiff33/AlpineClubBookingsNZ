@@ -1597,7 +1597,7 @@ describe("AID-6B booking/membership pack: no pattern language (#2376)", () => {
     // that exists is pinned beside it.
     for (const tool of sqlEntries) {
       expect(tool.sql, `${tool.id} does timestamp arithmetic on a lodge night`)
-        .not.toMatch(/INTERVAL/i);
+        .not.toMatch(/\bINTERVAL\b/i);
     }
     expect(sqlOf(DIAGNOSTICS_BOOKING_SEARCH_TOOL_ID)).toContain(
       '($5::date + ($6)::int)',

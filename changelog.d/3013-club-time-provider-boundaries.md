@@ -1,5 +1,3 @@
-### Fixed
-
 - Dates that come from Xero are now read correctly whichever of the four
   shapes Xero sends them in. One of those shapes carries no timezone at all,
   and it was being read as if it were the server's local time — which stored

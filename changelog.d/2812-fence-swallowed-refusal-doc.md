@@ -1,5 +1,3 @@
-### Internal
-
 - Documented the one path on which a participant-fence wiring fault is logged rather than
   surfaced: because the refusal deliberately stays outside the retryable 409 hierarchy,
   the four Xero subscription-history boundaries report it as a partial-success warning.

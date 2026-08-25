@@ -1,5 +1,3 @@
-### Changed
-
 - **The date and time helpers this product had been writing out by hand now
   exist once, and screens that had kept their own copy use the shared one
   (#2870).** Nothing an administrator or a member sees changes: every label,

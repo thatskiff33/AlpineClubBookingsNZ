@@ -1,5 +1,3 @@
-### Fixed
-
 - **The finance dashboard's trend charts were labelling the wrong day and the
   wrong month for any club west of Greenwich (#2870).** Every point on the
   occupancy and forward-demand trends was named a day early, and every month tick
@@ -14,8 +12,6 @@
   and that conversion happens to change nothing for a club east of Greenwich.
   Both labels now print the day and the month they were given, with no timezone
   involved, which is the only correct answer for a calendar date.
-
-### Changed
 
 - **Every screen that still kept its own private date formatter now uses the
   shared one (#2870).** Thirteen of them, across the kiosk, the chore sheet, both
