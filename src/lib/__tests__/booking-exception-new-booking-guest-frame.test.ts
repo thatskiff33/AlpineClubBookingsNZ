@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * CT-4 (#2870), group F2: THE HALF OF THE NEW-BOOKING PROPOSAL FRAME THAT IS
- * STILL WRONG. This file pins today's WRONG answer on purpose.
+ * CT-4 (#2870): THE NEW-BOOKING PROPOSAL FRAME, now whole. Group F2 closed two
+ * of the three shapes; group F4b closed the third, and this file pins all three
+ * as positive assertions.
  *
- * READ THIS BEFORE "FIXING" THE ASSERTION IT PINS. A red there is the REST of
- * the fix arriving, not a regression — the last section says what to do then.
+ * ## KEPT DELIBERATELY, INCLUDING ITS HISTORY
+ *
+ * Between F2 and F4b this file pinned today's WRONG answer on purpose, with a
+ * header saying a red here was the rest of the fix arriving rather than a
+ * regression. F4b turned that pin into the assertion below rather than deleting
+ * it: a warning that existed precisely to notice this moment is worth more as
+ * the test that now proves the moment happened. The mechanism is recorded in
+ * full because it is the shape this epic keeps finding, and the shape a later
+ * edit is most likely to reintroduce.
  *
  * ## Why this file exists at all
  *
@@ -18,35 +26,55 @@ import { describe, expect, it, vi } from "vitest";
  * durable warning while half the defect remained would have left the remaining
  * half neither documented nor guarded, so the warning moves here.
  *
- * ## The mechanism, exactly
+ * ## The mechanism that was wrong, exactly
  *
  * `buildProposalPartyFromGuests` (`src/lib/booking-exception-request-service.ts`)
- * is now a MIXED FRAME, and the union of the two frames is what over-expands:
+ * was a MIXED FRAME, and the union of the two frames is what over-expanded:
  *
  *  - `bookingNights` expands the submitted envelope with `getStayNights`, which
- *    F2 corrected, so those are the stored calendar days;
+ *    F2 corrected, so those were already the stored calendar days;
  *  - each guest's range goes through `normalizeGuestStayRange`
- *    (`src/lib/booking-guest-stay-range-input.ts`), which projects
+ *    (`src/lib/booking-guest-stay-range-input.ts`), which projected
  *    `booking.checkIn`/`checkOut` through `APP_TIME_ZONE` with
  *    `normalizeDateOnlyForTimeZone` at the top of the function, BEFORE it
- *    defaults a guest who supplied no dates of their own.
+ *    defaulted a guest who supplied no dates of their own.
  *
  * Every guest-supplied field on this input type is a `yyyy-MM-dd` STRING, so an
- * explicit range and an explicit night set both reach `parseDateOnly` and come
- * back as the stored days. Only the DEFAULT is projected — and the default is
- * what the member form sends for every guest unless they open multi-range mode.
- * So for a club behind Greenwich that guest is still frozen a night early, the
- * officer still reviews it, and the expand-only party envelope widens to cover
+ * explicit range and an explicit night set both reach `parseDateOnly` and always
+ * came back as the stored days. Only the DEFAULT was projected — and the default
+ * is what the member form sends for every guest unless they open multi-range
+ * mode. So for a club behind Greenwich that guest was frozen a night early, the
+ * officer reviewed that, and the expand-only party envelope widened to cover
  * both frames at once.
  *
- * F2 halves the error and closes two of the three shapes; it does not close this
- * one. `normalizeGuestStayRange` is #2870 item 6 and belongs to another lane.
+ * F4b read those two calls as the stored calendar days they are, which converges
+ * the frame: every shape below now reaches `STORED_NIGHTS`. The zone-divergence
+ * premise case stays, because without it the three assertions would agree for
+ * the wrong reason on a `Pacific/Auckland` default, where the projection is the
+ * identity.
  *
- * ## WHEN THAT LANE LANDS
+ * ## The cutover, stated rather than left to be discovered
  *
- * `RANGE_LESS_TODAY` becomes `STORED_NIGHTS`, and the projected envelope becomes
- * the stored one. Point the pinned test at the stored values, retitle it, and
- * delete this section. Nothing else in this file changes.
+ * A NEW_BOOKING proposal frozen before this change and approved after it is
+ * UNAFFECTED — measured, not assumed. The approval engine's tamper gate hashes
+ * the stored snapshot against its own stored hash, `verifyLiveProposalIntegrity`
+ * returns `{ intact: true }` for a new-booking snapshot because there is no live
+ * base to drift, and both the policy-drift re-evaluation and the capacity
+ * recheck read the frozen `YYYY-MM-DD` strings. Nothing in that path calls this
+ * helper again, so such a request still executes exactly as it was frozen —
+ * including a night early, if it was frozen before this fix.
+ *
+ * A MODIFICATION request carrying a range-less ADDED guest is the case that does
+ * change: its approval REPLAYS the stored delta through
+ * `buildModificationProposalParties`, which reaches this helper, so it now
+ * replays to a different hash and is refused with `PROPOSAL_DRIFT_MESSAGE`. That
+ * is the correct outcome on #3056's recorded ACCEPT precedent — the proposal
+ * describes a stay a night early, so refusing it once and having the member
+ * resubmit is better than executing it — but the MESSAGE is not true of this
+ * cause: "the live booking has changed since this request was made" sends an
+ * officer looking for an edit that never happened. Recorded on #2870 rather than
+ * papered over here, because distinguishing this cause from real base drift
+ * needs a signal the engine does not currently carry.
  */
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",
@@ -69,8 +97,13 @@ const CHECK_OUT = "2026-07-07";
 /** What the member asked for, read as the days they are stored as. */
 const STORED_NIGHTS = ["2026-07-04", "2026-07-05", "2026-07-06"];
 
-/** A night EARLY. Today's answer for a guest who supplied no dates. */
-const RANGE_LESS_TODAY = ["2026-07-03", "2026-07-04", "2026-07-05"];
+/**
+ * A night EARLY: what a range-less guest used to get, kept as a NAMED value so
+ * a regression fails against the specific wrong answer rather than against
+ * "something else". The `not.toEqual` below is the mutation-shaped assertion —
+ * reinstating `normalizeDateOnlyForTimeZone` reaches exactly this list.
+ */
+const PROJECTED_A_NIGHT_EARLY = ["2026-07-03", "2026-07-04", "2026-07-05"];
 
 const ada = {
   firstName: "Ada",
@@ -79,22 +112,25 @@ const ada = {
   isMember: true,
 };
 
-describe("the new-booking proposal's guest frame (CT-4, #2870, group F2)", () => {
+describe("the new-booking proposal's guest frame (CT-4, #2870, groups F2 + F4b)", () => {
   it("PREMISE: the mocked club zone really does move a stored day", () => {
     // Measured, not assumed. If `America/Denver` ever stopped shifting a
     // UTC-midnight day, every assertion below would hold for the wrong reason.
     expect(formatDateOnlyForTimeZone(day(CHECK_IN))).toBe("2026-07-03");
   });
 
-  it("PINS A DEFECT F2 DID NOT FIX: a guest who supplied no dates is defaulted from the PROJECTED envelope", () => {
+  it("a guest who supplied no dates is defaulted from the STORED envelope (this WAS the F2 pin)", () => {
     const party = buildProposalPartyFromGuests(day(CHECK_IN), day(CHECK_OUT), [
       ada,
     ]);
 
-    // A night early, and the party envelope has widened to cover both frames.
-    // See "WHEN THAT LANE LANDS" in this file's header before changing these.
-    expect(party.guests[0].nights).toEqual(RANGE_LESS_TODAY);
-    expect(party.checkIn).toBe("2026-07-03");
+    // This assertion IS the flipped pin. It read `PROJECTED_A_NIGHT_EARLY` and a
+    // `checkIn` of "2026-07-03" until F4b read those two calls as stored days.
+    expect(party.guests[0].nights).toEqual(STORED_NIGHTS);
+    expect(party.guests[0].nights).not.toEqual(PROJECTED_A_NIGHT_EARLY);
+    // The envelope no longer widens to cover two frames at once: a guest who
+    // asked for nothing cannot expand the booking they were added to.
+    expect(party.checkIn).toBe(CHECK_IN);
     expect(party.checkOut).toBe(CHECK_OUT);
   });
 

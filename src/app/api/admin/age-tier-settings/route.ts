@@ -5,8 +5,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
-import { dateOnlyInstantOf } from "@/lib/club-time";
-import { clubTime } from "@/lib/club-time/server";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
   invalidateAgeTierCache,
@@ -168,7 +167,7 @@ export async function PUT(request: NextRequest) {
   // and only for a save that actually DROPS a tier, because an ordinary settings PUT
   // never reaches the count and should not pay for the club-settings read.
   const liveGuestCutOff =
-    removedTiers.length > 0 ? dateOnlyInstantOf((await clubTime()).today()) : null;
+    removedTiers.length > 0 ? await clubTodayDateOnlyInstant() : null;
 
   try {
     await prisma.$transaction(async (tx) => {

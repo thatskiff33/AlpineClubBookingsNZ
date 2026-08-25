@@ -31,6 +31,14 @@
  *   row holds kept. A misconfiguration rather than an environment fact, and
  *   retryable for exactly the same reason as the row below: correct the flags and
  *   the mail goes out.
+ * - **A capture transport on a copy whose host is a PUBLIC mail host** -> `FAILED`
+ *   with `deliveryBlockReason` `CAPTURE_TRANSPORT_PUBLIC_HOST` (#3071 review,
+ *   hoppers99). Its own value rather than a reuse of the one above, because that
+ *   one asserts the installation is the club's live site and
+ *   `environment-safety-withheld.ts` counts it separately as exactly that alarm —
+ *   writing it from a copy would raise a live-site emergency that is not
+ *   happening. Retryable: point `EMAIL_SERVER_HOST` at the capture and the mail
+ *   goes into it.
  * - **UNKNOWN** -> `FAILED` with `deliveryBlockReason` set, and whatever HTML the
  *   row holds kept. Retryable on purpose, so the message goes out by itself the
  *   moment an operator declares the role — the same self-healing shape the
@@ -113,7 +121,13 @@ export type EmailEnvironmentGate =
 export type EmailEnvironmentWithheldReason =
   | "environment_non_production"
   | "environment_unknown"
-  | "capture_transport_in_production";
+  | "capture_transport_in_production"
+  /**
+   * A copy declaring a capture mailbox whose `EMAIL_SERVER_HOST` is a public mail
+   * host (#3071 review, hoppers99). A fault, and replayable by the rule above —
+   * fix the host and the mail goes into the capture by itself.
+   */
+  | "capture_transport_public_host";
 
 /**
  * Decide whether this installation may transmit, and record the outcome when it
@@ -147,17 +161,54 @@ export async function resolveEmailEnvironmentGate(params: {
     ? "replayed-automatically"
     : "needs-a-manual-resend";
   const errorMessage = describeDeliveryDecision(decision, replay);
-  const reason: EmailEnvironmentWithheldReason = suppressed
-    ? "environment_non_production"
-    : decision.kind === "block_capture_in_production"
-      ? "capture_transport_in_production"
-      : "environment_unknown";
-  const blockReason: EmailDeliveryBlockReason | null =
-    decision.kind === "block_capture_in_production"
-      ? "CAPTURE_TRANSPORT_IN_PRODUCTION"
-      : decision.kind === "block_environment_unknown"
-        ? BLOCK_REASON_COLUMN[decision.reason]
-        : null;
+  /*
+    EXHAUSTIVE BY COMPILATION, RATHER THAN BY A TRAILING FALLBACK (#3071 review,
+    hoppers99).
+
+    This was two ternary chains ending `: "environment_unknown"` and `: null`, and
+    that trailing branch is what made adding a delivery outcome unsafe: the new
+    `block_capture_public_host` fell into it silently and would have been recorded
+    as "nobody has declared what this installation is" — false, it is a declared
+    copy — carrying a NULL block reason, which drops the row out of the
+    withheld-email count `INV-CONFIG-004` defines as `FAILED` plus a non-null
+    reason. Two wrong facts about a message that was not sent, from a default
+    nobody chose.
+
+    Adding the case to the chain would have fixed today and left the next one
+    exposed, so the shape changed instead. The `never` assignment means a seventh
+    outcome is a COMPILE ERROR here, not a silent mis-bucket — the same reason
+    this module's `BLOCK_REASON_COLUMN` is a total `Record` rather than a lookup
+    with a default.
+  */
+  const [reason, blockReason]: [
+    EmailEnvironmentWithheldReason,
+    EmailDeliveryBlockReason | null,
+  ] = (() => {
+    switch (decision.kind) {
+      case "suppress_non_production":
+        // Terminal, and recorded as its own STATUS rather than a block reason —
+        // see the row write below.
+        return ["environment_non_production", null];
+      case "block_capture_in_production":
+        return [
+          "capture_transport_in_production",
+          "CAPTURE_TRANSPORT_IN_PRODUCTION",
+        ];
+      case "block_capture_public_host":
+        return [
+          "capture_transport_public_host",
+          "CAPTURE_TRANSPORT_PUBLIC_HOST",
+        ];
+      case "block_environment_unknown":
+        return ["environment_unknown", BLOCK_REASON_COLUMN[decision.reason]];
+      default: {
+        const unhandled: never = decision;
+        throw new Error(
+          `Unhandled delivery outcome in the mail environment gate: ${JSON.stringify(unhandled)}. Every outcome must name its own withheld reason and block reason (INV-CONFIG-004).`,
+        );
+      }
+    }
+  })();
 
   if (params.emailLogId) {
     try {
@@ -223,6 +274,10 @@ export async function resolveEmailEnvironmentGate(params: {
         ? params.bodyRetainedForReplay
           ? "Did not send an email: this deployment declares itself the club's live site AND declares a local capture mailbox, so it would accept every message and deliver none. No provider was contacted. It is queued and goes out once the transport flags are corrected"
           : "Did not send an email: this deployment declares itself the club's live site AND declares a local capture mailbox, so it would accept every message and deliver none. No provider was contacted. This message keeps no stored copy, so it must be re-sent by hand once the transport flags are corrected; it is in the email-failure review queue"
+        : decision.kind === "block_capture_public_host"
+          ? params.bodyRetainedForReplay
+            ? "Did not send an email: this copy declares a local capture mailbox but EMAIL_SERVER_HOST is a public mail host, so the capture would have delivered this message to a real member. No provider was contacted. It is queued and goes out once EMAIL_SERVER_HOST points at the capture"
+            : "Did not send an email: this copy declares a local capture mailbox but EMAIL_SERVER_HOST is a public mail host, so the capture would have delivered this message to a real member. No provider was contacted. This message keeps no stored copy, so it must be re-sent by hand once EMAIL_SERVER_HOST points at the capture; it is in the email-failure review queue"
         : params.bodyRetainedForReplay
           ? "Did not send an email: nothing has confirmed whether this installation is the club's live site or a copy, so no provider was contacted. It is queued and will go out once the environment role is declared"
           : "Did not send an email: nothing has confirmed whether this installation is the club's live site or a copy, so no provider was contacted. This message keeps no stored copy, so it must be re-sent by hand once the role is declared; it is in the email-failure review queue",

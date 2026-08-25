@@ -403,6 +403,37 @@ export function endOfClubDayExclusive(
 }
 
 /**
+ * The last instant of a club calendar day, INCLUSIVE — the millisecond before
+ * {@link endOfClubDayExclusive}.
+ *
+ * PREFER THE HALF-OPEN BOUND. This exists because five call sites across three
+ * lanes had each written `new Date(endOfClubDayExclusive(d, zone).getTime() - 1)`
+ * by hand, and a subtraction repeated by hand is a subtraction somebody
+ * eventually writes with the wrong resolution — `- 1000` for a seconds-precision
+ * column reads as thoughtful and is wrong by 999 milliseconds. One
+ * implementation, named for what it produces, is what stops that.
+ *
+ * WHERE IT IS THE RIGHT ANSWER: a bound that is already inclusive because
+ * something else decided so — Prisma's `lte`, a provider's `to` parameter, a
+ * user-facing "up to and including" filter. Reaching for it anywhere a `lt` will
+ * do is choosing the shape `INV-DATE-003` and the rest of this domain do not
+ * use.
+ *
+ * IT THROWS WHERE ITS EXCLUSIVE SIBLING THROWS, which is the one day whose
+ * successor has no `CalendarDate`: `9999-12-31`. `date-only.ts`'s legacy adapter
+ * catches that `RangeError` and answers `new Date(NaN)`, because fifty-eight
+ * call sites already behave correctly against an Invalid Date; the kernel does
+ * not, because a new caller should be told rather than handed a value that
+ * fails silently three modules later.
+ */
+export function endOfClubDayInclusive(
+  date: CalendarDate,
+  zone: ClubTimeZone,
+): Instant {
+  return new Date(endOfClubDayExclusive(date, zone).getTime() - 1);
+}
+
+/**
  * Midday club time on a calendar day — the lodge stay boundary (INV-DATE-002).
  *
  * `nextExistingInstant` rather than `reject`, so a booking screen can never fail

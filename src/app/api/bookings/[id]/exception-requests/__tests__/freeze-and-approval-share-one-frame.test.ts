@@ -315,14 +315,20 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
       it goes back to naming 3 July, on any host, because the zone is mocked
       rather than read from the machine.
 
-      WHAT IS NOT CLOSED, so that removing group B's pin does not remove the
-      warning with it: the MODIFICATION path resolves guest ranges through
-      `resolveModificationStayRanges`, which never reaches
-      `normalizeGuestStayRange`. The NEW-BOOKING path does, and a guest who
-      supplies no dates of their own is still defaulted from an envelope projected
-      through `APP_TIME_ZONE` (#2870 item 6). Group B's pin therefore moves rather
-      than disappearing — it is now
-      `src/lib/__tests__/booking-exception-new-booking-guest-frame.test.ts`.
+      CLOSED IN GROUP F4b, and the sentence that used to sit here was WRONG in a
+      way worth recording. It said the MODIFICATION path "resolves guest ranges
+      through `resolveModificationStayRanges`, which never reaches
+      `normalizeGuestStayRange`". It reaches it at four sites, one of which
+      normalises every ADDED guest against the final envelope — including a
+      range-less one. So both paths carried the same night-early default, and the
+      claim that only the new-booking path did travelled from this comment into
+      #2870's residual list, where it was recorded as fact for two groups.
+
+      F4b read those two calls as the stored calendar days they are. Group B's pin
+      lives on as a POSITIVE assertion at
+      `src/lib/__tests__/booking-exception-new-booking-guest-frame.test.ts`, and
+      the modification half is pinned at
+      `src/lib/__tests__/booking-range-less-guest-frame.test.ts`.
     */
     const { proposed } = await freezeProposal();
     expect(proposed.guests[0].nights).toEqual([

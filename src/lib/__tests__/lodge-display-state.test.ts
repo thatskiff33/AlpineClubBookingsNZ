@@ -74,20 +74,32 @@ const clubTimeState = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/club-time/server", async () => {
-  const { bindClubTime, requireCalendarDate, requireClubTimeZone } =
-    await import("@/lib/club-time");
+  const {
+    bindClubTime,
+    dateOnlyInstantOf,
+    requireCalendarDate,
+    requireClubTimeZone,
+  } = await import("@/lib/club-time");
+  const bindWithKnobs = () => {
+    const bound = bindClubTime(requireClubTimeZone(clubTimeState.zone));
+    return {
+      ...bound,
+      today: () =>
+        clubTimeState.today === null
+          ? bound.today()
+          : requireCalendarDate(clubTimeState.today),
+    };
+  };
   return {
     clubTimeZone: async () => requireClubTimeZone(clubTimeState.zone),
-    clubTime: async () => {
-      const bound = bindClubTime(requireClubTimeZone(clubTimeState.zone));
-      return {
-        ...bound,
-        today: () =>
-          clubTimeState.today === null
-            ? bound.today()
-            : requireCalendarDate(clubTimeState.today),
-      };
-    },
+    clubTime: async () => bindWithKnobs(),
+    // `clubTodayDateOnlyInstant` IS `dateOnlyInstantOf(clubTime().today())` in the
+    // real module (F4a, #2870), so the double is composed from the same two knobs
+    // rather than given a literal of its own — otherwise setting `today` to `null`
+    // for the discriminating case at the end of this file would stop reaching the
+    // derivation through this path.
+    clubTodayDateOnlyInstant: async () =>
+      dateOnlyInstantOf(bindWithKnobs().today()),
   };
 });
 

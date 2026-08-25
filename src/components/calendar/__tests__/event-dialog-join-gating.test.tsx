@@ -7,7 +7,7 @@ import {
   render,
   screen,
   waitFor,
-} from "@testing-library/react";
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 import { EventDialog } from "../event-dialog";

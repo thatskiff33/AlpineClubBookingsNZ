@@ -6,8 +6,8 @@ import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import {
   calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
 } from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -24,18 +24,6 @@ import {
   projectMemberBookingChangeRequest,
 } from "@/lib/booking-change-request-member-view";
 import { deletedBookingRefusalResponse } from "@/lib/deleted-booking-refusal";
-
-/**
- * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
- *
- * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
- * no timezone (INV-DATE-010, INV-DATE-026). `normalizeDateOnlyForTimeZone`, which
- * this replaces, projected it into the club zone first — the identity ahead of
- * Greenwich, the PREVIOUS day behind it, so every stay date came back a day early.
- */
-function storedDateOnly(value: Date): Date {
-  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
-}
 
 const createChangeRequestSchema = z.object({
   checkIn: z.string().optional(),

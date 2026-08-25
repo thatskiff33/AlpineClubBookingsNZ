@@ -10,7 +10,7 @@ import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 import {
-  endOfClubDayExclusive,
+  endOfClubDayInclusive,
   requireCalendarDate,
   startOfClubDay,
   type ClubTimeZone,
@@ -50,7 +50,7 @@ function startOfInputDate(date: string, zone: ClubTimeZone) {
 
 /** The last instant of that club day, INCLUSIVE — the filter uses `lte`. */
 function endOfInputDate(date: string, zone: ClubTimeZone) {
-  return new Date(endOfClubDayExclusive(requireCalendarDate(date), zone).getTime() - 1);
+  return endOfClubDayInclusive(requireCalendarDate(date), zone);
 }
 
 export async function GET(request: NextRequest) {

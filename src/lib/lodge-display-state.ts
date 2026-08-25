@@ -15,8 +15,7 @@ import {
   eachDateOnlyInRange,
   formatDateOnly,
 } from "./date-only";
-import { dateOnlyInstantOf } from "./club-time";
-import { clubTime } from "./club-time/server";
+import { clubTodayDateOnlyInstant } from "./club-time/server";
 import { getCachedClubIdentity } from "./public-layout-config";
 import {
   CLUB_THEME_ID,
@@ -373,12 +372,11 @@ export async function buildDisplayState(
   // "Fri, 17 Apr" above a board still showing 16 April's guests and arrivals.
   // One unattended screen, contradicting itself, with nobody to reload it.
   //
-  // The club's today is a CALENDAR DATE; `dateOnlyInstantOf` re-encodes it as
-  // the UTC-midnight `Date` every query below and every `@db.Date` bound wants,
-  // which is exactly the shape `getTodayDateOnly()` returned. Group F still owns
-  // carrying `CalendarDate` through this function rather than re-encoding here.
-  const startDate =
-    options.windowStart ?? dateOnlyInstantOf((await clubTime()).today());
+  // The club's today is a CALENDAR DATE; `clubTodayDateOnlyInstant` re-encodes it
+  // as the UTC-midnight `Date` every query below and every `@db.Date` bound wants,
+  // which is exactly the shape `getTodayDateOnly()` returned. CT-6 (#2991) still
+  // owns carrying `CalendarDate` through this function rather than re-encoding here.
+  const startDate = options.windowStart ?? (await clubTodayDateOnlyInstant());
   const endExclusive = addDaysDateOnly(startDate, days);
   const endInclusive = addDaysDateOnly(endExclusive, -1);
   const windowDates = eachDateOnlyInRange(startDate, endExclusive).slice(0, days);

@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { requireCalendarDate } from "../calendar-date";
 import {
   endOfClubDayExclusive,
+  endOfClubDayInclusive,
   instantForClubWallTime,
   noonOfClubDay,
   startOfClubDay,
@@ -528,6 +529,95 @@ describe("noon is the boundary the domain actually uses, and it is always safe",
         expect(noonOfClubDay(cd(day), zone).getTime()).toBe(noon.getTime());
       }
     }
+  });
+});
+
+describe("the inclusive end of a club day", () => {
+  it("is exactly one millisecond before the exclusive end", () => {
+    for (const zone of [AUCKLAND, CHATHAM, DENVER, HAVANA]) {
+      for (const day of ["2026-07-01", "2026-03-08", "2026-04-05", "2026-09-27"]) {
+        const exclusive = endOfClubDayExclusive(cd(day), zone);
+        expect(
+          endOfClubDayInclusive(cd(day), zone).getTime(),
+          `${zone} ${day}`,
+        ).toBe(exclusive.getTime() - 1);
+      }
+    }
+  });
+
+  it("still reads as the day it names, on a day that is 23 or 25 hours long", () => {
+    /*
+      THE PROPERTY, not the arithmetic. An inclusive bound is only useful if it is
+      the last instant that reads back as its own day, and a DST transition inside
+      the day is where a fixed-24-hour spelling stops being that. 2026-04-05 is
+      the day NZDT ends (25 hours); 2026-09-27 is the day it begins (23 hours).
+      `America/Havana` transitions AT MIDNIGHT on 2026-03-08, which is the
+      original defect this whole module exists for.
+    */
+    const cases: Array<[ReturnType<typeof tz>, string]> = [
+      [AUCKLAND, "2026-04-05"],
+      [AUCKLAND, "2026-09-27"],
+      [CHATHAM, "2026-04-05"],
+      [DENVER, "2026-11-01"],
+      [HAVANA, "2026-03-08"],
+      [HAVANA, "2026-03-07"],
+      [SANTIAGO, "2026-09-06"],
+    ];
+    for (const [zone, day] of cases) {
+      const inclusive = endOfClubDayInclusive(cd(day), zone);
+      expect(clubCalendarDateOf(inclusive, zone), `${zone} ${day}`).toBe(day);
+      expect(
+        clubCalendarDateOf(new Date(inclusive.getTime() + 1), zone),
+        `${zone} ${day} + 1ms is the NEXT day`,
+      ).not.toBe(day);
+    }
+  });
+
+  it("takes the club's zone, not the host's or a fixed offset", () => {
+    /*
+      DISCRIMINATING BY CONSTRUCTION, because the zone is an argument. Three
+      divergent zones on the same calendar day give three different instants, so a
+      helper that ignored its zone argument — or read the host's — could not pass.
+      `Pacific/Chatham` is 45 minutes off `Pacific/Auckland`, which also catches a
+      whole-hour assumption.
+    */
+    const day = cd("2026-07-01");
+    const instants = [AUCKLAND, CHATHAM, DENVER, HAVANA].map((zone) =>
+      endOfClubDayInclusive(day, zone).toISOString(),
+    );
+    expect(new Set(instants).size).toBe(4);
+    expect(instants).toEqual([
+      "2026-07-01T11:59:59.999Z",
+      "2026-07-01T11:14:59.999Z",
+      "2026-07-02T05:59:59.999Z",
+      "2026-07-02T03:59:59.999Z",
+    ]);
+  });
+
+  it("is unaffected by the host machine's timezone", () => {
+    const answersIn = (hostZone: string) =>
+      withTimeZone(hostZone, () =>
+        [AUCKLAND, DENVER, CHATHAM].map((zone) =>
+          endOfClubDayInclusive(cd("2026-07-01"), zone).toISOString(),
+        ),
+      );
+    expect(answersIn("UTC")).toEqual(answersIn("America/Los_Angeles"));
+  });
+
+  it("throws where its exclusive sibling throws, rather than inventing a day", () => {
+    /*
+      9999-12-31 has no successor a `CalendarDate` can name, so the half-open end
+      throws a `RangeError` and so does this. The legacy adapter in `date-only.ts`
+      catches that and answers `new Date(NaN)` for its fifty-eight existing call
+      sites; the kernel refuses out loud, because a new caller handed an Invalid
+      Date discovers it three modules later.
+    */
+    expect(() => endOfClubDayExclusive(cd("9999-12-31"), AUCKLAND)).toThrow(RangeError);
+    expect(() => endOfClubDayInclusive(cd("9999-12-31"), AUCKLAND)).toThrow(RangeError);
+    // And the day before is perfectly ordinary.
+    expect(
+      endOfClubDayInclusive(cd("9999-12-30"), AUCKLAND).getTime(),
+    ).toBe(endOfClubDayExclusive(cd("9999-12-30"), AUCKLAND).getTime() - 1);
   });
 });
 

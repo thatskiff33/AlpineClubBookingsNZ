@@ -117,6 +117,49 @@ const CANONICAL_ENCODERS = new Set([
  */
 const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
 
+/**
+ * Shared helpers that DECODE a stored calendar day and immediately RE-ENCODE it
+ * — the mirror image of {@link INSTANT_PASS_THROUGHS}, and here for the same
+ * reason: without an entry the scanner cannot see what is being handed in.
+ *
+ * `storedDateOnly` is `dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value))`.
+ * The canonical encoder is in there, but it FEEDS ANOTHER CALL rather than being
+ * the result, and `localEncoderAliases` deliberately refuses to follow that
+ * shape — a function that normalises is naming a decision, not hiding one, and
+ * treating every normaliser as a bare rename would ban `parseDateOnly(formatDateOnly(x))`
+ * wrappers wholesale. Correct for the ALIAS BAN, and wrong for the CENSUS: the
+ * 32 call sites written through this helper were classified as nothing at all,
+ * so `storedDateOnly(booking.createdAt)` — a real instant read as its UTC day,
+ * which is `INV-DATE-019` — would have been invisible here.
+ *
+ * NOT A REGRESSION BEING BLESSED: the six file-local clones this helper replaced
+ * (CT-4, #2870) were never classified either, and neither was
+ * `normalizeDateOnlyForTimeZone` before them. This closes a hole that predates
+ * the hoist; the hoist is only what made one entry able to close it.
+ *
+ * A LISTED NAME COUNTS ONLY WHERE IT IS DECLARED, which is what stops the set
+ * being a blanket permission: an unrelated local `storedDateOnly` in some other
+ * module is not silently followed, because {@link declaredRenormalisersIn} looks
+ * for the declaration rather than the call. The staleness assertion further down
+ * fails an entry that names nothing in the tree, so this cannot rot into a set
+ * of dead names the way a bare exclusion list does.
+ *
+ * THE SEQUENCING RULE for {@link CANONICAL_ENCODERS} applies here too, for the
+ * same reason: the census keys on the NAME, so add the new name here before
+ * renaming the function, or there is a window in which 32 sites are unclassified
+ * again.
+ */
+const DATE_ONLY_RENORMALISERS = new Set([
+  "storedDateOnly",
+  // `pricing.ts`'s own strict-contract variant of the same expression (F2,
+  // #3076). Its docblock says this census "cannot cover this site" because the
+  // receiver at the DEFINITION is a bare parameter — true, and it stops there.
+  // Its CALL SITES are field accesses, and those are exactly what this set makes
+  // reachable, so `normalizeBookingDate(guest.stayStart)` is now classified and a
+  // future `normalizeBookingDate(booking.createdAt)` would be reported.
+  "normalizeBookingDate",
+]);
+
 /** The helper module itself — the sanctioned home for the raw truncation. */
 const ENCODER_MODULE = "src/lib/date-only.ts";
 
@@ -824,6 +867,36 @@ function localEncoderAliases(sf: ts.SourceFile): {
   return { names, exported };
 }
 
+/**
+ * The {@link DATE_ONLY_RENORMALISERS} names this file DECLARES, top level.
+ *
+ * Keyed on the declaration rather than the call so that a listed name is
+ * followed only in the module that owns it. `localEncoderAliases` cannot answer
+ * this — it refuses the normaliser shape by design — so the two are asked
+ * separately and merged.
+ */
+function declaredRenormalisersIn(sf: ts.SourceFile): string[] {
+  const found: string[] = [];
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name && DATE_ONLY_RENORMALISERS.has(st.name.text)) {
+      found.push(st.name.text);
+    }
+    if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) {
+        if (
+          ts.isIdentifier(d.name) &&
+          DATE_ONLY_RENORMALISERS.has(d.name.text) &&
+          d.initializer != null &&
+          (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))
+        ) {
+          found.push(d.name.text);
+        }
+      }
+    }
+  }
+  return found;
+}
+
 type Encoding = {
   /** `file:line`, for a human reading a failure. NEVER a key — see above. */
   site: string;
@@ -1017,7 +1090,11 @@ function readTreeSources(): Array<{ rel: string; text: string }> {
  */
 function scanEncodings(
   sources: Array<{ rel: string; text: string }> = readTreeSources(),
-): { encodings: Encoding[]; exportedAliases: string[] } {
+): {
+  encodings: Encoding[];
+  exportedAliases: string[];
+  declaredRenormalisers: string[];
+} {
   const encodings: Encoding[] = [];
   const exportedAliases: string[] = [];
 
@@ -1032,8 +1109,16 @@ function scanEncodings(
   // encoder. Collected for EVERY file, including the helper module, so pass 2
   // can follow one across a module boundary.
   const resolvableByFile = new Map<string, Set<string>>();
+  const declaredRenormalisers: string[] = [];
   for (const { rel, sf } of files) {
     const aliases = localEncoderAliases(sf);
+    // A listed renormaliser is resolvable in the module that DECLARES it, which
+    // then reaches its importers through the same named/namespace/dynamic import
+    // resolution every other wrapper uses. See DATE_ONLY_RENORMALISERS.
+    for (const name of declaredRenormalisersIn(sf)) {
+      aliases.names.add(name);
+      declaredRenormalisers.push(name);
+    }
     resolvableByFile.set(rel, aliases.names);
     if (rel !== ENCODER_MODULE) {
       for (const name of aliases.exported) exportedAliases.push(`${rel}: ${name}`);
@@ -1107,10 +1192,14 @@ function scanEncodings(
     ts.forEachChild(sf, visit);
   }
 
-  return { encodings, exportedAliases };
+  return { encodings, exportedAliases, declaredRenormalisers };
 }
 
-const { encodings: ENCODINGS, exportedAliases: EXPORTED_ALIASES } = scanEncodings();
+const {
+  encodings: ENCODINGS,
+  exportedAliases: EXPORTED_ALIASES,
+  declaredRenormalisers: DECLARED_RENORMALISERS,
+} = scanEncodings();
 
 // ---------------------------------------------------------------------------
 
@@ -1404,6 +1493,135 @@ export function due(booking: { createdAt: Date }) {
     ]);
   });
 
+  it("follows a shared renormaliser to the value handed in", () => {
+    /*
+      `storedDateOnly` decodes a stored calendar day and re-encodes it, so the
+      canonical encoder inside it FEEDS ANOTHER CALL rather than being the
+      result — the one shape `localEncoderAliases` deliberately will not follow.
+      Correct for the alias ban and wrong for the census, which is why
+      DATE_ONLY_RENORMALISERS exists.
+
+      TWO FILES, because the real arrangement is cross-module: the helper lives in
+      `src/lib/stored-calendar-day.ts` and its callers import it. A one-file
+      fixture would pass through `resolvableByFile` for the same file and prove
+      nothing about the import hop.
+    */
+    const { encodings } = censusOfFiles([
+      {
+        rel: "src/lib/renormaliser-fixture.ts",
+        text: `import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+export function storedDateOnly(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+`,
+      },
+      {
+        rel: "src/lib/renormaliser-caller-fixture.ts",
+        text: `import { storedDateOnly } from "./renormaliser-fixture";
+export function nights(booking: { checkIn: Date; createdAt: Date }) {
+  return [storedDateOnly(booking.checkIn), storedDateOnly(booking.createdAt)];
+}
+`,
+      },
+    ]);
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `storedDateOnly(booking.createdAt)` reads a real instant as " +
+        "its UTC day, one call further round than `calendarDateOfDateOnlyInstant` " +
+        "written inline. Before DATE_ONLY_RENORMALISERS the census classified " +
+        "nothing written through that helper, so 32 `@db.Date` reads AND any " +
+        "instant that joined them were both invisible. `checkIn` is `@db.Date` " +
+        "and correctly produces no finding; `createdAt` is a bare `DateTime` and " +
+        "must.",
+    ).toEqual(["instant:createdAt"]);
+  });
+
+  it("lists exactly the renormalisers this tree has, named explicitly", () => {
+    /*
+      THE CASE BELOW IS DRIVEN FROM THE SET, so deleting an entry also deletes its
+      own coverage — a guard whose only measured call comes from its own
+      scaffolding, which is the vacuity class this epic keeps re-finding. Measured:
+      removing `normalizeBookingDate` from the set left all 31 cases passing.
+
+      So the membership is named here as a literal. A DELETION fails this case; an
+      ADDITION without coverage fails the loop below; a rename fails the staleness
+      assertion further down. Between the three there is no way to change this set
+      quietly.
+    */
+    expect([...DATE_ONLY_RENORMALISERS].sort()).toEqual([
+      "normalizeBookingDate",
+      "storedDateOnly",
+    ]);
+  });
+
+  it("follows EVERY name in the set, not just the first", () => {
+    /*
+      Removing a name from DATE_ONLY_RENORMALISERS must break something, or the
+      entry is decoration. The case above covers `storedDateOnly`; this one covers
+      `normalizeBookingDate`, whose guards keep it a separate function in
+      `pricing.ts` and whose call sites are therefore classified only because its
+      name is listed too. Driven from the set itself, so a name added later
+      without a case fails here rather than going unverified.
+    */
+    for (const name of DATE_ONLY_RENORMALISERS) {
+      const { encodings } = censusOfFiles([
+        {
+          rel: "src/lib/set-driven-fixture.ts",
+          text: `import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+export function ${name}(value: Date): Date {
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
+}
+export function read(booking: { createdAt: Date }) {
+  return ${name}(booking.createdAt);
+}
+`,
+        },
+      ]);
+      expect(
+        encodings.map((e) => `${e.kind}:${e.field}`),
+        `INV-DATE-019: DATE_ONLY_RENORMALISERS lists \`${name}\`, but the census does ` +
+          "not follow it, so every call site written through it is classified as " +
+          "nothing. Either the set entry does nothing or the scanner stopped " +
+          "reading it.",
+      ).toEqual(["instant:createdAt"]);
+    }
+  });
+
+  it("does not follow an unrelated function that shares a listed name", () => {
+    // The set names a FUNCTION, not a spelling. A local helper elsewhere in the
+    // tree that happens to be called `storedDateOnly` and does something else
+    // must not be followed as if it were the shared one — which is what keys the
+    // set on the declaration rather than on the call.
+    const { encodings } = censusOfFiles([
+      {
+        rel: "src/lib/unrelated-caller-fixture.ts",
+        text: `import { storedDateOnly } from "some-package";
+export function nights(booking: { createdAt: Date }) {
+  return storedDateOnly(booking.createdAt);
+}
+`,
+      },
+    ]);
+
+    expect(encodings).toEqual([]);
+  });
+
+  it("names a renormaliser that really exists in the tree", () => {
+    // The mirror of the reviewed-list staleness rule. An entry naming nothing
+    // classifies nothing, and reads as coverage while covering nothing.
+    expect(
+      [...DATE_ONLY_RENORMALISERS].filter(
+        (name) => !DECLARED_RENORMALISERS.includes(name),
+      ),
+      "INV-DATE-019: a DATE_ONLY_RENORMALISERS entry names no function declared " +
+        "anywhere under src/. Either the helper was renamed — in which case the " +
+        "set must lead the rename, or every call site written through it is " +
+        "unclassified in the window — or it was deleted, and the entry should go " +
+        "with it.",
+    ).toEqual([]);
+  });
+
   it("leaves a wrapper that adds MEANING alone", () => {
     // The ban is on a bare RENAME. A helper that decides WHICH field is a lodge
     // night is naming a decision rather than hiding one, and banning it would
@@ -1457,6 +1675,54 @@ export function due(booking: { createdAt: Date }) {
 
     expect(encodings.map((e) => `${e.kind}:${e.field}`)).toEqual([
       "instant:createdAt",
+    ]);
+  });
+
+  it("classifies an instant that reaches the kernel through parseInstant", () => {
+    /*
+      THE SECOND NAME IN THE SET, which had no fixture at all until #2870's F3
+      lane. `requireInstant` above was covered and `parseInstant` was not, so
+      dropping it from INSTANT_PASS_THROUGHS left the whole suite green — measured,
+      32 of 32 passing. That is the same vacuity DATE_ONLY_RENORMALISERS was given
+      a named roster to prevent, in the set this file describes as its mirror
+      image, and it was inherited rather than noticed.
+    */
+    const { encodings } = censusOf(
+      `import { calendarDateOfDateOnlyInstant, parseInstant } from "@/lib/club-time";
+export function due(booking: { createdAt: Date }) {
+  const instant = parseInstant(booking.createdAt);
+  return instant ? calendarDateOfDateOnlyInstant(instant) : null;
+}
+export function dueDirect(booking: { createdAt: Date }) {
+  return calendarDateOfDateOnlyInstant(parseInstant(booking.createdAt)!);
+}
+`,
+    );
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `parseInstant` is the nullable half of the kernel's " +
+        "Date-to-Instant pass-through. It changes the type and not the value, so a " +
+        "field read through it must stay visible to this census — otherwise " +
+        "`calendarDateOfDateOnlyInstant(parseInstant(booking.createdAt))` is the " +
+        "#2697 defect written one call further round.",
+    ).toEqual(["instant:createdAt"]);
+  });
+
+  it("lists exactly the instant pass-throughs this kernel has, named explicitly", () => {
+    /*
+      The roster for the SIBLING set, added for the reason its mirror needed one.
+      A fixture proves a listed name is followed; only a literal list proves a name
+      cannot be quietly DELETED. Measured before this case existed: removing
+      `parseInstant` from the set passed 32 of 32.
+
+      If the kernel renames or retires one of these, this case is the thing that
+      says so, and the fixture above is the thing that says the survivor still
+      works.
+    */
+    expect([...INSTANT_PASS_THROUGHS].sort()).toEqual([
+      "parseInstant",
+      "requireInstant",
     ]);
   });
 

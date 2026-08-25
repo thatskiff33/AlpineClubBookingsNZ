@@ -9,7 +9,7 @@
  * the environment role (`resolveEnvironmentRole()`, #3034, INV-CONFIG-003) and
  * the transport kind (`resolveEmailTransportKind()`, `email-delivery.ts`).
  *
- * ## The five answers
+ * ## The six answers
  *
  * - **allow, grounds `production`** — the club's live site. Live behaviour is
  *   unchanged aside from passing through here. Carries a
@@ -32,6 +32,14 @@
  *   transport. Refused, loudly, because a live installation quietly dropping
  *   every member's mail into a sink is the same class of harm as declaring the
  *   live site a copy. Also a fault, also retryable on the same terms.
+ * - **block_capture_public_host** — a copy declares a capture transport while
+ *   `EMAIL_SERVER_HOST` names a host on the public internet, so the "capture"
+ *   would deliver to a real member (#3071 review, hoppers99). Refused. This is
+ *   the shape an EXISTING relay installation lands in when it flips
+ *   `USE_LOCAL_CAPTURE` on upgrade and changes nothing else, which is why the
+ *   repair strings now name the host as well as the flag. A fault, retryable, and
+ *   deliberately not folded into either neighbour — see
+ *   {@link EmailTransportKind}.
  *
  * "RETRYABLE" IS CONDITIONAL, and saying so is not a caveat — it was a false
  * claim in seven places before #3035's review. Twenty-six templates never persist
@@ -94,6 +102,7 @@ import {
   resolveEnvironmentRole,
   type EnvironmentRoleDecidedBy,
   type EnvironmentRoleResolution,
+  type EnvironmentSafetySettingsStore,
 } from "@/lib/environment-role";
 
 /**
@@ -189,7 +198,8 @@ export type DeliveryOutcome =
   | { kind: "allow"; grounds: "non-production-capture" }
   | { kind: "suppress_non_production"; decidedBy: EnvironmentRoleDecidedBy }
   | { kind: "block_environment_unknown"; reason: DeliveryBlockReason }
-  | { kind: "block_capture_in_production" };
+  | { kind: "block_capture_in_production" }
+  | { kind: "block_capture_public_host" };
 
 /** {@link DeliveryOutcome} with the clearance the allow branches carry. */
 export type DeliveryDecision =
@@ -201,7 +211,8 @@ export type DeliveryDecision =
     }
   | { kind: "suppress_non_production"; decidedBy: EnvironmentRoleDecidedBy }
   | { kind: "block_environment_unknown"; reason: DeliveryBlockReason }
-  | { kind: "block_capture_in_production" };
+  | { kind: "block_capture_in_production" }
+  | { kind: "block_capture_public_host" };
 
 /**
  * The mapping from a resolved role plus a declared transport to a delivery
@@ -232,7 +243,14 @@ export function decideDeliveryPolicy(
       epic is built around, arriving from the opposite direction. Symmetric with
       #3034's deploy-gate refusal, and just as loud.
     */
-    if (transport === "local-capture") {
+    if (transport === "local-capture" || transport === "capture-public-host") {
+      /*
+        BOTH capture kinds, and the order matters: a live site that has declared
+        capture mode is refused for BEING a live site in capture mode, whatever
+        its host turned out to be. Reporting the host problem here would send the
+        operator of the club's live site off to fix `EMAIL_SERVER_HOST` when the
+        thing that is wrong is the capture declaration itself.
+      */
       return { kind: "block_capture_in_production" };
     }
     return { kind: "allow", grounds: "production" };
@@ -245,12 +263,22 @@ export function decideDeliveryPolicy(
       valid" — and it is what lets the browser suite read a two-factor code back
       out of mailpit while nothing can reach a member.
 
-      It rests entirely on the DECLARATION being true. Declaring capture mode
-      against a relay that can actually deliver would send real mail from a copy,
-      and the application cannot detect that — the same family of operator error
-      as declaring the live site a copy, and answered the same way: the deployment
-      says what it is, and says it explicitly.
+      IT RESTS ON THE DECLARATION BEING TRUE, AND ON ONE CHECK OF IT. An earlier
+      version of this comment said the application "cannot detect" a capture
+      declared against a relay that really delivers. That was too strong, and the
+      gap it excused was real (#3071 review, hoppers99): it cannot detect a
+      PRIVATE host that forwards onward, but it can certainly detect
+      `EMAIL_SERVER_HOST=smtp.sendgrid.net`, which is what an existing relay
+      installation is left holding when it flips one flag on upgrade. That case
+      arrives here as `capture-public-host` and is refused below. What remains
+      undetectable is a sink on a private address that forwards anyway, and that
+      is answered the way the rest of this epic answers such things: the
+      deployment says what it is, explicitly, and no sentence anywhere claims more
+      than the check can support.
     */
+    if (transport === "capture-public-host") {
+      return { kind: "block_capture_public_host" };
+    }
     if (transport === "local-capture") {
       return { kind: "allow", grounds: "non-production-capture" };
     }
@@ -277,9 +305,11 @@ export function decideDeliveryPolicy(
  * caller. A test can still assert every row of the decision table; it can no
  * longer manufacture the token that opens a live provider path.
  */
-export async function resolveDeliveryPolicy(): Promise<DeliveryDecision> {
+export async function resolveDeliveryPolicy(
+  store?: EnvironmentSafetySettingsStore,
+): Promise<DeliveryDecision> {
   const outcome = decideDeliveryPolicy(
-    await resolveEnvironmentRole(),
+    await resolveEnvironmentRole(store),
     resolveEmailTransportKind(),
   );
   if (outcome.kind !== "allow") return outcome;
@@ -341,9 +371,23 @@ export function describeDeliveryDecision(
   replay: DeliveryReplayability = "replayed-automatically",
 ): string {
   if (decision.kind === "allow") {
+    /*
+      THE CAPTURE SENTENCE USED TO END "and can reach nobody outside it", which
+      was an unconditional claim resting on nothing but the flag (#3071 review,
+      hoppers99). On the installation that found it, the flag was set and
+      EMAIL_SERVER_HOST still named a live relay, so that sentence was written
+      into the log of a message that had just reached a real member. The host is
+      now checked — see `classifyCaptureHost` — but the sentence deliberately does
+      NOT recite that check. It cannot prove onward forwarding, and an operator
+      who used `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST` has overridden it, so a line
+      claiming the host had been vetted would be false on the very installation
+      where the guarantee is weakest. What is left is true everywhere: the message
+      went to the capture, and the capture's behaviour is a declaration rather
+      than a measurement. The check protects; the log line only has to be honest.
+    */
     return decision.grounds === "production"
       ? "This installation is the club's live site, so the message was delivered normally."
-      : "This installation is a copy with a local capture mailbox declared (USE_LOCAL_CAPTURE), so the message was transmitted into that capture and can reach nobody outside it.";
+      : "This installation is a copy with a local capture mailbox declared (USE_LOCAL_CAPTURE), so the message was transmitted into that capture instead of to the member. Whether that capture can pass mail onward is what this deployment declares about EMAIL_SERVER_HOST, not something this application can verify.";
   }
   if (decision.kind === "suppress_non_production") {
     // Terminal, so no replay clause: a copy is a copy until somebody
@@ -352,6 +396,9 @@ export function describeDeliveryDecision(
     return decision.decidedBy === "database-safer-override"
       ? "Held back: an administrator has switched this installation's safer override on, so it behaves as a copy and does not contact real members. Nothing was sent and no provider was contacted. Turn the override off under Admin -> Environment if this really is the club's live site."
       : "Held back: this deployment declares itself a copy (APP_ENVIRONMENT_ROLE=non-production), so it does not contact real members. Nothing was sent and no provider was contacted. To let a copy send into a local capture mailbox instead, declare USE_LOCAL_CAPTURE=true and point EMAIL_SERVER_HOST at it.";
+  }
+  if (decision.kind === "block_capture_public_host") {
+    return `Not sent: this installation is a copy that declares a local capture mailbox (USE_LOCAL_CAPTURE=true), but EMAIL_SERVER_HOST names a host on the public internet, so the "capture" would have delivered this message to a real member. Nothing was sent and no provider was contacted. Point EMAIL_SERVER_HOST at the capture itself — a container name such as mailpit, localhost, or a private address — or set USE_SMTP_RELAY=true instead if that host really does deliver mail, in which case this copy holds every message back rather than sending it. If the host genuinely is a sink that forwards nothing and only has a public name, declare EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true.${REPLAY_CLAUSE[replay]}`;
   }
   if (decision.kind === "block_capture_in_production") {
     return `Not sent: this deployment declares itself the club's live site (APP_ENVIRONMENT_ROLE=production) AND declares a local capture mailbox (USE_LOCAL_CAPTURE=true). Those cannot both be true — a live site in capture mode would accept every message and deliver none of them. Nothing was sent and no provider was contacted. Set USE_AWS_SES or USE_SMTP_RELAY instead.${REPLAY_CLAUSE[replay]}`;
@@ -414,6 +461,16 @@ export function assertDeliveryClearanceWitness(
  * genuine and is no longer true. An administrator can switch the safer override on
  * while a batch is mid-flight, and that click is the one somebody makes when they
  * have just realised a copy is about to email the club's real members.
+ *
+ * THIS FUNCTION CAN ONLY PROTECT WHAT ASKS IT, and that sentence is here because
+ * omitting it made the paragraph above false in one place (#3071 review,
+ * hoppers99). A caller that resolves once and then sends fifty messages gets ONE
+ * check, however carefully this function re-resolves. Both callers now ask per
+ * message: `sendEmail` through `getEmailTransporter` for every message it renders,
+ * and `cron-email-retry.ts` inside its own loop rather than once above it, which
+ * is what it used to do. A future third sender that hoists the call out of its
+ * loop reopens the same hole, and nothing here can stop it — the check is
+ * per-call by construction, so the discipline belongs at the call site.
  *
  * The second half costs one primary-key read per call, and it is spent here rather
  * than in the Xero wrapper for a stated reason: this function guards a CACHED

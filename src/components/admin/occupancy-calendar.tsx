@@ -11,10 +11,12 @@ import {
   formatClubWeekdayDayMonth,
   requireCalendarDate,
 } from "@/lib/club-time";
+import { formatMonthOnly, parseDateOnly } from "@/lib/date-only";
 import {
-  formatMonthOnly,
-  parseDateOnly,
-} from "@/lib/date-only";
+  getMonthGrid,
+  getMonthStart,
+  monthKeysForDateRange,
+} from "./occupancy-calendar-month-grid";
 import { CalendarDays, ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 type OccupancyCalendarMode = "range" | "single";
@@ -88,46 +90,6 @@ type OccupancyCalendarProps = {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// Every receiver here is a `getMonthStart` result — `parseDateOnly` of a
-// `yyyy-MM-01` string, so UTC midnight and a date-only value by construction —
-// which is why the canonical month encoder reads back the month it encodes
-// (INV-DATE-010) and why this must NOT become the club-timezone helper: see the
-// "Deliberately UTC, NOT club time" note on `visibleMonth` below. It assembled
-// the key from UTC parts until #2684, which is the truncation in a fourth
-// spelling and invisible to a census that looks for the ISO ones.
-function monthKey(date: Date) {
-  return formatMonthOnly(date);
-}
-
-function getMonthStart(date: Date) {
-  return parseDateOnly(`${monthKey(date)}-01`);
-}
-
-function monthKeysForDateRange(startDate: string, endDate: string) {
-  const start = getMonthStart(parseDateOnly(startDate));
-  const end = getMonthStart(parseDateOnly(endDate));
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
-    return [];
-  }
-
-  const keys: string[] = [];
-  let cursor = start;
-  while (cursor <= end) {
-    keys.push(monthKey(cursor));
-    cursor = new Date(
-      Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1),
-    );
-  }
-  return keys;
-}
-
-function getMonthGrid(year: number, monthIndex: number) {
-  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
-  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  const day = firstDay.getUTCDay();
-  const startOffset = day === 0 ? 6 : day - 1;
-  return { daysInMonth, startOffset };
-}
 
 // The cell label deliberately carries the weekday and drops the year — the year
 // is already stated by the month heading above the grid, and a day cell has no
@@ -188,7 +150,7 @@ export function OccupancyCalendar({
   const [loadError, setLoadError] = useState("");
   const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
   const requestedMonthKeys = useRef(new Set<string>());
-  const visibleMonthKey = monthKey(visibleMonth);
+  const visibleMonthKey = formatMonthOnly(visibleMonth);
 
   /*
     #2887: the month caches below are keyed by month alone, so they belong to

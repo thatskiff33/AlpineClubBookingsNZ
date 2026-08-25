@@ -8,10 +8,12 @@ import {
   Users,
 } from "lucide-react";
 import type { RosterDayStatus } from "@/lib/roster-status";
-import { APP_LOCALE } from "@/config/operational";
 import {
-  dateOnlyInstantOf,
+  addCalendarDays,
+  calendarDayOfWeek,
   formatClubDate,
+  formatClubDayMonth,
+  formatClubLongWeekdayDayMonth,
   formatClubWeekdayDayMonth,
   requireCalendarDate,
 } from "@/lib/club-time";
@@ -21,35 +23,22 @@ import { formatDateOnly } from "@/lib/date-only";
   EVERY DATE ON THIS STRIP IS A CALENDAR DAY, SO NOTHING HERE READS A TIMEZONE
   (CT-4, #2870).
 
-  The two formatters below stay local because the kernel has no `HOUSE_SHAPES`
-  entry for their bags — the strip is scanned by day of the week and deliberately
-  drops the year, and both are rendered verbatim into accessible button labels,
-  so they must stay byte-identical. What changed is the ZONE THEY ARE PINNED TO:
-  `APP_TIME_ZONE` before, `UTC` now. Every value handed to them is a
-  `parseDateKey` result — a calendar day encoded at UTC midnight — so a
-  UTC-pinned formatter over that encoding is provably the identity, where the
-  environment pin cancelled only because New Zealand happens to be east of
-  Greenwich. For a club that is not, the strip labelled each column with the
-  previous night.
+  All four labels are now kernel shapes and this file keeps no formatter of its
+  own. The strip is scanned by day of the week and deliberately drops the year,
+  and every label is rendered verbatim into an accessible button label, so each
+  had to stay byte-identical: `longWeekdayDayMonth` and `weekdayDayMonth` are the
+  same option bags in the same locale the local formatters carried, and
+  `dayMonth` — which F3 (#3079) declared — is the week range's start.
 
-  The short weekday bag is now the kernel's `weekdayDayMonth` shape, which is the
-  same options in the same locale.
+  The shapes pin `UTC` over the kernel's own UTC-midnight encoding, which is
+  provably the identity for every club. Before CT-4 the local formatters were
+  pinned to `APP_TIME_ZONE`, which cancelled only because New Zealand happens to
+  be east of Greenwich; for a club that is not, the strip labelled each column
+  with the previous night.
+
+  The week range reads "13 Apr - 19 Apr 2026": the year is carried once, by the
+  end date, so printing it on both halves would just be noise.
 */
-const LONG_WEEKDAY_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-});
-
-// The START of the week range only. The range reads "13 Apr - 19 Apr 2026":
-// the year is carried once, by the end date, so printing it on both halves
-// would just be noise.
-const SHORT_DAY_MONTH = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  day: "numeric",
-  month: "short",
-});
 
 type DateRange = { minDate: string; maxDate: string } | null;
 
@@ -148,11 +137,14 @@ export function addDaysToDateKey(dateKey: string, days: number): string {
   return formatDateOnly(date);
 }
 
+// `calendarDayOfWeek` numbers Sunday 0 .. Saturday 6, so Monday-first is `+6 % 7`.
+// The kernel answers both halves from the `yyyy-MM-dd` text and builds no `Date`
+// at all, which is what removes the `getDay()`-instead-of-`getUTCDay()` slip the
+// block above spends a paragraph warning about (CT-4, #2870).
 export function getWeekStartDateKey(dateKey: string): string {
-  const date = parseDateKey(dateKey);
-  const mondayOffset = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - mondayOffset);
-  return formatDateOnly(date);
+  const day = requireCalendarDate(dateKey);
+  const mondayOffset = (calendarDayOfWeek(day) + 6) % 7;
+  return addCalendarDays(day, -mondayOffset);
 }
 
 export function buildWeekDateKeys(weekStart: string): string[] {
@@ -172,7 +164,7 @@ export function weekHasAccessibleDay(
 }
 
 function displayDay(dateKey: string): string {
-  return LONG_WEEKDAY_DAY.format(dateOnlyInstantOf(requireCalendarDate(dateKey)));
+  return formatClubLongWeekdayDayMonth(requireCalendarDate(dateKey));
 }
 
 function displayShortDay(dateKey: string): string {
@@ -181,8 +173,7 @@ function displayShortDay(dateKey: string): string {
 
 function displayWeekRange(weekStart: string): string {
   const weekEnd = addDaysToDateKey(weekStart, 6);
-  const start = dateOnlyInstantOf(requireCalendarDate(weekStart));
-  return `${SHORT_DAY_MONTH.format(start)} - ${formatClubDate(requireCalendarDate(weekEnd))}`;
+  return `${formatClubDayMonth(requireCalendarDate(weekStart))} - ${formatClubDate(requireCalendarDate(weekEnd))}`;
 }
 
 export function KioskWeekView({

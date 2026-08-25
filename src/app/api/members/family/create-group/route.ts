@@ -6,9 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { parseDateOnly } from "@/lib/date-only";
-import { dateOnlyInstantOf } from "@/lib/club-time";
-import { clubTime } from "@/lib/club-time/server";
-import { clubTimeZone } from "@/lib/club-time/server";
+import { clubTimeZone, clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
@@ -227,7 +225,7 @@ export async function POST(req: NextRequest) {
   // the persisted ClubTimeSettings zone and not the container's TZ
   // (INV-CONFIG-002, INV-DATE-019). The date of birth takes no zone at all
   // (INV-DATE-010), and both sides stay UTC-midnight date-only values.
-  const today = dateOnlyInstantOf((await clubTime()).today());
+  const today = await clubTodayDateOnlyInstant();
   const parsedChildren: Array<{ firstName: string; lastName: string; dateOfBirth: Date }> = [];
   for (const child of children) {
     const childDob = parseDateOnly(child.dateOfBirth);

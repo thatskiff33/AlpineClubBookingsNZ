@@ -169,7 +169,7 @@ reason: the range bounds come from the URL and used to reach date-fns through a
   and naming which patterns stay on date-fns and why.
 
 file: src/app/(admin)/admin/roster/page.tsx
-lines: 594
+lines: 586
 reason: the roster's opening day moved onto the club's zone, and the long-date
   heading is now pinned to UTC over the date-only encoding — an identity for
   every club rather than a projection. The note explaining that pin is most of

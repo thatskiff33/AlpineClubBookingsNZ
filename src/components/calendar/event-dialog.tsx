@@ -23,13 +23,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useClubTime } from "@/components/club-time-provider";
 import type {
   CalendarEditScope,
   CalendarEventDTO,
 } from "@/lib/calendar-events";
 import {
+  parseCalendarDate,
+  parseInstant,
+  type CalendarDate,
+} from "@/lib/club-time";
+import {
   formatEventDateLong,
-  formatTime,
+  formatInstantTime,
+  isoEndFromDateTimeInputs,
   isoFromDateTimeInputs,
   shouldIncludeRecurrence,
   toDateInputValue,
@@ -50,8 +57,8 @@ interface EventDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The event being edited/viewed, or null when creating. */
   event: CalendarEventDTO | null;
-  /** Pre-selected day (YYYY-MM-DD) when creating from a day cell. */
-  initialDate: string | null;
+  /** Pre-selected calendar day when creating from a day cell. */
+  initialDate: CalendarDate | null;
   /** Whether the current member may create NEW events. */
   canCreate: boolean;
   /**
@@ -69,14 +76,6 @@ interface EventDialogProps {
   canEditExisting: boolean;
   /** Called after a successful create/update/delete so the caller can refetch. */
   onSaved: () => void;
-}
-
-function todayDateValue(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
 }
 
 /** Fresh idempotency key for a create submit; empty string if unavailable. */
@@ -97,6 +96,15 @@ export function EventDialog({
   canEditExisting,
   onSaved,
 }: EventDialogProps) {
+  /*
+    CT-4 (#2870). Every date and time this dialog reads or WRITES is club civil
+    time, from `ClubTimeProvider`. The write half is the one that mattered: the
+    date and time inputs were composed with `new Date("2026-04-16T19:00")`, which
+    JavaScript resolves in the HOST's zone — so an officer editing from overseas
+    saved 7pm THEIR time onto a club event, and the "today" default for a new
+    event was their day rather than the club's.
+  */
+  const club = useClubTime();
   const isEdit = event !== null;
   const isSeriesEvent = Boolean(event?.seriesId);
 
@@ -172,9 +180,13 @@ export function EventDialog({
       ? {
           title: event.title,
           allDay: event.allDay,
-          date: toDateInputValue(event.startsAt),
-          startTime: event.allDay ? "" : toTimeInputValue(event.startsAt),
-          endTime: event.endsAt ? toTimeInputValue(event.endsAt) : "",
+          date: toDateInputValue(event.startsAt, club.zone),
+          startTime: event.allDay
+            ? ""
+            : toTimeInputValue(event.startsAt, club.zone),
+          endTime: event.endsAt
+            ? toTimeInputValue(event.endsAt, club.zone)
+            : "",
           location: event.location ?? "",
           details: event.details ?? "",
           isMeeting: event.isMeeting,
@@ -182,14 +194,14 @@ export function EventDialog({
           interval: event.recurrence?.interval ?? 1,
           endMode: (event.recurrence?.endMode ?? "never") as RecurrenceEndMode,
           until: event.recurrence?.until
-            ? toDateInputValue(event.recurrence.until)
+            ? toDateInputValue(event.recurrence.until, club.zone)
             : "",
           count: event.recurrence?.count ?? 10,
         }
       : {
           title: "",
           allDay: false,
-          date: initialDate ?? todayDateValue(),
+          date: initialDate ?? club.today(),
           startTime: "09:00",
           endTime: "",
           location: "",
@@ -217,7 +229,12 @@ export function EventDialog({
     setCount(next.count);
     // Record the just-loaded values as the clean baseline for dirty detection.
     setBaseline(JSON.stringify(next));
-  }, [open, event, initialDate]);
+    // `club` joins the dependencies because this effect now decodes the event's
+    // date and time THROUGH the club's zone (CT-4, #2870): if an operator changes
+    // the club timezone the form has to reload in the new one rather than keep
+    // showing the old reading. `useClubTime` returns a `useMemo`d binding keyed on
+    // the zone, so the identity is stable and this does not re-run per render.
+  }, [open, event, initialDate, club]);
 
   // Join a meeting by minting a fresh host token on the server (never reading a
   // link off the event). A blank tab is opened SYNCHRONOUSLY on the click so the
@@ -285,6 +302,11 @@ export function EventDialog({
   // "Join meeting" button only to managers (committee members / admins) — an
   // ordinary member sees the event details but cannot join the meeting.
   if (event && !canEditExisting) {
+    // The series summary describes a pattern anchored at a real instant, so it
+    // is rendered only when that instant parses. There is nothing honest to say
+    // about the shape of a series whose anchor is unreadable, and a placeholder
+    // date would be a confident lie.
+    const anchorInstant = parseInstant(event.startsAt);
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-lg">
@@ -296,19 +318,21 @@ export function EventDialog({
               {event.title}
             </DialogTitle>
             <DialogDescription>
-              {formatEventDateLong(event)}
+              {formatEventDateLong(event, club.zone)}
               {!event.allDay && (
                 <>
                   {" · "}
-                  {formatTime(event.startsAt)}
-                  {event.endsAt ? ` – ${formatTime(event.endsAt)}` : ""}
+                  {formatInstantTime(event.startsAt, club.zone)}
+                  {event.endsAt
+                    ? ` – ${formatInstantTime(event.endsAt, club.zone)}`
+                    : ""}
                 </>
               )}
               {event.allDay && " · All day"}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
-            {event.recurrence && (
+            {event.recurrence && anchorInstant && (
               <p className="flex items-center gap-2 text-muted-foreground">
                 <Repeat aria-hidden className="h-4 w-4" />
                 {describeRecurrence(
@@ -319,7 +343,8 @@ export function EventDialog({
                     until: event.recurrence.until,
                     count: event.recurrence.count,
                   },
-                  new Date(event.startsAt),
+                  anchorInstant,
+                  club.zone,
                 )}
               </p>
             )}
@@ -399,8 +424,14 @@ export function EventDialog({
     onOpenChange(false);
   }
 
-  // Labels for the Repeat picker follow the currently-selected date.
-  const anchorDate = date ? new Date(`${date}T00:00`) : new Date();
+  /*
+    Labels for the Repeat picker follow the currently-selected date, which is a
+    CALENDAR DAY straight out of `<input type="date">` and needs no zone at all.
+    It used to be re-parsed as a browser-local midnight instant and then read
+    back through a club-pinned formatter, so an overseas admin could be offered
+    "Weekly on Monday" for a Tuesday.
+  */
+  const anchorDate = parseCalendarDate(date) ?? club.today();
   const repeatOptions = recurrenceOptionsForDate(anchorDate);
 
   async function submit(scope: CalendarEditScope) {
@@ -419,6 +450,7 @@ export function EventDialog({
 
     const startsAt = isoFromDateTimeInputs(
       date,
+      club.zone,
       allDay ? undefined : startTime || "00:00",
     );
     if (!startsAt) {
@@ -426,8 +458,19 @@ export function EventDialog({
       setScopePrompt(null);
       return;
     }
+    /*
+      The END goes through its own resolver rather than a second
+      `isoFromDateTimeInputs` call, because both ends of a time inside a
+      spring-forward gap resolve to the same instant and the event would be
+      stored zero-length. `isoEndFromDateTimeInputs` keeps the exact wall time
+      wherever it survives the transition and falls back to the typed duration
+      only in that degenerate case; its docblock carries the measurement and why
+      duration-first would be worse.
+    */
     const endsAt =
-      !allDay && endTime ? isoFromDateTimeInputs(date, endTime) : null;
+      !allDay && endTime
+        ? isoEndFromDateTimeInputs(date, club.zone, startTime || "00:00", endTime)
+        : null;
 
     // Send the recurrence rule EXCEPT when editing a single occurrence of an
     // existing series — that path changes only this occurrence, never the
@@ -444,7 +487,7 @@ export function EventDialog({
             endMode,
             until:
               endMode === "until"
-                ? isoFromDateTimeInputs(until, "12:00")
+                ? isoFromDateTimeInputs(until, club.zone, "12:00")
                 : null,
             count: endMode === "count" ? Math.max(1, count || 1) : null,
           };

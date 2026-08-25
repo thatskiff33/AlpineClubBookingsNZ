@@ -45,7 +45,8 @@ import { getClubTimeZone } from "@/lib/club-time-zone-settings";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 
 import { bindClubTime, type BoundClubTime } from "./bound";
-import type { ClubTimeZone } from "./types";
+import { dateOnlyInstantOf } from "./instant";
+import type { ClubTimeZone, Instant } from "./types";
 import { asClubTimeZone, requireClubTimeZone } from "./zone";
 
 /**
@@ -67,3 +68,35 @@ export const clubTimeZone = cache(async (): Promise<ClubTimeZone> => {
 export const clubTime = cache(async (): Promise<BoundClubTime> =>
   bindClubTime(await clubTimeZone()),
 );
+
+/**
+ * The club's today, encoded as the UTC-midnight `Date` a Prisma `@db.Date`
+ * column round-trips through.
+ *
+ * `dateOnlyInstantOf((await clubTime()).today())` appeared fifteen times across
+ * CT-4's route groups, always as a `@db.Date` query bound or column write, and
+ * always costing the file two import lines — one from this module for
+ * `clubTime`, one from the barrel for `dateOnlyInstantOf`. That import pair is
+ * what group A reported (#2870) and this collapses both halves.
+ *
+ * THE ENCODING IS THE POINT AND ALSO THE LIMIT. What comes back is an encoding,
+ * not a moment — `INV-DATE-026`'s corollary is why it has to be exactly this one,
+ * because the Prisma adapter narrows whatever instant a `@db.Date` bound is
+ * handed to its UTC calendar date. So it is the right value to compare against a
+ * `date` column and the wrong one to compare against a `DateTime`, where
+ * midnight UTC is a real instant that is the previous club day for roughly the
+ * first half of every club day ahead of Greenwich. A caller that wants an instant boundary
+ * wants `startOfClubDay` / `endOfClubDayExclusive`; one that wants the day itself
+ * wants `(await clubTime()).today()` and no encoding at all.
+ *
+ * NOT FOR A MODULE A CLI CAN REACH. This file is `server-only`, which is a bare
+ * `throw` outside the `react-server` condition, so a shared `src/lib` module
+ * importing it kills every `tsx` entry point that reaches it — at import, before
+ * `main()`. That has happened twice. Such a module composes
+ * `dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))`
+ * instead; nine sites do, and `docs/CLUB_TIME_KERNEL.md` states which of the two
+ * readers a given module wants and how to check.
+ */
+export async function clubTodayDateOnlyInstant(): Promise<Instant> {
+  return dateOnlyInstantOf((await clubTime()).today());
+}

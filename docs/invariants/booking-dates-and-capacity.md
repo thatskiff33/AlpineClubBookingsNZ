@@ -329,15 +329,29 @@ derivation).
 
 ### INV-DATE-010
 
-- **Storage encoding, not semantics.** A stored lodge night is an NZ calendar
+- **Storage encoding, not semantics.** A stored lodge night is a club calendar
   date. The `@db.Date` columns pin that date to UTC midnight internally — an
-  instant that renders as club midday in NZST (1pm during NZ daylight saving),
-  either way the same NZ calendar day in every zone, so a CI runner in UTC and
-  a club in NZ agree on the date ([`docs/TESTING.md`](../TESTING.md) pins the
-  frozen test clock to an NZST instance of exactly this instant as evidence).
-  The UTC-midnight pinning is an internal encoding of the NZ date and nothing
-  more: it is NOT the midday boundary instant, NZ time is the semantic truth,
-  and no rule may be derived from the UTC reading of these values.
+  instant that renders as club midday in NZST and 1pm during NZ daylight saving,
+  which is the same club calendar day either way, so a CI runner in UTC and a
+  club in New Zealand agree on the date ([`docs/TESTING.md`](../TESTING.md) pins
+  the frozen test clock to an instance of exactly this instant as evidence).
+  The UTC-midnight pinning is an internal encoding of the calendar date and
+  nothing more: it is NOT the midday boundary instant, and the club's calendar
+  day is the semantic truth.
+- **That agreement is NOT universal, and an earlier wording of this rule said it
+  was.** It held only because every deployment so far sits at or ahead of
+  Greenwich. Read one of these values in a zone BEHIND Greenwich and it names the
+  PREVIOUS day — measured during epic #2988, which exists to remove exactly that
+  assumption. So the encoding is the same everywhere; the day you get back is not,
+  unless you decode it correctly.
+- **Decode it in UTC, and cite the rules that say so.** `INV-DATE-019` states the
+  exact boundaries for truncating a stored `@db.Date` value, and `INV-DATE-026`
+  its corollary; those are the authority for a decode, not this rule. What no
+  rule may be derived from is one of these values read as a **moment** — an
+  instant carrying a time of day — rather than as the calendar date it encodes.
+  Do not cite this rule as permission to read one in a zone, and do not cite it
+  as a prohibition on decoding one in UTC; several docblocks have paraphrased it
+  as its own inverse and propagated that.
 
 ## Date handling rules
 
@@ -439,12 +453,24 @@ derivation).
   `scripts/`, `e2e/` and `prisma/` was enumerated (the seed), and each survivor
   was then traced forward to the columns it actually binds (the census).
 
-  That leaves one site in application code: `monthGridRange`
+  That left one site in application code: `monthGridRange`
   (`src/lib/calendar-client.ts`), whose `setHours(0, 0, 0, 0)` and
-  `setHours(23, 59, 59, 999)` are the two ends of one browser-side month-grid
+  `setHours(23, 59, 59, 999)` were the two ends of one browser-side month-grid
   range. Traced through the calendar view, its query parameters and the events
-  route, both ends bind `CalendarEvent.startsAt`/`endsAt` — both bare `DateTime`
-  — so the pair is outside this class by column type, not by luck.
+  route, both ends bound `CalendarEvent.startsAt`/`endsAt` — both bare
+  `DateTime` — so the pair was outside this class by column type, not by luck.
+
+  **That site is gone (CT-4 group F5, #2870), and for a different reason than
+  this rule.** It was not binding a `@db.Date` column, but the two `setHours`
+  ends were still the BROWSER's day rather than the club's, so a member abroad
+  fetched a window shifted from the grid they were shown. Both ends are now club
+  day boundaries from `startOfClubDay` / `endOfClubDayExclusive`.
+
+  Re-censused on that change, the only `setHours` left in non-test application
+  code is `guest-chore-token.ts`'s `setHours(getHours() + N)`, which ADDS hours
+  to an expiry instant rather than truncating a day — a different operation, and
+  outside this class. Every other occurrence under `src/` is prose in a comment
+  recording the history above, or a fixture in a test.
 
   **Read that as "no site is currently known", never as "the class is closed",**
   and note precisely where the residual sits: the trace is sound for everything

@@ -34,8 +34,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { useClubTime } from "@/components/club-time-provider";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { countNightsDateOnly, dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
+import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { FocusedActionError } from "@/components/focused-action-error";
@@ -322,7 +325,7 @@ function isMemberWholeLodgeRequest(request: PublicBookingRequestData) {
  * for a club east of Greenwich and the PREVIOUS DAY for any club west of it.
  */
 function formatDate(value: string) {
-  return formatClubDate(requireCalendarDate(dateOnlyFromIsoString(value)));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 // #2338: nights in a check-in/check-out range, for the whole-lodge flat-price

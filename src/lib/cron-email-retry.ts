@@ -146,7 +146,46 @@ export async function retryFailedEmails(): Promise<{
       `Email retry skipped: ${describeDeliveryDecision(delivery)}`,
     );
   }
-  const { transporter } = await getEmailTransporter(delivery.clearance);
+  /*
+    THE CLEARANCE IS RE-RESOLVED PER MESSAGE, NOT ONCE PER RUN (#3071 review,
+    hoppers99). This job used to resolve the policy here and obtain one
+    transporter for the whole batch, so a single check covered up to fifty
+    messages: an administrator who switched the safer override on mid-run stopped
+    `sendEmail` immediately but let every remaining queued retry go to real
+    members. Two docblocks shipped in #3035 described per-message protection this
+    job did not have.
+
+    That was recorded during our own review as "a bounded limit worth stating
+    rather than fixing", and that was the wrong call. The override exists so an
+    operator can stop mail NOW — it is the click somebody makes the moment they
+    realise a copy is about to email the club's real members — so "it takes effect
+    on the next batch" is not a limit, it is the feature not working.
+
+    WHAT IT COSTS: one primary-key read of a one-row table per message, twice
+    (`resolveDeliveryPolicy` here and `requireDeliveryClearance` inside
+    `getEmailTransporter`), bounded by the batch of fifty. `sendEmail` already
+    pays the same per message. The transporter itself is CACHED on its
+    configuration signature, so no connection is rebuilt.
+
+    THE TWO READS ARE BOTH KEPT ON PURPOSE. Asking the policy directly is what
+    preserves the two SHAPES this job established at the top of the run — a
+    confirmed copy stops cleanly, a configuration fault throws — which
+    `getEmailTransporter` alone cannot express, because it throws for every
+    non-allow answer and would turn a correct operator action into a red cron run.
+    Getting the transport through the clearance-gated accessor is what keeps the
+    compile-time guarantee that no sender reaches a provider without asking. See
+    the loop below.
+  */
+
+  /*
+    AND ONCE HERE AS WELL, PURELY TO FAIL FAST. An unusable mail configuration
+    should stop this job before it selects fifty rows, not after — which is what
+    the run-level call did when it was the ONLY call, and an existing test pins
+    it. The transporter it returns is deliberately discarded: the loop obtains its
+    own per message, because that is where the guarantee lives. This call is a
+    configuration check, not the send path's licence.
+  */
+  await getEmailTransporter(delivery.clearance);
 
   // Backoff: don't retry emails until at least 15 minutes after the last attempt
   const backoffThreshold = new Date(Date.now() - 15 * 60 * 1000);
@@ -174,6 +213,34 @@ export async function retryFailedEmails(): Promise<{
   let failed = 0;
 
   for (const emailLog of failedEmails) {
+    /*
+      RE-ASKED BEFORE EVERY MESSAGE, and answered in the same two shapes as the
+      run-level check above — see the comment beside `backoffThreshold`.
+
+      IT HAPPENS BEFORE THIS ROW IS TOUCHED, which is the part that matters as
+      much as the check itself. Neither branch has written anything, burned an
+      attempt or dropped a retained body, so the remaining rows are left exactly
+      as found and the very next run replays them once the installation may send
+      again — the same "NEITHER TOUCHES A ROW" rule the run-level check states,
+      applied mid-batch.
+    */
+    const stillPermitted = await resolveDeliveryPolicy();
+    if (stillPermitted.kind === "suppress_non_production") {
+      logger.info(
+        { job: "retryFailedEmails", retried, succeeded, failed },
+        "Stopped the email retry run part-way: this installation is no longer the club's live site — most likely an administrator switched the safer override on while the batch was running. Every remaining failed row is left untouched",
+      );
+      break;
+    }
+    if (stillPermitted.kind !== "allow") {
+      // A configuration fault, and the same fault the run-level check throws on.
+      // Rows already retried keep their outcome; the rest are untouched.
+      throw new Error(
+        `Email retry stopped part-way: ${describeDeliveryDecision(stillPermitted)}`,
+      );
+    }
+    const { transporter } = await getEmailTransporter(stillPermitted.clearance);
+
     const usesBookingRetryBody = emailLog.bookingRetryHtmlBody != null;
     // Retained HTML, rendered by whichever process first attempted this
     // message. Its colours are already baked into the stored string, so it is

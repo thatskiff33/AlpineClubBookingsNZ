@@ -1,4 +1,11 @@
 # File-size allowances for #2870 (CT-4a — the admin API on the club-time boundary)
+> **Line counts refreshed by CT-4 group F3 (#2870).** That group hoisted the
+> shared helpers these files each wrote out privately, so several of them are now
+> SHORTER than this file recorded and four are two or three lines longer where a
+> two-line import pair became one multi-line import. The gate requires
+> `lines:` to equal the file's real length, so the numbers below were reset to
+> what the tree holds; nothing about the reasoning above changed, and no file
+> here crossed a ceiling it was not already over.
 
 Thirteen route handlers move off the legacy timezone adapters and onto the
 club-time kernel. Seven of them are already over the 250-line route budget — they
@@ -29,7 +36,7 @@ derivation and still comes out at exactly its base length, so it needs no
 allowance and does not collide with the one CT-3 left behind.
 
 file: src/app/api/admin/age-tier-settings/route.ts
-lines: 287
+lines: 286
 reason: nine lines. One is the second club-time import; the rest explain why the
   live-guest cut-off is now resolved BEFORE the transaction opens — reading the
   club's settings row is a second query, and it must not run on another
@@ -40,7 +47,7 @@ reason: nine lines. One is the second club-time import; the rest explain why the
   that test deserves to be told the two are the same question.
 
 file: src/app/api/admin/bookings/[id]/force-confirm/route.ts
-lines: 370
+lines: 369
 reason: seven lines. Two are the club-time imports, one is the hoisted
   cut-off itself, and four say why it is hoisted: the transaction below takes
   `pg_advisory_xact_lock(1)`, so a settings read inside it would make the global
@@ -48,7 +55,7 @@ reason: seven lines. Two are the club-time imports, one is the hoisted
   thing this comment exists to stop.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1278
+lines: 1277
 reason: three lines on a 1,275-line route, extending an existing comment to say
   that the future-stay cut-off now comes from the persisted club timezone and is
   re-encoded to UTC midnight because that is the only bound shape a `@db.Date`

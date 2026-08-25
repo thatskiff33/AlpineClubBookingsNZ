@@ -24,7 +24,10 @@ import {
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
 import { dateOnlyFromIsoString } from "@/lib/date-only"
-import { formatClubDate, parseCalendarDate } from "@/lib/club-time"
+import {
+  calendarDateOfSerialisedDbDateOrNull,
+  formatClubDate,
+} from "@/lib/club-time"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
 
 /**
@@ -42,7 +45,7 @@ import { DAY_LABELS, type MinStayPolicy } from "./types"
  * Greenwich, and a day early for any club west of it.
  */
 function formatPolicyDate(value: string): string {
-  const day = parseCalendarDate(dateOnlyFromIsoString(value))
+  const day = calendarDateOfSerialisedDbDateOrNull(value)
   return day === null ? value : formatClubDate(day)
 }
 

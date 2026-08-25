@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { endOfClubDayExclusive, requireCalendarDate, startOfClubDay } from "@/lib/club-time";
+import { endOfClubDayInclusive, requireCalendarDate, startOfClubDay } from "@/lib/club-time";
 import { clubTimeZone } from "@/lib/club-time/server";
 import { formatDateOnly, isDateOnlyString } from "@/lib/date-only";
 import type { Prisma } from "@prisma/client";
@@ -128,11 +128,11 @@ export async function GET(
   // boundaries in the PERSISTED club timezone (CT-4, #2870; INV-CONFIG-002), not the
   // container's. `from`/`to` already passed `isDateOnlyString` above, so the brand
   // cannot be refused here. The end keeps the INCLUSIVE last millisecond the `lte`
-  // filter has always used; the kernel's own boundary is half-open, hence the -1.
+  // filter has always used, through the kernel's own named inclusive bound.
   const zone = await clubTimeZone();
   const createdAtFilter: Prisma.DateTimeFilter = {};
   if (from) createdAtFilter.gte = startOfClubDay(requireCalendarDate(from), zone);
-  if (to) createdAtFilter.lte = new Date(endOfClubDayExclusive(requireCalendarDate(to), zone).getTime() - 1);
+  if (to) createdAtFilter.lte = endOfClubDayInclusive(requireCalendarDate(to), zone);
 
   const filteredWhere: Prisma.PromoRedemptionWhereInput = {
     promoCodeId: id,

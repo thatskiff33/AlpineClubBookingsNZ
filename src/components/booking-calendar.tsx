@@ -4,14 +4,17 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { useClubTime } from "@/components/club-time-provider";
-import { APP_LOCALE } from "@/config/operational";
 import {
   addCalendarDays,
+  calendarDateFromParts,
   calendarDateParts,
+  calendarDayOfWeek,
+  daysInCalendarMonth,
+  formatClubLongWeekdayDate,
   formatClubMonthYear,
   requireCalendarDate,
 } from "@/lib/club-time";
-import { formatCalendarDayOnly, parseDateOnly } from "@/lib/date-only";
+import { formatCalendarDayOnly } from "@/lib/date-only";
 
 /**
  * A day button's accessible name, spelled out in full — long weekday, long month
@@ -19,38 +22,26 @@ import { formatCalendarDayOnly, parseDateOnly } from "@/lib/date-only";
  * cell context (#2264). The kernel's medium and weekday shapes abbreviate, which
  * would make the announcement harder to follow.
  *
- * PINNED TO UTC, NOT TO THE CLUB'S ZONE, AND THAT IS THE FIX (CT-4, #2870;
- * INV-DATE-010). What it renders is a CALENDAR DAY, carried as a `yyyy-MM-dd`
- * string and parsed at UTC midnight below, so a UTC-pinned formatter is the
- * IDENTITY: it reads back exactly the day it was handed, in every zone. The
- * constant this replaces pinned `APP_TIME_ZONE`, which is the identity only for
- * a club east of Greenwich and a day early for any club west of it — the same
- * defect `formatClubDate` and friends exist to remove.
+ * NO ZONE AT ALL, WHICH IS THE FIX (CT-4, #2870). What it renders is a CALENDAR
+ * DAY, carried as a `yyyy-MM-dd` string, so it goes to a calendar-date shape,
+ * which takes no zone and cannot be moved by one. This file used to hold a local
+ * `Intl.DateTimeFormat` pinned to UTC over the UTC-midnight encoding, and before
+ * that one pinned to `APP_TIME_ZONE` — the identity only for a club east of
+ * Greenwich, and a day early for any club west of it.
  *
- * IT IS STILL A LOCAL `Intl.DateTimeFormat` BECAUSE THE KERNEL HAS NO SUCH
- * SHAPE. `HOUSE_SHAPES` in `club-time/intl.ts` declares `longWeekdayDayMonth`
- * ("Thursday, 16 April") but nothing carrying the YEAR as well, and adding a
- * shape means editing `src/lib/club-time/**`, which belongs to the last group of
- * this migration. Composing the year on ("… 16 April" + " 2026") happens to be
- * byte-identical for `en-NZ` and is NOT safe in general: `APP_LOCALE` is
- * configurable and a locale that orders or punctuates the pair differently would
- * silently change every day button — the exact hazard `formatClubWeekdayDay`'s
- * own docblock records. The missing shape is recorded on **#2870**, in this
- * group's hand-off list to the kernel group; when it lands, this becomes one
- * call.
+ * IT IS ONE CALL NOW because CT-4's `src/lib` group added the missing shape:
+ * `HOUSE_SHAPES.longWeekdayDate` carries the long weekday, the long month AND
+ * the year, declared as one shape rather than composed from
+ * `longWeekdayDayMonth` plus the year — which is byte-identical for `en-NZ` and
+ * not safe for a configurable `APP_LOCALE`, the exact hazard
+ * `formatClubWeekdayDay`'s own docblock records.
  */
-const DAY_BUTTON_DATE_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
 
 // #2474: the cells below are abstract calendar days (lodge nights), carried as
-// NZ date-only strings end-to-end — never a local-midnight `Date`. A club-pinned
-// formatter reads one via `parseDateOnly` (UTC midnight → club midday → the same
-// calendar day in every browser zone).
+// NZ date-only strings end-to-end — never a local-midnight `Date`. CT-4 (#2870)
+// removed the last step of that journey: they are now handed to the kernel's
+// calendar-date shapes as strings, so no `Date` is constructed and no zone is
+// consulted at any point.
 
 interface SeasonInfo {
   name: string;
@@ -131,8 +122,20 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     };
   }, [currentMonth.month, currentMonth.year, lodgeId]);
 
-  const daysInMonth = new Date(currentMonth.year, currentMonth.month + 1, 0).getDate();
-  const firstDay = new Date(currentMonth.year, currentMonth.month, 1).getDay();
+  // The grid's two facts are calendar-day facts, so the kernel answers both and
+  // no `Date` is built (CT-4, #2870). The spelling this replaces was
+  // host-local-midnight in and host-local out, which is self-consistent and
+  // therefore correct — but it is the shape from which the next author reaches
+  // for a UTC-midnight value and keeps `.getDay()`, shifting the whole grid by a
+  // column for every viewer west of Greenwich. `currentMonth.month` stays
+  // 0-based, matching `Date.getMonth()`; the kernel counts months 1-12.
+  const daysInMonth = daysInCalendarMonth(
+    currentMonth.year,
+    currentMonth.month + 1,
+  );
+  const firstDay = calendarDayOfWeek(
+    calendarDateFromParts(currentMonth.year, currentMonth.month + 1, 1),
+  );
   // Adjust for Monday start (0=Mon, 6=Sun)
   const startOffset = firstDay === 0 ? 6 : firstDay - 1;
 
@@ -283,7 +286,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           // still inside the retroactive window is clickable but muted (#1695).
           const isPast = dateStr < minSelectableStr;
           const isRetroPast = allowPastDates && !isPast && dateStr < todayStr;
-          const dateLabel = DAY_BUTTON_DATE_LABEL.format(parseDateOnly(dateStr));
+          const dateLabel = formatClubLongWeekdayDate(requireCalendarDate(dateStr));
           const isCheckIn = Boolean(checkIn && dateStr === checkIn);
           const isCheckOut = Boolean(checkOut && dateStr === checkOut);
           const inRange = Boolean(

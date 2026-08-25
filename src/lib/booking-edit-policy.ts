@@ -1,28 +1,6 @@
 import { BookingStatus } from "@prisma/client";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
-import {
-  calendarDateOfDateOnlyInstant,
-  dateOnlyInstantOf,
-} from "@/lib/club-time";
-
-/**
- * The calendar day a `@db.Date` column stores, back as a date-only `Date`.
- *
- * CT-4 (#2870): a stored calendar day is decoded and re-encoded in UTC and takes
- * no timezone (`INV-DATE-010`, `INV-DATE-026`). `normalizeDateOnlyForTimeZone`,
- * which this replaces, projected it through `APP_TIME_ZONE` first — the identity
- * for a club ahead of Greenwich, the PREVIOUS day for one behind it.
- *
- * It matters here because `editableFrom` is handed BACK to callers that then
- * compare it against the same booking's dates decoded their own way.
- * `/api/bookings/[id]/modify-quote` does exactly that one call later, so with
- * this line projecting and that one not, the same stored `checkIn` was two
- * different days a few lines apart and the self-service check-out lock ran a day
- * wide.
- */
-function storedDateOnly(value: Date): Date {
-  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(value));
-}
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 const MEMBER_FUTURE_EDIT_STATUSES = new Set<string>([
   BookingStatus.PENDING,

@@ -85,7 +85,7 @@ reason: the invoice due date now takes the club's zone explicitly, so the zone i
   it is hoisted, which is the property a future reader is most likely to undo.
 
 file: src/lib/xero-contacts.ts
-lines: 1890
+lines: 1905
 reason: `getContactFirstInvoiceDate` is the original defect this issue was filed
   for, and the fourteen lines are its docblock. The function body got SHORTER —
   a five-line parse became one call to the boundary. The explanation has to sit

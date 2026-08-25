@@ -68,6 +68,13 @@ x-app-environment: &app-environment
   # first cut of #3035 shipped an E2E stack whose mailbox stayed empty.
   # Defaults false — a capture transport is a declaration, never an inference.
   USE_LOCAL_CAPTURE: ${USE_LOCAL_CAPTURE:-false}
+  # Allows the capture declaration above when EMAIL_SERVER_HOST is a host on the
+  # public internet (#3071 review). Listed HERE for exactly the reason the comment
+  # above gives: a variable absent from this map does not reach the container, so
+  # an operator setting it in an env file would find their capture still refused
+  # and nothing explaining why. Defaults false — the refusal is the safe answer,
+  # and overriding it asserts something no check can verify.
+  EMAIL_CAPTURE_ALLOW_PUBLIC_HOST: ${EMAIL_CAPTURE_ALLOW_PUBLIC_HOST:-false}
   EMAIL_SERVER_HOST: ${EMAIL_SERVER_HOST:-}
   EMAIL_SERVER_PORT: ${EMAIL_SERVER_PORT:-}
   EMAIL_SERVER_USER: ${EMAIL_SERVER_USER:-}

@@ -259,6 +259,50 @@ export function calendarMonthOf(date: CalendarDate): string {
 }
 
 /**
+ * The first day of the calendar month `date` falls in.
+ *
+ * "The first of this month" is a calendar-day question, so it is answered here
+ * rather than by whichever module happens to be drawing a grid. The two
+ * spellings this replaces both went through a `Date`:
+ * `parseDateOnly(`${formatMonthOnly(d)}-01`)` and
+ * `new Date(d.getFullYear(), d.getMonth(), 1)`. The second is host-local
+ * midnight, so on a behind-UTC host it is the previous month's last day for the
+ * first of a month — which is the whole class this kernel exists to remove.
+ *
+ * Cannot throw: the year is the one `date` already carries, and day 1 exists in
+ * every month.
+ */
+export function startOfCalendarMonth(date: CalendarDate): CalendarDate {
+  const { year, month } = calendarDateParts(date);
+  return compose(year, month, 1);
+}
+
+/**
+ * The day of the week a calendar day falls on: `0` for Sunday through `6` for
+ * Saturday, which is `Date.prototype.getUTCDay`'s numbering.
+ *
+ * NO `Date` IS CONSTRUCTED, which is the point rather than a detail. The
+ * spellings this replaces are `dateOnlyInstantOf(date).getUTCDay()` — correct,
+ * but it mints an instant to ask a question a calendar day already answers — and
+ * `new Date(y, m, 1).getDay()`, which is host-local midnight and therefore
+ * reports the PREVIOUS day's weekday for any host far enough west. A month grid
+ * built on the second shifts by a whole column, invisibly, on exactly the hosts
+ * this epic exists to stop mattering.
+ *
+ * The offset is 4 because 1970-01-01 — day number 0 — was a Thursday. The double
+ * modulo is for a pre-epoch date, whose day number is negative and whose
+ * remainder in JavaScript therefore is too.
+ *
+ * `getUTCDay`'s numbering rather than ISO's 1-7 because every call site in this
+ * tree already reads that convention, and a helper that silently renumbered
+ * would be a defect wearing a green suite.
+ */
+export function calendarDayOfWeek(date: CalendarDate): number {
+  const { year, month, day } = calendarDateParts(date);
+  return (((daysFromCivil(year, month, day) + 4) % 7) + 7) % 7;
+}
+
+/**
  * Whole calendar days later (or earlier, for a negative `days`).
  *
  * Throws a `RangeError` for a fractional or non-finite step, and for a step that

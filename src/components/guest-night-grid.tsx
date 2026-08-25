@@ -1,8 +1,11 @@
 "use client";
 
 import { formatCents } from "@/lib/utils";
-import { APP_LOCALE } from "@/config/operational";
-import { formatClubWeekday, requireCalendarDate } from "@/lib/club-time";
+import {
+  formatClubDayMonth,
+  formatClubWeekday,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 /**
  * A night column is two stacked lines — weekday above, day-and-month below — so
@@ -17,18 +20,12 @@ import { formatClubWeekday, requireCalendarDate } from "@/lib/club-time";
  * weekday half is now the kernel's own `formatClubWeekday`, which takes no zone
  * at all and makes the reasoning structural instead of a comment.
  *
- * THE DAY-AND-MONTH HALF STAYS LOCAL, because the kernel declares no "16 Apr"
- * shape — `HOUSE_SHAPES.date` is "16 Apr 2026" and there is nothing between it
- * and the bare weekday. Adding one means editing `src/lib/club-time/**`, which
- * belongs to the last group of this migration; the missing shape is recorded on
- * **#2870**, in this group's hand-off list to the kernel group. Until then this
- * is the same UTC-pinned identity, not a second zone authority.
+ * BOTH HALVES ARE NOW THE KERNEL'S. The day-and-month half used to be a local
+ * `Intl.DateTimeFormat` for want of a "16 Apr" shape — `HOUSE_SHAPES.date` is
+ * "16 Apr 2026" and there was nothing between it and the bare weekday. CT-4's
+ * `src/lib` group added `dayMonth` with byte-identical options, so this file now
+ * builds no formatter and constructs no `Date` at all.
  */
-const NIGHT_COLUMN_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
 
 /**
  * Per-guest night picker grid (issue #713 — multi date range stays).
@@ -59,7 +56,7 @@ function nightColumnLabel(nightKey: string): { weekday: string; day: string } {
   const day = requireCalendarDate(nightKey);
   return {
     weekday: formatClubWeekday(day),
-    day: NIGHT_COLUMN_DAY.format(new Date(`${day}T00:00:00.000Z`)),
+    day: formatClubDayMonth(day),
   };
 }
 

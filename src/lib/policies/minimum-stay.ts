@@ -1,3 +1,7 @@
+import {
+  calendarDateOfDateOnlyInstant,
+  calendarDayOfWeek,
+} from "@/lib/club-time";
 import { getStayNights } from "./pricing";
 import {
   aggregatePolicyExceptionViolations,
@@ -50,10 +54,14 @@ export function getMinimumStayViolations(
   const violations: MinimumStayViolation[] = [];
 
   for (const policy of policies) {
-    // Date-only values are UTC midnight by contract. getUTCDay prevents the
-    // host machine's timezone from changing which weekday activates a policy.
+    // Date-only values are UTC midnight by contract, so the weekday belongs to
+    // the DAY they encode. The kernel decodes that day and answers from its
+    // calendar text, so no host getter decides which weekday activates a policy
+    // (CT-4, #2870). `getStayNights` builds every night through
+    // `normalizeBookingDate`, which refuses a value it cannot decode, so the
+    // decode here cannot throw.
     const affected = nights.filter((night) => {
-      const dow = night.getUTCDay();
+      const dow = calendarDayOfWeek(calendarDateOfDateOnlyInstant(night));
       return (
         policy.triggerDays.includes(dow) &&
         dateRangesOverlap(night, night, policy.startDate, policy.endDate)
@@ -64,7 +72,11 @@ export function getMinimumStayViolations(
       // Find the first triggering day name for the message
       const triggerDayNames = [...new Set(
         policy.triggerDays
-          .filter((d) => affected.some((n) => n.getUTCDay() === d))
+          .filter((d) =>
+            affected.some(
+              (n) => calendarDayOfWeek(calendarDateOfDateOnlyInstant(n)) === d,
+            ),
+          )
           .map(dayName)
       )];
 

@@ -154,13 +154,33 @@ type EnvironmentSafetySettingsDelegate = {
   }) => Promise<PersistedEnvironmentSafetySettings | null>;
 };
 
-function environmentSafetySettingsDelegate():
-  | EnvironmentSafetySettingsDelegate
-  | undefined {
+/**
+ * A client the override can be read on: the global `prisma`, or a transaction
+ * client.
+ *
+ * WHY A CALLER IS EVER ALLOWED TO CHOOSE (#3071 review, hoppers99). The Xero
+ * group-settlement workflow resolves this policy, then opens a transaction taking
+ * the exclusive `pg_advisory_xact_lock(1)`, then asks Xero to email the invoice
+ * from inside it. The wait for that lock is unbounded — every other invoice run is
+ * queued on it — so the clearance it carried across could be arbitrarily stale,
+ * and the safer override switched on during the wait was not seen.
+ *
+ * It deliberately did NOT re-resolve, and the reason was sound as far as it went:
+ * a SECOND Prisma connection taken from inside that lock is a pool-timeout hazard
+ * while every queued writer holds one of its own. Reading on the TRANSACTION
+ * client dissolves that objection entirely — it takes no second connection,
+ * because it uses the one the transaction already holds.
+ */
+export type EnvironmentSafetySettingsStore = {
+  environmentSafetySettings?: EnvironmentSafetySettingsDelegate;
+};
+
+function environmentSafetySettingsDelegate(
+  store?: EnvironmentSafetySettingsStore,
+): EnvironmentSafetySettingsDelegate | undefined {
   return (
-    prisma as unknown as {
-      environmentSafetySettings?: EnvironmentSafetySettingsDelegate;
-    }
+    (store ??
+      (prisma as unknown as EnvironmentSafetySettingsStore))
   ).environmentSafetySettings;
 }
 
@@ -232,12 +252,14 @@ function logUnreadableOverride(error: unknown) {
   );
 }
 
-export async function loadPersistedEnvironmentSafetySettings(): Promise<
+export async function loadPersistedEnvironmentSafetySettings(
+  store?: EnvironmentSafetySettingsStore,
+): Promise<
   | PersistedEnvironmentSafetySettings
   | null
   | typeof ENVIRONMENT_SAFETY_SETTINGS_UNREADABLE
 > {
-  const delegate = environmentSafetySettingsDelegate();
+  const delegate = environmentSafetySettingsDelegate(store);
   /*
     A MISSING DELEGATE IS DELIBERATELY SILENT, unlike a thrown read. In
     production the delegate is generated from the same schema as this code, so
@@ -261,8 +283,10 @@ export async function loadPersistedEnvironmentSafetySettings(): Promise<
 }
 
 /** {@link loadPersistedEnvironmentSafetySettings}, classified. */
-export async function readEnvironmentRoleDatabaseOverride(): Promise<EnvironmentRoleDatabaseOverride> {
-  const row = await loadPersistedEnvironmentSafetySettings();
+export async function readEnvironmentRoleDatabaseOverride(
+  store?: EnvironmentSafetySettingsStore,
+): Promise<EnvironmentRoleDatabaseOverride> {
+  const row = await loadPersistedEnvironmentSafetySettings(store);
   if (row === ENVIRONMENT_SAFETY_SETTINGS_UNREADABLE) {
     return { kind: "unreadable" };
   }
@@ -414,10 +438,18 @@ export function decideEnvironmentRole(
  * one where it cannot change the answer, so an operator surface can always
  * report whether the override is on. See {@link decideEnvironmentRole} for why a
  * failed read on that one path changes nothing.
+ *
+ * `store` lets a caller inside a transaction read the override on that
+ * transaction's own client — see {@link EnvironmentSafetySettingsStore}. It
+ * changes WHICH connection answers and nothing about the answer: the declaration
+ * still comes from the process environment, and `decideEnvironmentRole` is the
+ * same pure function either way. Omit it everywhere else.
  */
-export async function resolveEnvironmentRole(): Promise<EnvironmentRoleResolution> {
+export async function resolveEnvironmentRole(
+  store?: EnvironmentSafetySettingsStore,
+): Promise<EnvironmentRoleResolution> {
   const declaration = readEnvironmentRoleDeclaration();
-  const databaseOverride = await readEnvironmentRoleDatabaseOverride();
+  const databaseOverride = await readEnvironmentRoleDatabaseOverride(store);
   return decideEnvironmentRole(declaration, databaseOverride);
 }
 

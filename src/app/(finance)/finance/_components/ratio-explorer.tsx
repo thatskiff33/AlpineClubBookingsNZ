@@ -22,25 +22,21 @@ import {
   formatDollarsDisplay,
   formatFinancePercent,
 } from "@/lib/finance-format";
-import { APP_LOCALE } from "@/config/operational";
+import { formatClubShortMonthYear, requireCalendarDate } from "@/lib/club-time";
 
 /*
-  Not one of the shared helpers: finance chart axes need the SHORT month
-  ("Apr 2026"), and the kernel's `monthYear` shape is the long one ("April
-  2026"). So the formatter stays local; what changed is the zone (CT-4, #2870).
+  Finance chart axes need the SHORT month ("Apr 2026"), where the kernel's
+  `monthYear` shape is the long one ("April 2026"). F3 (#3079) declared the short
+  bag as `shortMonthYear` for exactly the two call sites that were keeping a local
+  formatter, so this is now one kernel call (CT-4, #2870).
 
-  A MONTH IS A CALENDAR CONCEPT AND TAKES NO TIMEZONE. The only value handed to
-  this formatter is `${monthKey}-01T00:00:00.000Z` — the first day of a finance
-  month, encoded at UTC midnight — so pinning `UTC` over that encoding is
-  provably the identity, where `APP_TIME_ZONE` cancelled only because New
-  Zealand is east of Greenwich. For a club that is not, every axis label and
-  every range chip named the PREVIOUS month.
+  A MONTH IS A CALENDAR CONCEPT AND TAKES NO TIMEZONE. The value is the first day
+  of a finance month, so the shape pins `UTC` over the kernel's own UTC-midnight
+  encoding — provably the identity, where the local formatter's earlier
+  `APP_TIME_ZONE` pin cancelled only because New Zealand is east of Greenwich. For
+  a club that is not, every axis label and every range chip named the PREVIOUS
+  month.
 */
-const SHORT_MONTH_YEAR = new Intl.DateTimeFormat(APP_LOCALE, {
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
 
 const chartLoading = () => <div style={{ height: 300 }} />;
 const TrendChart = dynamic(
@@ -64,7 +60,7 @@ interface RangeChip {
 }
 
 function shortMonthLabel(monthKey: string) {
-  return SHORT_MONTH_YEAR.format(new Date(`${monthKey}-01T00:00:00.000Z`));
+  return formatClubShortMonthYear(requireCalendarDate(`${monthKey}-01`));
 }
 
 function defaultSeriesId(

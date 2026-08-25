@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useClubTime } from "@/components/club-time-provider";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
 import {
-  addMonths,
-  formatMonthTitle,
-  groupEventsByDay,
-  monthGridRange,
-  startOfMonth,
-} from "@/lib/calendar-client";
+  addCalendarMonths,
+  formatClubMonthYear,
+  startOfCalendarMonth,
+} from "@/lib/club-time";
+import type { CalendarDate } from "@/lib/club-time";
+import { groupEventsByDay, monthGridRange } from "@/lib/calendar-client";
 import { MonthCalendar } from "./month-calendar";
 import { EventDialog } from "./event-dialog";
 import { DayEventsDialog } from "./day-events-dialog";
@@ -32,7 +33,26 @@ export function CalendarView({
 }: CalendarViewProps) {
   const canCreate = canManage;
   const canEditExisting = canManage && allowEditExisting;
-  const [viewDate, setViewDate] = useState<Date>(() => startOfMonth(new Date()));
+  /*
+    The club's timezone, delivered as data by `ClubTimeProvider` (CT-4, #2870).
+    Everything below that touches a real instant — the fetch window, the day
+    buckets, "today" in the grid — reads it from here. A browser must never
+    answer "what day is it at the club?" from its own clock, which is exactly
+    what this view used to do: it opened on the READER's current month, asked the
+    API for the reader's own day window, and bucketed each event onto the reader's
+    calendar day. A member abroad was shown a grid a day out of step with the one
+    the lodge is on.
+  */
+  const club = useClubTime();
+  /*
+    The month on screen, held as the CALENDAR DAY it starts on rather than as a
+    `Date`. A month heading and a 42-cell grid are statements about calendar
+    days; carrying a `Date` here is what made `getFullYear()`/`getMonth()` look
+    reasonable, and it also removes the 0-based-month footgun that came with it.
+  */
+  const [monthStart, setMonthStart] = useState<CalendarDate>(() =>
+    startOfCalendarMonth(club.today()),
+  );
   const [events, setEvents] = useState<CalendarEventDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -41,18 +61,17 @@ export function CalendarView({
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventDTO | null>(
     null,
   );
-  const [createDate, setCreateDate] = useState<string | null>(null);
+  const [createDate, setCreateDate] = useState<CalendarDate | null>(null);
 
   // Day-detail overflow list ("+N more"): the day whose full event list is open.
-  const [dayDetailKey, setDayDetailKey] = useState<string | null>(null);
+  const [dayDetailKey, setDayDetailKey] = useState<CalendarDate | null>(null);
 
-  const year = viewDate.getFullYear();
-  const month = viewDate.getMonth();
+  const monthTitle = formatClubMonthYear(monthStart);
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
-    const { from, to } = monthGridRange(year, month);
+    const { from, to } = monthGridRange(monthStart, club.zone);
     try {
       const params = new URLSearchParams({
         from: from.toISOString(),
@@ -72,15 +91,18 @@ export function CalendarView({
     } finally {
       setLoading(false);
     }
-  }, [year, month]);
+  }, [monthStart, club.zone]);
 
   useEffect(() => {
     fetchEvents();
   }, [fetchEvents]);
 
-  const eventsByDay = useMemo(() => groupEventsByDay(events), [events]);
+  const eventsByDay = useMemo(
+    () => groupEventsByDay(events, club.zone),
+    [events, club.zone],
+  );
 
-  function openCreate(dayKey: string | null) {
+  function openCreate(dayKey: CalendarDate | null) {
     setSelectedEvent(null);
     setCreateDate(dayKey);
     setDialogOpen(true);
@@ -99,7 +121,7 @@ export function CalendarView({
     openEvent(event);
   }
 
-  function createFromDay(dayKey: string) {
+  function createFromDay(dayKey: CalendarDate) {
     setDayDetailKey(null);
     openCreate(dayKey);
   }
@@ -112,7 +134,7 @@ export function CalendarView({
             variant="outline"
             size="icon"
             aria-label="Previous month"
-            onClick={() => setViewDate((d) => addMonths(d, -1))}
+            onClick={() => setMonthStart((m) => addCalendarMonths(m, -1))}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -120,19 +142,19 @@ export function CalendarView({
             variant="outline"
             size="icon"
             aria-label="Next month"
-            onClick={() => setViewDate((d) => addMonths(d, 1))}
+            onClick={() => setMonthStart((m) => addCalendarMonths(m, 1))}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setViewDate(startOfMonth(new Date()))}
+            onClick={() => setMonthStart(startOfCalendarMonth(club.today()))}
           >
             Today
           </Button>
           <h2 className="ml-1 text-lg font-semibold text-foreground">
-            {formatMonthTitle(year, month)}
+            {monthTitle}
           </h2>
           {loading && (
             <span className="text-xs text-muted-foreground">Loading…</span>
@@ -141,10 +163,10 @@ export function CalendarView({
               grid re-renders without moving focus. */}
           <span className="sr-only" role="status" aria-live="polite">
             {loading
-              ? `Loading ${formatMonthTitle(year, month)}`
+              ? `Loading ${monthTitle}`
               : loadError
-                ? `Could not load events for ${formatMonthTitle(year, month)}`
-                : `Showing ${formatMonthTitle(year, month)}`}
+                ? `Could not load events for ${monthTitle}`
+                : `Showing ${monthTitle}`}
           </span>
         </div>
 
@@ -169,8 +191,7 @@ export function CalendarView({
       )}
 
       <MonthCalendar
-        year={year}
-        month={month}
+        monthStart={monthStart}
         eventsByDay={eventsByDay}
         canCreate={canCreate}
         onSelectEvent={openEvent}

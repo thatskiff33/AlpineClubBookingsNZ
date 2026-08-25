@@ -13,8 +13,10 @@ import {
   membershipCancellationBlockerHint,
   type MembershipCancellationBlocker,
 } from "@/lib/membership-cancellation-blocker-messages";
-import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 
 /**
  * Everything standing between this participant and an approval, in the server's
@@ -48,7 +50,7 @@ const PANEL_BLOCKER_LIMIT = 20;
  * east of Greenwich, the PREVIOUS DAY for any club west of it.
  */
 function formatDateOnly(value: string) {
-  return formatClubDate(requireCalendarDate(dateOnlyFromIsoString(value)));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 /** Stable list key across every blocker kind. */

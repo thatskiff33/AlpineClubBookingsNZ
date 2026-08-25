@@ -178,6 +178,68 @@ as a copy from that page; it can only ever make the answer safer, and every
 change either way is audited (`ENVIRONMENT_SAFETY_OVERRIDE_UPDATED`). Full
 walkthrough: `docs/guides/environment-role.md`.
 
+### If any copy of your site uses a capture mailbox, check `EMAIL_SERVER_HOST` (#3071)
+
+**This is for installations that already had `USE_SMTP_RELAY=true` working before
+they declared a capture mailbox. If that is you, one of your copies may have been
+emailing real members while its logs said otherwise, and this release refuses that
+configuration rather than obeying it.**
+
+**What was wrong.** `USE_LOCAL_CAPTURE=true` declares that `EMAIL_SERVER_HOST` is
+a sink that forwards mail nowhere, which is what lets a copy transmit at all. But
+the two settings were read as one pair with no check between them, so an
+installation that flipped the flag and left the host pointed at its real relay got
+the *permission* without the *sink*. The delivery boundary answered "allowed —
+capture", the mail went to the relay, the relay delivered it to real members, and
+the log recorded that the message had reached nobody. Our own repair messages made
+that easy to walk into: they said to declare `USE_LOCAL_CAPTURE=true` and did not
+mention the host.
+
+**What to do, on every copy** — staging, rehearsal stacks, developer machines.
+Look at the two settings together:
+
+```
+USE_LOCAL_CAPTURE=true
+EMAIL_SERVER_HOST=<must be the capture, not your relay>
+```
+
+Point `EMAIL_SERVER_HOST` (and `EMAIL_SERVER_PORT`, `EMAIL_SERVER_USER`,
+`EMAIL_SERVER_PASSWORD`) at the capture mailbox itself. A container or service
+name (`mailpit`, `mailhog`), `localhost`, or any private address is accepted with
+nothing further to do. If that host really does deliver mail, set
+`USE_SMTP_RELAY=true` instead — the copy then holds every message back, which is
+the correct behaviour for a copy pointed at a live provider.
+
+**If you leave it as it was, nothing is sent.** From this release the combination
+is refused: each message is recorded as failed, carrying a reason that names
+`EMAIL_SERVER_HOST`, and it goes out by itself once the host is corrected. Mail is
+delayed rather than lost — except for the messages that keep no stored copy (a
+sign-in link, a door code, a payment link), which are listed under **Admin →
+Email** for a manual re-send, as they always are.
+
+**If your capture genuinely has a public name.** Some sinks legitimately do — a
+mailpit reachable only at a public DNS name. Declare
+`EMAIL_CAPTURE_ALLOW_PUBLIC_HOST=true` alongside the capture flag. Only do that
+once you have confirmed the host cannot deliver onward; nothing checks it, and
+nothing can. Note that a mail server on a *private* address can relay outward too,
+so the private-address case is accepted rather than proven safe — the declaration
+is what carries it either way.
+
+**The club's live site is unaffected**, and cannot reach this state: a deployment
+declaring `APP_ENVIRONMENT_ROLE=production` together with `USE_LOCAL_CAPTURE=true`
+was already refused before this release, for its own reason.
+
+**One new enum value, no data change.** The migration
+`20260901010000_add_capture_transport_public_host_block_reason` registers one
+label on an existing type so the new refusal can be recorded distinguishably from
+every other reason a message was not sent. It writes no rows and alters no table.
+Full analysis, including the one old-code read window during a blue/green drain,
+is in `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`.
+
+Reported by an external reviewer running the only real staging deployment of this
+application — the failure needs an *existing* relay configuration to upgrade from,
+which no fresh install and no test fixture reproduces.
+
 ### The club's time zone moves into the database (#2989, epic #2988)
 
 **Nothing changes for your deployment at this upgrade. That is the point of how

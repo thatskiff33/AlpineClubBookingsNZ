@@ -1,4 +1,11 @@
 # File-size allowances for CT-4b (#2870 — non-admin API routes onto club time)
+> **Line counts refreshed by CT-4 group F3 (#2870).** That group hoisted the
+> shared helpers these files each wrote out privately, so several of them are now
+> SHORTER than this file recorded and four are two or three lines longer where a
+> two-line import pair became one multi-line import. The gate requires
+> `lines:` to equal the file's real length, so the numbers below were reset to
+> what the tree holds; nothing about the reasoning above changed, and no file
+> here crossed a ceiling it was not already over.
 
 Nine already-over-budget route handlers grow here, by 87 lines between them.
 **Every one of those lines is a comment, an import, or the same three-line
@@ -74,7 +81,7 @@ reason: seventeen lines on a 355-line route that is not restructured here.
   the right one in New Zealand.
 
 file: src/app/api/bookings/[id]/change-requests/route.ts
-lines: 587
+lines: 575
 reason: twenty-three lines on a 564-line route, of which nine are the shared
   `storedDateOnly` helper and its doc. That helper belongs in `src/lib/**`, which
   CT-4f owns and which must move last so the five groups ahead of it are not
@@ -87,20 +94,19 @@ reason: twenty-three lines on a 564-line route, of which nine are the shared
   which half of that policy moved and which half is CT-6's.
 
 file: src/app/api/bookings/[id]/exception-requests/route.ts
-lines: 302
+lines: 287
 reason: sixteen lines on a 286-line route, nine of them the same
   `storedDateOnly` helper and doc that CT-4f will hoist into `src/lib/**`, the
   rest the club-time import. The route freezes a proposal an officer later
   approves, so what the stored stay days mean is exactly the thing worth stating
   where it happens.
 
-file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2346
-reason: fifteen lines on a 2331-line route, nine of them the shared
-  `storedDateOnly` helper awaiting its CT-4f home in `src/lib/**`. This file has
-  thirteen separate reads of a stored `@db.Date` stay day; a local helper with
-  one doc is smaller than annotating them, and splitting a 2300-line quoting
-  route is a substantial refactor that has nothing to do with timezones.
+<!-- The `modify-quote/route.ts` entry that stood here is DELETED, not
+     re-numbered. Its own reason said the nine lines it covered were the shared
+     `storedDateOnly` helper "awaiting its CT-4f home in `src/lib/**`"; group F3
+     (#2870) gave it that home, so the route is now shorter than the base ref and
+     needs no allowance. An allowance is one-shot, and one left behind after its
+     growth is undone is a stored exception. -->
 
 file: src/app/api/bookings/route.ts
 lines: 1359
@@ -126,7 +132,7 @@ reason: five lines on a 394-line route — a four-line comment and an import —
   zone; both halves are one line apart and both have been got wrong here before.
 
 file: src/app/api/members/family/create-group/route.ts
-lines: 498
+lines: 496
 reason: six lines on a 491-line route: the same four-line comment on the same
   future-date-of-birth gate, plus the club-time imports. This route applies the
   gate per child in a loop, so the note sits at the single place the day is
@@ -155,7 +161,7 @@ reason: fifteen lines on an already-oversized create service, of which thirteen
   and an entirely separate one.
 
 file: src/lib/booking-exception-approval.ts
-lines: 1064
+lines: 1050
 reason: twenty-one lines on an already-oversized module: nine are the same
   `storedDateOnly` helper and doc the three routes carry, awaiting CT-4f's single
   home for it in `src/lib/**`, and eleven are the comment on the five decodes that
