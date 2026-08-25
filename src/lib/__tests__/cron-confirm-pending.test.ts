@@ -144,9 +144,13 @@ const mockRevokePaymentLinksForBooking = vi.fn().mockResolvedValue(0);
 // #1967: the settlement cron mints a guest-portion payment link for a split
 // child with no card on file (default: first transition — returns a fresh
 // link), and revokes a just-minted link by id when the member email fails.
+// `expiresAt` is part of the mint's contract since #2870: the caller emails the
+// instant the row really holds rather than deriving the boundary again.
+const MINTED_LINK_EXPIRES_AT = new Date("2026-08-02T11:59:59.999Z");
 const mockMintSplitGuestPaymentLinkIfAbsent = vi.fn().mockResolvedValue({
   token: "tok_split_1",
   paymentLinkId: "pl_split_1",
+  expiresAt: MINTED_LINK_EXPIRES_AT,
 });
 const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
@@ -442,6 +446,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({
       token: "tok_split_1",
       paymentLinkId: "pl_split_1",
+      expiresAt: MINTED_LINK_EXPIRES_AT,
     });
     mockRevokePaymentLinkById.mockResolvedValue(1);
     mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
@@ -1519,7 +1524,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     // extended via the status-guarded claim.
     expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn })
+      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn }),
+      // #2870: the zone is threaded in, never read under the lock.
+      expect.any(String)
     );
     expect(mockBookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1536,6 +1543,10 @@ describe("Cron: Confirm Pending Bookings", () => {
         priceCents: 12000,
         guestCount: 2,
         bookingReference: "child_1",
+        // #2870: the email states the instant the ROW holds. A second
+        // derivation here is what let the page, the email and the stored value
+        // mean three different moments.
+        expiresAt: MINTED_LINK_EXPIRES_AT,
       })
     );
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
@@ -1882,6 +1893,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         return {
           token: `tok_${mintCounter}`,
           paymentLinkId: `pl_${mintCounter}`,
+          expiresAt: MINTED_LINK_EXPIRES_AT,
         };
       }
     );
