@@ -20,12 +20,17 @@ import {
 /**
  * #2684 — the date-only ENCODING guard, second arm.
  *
- * ENFORCES INV-DATE-010 and INV-DATE-019
- * (`docs/invariants/booking-dates-and-capacity.md`), which name this file and
- * the `no-restricted-syntax` rules in `eslint.config.mjs` as their two
- * enforcement arms. Every assertion repeats the id in its failure message so
- * whoever trips one is handed the rule rather than having to go and find it
- * (#2691).
+ * ENFORCES INV-DATE-019 — the flat prohibition on truncating a `DateTime` — over
+ * the columns INV-DATE-026 establishes as calendar days, whose UTC midnight is an
+ * encoding rather than a moment (INV-DATE-010). All three are in
+ * `docs/invariants/booking-dates-and-capacity.md`, and INV-DATE-026 is the one
+ * that names this file, for the `DATE_ONLY_IN_DATETIME_COLUMN` entry it fails
+ * when the entry outlives its fix. It and the `no-restricted-syntax` rules in
+ * `eslint.config.mjs` are the two enforcement arms, which is this file's own
+ * claim and not something an invariant asserts (#3080 — an earlier version said
+ * INV-DATE-010 and INV-DATE-019 named them, and neither does). Every assertion
+ * repeats the id in its failure message so whoever trips one is handed the rule
+ * rather than having to go and find it (#2691).
  *
  * THE TWO ARMS DIVIDE ALONG WHAT EACH CAN SEE.
  *
@@ -35,8 +40,9 @@ import {
  * value.
  *
  * It cannot see MEANING, and meaning is the whole defect. `formatDateOnly` is
- * correct for a `@db.Date` column, whose UTC midnight is the ENCODING of an NZ
- * calendar day (INV-DATE-010), and wrong for a bare `DateTime`, which is a real
+ * correct for a `@db.Date` column, whose UTC midnight is the ENCODING of a CLUB
+ * calendar day (INV-DATE-010 — the rule's own word, because the day is the
+ * club's and not New Zealand's), and wrong for a bare `DateTime`, which is a real
  * instant whose UTC day is the PREVIOUS New Zealand day for roughly the first
  * half of every NZ day (INV-DATE-019). The two are identical in syntax. A Xero
  * invoice due date and a finance export were both a day early for exactly this
