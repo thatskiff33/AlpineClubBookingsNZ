@@ -29,7 +29,13 @@ import {
   parseApplicationFamilyMembers,
   type ApplicationFamilyMember,
 } from "@/lib/nomination";
+import {
+  applicationDateOfBirthDay,
+  dependentSubject,
+  unreadableDateOfBirthRefusal,
+} from "@/lib/member-application-date-of-birth";
 import { formatDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 
 // personDecisionsSchema, personDecisionSchema, refKey, resolvePersonDecisions,
 // PersonDecisionInput, and DecisionResolution used to be re-exported here too,
@@ -406,11 +412,27 @@ export async function computeApprovalMappingOutcomes(params: {
 
   const applicantPhone = parseApplicantPhone(application.applicantPhone);
   const applicantAddress = parseApplicationAddress(application.applicantAddress);
-  const applicantAgeTier = computeAgeTierWithSettings(
-    application.applicantDateOfBirth,
-    seasonStart,
-    ageTierSettings,
+  // A DATE OF BIRTH THAT NAMES NO REAL DAY IS A BLOCKING ERROR, NOT A THROW
+  // (#3082). This function is the approval PREVIEW as well as the approval's own
+  // recompute, so throwing would blank the surface an admin needs in order to
+  // act; `blockingErrors` already means "cannot proceed, and here is why", and
+  // `approveMemberApplication` turns the first one into a 409 carrying the same
+  // sentence. Why the value can be malformed at all, and why the read schema
+  // stays loose: `member-application-date-of-birth.ts`.
+  const dateOfBirthErrors: string[] = [];
+  const applicantDayOfBirth = applicationDateOfBirthDay(
+    formatDateOnly(application.applicantDateOfBirth),
   );
+  if (!applicantDayOfBirth) {
+    dateOfBirthErrors.push(unreadableDateOfBirthRefusal("The applicant"));
+  }
+  const applicantAgeTier: AgeTier = applicantDayOfBirth
+    ? computeAgeTierWithSettings(
+        dateOnlyInstantOf(applicantDayOfBirth),
+        seasonStart,
+        ageTierSettings,
+      )
+    : "ADULT";
 
   const persons: PersonOutcome[] = [];
 
@@ -456,14 +478,25 @@ export async function computeApprovalMappingOutcomes(params: {
     const label = familyMember
       ? `${familyMember.firstName} ${familyMember.lastName}`.trim()
       : `Dependent ${ref.index + 1}`;
+    // BEFORE the CREATE early return: only the MAP branch computes a tier from
+    // this, but the approval writes the date on BOTH paths, so the preview has to
+    // report it either way.
+    const familyDayOfBirth = familyMember
+      ? applicationDateOfBirthDay(familyMember.dateOfBirth)
+      : null;
+    if (familyMember && !familyDayOfBirth) {
+      dateOfBirthErrors.push(
+        unreadableDateOfBirthRefusal(dependentSubject(familyMember, ref.index)),
+      );
+    }
     if (decision.mode === "CREATE") {
       persons.push(baseCreateOutcome(ref, label, []));
       continue;
     }
     const target = targetsById.get(decision.memberId);
-    const familyAgeTier = familyMember
+    const familyAgeTier: AgeTier = familyDayOfBirth
       ? computeAgeTierWithSettings(
-          new Date(familyMember.dateOfBirth),
+          dateOnlyInstantOf(familyDayOfBirth),
           seasonStart,
           ageTierSettings,
         )
@@ -487,8 +520,11 @@ export async function computeApprovalMappingOutcomes(params: {
     );
   }
 
+  // Date-of-birth refusals first, then the cross-person checks: the same order in
+  // the preview and in the approval's recompute, because this array is part of the
+  // tokenised outcome and a reordering would read as drift.
+  const blockingErrors: string[] = [...dateOfBirthErrors];
   // Cross-person: the same existing member must not be mapped to two people.
-  const blockingErrors: string[] = [];
   const targetCounts = new Map<string, number>();
   for (const person of persons) {
     if (person.targetMemberId) {

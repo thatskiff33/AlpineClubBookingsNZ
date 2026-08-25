@@ -73,6 +73,7 @@ export {
   isInstant,
   parseInstant,
   requireInstant,
+  requireStoredCalendarDay,
 } from "./instant";
 
 export {

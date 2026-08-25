@@ -3,8 +3,9 @@ import { prisma } from "./prisma";
 import {
   computeAgeTierWithSettings,
   getAgeTierSettings,
-  getSeasonStartDate,
+  getSeasonStartCalendarDate,
 } from "./age-tier";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "./club-time-zone-runtime";
 import { clubSeasonYear } from "./financial-year";
 import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
@@ -309,7 +310,11 @@ export async function checkAgeUpMembers(): Promise<{
   failed: number;
 }> {
   const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
-  const seasonStart = getSeasonStartDate(seasonYear);
+  // ONE season-start calendar day for the prefilter AND the authority (#3082).
+  // The bound below and `computeAgeTierWithSettings` further down used to read
+  // two different frames off the same value; they now read the same day.
+  const seasonStartDay = getSeasonStartCalendarDate(seasonYear);
+  const seasonStart = dateOnlyInstantOf(seasonStartDay);
   const ageTierSettings = await getAgeTierSettings();
   const adultAgeTierSetting = ageTierSettings.find(
     (setting) => setting.tier === "ADULT"
@@ -318,13 +323,15 @@ export async function checkAgeUpMembers(): Promise<{
   const targetAgeTierMinAge = adultAgeTierSetting?.minAge ?? 18;
 
   // Find non-login members whose DOB puts them in the ADULT tier on season start.
-  // The bound comes from the configured ADULT minimum age, and it deliberately
-  // OVER-ADMITS: `dateOfBirthPrefilterBoundForMinAge` carries the whole
-  // derivation and the two off-by-ones (#2859, #2872) that shaped it, including
-  // why `computeAgeTierWithSettings` below — not this query — decides who is
-  // actually promoted.
+  // The bound comes from the configured ADULT minimum age and is EXACT since
+  // #3082 — it admits precisely the members whose age reaches that minimum, not a
+  // widened superset, because the bound and the authority below now read one
+  // calendar frame. `dateOfBirthPrefilterBoundForMinAge` carries the whole
+  // derivation and the three off-by-ones (#2859, #2872, #3082) that shaped it,
+  // including why `computeAgeTierWithSettings` below — not this query — remains
+  // the authority on who is actually promoted.
   const cutoffWindowEnd = dateOfBirthPrefilterBoundForMinAge(
-    seasonStart,
+    seasonStartDay,
     targetAgeTierMinAge,
   );
 

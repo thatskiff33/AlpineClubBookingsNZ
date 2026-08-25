@@ -61,20 +61,34 @@ reason: twenty lines, and most of them are a signature and its docblock.
   reason for it in different files.
 
 file: src/lib/admin-member-detail-service.ts
-lines: 1675
+lines: 1680
 reason: eighteen lines across two hoists plus their comments. The member payload
   now reads the club's current season ONCE before the parallel loads that consume
   it, and the age-tier restore branch shares one reference day between its two
   arms. Both hoists exist to stop the same page describing two different seasons
   three lines apart — the shape group D found on the admin dashboard — and the
   comments are what stop the next author inlining them back.
+  **Plus five lines from #3104**, which is this entry's own follow-up rather than a
+  separate concern: the date-of-birth decode became `parseCalendarDate` instead of
+  `new Date` plus `isNaN`, because the old pair accepted `1990-02-31` and stored
+  3 March, and accepted `0000-05-05`, which the corrected `computeAge` then throws
+  on — a 500 where this branch already had the right answer, 422. Four of the five
+  lines are the comment saying so. Recorded here because this gate measures
+  against `main` and one file may hold only one allowance, so the whole 1675-to-
+  1680 growth has to be one entry.
 
 file: src/lib/admin-members-service.ts
-lines: 1741
+lines: 1750
 reason: eight lines. The member listing pins one moment for the whole page and
   derives the club's season from it, and the age tier on a created member is
   judged against the club's season start. The comment states that `now` is pinned
   deliberately.
+  **Plus nine lines from #3104**, the same one-line decode correction as the entry
+  above plus its comment. It matters more in this file than anywhere else, and the
+  comment says why: `createAdminMember` defaults `canLogin` from the age tier it
+  computes two lines later, so a rolled or year-0 date could hand somebody a login
+  off a band nobody chose. Same reason for being recorded here rather than in its
+  own file: one allowance per path, measured against `main`.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
 lines: 2157
@@ -117,9 +131,28 @@ reason: fifty-four lines, of which about forty-five are two comments. The FIRST 
   is a rule nobody reads before adding the caller that breaks it.
 
 file: src/lib/nomination.ts
-lines: 2482
+lines: 2552
 reason: four lines. Two season reads and one age-tier reference day move onto the
   club's zone; the growth is the line wrapping the multi-argument call needs.
+  **Plus seventy lines from #3104**, and they close a defect the corrected age
+  read opened in this very file. `approveMemberApplication` decoded a dependent's
+  date of birth — a value from an unvalidated `Json` column, reachable from an
+  UNAUTHENTICATED endpoint — with `new Date(...)` and no calendar check. Once
+  `computeAge` gained its stored-calendar-day precondition, a malformed value threw
+  a `RangeError` inside this function's `prisma.$transaction`, where the admin
+  route classifies only `MembershipApplicationError`: a bare 500, on every retry,
+  for an application that could then never be approved and that no admin screen
+  can edit. The seventy lines are the write-path validation in
+  `createMemberApplication`, the applicant's own guard, and the one-pass dependent
+  decode whose single result feeds both the tier and the stored date.
+  **The reasoning and the shared helpers were EXTRACTED rather than added here**,
+  into the new `src/lib/member-application-date-of-birth.ts` — sixty-six lines
+  that would otherwise have landed in this file, in a module small enough to be
+  under budget on its own and with one dependency instead of this file's forty. It
+  also breaks the `nomination.ts` ⇄ `member-application-mapping.ts` cycle for
+  these three helpers rather than deepening it. What is left here is the
+  validation at the call sites, which cannot move: it is where the decision to
+  refuse is taken.
 
 file: src/lib/notices.ts
 lines: 716

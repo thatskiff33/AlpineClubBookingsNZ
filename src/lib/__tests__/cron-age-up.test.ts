@@ -126,11 +126,19 @@ beforeEach(() => {
   mockTxTokenDeleteMany.mockResolvedValue({ count: 1 });
 });
 
-// Helper: create a date of birth for a given age at season start (April 1 2026)
+/**
+ * A date of birth that reaches exactly `age` at the 1 April 2026 season start,
+ * stored the way every correct writer stores one: the calendar day at UTC
+ * midnight (INV-DATE-024).
+ *
+ * IT USED TO BE `new Date(2026 - age, 3, 1)`, host-local midnight, which
+ * INV-DATE-024 names as the forbidden spelling for this column and which
+ * `computeAge`'s stored-day guard now refuses outright (#3082). Under
+ * `Pacific/Auckland` that fixture was `(D-1)T11:00Z` — not a stored calendar day
+ * at all, and a day early on top.
+ */
 function dobForAge(age: number): Date {
-  // Season start: 2026-04-01
-  // If age 18, born on or before 2008-04-01
-  return new Date(2026 - age, 3, 1); // April 1, (2026 - age)
+  return new Date(`${2026 - age}-04-01T00:00:00.000Z`);
 }
 
 /** A member row as `resolveInheritedEmailSourceId` selects one. */
@@ -1325,12 +1333,17 @@ describe("checkAgeUpMembers", () => {
     mockedFindMany.mockResolvedValue([]);
 
     // #2872: the club's own zone is FORCED, not inherited, and without that this
-    // test cannot tell the fix from the defect. `getSeasonStartDate` builds
-    // HOST-local midnight; the bound must be the calendar DAY at UTC midnight.
-    // On a UTC runner — which is what CI is — those two are the same instant, so
-    // every assertion below would pass against a local-midnight bound as
-    // happily as against a correct one. Pinning a zone ahead of UTC is what
-    // separates them (docs/TESTING.md rules 6 and 7).
+    // test could not tell the fix from the defect of its day. `getSeasonStartDate`
+    // built HOST-local midnight; the bound had to be the calendar DAY at UTC
+    // midnight. On a UTC runner — which is what CI is — those two are the same
+    // instant, so every assertion below would have passed against a
+    // local-midnight bound as happily as against a correct one.
+    //
+    // #3082 moved the season start itself onto a calendar day, so the two are no
+    // longer different shapes to confuse. The pin STAYS: it is now what proves
+    // the bound cannot be moved by the container at all, and a regression that
+    // reintroduced a host-local read would fail here rather than only on a
+    // behind-Greenwich host (docs/TESTING.md rules 6 and 7).
     await withTimeZoneAsync("Pacific/Auckland", () => checkAgeUpMembers());
 
     expect(mockedFindMany).toHaveBeenCalledWith({
@@ -1402,14 +1415,15 @@ describe("checkAgeUpMembers", () => {
   // a member's price and whether they may host — and neither was covered.
   //
   // The zone is forced rather than inherited (docs/TESTING.md rules 6 and 7).
-  // Both sides of this comparison are host-local — `getSeasonStartDate` is
-  // `new Date(year, month, 1)` and `computeAge` uses `getFullYear`/`getMonth`/
-  // `getDate` — so the answer depends on the runner. Pinning the club's own zone
-  // makes these assert what production does. Under a host WEST of UTC the
-  // day-after member would be promoted a year early, because UTC midnight is the
-  // previous evening locally: that is a pre-existing `computeAge` defect
-  // (INV-DATE-024 records it), it is unreachable under the Dockerfile's
-  // `TZ=Pacific/Auckland` pin, and it is deliberately not fixed here.
+  //
+  // #3082 IS THE OTHER HALF OF WHAT THIS COMMENT USED TO SAY. It read: "under a
+  // host WEST of UTC the day-after member would be promoted a year early,
+  // because UTC midnight is the previous evening locally: that is a pre-existing
+  // `computeAge` defect (INV-DATE-024 records it) ... and it is deliberately not
+  // fixed here." That was exactly right, and it was measured afterwards at 161
+  // of the 418 zones this runtime knows. It is fixed now — both sides read one
+  // calendar frame — so the second of these two tests runs behind Greenwich as
+  // well, which is where it used to give the wrong answer.
   it("promotes the member born on exactly the season-start anniversary", async () => {
     const member = {
       id: "m-boundary-on",
@@ -1481,14 +1495,36 @@ describe("checkAgeUpMembers", () => {
     mockedCreateToken.mockResolvedValue({} as any);
     mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
-    const result = await withTimeZoneAsync("Pacific/Auckland", () =>
-      checkAgeUpMembers(),
-    );
+    // BOTH SIDES OF GREENWICH, and the second one is the discriminating half:
+    // this member is the single day of birthdays the retired host-local read
+    // misclassified, and `America/Denver` is where it did it. Before #3082 the
+    // Denver run promoted them HERE — ADULT, their own login, and a different
+    // price band, a season early.
+    //
+    // TRUE OF THIS TEST, AND NOT OF PRODUCTION, which matters because the
+    // difference has already been published once as a defect that never existed.
+    // This suite mocks `prisma.member.findMany`, so it hands the job a candidate
+    // the real prefilter would never have proposed:
+    // `dateOfBirthPrefilterBoundForMinAge` is EXCLUSIVE at
+    // `seasonStart - minAge years` plus one day, and this member is born the day
+    // after that, so a live Denver run never saw them. Swept in
+    // `policies/age-tier.ts`'s module docblock: 27 638 160 admitted candidates
+    // across 418 zones, zero verdict changes. What this test pins is the
+    // AUTHORITY itself, on the exact input the bypassed bound would have
+    // filtered — which is the only place that half of the argument can be stated.
+    for (const hostZone of ["Pacific/Auckland", "America/Denver"]) {
+      mockedUpdate.mockClear();
+      mockedSendEmail.mockClear();
 
-    expect(result.upgraded).toBe(0);
-    expect(result.skipped).toBe(1);
-    expect(mockedUpdate).not.toHaveBeenCalled();
-    expect(mockedSendEmail).not.toHaveBeenCalled();
+      const result = await withTimeZoneAsync(hostZone, () =>
+        checkAgeUpMembers(),
+      );
+
+      expect(result.upgraded, hostZone).toBe(0);
+      expect(result.skipped, hostZone).toBe(1);
+      expect(mockedUpdate, hostZone).not.toHaveBeenCalled();
+      expect(mockedSendEmail, hostZone).not.toHaveBeenCalled();
+    }
   });
 
   it("should use the configured ADULT age tier for cutoff and email data", async () => {

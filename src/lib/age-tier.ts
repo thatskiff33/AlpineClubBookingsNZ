@@ -13,6 +13,7 @@ export {
   // test seam
   computeAge,
   computeAgeTierWithSettings,
+  getSeasonStartCalendarDate,
   getSeasonStartDate,
   normalizeAgeTierSettings,
   validateAgeTierPartition,
