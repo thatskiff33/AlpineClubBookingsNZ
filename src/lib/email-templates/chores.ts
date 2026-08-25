@@ -16,7 +16,7 @@ import {
 } from "./layout";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { emailPalette } from "@/lib/email-theme";
-import { emailClubDate } from "@/lib/email-templates-club-time";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 /**
  * Chore-roster date: the deliberate long-weekday form ("Thursday, 16 April
@@ -74,8 +74,8 @@ export function hutLeaderAssignmentTemplate(params: {
     ${heading(`${CLUB_HUT_LEADER_LABEL} Assignment`)}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on " + CLUB_HUT_LEADER_LABEL.toLowerCase() + " duties for the lodge.")}
     ${infoTable([
-      { label: "Start date", value: emailClubDate(params.startDate) },
-      { label: "End date", value: emailClubDate(params.endDate) },
+      { label: "Start date", value: emailCalendarDay(params.startDate) },
+      { label: "End date", value: emailCalendarDay(params.endDate) },
       { label: "Kiosk PIN", value: `<strong style="font-size: 18px; letter-spacing: 2px;">${escapeHtml(params.pin)}</strong>` },
     ])}
     ${paragraph(`When you arrive, open the lodge kiosk and use this PIN to unlock ${CLUB_HUT_LEADER_LABEL.toLowerCase()} controls for arrivals, departures, and roster management.`)}

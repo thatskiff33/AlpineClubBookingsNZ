@@ -18,13 +18,13 @@ import {
   CLUB_NAME,
 } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "../member-setup-invite";
-import { formatNZDateTime } from "../nzst-date";
 import {
   EMAIL_CHANGE_TTL_MS,
   EMAIL_VERIFICATION_TTL_MS,
 } from "@/lib/verification-tokens";
 import { sendEmail } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailClubDateTime } from "@/lib/email-templates-club-time";
 
 export async function sendPasswordResetEmail(email: string, token: string) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
@@ -125,7 +125,7 @@ export async function sendTwoFactorCodeEmail(params: {
     templateData: {
       firstName: params.firstName,
       code: params.code,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -152,7 +152,7 @@ export async function sendVerificationEmail(
       firstName,
       token,
       verifyUrl,
-      expiresAt: formatNZDateTime(expiresAt),
+      expiresAt: emailClubDateTime(expiresAt),
     },
   });
 }
@@ -178,7 +178,7 @@ export async function sendEmailChangeVerification(
       newEmail,
       token,
       verifyUrl,
-      expiresAt: formatNZDateTime(expiresAt),
+      expiresAt: emailClubDateTime(expiresAt),
     },
   });
 }

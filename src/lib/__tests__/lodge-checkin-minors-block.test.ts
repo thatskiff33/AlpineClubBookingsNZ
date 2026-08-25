@@ -70,8 +70,18 @@ const REVIEW_ALLOWED_FRAGMENT = {
   ],
 };
 
+/**
+ * A `@db.Date` calendar day, which round-trips as exactly UTC midnight.
+ *
+ * This used to be `new Date(y, m, d)` — HOST-LOCAL midnight, so on any host east
+ * of Greenwich it produced the previous UTC day at noon. A helper called
+ * `dateOnly` handing back a value carrying a time of day is the `INV-DATE-019`
+ * defect wearing the right name, and it was invisible while every reader
+ * projected it back through the same host zone. The calendar-day formatter now
+ * refuses such a value outright (#3113).
+ */
 function dateOnly(y: number, m: number, d: number) {
-  return new Date(y, m, d);
+  return new Date(Date.UTC(y, m, d));
 }
 
 describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
