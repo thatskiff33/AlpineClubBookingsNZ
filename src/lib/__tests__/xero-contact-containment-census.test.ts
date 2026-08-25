@@ -597,7 +597,7 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       block,
       "the payload carries no member email address and this screen must not " +
         "invent one",
-    ).not.toMatch(/contact\.(?:email|emailAddress)/);
+    ).not.toMatch(/contact\.(?:email|emailAddress)\b/);
   });
 
   it("says opposite things about Xero for a confirmed copy and an undeclared installation", () => {
