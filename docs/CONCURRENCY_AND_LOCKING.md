@@ -883,6 +883,30 @@ for the second, non-pool reason as well: two bookings resolved in one tick must
 be judged against the same club day, or a zone change mid-run would cancel one
 booking's hold and extend another's on different boundaries.
 
+**What enforces it, and why it is a source contract.** `paymentLinkExpiryForCheckIn`
+imports no reader at all, so it cannot resolve the zone under a lock however it is
+called — the refuse-when-handed-a-transaction-client shape used by
+`buildSubscriptionBillingPreview` has nothing to key on here, because there is no
+client to key on. What is left to protect is a property of the four **callers**:
+each one's own `await` must sit outside its own transaction. Two guards hold it.
+
+- `payment-link-expiry-club-zone.test.ts` -> `reads the club's zone outside every
+  transaction, in all four writers` reads the four files off disk, paren-matches
+  every `$transaction(...)` argument list, and fails on a
+  `readClubTimeZoneOutsideRequest(` found inside one. It covers all four writers
+  at once, including `approveBookingRequest` and `verifyAndCreateNonMemberJoin`,
+  which no runtime test reaches — measured: a read added straight after
+  `acquireLodgeCapacityLock` in both of those files left every suite covering them
+  green. A companion case fails if the scanner stops matching anything, so it
+  cannot go quietly vacuous.
+- `cron-confirm-pending.test.ts` counts the zone reads that happen **while a
+  `$transaction` callback is running**, and requires zero. A per-run call count
+  cannot stand in for that: a read that moved inside the transaction but still ran
+  once per run keeps the count at 1 and passes.
+
+If you add a fifth writer on this boundary, the first guard already covers it the
+moment its file joins that census's list; add the file, do not add a bespoke test.
+
 ### Composition: application-approval mapping (E10, #1936)
 
 The membership-application approval transaction is the one writer that composes
