@@ -221,7 +221,13 @@ interface PaymentLinkPayable {
    * page never offers a payment method the club hasn't enabled.
    */
   internetBankingReference?: string;
-  /** NZT end-of-check-in-day expiry, ISO. */
+  /**
+   * The link's hard expiry, ISO. The END OF THE CHECK-IN DAY in the club's
+   * PERSISTED timezone (`payment-link-expiry.ts`, `INV-CONFIG-002`) — not the
+   * container's, and not spelled as an abbreviation, which `INV-CONFIG-002`
+   * forbids and which names one country's zone in a generic product
+   * (`INV-CONFIG-001`). The pay page renders this value in that same zone.
+   */
   expiresAt: string;
 }
 
@@ -344,7 +350,9 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
  * Re-issue a payment link for an expired-but-payable booking and email the
  * requester a fresh one (the self-service "fresh link" action offered on the
  * expired-link page). Revokes any prior unused links for the booking. The new
- * link expires at the end of the check-in day in NZT.
+ * link expires at the end of the check-in day in the CLUB's persisted timezone
+ * (`payment-link-expiry.ts`), which is where every one of this boundary's four
+ * decisions now reads it from.
  *
  * Returns `emailed: false` when the requester's address is actively
  * suppressed (prior SES bounce/complaint) — nothing was delivered, so the UI

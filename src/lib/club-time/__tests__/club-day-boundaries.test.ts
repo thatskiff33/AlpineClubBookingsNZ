@@ -4,9 +4,11 @@
  * The defect this suite exists for: `startOfDateOnlyForTimeZone` resolved a wall
  * time by applying the zone offset twice, and for a club whose clocks spring
  * forward AT MIDNIGHT that lands before the transition — on the PREVIOUS
- * calendar day. Fifty-eight call sites in sixteen files depend on that pair, and
- * no test could see it because the configured zone is `Pacific/Auckland`, where
- * nothing transitions at midnight.
+ * calendar day. Production call sites depend on that pair — 31 in 16 files when
+ * this suite was written, and `date-only.ts` holds the count, the predicate and
+ * the command rather than this docblock restating a number that can go stale —
+ * and no test could see it because the configured zone is `Pacific/Auckland`,
+ * where nothing transitions at midnight.
  *
  * THE MUTATION THAT MATTERS: reimplement `resolveClubWallTime` as the old
  * two-pass offset correction. `startOfClubDay` for `America/Havana` on

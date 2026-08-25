@@ -1,25 +1,35 @@
 # File-size allowances for the payment-link expiry mint (#2870, CT-4 group F)
 
-Three already-oversized modules grow by 34 lines between them. The growth is
+Three already-oversized modules grow by 42 lines between them. The growth is
 **threading one value** — the club's persisted timezone — from before each
 transaction into the four decisions bound to a payment link's expiry boundary,
 plus returning the stored instant from the mint so the email cannot re-derive it.
 
 The reasoning that could have been written into these files is deliberately NOT
-in them. It lives in `src/lib/payment-link-expiry.ts` (a new 58-line module, well
+in them. It lives in `src/lib/payment-link-expiry.ts` (a new 59-line module, well
 inside its budget, which is also where the boundary itself now lives) and in
 `docs/CONCURRENCY_AND_LOCKING.md` -> "Which client reads the club's timezone".
 Each in-file comment was cut back to a pointer at those, which is what took the
-growth from 60 lines to 34 and took `group-booking.ts` back under its ceiling
-entirely. What is left is code: import lines, one function parameter, one call
-argument, and one hoisted `await` per lock boundary.
+growth from 60 lines to 34. `group-booking.ts` ends at 1763 lines, which is
+EXACTLY its length on the base ref — the same, not shorter, and an earlier draft
+of this file said "back under its ceiling", which it is not: it is 1063 over the
+700-line domain-module budget both before and after. What the pointer-only
+comments bought there was a net zero rather than a reduction, and that is worth
+stating plainly in the file whose subject is published numbers. What is left is
+code: import lines, one function parameter, one call argument, and one hoisted
+`await` per lock boundary.
 
 file: src/lib/payment-link.ts
-lines: 1244
+lines: 1252
 reason: the three mint paths here have to keep the zone read on the far side of
   the capacity lock, which is one hoisted await each and cannot be shortened
-  without putting a settings query back under the lock. Splitting the module is
-  the right eventual answer at 1244 lines against 700, but not in this change:
+  without putting a settings query back under the lock. Eight of these lines are
+  the review round's own: two docblocks in this file still said the link expires
+  "in NZT", which `INV-CONFIG-002` forbids outright as an abbreviated spelling
+  and `INV-CONFIG-001` forbids as one country's zone in a generic product, and
+  one of them sits twenty lines above the body this change moved onto the
+  persisted zone. Splitting the module is the right eventual answer at 1252
+  lines against 700, but not in this change:
   it is a settlement boundary on a money path, and lifting the split-guest mint
   into its own file in the same diff would triple the review surface of the
   highest-risk lane in this epic for no correctness gain. The seam is real and

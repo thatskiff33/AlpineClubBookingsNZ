@@ -25,14 +25,29 @@
  * own boundary is half-open (`endOfClubDayExclusive`) and new code should use
  * that.
  *
- * THAT SENTENCE SAID "fifty-eight call sites" AND THE NUMBER WAS NEVER TRUE.
- * At `613cc552e`, the commit that wrote it, `endOfDateOnlyForTimeZone(` appeared
- * 23 times in `src/` — tests and two comments included. It is **3** now, after
- * #2870 moved the nine payment-link expiry sites onto
- * `paymentLinkExpiryForCheckIn`. A published count is a claim, and one nobody
- * can reproduce is worse than none, so the figure is stated as a measurement
- * with the command that reproduces it rather than as a word:
- * `git grep -c "endOfDateOnlyForTimeZone(" -- src/`.
+ * THAT SENTENCE USED TO READ "fifty-eight call sites", AND HALF OF IT WAS WRONG.
+ * The claim was about the PAIR — `startOfDateOnlyForTimeZone` together with
+ * `endOfDateOnlyForTimeZone` — so the pair is what has to be measured, under a
+ * stated predicate. This one is: calls in `src/`, excluding this file's own
+ * definitions, excluding `__tests__`, and excluding comment lines.
+ *
+ *     git grep -nE "(startOf|endOf)DateOnlyForTimeZone\(" -- src/ \
+ *       ':!src/lib/date-only.ts' ':!*__tests__*' \
+ *       | grep -vE ':[0-9]+: *(\*|//)'
+ *
+ * At `613cc552e`, the commit that wrote the sentence, that yields **31 call
+ * sites in 16 files**. So "sixteen files" was exactly right and "fifty-eight"
+ * was not, and no predicate reproduces 58 — the most generous reading available,
+ * every non-comment reference including the import lines, is 55. At this head it
+ * is **8 call sites in 5 files**, of which 3 are `endOfDateOnlyForTimeZone`,
+ * after #2870 moved the nine payment-link expiry sites onto
+ * `paymentLinkExpiryForCheckIn`.
+ *
+ * The method is the point, not the arithmetic. A count without the predicate it
+ * was counted under cannot be checked, so it gets copied instead — which is how
+ * one wrong figure reached six places. State the predicate, publish a command
+ * that yields exactly the stated number, and the next reader can re-run it
+ * instead of trusting it.
  */
 
 import { APP_TIME_ZONE } from "@/config/operational";

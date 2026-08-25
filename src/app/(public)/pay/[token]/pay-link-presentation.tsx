@@ -129,11 +129,23 @@ export function formatStayDay(value: string): string {
  * A bare day therefore misstated the deadline by most of a day, in the direction
  * that costs the payer their link.
  *
- * `instantDateTime` states the moment as a moment. It also makes this page AGREE
- * WITH THE EMAIL THAT DELIVERED THE LINK: `email-templates/booking-requests.ts`
+ * `instantDateTime` states the moment as a moment. It also makes this page agree
+ * with the email that delivered the link: `email-templates/booking-requests.ts`
  * renders the same value into the same sentence with `emailClubDateTime`, which
  * is `instantDateTime` through the same persisted zone (CT-5, #2869). This page
  * was the one surface spelling it short.
+ *
+ * THAT EMAIL HAS TWO RENDERERS, NOT ONE, and the second one had to be moved
+ * before this paragraph was true. A club that has saved a body override gets its
+ * whole message rebuilt from `templateData` by `prepareEmailMessage`, and the
+ * shipped default body for both payment-link templates contains `{{expiresAt}}`
+ * — so the copy in `src/lib/email/booking-requests.ts` is a real member-facing
+ * rendering and not an internal detail. It went through `formatNZDateTime`, the
+ * CONTAINER's zone, so on a divergent deployment an edited-wording club read a
+ * different time from this page and from an unedited club. Both copies now use
+ * `emailClubDateTime` (#2870), which is what lets this say "agree" without a
+ * qualifier. The ~146 sibling `templateData` date sites across the email surface
+ * still carry the same two-authority split and are their own census.
  *
  * THE MINT NOW AGREES, so this page states the end of the check-in day in the
  * club's own reckoning rather than a moment that merely renders faithfully. All

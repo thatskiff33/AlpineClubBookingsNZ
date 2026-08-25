@@ -18,7 +18,10 @@
  *
  * `endOfDateOnlyForTimeZone` is built on top of it, so an activity window for
  * 8 March started on 7 March and the window for 7 March lost its last hour.
- * Fifty-eight call sites in sixteen files use that pair.
+ * When this was written that pair had **31 production call sites in 16 files** —
+ * an earlier draft of this sentence said "fifty-eight", which no predicate
+ * reproduces; `date-only.ts` carries the measurement, the predicate and the
+ * command, and is the one place either figure should be read from.
  *
  * Swept across every one of the 418 zones this runtime knows, 2015-2036, the
  * old algorithm returns the WRONG CALENDAR DAY in **eleven** of them —
