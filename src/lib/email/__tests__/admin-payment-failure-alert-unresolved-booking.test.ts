@@ -19,7 +19,9 @@ import { join } from "node:path";
  * So the property pinned here is not a string but a delivery: an absent night
  * renders "Unknown" and the mail still goes out. The webhook suite mocks this
  * sender away, which is why it is pinned at the sender — the same reason its
- * two #2761/#2774 siblings in this directory have their own files.
+ * two late-capture siblings in this directory have their own files
+ * (`admin-late-capture-auto-refund-alert.test.ts` and
+ * `admin-late-capture-hand-back-conflict-alert.test.ts`).
  *
  * MUTATION PROOF (measured, each restored by byte backup):
  *  - make `emailCalendarDayOrUnknown` return "" for null and "names the two
