@@ -24,10 +24,17 @@ reason: one line, `db: tx`, inside `removeBookingGuestInTransaction`, which
   inventing one for one line would make the removal path harder to follow.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2376
+lines: 2380
 reason: one argument, two parameter lines, and a five-line note on the
   signature saying why `db` is required rather than defaulted here. That note
   is the exception to the sibling readers' pattern, so it belongs beside the
   parameter it qualifies -- moving it away is how the last such pair drifted.
   The full reasoning already lives in CONCURRENCY_AND_LOCKING.md; this is the
   pointer a reader needs at the signature.
+  #3107 adds four more lines here: one import and a note on the single
+  projection that reached the database, since `syncGuestNights` writes these
+  values into `BookingGuestNight.stayDate` and the note is what tells the next
+  reader why the in-progress branch changed and the ordinary one did not.
+  Recorded in this entry rather than its own, because the gate measures against
+  `main`, where the whole 2376 to 2380 growth is one change, and one file may
+  hold only one allowance.

@@ -372,9 +372,18 @@ derivation).
   `BookingGuest.stayStart`/`stayEnd`, `HutLeaderAssignment.endDate`) store an NZ
   calendar date, encoded internally at UTC midnight (the storage-encoding note
   in the invariant above). Compare them only against date-only values
-  (`getTodayDateOnly()` / `normalizeDateOnlyForTimeZone()` from
-  `src/lib/date-only.ts`), never a raw `new Date()` or a local-midnight
-  (`setHours(0,0,0,0)`) instant (F8/F32, #1888).
+  (`getTodayDateOnly()` for today; `storedDateOnly()` from
+  `src/lib/stored-calendar-day.ts` to normalise one of these columns), never a
+  raw `new Date()` or a local-midnight (`setHours(0,0,0,0)`) instant (F8/F32,
+  #1888).
+
+  **Not `normalizeDateOnlyForTimeZone()` on one of these columns**, which this
+  bullet used to name. It projects the value through the environment zone
+  before re-encoding it — the identity for a club at or ahead of Greenwich and
+  the PREVIOUS day for one behind it — so it decodes a stored day by asking a
+  zone, which is what `INV-DATE-019`'s first exact boundary and `INV-DATE-026`
+  settle without one (#3107). It remains correct for a real instant, which is a
+  different receiver.
 
   **The two mistakes fail differently, and the local-midnight one is the worse
   of them (#2838).** A bound value is narrowed to a `DATE` parameter by its UTC
