@@ -47,15 +47,25 @@
  * would have watched the old code produce the right answer by coincidence and
  * called it a pass.
  *
- * Then the club's PERSISTED zone is varied, because the two paths are killed by
- * opposite settings:
+ * Then the club's PERSISTED zone is varied, and the two configurations do
+ * genuinely different jobs — measured, not assumed:
  *
- * - `EAST` (`Pacific/Auckland`): the persisted projection is right by luck, the
- *   environment's is a day early. This kills a revert on the **templateData**
- *   side — the override body would name a different day from the default one.
- * - `WEST` (`Pacific/Honolulu`): the persisted projection is itself a day early.
- *   This kills a revert on the **default HTML body** side, which no
- *   configuration with an eastern club could see.
+ * - `WEST` (`Pacific/Honolulu`) is the **discriminating** one. Both wrong
+ *   authorities — the container's zone and the persisted zone — read a stored
+ *   night as the previous day, so it kills a revert on EITHER path. Measured:
+ *   with only this configuration kept, a reverted `templateData` site and a
+ *   reverted default-HTML-body site are both killed.
+ * - `EAST` (`Pacific/Auckland`) is the **current-adopter regression** case, and
+ *   it is deliberately NOT the discriminating one. Here the persisted projection
+ *   of a stored night agrees with the stored night, because New Zealand is east
+ *   of Greenwich — which is exactly the situation of every deployment today. Its
+ *   job is to prove this change is output-neutral for them rather than to catch
+ *   a revert. Measured: with only this configuration kept, a reverted
+ *   default-HTML-body site SURVIVES.
+ *
+ * That asymmetry is stated plainly because the obvious-sounding version — "each
+ * configuration catches one path" — is false, and a suite whose comment
+ * overstates its own reach is how a coverage gap gets left behind a green run.
  *
  * In both, the correct answer is the same stored day, and both paths must give
  * it. A premise failure here is a FAILURE and never a skip (owner decision,
@@ -238,22 +248,23 @@ const clubInstant = (iso: string, zone: string) =>
 // ---------------------------------------------------------------------------
 
 /**
- * `EAST` kills a `templateData` revert; `WEST` kills a default-HTML-body revert.
- * See the header for why neither alone is sufficient.
+ * `WEST` is the discriminating configuration; `EAST` is the current-adopter
+ * regression case. See "Why the suite pins TWO persisted zones" in the header
+ * for the measurements behind that split.
  */
 const CONFIGURATIONS = [
   {
     label:
       "club EAST of Greenwich (persisted Pacific/Auckland, container America/Denver)",
     zone: "Pacific/Auckland",
-    /** The path this configuration is able to catch. */
-    catches: "a templateData site reverted to the environment zone",
+    /** What this configuration is here to do. */
+    role: "every deployment today: proves the stored night is unchanged when the persisted projection would have agreed anyway",
   },
   {
     label:
       "club WEST of Greenwich (persisted Pacific/Honolulu, container America/Denver)",
     zone: "Pacific/Honolulu",
-    catches: "a default-HTML-body site reverted to the persisted-zone projection",
+    role: "the discriminating case: both wrong authorities read a stored night as the previous day, so a revert on either path dies here",
   },
 ] as const;
 
@@ -569,8 +580,8 @@ describe("email dates render by kind, on both rendering paths", () => {
 
             // THE AGREEMENT, which is the assertion that matters: the defect
             // class is divergence, and two assertions each pinning one path can
-            // both pass while the pair disagrees. This configuration catches
-            // ${configuration.catches}.
+            // both pass while the pair disagrees. What each configuration is
+            // for is recorded on its `role` above.
             for (const day of sender.days) {
               const expected = storedDay(day.iso);
               expect(shipped.html).toContain(expected);
