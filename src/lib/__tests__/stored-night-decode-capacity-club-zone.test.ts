@@ -627,12 +627,24 @@ describe("#3107 the create envelope is stored, and admitted, on the true calenda
     }
   });
 
-  it("reads a night entry in every shape the create path can carry", () => {
+  it("reads a night entry in every shape the TYPE admits, reachable or not", () => {
+    // TWO OF THESE FOUR ARE DEFENSIVE, and the distinction is worth stating
+    // rather than blurring. `GuestNightInput` is wider than any live producer:
+    // the route's schema is `z.array(dateOnlyString)` and `ProposalGuest.nights`
+    // is `string[]`, so what actually arrives is a canonical `yyyy-mm-dd`, and
+    // the `@db.Date` row shape is what a stored `BookingGuestNight` looks like.
+    // The SERIALISED row shape is not produced by anything here - it is the
+    // contract boundary, the same one the offset-bearing string above marks.
+    //
+    // Worth pinning anyway: the longer ISO forms used to make
+    // `new Date(entry + "T00:00:00.000Z")` an Invalid Date and throw on EVERY
+    // zone, so decoding them correctly is a real widening rather than a
+    // restatement. It is just not a shape the create path can hand over today.
     const shapes: Array<[string, BookingGuestInput["nights"]]> = [
-      ["date-only strings", PROPOSAL_NIGHTS],
+      ["date-only strings (the reachable one)", PROPOSAL_NIGHTS],
       ["Date values", PROPOSAL_NIGHTS.map(day)],
       [
-        "serialised @db.Date rows",
+        "serialised @db.Date rows (defensive)",
         PROPOSAL_NIGHTS.map((value) => ({
           stayDate: `${value}T00:00:00.000Z`,
         })),

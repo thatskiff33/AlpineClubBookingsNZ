@@ -235,8 +235,21 @@ export function getCapacityGuestRanges(
  * the defect rather than an aside: `formatDateOnly` seeded the min and max keys
  * on the true calendar, then every guest-derived key and BOTH returned bounds
  * went through `normalizeDateOnlyForTimeZone`. Behind Greenwich that is the
- * previous day, so the envelope came back a day early even when no guest widened
- * it. Measured on `America/Denver`, two guests over the three nights
+ * previous day, and it was applied TWICE on the path every ordinary create takes
+ * - once to the contribution and once to the return - so the low bound came back
+ * TWO days early, not one. `normalizeGuestStayRange` fills `stayStart` /
+ * `stayEnd` from the booking range for every guest that supplies neither, so the
+ * branch below always ran; a single day was lost only by a guest contributing
+ * nothing at all, which no caller can produce.
+ *
+ * That is also why one consequence was LOUD. `createConfirmedBooking` re-checks
+ * this resolved envelope against the club's own day, so behind Greenwich a
+ * member whose stay started TODAY OR TOMORROW had a low bound already in the
+ * past and was refused with `Cannot book in the past` - a 400 on an ordinary
+ * create. The route's own gate reads the unresolved request and would have let
+ * both through.
+ *
+ * Measured on `America/Denver`, two guests over the three nights
  * 2026-07-04/05/06 requested as 07-04 -> 07-07: the envelope stored 07-02 ->
  * 07-06, the admission check therefore inspected 07-02..07-05 and counted 0
  * proposed beds on two of those four nights and never looked at 07-06 at all -
