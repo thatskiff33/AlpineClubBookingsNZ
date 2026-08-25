@@ -34,10 +34,18 @@ const maxStr = (len: number) => z.string().max(len).optional().nullable();
  * month 1-12, and a day that exists in that month.
  */
 const calendarDayOfBirth = (label: string) =>
-  z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, `${label} must be YYYY-MM-DD`)
-    .refine(isCalendarDate, `${label} must be a real date`);
+  z.string().superRefine((value, context) => {
+    // ONE ISSUE, NOT TWO. A `.regex(...).refine(...)` pair reports both messages
+    // for `"01/02/1990"`, which is noise in a field-level form error: the shape
+    // is the only thing wrong with it and the caller is told twice.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      context.addIssue({ code: "custom", message: `${label} must be YYYY-MM-DD` });
+      return;
+    }
+    if (!isCalendarDate(value)) {
+      context.addIssue({ code: "custom", message: `${label} must be a real date` });
+    }
+  });
 
 const cleanedString = (label: string, maxLength: number) =>
   z

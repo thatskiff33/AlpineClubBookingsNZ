@@ -480,11 +480,11 @@ export async function computeApprovalMappingOutcomes(params: {
     const label = familyMember
       ? `${familyMember.firstName} ${familyMember.lastName}`.trim()
       : `Dependent ${ref.index + 1}`;
-    if (decision.mode === "CREATE") {
-      persons.push(baseCreateOutcome(ref, label, []));
-      continue;
-    }
-    const target = targetsById.get(decision.memberId);
+    // BEFORE the CREATE early return, so the preview reports an unreadable date
+    // whichever mode the admin picked. Only the MAP branch computes a tier from
+    // it, but the approval writes the date on BOTH paths, and an admin who is
+    // told at approval time what the preview could have told them is an admin
+    // chasing the wrong thing.
     const familyDayOfBirth = familyMember
       ? applicationDateOfBirthDay(familyMember.dateOfBirth)
       : null;
@@ -493,6 +493,11 @@ export async function computeApprovalMappingOutcomes(params: {
         unreadableDateOfBirthRefusal(dependentSubject(familyMember, ref.index)),
       );
     }
+    if (decision.mode === "CREATE") {
+      persons.push(baseCreateOutcome(ref, label, []));
+      continue;
+    }
+    const target = targetsById.get(decision.memberId);
     const familyAgeTier: AgeTier = familyDayOfBirth
       ? computeAgeTierWithSettings(
           dateOnlyInstantOf(familyDayOfBirth),
