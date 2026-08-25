@@ -42,6 +42,6 @@
   gives an answer that is right for a club east of Greenwich and wrong for the
   rest, which is harder to notice than being wrong everywhere. The database itself
   can no longer hold such a value in these columns, so this catches a mistake made
-  in code before it can reach a price. It immediately found seventeen test fixtures
-  that were describing an age-band price boundary with a value no part of the
-  running system ever produces.
+  in code before it can reach a price. It immediately found fourteen places in this
+  project's own tests that were describing an age-band price boundary with a value
+  no part of the running system ever produces.

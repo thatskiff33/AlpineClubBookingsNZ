@@ -114,6 +114,12 @@ const CANONICAL_ENCODERS = new Set([
  * serialisation this scanner already follows, so it must not hide the field
  * being read — `calendarDateOfDateOnlyInstant(requireInstant(booking.createdAt))`
  * is `INV-DATE-019` written the long way round.
+ *
+ * `requireStoredCalendarDay` is the strict third (#3082): it PROVES the `Date` is
+ * a `@db.Date` encoding and returns that same value. It reports the SHAPE, not
+ * the outcome — a source line asking for a `createdAt` to be encoded as a
+ * calendar day is the defect whether it throws at runtime or answers, and it has
+ * to be visible here rather than found by a production stack trace.
  */
 const INSTANT_PASS_THROUGHS = new Set([
   "parseInstant",
@@ -434,7 +440,7 @@ function isoSerialisationReceiver(n: ts.Node): ts.Expression | null {
   return null;
 }
 
-/** `requireInstant(x)` / `parseInstant(x)` — returns `x`, or null. */
+/** `requireInstant(x)` / `parseInstant(x)` / `requireStoredCalendarDay(x, …)` — returns `x`, or null. */
 function instantPassThroughArgument(node: ts.Node): ts.Expression | null {
   if (!ts.isCallExpression(node)) return null;
   const callee = node.expression;

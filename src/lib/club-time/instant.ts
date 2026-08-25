@@ -300,8 +300,10 @@ export function calendarDateOfSerialisedDbDateOrNull(
  * On today's schema the throw is unreachable from the database — PostgreSQL will
  * not keep a time in a `date` column — so it fires for a value some code path
  * built wrong, which is exactly when a loud failure is worth more than an
- * answer. It has already found four such values in this repository's own test
- * fixtures.
+ * answer. It has already found fourteen such values across two of this
+ * repository's own test files — thirteen date-of-birth literals describing an
+ * age-tier price boundary, and the shared helper the age-up cron's suite built
+ * every one of its members from.
  */
 export function requireStoredCalendarDay(
   value: Date,

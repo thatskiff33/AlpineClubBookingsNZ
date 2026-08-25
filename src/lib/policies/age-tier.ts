@@ -114,8 +114,8 @@ export function computeAgeOnCalendarDays(
  * one to its UTC day is right for a club east of Greenwich and wrong for the
  * rest, which is worse than being wrong everywhere. On today's schema both
  * columns are `@db.Date`, so PostgreSQL cannot hand this a time - it fires for a
- * value some code path built rather than read, and it has already found four in
- * this repository's own test fixtures.
+ * value some code path built rather than read, and it has already found fourteen
+ * across two of this repository's own test files.
  */
 export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
   return computeAgeOnCalendarDays(
