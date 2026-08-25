@@ -637,9 +637,9 @@ export interface PolicyExceptionDriftResult {
 /**
  * Classify how the CURRENT violations of the frozen proposal compare to the
  * violations that were reviewed. Both inputs are the result of evaluating the
- * SAME frozen proposal — the reviewed set at submit time, the current set at
- * approval time against today's policy configuration — so any difference is a
- * genuine policy-config change (or tampering), never snapshot noise.
+ * SAME frozen proposal — reviewed at submit, current at approval — so a
+ * difference is real, never snapshot noise. It is NOT proof a policy was edited:
+ * the fingerprint covers the nights (`INV-EXCEPT-035`), so no refusal says so.
  *
  * This is the whole of #2365's "if a reviewed soft rule disappeared, execute
  * without override; new/materially-changed violations require resubmission",
