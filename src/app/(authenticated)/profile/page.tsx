@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import {
   ProfileDetailsCard,
   ProfileDetailsPageActions,
@@ -240,7 +241,6 @@ export default async function ProfilePage({
   const subscriptionStatus = subscriptionRequired
     ? (currentSub?.status ?? null)
     : "NOT_REQUIRED";
-  const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
@@ -382,7 +382,7 @@ export default async function ProfilePage({
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription ({seasonLabel})
+                Subscription {seasonSelectLabel(currentSeasonYear)}
               </span>
               <Badge
                 className={subscriptionStatusClass(
@@ -474,7 +474,7 @@ export default async function ProfilePage({
           ) : (
             <div className="divide-y">
               {subscriptionHistory.map((sub) => {
-                const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
+                const label = seasonSelectLabel(sub.seasonYear);
                 const isCurrent = sub.seasonYear === currentSeasonYear;
                 return (
                   <div

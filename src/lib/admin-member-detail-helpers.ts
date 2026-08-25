@@ -3,6 +3,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address"
 import { formatNZDate } from "@/lib/nzst-date"
+import { seasonSelectLabel } from "@/lib/season-label"
 import {
   calendarDateOfDateOnlyInstant,
   formatClubDate,
@@ -350,7 +351,7 @@ export function formatMemberMembershipPreview(input: {
   currentSeasonTypeName: string | null
   currentSeasonSubscriptionLabel: string | null
 }) {
-  const season = `${input.currentSeasonYear}/${input.currentSeasonYear + 1}`
+  const season = seasonSelectLabel(input.currentSeasonYear)
   return [
     `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
     input.currentSeasonSubscriptionLabel,

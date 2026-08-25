@@ -117,12 +117,17 @@ reason: four lines on a 1355-line create route — a three-line comment and one
   Splitting booking creation is a genuine but entirely separate job.
 
 file: src/app/api/member/data-export/route.ts
-lines: 338
+lines: 339
 reason: three lines on a 338-line export route: a two-line comment and an
   import. The date it stamps on a member's downloaded file is now the club's
   calendar day rather than the container's, and saying so beside the stamp is
   cheaper than leaving a future reader to work out why the obvious helper was
   not used.
+  #3103 adds the 339th line: one more import, for the shared season name, so a
+  member's downloaded file and their screen cannot disagree about which season
+  a subscription belongs to. Recorded here rather than in its own file because
+  this gate measures against `main`, where the whole 338 to 339 growth is one
+  change, and one file may hold only one allowance.
 
 file: src/app/api/members/family/[memberId]/details/route.ts
 lines: 405
