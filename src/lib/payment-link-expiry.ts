@@ -48,6 +48,9 @@ import {
   type Instant,
 } from "@/lib/club-time";
 
+/** Re-exported so a caller threading the zone needs one import, not two. */
+export type { ClubTimeZone };
+
 export function paymentLinkExpiryForCheckIn(
   checkIn: Instant,
   zone: ClubTimeZone,

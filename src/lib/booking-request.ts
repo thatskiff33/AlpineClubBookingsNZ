@@ -2014,13 +2014,9 @@ export async function approveBookingRequest(input: {
     reviewedAt
   );
   // The payment link stays valid while the booking remains payable; the hard
-  // ceiling is the end of the check-in day in the CLUB's persisted zone (not
-  // midnight UTC, which would cut the day short — issue #740). Booking status
-  // checks gate actual payment. Resolved HERE, before the transaction below,
-  // which holds both the global and the per-lodge advisory lock: the same
-  // ordering rule the member-guest policy read a few lines down follows, and
-  // `payment-link-expiry.ts` is why the cron's terminal cancel cannot disagree
-  // with this value.
+  // ceiling is the end of the check-in day in the CLUB's persisted zone (issue
+  // #740, `payment-link-expiry.ts`). Booking status checks gate actual payment.
+  // Read HERE for the same reason the member-guest policy below is.
   const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
     request.checkIn,
     await readClubTimeZoneOutsideRequest()

@@ -421,8 +421,8 @@ export function endOfClubDayExclusive(
  *
  * IT THROWS WHERE ITS EXCLUSIVE SIBLING THROWS, which is the one day whose
  * successor has no `CalendarDate`: `9999-12-31`. `date-only.ts`'s legacy adapter
- * catches that `RangeError` and answers `new Date(NaN)`, because fifty-eight
- * call sites already behave correctly against an Invalid Date; the kernel does
+ * catches that `RangeError` and answers `new Date(NaN)`, because its call sites
+ * already behave correctly against an Invalid Date; the kernel does
  * not, because a new caller should be told rather than handed a value that
  * fails silently three modules later.
  */

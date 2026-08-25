@@ -857,6 +857,32 @@ one request can disagree if an admin saves the panel between them, which on
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
 
+#### Which client reads the club's timezone (#2870)
+
+The same rule again, and the one place it decides whether a member keeps a bed.
+A payment link expires at the end of the check-in day in the club's **persisted**
+timezone (`INV-CONFIG-002`), and four decisions read that one boundary: the mint
+in `payment-link.ts` / `booking-request.ts` / `group-booking.ts`, the refusal to
+mint a link that would be born expired, and the two capacity-releasing
+`PENDING -> CANCELLED` terminal cancels in `cron-confirm-pending.ts`. Three of
+those sites are inside a `prisma.$transaction` already holding
+`acquireLodgeCapacityLock`, one of them under `lock(1)` as well.
+
+Resolving the zone is a `clubTimeSettings.findUnique`. So the zone is **resolved
+once, outside the transaction, and passed as a value** to
+`paymentLinkExpiryForCheckIn(checkIn, zone)`, which is pure and takes no client —
+`mintSplitGuestPaymentLinkIfAbsent` and `resolveHoldWindowUnderLock` both take
+the zone as a parameter rather than reading it. The reader is
+`readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`, not
+`clubTime()`, because all four files are reachable from
+`src/instrumentation.node.ts`; `docs/CLUB_TIME_KERNEL.md` -> "Where the zone
+comes from" is the rule and the measurement.
+
+`confirmPendingBookings` reads it **once per run** rather than once per booking,
+for the second, non-pool reason as well: two bookings resolved in one tick must
+be judged against the same club day, or a zone change mid-run would cancel one
+booking's hold and extend another's on different boundaries.
+
 ### Composition: application-approval mapping (E10, #1936)
 
 The membership-application approval transaction is the one writer that composes

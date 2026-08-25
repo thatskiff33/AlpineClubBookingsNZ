@@ -23,8 +23,10 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import type { ClubTimeZone } from "@/lib/club-time";
-import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
+import {
+  paymentLinkExpiryForCheckIn,
+  type ClubTimeZone,
+} from "@/lib/payment-link-expiry";
 import {
   sendAdminPaymentFailureAlert,
   sendBookingRequestApprovedEmail,
@@ -362,12 +364,9 @@ export async function reissuePaymentLinkForToken(
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
-  // Read the zone BEFORE the mint transaction below, which holds the per-lodge
-  // capacity lock — see `payment-link-expiry.ts`.
-  const expiresAt = paymentLinkExpiryForCheckIn(
-    booking.checkIn,
-    await readClubTimeZoneOutsideRequest()
-  );
+  // Zone read BEFORE the mint transaction, which holds the capacity lock.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
   if (expiresAt.getTime() < Date.now()) {
     throw new PaymentLinkError(
       "These dates have already passed, so a new payment link can't be issued.",
@@ -843,9 +842,7 @@ export async function createPaymentIntentForPaymentLink(
  * only this link — without touching a newer one minted concurrently.
  *
  * `expiresAt` IS THE STORED INSTANT, handed back so the email that carries the
- * token states the deadline the row really holds instead of deriving it a second
- * time. Two derivations is how the page and the mint came to mean different
- * moments (#3068); returning the value makes them the same by construction. */
+ * token states the row's deadline rather than deriving the boundary again. */
 export type MintedSplitGuestPaymentLink = {
   token: string;
   paymentLinkId: string;
@@ -901,12 +898,8 @@ async function mintFreshSplitGuestPaymentLink(
  * DB-only and safe to call inside a capacity-lock transaction; the email MUST
  * be sent by the caller OUTSIDE the transaction. The link expires at the end of
  * the check-in day in the CLUB's persisted zone, matching the #707/#740
- * request-origin convention.
- *
- * `clubZone` IS A PARAMETER BECAUSE THIS RUNS UNDER A LOCK. Resolving the zone
- * is a `clubTimeSettings` read, and the only caller is the settlement cron's
- * global+per-lodge lock transaction; it resolves the zone once per run before
- * the transaction and threads it in (`payment-link-expiry.ts`).
+ * request-origin convention. `clubZone` is a PARAMETER because this runs under
+ * the caller's lock — `payment-link-expiry.ts` is why.
  */
 export async function mintSplitGuestPaymentLinkIfAbsent(
   tx: Prisma.TransactionClient,
@@ -1062,15 +1055,11 @@ export async function issueSplitGuestPaymentLink(
     return { outcome: "not_payable" };
   }
 
-  // BEFORE the transaction, which holds the per-lodge capacity lock: resolving
-  // the club's zone is a settings read, and `checkIn` is immutable on the row
-  // already loaded, so nothing under the lock can change this value. Computing
-  // it once is also what stops the stored instant and the emailed one drifting
-  // apart — they were two separate derivations of the same boundary.
-  const expiresAt = paymentLinkExpiryForCheckIn(
-    booking.checkIn,
-    await readClubTimeZoneOutsideRequest()
-  );
+  // BEFORE the transaction, which holds the capacity lock, and ONCE, so the
+  // stored instant and the emailed one cannot drift apart. `checkIn` is
+  // immutable, so nothing under the lock can change this value.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
 
   const minted = await prisma.$transaction(
     async (
@@ -1149,8 +1138,7 @@ export async function issueSplitGuestPaymentLink(
       guestCount: booking.guests.length,
       priceCents: booking.finalPriceCents,
       bookingReference: booking.id,
-      // The instant the row really carries, not a second derivation of it.
-      expiresAt: minted.expiresAt,
+      expiresAt: minted.expiresAt, // the row's own instant, not a re-derivation
       lodgeId: booking.lodgeId ?? null,
     });
   } catch (err) {

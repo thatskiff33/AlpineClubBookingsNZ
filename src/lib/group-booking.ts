@@ -1546,13 +1546,10 @@ export async function verifyAndCreateNonMemberJoin(
     reviewedAt
   );
   // The pay link stays valid to the end of the check-in day in the CLUB's
-  // persisted zone; booking status gates actual payment. Read here rather than
-  // inside the transaction below, which holds the per-lodge capacity lock —
-  // `payment-link-expiry.ts` states the rule and the coupling it protects.
-  const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
-    checkIn,
-    await readClubTimeZoneOutsideRequest()
-  );
+  // persisted zone; booking status gates actual payment. Read here, not inside
+  // the capacity-lock transaction below — `payment-link-expiry.ts`.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(checkIn, clubZone);
   const { token: payToken, tokenHash: payTokenHash } = issueActionToken();
 
   let capacityFullNights: string[] | null = null;

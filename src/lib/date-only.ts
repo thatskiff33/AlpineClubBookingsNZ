@@ -21,9 +21,18 @@
  * no change at all — see `club-day-boundaries.test.ts`.
  *
  * `endOfDateOnlyForTimeZone` keeps its INCLUSIVE "one millisecond before the
- * next day" shape, unchanged, because fifty-eight call sites depend on it. The
- * kernel's own boundary is half-open (`endOfClubDayExclusive`) and new code
- * should use that.
+ * next day" shape, unchanged, because its call sites depend on it. The kernel's
+ * own boundary is half-open (`endOfClubDayExclusive`) and new code should use
+ * that.
+ *
+ * THAT SENTENCE SAID "fifty-eight call sites" AND THE NUMBER WAS NEVER TRUE.
+ * At `613cc552e`, the commit that wrote it, `endOfDateOnlyForTimeZone(` appeared
+ * 23 times in `src/` — tests and two comments included. It is **3** now, after
+ * #2870 moved the nine payment-link expiry sites onto
+ * `paymentLinkExpiryForCheckIn`. A published count is a claim, and one nobody
+ * can reproduce is worse than none, so the figure is stated as a measurement
+ * with the command that reproduces it rather than as a word:
+ * `git grep -c "endOfDateOnlyForTimeZone(" -- src/`.
  */
 
 import { APP_TIME_ZONE } from "@/config/operational";
@@ -71,7 +80,7 @@ export function startOfDateOnlyForTimeZone(
  *
  * `new Date(NaN)` FOR A DAY THE KERNEL CANNOT ANSWER, which is this adapter's
  * long-standing contract for an input it cannot interpret and is what every one
- * of its fifty-eight call sites already behaves correctly against. There is
+ * of its call sites already behaves correctly against. There is
  * exactly one such day: `9999-12-31`, whose exclusive end lies in the year
  * 10000 and so has no `CalendarDate`, where the kernel throws a `RangeError`
  * (see the four-digit-year guard in `club-time/calendar-date.ts`). Before CT-2

@@ -206,7 +206,7 @@ describe("a club day starts at the first instant that exists on it", () => {
       The exclusive END of the last day is a different thing and genuinely has no
       answer — it is the year 10000 — so that one throws, and
       `endOfDateOnlyForTimeZone` turns it back into the Invalid Date its
-      fifty-eight legacy call sites have always had for an unanswerable input.
+      legacy call sites have always had for an unanswerable input.
     */
     expect(startOfClubDay(cd("9999-12-31"), AUCKLAND).toISOString()).toBe(
       "9999-12-30T11:00:00.000Z",
@@ -274,7 +274,7 @@ describe("a club day starts at the first instant that exists on it", () => {
 
 describe("Pacific/Auckland is unaffected, which is what makes the fix safe to land", () => {
   /*
-    The delegation in `date-only.ts` changes fifty-eight call sites, so the claim
+    The delegation in `date-only.ts` changes every legacy call site, so the claim
     that this deployment sees no change at all has to be measured rather than
     asserted. Every day of 2015-2036 was swept against the old two-pass
     algorithm for Auckland, Chatham, UTC and Denver with zero differences; this
@@ -608,7 +608,7 @@ describe("the inclusive end of a club day", () => {
     /*
       9999-12-31 has no successor a `CalendarDate` can name, so the half-open end
       throws a `RangeError` and so does this. The legacy adapter in `date-only.ts`
-      catches that and answers `new Date(NaN)` for its fifty-eight existing call
+      catches that and answers `new Date(NaN)` for its existing call
       sites; the kernel refuses out loud, because a new caller handed an Invalid
       Date discovers it three modules later.
     */
