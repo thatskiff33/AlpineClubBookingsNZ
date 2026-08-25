@@ -5,15 +5,10 @@ one argument line per site. Seven files grew initially; the explanatory prose wa
 moved to its canonical home in `docs/CONCURRENCY_AND_LOCKING.md` ->
 "Which client reads the cancellation and non-member-hold policy (#3110)", and the
 gratuitous multi-line reformatting was collapsed, which took three files back to
-or below their base length. These four are what is genuinely left: thirteen lines
-in total, of which nine are an argument or parameter that has to exist.
-
-file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2331
-reason: one line, `db: prisma`, stating that this advisory quote holds no
-  transaction and so is right to use the module client. The helper it calls
-  requires the choice rather than defaulting it, which is the whole point of
-  the change; there is no shorter way to say it and nothing here to split.
+or below their base length. These three are what is genuinely left: twelve lines in
+total, of which eight are an argument or parameter that has to exist. The
+advisory quote route needed no allowance in the end: its one `db: prisma` line
+does not take the file past a ceiling it was already over on `main`.
 
 file: src/lib/booking-batch-modification-service.ts
 lines: 1480
