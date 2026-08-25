@@ -158,12 +158,10 @@ export async function PUT(
     CT-4 (#2870). Two temporal concepts, and the old spelling took both from the
     environment. "Today" IS a zone question: the persisted `ClubTimeSettings`
     zone answers it (INV-CONFIG-002, INV-DATE-019). `booking.checkIn` is NOT —
-    it is `@db.Date`, a calendar day encoded as UTC midnight and not a moment
-    (INV-DATE-010), so it is decoded in UTC: INV-DATE-019's first exact boundary
-    with INV-DATE-026, which are the citation for a decode and INV-DATE-010 is
-    not (#3080). Projecting it, as the old helper did, is
-    the identity in New Zealand and the PREVIOUS day for a club behind UTC, and
-    the editor then locked a day early.
+    it is `@db.Date`, a calendar day encoded as UTC midnight, so it is decoded
+    in UTC (INV-DATE-019's first boundary with INV-DATE-026, not INV-DATE-010,
+    #3080). Projecting it, as the old helper did, is the identity in New Zealand
+    and the PREVIOUS day for a club behind UTC, so the editor locked a day early.
   */
   const today = (await clubTime()).today();
   const checkInDay = calendarDateOfDateOnlyInstant(booking.checkIn);

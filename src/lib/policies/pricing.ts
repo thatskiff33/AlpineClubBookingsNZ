@@ -208,11 +208,10 @@ const MS_PER_DAY = 86_400_000;
  * not fine for a `DateTime` column." That sentence is also why the contract above
  * has to hold, and `INV-DATE-026` is why these columns qualify as calendar days
  * at all. Do NOT cite `INV-DATE-010` for the decode: its closing clause names
- * those two ids as the authority instead, and what it forbids is deriving a rule
- * from one of these values read as a MOMENT — a rule against treating the
- * encoding as a boundary instant, not a licence to project. This docblock, two
- * test files and the kernel's own `dateOnlyInstantOf` comment had each attributed
- * the inverse to it (#3076, #3080).
+ * those two ids as that authority, and what it forbids is deriving a rule from
+ * one of these values read as a MOMENT — not a licence to project. This
+ * docblock, two test files and the kernel's own `dateOnlyInstantOf` comment had
+ * each attributed the inverse to it (#3076, #3080).
  *
  * Because `getStayNights` is built on this, the whole per-night surface moved
  * with it: the policy-exception proposal's `envelopeNights` froze a party
