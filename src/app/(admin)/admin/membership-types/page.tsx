@@ -42,6 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 import { useClubTime } from "@/components/club-time-provider";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -251,10 +252,6 @@ function draftPayload(
       draft.allowedAgeTiers.includes(ageTier),
     ),
   };
-}
-
-function formatSeasonLabel(seasonYear: number) {
-  return `${seasonYear}/${seasonYear + 1}`;
 }
 
 function rollForwardExceptionLabel(exception: RollForwardException) {
@@ -1019,6 +1016,12 @@ export default function AdminMembershipTypesPage() {
   // (CT-4 group F1, #2870). Before this it went through a helper that read a
   // `Date`'s host-local components, so it answered from whatever zone the bundle
   // was built with rather than the club's.
+  // Seasons are NAMED by `seasonSelectLabel`, which follows the club's
+  // configured year-end (#3103). On the client it reads the same unseeded
+  // financial-year cache as `clubSeasonYear` below, so both answer for the
+  // March default and the roll-forward banner cannot name a season the
+  // pickers beside it did not select; `src/lib/season-label.ts` holds why the
+  // year-end is not plumbed to the client yet.
   const clubTime = useClubTime();
   const defaultSeasonYear = clubSeasonYear(clubTime.zone);
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
@@ -1739,8 +1742,8 @@ export default function AdminMembershipTypesPage() {
                   Seasons
                 </div>
                 <div className="mt-1 text-foreground">
-                  {formatSeasonLabel(rollForwardResult.fromSeasonYear)} to{" "}
-                  {formatSeasonLabel(rollForwardResult.toSeasonYear)}
+                  {seasonSelectLabel(rollForwardResult.fromSeasonYear)} to{" "}
+                  {seasonSelectLabel(rollForwardResult.toSeasonYear)}
                 </div>
               </div>
               <div>

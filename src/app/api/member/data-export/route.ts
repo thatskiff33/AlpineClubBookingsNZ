@@ -13,6 +13,7 @@ import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { formatDateOnly } from "@/lib/date-only";
 import { clubTime } from "@/lib/club-time/server";
+import { seasonSelectLabel } from "@/lib/season-label";
 
 export async function GET() {
   const session = await auth();
@@ -308,7 +309,13 @@ export async function GET() {
       ],
       subscriptions: subscriptions.map((s) => ({
         seasonYear: s.seasonYear,
-        seasonLabel: `${s.seasonYear}/${s.seasonYear + 1}`,
+        // Named by the shared derivation, so a member's download and their
+        // profile screen always agree (#3103). The KEY and its type are
+        // unchanged; the string it carries now follows the club's configured
+        // year-end instead of assuming a season spans two calendar years.
+        // `seasonYear` beside it is the stored column and is untouched, so a
+        // consumer reading the season as a number sees no change at all.
+        seasonLabel: seasonSelectLabel(s.seasonYear),
         status: s.status,
         paidAt: s.paidAt ? s.paidAt.toISOString() : null,
         createdAt: s.createdAt.toISOString(),

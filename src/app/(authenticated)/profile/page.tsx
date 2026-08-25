@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import {
   ProfileDetailsCard,
   ProfileDetailsPageActions,
@@ -240,7 +241,12 @@ export default async function ProfilePage({
   const subscriptionStatus = subscriptionRequired
     ? (currentSub?.status ?? null)
     : "NOT_REQUIRED";
-  const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
+  // The season is NAMED by the shared derivation, which follows the club's
+  // configured year-end rather than assuming a season spans two calendar
+  // years (#3103; `src/lib/season-label.ts` holds the rule and the reasoning).
+  // It reads the same financial-year cache as `currentSeasonYear` above, so
+  // the label and the season it labels can never disagree with each other.
+  const seasonLabel = seasonSelectLabel(currentSeasonYear);
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
@@ -382,7 +388,7 @@ export default async function ProfilePage({
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription ({seasonLabel})
+                Subscription {seasonLabel}
               </span>
               <Badge
                 className={subscriptionStatusClass(
@@ -474,7 +480,7 @@ export default async function ProfilePage({
           ) : (
             <div className="divide-y">
               {subscriptionHistory.map((sub) => {
-                const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
+                const label = seasonSelectLabel(sub.seasonYear);
                 const isCurrent = sub.seasonYear === currentSeasonYear;
                 return (
                   <div
