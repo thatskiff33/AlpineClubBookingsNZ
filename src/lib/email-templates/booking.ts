@@ -81,19 +81,23 @@ export function arrivalInstructionsSection({
   `;
 }
 
-// The HTML twin of the flat {{ical}} block (fork issue #35): one line of
-// three add-to-calendar links. The Google/Outlook targets are cross-origin by
-// nature, so the href sanitiser runs without the same-origin restriction the
-// View Booking button uses.
+// The HTML twin of the flat {{ical}} block (fork issue #35; icons per fork
+// issue #41): three tappable icon links after the lead-in. The icons are
+// self-hosted originals under /branding/calendar (the email logo pattern —
+// no third-party image hosts), and each carries its destination as alt text
+// because many mail clients block remote images by default, so the blocked
+// state must still read as the three service names. The Google/Outlook
+// targets are cross-origin by nature, so the href sanitiser runs without the
+// same-origin restriction the View Booking button uses. "Outlook.com", not
+// "Outlook": the deeplink serves personal Microsoft accounts only, and the
+// name must not promise a Microsoft 365 work/school reader a link that lands
+// them on a consumer sign-in.
 function addToCalendarLine(links: BookingCalendarLinks): string {
   const p = emailPalette();
-  const link = (label: string, url: string) =>
-    `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" style="color: ${p.deep}; font-weight: 600;">${label}</a>`;
+  const iconLink = (alt: string, icon: string, url: string) =>
+    `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" title="${escapeHtml(alt)}" style="display: inline-block; margin: 0 10px 0 0; text-decoration: none;"><img src="${BASE_URL}/branding/calendar/${icon}" alt="${escapeHtml(alt)}" width="28" height="28" style="display: inline-block; width: 28px; height: 28px; vertical-align: middle; border: 0;"></a>`;
   return paragraph(
-    // "Outlook.com", not "Outlook": the deeplink serves personal Microsoft
-    // accounts only, and the label must not promise a Microsoft 365
-    // work/school reader a link that lands them on a consumer sign-in.
-    `Add this stay to your calendar: ${link("Calendar file (.ics)", links.icsUrl)} &middot; ${link("Google Calendar", links.googleUrl)} &middot; ${link("Outlook.com", links.outlookUrl)}`,
+    `<span style="display: inline-block; margin-right: 10px; color: ${p.deep};">Add this stay to your calendar:</span>${iconLink("Calendar file (.ics)", "ics.png", links.icsUrl)}${iconLink("Google Calendar", "google-calendar.png", links.googleUrl)}${iconLink("Outlook.com", "outlook.png", links.outlookUrl)}`,
   );
 }
 
