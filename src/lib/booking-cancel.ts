@@ -1368,7 +1368,13 @@ async function performBookingCancellation(
       Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
       payment.changeFeeCents;
     const days = daysUntilDate(fresh.checkIn);
-    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId);
+    // `tx`, not the module client: under pg_advisory_xact_lock(1) and the
+    // per-lodge capacity lock, against the `fresh` row re-read after both.
+    const policy = await loadCancellationPolicy(
+      fresh.checkIn,
+      fresh.lodgeId,
+      tx,
+    );
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card

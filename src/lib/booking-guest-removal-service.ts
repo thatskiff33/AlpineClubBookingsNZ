@@ -643,6 +643,9 @@ export async function removeBookingGuestInTransaction({
   const settlementOptions = await calculateModificationSettlementOptions({
     booking: booking as unknown as LoadedBookingForModify,
     netChargeCents: priceDiffCents,
+    // This function runs inside the caller's transaction and has already taken
+    // pg_advisory_xact_lock(1) and the per-lodge capacity lock above.
+    db: tx,
   });
   if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
     // A settled booking needs an explicit card/credit election. The only

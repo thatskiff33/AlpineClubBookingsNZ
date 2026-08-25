@@ -16,6 +16,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
   getNonMemberHoldPolicy,
+  type CancellationPolicyDb,
 } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
@@ -65,12 +66,29 @@ export type PaymentAdjustmentResult = {
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
 // period lock-date guard shares the hasIssuedPrimaryXeroInvoice derivation.
 
+/**
+ * COMPOSITION RULE - `db`, and it is REQUIRED. This helper reads the
+ * cancellation policy set, so it inherits the rule on `CancellationPolicyDb`
+ * (`cancellation.ts`): **a caller already inside `prisma.$transaction` MUST pass
+ * its own `tx`.** Three of the four callers are in exactly that position - the
+ * date, batch and guest-removal services, each holding pg_advisory_xact_lock(1)
+ * and the per-lodge capacity lock - and the fourth, the advisory modify-quote
+ * route, holds no transaction and passes the module client explicitly.
+ *
+ * No default, deliberately. This module imports no module-level Prisma client at
+ * all, and a `db = prisma` default would put a silent fall-back to a second
+ * pooled connection inside a transaction-scoped helper, which is the exact
+ * failure this parameter exists to remove and the hardest place to see it. A
+ * required parameter cannot fall back; it makes every caller state its choice.
+ */
 export async function calculateModificationSettlementOptions({
   booking,
   netChargeCents,
+  db,
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
   netChargeCents: number;
+  db: CancellationPolicyDb;
 }): Promise<BookingModificationSettlementOptions | null> {
   const reductionAmountCents = Math.max(0, -netChargeCents);
   const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
@@ -85,7 +103,11 @@ export async function calculateModificationSettlementOptions({
     return null;
   }
 
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+  const policy = await loadCancellationPolicy(
+    booking.checkIn,
+    booking.lodgeId,
+    db,
+  );
   const daysUntilCheckIn = daysUntilDate(booking.checkIn);
   const {
     cardRefundAmountCents,
@@ -345,7 +367,15 @@ export async function applyLifecycleTransitions(
   // non-member guests would stamp a meaningless nonMemberHoldUntil onto it.
   const isDraftEdit = booking.status === BookingStatus.DRAFT;
   if (!skipBookingLifecycleRules && hasNonMembers && !isDraftEdit) {
-    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId);
+    const holdPolicy = await getNonMemberHoldPolicy(
+      newCheckIn,
+      booking.lodgeId,
+      // This function already runs inside the caller's transaction, under
+      // pg_advisory_xact_lock(1) and the per-lodge capacity lock. Reading on
+      // the module client here would take a second pooled connection beneath
+      // both. See the composition rule on `CancellationPolicyDb`.
+      tx,
+    );
     const holdDecision = calculateBookingHoldDecision({
       hasNonMembers,
       checkIn: newCheckIn,

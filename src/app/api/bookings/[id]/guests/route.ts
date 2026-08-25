@@ -744,6 +744,10 @@ export async function POST(
         const holdPolicy = await getNonMemberHoldPolicy(
           booking.checkIn,
           booking.lodgeId,
+          // Inside this transaction, under pg_advisory_xact_lock(1) and the
+          // per-lodge capacity lock: the read must use `tx`, never the module
+          // client. See the composition rule on `CancellationPolicyDb`.
+          tx,
         );
         const holdDecision = calculateBookingHoldDecision({
           hasNonMembers,
