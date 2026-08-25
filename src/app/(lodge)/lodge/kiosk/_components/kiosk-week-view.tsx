@@ -121,8 +121,9 @@ const rosterStatusMeta: Record<
   encoding written a fourth way, in an EXPORTED function, which is precisely the
   shape that put roughly eighteen Xero document dates beyond the reach of #2682's
   census (#2684). Every value it was handed is a `parseDateKey` result, so it is
-  a date-only value and the canonical encoder reads back the day it encodes
-  (INV-DATE-010). Deliberately NOT `formatDateOnlyForTimeZone`: the key and the
+  a date-only value and the canonical encoder reads back the day it encodes —
+  INV-DATE-019's first exact boundary, with INV-DATE-026, which are the citation
+  for that decode rather than INV-DATE-010 (#3080). Deliberately NOT `formatDateOnlyForTimeZone`: the key and the
   instant are two spellings of the same abstract calendar day, and converting one
   into the club's zone would reintroduce the very drift this block removed.
 */
