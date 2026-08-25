@@ -1,5 +1,3 @@
-### Fixed
-
 - Dates that mean a calendar day — a date of birth, a joining date, a promo
   code's window, a group booking's join deadline — are now stored as real
   dates rather than as timestamps that everybody agreed to keep at midnight.

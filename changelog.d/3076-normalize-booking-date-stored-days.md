@@ -1,5 +1,3 @@
-### Fixed
-
 - **The pricing engine now works from the day a stay is actually stored
   against, rather than shifting it into the server's time zone first.** For a
   club west of Greenwich that shift moved every night of every stay one day

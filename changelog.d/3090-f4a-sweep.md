@@ -1,5 +1,3 @@
-### Changed
-
 - **The last screens and services that worked out a date for themselves now ask
   the club's own calendar instead (#2870).** For a club in New Zealand nothing
   visible changes — every label, heading and filter is the same as before. For a
@@ -19,8 +17,6 @@
   the events calendar's own month heading. A club whose server sits behind
   Greenwich would have seen those name the previous day, and at the turn of a
   month, the previous month.
-
-### Fixed
 
 - **A rule in the developer documentation would have broken every scheduled job
   if somebody had followed it (#2870).** It said a module that nothing
