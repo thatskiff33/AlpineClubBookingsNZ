@@ -375,6 +375,17 @@ describe("#3107 the create envelope is stored, and admitted, on the true calenda
     guest({ nights: PROPOSAL_NIGHTS }),
     guest({ nights: PROPOSAL_NIGHTS }),
   ];
+  // THE SHAPE THE ORDINARY CREATE ACTUALLY SENDS, and the one the branch below
+  // exists for. `normalizeGuestStayRange` fills `stayStart` / `stayEnd` from the
+  // booking range for every guest that supplies neither
+  // (`booking-guest-stay-range-input.ts`), and `planMemberGuestConsentWrites`
+  // passes them through, so `guestInputs` on `POST /api/bookings` ALWAYS carries
+  // both bounds. Any guest not using multi-date-range mode therefore reaches
+  // `resolveBookingDateEnvelope` here, in the `stayStart && stayEnd` branch.
+  const withBounds = [
+    guest({ stayStart: PROPOSAL_CHECK_IN, stayEnd: PROPOSAL_CHECK_OUT }),
+    guest({ stayStart: PROPOSAL_CHECK_IN, stayEnd: PROPOSAL_CHECK_OUT }),
+  ];
 
   it("resolves to the days the member asked for", () => {
     const envelope = resolveBookingDateEnvelope(
@@ -388,9 +399,15 @@ describe("#3107 the create envelope is stored, and admitted, on the true calenda
     expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
   });
 
-  it("resolves to them when NO guest carries an explicit night set either", () => {
-    // The projection was in the RETURN as well as in the contributions, so this
-    // case was wrong too: a member asking 07-04 -> 07-07 had 07-03 -> 07-06
+  it("resolves to them when a guest contributes NOTHING at all", () => {
+    // DEFENSIVE, NOT REACHABLE - and saying so is the point. A guest carrying
+    // neither nights nor bounds is the one shape no caller can produce: the
+    // route fills the bounds, `admin-booking-copy.ts` sets them, and
+    // `proposalGuestToCreateInput` sets nights AND bounds. So this case
+    // isolates the RETURN, by taking no contribution branch at all - which is
+    // exactly why it cannot speak for the branch production takes, and why the
+    // `withBounds` cases below exist. It was wrong before the fix too, by one
+    // day rather than two: a member asking 07-04 -> 07-07 had 07-03 -> 07-06
     // written to `booking.checkIn` / `checkOut` while `pricing.ts`'s zone-free
     // `normalizeBookingDate` wrote `BookingGuestNight.stayDate` on the true
     // calendar. The created row straddled itself.
@@ -401,6 +418,123 @@ describe("#3107 the create envelope is stored, and admitted, on the true calenda
     );
     expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
     expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+  });
+
+  it("resolves to them for the shape the ordinary create ACTUALLY sends", () => {
+    // THE CASE THIS SUITE WAS MISSING. Every other envelope case here passes
+    // `nights` or nothing, so the branch every ordinary API create takes had no
+    // coverage at all - and that gap, not equivalence, is why the
+    // contributions-only mutant used to survive twice instead of once.
+    //
+    // Pre-fix on this zone: 2026-07-02 -> 2026-07-06. TWO days early on the low
+    // bound, not one, because the contribution projected the bound and then the
+    // return projected the result again. The one-day case above is the only
+    // shape that lost a single day, and no caller can produce it.
+    const envelope = resolveBookingDateEnvelope(
+      withBounds,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+  });
+
+  it("expands from the stay-bounds branch on the true calendar, at BOTH ends", () => {
+    // A guest whose own bounds sit outside the member stated range widens it.
+    // Both ends move here, so a projection on either one shows up: the low bound
+    // is taken as-is and the high bound goes through the -1 / +1 last-night
+    // round trip that turns an exclusive stay end into an inclusive night key
+    // and back.
+    const envelope = resolveBookingDateEnvelope(
+      [guest({ stayStart: day("2026-07-02"), stayEnd: day("2026-07-09") })],
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-02");
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-09");
+  });
+
+  it("follows the NIGHT SET when a guest carries both nights and bounds", () => {
+    // `proposalGuestToCreateInput` sets both, and so does
+    // `normalizeGuestStayRange` for a multi-date-range guest, so the two
+    // branches are not mutually exclusive in the data - only in the code. The
+    // wide bounds here would reach 07-01 -> 07-12 if the wrong branch won.
+    const envelope = resolveBookingDateEnvelope(
+      [
+        guest({
+          nights: PROPOSAL_NIGHTS,
+          stayStart: day("2026-07-01"),
+          stayEnd: day("2026-07-12"),
+        }),
+      ],
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+  });
+
+  it("contributes NOTHING for a one-sided guest, so the range accessors stay unused", () => {
+    // The branch needs BOTH bounds, so a guest carrying one is skipped and the
+    // member stated range stands. `booking-guest-stay-ranges.ts` exports
+    // accessors that fall back to the booking range per side, so reusing them
+    // here would make a one-sided guest contribute where today it does not.
+    // That is a behaviour change rather than a refactor, and this pins the
+    // current answer so the next reader can see the difference is deliberate.
+    for (const oneSided of [
+      guest({ stayStart: day("2026-07-01") }),
+      guest({ stayEnd: day("2026-07-12") }),
+    ]) {
+      const envelope = resolveBookingDateEnvelope(
+        [oneSided],
+        PROPOSAL_CHECK_IN,
+        PROPOSAL_CHECK_OUT,
+      );
+      expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
+      expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+    }
+  });
+
+  it("counts every proposed bed on the envelope the ordinary create resolves", async () => {
+    // The `withNights` twin of this case is below; this is the same composition
+    // `createConfirmedBooking` performs inside `acquireLodgeCapacityLock`, for
+    // the guests the route really builds. `getCapacityGuestRanges` passes
+    // `nights: undefined` for these, so capacity spreads each guest across the
+    // whole window - which is what makes a two-day-early window visible as a
+    // bed count rather than only as a stored date.
+    const envelope = resolveBookingDateEnvelope(
+      withBounds,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      envelope.checkIn,
+      envelope.checkOut,
+      getCapacityGuestRanges(withBounds, envelope.checkIn, envelope.checkOut),
+    );
+
+    expect(result.nightDetails.map((night) => storedDay(night.date))).toEqual(
+      PROPOSAL_NIGHTS,
+    );
+    // Pre-fix this window was 07-02..07-05: it counted 0 proposed beds on the
+    // two nights before the stay and never inspected 07-06 at all.
+    expect(beds(result.nightDetails)).toEqual([2, 2, 2]);
+  });
+
+  it("HOST AXIS: neither offset extreme moves the ordinary create envelope", () => {
+    for (const zone of HOST_EXTREMES) {
+      withTimeZone(zone, () => {
+        const envelope = resolveBookingDateEnvelope(
+          withBounds,
+          PROPOSAL_CHECK_IN,
+          PROPOSAL_CHECK_OUT,
+        );
+        expect(storedDay(envelope.checkIn), zone).toBe("2026-07-04");
+        expect(storedDay(envelope.checkOut), zone).toBe("2026-07-07");
+      });
+    }
   });
 
   it("still auto-expands to cover a guest night outside the stated range (#713)", () => {
