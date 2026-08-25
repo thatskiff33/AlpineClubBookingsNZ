@@ -1,0 +1,343 @@
+/**
+ * #3107 - a stored lodge night is DECODED, and the capacity admission check sees
+ * the beds a proposal really asks for.
+ *
+ * ## The defect this file exists to keep closed
+ *
+ * `dateOnlyKey` in `booking-guest-stay-ranges.ts` read every stored `@db.Date`
+ * value through the environment zone, while `nightEntryKey` took a `yyyy-mm-dd`
+ * string VERBATIM. Both shapes occur in production: `BookingGuestNight` rows and
+ * booking envelopes arrive as `Date`s, and `ProposalGuest.nights` is declared
+ * `string[]` (`booking-exception-requests.ts`) and reaches
+ * `checkCapacityForGuestRanges` untouched through
+ * `createModificationExceptionRequest`. So one logical night lived in two frames
+ * at once.
+ *
+ * `checkCapacityForGuestRanges` compounded it: it projected its bounds with
+ * `normalizeDateOnlyForTimeZone` before expanding them into nights, so the night
+ * it asked about was a day early AND the key it derived for that night was a
+ * further day early. Measured on `America/Denver` for a two-guest, three-night
+ * proposal, exactly one of the three nights matched the proposal's string set -
+ * the other two counted ZERO proposed beds instead of two.
+ *
+ * That runs inside `acquireGlobalBookingLock` plus `acquireLodgeCapacityLock`, on
+ * the `reservesBeds` branch, and it is the one code path whose entire job is to
+ * decide whether the beds exist. An under-count makes the lodge look emptier than
+ * it is, so a proposal that should be refused for want of beds could be admitted.
+ *
+ * ## Why no existing suite caught it
+ *
+ * Every other suite runs with the environment zone resolving to
+ * `Pacific/Auckland`, where the projection is the identity. This file pins the
+ * environment zone behind Greenwich with a module mock, and moves the HOST
+ * separately with `withTimeZone` / `withTimeZoneAsync` - separately, because a
+ * test moving both together could not tell a projection through the configured
+ * zone from one through the host's, and one instant can move both axes.
+ *
+ * The first case asserts the premise is real, so nothing below can pass
+ * vacuously.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// `APP_TIME_ZONE` is frozen at module load, so the environment zone has to move
+// above the imports. This moves it ALONE, leaving the host where the runner put
+// it.
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "America/Denver",
+  APP_LOCALE: "en-NZ",
+}));
+
+const mocks = vi.hoisted(() => ({
+  bookingFindMany: vi.fn(),
+  clubModuleSettingsFindUnique: vi.fn(),
+  lodgeBedCount: vi.fn(),
+  lodgeSettingsFindUnique: vi.fn(),
+  hutLeaderAssignmentFindMany: vi.fn(),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    booking: { findMany: mocks.bookingFindMany },
+    clubModuleSettings: { findUnique: mocks.clubModuleSettingsFindUnique },
+    lodgeBed: { count: mocks.lodgeBedCount },
+    lodgeSettings: { findUnique: mocks.lodgeSettingsFindUnique },
+    hutLeaderAssignment: { findMany: mocks.hutLeaderAssignmentFindMany },
+  },
+}));
+
+import { APP_TIME_ZONE } from "@/config/operational";
+import {
+  checkCapacityForGuestRanges,
+  type NightAvailability,
+} from "@/lib/capacity";
+import {
+  getGuestBedNightKeys,
+  getNextGuestBedNightAfter,
+  type GuestStayRange,
+} from "@/lib/booking-guest-stay-ranges";
+import { formatDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import {
+  withTimeZone,
+  withTimeZoneAsync,
+} from "@/lib/__tests__/helpers/timezone";
+
+const LODGE = "lodge-a";
+
+/** The three lodge nights of the proposal, as `ProposalGuest.nights` carries them. */
+const PROPOSAL_NIGHTS = ["2026-07-04", "2026-07-05", "2026-07-06"];
+/** Its envelope, as `createModificationExceptionRequest` builds it. */
+const PROPOSAL_CHECK_IN = parseDateOnly("2026-07-04");
+const PROPOSAL_CHECK_OUT = parseDateOnly("2026-07-07");
+
+/** A `@db.Date` value: the calendar day encoded at UTC midnight. */
+function day(value: string): Date {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+/** Both offset extremes, to prove the host cannot move any answer here. */
+const HOST_EXTREMES = ["Pacific/Pago_Pago", "Pacific/Kiritimati"];
+
+const BOOKING = { checkIn: day("2026-07-04"), checkOut: day("2026-07-07") };
+
+function beds(nights: NightAvailability[]): number[] {
+  return nights.map((night) => night.occupiedBeds);
+}
+
+function proposal(nights: GuestStayRange["nights"]): GuestStayRange[] {
+  return [{ nights }, { nights }];
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // An EMPTY lodge, so every bed the check reports as occupied is the proposal's
+  // own. That is what makes `occupiedBeds` a direct readout of the proposed count.
+  mocks.bookingFindMany.mockResolvedValue([]);
+  mocks.hutLeaderAssignmentFindMany.mockResolvedValue([]);
+  mocks.clubModuleSettingsFindUnique.mockResolvedValue(null);
+  mocks.lodgeBedCount.mockResolvedValue(0);
+  mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 10 });
+});
+
+describe("#3107 premise: the environment zone really is behind Greenwich", () => {
+  it("pins it, so nothing below measures the identity", () => {
+    expect(APP_TIME_ZONE).toBe("America/Denver");
+    // The projection the fix removed. While `dateOnlyKey` used this, every key
+    // it produced was this day rather than the day the column holds.
+    expect(formatDateOnlyForTimeZone(day("2026-07-04"))).toBe("2026-07-03");
+  });
+});
+
+describe("#3107 the capacity admission check counts the proposal's beds", () => {
+  it("sees TWO proposed beds on every night of a two-guest three-night proposal fed as STRINGS", async () => {
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS),
+    );
+
+    // The nights asked about are the nights proposed - not a day early.
+    expect(
+      result.nightDetails.map((night) => night.date.toISOString().slice(0, 10)),
+    ).toEqual(PROPOSAL_NIGHTS);
+    // THE MEASUREMENT. Before the fix this was [2, 0, 0] - one night matched and
+    // two counted no beds at all, on an empty lodge, inside the capacity lock.
+    expect(beds(result.nightDetails)).toEqual([2, 2, 2]);
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([
+      8, 8, 8,
+    ]);
+  });
+
+  it("REFUSES a proposal that does not fit, which the under-count could admit", async () => {
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 1 });
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS),
+    );
+
+    // Two beds asked for, one bed in the lodge, so every night is short by one.
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([
+      -1, -1, -1,
+    ]);
+    expect(result.available).toBe(false);
+  });
+
+  it("gives the SAME answer for every input shape, so the frames agree", async () => {
+    const asStrings = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS),
+    );
+    const asDates = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS.map(day)),
+    );
+    const asRows = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS.map((value) => ({ stayDate: day(value) }))),
+    );
+    const asSerialisedRows = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(
+        PROPOSAL_NIGHTS.map((value) => ({
+          stayDate: `${value}T00:00:00.000Z`,
+        })),
+      ),
+    );
+
+    expect(beds(asStrings.nightDetails)).toEqual([2, 2, 2]);
+    expect(beds(asDates.nightDetails)).toEqual(beds(asStrings.nightDetails));
+    expect(beds(asRows.nightDetails)).toEqual(beds(asStrings.nightDetails));
+    expect(beds(asSerialisedRows.nightDetails)).toEqual(
+      beds(asStrings.nightDetails),
+    );
+  });
+
+  it("counts the ENVELOPE branch on the same frame as the explicit one", async () => {
+    const envelope = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      [
+        { stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
+        { stayStart: day("2026-07-04"), stayEnd: day("2026-07-07") },
+      ],
+    );
+    expect(beds(envelope.nightDetails)).toEqual([2, 2, 2]);
+  });
+
+  it("counts an EXISTING booking's stored span against the same nights", async () => {
+    // The occupancy index keys the booking's stored span; the night keys come
+    // from the requested window. Those were built by two different spellings -
+    // one projected, one not - so behind Greenwich this term was off by one.
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        id: "existing",
+        checkIn: day("2026-07-04"),
+        checkOut: day("2026-07-07"),
+        wholeLodgeHold: false,
+        guests: [{ nights: [] }, { nights: [] }],
+      },
+    ]);
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal(PROPOSAL_NIGHTS),
+    );
+
+    // Two existing beds plus the two proposed, on each of the three nights.
+    expect(beds(result.nightDetails)).toEqual([4, 4, 4]);
+  });
+
+  it("HOST AXIS: neither offset extreme changes the bed count", async () => {
+    for (const zone of HOST_EXTREMES) {
+      await withTimeZoneAsync(zone, async () => {
+        const result = await checkCapacityForGuestRanges(
+          LODGE,
+          PROPOSAL_CHECK_IN,
+          PROPOSAL_CHECK_OUT,
+          proposal(PROPOSAL_NIGHTS),
+        );
+        expect(beds(result.nightDetails), zone).toEqual([2, 2, 2]);
+      });
+    }
+  });
+});
+
+describe("#3107 the two exported key producers hand out the stored day", () => {
+  it("getGuestBedNightKeys returns the days the columns hold, from either branch", () => {
+    // Explicit `BookingGuestNight` rows.
+    expect(
+      getGuestBedNightKeys({ nights: PROPOSAL_NIGHTS.map(day) }, BOOKING),
+    ).toEqual(PROPOSAL_NIGHTS);
+    // The half-open envelope fallback, from the booking's own stored columns.
+    expect(getGuestBedNightKeys({}, BOOKING)).toEqual(PROPOSAL_NIGHTS);
+  });
+
+  it("getNextGuestBedNightAfter returns the stored day, not a projected one", () => {
+    const guest: GuestStayRange = {
+      nights: [day("2026-07-04"), day("2026-07-07")],
+    };
+    const next = getNextGuestBedNightAfter(guest, day("2026-07-05"), BOOKING);
+    // The kiosk's departure sweep uses this as the UPPER Prisma bound of a
+    // `choreAssignment.deleteMany` range whose lower bound is `parseDateOnly` of
+    // the URL segment and was never projected. Two bounds, one frame.
+    expect(next?.toISOString()).toBe("2026-07-07T00:00:00.000Z");
+  });
+
+  it("HOST AXIS: neither offset extreme changes either producer", () => {
+    for (const zone of HOST_EXTREMES) {
+      withTimeZone(zone, () => {
+        expect(
+          getGuestBedNightKeys({ nights: PROPOSAL_NIGHTS.map(day) }, BOOKING),
+          zone,
+        ).toEqual(PROPOSAL_NIGHTS);
+        expect(
+          getNextGuestBedNightAfter(
+            { nights: [day("2026-07-04"), day("2026-07-07")] },
+            day("2026-07-05"),
+            BOOKING,
+          )?.toISOString(),
+          zone,
+        ).toBe("2026-07-07T00:00:00.000Z");
+      });
+    }
+  });
+});
+
+describe("#3107 the string branch reads the prefix, it does not reparse", () => {
+  // The one input on which a prefix read and a reparse disagree, and therefore
+  // the only probe that can tell the fixed string branch from the one it
+  // replaced. `calendarDateOfSerialisedDbDate` reads the first ten characters,
+  // so this is 4 July in every zone; `dateOnlyKey(new Date(entry))` would
+  // resolve the offset first and decode 3 July. No serialisation of a `@db.Date`
+  // produces such a string, so this is the contract boundary rather than a live
+  // path - but "which day does this night name" must not depend on a zone at
+  // all, and only one of the two spellings has that property.
+  const OFFSET_BEARING = "2026-07-04T12:00:00+13:00";
+
+  it("names the day in the string, not the day its offset resolves to", () => {
+    expect(
+      getGuestBedNightKeys({ nights: [OFFSET_BEARING] }, BOOKING),
+    ).toEqual(["2026-07-04"]);
+  });
+
+  it("counts that night as the day it names, inside the admission check", async () => {
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+      proposal([OFFSET_BEARING]),
+    );
+    expect(beds(result.nightDetails)).toEqual([2, 0, 0]);
+  });
+});
+
+describe("#3107 a real timestamp is refused rather than silently decoded", () => {
+  it("names the value instead of returning its UTC day", () => {
+    // The precondition `requireStoredCalendarDay` asserts. Without it, swapping
+    // the projection for a UTC read would be silently wrong the moment a caller
+    // passed a moment - the INV-DATE-019 defect from the other direction, and
+    // the reason #3100 refused to fold this fix into itself.
+    expect(() =>
+      getGuestBedNightKeys(
+        { nights: [new Date("2026-07-04T09:30:00.000Z")] },
+        BOOKING,
+      ),
+    ).toThrow(/takes a stored calendar day, not a moment/);
+  });
+});
