@@ -75,9 +75,9 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -422,9 +422,15 @@ export async function modifyBookingDates({
       existingAssignmentDates.map((assignment) => assignment.date),
     );
 
+    // CT-4 (#2870), #3088: THE STORED DAY, NOT A ZONE PROJECTION OF IT. The
+    // preview twin — the `editPolicy.today` gate in `modify-quote/route.ts` —
+    // reads it through `storedDateOnly`, and `editPolicy.today` is the
+    // container's day on both sides, so a projection here alone quoted one
+    // window and refused another, a day apart, for a club behind Greenwich.
+    // Reasoning in full beside the same reads in `booking-modify-validation.ts`.
     if (
       actor.role !== "ADMIN" &&
-      normalizeDateOnlyForTimeZone(newCheckIn) <= editPolicy.today
+      storedDateOnly(newCheckIn) <= editPolicy.today
     ) {
       throw new ApiError(
         "NZ today and earlier are locked for self-service changes",
@@ -1369,8 +1375,11 @@ export async function adminShiftBookingDates({
     // both bounds are normalised to UTC midnight first, so the delta and every
     // shift are DST-safe (addDaysDateOnly for shifting, never raw ms on unnorm-
     // alised Dates).
-    const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-    const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+    // The stored days, matching `buildShiftPreviewResponse` read for read — see
+    // the note at the self-service gate above. The night count, the delta and
+    // every translated guest row below all derive from these two.
+    const oldCheckIn = storedDateOnly(booking.checkIn);
+    const oldCheckOut = storedDateOnly(booking.checkOut);
     const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
 
     const providedCheckIn = input.checkIn ? parseDateOnly(input.checkIn) : null;
@@ -1437,19 +1446,10 @@ export async function adminShiftBookingDates({
     // the stay). Guests with no night rows keep envelope-only semantics.
     const translatedGuests = booking.guests.map((guest) => ({
       guest,
-      stayStart: addDaysDateOnly(
-        normalizeDateOnlyForTimeZone(guest.stayStart),
-        deltaDays,
-      ),
-      stayEnd: addDaysDateOnly(
-        normalizeDateOnlyForTimeZone(guest.stayEnd),
-        deltaDays,
-      ),
+      stayStart: addDaysDateOnly(storedDateOnly(guest.stayStart), deltaDays),
+      stayEnd: addDaysDateOnly(storedDateOnly(guest.stayEnd), deltaDays),
       nights: guest.nights.map((night) => ({
-        stayDate: addDaysDateOnly(
-          normalizeDateOnlyForTimeZone(night.stayDate),
-          deltaDays,
-        ),
+        stayDate: addDaysDateOnly(storedDateOnly(night.stayDate), deltaDays),
         priceCents: night.priceCents,
       })),
     }));
