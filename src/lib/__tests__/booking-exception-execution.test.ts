@@ -1062,7 +1062,10 @@ describe("refusal messages name only what the engine established (#3089)", () =>
   /**
    * The two causes each message used to assert. Named so a regression fails
    * against the SPECIFIC wrong answer rather than against "something else":
-   * restoring either old string reaches exactly one of these.
+   * restoring either old string reaches exactly one of these. They apply ONLY to
+   * the two messages that must name no cause — `PROPOSAL_UNREPLAYABLE_MESSAGE`
+   * deliberately says "nothing about the booking has changed", which is a denial
+   * and not a claim, and would match the first of them.
    */
   const ASSERTS_A_LIVE_EDIT = /booking (has|was) (changed|edited)/i;
   const ASSERTS_A_POLICY_EDIT = /polic(y|ies) (have|has) changed/i;
