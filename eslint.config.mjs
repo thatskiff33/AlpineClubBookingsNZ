@@ -402,8 +402,11 @@ const RAW_SQL_RESTRICTIONS = [
 // LINT rule rather than a style note is what the duplication hides.
 //
 // The truncation is only correct for a DATE-ONLY receiver. A `@db.Date` column
-// is pinned to UTC midnight as the ENCODING of an NZ calendar day, so reading
-// the UTC day back returns the day it encodes (INV-DATE-010). A bare `DateTime`
+// is pinned to UTC midnight as the ENCODING of a CLUB calendar day and not as a
+// moment (INV-DATE-010), so reading the UTC day back returns the day it encodes
+// — INV-DATE-019's first exact boundary, over the columns INV-DATE-026
+// establishes as calendar days; those are the citation for a decode, and
+// INV-DATE-010 is not (#3080). A bare `DateTime`
 // is a real instant, and New Zealand runs 12-13 hours ahead of UTC, so its UTC
 // day is the PREVIOUS NZ day for roughly the first half of every NZ day — which
 // is how a Xero invoice due date and a finance export both landed a day early

@@ -9,6 +9,7 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -1209,11 +1210,15 @@ export async function updateAdminMember(params: {
     data.dateOfBirth !== undefined && data.dateOfBirth !== "";
   if (data.dateOfBirth !== undefined) {
     if (dobProvided) {
-      const dob = new Date(data.dateOfBirth as string);
-      if (isNaN(dob.getTime())) {
+      // `parseCalendarDate`, not `new Date` + `isNaN` (#3082 fix round). The old
+      // pair accepted `1990-02-31` and stored 3 March, and accepted
+      // `0000-05-05`, which then throws a `RangeError` out of `computeAge`
+      // below — a 500 where this branch already had the right answer, 422.
+      const day = parseCalendarDate(data.dateOfBirth as string);
+      if (day === null) {
         return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
       }
-      updateData.dateOfBirth = dob;
+      updateData.dateOfBirth = dateOnlyInstantOf(day);
     } else {
       updateData.dateOfBirth = null;
     }

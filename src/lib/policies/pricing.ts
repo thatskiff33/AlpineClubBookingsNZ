@@ -196,8 +196,8 @@ const MS_PER_DAY = 86_400_000;
  * It read the value through `APP_TIME_ZONE` — the CONTAINER's zone, not even the
  * club's persisted one (`INV-CONFIG-002`). A `@db.Date` value is a calendar day
  * ENCODED at UTC midnight, and `INV-DATE-010` says that pinning "is an internal
- * encoding of the NZ date and nothing more", so projecting it through a zone
- * treats an encoding as a moment. For a club behind Greenwich that moved the day:
+ * encoding of the calendar date and nothing more", so projecting it through a
+ * zone treats an encoding as a moment. For a club behind Greenwich that moved the day:
  * the stored `2026-07-04T00:00:00.000Z` came back as `2026-07-03`. Measured, not
  * inferred — `America/Denver` shifts it.
  *
@@ -207,11 +207,11 @@ const MS_PER_DAY = 86_400_000;
  * already pinned to UTC midnight and encode a calendar day, not an instant. It is
  * not fine for a `DateTime` column." That sentence is also why the contract above
  * has to hold, and `INV-DATE-026` is why these columns qualify as calendar days
- * at all. Do NOT cite `INV-DATE-010` for the decode: its closing clause is that
- * no rule may be derived from the UTC READING of these values — a rule against
- * treating the encoding as a midnight boundary instant, not a licence to project
- * — and this docblock, two test files and the kernel's own `dateOnlyInstantOf`
- * comment have each attributed the inverse to it.
+ * at all. Do NOT cite `INV-DATE-010` for the decode: its closing clause names
+ * those two ids as that authority, and what it forbids is deriving a rule from
+ * one of these values read as a MOMENT — not a licence to project. This
+ * docblock, two test files and the kernel's own `dateOnlyInstantOf` comment had
+ * each attributed the inverse to it (#3076, #3080).
  *
  * Because `getStayNights` is built on this, the whole per-night surface moved
  * with it: the policy-exception proposal's `envelopeNights` froze a party

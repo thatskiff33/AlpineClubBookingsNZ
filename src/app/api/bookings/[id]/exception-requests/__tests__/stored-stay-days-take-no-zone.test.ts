@@ -7,7 +7,9 @@ import { NextRequest } from "next/server";
  *
  * `Booking.checkIn`/`checkOut`, `BookingGuest.stayStart`/`stayEnd` and
  * `BookingGuestNight.stayDate` are all `@db.Date`: a calendar day encoded as UTC
- * midnight, where the UTC reading IS the meaning (INV-DATE-010, INV-DATE-026).
+ * midnight and never a moment (INV-DATE-010), read back in UTC under
+ * INV-DATE-019's first exact boundary with INV-DATE-026 — which are the citation
+ * for a decode, and INV-DATE-010 is not (#3080).
  * The route used to hand every one of them to `normalizeDateOnlyForTimeZone`,
  * which projected the stored instant into `APP_TIME_ZONE` first. That is the
  * identity for a club ahead of Greenwich — which is why New Zealand never saw

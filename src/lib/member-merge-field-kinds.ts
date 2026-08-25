@@ -23,8 +23,10 @@ import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
  *   human judge which record is more recent, where `photoUpdatedAt` is a recency
  *   signal by construction (`INV-DATE-019`).
  * - `dateOfBirth`, `joinedDate` and `lifeMemberDate` are CALENDAR DAYS — their
- *   writers mean to pin them to UTC midnight, and for a value stored that way
- *   the same truncation is exactly right (`INV-DATE-010`). Reading one through
+ *   writers mean to pin them to UTC midnight as an encoding and not a moment
+ *   (`INV-DATE-010`), and for a value stored that way the same truncation is
+ *   exactly right (`INV-DATE-019`'s first exact boundary, with `INV-DATE-026`;
+ *   those are the citation for a decode, not 010 — #3080). Reading one through
  *   the club-zone formatter would happen to agree in New Zealand — UTC midnight
  *   is midday NZ, still the same day — and be wrong by a day for any club
  *   sitting behind UTC.
@@ -212,7 +214,8 @@ function toInstant(value: unknown): Date | null {
  * - `instant` reads the club's calendar day (`formatDateOnlyForTimeZone`,
  *   `INV-DATE-019`), which is correct in every zone.
  * - `calendarDay` reads the UTC-midnight encoding by truncation
- *   (`formatDateOnly`, `INV-DATE-010`), which is also correct in every zone —
+ *   (`formatDateOnly`, `INV-DATE-019`'s first exact boundary with
+ *   `INV-DATE-026`), which is also correct in every zone —
  *   and deliberately NOT routed through the club-zone formatter, which would
  *   agree in New Zealand and be a day wrong for a club behind UTC.
  *

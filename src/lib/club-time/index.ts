@@ -73,6 +73,7 @@ export {
   isInstant,
   parseInstant,
   requireInstant,
+  requireStoredCalendarDay,
 } from "./instant";
 
 export {
@@ -102,6 +103,7 @@ export {
   formatClubLongWeekdayDate,
   formatClubLongWeekdayDayMonth,
   formatClubMonthYear,
+  formatClubShortMonth,
   formatClubShortMonthYear,
   formatClubWeekday,
   formatClubWeekdayDate,

@@ -26,8 +26,11 @@ import { NextRequest } from "next/server";
  * When CT-4 corrected the route and left `booking-exception-approval.ts`
  * projecting through `APP_TIME_ZONE`, every replay for a club BEHIND Greenwich
  * came back a day early, the hashes differed, and `verifyLiveProposalIntegrity`
- * reported `drift` — telling the officer "the live booking has changed since this
- * request was made, please resubmit" about a booking nobody had touched.
+ * reported `drift` — refusing every replay for a booking nobody had touched, and,
+ * in the wording of the time, telling the officer "the live booking has changed
+ * since this request was made, please resubmit". #3089 reworded that refusal so
+ * it no longer names a cause the engine cannot see (`INV-EXCEPT-035`); the
+ * refusal itself is what this test exists to prevent.
  * Resubmitting reproduced it exactly, so no modification policy exception could
  * ever be approved (`INV-EXCEPT`). Both sides had been wrong in the SAME
  * direction before, which is why the equality held while both were wrong.
@@ -305,9 +308,10 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
       existing `@db.Date` value the same way is fine … it is not fine for a
       `DateTime` column" — over the columns `INV-DATE-026` establishes as calendar
       days. `INV-DATE-010` is why the value is an ENCODING rather than a moment,
-      and is NOT the citation for the decode: its closing clause says no rule may
-      be derived from the UTC READING of these values, which is the opposite
-      sentence, and this comment used to attribute the inverse to it. Either way
+      and is NOT the citation for the decode: its closing clause names those two
+      ids as that authority, and what it forbids is deriving a rule from one of
+      these values read as a MOMENT. This comment used to attribute the inverse
+      of that to it (#3080). Either way
       the nights are the stored days: 4, 5 and 6 July for the requested
       `[04, 07)` envelope.
 

@@ -556,27 +556,64 @@ derivation).
   instead, so a value nobody can read as a calendar day never becomes a
   birthday. Prefer it everywhere.
 - **Compare a stored date of birth only against another date-only value.** A SQL
-  range filter compares instants, so a bound derived from `getSeasonStartDate` —
-  which is local midnight — must cover the whole cutoff calendar day rather than
-  compare instants (`src/lib/cron-age-up.ts`, #2859). Getting that wrong moves
-  an age tier, and an age tier moves a member's price and their hosting
-  eligibility.
+  range filter compares instants, so the bound the age-up candidate query filters
+  on must cover the whole cutoff calendar day rather than compare instants
+  (`src/lib/cron-age-up.ts`, #2859). Getting that wrong moves an age tier, and an
+  age tier moves a member's price and their hosting eligibility.
+- **Both sides of the age comparison are calendar days, and they read one
+  frame** (#3082). `computeAge` (`src/lib/policies/age-tier.ts`) decodes its date
+  of birth **and** its reference date in UTC through
+  `requireStoredCalendarDay`, which refuses a value carrying a UTC time of day
+  rather than flooring it; `getSeasonStartDate` is that day encoded at UTC
+  midnight, and `getSeasonStartCalendarDate` is the same day as text. Do not
+  correct one half: they were interlocked, and the straddle is worse than either
+  end. The reasoning lives in the `policies/age-tier.ts` module docblock and is
+  not repeated here.
 
-  The two in-process readers recover the calendar day **only east of UTC**, and
-  that is a property of the deployment rather than of the code. `computeAge`
-  (`src/lib/policies/age-tier.ts`) uses `getFullYear`/`getMonth`/`getDate`,
-  which are HOST-local: under the `TZ=Pacific/Auckland` pin every stored
-  UTC-midnight value reads back as the same calendar day, but on a server west
-  of UTC — this repository is a template with live forks — UTC midnight is the
-  *previous* evening locally and every member's birthday moves a day.
-  `member-age.ts` used to read through the club zone, which had the same
-  dependence in a subtler form — it agreed in New Zealand and reported an age a
-  year old on the day before a birthday for any club behind UTC. #2872 moved it
-  onto `formatDateOnly`; "today" on the other side of that comparison is still
-  the club's, and correctly so.
-  The correct reading of a UTC-midnight column is UTC getters or
-  `formatDateOnly`; treat the local-getter readers as working by deployment
-  accident, not by construction.
+  **What #3082 fixed, because the shape recurs.** Both functions used to be
+  host-local. The reference side survived that by a round trip — local getters
+  read back exactly the parts the local constructor was given, in every zone
+  (swept: 418 zones, 2015-2036, all twelve possible season-start months, zero
+  failures) — and the date-of-birth side did not, because it is stored at UTC
+  midnight. A host behind Greenwich read it a day early, which makes the member
+  look a day **older**, so the misclassified member is the one born the day
+  **after** a tier boundary, not on it. Measured across every stored date of
+  birth in a year: **161 of 418 zones moved exactly one day of birthdays, by +1
+  year.** Every zone at or ahead of Greenwich, this deployment included, was
+  already right — which is how it stayed latent.
+
+  **The age-up cron was not affected**, and an earlier version of this paragraph
+  implied otherwise. `cron-age-up.ts` prefilters candidates on a bound whose
+  exclusive edge coincides exactly with the misclassification boundary, so the one
+  day of birthdays the old read got wrong was never proposed as a candidate — and
+  for candidates it did misread, both readings land at or above the tier minimum,
+  which `validateAgeTierPartition` guarantees means ADULT either way. Swept over
+  27 638 160 admitted candidates across 418 zones: **zero promote-or-skip verdict
+  changes**, and the candidate set itself byte-identical. Price bands and hosting
+  eligibility DID move, because billing calls `computeAgeTierWithSettings` with no
+  prefilter in front of it.
+
+  `member-age.ts` had the same dependence in a subtler form before #2872: it read
+  through the club zone, agreed in New Zealand, and reported an age a year old on
+  the day before a birthday for any club behind UTC. It reads `formatDateOnly`
+  now; "today" on the other side of that comparison is still the club's, and
+  correctly so. Its 29 February convention differs from `computeAge`'s
+  deliberately — it clamps the anniversary to 28 February for an identity check,
+  where `computeAge` compares the day as written. The two can only disagree when
+  the REFERENCE date is 28 February, and `computeAge`'s reference is always a
+  season start, which is always day 1 of a month — so on the price path the
+  divergence is **structurally unreachable** and aligning the conventions would
+  move nobody's tier. This document used to say aligning them "would move a real
+  member's tier for one day a year, so it needs a decision rather than a
+  tidy-up"; that was measured false (enumerated in
+  `computeAgeOnCalendarDays`'s docblock). The conventions still stand as they
+  are, on the ground that the divergence is harmless and `member-age.ts` serves a
+  different purpose — not on the ground that changing them would move somebody.
+
+  The correct reading of a UTC-midnight column is UTC getters, `formatDateOnly`
+  or the kernel's `calendarDateOfDateOnlyInstant`. A local-getter reader is
+  working by deployment accident, not by construction — there are none left on
+  this path.
 
 ### INV-DATE-026
 
@@ -773,9 +810,11 @@ derivation).
   for a booker far enough from New Zealand. The value submitted, the club-pinned
   label displayed, the night count, and the hold deadline are all derived from
   the string via `parseDateOnly` / `addDaysDateOnly` / `countNightsDateOnly`,
-  which encode the NZ calendar day internally at UTC midnight (the
-  storage-encoding note in the stay-boundary invariant above: the instant that
-  renders as club midday, the same calendar day in every zone).
+  which encode the club calendar day internally at UTC midnight — an encoding and
+  not a moment, per `INV-DATE-010`, which is also where the qualification lives:
+  that encoding renders as club midday only for a club at or ahead of Greenwich,
+  and the day it names comes back correctly because it is decoded in UTC rather
+  than projected.
   `formatCalendarDayOnly(year, monthIndex, day)` is the
   canonical encoder; the #2264 `localCalendarDayToDateOnly` bridge, which patched
   only the display half of this hazard while the fragile encoding lived on, is

@@ -33,8 +33,9 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 /**
  * The invoice's issue date is the booking's check-in, which is a `@db.Date`
  * lodge night — an abstract calendar day already pinned to UTC midnight, not an
- * instant. Reading it back as a date-only value yields the day it encodes
- * (INV-DATE-010).
+ * instant (INV-DATE-010). Reading it back as a date-only value yields the day it
+ * encodes: INV-DATE-019's first exact boundary, with INV-DATE-026, which are the
+ * citation for that decode and INV-DATE-010 is not (#3080).
  */
 export function getBookingInvoiceIssueDate(booking: {
   checkIn: Date | string;

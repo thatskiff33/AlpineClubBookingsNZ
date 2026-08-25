@@ -20,12 +20,17 @@ import {
 /**
  * #2684 — the date-only ENCODING guard, second arm.
  *
- * ENFORCES INV-DATE-010 and INV-DATE-019
- * (`docs/invariants/booking-dates-and-capacity.md`), which name this file and
- * the `no-restricted-syntax` rules in `eslint.config.mjs` as their two
- * enforcement arms. Every assertion repeats the id in its failure message so
- * whoever trips one is handed the rule rather than having to go and find it
- * (#2691).
+ * ENFORCES INV-DATE-019 — the flat prohibition on truncating a `DateTime` — over
+ * the columns INV-DATE-026 establishes as calendar days, whose UTC midnight is an
+ * encoding rather than a moment (INV-DATE-010). All three are in
+ * `docs/invariants/booking-dates-and-capacity.md`, and INV-DATE-026 is the one
+ * that names this file, for the `DATE_ONLY_IN_DATETIME_COLUMN` entry it fails
+ * when the entry outlives its fix. It and the `no-restricted-syntax` rules in
+ * `eslint.config.mjs` are the two enforcement arms, which is this file's own
+ * claim and not something an invariant asserts (#3080 — an earlier version said
+ * INV-DATE-010 and INV-DATE-019 named them, and neither does). Every assertion
+ * repeats the id in its failure message so whoever trips one is handed the rule
+ * rather than having to go and find it (#2691).
  *
  * THE TWO ARMS DIVIDE ALONG WHAT EACH CAN SEE.
  *
@@ -35,8 +40,9 @@ import {
  * value.
  *
  * It cannot see MEANING, and meaning is the whole defect. `formatDateOnly` is
- * correct for a `@db.Date` column, whose UTC midnight is the ENCODING of an NZ
- * calendar day (INV-DATE-010), and wrong for a bare `DateTime`, which is a real
+ * correct for a `@db.Date` column, whose UTC midnight is the ENCODING of a CLUB
+ * calendar day (INV-DATE-010 — the rule's own word, because the day is the
+ * club's and not New Zealand's), and wrong for a bare `DateTime`, which is a real
  * instant whose UTC day is the PREVIOUS New Zealand day for roughly the first
  * half of every NZ day (INV-DATE-019). The two are identical in syntax. A Xero
  * invoice due date and a finance export were both a day early for exactly this
@@ -114,8 +120,25 @@ const CANONICAL_ENCODERS = new Set([
  * serialisation this scanner already follows, so it must not hide the field
  * being read — `calendarDateOfDateOnlyInstant(requireInstant(booking.createdAt))`
  * is `INV-DATE-019` written the long way round.
+ *
+ * `requireStoredCalendarDay` is the strict third (#3082): it PROVES the `Date`
+ * carries no time of day — necessary for a `@db.Date` encoding and NOT
+ * sufficient, since a real instant landing on exactly UTC midnight passes it —
+ * and returns that same value. It reports the SHAPE, not
+ * the outcome — a source line asking for a `createdAt` to be encoded as a
+ * calendar day is the defect whether it throws at runtime or answers, and it has
+ * to be visible here rather than found by a production stack trace.
  */
-const INSTANT_PASS_THROUGHS = new Set(["parseInstant", "requireInstant"]);
+const INSTANT_PASS_THROUGHS = new Set([
+  "parseInstant",
+  "requireInstant",
+  // #3082's strict sibling. It PROVES the `Date` is a `@db.Date` encoding rather
+  // than a moment and returns that same value, so it changes what is guaranteed
+  // and not which value is read. Without an entry here it would be the
+  // `formatDate` blind spot one call further round: a rule that exists to refuse
+  // an instant would be the thing hiding one from this census.
+  "requireStoredCalendarDay",
+]);
 
 /**
  * Shared helpers that DECODE a stored calendar day and immediately RE-ENCODE it
@@ -425,7 +448,7 @@ function isoSerialisationReceiver(n: ts.Node): ts.Expression | null {
   return null;
 }
 
-/** `requireInstant(x)` / `parseInstant(x)` — returns `x`, or null. */
+/** `requireInstant(x)` / `parseInstant(x)` / `requireStoredCalendarDay(x, …)` — returns `x`, or null. */
 function instantPassThroughArgument(node: ts.Node): ts.Expression | null {
   if (!ts.isCallExpression(node)) return null;
   const callee = node.expression;
@@ -1723,7 +1746,44 @@ export function dueDirect(booking: { createdAt: Date }) {
     expect([...INSTANT_PASS_THROUGHS].sort()).toEqual([
       "parseInstant",
       "requireInstant",
+      "requireStoredCalendarDay",
     ]);
+  });
+
+  it("classifies an instant that reaches the kernel through requireStoredCalendarDay", () => {
+    /*
+      THE THIRD NAME IN THE SET (#3082), with its own fixture for the reason the
+      `parseInstant` case above records: a listed name with no fixture can be
+      dropped from the set with the whole suite still green.
+
+      This one is worth stating twice over, because it is the pass-through most
+      likely to be read as unnecessary. `requireStoredCalendarDay` REFUSES a value
+      carrying a UTC time of day, so it looks like the one wrapper through which an
+      instant cannot reach the encoder — and `createdAt` here would throw at runtime
+      for all but one instant in 86 400 000, the one landing on exactly UTC
+      midnight, which passes. The residue is small and it is not the argument: what
+      the census reports is the SHAPE, not the outcome. A source line
+      asking for a `createdAt` to be encoded as a calendar day is the INV-DATE-019
+      defect whether it throws or answers, and it has to be visible here rather
+      than discovered by a production stack trace.
+    */
+    const { encodings } = censusOf(
+      `import { calendarDateOfDateOnlyInstant, requireStoredCalendarDay } from "@/lib/club-time";
+export function due(booking: { createdAt: Date }) {
+  return calendarDateOfDateOnlyInstant(
+    requireStoredCalendarDay(booking.createdAt, { subject: "due", instead: "no" }),
+  );
+}
+`,
+    );
+
+    expect(
+      encodings.map((e) => `${e.kind}:${e.field}`),
+      "INV-DATE-019: `requireStoredCalendarDay` is the kernel's strict " +
+        "Date-to-Instant pass-through. It changes what is GUARANTEED and not which " +
+        "value is read, so a field read through it must stay visible to this " +
+        "census.",
+    ).toEqual(["instant:createdAt"]);
   });
 
   it("classifies an encoder reached through a namespace import", () => {

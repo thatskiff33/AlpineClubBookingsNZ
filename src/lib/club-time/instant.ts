@@ -39,6 +39,9 @@ import type { CalendarDate, ClubTimeZone, ClubWallTime, Instant } from "./types"
 
 const MS_PER_SECOND = 1000;
 
+/** A whole UTC day in milliseconds - the stride a `@db.Date` encoding lands on. */
+const MS_PER_DAY = 86_400_000;
+
 /** An ISO 8601 value that actually pins a moment: it carries `Z` or an offset. */
 const OFFSET_BEARING_ISO =
   /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$/;
@@ -157,11 +160,14 @@ export function clubCalendarDateOf(
  * calendar date, so a bound built as midnight in the club's zone — or, worse, on
  * the host — silently becomes the PREVIOUS day.
  *
- * DO NOT CITE `INV-DATE-010` FOR THE DECODE. It says that no rule may be derived
- * from **the UTC reading** of a stored value; a docblock in this file used to
- * paraphrase it as its own inverse ("no rule may be derived from reading the
- * result in any zone but UTC"), and four call sites plus two test files copied
- * that inverse from here before it was caught. The authority for reading a
+ * DO NOT CITE `INV-DATE-010` FOR THE DECODE — the rule now says so in as many
+ * words. What it forbids deriving a rule from is one of these values read as a
+ * **moment**, an instant carrying a time of day. Its earlier wording ("no rule
+ * may be derived from the UTC reading of these values") is what a docblock in
+ * this file paraphrased as that sentence's own inverse ("no rule may be derived
+ * from reading the result in any zone but UTC"), and four call sites plus two
+ * test files copied the inverse from here before it was caught (#3080). The
+ * authority for reading a
  * `@db.Date` back in UTC is `INV-DATE-019`'s first exact boundary — truncating an
  * existing `@db.Date` value is fine because it already encodes a calendar day —
  * together with `INV-DATE-026`, which is what guarantees the column really is
@@ -188,10 +194,11 @@ export function dateOnlyInstantOf(date: CalendarDate): Instant {
  * UTC midnight and encode a calendar day, not an instant" — together with
  * `INV-DATE-026`, which is what makes the column a `@db.Date` in the first place
  * rather than a bare `DateTime` its writers merely agree to keep at midnight.
- * **Do not cite `INV-DATE-010` for this direction**: that rule forbids deriving a
- * rule from the UTC READING of a stored value, so citing it here states the
- * opposite of what it says. {@link dateOnlyInstantOf} records where that inverse
- * paraphrase came from and how far it spread.
+ * **Do not cite `INV-DATE-010` for this direction**: what that rule forbids is
+ * deriving a rule from one of these values read as a MOMENT, and it names these
+ * two ids rather than itself as the authority for a decode.
+ * {@link dateOnlyInstantOf} records where the inverse paraphrase came from and
+ * how far it spread.
  *
  * Hand it a real `DateTime` and you get that column's UTC day, which is the
  * `INV-DATE-019` defect. Use {@link clubCalendarDateOf} for a moment.
@@ -262,4 +269,73 @@ export function calendarDateOfSerialisedDbDateOrNull(
   value: string | null | undefined,
 ): CalendarDate | null {
   return value == null ? null : parseCalendarDate(value.slice(0, 10));
+}
+
+/**
+ * `value`, PROVED not to be a moment carrying a time of day — which is as much as
+ * anything can prove about a bare `Date`.
+ *
+ * BE PRECISE ABOUT WHAT THE CHECK ESTABLISHES, because the stronger reading is
+ * the tempting one and it is wrong. The test is that the value sits on a whole
+ * number of UTC days since the epoch, so it is NECESSARY for a `@db.Date`
+ * encoding and not SUFFICIENT: a real `createdAt` that happens to fall on exactly
+ * UTC midnight passes it. That residue is why the census in
+ * `date-only-encoding-guard.test.ts` still classifies a field read through this
+ * guard — the guard reports a shape, and only the field name says whether the
+ * value was ever a calendar day.
+ *
+ * The precondition {@link calendarDateOfDateOnlyInstant} cannot check for
+ * itself. That decoder takes an `Instant`, which is a bare `Date`, so it cannot
+ * tell a stored calendar day from a real timestamp — and it says so: hand it a
+ * `createdAt` and you get that instant's UTC day, which for a club east of
+ * Greenwich is the right answer for most of the day and the wrong one for the
+ * rest. That is the hardest kind of wrong to notice, so a caller whose whole
+ * contract is "this argument is a stored calendar day" states the precondition
+ * here and declines to answer when it does not hold. F2 (#3076) established the
+ * shape on `normalizeBookingDate`; `seasonYearOfStoredDate` and `computeAge` are
+ * the two derivations that now share it.
+ *
+ * IT RETURNS THE INSTANT RATHER THAN THE CALENDAR DAY, deliberately, and that is
+ * the same decision {@link requireInstant} makes. Wrapping the decode would put
+ * a second name in front of it, and `date-only-encoding-guard.test.ts` bans that
+ * for a measured reason: `xero-invoice-helpers` once exported `formatDate`, and
+ * the thirty-three Xero document dates behind that one-line rename were
+ * invisible to the spelling census that was supposed to audit them. Composing
+ * instead — `calendarDateOfDateOnlyInstant(requireStoredCalendarDay(v, ...))` —
+ * keeps the encoder's own name at every call site, where the census can see what
+ * is being encoded.
+ *
+ * `refusal.instead` is the sentence naming what the caller should have been
+ * asked for, supplied by the caller because only the caller knows it. There is
+ * no repair to offer: a moment handed to a calendar-day rule needs somebody to
+ * decide whose calendar the day comes from, and that is not a decision a guard
+ * can make.
+ *
+ * On today's schema the throw is unreachable from the database — PostgreSQL will
+ * not keep a time in a `date` column — so it fires for a value some code path
+ * built wrong, which is exactly when a loud failure is worth more than an
+ * answer. It has already found fourteen such values across two of this
+ * repository's own test files — thirteen date-of-birth literals describing an
+ * age-tier price boundary, and the shared helper the age-up cron's suite built
+ * every one of its members from.
+ */
+export function requireStoredCalendarDay(
+  value: Date,
+  refusal: { subject: string; instead: string },
+): Instant {
+  if (!isInstant(value)) {
+    throw new RangeError(
+      `${refusal.subject} needs a valid Date holding a @db.Date calendar-day ` +
+        `encoding; got ${String(value)}.`,
+    );
+  }
+  if (value.getTime() % MS_PER_DAY !== 0) {
+    throw new RangeError(
+      `${refusal.subject} takes a stored calendar day, not a moment: ${value.toISOString()} ` +
+        "carries a UTC time of day. A @db.Date column round-trips as UTC midnight, so a value with " +
+        "a time of day is a real timestamp - flooring it to its UTC day is the INV-DATE-019 defect " +
+        `and would be silently right for a club east of Greenwich. ${refusal.instead}`,
+    );
+  }
+  return value;
 }

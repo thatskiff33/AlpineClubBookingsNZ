@@ -192,8 +192,10 @@ function toLegacyDashboardBookingRow(input: {
     // it reported the booking as created a day early for every booking made
     // before ~midday NZ, and mixed two definitions of "day" inside one payload
     // (#2697). The other dates here are true `@db.Date` lodge nights, whose UTC
-    // midnight IS the encoding of a calendar day (INV-DATE-010), so they are
-    // correctly left on truncation.
+    // midnight IS the encoding of a calendar day and not a moment
+    // (INV-DATE-010), so they are correctly left on truncation — INV-DATE-019's
+    // first exact boundary with INV-DATE-026, which is what blesses that decode
+    // rather than INV-DATE-010 (#3080).
     //
     // The zone is the CLUB's persisted one, supplied by the caller (CT-5,
     // #2869). It used to default to `APP_TIME_ZONE` — `process.env.TZ` — so a

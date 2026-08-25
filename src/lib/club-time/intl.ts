@@ -56,21 +56,26 @@ import { APP_LOCALE } from "@/config/operational";
  * forms, which drop the year because a wall screen only ever names days inside
  * the current stay window.
  *
- * The last four arrived with CT-4's `src/lib` group (#2870), each because a call
+ * The last five arrived with CT-4's `src/lib` group (#2870), each because a call
  * site was keeping a local `Intl.DateTimeFormat` for want of them and saying so
  * in a comment: `longWeekdayDate` for the booking calendar's day-button label,
  * the booking editor's stay dates and the kiosk and chore-sheet headings;
  * `dayMonth` for the guest-night grid's night column and the dashboard's tight
  * slots; `shortMonthYear` for the finance chart axes; `longWeekday` for a bare
  * spelled-out weekday, which nothing had asked for until the calendar
- * subsystem's recurrence labels needed one.
+ * subsystem's recurrence labels needed one; and `shortMonth` for the membership
+ * season label, which names the months a season runs between and had no month
+ * name to reach for at all.
  *
- * NONE OF THE FOUR IS COMPOSED FROM AN EXISTING SHAPE, and that is deliberate.
+ * NONE OF THE FIVE IS COMPOSED FROM AN EXISTING SHAPE, and that is deliberate.
  * `longWeekdayDayMonth` plus `" 2026"` is byte-identical for `en-NZ` and is NOT
  * safe in general: `APP_LOCALE` is configurable, and a locale that ordered or
  * punctuated the pair differently would silently change every day button in the
- * product. Declaring the whole shape asks `Intl` the question rather than
- * assuming its answer — the same reasoning `formatClubWeekdayDay`'s docblock
+ * product. `shortMonth` is the same rule read the other way round - it is the
+ * one shape that could plausibly be SLICED out of a longer one, and stripping
+ * the year off `shortMonthYear` is a guess about where that locale puts the year
+ * and how it punctuates the join. Declaring the whole shape asks `Intl` the
+ * question rather than assuming its answer — the same reasoning `formatClubWeekdayDay`'s docblock
  * records for the one shape that IS assembled, where the assembled half is a
  * bare integer taken from the calendar-date string and so has no locale form at
  * all.
@@ -95,6 +100,8 @@ export const HOUSE_SHAPES = {
   },
   /** "Apr 2026" — a chart axis tick, where the long month will not fit. */
   shortMonthYear: { month: "short", year: "numeric" },
+  /** "Apr" — the month alone, for a label naming the months a season spans. */
+  shortMonth: { month: "short" },
   /** "Thu" */
   weekday: { weekday: "short" },
   /** "Thursday" */

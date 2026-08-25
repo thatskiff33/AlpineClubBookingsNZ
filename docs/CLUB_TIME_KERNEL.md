@@ -164,7 +164,7 @@ policy, and the code handles that case rather than assuming it away.
 
 ## Reaching for the right helper
 
-The kernel grew ten entry points during CT-4's last group (#2870), plus one
+The kernel grew eleven entry points during CT-4's last group (#2870), plus one
 bridge beside it, and every one arrived because several call sites had already
 written the line out by hand and said so in a comment. If you are about to write
 one of these, there is a function.
@@ -176,7 +176,8 @@ one of these, there is a function.
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
-| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
+| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; five shapes were added in #2870 for exactly this |
+| a bare month name — the months a season or period runs between | `formatClubShortMonth(date)`. Declared as its own shape rather than the year sliced off `formatClubShortMonthYear`, per the rule below |
 | the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, of which #3100 shipped one and armed the other: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 
@@ -287,6 +288,72 @@ Two honest limits while both exist:
   are pinned — `booking-exception-new-booking-guest-frame.test.ts` for the
   new-booking freeze and `booking-range-less-guest-frame.test.ts` for the
   modification resolver, each on the environment and the host axis.
+
+  **The booking-modification date window had THREE apply-path mirrors, and the
+  third one (#3088) is the entry worth reading before writing a test for this
+  class.** Group B (#3056) moved the preview — `modify-quote/route.ts` — onto
+  `storedDateOnly` and left the apply paths projecting the same `@db.Date` lodge
+  nights through `APP_TIME_ZONE`; F4b closed `booking-modify-validation.ts` and
+  #3088 closed `booking-date-modification-service.ts`. What the last one
+  measured is that **a wrong stored day can hide inside a correct-looking
+  result.** The admin date shift computes its delta from the projected
+  `oldCheckIn` and then applies that delta to equally-projected guest rows, so
+  the two one-day errors cancel and every translated night lands on the right
+  day. A test asserting the shifted nights would have passed throughout.
+
+  **The same `oldCheckIn` reaches six other places, and none of them cancel:**
+  the roster-date lock key set, the persisted `BookingModification.previousData`,
+  the `booking.modify.admin_override` audit payload, the member's date-change
+  email, `processWaitlistForDates`, and the equality guard that is supposed to
+  refuse a no-op shift. That guard is the sharpest case, because it failed in
+  BOTH directions: it never matched a true no-op, so re-submitting a booking's
+  own dates wrote a change record, mailed the member and offered the nights to
+  the waitlist — and it falsely matched a legitimate one-day-earlier shift,
+  which was refused with "The booking already has these dates". Because the
+  writer re-reads the booking under `pg_advisory_xact_lock(1)`, the same guard is
+  what makes two concurrent identical shifts idempotent; before the fix the loser
+  wrote a second phantom modification instead. **Pin what the wrong value
+  REACHES, not the one derived quantity that happens to be self-correcting.**
+
+  **The lock keys are the example to copy, and the reason a contract test did
+  not catch this.** `rosterOperationalDayRange(oldCheckIn, oldCheckOut)` builds
+  the `roster:<date>` set, so behind Greenwich a stay of
+  `2026-07-05 → 2026-07-08` locked `roster:07-04 … roster:07-07`: the real
+  check-out day — the exact day #2622 extended the range to cover — went
+  unlocked unless a chore row already sat on it, while an irrelevant `07-04` was
+  locked instead. `roster-lock-contract.test.ts` enforces that every caller
+  *calls* `rosterOperationalDayRange(` and writes no raw
+  `{ start: checkIn, end: checkOut }`; it never inspects the VALUE handed in, and
+  its key-set cases exercise the helper with literal dates rather than a caller's
+  derived ones. **A contract over the call is not a contract over the argument.**
+  Changing which dates are in the set is deadlock-safe by construction:
+  `lockRosterDates` sorts the whole set by formatted date before acquiring any of
+  it, so no membership change can invert an acquisition order.
+
+  **`previousRange` on the bed-allocation reconciler is NOT one of the six, and
+  an earlier version of this entry said it was.** It is a dead parameter:
+  `reconcileBedAllocationsForBookingWithLodgeLockHeld` destructures only
+  `{ bookingId, db }`, pruning is driven entirely by the freshly re-read booking
+  (`bookingGuestId notIn guestIds`, `stayDate notIn nightDates`), and
+  `BedAllocation` cascades from `BookingGuest` rather than `BookingGuestNight`,
+  so the night delete/recreate leaves allocations alone. The wrong `oldCheckIn`
+  released no bed and left no stale row. That correction is recorded here rather
+  than quietly dropped, because this entry exists to record exactly this failure
+  — a plausible mechanism written into the ledger as the durable lesson, ahead
+  of the call graph that would have refuted it.
+
+  **What `booking-date-modification-frame-parity.test.ts` does and does not
+  guarantee.** It compares the apply path against a *transcription* of the
+  preview rather than against fixed dates, so the apply path cannot drift away
+  from the preview **as transcribed there**. It cannot see preview-side drift at
+  all: the oracles deliberately do not import `modify-quote/route.ts`, and a
+  measured mutation moving that route's shift delta base from `oldCheckIn` to
+  `oldCheckOut` left the parity suite at 10 passed / 0 failed. Preview-side drift
+  is caught by `modify-quote-shift.test.ts` (which did fail on that mutation) and
+  by `api-club-time-convergence.test.ts`'s import ban, not by the parity file.
+  The design is right — importing the route drags its whole module graph in and
+  proves nothing about the text that ships — but a transcription goes stale
+  silently, so both transcribed sites carry a back-pointer naming the oracle.
 
   So "is this application running on the persisted zone?" still has a different
   answer per surface until CT-6 (#2991) retires the adapters, and until then no

@@ -131,10 +131,10 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 /*
-  TRUNCATION, NOT A ZONE PROJECTION (#2872; INV-DATE-010, INV-DATE-026). All four
-  `PromoCode` window columns are `@db.Date` — a CALENDAR DAY encoded as UTC
-  midnight — so the day is read off the front of the serialised value, and
-  `formatClubDate` takes that day and needs no zone.
+  TRUNCATION, NOT A ZONE PROJECTION (#2872; INV-DATE-019's first boundary with
+  INV-DATE-026, not INV-DATE-010 — #3080). All four `PromoCode` window columns
+  are `@db.Date` — a CALENDAR DAY encoded as UTC midnight — so the day is read
+  off the front of the serialised value, and `formatClubDate` needs no zone.
 
   Both used to project through the club zone, and on the input that was a live
   data defect rather than a cosmetic one, because THIS FORM WRITES THE VALUE

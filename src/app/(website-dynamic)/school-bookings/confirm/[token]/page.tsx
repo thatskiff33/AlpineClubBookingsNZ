@@ -45,9 +45,11 @@ export default async function SchoolAttendeeConfirmationPage({
         {/*
           `checkIn`/`checkOut` are `@db.Date` LODGE NIGHTS serialised to ISO by
           `getSchoolAttendeeConfirmation`, so they are CALENDAR DATES and take no
-          zone at all: the kernel's decoder reads the day out of the value's first
-          ten characters, and the formatter pins `UTC` over it, so the
-          projection is provably the identity (CT-4, #2870; INV-DATE-010). The
+          zone at all (INV-DATE-010): the kernel's decoder reads the day out of
+          the value's first ten characters, and the formatter pins `UTC` over it,
+          so the projection is provably the identity (CT-4, #2870;
+          INV-DATE-019's first exact boundary with INV-DATE-026, which are the
+          citation for that decode and INV-DATE-010 is not — #3080). The
           old `formatNZDate` projected them through `APP_TIME_ZONE`, which is the
           identity only for a club east of Greenwich and a day early for one that
           is not.

@@ -120,9 +120,10 @@ import {
  * plus `INV-DATE-026`, which is what says the column is one. The RE-ENCODE is
  * `INV-DATE-026`'s corollary: a bound against a `@db.Date` column must be a
  * calendar day at UTC midnight, because the adapter narrows whatever instant it
- * is handed. **Do not cite `INV-DATE-010` for the decode** — that rule forbids
- * deriving a rule from the UTC reading, which is the opposite claim; the six
- * docblocks this function replaces all cited it that way, and
+ * is handed. **Do not cite `INV-DATE-010` for the decode** — it names these two
+ * ids rather than itself as the decode authority, and what it forbids is
+ * deriving a rule from one of these values read as a MOMENT. The six docblocks
+ * this function replaces all cited it for the decode anyway, and
  * `club-time/instant.ts` records where the paraphrase started.
  *
  * Idempotent, so a caller that has already normalised its rows hands in values

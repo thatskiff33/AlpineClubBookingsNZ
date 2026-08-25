@@ -70,11 +70,14 @@ import { describe, expect, it, vi } from "vitest";
  * replays to a different hash and is refused with `PROPOSAL_DRIFT_MESSAGE`. That
  * is the correct outcome on #3056's recorded ACCEPT precedent — the proposal
  * describes a stay a night early, so refusing it once and having the member
- * resubmit is better than executing it — but the MESSAGE is not true of this
- * cause: "the live booking has changed since this request was made" sends an
- * officer looking for an edit that never happened. Recorded on #2870 rather than
- * papered over here, because distinguishing this cause from real base drift
- * needs a signal the engine does not currently carry.
+ * resubmit is better than executing it.
+ *
+ * The MESSAGE was not true of this cause, and #3089 fixed that: it used to say
+ * "the live booking has changed since this request was made", which sent an
+ * officer looking for an edit that never happened. The engine still cannot tell
+ * this cause from real base drift — that needs a signal it does not carry — so
+ * the message now names NEITHER cause and states only what was established
+ * (`INV-EXCEPT-035`).
  */
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",

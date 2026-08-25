@@ -169,11 +169,12 @@ describe("Season start date as reference", () => {
   });
 
   it("getSeasonStartDate returns April 1 for any season year", () => {
+    // In UTC, because that is the encoding (#3082). Host-local getters answer
+    // 31 March on any host behind Greenwich.
     [2024, 2025, 2026, 2027].forEach((year) => {
-      const d = getSeasonStartDate(year);
-      expect(d.getFullYear()).toBe(year);
-      expect(d.getMonth()).toBe(3); // April
-      expect(d.getDate()).toBe(1);
+      expect(getSeasonStartDate(year).toISOString()).toBe(
+        `${year}-04-01T00:00:00.000Z`,
+      );
     });
   });
 });

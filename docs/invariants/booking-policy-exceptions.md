@@ -304,6 +304,26 @@ invariants hold in addition to every #2365/#2524/#2525 invariant above:
   moved, and blaming a live edit sends the officer and the member looking for an
   edit that never happened.
 
+  Added #3089: the drift message no longer blames a live edit either, because the
+  replay proves an inequality and not its reason (`INV-EXCEPT-035`). The
+  unreplayable message stays distinct precisely because that cause IS established.
+
+### INV-EXCEPT-035
+
+- **A refusal names only what was established.** Each refusal path observes ONE
+  thing — a replayed hash that no longer matches the frozen `proposalHash`, or a
+  violation fingerprint that moved — and each of those has more than one possible
+  cause. The engine holds no record of which reader produced the stored snapshot,
+  so it cannot tell a live edit from corrected code re-deriving the same evidence
+  (#3087); and `violationFingerprint` covers the affected NIGHTS, so a re-derived
+  night set moves it while every policy stands exactly as reviewed. A refusal
+  message therefore names no cause the engine cannot distinguish, and still names
+  the next step — the member resubmits, the officer reviews what stands now — so
+  it is true without being useless. A cause the engine really did observe keeps
+  its own words (`INV-EXCEPT-021`). Pinned by
+  `src/lib/__tests__/booking-exception-execution.test.ts` → "refusal messages name
+  only what the engine established (#3089)".
+
 ### INV-EXCEPT-022
 
 - **"What the delta produces" is computed by ONE implementation.** The replay is

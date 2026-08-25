@@ -1046,6 +1046,9 @@ export async function POST(
         { status: 400 }
       );
     }
+    // TRANSCRIBED, not imported: `booking-date-modification-frame-parity.test.ts`
+    // → `previewRefusesSelfServiceWindow` copies this gate, so nothing here can
+    // fail that file. Change this and update the oracle in the same commit (#3088).
   } else if (
     !isAdmin &&
     storedDateOnly(finalRequestedCheckIn) <= editPolicy.today
@@ -2152,6 +2155,8 @@ export async function POST(
  * whether the shifted nights are over capacity, which the UI surfaces as an
  * explicit confirm rather than a hard error.
  */
+// TRANSCRIBED, not imported, by `booking-date-modification-frame-parity.test.ts`
+// → `previewShift`: change this and update that oracle in the same commit (#3088).
 async function buildShiftPreviewResponse({
   booking,
   bookingId,
@@ -2239,14 +2244,8 @@ async function buildShiftPreviewResponse({
 
   const translatedRanges = booking.guests.map((guest) => ({
     memberId: guest.memberId ?? null,
-    stayStart: addDaysDateOnly(
-      storedDateOnly(guest.stayStart),
-      deltaDays,
-    ),
-    stayEnd: addDaysDateOnly(
-      storedDateOnly(guest.stayEnd),
-      deltaDays,
-    ),
+    stayStart: addDaysDateOnly(storedDateOnly(guest.stayStart), deltaDays),
+    stayEnd: addDaysDateOnly(storedDateOnly(guest.stayEnd), deltaDays),
     nights: guest.nights.map((night) =>
       addDaysDateOnly(storedDateOnly(night.stayDate), deltaDays),
     ),

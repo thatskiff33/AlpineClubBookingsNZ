@@ -50,15 +50,11 @@ import {
   calendarDateOfDateOnlyInstant,
   calendarDateParts,
   clubToday,
-  isInstant,
+  requireStoredCalendarDay,
   type CalendarDate,
   type ClubClock,
   type ClubTimeZone,
-  type Instant,
 } from "@/lib/club-time";
-
-/** A whole UTC day in milliseconds - the stride a `@db.Date` encoding lands on. */
-const MS_PER_DAY = 86_400_000;
 
 /** Default financial year-end month: March (NZ convention, 31 March year-end). */
 export const DEFAULT_FINANCIAL_YEAR_END_MONTH = 3;
@@ -94,12 +90,28 @@ export function setFinancialYearEndMonth(month: number): void {
 }
 
 /**
- * The 1-based calendar month in which the membership season starts (the month
- * after the year-end month). For a March year-end this is April (4); for a
- * December year-end it is January (1).
+ * The 1-based calendar month a membership season starts in, for an EXPLICIT
+ * year-end month - the month after it. For a March year-end that is April (4);
+ * for a December year-end it is January (1), which is why a December club's
+ * season is one calendar year rather than two.
+ *
+ * THE ONE HOME FOR THAT ROLLOVER. It was written out twice - here and inside
+ * {@link seasonYearOfCalendarDate} - and the season LABEL
+ * (`@/lib/season-label`) needs it a third time, for a year-end its caller holds
+ * rather than the cached one. Three copies of a one-line modular step is the
+ * drift class this epic exists to remove, so it is a function.
+ */
+export function seasonStartMonthOf(yearEndMonth: number): number {
+  return (normalizeYearEndMonth(yearEndMonth) % 12) + 1;
+}
+
+/**
+ * The 1-based calendar month in which the membership season starts, for the
+ * club's CONFIGURED year-end. A cache accessor, so it takes no override; every
+ * DERIVATION in this module takes one.
  */
 export function getSeasonStartMonth(): number {
-  return (getFinancialYearEndMonth() % 12) + 1;
+  return seasonStartMonthOf(getFinancialYearEndMonth());
 }
 
 /**
@@ -118,7 +130,7 @@ export function seasonYearOfCalendarDate(
   date: CalendarDate,
   yearEndMonth: number = getFinancialYearEndMonth(),
 ): number {
-  const startMonth = (normalizeYearEndMonth(yearEndMonth) % 12) + 1;
+  const startMonth = seasonStartMonthOf(yearEndMonth);
   const { year, month } = calendarDateParts(date);
   return month >= startMonth ? year : year - 1;
 }
@@ -131,9 +143,10 @@ export function seasonYearOfCalendarDate(
  * definition is UTC midnight (`INV-DATE-019`'s first exact boundary, and
  * `INV-DATE-026`); the day it names is the same day in every zone, so projecting
  * it through one - the club's or the host's - is the defect rather than the
- * remedy. Do NOT cite `INV-DATE-010` for the decode: it forbids deriving a rule
- * from the UTC READING of such a value, which is the opposite of what it gets
- * quoted for (#3076 corrected four such citations).
+ * remedy. Do NOT cite `INV-DATE-010` for the decode: it names the two ids above
+ * as that authority rather than itself, and what it forbids is deriving a rule
+ * from such a value read as a MOMENT (#3076 corrected four such citations;
+ * #3080 the rest).
  *
  * IT REFUSES A VALUE CARRYING A UTC TIME OF DAY, for the reason F2 recorded on
  * `normalizeBookingDate` (#3076). `calendarDateOfDateOnlyInstant` silently FLOORS
@@ -148,24 +161,13 @@ export function seasonYearOfStoredDate(
   value: Date,
   yearEndMonth?: number,
 ): number {
-  if (!isInstant(value)) {
-    throw new RangeError(
-      "seasonYearOfStoredDate needs a valid Date holding a @db.Date calendar-day " +
-        `encoding; got ${String(value)}.`,
-    );
-  }
-  const instant: Instant = value;
-  if (instant.getTime() % MS_PER_DAY !== 0) {
-    throw new RangeError(
-      `seasonYearOfStoredDate takes a stored calendar day, not a moment: ${instant.toISOString()} ` +
-        "carries a UTC time of day. A @db.Date column round-trips as UTC midnight, so a value with " +
-        "a time of day is a real timestamp - flooring it to its UTC day is the INV-DATE-019 defect " +
-        "and would be silently right for a club east of Greenwich. If you meant \"the club's season " +
-        'year now", call clubSeasonYear(zone) instead.',
-    );
-  }
   return seasonYearOfCalendarDate(
-    calendarDateOfDateOnlyInstant(instant),
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "seasonYearOfStoredDate",
+        instead: `If you meant "the club's season year now", call clubSeasonYear(zone) instead.`,
+      }),
+    ),
     yearEndMonth,
   );
 }

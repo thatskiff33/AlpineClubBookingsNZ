@@ -403,7 +403,7 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
     ).toEqual([]);
   });
 
-  it("derives no label from the UTC reading of a lodge night", () => {
+  it("derives no label from a lodge night turned back into an instant", () => {
     const displayFiles = walk(LODGE_DISPLAY).map((file) => ({
       rel: rel(file),
       text: withoutComments(readFileSync(file, "utf8")),
@@ -413,8 +413,9 @@ describe("the lobby wall no longer reasons from UTC midnight", () => {
       .map((file) => file.rel);
     expect(
       offenders,
-      "INV-DATE-010: no rule may be derived from the UTC reading of a date-only value. " +
-        "A lodge night is a calendar day; format it as one.",
+      "INV-DATE-010: no rule may be derived from a date-only value read as a MOMENT, " +
+        "which is what pinning a lodge night to UTC midnight and then reading a part " +
+        "back off it does. A lodge night is a calendar day; format it as one.",
     ).toEqual([]);
   });
 });

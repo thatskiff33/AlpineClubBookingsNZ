@@ -1,24 +1,173 @@
 import type { AgeTier } from "@prisma/client";
+import {
+  calendarDateFromParts,
+  calendarDateOfDateOnlyInstant,
+  calendarDateParts,
+  dateOnlyInstantOf,
+  requireStoredCalendarDay,
+  type CalendarDate,
+} from "@/lib/club-time";
 import { getSeasonStartMonth } from "@/lib/financial-year";
 
 /**
- * Returns the first day of the given season year, i.e. the start of the
- * membership financial year. For the default 31 March year-end this is April 1
- * (e.g. getSeasonStartDate(2026) => 2026-04-01).
+ * THE AGE-TIER COMPARISON HAS TWO SIDES AND THEY SHARE ONE FRAME (#3082).
+ *
+ * A date of birth and a season start are both CALENDAR DAYS. Neither carries a
+ * time of day, neither carries a zone, and the answer they produce - an age, and
+ * therefore a tier, and therefore a price band - must be the same on every host
+ * on earth. So both sides are held as {@link CalendarDate} text and compared
+ * with integer arithmetic, and the `Date`-shaped entry points below exist only
+ * to decode the `@db.Date` values 23 call sites already hold.
+ *
+ * WHAT THIS REPLACED, because the next author's instinct will be to fix one half
+ * and the halves were interlocked. `getSeasonStartDate` built
+ * `new Date(seasonYear, startMonth - 1, 1)` - HOST-local midnight - and
+ * `computeAge` read both arguments with `getFullYear`/`getMonth`/`getDate`, also
+ * host-local. The reference side survived that by a round trip: local getters
+ * read back exactly the parts the local constructor was given, in every zone
+ * (swept: 418 zones x 2015-2036 x all 12 season-start months, zero failures).
+ * The DATE OF BIRTH side had no such luck - it is stored at UTC midnight
+ * (`INV-DATE-024`), so host-local getters read the PREVIOUS day for any host
+ * behind Greenwich, which makes the member look a day older.
+ *
+ * Measured on the old pair, over every stored date of birth in a full year and
+ * every zone this runtime knows: **161 of 418 zones misclassified exactly one
+ * day of birthdays - the day AFTER the season start - and by +1 year**, never
+ * fewer and never more. `Pacific/Auckland` and every other zone at or ahead of
+ * Greenwich answered correctly, which is why the defect was latent rather than
+ * live. A member born on 2 April whose true age at season start is 17 was read
+ * as 18 and quoted the ADULT band; at 4 and 9 the same +1 crosses the INFANT and
+ * CHILD boundaries.
+ *
+ * THE AGE-UP CRON WAS NOT AFFECTED, and an earlier draft of this docblock said it
+ * was. `cron-age-up.ts` prefilters candidates on
+ * `dateOfBirthPrefilterBoundForMinAge`, whose EXCLUSIVE bound and this
+ * misclassification's boundary coincide exactly: the bound admits
+ * `dateOfBirth <= seasonStart - minAge years`, and the one day of birthdays the
+ * old read got wrong is the day AFTER that. So the misread member was never a
+ * candidate — and for candidates the old read DID move, both readings sit at or
+ * above `minAge`, which `validateAgeTierPartition` guarantees means ADULT either
+ * way. Swept: 27 638 160 admitted candidates over 418 zones x 12 season-start
+ * months x 10 configured ADULT minimum ages. 19 423 of them had their age reading
+ * changed by this fix and **zero had their promote-or-skip verdict changed.** The
+ * candidate set itself is byte-identical too (280 896 comparisons, zero
+ * differences), because the retired `setFullYear` spelling preserved the local
+ * wall components and the read-back re-encoded them as UTC midnight.
+ *
+ * FIXING EITHER HALF ALONE MAKES IT WORSE, which is why they moved together.
+ * Correct the date-of-birth read and the reference side (still host-local
+ * midnight) is then read in UTC, so on a behind-Greenwich host the season start
+ * itself lands a day early. Move `getSeasonStartDate` to UTC midnight and leave
+ * the host-local getters and the same happens from the other direction. There is
+ * no half of this that is an improvement on its own.
  */
-export function getSeasonStartDate(seasonYear: number): Date {
-  const startMonth = getSeasonStartMonth(); // 1-12
-  return new Date(seasonYear, startMonth - 1, 1);
+
+/**
+ * The club calendar day a season year starts on - the start of the membership
+ * financial year. For the default 31 March year-end that is 1 April
+ * (`getSeasonStartCalendarDate(2026)` is `"2026-04-01"`).
+ *
+ * NO `Date`, so nothing here can be moved by a host zone. This is the canonical
+ * form; {@link getSeasonStartDate} is the encoding of it that the existing call
+ * sites take.
+ */
+export function getSeasonStartCalendarDate(seasonYear: number): CalendarDate {
+  return calendarDateFromParts(seasonYear, getSeasonStartMonth(), 1);
 }
 
-// test seam
-export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
-  let age = referenceDate.getFullYear() - dateOfBirth.getFullYear();
-  const monthDiff = referenceDate.getMonth() - dateOfBirth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && referenceDate.getDate() < dateOfBirth.getDate())) {
+/**
+ * The same day as a date-only `Date` - UTC midnight, the one encoding a
+ * `@db.Date` column keeps (`INV-DATE-019`'s first exact boundary,
+ * `INV-DATE-026`).
+ *
+ * It used to be `new Date(seasonYear, startMonth - 1, 1)`, host-local midnight,
+ * which is a different instant in every zone. See the module doc above for why
+ * that survived as long as it did and why it could not be corrected alone.
+ */
+export function getSeasonStartDate(seasonYear: number): Date {
+  return dateOnlyInstantOf(getSeasonStartCalendarDate(seasonYear));
+}
+
+/**
+ * Completed years between two calendar days. Pure integer arithmetic over the
+ * `YYYY-MM-DD` parts, so there is nothing in it a zone could move.
+ *
+ * The rule is unchanged from the host-local version this replaced, including its
+ * 29 February convention: a leap-day birthday counts the new year on 1 March in
+ * a non-leap year, because `day` is compared as written and 28 < 29. That
+ * deliberately differs from `member-age.ts`, which clamps the anniversary to
+ * `min(dobDay, daysInMonth)` - 28 February - for an identity check.
+ *
+ * THE TWO CONVENTIONS CANNOT DISAGREE ON THIS PATH, and the earlier version of
+ * this comment gave a reason for leaving them alone that was measurably false. It
+ * said aligning them "would move a real member's tier for one day a year, so it
+ * needs a decision rather than a tidy-up". Enumerated over 21 birth years x every
+ * day x 17 reference years x every day: the two answers differ in exactly ONE
+ * shape, a 29 February date of birth against a 28 February reference date, and in
+ * **zero** cases where the reference day is the 1st. Every reference date this
+ * function is given on the price path comes from
+ * {@link getSeasonStartCalendarDate}, which always returns day 1 of a month, so
+ * 28 February is unreachable as a reference and aligning the conventions would
+ * move nobody's tier at any configured year-end month.
+ *
+ * SO DO NOT ALIGN THEM ANYWAY, for the honest reason rather than the false one:
+ * the divergence is harmless and unreachable here, `member-age.ts` serves a
+ * different purpose, and a change with no behavioural effect on this path is not
+ * worth the risk of being wrong about the other one. What was corrected is the
+ * justification, because a false reason for not doing work, written down in a
+ * docblock and copied into an invariants document, is how a decision nobody made
+ * becomes permanent.
+ */
+export function computeAgeOnCalendarDays(
+  dateOfBirth: CalendarDate,
+  referenceDate: CalendarDate,
+): number {
+  const dob = calendarDateParts(dateOfBirth);
+  const reference = calendarDateParts(referenceDate);
+
+  let age = reference.year - dob.year;
+  const monthDiff = reference.month - dob.month;
+  if (monthDiff < 0 || (monthDiff === 0 && reference.day < dob.day)) {
     age--;
   }
   return age;
+}
+
+// test seam
+/**
+ * {@link computeAgeOnCalendarDays} over the two stored calendar days the call
+ * sites hold: a `@db.Date` date of birth, and a season start from
+ * {@link getSeasonStartDate}.
+ *
+ * BOTH ARGUMENTS ARE DECODED IN UTC AND BOTH STATE THE PRECONDITION FIRST, which
+ * is the only reading of a UTC-midnight encoding that answers the same on every
+ * host (`INV-DATE-024`). `requireStoredCalendarDay` is `seasonYearOfStoredDate`'s
+ * guard, shared: a value carrying a time of day is a real moment, and flooring
+ * one to its UTC day is right for a club east of Greenwich and wrong for the
+ * rest, which is worse than being wrong everywhere. On today's schema both
+ * columns are `@db.Date`, so PostgreSQL cannot hand this a time - it fires for a
+ * value some code path built rather than read, and it has already found fourteen
+ * across two of this repository's own test files.
+ */
+export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
+  return computeAgeOnCalendarDays(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(dateOfBirth, {
+        subject: "computeAge's dateOfBirth",
+        instead:
+          "A date of birth is a calendar day: build it with parseDateOnly or an explicit " +
+          "T00:00:00.000Z (INV-DATE-024), never from the clock.",
+      }),
+    ),
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(referenceDate, {
+        subject: "computeAge's referenceDate",
+        instead:
+          "Pass getSeasonStartDate(seasonYear) - the season start at UTC midnight - from a " +
+          "season the caller resolved once.",
+      }),
+    ),
+  );
 }
 
 export type AgeTierSettingData = {

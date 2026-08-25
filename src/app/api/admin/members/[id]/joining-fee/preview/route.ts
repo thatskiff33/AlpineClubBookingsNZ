@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AgeTier } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
+import { isCalendarDate } from "@/lib/club-time";
 import {
   getJoiningFeePreviewForInputs,
   getJoiningFeePreviewForMember,
@@ -16,9 +17,18 @@ const previewSchema = z
     membershipTypeId: z.string().min(1).optional(),
     membershipTypeKey: z.string().min(1).optional(),
     ageTier: z.nativeEnum(AgeTier).nullable().optional(),
+    // A REAL DAY, not merely a date-shaped string (#3082 fix round). The bare
+    // shape check accepted `1990-13-01` and `1990-02-31`; the first becomes an
+    // Invalid Date below and the second silently becomes 3 March. Since #3082
+    // `computeAge` refuses both rather than answering `NaN`, and it refuses by
+    // throwing — so without this the preview answered 500 where it should answer
+    // 400, and before #3082 it answered a wrong ADULT band. This route is the
+    // only caller of `getJoiningFeePreviewForInputs`, so validating here closes
+    // the path rather than only narrowing it.
     dateOfBirth: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine(isCalendarDate, "Date of birth must be a real date")
       .optional(),
   })
   .strict();
