@@ -725,10 +725,7 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
-      // Both helpers read the cancellation policy set. We hold
-      // pg_advisory_xact_lock(1) and the per-lodge capacity lock here, so the
-      // read goes through `tx`, never a second pooled connection.
-      db: tx,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
     });
 
     const settlementOptions = await calculateModificationSettlementOptions({

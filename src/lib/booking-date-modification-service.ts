@@ -699,14 +699,7 @@ export async function modifyBookingDates({
 
     if (checkInChanged) {
       const now = new Date();
-      // `tx`, not the module client: this runs under pg_advisory_xact_lock(1)
-      // and the per-lodge capacity lock, and `booking` was re-read after both.
-      // See the composition rule on `CancellationPolicyDb`.
-      const policy = await loadCancellationPolicy(
-        booking.checkIn,
-        booking.lodgeId,
-        tx,
-      );
+      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
       const feeResult = calculateChangeFee({
         daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
         daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
@@ -727,10 +720,7 @@ export async function modifyBookingDates({
     const settlementOptions = await calculateModificationSettlementOptions({
       booking: booking as unknown as LoadedBookingForModify,
       netChargeCents,
-      // Reads the cancellation policy set while we hold
-      // pg_advisory_xact_lock(1) and the per-lodge capacity lock, so it must go
-      // through `tx` rather than take a second pooled connection.
-      db: tx,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
     });
     if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       throw new ApiError(
@@ -761,11 +751,7 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(
-        newCheckIn,
-        booking.lodgeId,
-        tx,
-      );
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -1553,11 +1539,7 @@ export async function adminShiftBookingDates({
     let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
     let newStatus = booking.status;
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(
-        newCheckIn,
-        booking.lodgeId,
-        tx,
-      );
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,

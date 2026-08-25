@@ -1975,15 +1975,10 @@ export async function applyPromoCodeChanges(
 }
 
 /**
- * COMPOSITION RULE - `db`, and it is REQUIRED. This helper reads the
- * cancellation policy set, so it inherits the rule on `CancellationPolicyDb`
- * (`cancellation.ts`): **a caller already inside `prisma.$transaction` MUST pass
- * its own `tx`.** Its one caller, `modifyBookingBatch`, is in exactly that
- * position, holding pg_advisory_xact_lock(1) and the per-lodge capacity lock.
- *
- * No default, for the same reason as `calculateModificationSettlementOptions`:
- * this module imports no module-level Prisma client, and a `db = prisma` default
- * would hide a second pooled connection inside a transaction-scoped helper.
+ * `db` is REQUIRED and reads the cancellation policy set: this module is
+ * transaction-scoped and imports no module-level client, so a default would hide
+ * a second pooled connection under the caller's locks. Rule and reasoning:
+ * `CancellationPolicyDb` in `cancellation.ts`.
  */
 export async function calculateModificationChangeFee({
   booking,
@@ -2008,11 +2003,7 @@ export async function calculateModificationChangeFee({
     return 0;
   }
   const now = new Date();
-  const policy = await loadCancellationPolicy(
-    booking.checkIn,
-    booking.lodgeId,
-    db,
-  );
+  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const feeResult = calculateChangeFee({
     daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
     daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),

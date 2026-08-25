@@ -741,14 +741,7 @@ export async function POST(
         hasNonMembers &&
         (booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")
       ) {
-        const holdPolicy = await getNonMemberHoldPolicy(
-          booking.checkIn,
-          booking.lodgeId,
-          // Inside this transaction, under pg_advisory_xact_lock(1) and the
-          // per-lodge capacity lock: the read must use `tx`, never the module
-          // client. See the composition rule on `CancellationPolicyDb`.
-          tx,
-        );
+        const holdPolicy = await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId, tx);
         const holdDecision = calculateBookingHoldDecision({
           hasNonMembers,
           checkIn: booking.checkIn,

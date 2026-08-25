@@ -2093,10 +2093,7 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
-    // Advisory quote: no transaction and no lock is held here, so the module
-    // client is correct and cheapest. Stated rather than defaulted, because
-    // `calculateModificationSettlementOptions` requires the choice.
-    db: prisma,
+    db: prisma, // advisory quote: no transaction, no lock held
   });
 
   return NextResponse.json({
