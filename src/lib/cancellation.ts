@@ -22,11 +22,11 @@ type NonMemberHoldPolicySource = "period" | "default";
  * The narrow client the three readers below need. A `Prisma.TransactionClient`
  * satisfies it, which is the whole point of the `db` parameter they take.
  *
- * COMPOSITION RULE - `db`. The same rule `validateMinimumStay`
- * (`booking-policies.ts`) and `loadAdultMemberHostingPolicy`
- * (`adult-member-hosting-review.ts`) carry, and binding here for the same
- * reason: **a caller already inside `prisma.$transaction` MUST pass its own
- * `tx`.** Reaching for the module-level client while the caller holds
+ * COMPOSITION RULE - `db`, and it is `INV-LOCK-004`. The same rule
+ * `validateMinimumStay` (`booking-policies.ts`) and
+ * `loadAdultMemberHostingPolicy` (`adult-member-hosting-review.ts`) carry, and
+ * binding here for the same reason: **a caller already inside
+ * `prisma.$transaction` MUST pass its own `tx`.** Reaching for the module-level client while the caller holds
  * `pg_advisory_xact_lock(1)` and a per-lodge capacity lock checks out a SECOND
  * pool connection underneath both, which is the pool-starvation shape the
  * ordering rule at the top of `member-guest-add-policy.ts` exists to forbid:

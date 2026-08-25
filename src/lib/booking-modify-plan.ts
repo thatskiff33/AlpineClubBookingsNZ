@@ -1977,7 +1977,7 @@ export async function applyPromoCodeChanges(
 /**
  * `db` is REQUIRED and reads the cancellation policy set: this module is
  * transaction-scoped and imports no module-level client, so a default would hide
- * a second pooled connection under the caller's locks. Rule and reasoning:
+ * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
  * `CancellationPolicyDb` in `cancellation.ts`.
  */
 export async function calculateModificationChangeFee({

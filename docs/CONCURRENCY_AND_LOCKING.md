@@ -3323,6 +3323,22 @@ compounded by this repair.
 - **Bailing out of a `$transaction` callback?** Only `throw` rolls back;
   `return` COMMITS everything written so far. A `count === 0` guard that returns
   must sit above every write it does not want committed.
+- **Deciding which client a read uses, or censusing that with a grep?**
+  `INV-LOCK-004` is the rule: a read taken while a lock is held goes through the
+  caller's transaction client. When you audit it, remember a transaction is
+  opened **three** ways here and a scan keyed only on `prisma.$transaction(`
+  under-reports. `withOptionalTransaction(callerTx, async (tx) → ...)`
+  (`src/lib/db-transaction.ts`) either reuses a caller's `tx` or opens its own,
+  so its callback body always runs inside a transaction while containing no
+  opener itself → `modifyBookingBatch` and `createConfirmedBooking` both reach
+  their locked work through it. And a transaction-scoped helper that merely
+  *receives* a `tx` or `db` parameter contains no opener at all, so a lexical
+  scan cannot see it either; `applyLifecycleTransitions`,
+  `calculateModificationSettlementOptions` and `calculateModificationChangeFee`
+  are that shape. #3110's census read two sites short until the first was
+  accounted for and three short until the second was.
+  `cancellation-policy-client-contract.test.ts` covers both, without an
+  allowlist, and is the model to copy rather than a grep.
 - **Writing raw SQL for a row lock?** Take it with `$executeRaw` on a statement
   that selects a constant, then read what you need through the Prisma model
   under that lock (#2289). Never type a `$queryRaw` result and read it: the

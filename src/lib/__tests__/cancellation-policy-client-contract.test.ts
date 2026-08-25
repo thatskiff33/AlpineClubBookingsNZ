@@ -1,22 +1,23 @@
 // #3110 — which Prisma client reads the cancellation and non-member-hold policy
 // set, read off the real source files.
 //
-// ENFORCES the rule stated in full at `docs/CONCURRENCY_AND_LOCKING.md` →
-// "Which client reads the cancellation and non-member-hold policy": **a caller
-// already inside `prisma.$transaction` MUST pass its own `tx`.** Every assertion
-// below repeats that citation in its failure message, so whoever trips one is
-// handed the rule instead of having to go and find it (`AGENTS.md` → "Keeping
-// the table usable").
+// ENFORCES `INV-LOCK-004` (`docs/invariants/operations.md`): **a read taken
+// while a lock is held goes through the caller's transaction client, never the
+// module-level one** → so a caller already inside `prisma.$transaction` MUST
+// pass its own `tx`. Every assertion below repeats that id in its failure
+// message, so whoever trips one is handed the rule instead of having to go and
+// find it (`AGENTS.md` → "Keeping the table usable"). The reasoning and the
+// writer inventory are in `docs/CONCURRENCY_AND_LOCKING.md` → "Which client
+// reads the cancellation and non-member-hold policy".
 //
-// It cites the GUIDE SECTION and no `INV-*` id, deliberately. No invariant id
-// covers "which client reads a policy set": `INV-LOCK-001` is about which lock
-// TIER a writer takes, `INV-LOCK-002` about the order and `INV-LOCK-003` about
-// registering a global site, so citing one here would attach this rule to a row
-// that does not state it → the exact defect #3080 is cleaning up across ~38
-// files. `docs:indexcheck` would NOT have caught it either, because it checks
-// that a cited id resolves to a definition, never that the prose beside it
-// states the rule. This guide section is the rule's canonical home, and it is
-// already where the two remediated siblings are described.
+// The id was minted BY this change, and that is the point: before it, the
+// nearest-looking ids were `INV-LOCK-001` (which lock TIER a writer takes),
+// `-002` (the order) and `-003` (registering a global site), none of which state
+// this rule. An earlier draft of this file cited `-001` and `docs:indexcheck`
+// passed it, because that check verifies a cited id RESOLVES and never that the
+// prose beside it says what the citation claims → which is the defect #3080
+// spent 37 files repairing. A rule with no id is what pushes a guard toward the
+// nearest wrong one, so the rule got an id rather than a pointer.
 //
 // WHY STRUCTURAL AND NOT BEHAVIOURAL. The defect is a claim about a SET OF CALL
 // SITES, and it is invisible to any test of what the sites return:
@@ -77,12 +78,13 @@ const TX_OPENERS = [
 ] as const;
 
 const RULE =
-  "RULE: docs/CONCURRENCY_AND_LOCKING.md -> \"Which client reads the " +
-  "cancellation and non-member-hold policy\": a caller already inside " +
-  "prisma.$transaction MUST pass its own tx to the policy readers. Reading on " +
-  "the module client there checks out a second pool connection underneath " +
-  "pg_advisory_xact_lock(1) and the per-lodge capacity lock, which is the " +
-  "pool-starvation shape that guide forbids by name.";
+  "INV-LOCK-004 (docs/invariants/operations.md): a read taken while a lock is " +
+  "held goes through the caller's transaction client, never the module one. A " +
+  "caller already inside prisma.$transaction MUST pass its own tx to the " +
+  "policy readers; reading on the module client there checks out a second pool " +
+  "connection underneath pg_advisory_xact_lock(1) and the per-lodge capacity " +
+  "lock. Explanation: docs/CONCURRENCY_AND_LOCKING.md -> \"Which client reads " +
+  "the cancellation and non-member-hold policy\".";
 
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
