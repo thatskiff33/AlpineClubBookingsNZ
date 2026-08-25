@@ -216,6 +216,8 @@ const mockAdultMemberHostingPolicyFindMany = vi.fn().mockResolvedValue([]);
   the only one that persists a value.
 */
 const mockClubTimeSettingsFindUnique = vi.fn().mockResolvedValue(null);
+/** Zone reads that happened inside a `$transaction` callback. Contract: 0. */
+let zoneReadsInsideTransaction = 0;
 const mockHostingCoverageReevaluationCreate = vi
   .fn()
   .mockResolvedValue({ id: "hcr_1" });
@@ -270,6 +272,20 @@ const {
   splitSettlementExtensionNumber,
   shouldAlertOnSplitSettlementExtension,
 } = await import("../cron-confirm-pending");
+
+/*
+  The environment's answer, IMPORTED rather than rebuilt.
+
+  The club-zone block below used to compose it by hand as
+  `process.env.TZ || process.env.NEXT_PUBLIC_TZ || "Pacific/Auckland"`. Same
+  precedence, but not the same value: `src/config/operational.ts` TRIMS the
+  variable, so a `TZ` carrying a stray space made the hand-rolled copy and the
+  code under test disagree — and the zone chooser below excludes candidates by
+  comparing against exactly this string, so a disagreement there hands the suite
+  a candidate equal to the environment's and quietly stops it discriminating.
+  One import cannot drift from the constant it is asserting against.
+*/
+const { APP_TIME_ZONE } = await import("@/config/operational");
 
 function makePendingBooking(
   id: string,
@@ -475,9 +491,19 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockReconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mockGetNonMemberHoldDays.mockResolvedValue(7);
     mockBookingEventCreate.mockResolvedValue({ id: "evt_1" });
+    zoneReadsInsideTransaction = 0;
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
-        return arg({
+        // #2870: how many `clubTimeSettings` reads happened WHILE this callback
+        // was running. Zero is the contract — the callback holds
+        // `pg_advisory_xact_lock(1)` and the per-lodge capacity lock for its
+        // whole length, and a settings query in there lengthens a lock every
+        // cancel, capture, hold-release and capacity claim contends for. A
+        // per-run call count cannot see this: a read that MOVED inside the
+        // transaction but still ran once per run keeps that count at 1.
+        const zoneReadsBefore = mockClubTimeSettingsFindUnique.mock.calls.length;
+        try {
+          return await arg({
           $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
           lodge: {
             findFirst: (...args: unknown[]) => mockLodgeFindFirst(...args),
@@ -511,7 +537,11 @@ describe("Cron: Confirm Pending Bookings", () => {
             create: (...args: unknown[]) =>
               mockHostingCoverageReevaluationCreate(...args),
           },
-        });
+          });
+        } finally {
+          zoneReadsInsideTransaction +=
+            mockClubTimeSettingsFindUnique.mock.calls.length - zoneReadsBefore;
+        }
       }
 
       return Promise.all(arg as Promise<unknown>[]);
@@ -2578,8 +2608,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       return lo;
     }
 
-    const environmentZone =
-      process.env.TZ || process.env.NEXT_PUBLIC_TZ || "Pacific/Auckland";
+    const environmentZone = APP_TIME_ZONE;
     const hostZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     /**
@@ -2658,8 +2687,12 @@ describe("Cron: Confirm Pending Bookings", () => {
         "INV-CONFIG-002: the club's check-in day has not ended, so the requester's " +
           "/pay link is still live and this booking must keep its hold. Closing " +
           "the day on APP_TIME_ZONE cancels it and RELEASES ITS BEDS a whole club " +
-          "day early — and the member's link still works, so they can pay for a " +
-          "booking that no longer exists.",
+          "day early, and REVOKES THE MEMBER'S LINK with them: the terminal " +
+          "branch calls `revokePaymentLinksForBooking` in the same transaction, " +
+          "which is why the assertion below is `not.toHaveBeenCalled()`. So the " +
+          "harm is not a live link on a dead booking — it is a member who was " +
+          "given a deadline, and finds the link dead and their beds gone before " +
+          "it arrives.",
       ).toEqual([]);
       expect(mockReconcileBedAllocationsForBooking).not.toHaveBeenCalled();
       expect(mockRevokePaymentLinksForBooking).not.toHaveBeenCalled();
@@ -2722,7 +2755,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       expect(result.cancelledBookingIds).toEqual(["b_past"]);
     });
 
-    it("reads the club's zone ONCE per run and never inside a lock transaction", async () => {
+    it("reads the club's zone once per RUN, not once per booking, and never inside a lock transaction", async () => {
       mockPendingBookings([
         makePendingBooking("b_one", {
           checkIn: FIXTURE.checkIn,
@@ -2749,6 +2782,18 @@ describe("Cron: Confirm Pending Bookings", () => {
           "settings query. It would also let two bookings in one tick be judged " +
           "against different club days.",
       ).toHaveBeenCalledTimes(1);
+
+      // THE OTHER HALF, and the call count above cannot stand in for it: a read
+      // that moved INSIDE `resolveHoldWindowUnderLock` but still ran once per
+      // run keeps that count at 1 and passes. Two bookings only catch a read
+      // that became per-booking. This counter catches the placement.
+      expect(
+        zoneReadsInsideTransaction,
+        "`resolveHoldWindowUnderLock` holds pg_advisory_xact_lock(1) AND the " +
+          "per-lodge capacity lock for its whole callback. A `clubTimeSettings` " +
+          "query in there is a settings read under both — resolve the zone " +
+          "before the transaction and thread it in (`payment-link-expiry.ts`).",
+      ).toBe(0);
     });
   });
 });

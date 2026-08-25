@@ -420,6 +420,81 @@ describe("no zone read happens under a held lock", () => {
   });
 });
 
+/**
+ * The source text of every `$transaction(...)` argument list in `source`, with
+ * the line the call starts on.
+ *
+ * It is a paren matcher rather than a regex because the thing being asked is
+ * "is this call INSIDE that callback", which no regex can answer. String
+ * literals, template literals, regex-looking slashes and both comment forms are
+ * skipped, so a `)` in a message or a `//` in a URL cannot end a span early and
+ * let a real offender hide behind it. That mattered: these four files contain
+ * plenty of both.
+ *
+ * A parser would be more correct still. This is deliberately not one — a
+ * hand-rolled TypeScript parser in a guard is a larger liability than the
+ * property it protects, and the vacuity case below is what catches a scanner
+ * that has stopped matching anything.
+ */
+function transactionCallbackSpans(
+  source: string,
+): Array<{ line: number; body: string }> {
+  const spans: Array<{ line: number; body: string }> = [];
+  const NEEDLE = "$transaction(";
+
+  for (let at = source.indexOf(NEEDLE); at !== -1; at = source.indexOf(NEEDLE, at + 1)) {
+    const open = at + NEEDLE.length - 1;
+    let depth = 0;
+    let i = open;
+    let end = -1;
+
+    for (; i < source.length; i++) {
+      const c = source[i];
+      const next = source[i + 1];
+
+      if (c === "/" && next === "/") {
+        const nl = source.indexOf("\n", i);
+        i = nl === -1 ? source.length : nl;
+        continue;
+      }
+      if (c === "/" && next === "*") {
+        const close = source.indexOf("*/", i + 2);
+        i = close === -1 ? source.length : close + 1;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === "`") {
+        const quote = c;
+        i += 1;
+        for (; i < source.length; i++) {
+          if (source[i] === "\\") {
+            i += 1;
+            continue;
+          }
+          if (source[i] === quote) break;
+        }
+        continue;
+      }
+
+      if (c === "(") depth += 1;
+      else if (c === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+
+    if (end === -1) continue;
+    spans.push({
+      line: source.slice(0, at).split("\n").length,
+      body: source.slice(open + 1, end),
+    });
+  }
+
+  return spans;
+}
+
 /*
   A CENSUS, because the defect class is a call site that writes the boundary out
   again rather than a wrong line in one file. Nine of them did, across four
@@ -459,13 +534,93 @@ describe("every payment-link expiry goes through the one helper", () => {
     ).toEqual([]);
   });
 
-  it("found the files, so an empty census is not a silent pass", () => {
+  it("each owner file still calls the helper BY THAT EXACT NAME, so an empty census is not a silent pass", () => {
     for (const file of OWNERS) {
+      // A word-boundary match, not `toContain`. A substring test is satisfied by
+      // any prefix-preserving rename — `paymentLinkExpiryForCheckInZZ` passes it
+      // — which is measurably how a published "the helper was renamed away"
+      // mutation row came to read as a partial kill while this watchdog had in
+      // fact noticed nothing at all.
+      //
+      // THE TRADE, stated because it is a real one: a CONSISTENT rename of the
+      // helper is behaviour-preserving and now fails here, so whoever renames it
+      // has to edit this line too. That is the cheaper side. The alternative is a
+      // watchdog that cannot tell a rename from a deletion — and telling those
+      // apart is the entire job of a case whose name promises the census is not
+      // silently passing on files it is no longer watching.
       expect(
         readFileSync(path.join(REPO_ROOT, file), "utf8"),
         `${file} must still call the shared helper; if it no longer does, this ` +
           "census is watching the wrong files.",
-      ).toContain("paymentLinkExpiryForCheckIn");
+      ).toMatch(/\bpaymentLinkExpiryForCheckIn\b/);
+    }
+  });
+
+  /*
+    THE ORDERING GUARD, and the reason it is static rather than a runtime count.
+
+    The runtime `readsInsideTransaction` cases above cover three writers:
+    `reissuePaymentLinkForToken`, `issueSplitGuestPaymentLink` and
+    `mintSplitGuestPaymentLinkIfAbsent`. NOTHING covered the other two —
+    `approveBookingRequest` (`booking-request.ts`) and
+    `verifyAndCreateNonMemberJoin` (`group-booking.ts`) — and that gap was
+    measured, not supposed: adding a `readClubTimeZoneOutsideRequest()` call
+    immediately after `acquireLodgeCapacityLock` in BOTH of those files left all
+    219 tests in the seven suites covering them green, `advisory-lock-guard`
+    included.
+
+    A refuse-when-handed-a-transaction-client analogue — the shape
+    `buildSubscriptionBillingPreview` uses since `42ba10f36` — cannot be built
+    here, and the reason is that this PR already took the stronger remedy.
+    `paymentLinkExpiryForCheckIn` receives the zone and imports no reader at all,
+    so it CANNOT resolve the zone under a lock however it is called; there is no
+    client to key a refusal on. What is left to protect is a property of the
+    CALLERS: each one's own `await` must sit outside its own transaction. That is
+    an ordering fact about source, so a source contract is the honest guard for
+    it, and unlike a runtime count it covers all four writers — and any fifth
+    one somebody adds — at once.
+
+    The failure it exists to stop, concretely: an edit moves the `await` in
+    `booking-request.ts` a few lines down, inside the transaction. Every booking
+    request approval then holds `pg_advisory_xact_lock(1)` AND the per-lodge
+    capacity lock across a `clubTimeSettings` query, serialising every cancel,
+    capture, hold-release and capacity claim behind a settings read.
+  */
+  it("reads the club's zone outside every transaction, in all four writers", () => {
+    const offenders: string[] = [];
+
+    for (const file of OWNERS) {
+      const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
+      for (const span of transactionCallbackSpans(source)) {
+        if (!span.body.includes("readClubTimeZoneOutsideRequest(")) continue;
+        offenders.push(`${file}:${span.line}`);
+      }
+    }
+
+    expect(
+      offenders,
+      "A `readClubTimeZoneOutsideRequest()` inside a `$transaction` callback " +
+        "holds a settings query under whatever locks that transaction took — " +
+        "`pg_advisory_xact_lock(1)` and the per-lodge capacity lock, for two of " +
+        "these writers. Resolve the zone BEFORE the transaction and thread the " +
+        "value in: `payment-link-expiry.ts`, and " +
+        "`docs/CONCURRENCY_AND_LOCKING.md` -> \"Which client reads the club's " +
+        'timezone".',
+    ).toEqual([]);
+  });
+
+  it("found real transaction callbacks to inspect, so the ordering guard is not vacuous", () => {
+    // Without this, deleting `$transaction` from all four files — or a scanner
+    // that silently matched nothing — would leave the guard above passing while
+    // reading nothing at all. Nine callbacks across the four files today.
+    const spans = OWNERS.flatMap((file) =>
+      transactionCallbackSpans(
+        readFileSync(path.join(REPO_ROOT, file), "utf8"),
+      ),
+    );
+    expect(spans.length).toBeGreaterThanOrEqual(8);
+    for (const span of spans) {
+      expect(span.body.length).toBeGreaterThan(0);
     }
   });
 });
