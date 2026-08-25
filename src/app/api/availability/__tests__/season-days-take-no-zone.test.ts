@@ -7,8 +7,10 @@ import { NextRequest } from "next/server";
  * `Season.startDate` and `Season.endDate` are `@db.Date` — a calendar day encoded
  * as UTC midnight and never a moment (INV-DATE-010), read back in UTC under
  * INV-DATE-019's first exact boundary with INV-DATE-026, which are the citation
- * for a decode rather than INV-DATE-010 (#3080). The availability grid used to decode them with
- * `formatDateOnlyForTimeZone`, which projects the stored instant into
+ * for a decode rather than INV-DATE-010 (#3080).
+ *
+ * The availability grid used to decode them with `formatDateOnlyForTimeZone`,
+ * which projects the stored instant into
  * `APP_TIME_ZONE`. For a club ahead of Greenwich that is the identity, which is
  * why New Zealand never saw it. For a club BEHIND Greenwich every season window
  * slid one night earlier: the grid labelled the night before the season opened
