@@ -48,9 +48,8 @@ vi.mock("@/config/operational", () => ({
   APP_STRIPE_CURRENCY: "nzd",
 }));
 
-const { divergentClubZone, expectClubTimeZonePremise } = await import(
-  "./club-time-zone"
-);
+const { chooseDivergentClubZone, divergentClubZone, expectClubTimeZonePremise } =
+  await import("./club-time-zone");
 
 /**
  * 10:30 UTC, the hour in which three calendar days exist at once — so a third
@@ -181,5 +180,203 @@ describe("the fixture instant sits in the three-day window", () => {
     );
     expect(days.size).toBe(3);
     expect(days.has("2026-08-15")).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * `chooseDivergentClubZone` — the hand-written-literal chooser, and the
+ * opt-in host rival CT-6 (#2991) added to it.
+ *
+ * The guard-the-guard rule this epic paid for applies to the new option as much
+ * as to the old one: a shared helper whose central clause has no test silently
+ * weakens every suite that imports it, including suites in lanes not yet
+ * written. F5's chooser lost its host clause to a mutation that killed 0 of 124
+ * tests. Each block below therefore states which mutation it is the control
+ * for, so a later reader can re-run the experiment rather than trust this
+ * comment.
+ * ------------------------------------------------------------------------- */
+
+/** `answerFor` takes a bare string, and a rival zone is never validated. */
+const dayOfId = (zone: string): string =>
+  clubCalendarDateOf(FIXTURE, zone as ClubTimeZone);
+
+/**
+ * The two candidates, with HAND-WRITTEN literals — the property this chooser is
+ * chosen for. At the fixture instant `America/Denver` (UTC-6) reads the same
+ * calendar day as the pinned host `Europe/Berlin` (UTC+2), and
+ * `Pacific/Pago_Pago` (UTC-11) reads the third day that exists only in this
+ * hour. So the first candidate is the WRONG answer a host-blind chooser
+ * returns, and the second is the only right one.
+ */
+const CASES = [
+  { zone: FIRST_CANDIDATE, day: "2026-08-15" },
+  { zone: "Pacific/Pago_Pago", day: "2026-08-14" },
+] as const;
+
+describe("chooseDivergentClubZone: the host rival is opt-in and it BITES", () => {
+  it("returns the host-coinciding candidate when the host is not a rival", () => {
+    withTimeZone(HOST, () => {
+      const chosen = chooseDivergentClubZone({
+        subject: "the club's calendar day",
+        cases: CASES,
+        answerKey: "day",
+        answerFor: dayOfId,
+      });
+      // Denver's answer differs from the ENVIRONMENT's (Kiritimati, 16 August),
+      // so the default chooser is satisfied by it — and it is exactly the
+      // host's own answer. This is the weaker guarantee, stated as a fact
+      // rather than left implicit, so the next block's difference is visible.
+      expect(chosen.zone).toBe(FIRST_CANDIDATE);
+      expect(chosen.day).toBe(dayOfId(HOST));
+    });
+  });
+
+  it("skips it once alsoDifferFromHostAt is passed", () => {
+    withTimeZone(HOST, () => {
+      const chosen = chooseDivergentClubZone({
+        subject: "the club's calendar day",
+        cases: CASES,
+        answerKey: "day",
+        answerFor: dayOfId,
+        alsoDifferFromHostAt: FIXTURE,
+      });
+
+      // The premise first: the two rivals genuinely disagree here, so "differ
+      // from the host" and "differ from the environment" are different tests.
+      expect(dayOfId(HOST)).not.toBe(dayOfId("Pacific/Kiritimati"));
+
+      expect(chosen.zone).toBe("Pacific/Pago_Pago");
+      expect(chosen.day).not.toBe(dayOfId(HOST));
+      expect(chosen.day).not.toBe(dayOfId("Pacific/Kiritimati"));
+    });
+  });
+
+  it("says so rather than degrading when no candidate can escape both", () => {
+    withTimeZone(HOST, () => {
+      expect(() =>
+        chooseDivergentClubZone({
+          subject: "the club's calendar day",
+          // Only the host-coinciding candidate is offered, so with the host a
+          // rival there is nothing left to choose.
+          cases: [CASES[0]],
+          answerKey: "day",
+          answerFor: dayOfId,
+          alsoDifferFromHostAt: FIXTURE,
+        }),
+      ).toThrowError(/No candidate club zone disagrees with the environment/);
+    });
+  });
+});
+
+describe("chooseDivergentClubZone asserts the fixture, rather than documenting it", () => {
+  /**
+   * 21:00 UTC — outside the hour in which a third calendar day exists. This is
+   * the instant F5 measured refusing every candidate, and the reason the
+   * constraint exists at all.
+   */
+  const OUTSIDE_WINDOW = requireInstant("2026-08-15T21:00:00.000Z");
+  const dayOutsideWindow = (zone: string): string =>
+    clubCalendarDateOf(OUTSIDE_WINDOW, zone as ClubTimeZone);
+
+  it("refuses an instant outside the three-calendar-days hour", () => {
+    withTimeZone(HOST, () => {
+      expect(() =>
+        chooseDivergentClubZone({
+          subject: "the club's calendar day",
+          cases: [
+            { zone: FIRST_CANDIDATE, day: dayOutsideWindow(FIRST_CANDIDATE) },
+            {
+              zone: "Pacific/Pago_Pago",
+              day: dayOutsideWindow("Pacific/Pago_Pago"),
+            },
+          ],
+          answerKey: "day",
+          answerFor: dayOutsideWindow,
+          alsoDifferFromHostAt: OUTSIDE_WINDOW,
+        }),
+      ).toThrowError(/THREE calendar days exist on earth only while the UTC hour is 10/);
+    });
+  });
+
+  it("tells the reader which hour the fixture is actually at", () => {
+    let message = "";
+    withTimeZone(HOST, () => {
+      try {
+        chooseDivergentClubZone({
+          subject: "the club's calendar day",
+          cases: [
+            { zone: FIRST_CANDIDATE, day: dayOutsideWindow(FIRST_CANDIDATE) },
+          ],
+          answerKey: "day",
+          answerFor: dayOutsideWindow,
+          alsoDifferFromHostAt: OUTSIDE_WINDOW,
+        });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+    });
+    expect(message).toContain("21:xx UTC");
+    expect(message).toContain("Move the fixture into the 10:00-10:59 UTC hour");
+  });
+
+  it("refuses an instant the derivation does not actually read", () => {
+    withTimeZone(HOST, () => {
+      // The named instant is in the window and would satisfy an hour-only
+      // check, but `answerFor` reads a day five weeks away — so the window
+      // check would have proved nothing about the answers being compared.
+      const LIED_ABOUT = requireInstant("2026-09-19T10:30:00.000Z");
+      expect(() =>
+        chooseDivergentClubZone({
+          subject: "the club's calendar day",
+          cases: CASES,
+          answerKey: "day",
+          answerFor: dayOfId,
+          alsoDifferFromHostAt: LIED_ABOUT,
+        }),
+      ).toThrowError(/reading a DIFFERENT instant from the one this call claims/);
+    });
+  });
+
+  it("imposes no window on an answer that is not a calendar day", () => {
+    withTimeZone(HOST, () => {
+      // A wall-clock hour has far more than three possible answers across the
+      // zone set, so the constraint does not apply and must not fire — the
+      // control that stops the assertion above from being an unconditional ban.
+      const hourAt = (zone: string): string =>
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: zone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(OUTSIDE_WINDOW);
+
+      const chosen = chooseDivergentClubZone({
+        subject: "the club's wall-clock time",
+        cases: [
+          { zone: "Asia/Tokyo", clock: hourAt("Asia/Tokyo") },
+          { zone: "Pacific/Pago_Pago", clock: hourAt("Pacific/Pago_Pago") },
+        ],
+        answerKey: "clock",
+        answerFor: hourAt,
+        alsoDifferFromHostAt: OUTSIDE_WINDOW,
+      });
+      expect(chosen.clock).not.toBe(hourAt(HOST));
+      expect(chosen.clock).not.toBe(hourAt("Pacific/Kiritimati"));
+    });
+  });
+});
+
+describe("chooseDivergentClubZone checks the pinned literal against its own zone", () => {
+  it("refuses a candidate whose hand-written answer is a typo", () => {
+    withTimeZone(HOST, () => {
+      expect(() =>
+        chooseDivergentClubZone({
+          subject: "the club's calendar day",
+          cases: [{ zone: "Pacific/Pago_Pago", day: "2026-08-16" }],
+          answerKey: "day",
+          answerFor: dayOfId,
+        }),
+      ).toThrowError(/pins day = "2026-08-16".*but that zone actually answers "2026-08-14"/s);
+    });
   });
 });
