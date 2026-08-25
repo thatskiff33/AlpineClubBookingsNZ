@@ -349,7 +349,7 @@ describe("#3100 the envelope expander steps by a day, so its loop ends", () => {
   });
 });
 
-describe("#3107 the frame split this fix does NOT close", () => {
+describe("#3107 the frame split this fix did NOT close, now closed", () => {
   /*
     THE AGREEMENT NOBODY WAS ASSERTING. This file's two groups deliberately run
     in two different key frames — the string-fed group takes its nights verbatim,
@@ -368,35 +368,39 @@ describe("#3107 the frame split this fix does NOT close", () => {
     branch that reserves beds. That is a capacity-admission defect, it predates
     #3100, and #3100 does not touch it: `isGuestActiveOnNight` takes no shift.
 
-    WHY THIS ASSERTS THE SPLIT RATHER THAN THE AGREEMENT. The agreement cannot
-    pass until #3107 lands, and this file's own rule forbids pinning an absolute
-    `Date`-derived day as correct. So the split is asserted as an INEQUALITY: it
-    is a real measurement today, it cannot be satisfied vacuously, and it goes
-    RED the moment #3107 makes the two frames agree — which is when it must be
-    rewritten to `toEqual`. Do not delete it then; flip it.
+    THIS BLOCK ASSERTED THE SPLIT AS AN INEQUALITY, and said so: "it goes RED the
+    moment #3107 makes the two frames agree — which is when it must be rewritten
+    to `toEqual`. Do not delete it then; flip it." #3107 has landed, and it is
+    flipped rather than deleted, so the same two cases now hold the agreement they
+    were written to wait for.
+
+    THE ABSOLUTE DAYS ARE NOW ASSERTED, which this file previously forbade. The
+    reason for the ban was that `dateOnlyKey` projected, so pinning a
+    `Date`-derived day would have pinned the defect as correct. It decodes now, so
+    a `Date`-fed key names the day the column holds in every zone and there is
+    nothing left for an absolute assertion to freeze wrongly.
   */
   const LOGICAL_NIGHTS = ["2026-07-04", "2026-07-05", "2026-07-06"];
 
-  it("string-fed and Date-fed nights DISAGREE for the same logical stay", () => {
+  it("string-fed and Date-fed nights AGREE for the same logical stay", () => {
     const stringFed = getExplicitGuestBedNightKeys({ nights: LOGICAL_NIGHTS });
     const dateFed = getExplicitGuestBedNightKeys({ nights: LOGICAL_NIGHTS.map(day) });
 
     // Verbatim: no projection is reachable from a `yyyy-mm-dd` string, in any zone.
     expect(stringFed).toEqual(LOGICAL_NIGHTS);
-    // Same nights, same count — and, behind Greenwich, different days.
-    expect(dateFed).toHaveLength(LOGICAL_NIGHTS.length);
-    expect(
-      dateFed,
-      "#3107 has landed: the two frames now agree. Rewrite this case as toEqual.",
-    ).not.toEqual(stringFed);
+    // And the `Date` side now decodes the day its column holds, so the two frames
+    // are one frame. This is the assertion #3106 could not make.
+    expect(dateFed).toEqual(stringFed);
   });
 
-  it("so one logical night is both occupied and unoccupied, depending on the input type", () => {
+  it("so one logical night is occupied whichever shape it arrives in", () => {
     const night = day("2026-07-04");
     expect(isGuestActiveOnNight({ nights: [night] }, night, BOOKING)).toBe(true);
-    expect(
-      isGuestActiveOnNight({ nights: ["2026-07-04"] }, night, BOOKING),
-      "#3107 has landed: both input shapes now agree. Rewrite this case.",
-    ).toBe(false);
+    // This was `false` while the string was taken verbatim and the `Date` was
+    // projected. The same logical night being simultaneously occupied and
+    // unoccupied is what under-counted proposed beds inside the capacity lock.
+    expect(isGuestActiveOnNight({ nights: ["2026-07-04"] }, night, BOOKING)).toBe(
+      true,
+    );
   });
 });
