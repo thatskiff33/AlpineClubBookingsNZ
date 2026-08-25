@@ -189,6 +189,7 @@ one of these, there is a function.
 | a bare month name — the months a season or period runs between | `formatClubShortMonth(date)`. Declared as its own shape rather than the year sliced off `formatClubShortMonthYear`, per the rule below |
 | the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, of which #3100 shipped one and armed the other: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
+| a `yyyy-MM-dd` KEY from a stored `@db.Date` value, via a zone reader | `calendarDateOfDateOnlyInstant(requireStoredCalendarDay(v, …))`. Composed rather than wrapped, so the encoder's own name stays at the call site for the encoding census; #3107 is what a zone reader does here |
 
 Two rules the table cannot express.
 
@@ -237,6 +238,15 @@ measured over 4,000 consecutive days in both directions, zero mismatches, since 
 UTC day is always 86,400,000 ms. It arms itself the moment the anchor becomes
 club-local, which is the measurement above. Both are named here because a reader
 who fixes only the live half re-creates the other.
+
+**The step and the DECODER beside it are one fix, and #3107 is the other half.**
+Moving the step onto calendar arithmetic while the key derivation still projected
+left the two in different frames, which is worse than either alone: on
+`Atlantic/Azores` — the only IANA zone that changes the SIGN of its offset across
+DST, so the only one where the projection is not a uniform shift — a three-night
+stay grew a fourth night, and a proposal's beds were counted on the wrong nights
+inside the capacity lock. A key is DECODED from the day its column holds, never
+read out of a zone.
 
 ## The legacy adapters
 

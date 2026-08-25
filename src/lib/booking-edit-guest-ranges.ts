@@ -248,20 +248,15 @@ function minDate(a: Date, b: Date): Date {
 /**
  * The lodge-night key of a stored calendar day - the scheme every night set uses.
  *
- * DECODES, DOES NOT PROJECT (#3107). It used to read the value through the
- * environment zone, which is the identity for a club at or ahead of Greenwich and
- * the PREVIOUS day for one behind it. The keys it is compared against come from
- * `getExplicitGuestBedNightKeys`, whose `BookingGuestNight` rows were never
- * projected, so behind Greenwich a night's price never matched the night it was
- * the price OF and every such night silently repriced at today's rate - the exact
- * failure `storedNightPricesByKey` below warns about in the sentence about
- * INV-DATE-020.
+ * DECODES, DOES NOT PROJECT (#3107, INV-DATE-013). The keys this is compared
+ * against come from `getExplicitGuestBedNightKeys`, whose `BookingGuestNight`
+ * rows were never projected, so behind Greenwich a night's price never matched
+ * the night it was the price OF and that night silently repriced at today's rate
+ * - the failure `storedNightPricesByKey` below warns about under INV-DATE-020.
  *
- * A SECOND COPY OF `booking-guest-stay-ranges.ts`'s OWN DERIVATION, and it stays
- * a copy only because that one is module-private and its callers' bodies are
- * frozen byte-for-byte by `booking-guest-stay-ranges-contract.test.ts`. The two
- * must move together: they key the same night sets against each other, so one
- * decoding while the other projected is the straddle #3107 was widened to close.
+ * A second copy of `booking-guest-stay-ranges.ts`'s own derivation, kept only
+ * because that one is module-private behind bodies its contract test freezes
+ * byte-for-byte. The two key the same night sets and must move together.
  */
 function dateOnlyKey(value: Date): CalendarDate {
   return calendarDateOfDateOnlyInstant(

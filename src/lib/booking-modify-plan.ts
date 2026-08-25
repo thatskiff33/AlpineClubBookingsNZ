@@ -1236,17 +1236,12 @@ function guestNightBreakdown(entry: {
   return {
     priceCents: entry.priceCents,
     perNightCents: [...entry.perNightCents],
-    // #3107: `storedDateOnly`, not `normalizeDateOnlyForTimeZone`. These nights
-    // arrive from the in-progress plan as `parseDateOnly(key)` values already on
-    // the true calendar, and the projection re-read them through the environment
-    // zone - the identity for a club at or ahead of Greenwich, the PREVIOUS day
-    // for one behind it. It is a THIRD projection of a key the plan had already
-    // derived, and it is the one that REACHES THE DATABASE: `syncGuestNights`
-    // writes these very values into `BookingGuestNight.stayDate`, so a booking
-    // edited in progress stored its nights a day early while every reader of
-    // those rows decodes them on the true calendar. The ordinary edit branch
-    // never had the defect - it takes its nights from `pricing.ts`'s zone-free
-    // `normalizeBookingDate` - so only this branch changes.
+    // #3107: `storedDateOnly`, not `normalizeDateOnlyForTimeZone` (INV-DATE-013).
+    // These arrive from the in-progress plan already on the true calendar, and
+    // this is the projection that REACHES THE DATABASE - `syncGuestNights`
+    // writes these values into `BookingGuestNight.stayDate`, so an in-progress
+    // edit stored its nights a day early. The ordinary edit branch takes its
+    // nights from `pricing.ts`'s zone-free normaliser and never had the defect.
     nightDates: entry.nights.map((night) => storedDateOnly(night)),
   };
 }

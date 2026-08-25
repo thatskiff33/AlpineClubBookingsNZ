@@ -249,7 +249,6 @@ describe("N-03: checkCapacityWarnings", () => {
     // `addDaysDateOnly` steps whole UTC days. `setDate` steps the LOCAL date and
     // carries the local time of day with it, so on a host with a transition in
     // range it moves the UTC instant by 23 or 25 hours off the day boundary.
-    const tomorrow = addDaysDateOnly(today, 1);
     const dayAfter = addDaysDateOnly(today, 2);
 
     // Create a booking with 25 guests (only 4 beds remaining)

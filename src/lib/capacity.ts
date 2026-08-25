@@ -116,13 +116,10 @@ function buildOccupancyIndex(bookings: OccupancyBooking[]): OccupancyIndexEntry[
       booking,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
-      // #3107: the SAME zone-free decode the night key beside these uses.
-      // Both were built with `formatDateOnlyForTimeZone` while the night they
-      // are compared against was built with `formatDateOnly`, so behind
-      // Greenwich a booking's span and the night were a day apart and the
-      // occupancy window was off by one. A stored `@db.Date` value encodes a
-      // calendar day, so it is read back in UTC (`INV-DATE-019`'s first exact
-      // boundary, with `INV-DATE-026`) and no zone is consulted on either side.
+      // #3107: the SAME zone-free decode as the night key these are compared
+      // against. Built with `formatDateOnlyForTimeZone` they were a day apart
+      // from it behind Greenwich, so the occupancy window was off by one
+      // (INV-DATE-013).
       checkInKey: formatDateOnly(booking.checkIn),
       checkOutKey: formatDateOnly(booking.checkOut),
     });
