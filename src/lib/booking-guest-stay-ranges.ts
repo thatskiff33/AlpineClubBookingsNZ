@@ -39,8 +39,25 @@ function dateOnlyKey(value: Date): string {
 }
 
 /**
- * Derive the date-only key for one explicit night entry, matching the key
- * scheme used everywhere else (NZ time zone via formatDateOnlyForTimeZone).
+ * Derive the date-only key for one explicit night entry.
+ *
+ * IT DOES NOT USE ONE KEY SCHEME, and the comment that said it did was wrong in
+ * the way that matters (#3107). A `yyyy-mm-dd` string is returned VERBATIM — the
+ * true calendar day, in any zone. A `Date` goes through {@link dateOnlyKey},
+ * which PROJECTS it into the environment zone, so for a club behind Greenwich it
+ * comes back a day early. The two input shapes therefore land in different
+ * frames, and both shapes occur in production: `BookingGuestNight` rows and
+ * booking envelopes arrive as `Date`s, while `ProposalGuest.nights` is declared
+ * `string[]` and reaches {@link countActiveGuestsForNight} verbatim through
+ * `checkCapacityForGuestRanges`.
+ *
+ * Measured behind Greenwich, one logical night is simultaneously occupied
+ * (`Date`-fed) and unoccupied (string-fed), and a policy-exception capacity
+ * admission check counted zero proposed beds where it should have counted the
+ * party's. `operational-day-shift-club-zone.test.ts` → "#3107 the frame split
+ * this fix does NOT close" holds the measurement and fails the day the frames
+ * agree. `GuestNightInput` is exported, so a fork passing strings gets keys a day
+ * off every `Date`-derived one until #3107 lands.
  */
 function nightEntryKey(entry: GuestNightInput): string {
   if (typeof entry === "string") {
