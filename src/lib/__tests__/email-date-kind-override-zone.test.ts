@@ -238,6 +238,18 @@ const houseDay = (zone: string) =>
     timeZone: zone,
   });
 
+/**
+ * Every occurrence of the house medium day shape — "1 Aug 2026" — in a document.
+ *
+ * This is the alphabet the agreement assertion compares in. It deliberately
+ * matches the SHAPE rather than any particular value, so it finds the dates a
+ * regression renders as well as the ones it should have. `describesTheHouseShape`
+ * below refuses to let it drift away from what the formatters actually emit,
+ * because a pattern that matches nothing would make that comparison `[]` versus
+ * `[]` — vacuously green, which is the exact failure this suite was masking.
+ */
+const DAY_SHAPE = /[0-9]{1,2} [A-Z][a-z]{2} [0-9]{4}/g;
+
 const storedDay = (iso: string) => houseDay("UTC").format(new Date(iso));
 const projectedDay = (iso: string, zone: string) =>
   houseDay(zone).format(new Date(iso));
@@ -508,6 +520,30 @@ describe("email dates render by kind, on both rendering paths", () => {
     );
   });
 
+  it("has the other premise it needs: DAY_SHAPE really matches what the formatters emit", () => {
+    // The agreement assertion compares the multisets of DAY_SHAPE matches in
+    // two documents. A pattern that matched nothing would compare `[]` with
+    // `[]` and pass while measuring nothing, so pin the pattern against the
+    // oracles themselves rather than against a hand-written literal — every
+    // day-valued string this suite can expect has to be findable by it.
+    for (const value of [
+      storedDay(CHECK_IN_ISO),
+      storedDay(CHECK_OUT_ISO),
+      projectedDay(CHECK_IN_ISO, "Pacific/Honolulu"),
+      projectedDay(INSTANT_ISO, "Pacific/Auckland"),
+    ]) {
+      expect(
+        value.match(DAY_SHAPE),
+        `DAY_SHAPE no longer matches "${value}", so the agreement comparison it drives would be vacuous. The house medium date shape has moved — update the pattern.`,
+      ).toEqual([value]);
+    }
+    // And it finds a day inside a rendered date-TIME too, which is the exact
+    // overlap that made the old whole-document `toContain` maskable.
+    expect(clubInstant(INSTANT_ISO, "Pacific/Honolulu").match(DAY_SHAPE)).toEqual(
+      [projectedDay(INSTANT_ISO, "Pacific/Honolulu")],
+    );
+  });
+
   for (const configuration of CONFIGURATIONS) {
     describe(configuration.label, () => {
       beforeEach(() => {
@@ -585,6 +621,61 @@ describe("email dates render by kind, on both rendering paths", () => {
             // class is divergence, and two assertions each pinning one path can
             // both pass while the pair disagrees. What each configuration is
             // for is recorded on its `role` above.
+            //
+            // ## Why the per-token `toContain`s below are NOT the agreement
+            //
+            // `toContain` searches the WHOLE document, so one token's output can
+            // satisfy the assertion made on another token's behalf. Measured on
+            // this suite: with the persisted zone `Pacific/Honolulu`, the instant
+            // `2026-08-01T23:30Z` renders "1 Aug 2026, 1:30 pm", which contains
+            // "1 Aug 2026" — the very string the stored night 2026-08-01 must
+            // produce. So reverting a Check-in row to the pre-change
+            // `emailClubDate` left all 49 cases green at four of the six senders
+            // (only `hut-leader-assignment` and `setup-intent-failed`, which
+            // carry no instant, actually died). That Check-in row was a merge
+            // conflict site with #3105, so this is the resolution slip that
+            // happens, and a Honolulu club's members would have read
+            // "Check-in: 31 Jul" from the shipped body with the suite green.
+            //
+            // ## The oracle that is not maskable
+            //
+            // Compare the MULTISET of day-shaped strings the two documents
+            // render. A revert on one path changes that document's dates and not
+            // the other's, so the multisets differ and it dies wherever it is —
+            // no per-sender knowledge, no extracted window sized by a magic
+            // number, and no reliance on the fixtures failing to collide.
+            //
+            // Duplicates are kept deliberately (`.sort()`, not a Set): under
+            // Honolulu the correct render really is
+            // ["1 Aug 2026", "1 Aug 2026", "3 Aug 2026"] — the stored night and
+            // the instant's date part genuinely coincide — and collapsing that
+            // to a Set would throw away exactly the count that a revert changes.
+            //
+            // Note what this does and does not prove on its own. It proves the
+            // two paths AGREE; it does not prove they are both right, since a
+            // revert applied to both would agree too. That half is proved by the
+            // `templateData` cases above, which pin the override path's values
+            // absolutely with `toBe`, plus the not-vacuous case below, which
+            // proves the override body really names every token. Right override
+            // path + paths agree ⇒ right shipped path.
+            const dayShapedStrings = (html: string) =>
+              (html.match(DAY_SHAPE) ?? []).sort();
+            // Anti-vacuity: an empty match on BOTH sides would compare equal and
+            // prove nothing, which is the shape of the bug being fixed here.
+            // Every stored night and every instant-as-bare-day owes the document
+            // one day-shaped string, so the count cannot legitimately fall below
+            // that.
+            expect(
+              dayShapedStrings(shipped.html).length,
+              `${sender.templateName}'s shipped body renders fewer day-shaped strings than it has day tokens, so the agreement comparison would be vacuous. Either the house date shape moved (fix DAY_SHAPE) or the body stopped rendering a date.`,
+            ).toBeGreaterThanOrEqual(
+              sender.days.length + sender.instantDays.length,
+            );
+            expect(
+              dayShapedStrings(shipped.html),
+              `${sender.templateName} renders different days with a saved body override than without one. The override path and the shipped body must name the same days — that disagreement is the whole of #3113.`,
+            ).toEqual(dayShapedStrings(overridden.html));
+
             for (const day of sender.days) {
               const expected = storedDay(day.iso);
               expect(shipped.html).toContain(expected);
