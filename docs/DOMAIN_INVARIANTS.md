@@ -144,7 +144,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-026` | A calendar-day column is `@db.Date`, and a Prisma bound against one must be UTC midnight or it narrows to the previous day |
 | `INV-DATE-019` | Ask the club's calendar for "today", never the UTC clock |
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, carried end to end |
-| `INV-DATE-015` | Rendering has one seam, `nzst-date.ts`; bare `toLocale*` is lint-blocked |
+| `INV-DATE-015` | Rendering has one seam, `@/lib/club-time`; bare `toLocale*`, an unzoned `Intl` formatter and `date-fns` are lint-blocked |
 | `INV-DATE-016` | `formatNZLongDate` is reserved for four named member-facing surfaces |
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |

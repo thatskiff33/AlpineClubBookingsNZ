@@ -430,6 +430,33 @@ generalised.
    reproduce a UTC runner with an NZ club, force
    `timeZone = "Pacific/Auckland"` explicitly as well.
 
+   **Do not set `TZ` from Git Bash — it is a silent no-op, and this advice used
+   to send you straight into it.** Measured independently by three lanes on epic
+   #2988 and re-measured on #2991: Git Bash on Windows drops any `TZ` value
+   containing a `/`, so the variable arrives as `undefined` and the process keeps
+   the machine's own zone.
+
+   ```
+   $ TZ=UTC node -e "console.log(process.env.TZ)"              # UTC
+   $ TZ=America/Denver node -e "console.log(process.env.TZ)"   # undefined
+   $ export TZ=America/Denver; node -e "console.log(process.env.TZ)"  # undefined
+   ```
+
+   That is the worst possible shape: the zone with no slash works, so the lever
+   looks live, and every zone that would actually discriminate is dropped. A
+   matrix built on it reports six rows and measures one. `MSYS_NO_PATHCONV`,
+   `MSYS2_ARG_CONV_EXCL` and a leading `//` were all tried and none of them
+   helps.
+
+   **The levers that do work.** From PowerShell, `$env:TZ = "America/Denver"`
+   propagates correctly, so a whole-process run under one zone is available there.
+   In-process — which is what a matrix wants — assign `process.env.TZ`, through
+   `withTimeZone`/`withTimeZoneAsync` (rule 7 below), and use
+   `vi.resetModules()` plus a dynamic `import()` for anything frozen at module
+   load. `host-process-zone-matrix.test.ts` and
+   `browser-viewer-zone-matrix.test.ts` are the worked examples, and each asserts
+   its rows really diverge before asserting anything else.
+
    **Since CT-1 (#2989) that is true of `APP_TIME_ZONE` and NOT of the club
    timezone itself**, and the difference is the whole point of the change. The
    club's civil time is now the persisted `ClubTimeSettings.timeZone`, read

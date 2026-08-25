@@ -822,6 +822,18 @@ derivation).
   lodge-night identity across browsers behind, at, and ahead of NZ, on an NZ
   DST-transition night. (This is the CLIENT representation; server-side capacity
   date arithmetic keeps its own `@db.Date`/date-only helpers, above.)
+- **Since CT-6 (#2991) this fails mechanically rather than by review.** Two
+  `no-restricted-syntax` arms over `src/**` ban reading or writing a `Date`
+  through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
+  `set*` counterparts, in both the plain and the computed spelling — and ban
+  importing `date-fns`, which performs the identical read inside `node_modules`
+  where no selector can see it. The host-clock arm ships with NO exemption: the
+  seventeen call sites it found in eight files were all migrated, three of them
+  live daylight-saving defects. `date-fns` keeps a seven-file ratchet, each entry
+  naming what it uses and what blocks it. `club-time-boundary-guard.test.ts`
+  proves both arms twice — that they RESOLVE at every production path, and that
+  they actually REPORT a violation there — with a clean control at each path so
+  the ban is about the host's clock rather than about `Date`.
 
 ### INV-DATE-015
 
@@ -869,6 +881,16 @@ derivation).
   seam changes here — this note exists so that the next reader of these helpers
   knows the zone has an owner elsewhere, and does not conclude from
   `APP_TIME_ZONE` that the environment is still the club's civil-time authority.
+- **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
+  the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
+  `APP_TIME_ZONE` import — is a lint error under `src/**` outside a named
+  nine-file ratchet, of which two are structural (the config module that defines
+  it and CT-1's seed reader) and seven are measured callers each carrying the
+  issue that blocks them. What a selector cannot express is counted instead:
+  `club-time-escape-hatch-census.test.ts` pins 123 call sites in 56 files that
+  still let a zone-defaulting `@/lib/date-only` helper take the environment's
+  answer, and 25 production files still importing `nzst-date`. Both numbers are
+  ceilings and may only fall.
 
 ### INV-DATE-016
 
