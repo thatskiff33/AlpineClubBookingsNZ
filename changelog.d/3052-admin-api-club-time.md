@@ -1,5 +1,3 @@
-### Fixed
-
 - Admin screens and reports now show dates using the club's own recorded
   time zone rather than whatever time zone the server happens to run in.
   For a club west of Greenwich this fixes several places that were showing

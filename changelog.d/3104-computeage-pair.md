@@ -1,5 +1,3 @@
-### Fixed
-
 - **A member's age band no longer depends on where the site is running (#3082).**
   Working out how old a member is at the start of the season read their date of
   birth using the server's own calendar, and a date of birth is stored as a plain
