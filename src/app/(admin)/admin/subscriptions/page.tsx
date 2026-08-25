@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useClubTime } from "@/components/club-time-provider";
 import { requireInstant } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import {
   resetSubscriptionsDatasetSearchParams,
@@ -78,8 +79,8 @@ import {
   type ManualPaymentTarget,
 } from "./_components/manual-payment-dialog";
 
-// THE ACKNOWLEDGED DEFERRAL THIS FILE CARRIED IS CLOSED (CT-4 group F1, #2870),
-// and it had two problems rather than one.
+// THE ACKNOWLEDGED DEFERRALS THIS FILE CARRIED ARE CLOSED — the first two by
+// CT-4 group F1 (#2870), the third after it. There were three, not one.
 //
 // 1. THE ZONE. A module-scope `getSeasonYear(new Date())` with host-local getters,
 //    evaluated once at import in a `"use client"` file. It never read the viewer's
@@ -102,9 +103,8 @@ import {
 //    off the client graph by `INV-OPS-013`), so the answer is unchanged for now —
 //    but the RULE is shared, so the divergence cannot reappear.
 //
-// The "(Apr-Mar)" label on the season select below is still hard-coded and is
-// reported on #2870 rather than fixed here: rendering it needs a month name, and
-// `INV-DATE-015` requires an explicitly-pinned formatter for that.
+// 3. THE SELECT'S LABEL, the deferral this comment used to record. Both halves
+//    were literal text; `season-label.ts` derives both and says why.
 
 interface Subscription {
   id: string;
@@ -570,7 +570,7 @@ export default function SubscriptionsPage() {
                 <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>{y} - {y + 1} (Apr-Mar)</SelectItem>
+                    <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -164,7 +164,7 @@ policy, and the code handles that case rather than assuming it away.
 
 ## Reaching for the right helper
 
-The kernel grew ten entry points during CT-4's last group (#2870), plus one
+The kernel grew eleven entry points during CT-4's last group (#2870), plus one
 bridge beside it, and every one arrived because several call sites had already
 written the line out by hand and said so in a comment. If you are about to write
 one of these, there is a function.
@@ -176,7 +176,8 @@ one of these, there is a function.
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
-| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
+| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; five shapes were added in #2870 for exactly this |
+| a bare month name — the months a season or period runs between | `formatClubShortMonth(date)`. Declared as its own shape rather than the year sliced off `formatClubShortMonthYear`, per the rule below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 
 Two rules the table cannot express.

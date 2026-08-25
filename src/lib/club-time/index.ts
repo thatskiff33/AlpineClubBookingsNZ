@@ -102,6 +102,7 @@ export {
   formatClubLongWeekdayDate,
   formatClubLongWeekdayDayMonth,
   formatClubMonthYear,
+  formatClubShortMonth,
   formatClubShortMonthYear,
   formatClubWeekday,
   formatClubWeekdayDate,

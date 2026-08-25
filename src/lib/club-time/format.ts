@@ -64,6 +64,23 @@ export function formatClubShortMonthYear(date: CalendarDate): string {
   return formatCalendarDateShape("shortMonthYear", date);
 }
 
+/**
+ * "Apr" — the short month alone, with no day and no year.
+ *
+ * Asked of `Intl` as its own shape rather than sliced out of
+ * {@link formatClubShortMonthYear}, for the reason `HOUSE_SHAPES` records: a
+ * locale is free to order or punctuate a month-and-year differently, so
+ * subtracting the year from a rendered pair is a guess about `APP_LOCALE` and
+ * declaring the shape is not.
+ *
+ * The one caller is the membership-season label, which names the months a season
+ * runs between and derives them from the club's configured financial year-end
+ * (`getSeasonStartMonth`) rather than from a hard-coded April.
+ */
+export function formatClubShortMonth(date: CalendarDate): string {
+  return formatCalendarDateShape("shortMonth", date);
+}
+
 /** "Thu, 16 Apr 2026" — for lists scanned by day of the week. */
 export function formatClubWeekdayDate(date: CalendarDate): string {
   return formatCalendarDateShape("weekdayDate", date);

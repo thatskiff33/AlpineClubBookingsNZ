@@ -95,6 +95,8 @@ export const HOUSE_SHAPES = {
   },
   /** "Apr 2026" — a chart axis tick, where the long month will not fit. */
   shortMonthYear: { month: "short", year: "numeric" },
+  /** "Apr" — the month alone, for a label naming the months a season spans. */
+  shortMonth: { month: "short" },
   /** "Thu" */
   weekday: { weekday: "short" },
   /** "Thursday" */
