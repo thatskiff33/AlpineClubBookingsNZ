@@ -73,9 +73,9 @@ export function formatClubShortMonthYear(date: CalendarDate): string {
  * subtracting the year from a rendered pair is a guess about `APP_LOCALE` and
  * declaring the shape is not.
  *
- * The one caller is the membership-season label, which names the months a season
- * runs between and derives them from the club's configured financial year-end
- * (`getSeasonStartMonth`) rather than from a hard-coded April.
+ * The one caller is the membership-season label (`@/lib/season-label`), which
+ * names the months a season runs between and derives them from the club's
+ * financial year-end (`seasonStartMonthOf`) rather than from a hard-coded April.
  */
 export function formatClubShortMonth(date: CalendarDate): string {
   return formatCalendarDateShape("shortMonth", date);
