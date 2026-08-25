@@ -142,6 +142,11 @@ time-zone work ships. Keep the two the same and the distinction never matters.
 
 **Lodge nights are unaffected.** A stay is a set of calendar dates — "the nights
 of 12 and 13 July" — and calendar dates are not converted by a time zone change.
+That now holds in the emails as well: a night, a roster date or a season date in
+a message is the day itself and no zone is consulted to write it, whether the
+club has edited that template's wording or not. Only the moments in a message — a
+payment deadline, a timestamp — follow this setting. See
+[Email messages](email-messages.md).
 
 **The membership season is decided from this zone.** "Which membership year is it
 now?" is a club decision, so it is answered from the club's day here rather than
