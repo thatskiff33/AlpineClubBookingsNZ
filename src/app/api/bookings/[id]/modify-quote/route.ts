@@ -2093,6 +2093,7 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
+    db: prisma, // advisory quote: no transaction, no lock held
   });
 
   return NextResponse.json({

@@ -118,7 +118,7 @@ lines: 1216
 reason: one import pair, one hook, and the shared note on the stamp formatter.
 
 file: src/app/(admin)/admin/membership-types/page.tsx
-lines: 1859
+lines: 1858
 reason: SUPERSEDED IN PLACE. Group D added a twelve-line note recording why the
   season-year derivation was left on its host-local clock; CT-4 group F1 has since
   migrated it to `clubSeasonYear(clubTime.zone)` and replaced that note with a

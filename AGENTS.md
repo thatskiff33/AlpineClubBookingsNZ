@@ -83,6 +83,7 @@ id and need the file it lives in.
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
 | Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
 | Posting in public — issues, PRs, comments, claims, cross-lane hand-offs | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — what never goes in a public artifact, the `CLAIM:`/`LANE-SYNC:` prefixes, lane identity |
+| An entry every lane adds — changelog, size allowance, ledger note | — | [`changelog.d/README.md`](changelog.d/README.md) — the fragment-directory rule |
 | A Next.js API or convention | — | the relevant guide in `node_modules/next/dist/docs/` |
 | Any part of your change that no row above covers — including a change that also matched a row | — | [`docs/contributors/README.md`](docs/contributors/README.md) — the contributor index, which names every technical reference and feature hub; [`docs/README.md`](docs/README.md) routes to the adopter and member paths; [`README.md`](README.md) for what the product is |
 
@@ -204,10 +205,12 @@ id and need the file it lives in.
   implementation or operator notes. Keep code, tests, and docs in lockstep. Skip
   doc churn only for incidental internal refactors that change no contract or
   behavior.
-- Ship the changelog entry as a new `changelog.d/<pr-number>-<slug>.md` fragment
-  in the same PR — never by editing `CHANGELOG.md`'s `## Unreleased` list, which
-  is what made concurrent lanes conflict daily (#2452). `changelog.d/README.md`
-  documents the house entry style, the no-entry marker, and the release compile.
+- **An artifact every lane adds an entry to is a directory of per-lane fragments,
+  never one shared file** — a lane adds a file rather than editing a shared list,
+  so lanes cannot collide (#2452, #3111). Ship the changelog entry as
+  `changelog.d/<pr-number>-<slug>.md`, a file-size allowance as
+  `size-allowances.d/<issue>-<slug>.md`; each directory's `README.md` carries its
+  entry style, the no-entry marker and the release compile.
 - When writing or changing documentation, follow `docs/STYLE_GUIDE.md`: the
   audience labels (adopter/operator/developer/agent), the required operator-guide
   page skeleton, plain-English-first-with-technical-detail, and the screenshot
@@ -733,12 +736,11 @@ handed an epic-with-children or asked to run several related issues at once.
   caveat as an open loop never terminates. Each item is resolved, or written into
   the PR as a stated limit with its reasoning. It does not spawn another agent.
 - **Price the delay, because someone pays it.** Every hour a PR sits unready,
-  `main` moves under it. The changelog no longer contributes: entries are per-PR
-  `changelog.d/` fragments (#2452) and `CHANGELOG.md` is `merge=union` (#2451),
-  so that daily conflict is gone. What is left still costs — a shared doc, test
-  matrix or workflow hunk two lanes both edited, and on a schema lane a
-  migration-timestamp collision that fails `Migration drift check` and `verify`
-  together, each costing a re-resolve plus a full CI cycle. Optimise
+  `main` moves under it. The changelog no longer contributes (#2452, #2451).
+  What is left still costs — a shared doc, test matrix or workflow hunk two
+  lanes both edited, and on a schema lane a migration-timestamp collision that
+  fails `Migration drift check` and `verify` together, each costing a re-resolve
+  plus a full CI cycle. Optimise
   **time-to-ready**, and get sibling PRs ready in the same window rather than
   serially, since each merge re-conflicts every branch still open behind it.
 
@@ -894,14 +896,12 @@ CI-green → evidence**.
     caught every one; run it even when the fix looks obviously correct — the
     targeted, in-lane one §3 defines, not a fresh adversarial lens over the
     diff.
-- **Housekeeping that bites parallel lanes.** The changelog entry is a
-  `changelog.d/` fragment, never a hand-edit of `## Unreleased` — Change
-  Discipline above, and `changelog.d/README.md` for the style, the no-entry
-  marker and the release compile. If you must resolve a `CHANGELOG.md` conflict
-  on an older branch, keep **both** entries with an ordinary merge commit, never
-  a force-push. And GitHub honours `Closes #NNN` **only in the PR description**,
-  not in comments, so a linked issue named only in a comment stays open after
-  merge.
+- **Housekeeping that bites parallel lanes.** Additive artifacts are fragment
+  directories — Change Discipline above. If you must resolve a `CHANGELOG.md`
+  conflict on an older branch, keep **both** entries with an ordinary merge
+  commit, never a force-push. And GitHub honours `Closes #NNN` **only in the PR
+  description**, not in comments, so a linked issue named only in a comment stays
+  open after merge.
 - **PRs open as drafts and stay drafts** through review → fix → CI. Flip to
   ready-for-review only when the PR is fully reviewed, all confirmed findings are
   fixed, **every residual risk has been resolved inside the PR** (see §6 — a

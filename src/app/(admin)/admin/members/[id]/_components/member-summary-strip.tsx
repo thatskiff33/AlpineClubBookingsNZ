@@ -3,6 +3,7 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { Calendar, Clock, CreditCard, IdCard, User, Wallet } from "lucide-react"
 import { formatCents } from "@/lib/utils"
+import { seasonSelectLabel } from "@/lib/season-label"
 import { formatAgeYearsMonths } from "@/lib/member-age"
 // Both values this strip dates are CALENDAR DAYS with no timezone: a date of
 // birth, and `lastStay`, which is the maximum `checkOut` of the member's
@@ -75,7 +76,7 @@ export function MemberSummaryStrip({
           icon={IdCard}
           label="Membership"
           value={membershipLabel}
-          detail={`${member.currentSeasonYear}/${member.currentSeasonYear + 1} season`}
+          detail={`${seasonSelectLabel(member.currentSeasonYear)} season`}
         />
         <SummaryItem
           icon={Wallet}

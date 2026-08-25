@@ -741,10 +741,7 @@ export async function POST(
         hasNonMembers &&
         (booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")
       ) {
-        const holdPolicy = await getNonMemberHoldPolicy(
-          booking.checkIn,
-          booking.lodgeId,
-        );
+        const holdPolicy = await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId, tx);
         const holdDecision = calculateBookingHoldDecision({
           hasNonMembers,
           checkIn: booking.checkIn,

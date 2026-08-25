@@ -369,14 +369,14 @@ describe("admin-member-detail-helpers", () => {
           currentSeasonTypeName: "Full Member",
           currentSeasonSubscriptionLabel: "Paid",
         })
-      ).toBe("2026/2027: Full Member · Paid")
+      ).toBe("2026 - 2027 (Apr-Mar): Full Member · Paid")
       expect(
         formatMemberMembershipPreview({
           currentSeasonYear: 2026,
           currentSeasonTypeName: null,
           currentSeasonSubscriptionLabel: null,
         })
-      ).toBe("2026/2027: No seasonal type set")
+      ).toBe("2026 - 2027 (Apr-Mar): No seasonal type set")
     })
 
     it("summarises finance state with a loading placeholder", () => {

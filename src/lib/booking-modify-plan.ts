@@ -37,6 +37,7 @@ import {
 import {
   daysUntilDate,
   loadCancellationPolicy,
+  type CancellationPolicyDb,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
 import {
@@ -1973,16 +1974,24 @@ export async function applyPromoCodeChanges(
   };
 }
 
+/**
+ * `db` is REQUIRED and reads the cancellation policy set: this module is
+ * transaction-scoped and imports no module-level client, so a default would hide
+ * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
+ * `CancellationPolicyDb` in `cancellation.ts`.
+ */
 export async function calculateModificationChangeFee({
   booking,
   newCheckIn,
   checkInChanged,
   skipBookingLifecycleRules,
+  db,
 }: {
   booking: LoadedBookingForModify;
   newCheckIn: Date;
   checkInChanged: boolean;
   skipBookingLifecycleRules: boolean;
+  db: CancellationPolicyDb;
 }): Promise<number> {
   if (skipBookingLifecycleRules || !checkInChanged) {
     return 0;
@@ -1994,7 +2003,7 @@ export async function calculateModificationChangeFee({
     return 0;
   }
   const now = new Date();
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const feeResult = calculateChangeFee({
     daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
     daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),

@@ -1368,7 +1368,7 @@ async function performBookingCancellation(
       Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
       payment.changeFeeCents;
     const days = daysUntilDate(fresh.checkIn);
-    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId);
+    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId, tx);
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card

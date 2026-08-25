@@ -699,7 +699,7 @@ export async function modifyBookingDates({
 
     if (checkInChanged) {
       const now = new Date();
-      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
       const feeResult = calculateChangeFee({
         daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
         daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
@@ -720,6 +720,7 @@ export async function modifyBookingDates({
     const settlementOptions = await calculateModificationSettlementOptions({
       booking: booking as unknown as LoadedBookingForModify,
       netChargeCents,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
     });
     if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       throw new ApiError(
@@ -750,10 +751,7 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(
-        newCheckIn,
-        booking.lodgeId,
-      );
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -1541,7 +1539,7 @@ export async function adminShiftBookingDates({
     let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
     let newStatus = booking.status;
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId);
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
