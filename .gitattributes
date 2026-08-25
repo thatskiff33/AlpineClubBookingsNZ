@@ -117,7 +117,27 @@ src/lib/config-transfer/import-types.ts text eol=lf diff
 # `core.autocrlf` and git warned on every Windows touch (flagged in #2431's fix
 # round). Same fix and same zero churn as the migration SQL and shell scripts —
 # the stored blob is already LF; this only stops Windows re-materialising CRLF.
-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv text eol=lf
+#
+# `merge=union` was added by #3111, which audited the class of artifacts every
+# lane appends to. This ledger is a member nobody had registered: one row per
+# migration, hand-appended by every schema lane, measured at 86-90% pure-append
+# across 37-40 merges, and `blue-green-ledger-lint.test.ts` already calls it
+# "append-only, hand-edited TSV" in its own docblock. Two lanes each adding a
+# migration conflicted on the last line for no reason: neither row has anything
+# to say about the other, and every one of those conflicts was resolved by hand
+# as "keep both", which is exactly what union does.
+#
+# Union is safe HERE, and the reason is worth stating because it is not safe in
+# general. `AGENTS.md` makes the fragment directory the default remedy and union
+# the exception, because union-merging a NARRATIVE document interleaves its
+# sections in arbitrary order and can duplicate headings, silently. This file is
+# the opposite shape: a flat list of unrelated rows, parsed row-by-row and
+# order-independently by `scripts/check-migration-safety-coverage.sh`. And the
+# one bad outcome union could produce - the same row arriving twice - is already
+# a loud failure: the validator rejects a `duplicate safety ledger row`, pinned
+# by `blue-green-ledger-lint.test.ts`. Loud beats silent, which is the whole
+# reason the kernel ledger did NOT get this treatment (#3111).
+docs/BLUE_GREEN_MIGRATION_SAFETY.tsv text eol=lf merge=union
 
 # The rendered-email pin file (#2689) is the sixth instance of the same class.
 # Its parser strips a stray CR defensively, so a CRLF checkout no longer makes

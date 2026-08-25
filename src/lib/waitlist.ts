@@ -994,7 +994,7 @@ export async function confirmWaitlistOffer(
       // Math.ceil mirrors bookings/route.ts: fractional days over threshold → PENDING.
       const hasNonMembers = booking.guests.some((g) => !g.isMember);
       const holdPolicy = hasNonMembers
-        ? await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId)
+        ? await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId, tx)
         : { enabled: false, holdDays: 0, source: "default" as const };
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,

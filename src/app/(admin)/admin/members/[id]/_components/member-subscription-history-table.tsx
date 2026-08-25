@@ -17,6 +17,7 @@ import {
 import { useClubTime } from "@/components/club-time-provider"
 import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { buildXeroInvoiceUrl } from "@/lib/xero-links"
+import { seasonSelectLabel } from "@/lib/season-label"
 import type { MemberDetail } from "../_types"
 
 export function MemberSubscriptionHistoryTable({
@@ -51,7 +52,7 @@ export function MemberSubscriptionHistoryTable({
         {subscriptions.map((sub) => (
           <TableRow key={sub.id}>
             <TableCell className="font-medium">
-              {sub.seasonYear}/{sub.seasonYear + 1}
+              {seasonSelectLabel(sub.seasonYear)}
             </TableCell>
             <TableCell>
               <Badge

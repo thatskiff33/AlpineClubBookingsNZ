@@ -725,11 +725,13 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
     });
 
     const settlementOptions = await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
+      db: tx,
     });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();
