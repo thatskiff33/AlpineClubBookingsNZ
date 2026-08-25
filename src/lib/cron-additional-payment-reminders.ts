@@ -124,6 +124,14 @@ export async function sendAdditionalPaymentReminders(): Promise<AdditionalPaymen
     asymmetry with the withhold-handling below, which stays: this check reads the
     policy ONCE per run, and an administrator can switch the safer override on
     mid-pass, so the per-message handling is still the thing that catches it.
+
+    WHICH PER-MESSAGE HANDLING, NAMED, because leaving it implicit let the same
+    sentence be read as a claim about the retry cron, where it was not true
+    (#3071 review, hoppers99). THIS job sends through `sendEmail`, which asks the
+    delivery boundary for every individual message, so the early return above is
+    only an optimisation and the guarantee comes from `sendEmail`. The RETRY cron
+    does not go through `sendEmail` at all — it re-transmits a stored body on its
+    own transport — so it has to re-ask inside its own loop, and now does.
   */
   const delivery = await resolveDeliveryPolicy();
   if (delivery.kind !== "allow") {

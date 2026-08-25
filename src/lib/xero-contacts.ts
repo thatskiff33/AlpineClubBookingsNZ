@@ -680,6 +680,21 @@ export async function findOrCreateXeroContact(
   //             this is, `resolveXeroContactEmailPolicy` throws here, so an
   //             undeclared installation raises no invoice against a contact it
   //             cannot vouch for.
+  /*
+    THE POLICY IS RESOLVED ONCE AND PHASE 1 IS LONG, so an administrator switching
+    the safer override on during it leaves this contact written under the previous
+    answer — a real TOCTOU window, documented rather than closed (#3071 review).
+    Re-resolving later could not un-send it: by Phase 2 the contact already exists
+    in Xero. It SELF-HEALS but not instantly — the next document writer to resolve
+    this member takes the steady-state path above, which resolves afresh and
+    contains the address — and until then an invoice raised in the same workflow is
+    raised against a real address, which Xero's own reminders would email. Remedy:
+    Admin -> Environment lists uncontained contacts, and `guides/environment-role.md`
+    -> "Putting a replaced address back" covers the repair. Not closed here because
+    a lock spanning the provider calls is the F7 (#1355) failure this function was
+    restructured to remove, and a mid-Phase re-resolve would narrow the window
+    while inviting a reader to think it gone.
+  */
   const { policy: emailPolicy } = await resolveXeroContactEmailPolicy();
   const member = await prisma.member.findUnique({
     where: { id: memberId },
