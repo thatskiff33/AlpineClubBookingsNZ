@@ -45,12 +45,41 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
  *
  * ## WHY THE HOST PIN IS THE WHOLE TEST
  *
- * The mutation this suite exists to kill is the retired body, and it cannot be
- * killed on this machine's own clock or on a UTC runner: both are at or ahead of
- * Greenwich, where the old reading was right. Every discriminating assertion
- * below therefore runs under `America/Denver`, and the ones that state a
- * host-independence property run under all three zones so a regression to a
- * host-local read fails on the zone rather than on the arithmetic.
+ * THE SUITE PASSES UNDER AUCKLAND, UTC AND DENVER ALIKE — it is the MUTANTS that
+ * cannot be killed without the internal `America/Denver` pin. Both of them are a
+ * host-local read, and every host at or ahead of Greenwich reads correctly, so on
+ * this machine's own clock or on a UTC runner the retired body passes. That is
+ * why every discriminating assertion below pins the host itself rather than
+ * relying on the runner, and why the ones that state a host-independence property
+ * run under all three zones: a regression to a host-local read then fails on the
+ * zone rather than on the arithmetic. Do not "fix" the suite by removing the pin.
+ *
+ * ## THERE ARE TWO MUTANTS, AND ONE FIXTURE CANNOT KILL BOTH
+ *
+ * The shipped defect was ONE-SIDED: the date of birth read with host-local
+ * getters, the reference date left in UTC. The regression the next author is most
+ * likely to write is TWO-SIDED — "simplify" `computeAge` back to reading *both*
+ * `Date` arguments with host-local getters, which is exactly what the module
+ * docblock in `policies/age-tier.ts` predicts. On a behind-Greenwich host both
+ * sides then shift back a day and **cancel for every April fixture**, because the
+ * default 31 March year-end puts the season start on 1 April and 1 April minus a
+ * day is 31 March in both 2008 and 2026.
+ *
+ * Measured, on the real host semantics rather than reasoned: the two-sided mutant
+ * differs from correct in 254 (zone, season-start month, date-of-birth)
+ * combinations across **163 of the 418 zones** this runtime knows. So each mutant
+ * needs its own fixture, and neither fixture catches the other:
+ *
+ * | fixture (host `America/Denver`) | correct | one-sided | two-sided |
+ * | --- | --- | --- | --- |
+ * | born 2008-04-02, season starts 2026-04-01 | 17 | **18** | 17 |
+ * | born 2008-03-01, season starts 2026-03-01 | 18 | 18 | **17** |
+ *
+ * The second row is a February year-end, and the leap year is what breaks the
+ * cancellation: under Denver the date of birth reads back as 29 February 2008 and
+ * the season start as 28 February 2026, so the day comparison decides the
+ * birthday has not arrived when it has. A club whose financial year ends in
+ * February would quote a YOUTH band, and withhold a login, for an 18-year-old.
  */
 
 /** One zone behind Greenwich, one ahead, and UTC itself. */
@@ -117,6 +146,33 @@ describe("computeAge reads a stored date of birth as the day it names (#3082)", 
         hostZone,
       ).toBe("ADULT");
     });
+  });
+
+  it("survives a two-sided host-local read, which the April fixtures cannot see", () => {
+    // THE SECOND DISCRIMINATING ASSERTION — see the table in the module doc.
+    // Reading BOTH arguments host-locally cancels for every April fixture in this
+    // file, so without this case the most likely future regression passes the
+    // whole suite. A February year-end starts the season on 1 March; under
+    // `America/Denver` the two host-local reads are 29 February 2008 and
+    // 28 February 2026, and 28 < 29 decides the birthday has not arrived.
+    //
+    // Born 1 March 2008, judged at the 1 March 2026 season start: they turn 18
+    // that very day, so they are 18 and ADULT.
+    try {
+      __setFinancialYearEndMonthForTesting(2);
+      withTimeZone(BEHIND_GREENWICH, () => {
+        const dob = storedDay("2008-03-01");
+        const seasonStart = getSeasonStartDate(2026);
+
+        expect(seasonStart.toISOString()).toBe("2026-03-01T00:00:00.000Z");
+        expect(computeAge(dob, seasonStart)).toBe(18);
+        expect(
+          computeAgeTierWithSettings(dob, seasonStart, AGE_TIER_DEFAULTS),
+        ).toBe("ADULT");
+      });
+    } finally {
+      __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+    }
   });
 
   it("moves the INFANT and CHILD boundaries too, not only ADULT", () => {
@@ -191,20 +247,27 @@ describe("getSeasonStartDate is the season's calendar day, encoded in UTC", () =
     });
   });
 
-  it("follows the club's configured year-end month", () => {
+  it("follows the club's configured year-end month, for all twelve of them", () => {
+    // ALL TWELVE, not a sample. The season-start month is `(yearEnd % 12) + 1`,
+    // so December wraps to January and is the only case where the season start
+    // and the season year share a January - the one a two-month sample was most
+    // likely to be missing.
     try {
-      __setFinancialYearEndMonthForTesting(6);
-      onEveryHostZone((hostZone) => {
-        expect(getSeasonStartCalendarDate(2026), hostZone).toBe("2026-07-01");
-        expect(getSeasonStartDate(2026).toISOString(), hostZone).toBe(
-          "2026-07-01T00:00:00.000Z",
-        );
-      });
-
-      __setFinancialYearEndMonthForTesting(12);
-      onEveryHostZone((hostZone) => {
-        expect(getSeasonStartCalendarDate(2026), hostZone).toBe("2026-01-01");
-      });
+      for (let yearEndMonth = 1; yearEndMonth <= 12; yearEndMonth += 1) {
+        __setFinancialYearEndMonthForTesting(yearEndMonth);
+        const startMonth = (yearEndMonth % 12) + 1;
+        const expected = `2026-${String(startMonth).padStart(2, "0")}-01`;
+        onEveryHostZone((hostZone) => {
+          expect(
+            getSeasonStartCalendarDate(2026),
+            `${hostZone} yearEnd=${yearEndMonth}`,
+          ).toBe(expected);
+          expect(
+            getSeasonStartDate(2026).toISOString(),
+            `${hostZone} yearEnd=${yearEndMonth}`,
+          ).toBe(`${expected}T00:00:00.000Z`);
+        });
+      }
     } finally {
       __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
     }

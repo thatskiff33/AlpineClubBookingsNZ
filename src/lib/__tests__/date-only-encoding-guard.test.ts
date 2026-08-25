@@ -115,8 +115,10 @@ const CANONICAL_ENCODERS = new Set([
  * being read — `calendarDateOfDateOnlyInstant(requireInstant(booking.createdAt))`
  * is `INV-DATE-019` written the long way round.
  *
- * `requireStoredCalendarDay` is the strict third (#3082): it PROVES the `Date` is
- * a `@db.Date` encoding and returns that same value. It reports the SHAPE, not
+ * `requireStoredCalendarDay` is the strict third (#3082): it PROVES the `Date`
+ * carries no time of day — necessary for a `@db.Date` encoding and NOT
+ * sufficient, since a real instant landing on exactly UTC midnight passes it —
+ * and returns that same value. It reports the SHAPE, not
  * the outcome — a source line asking for a `createdAt` to be encoded as a
  * calendar day is the defect whether it throws at runtime or answers, and it has
  * to be visible here rather than found by a production stack trace.
@@ -1751,8 +1753,10 @@ export function dueDirect(booking: { createdAt: Date }) {
       This one is worth stating twice over, because it is the pass-through most
       likely to be read as unnecessary. `requireStoredCalendarDay` REFUSES a value
       carrying a UTC time of day, so it looks like the one wrapper through which an
-      instant cannot reach the encoder — and `createdAt` here would indeed throw at
-      runtime. What the census reports is the SHAPE, not the outcome: a source line
+      instant cannot reach the encoder — and `createdAt` here would throw at runtime
+      for all but one instant in 86 400 000, the one landing on exactly UTC
+      midnight, which passes. The residue is small and it is not the argument: what
+      the census reports is the SHAPE, not the outcome. A source line
       asking for a `createdAt` to be encoded as a calendar day is the INV-DATE-019
       defect whether it throws or answers, and it has to be visible here rather
       than discovered by a production stack trace.

@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { requireCalendarDate } from "@/lib/club-time";
-import { getSeasonStartCalendarDate } from "@/lib/policies/age-tier";
+import {
+  addCalendarDays,
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  type CalendarDate,
+} from "@/lib/club-time";
+import {
+  AGE_TIER_DEFAULTS,
+  computeAgeTierWithSettings,
+  getSeasonStartCalendarDate,
+  getSeasonStartDate,
+} from "@/lib/policies/age-tier";
 import { dateOfBirthPrefilterBoundForMinAge } from "@/lib/date-of-birth-prefilter";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 
@@ -111,6 +121,31 @@ describe("the age-tier date-of-birth prefilter bound", () => {
     expect(new Set(bounds).size).toBe(1);
   });
 
+  it("admits nobody for a minimum age nobody can have reached", () => {
+    // `minAge` is validated as `z.number().int().min(0)` with NO ceiling, so an
+    // ADULT tier at `minAge >= seasonYear` is absurd but permitted. Stepping the
+    // cutoff back past year 1 is a `RangeError` in the kernel's calendar
+    // arithmetic, and it would abort the whole nightly age-up run — which also
+    // sends email and syncs contact groups for every other member. Nobody HAS
+    // reached that age, so the empty candidate set is the correct answer and not a
+    // fudge.
+    onEveryHostZone((hostZone) => {
+      const bound = dateOfBirthPrefilterBoundForMinAge(SEASON_START, 2026);
+
+      expect(bound.toISOString(), hostZone).toBe("0001-01-01T00:00:00.000Z");
+      // No stored date of birth can precede it, so the query proposes nobody.
+      expect(
+        dateOnlyInstantOf(requireCalendarDate("0001-01-01")) < bound,
+        hostZone,
+      ).toBe(false);
+      // And the first year that is NOT absurd still steps normally.
+      expect(
+        dateOfBirthPrefilterBoundForMinAge(SEASON_START, 2025).toISOString(),
+        hostZone,
+      ).toBe("0001-04-02T00:00:00.000Z");
+    });
+  });
+
   it("follows the configured minimum age rather than assuming 18", () => {
     onEveryHostZone((hostZone) => {
       expect(
@@ -152,6 +187,56 @@ describe("the age-tier date-of-birth prefilter bound", () => {
         ).toISOString(),
         hostZone,
       ).toBe("2025-01-01T00:00:00.000Z");
+    });
+  });
+
+  it("admits exactly the dates of birth the AUTHORITY would promote", () => {
+    // THE UNTESTED RELATION, closed. Every other assertion in this file pins the
+    // bound's own value; none of them says the bound agrees with the function that
+    // actually decides who is promoted. `cron-age-up.test.ts` cannot say it either
+    // — it mocks `prisma.member.findMany`, so the bound is never applied to a
+    // candidate anywhere in the suite, and a future convention change could
+    // silently start dropping the member born on the anniversary (#2859, twice
+    // shipped) with every existing assertion still green.
+    //
+    // The property, stated over the real authority rather than a reimplementation
+    // of it: for every date of birth in a window straddling the boundary,
+    // `dateOfBirth < bound` if and only if `computeAgeTierWithSettings` answers
+    // ADULT. `AGE_TIER_DEFAULTS` makes ADULT the unbounded top tier at 18, which
+    // is what `validateAgeTierPartition` guarantees for every valid partition, so
+    // "answers ADULT" is exactly "age >= minAge".
+    const minAge = 18;
+    onEveryHostZone((hostZone) => {
+      const seasonStartDay = getSeasonStartCalendarDate(2026);
+      const seasonStart = getSeasonStartDate(2026);
+      const bound = dateOfBirthPrefilterBoundForMinAge(seasonStartDay, minAge);
+
+      let admitted = 0;
+      let promoted = 0;
+      for (let offset = -400; offset <= 400; offset += 1) {
+        const day: CalendarDate = addCalendarDays(
+          requireCalendarDate("2008-04-01"),
+          offset,
+        );
+        const dateOfBirth = dateOnlyInstantOf(day);
+        const isAdmitted = dateOfBirth < bound;
+        const wouldPromote =
+          computeAgeTierWithSettings(
+            dateOfBirth,
+            seasonStart,
+            AGE_TIER_DEFAULTS,
+          ) === "ADULT";
+
+        expect(isAdmitted, `${hostZone} ${day}`).toBe(wouldPromote);
+        if (isAdmitted) admitted += 1;
+        if (wouldPromote) promoted += 1;
+      }
+
+      // NOT A VACUOUS AGREEMENT: both sides really do change inside the window,
+      // so an implementation that admitted everybody or nobody would fail here
+      // rather than agree with itself.
+      expect(admitted, hostZone).toBe(401);
+      expect(promoted, hostZone).toBe(401);
     });
   });
 

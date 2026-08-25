@@ -268,7 +268,17 @@ export function calendarDateOfSerialisedDbDateOrNull(
 }
 
 /**
- * `value`, PROVED to be a `@db.Date` calendar-day encoding rather than a moment.
+ * `value`, PROVED not to be a moment carrying a time of day — which is as much as
+ * anything can prove about a bare `Date`.
+ *
+ * BE PRECISE ABOUT WHAT THE CHECK ESTABLISHES, because the stronger reading is
+ * the tempting one and it is wrong. The test is that the value sits on a whole
+ * number of UTC days since the epoch, so it is NECESSARY for a `@db.Date`
+ * encoding and not SUFFICIENT: a real `createdAt` that happens to fall on exactly
+ * UTC midnight passes it. That residue is why the census in
+ * `date-only-encoding-guard.test.ts` still classifies a field read through this
+ * guard — the guard reports a shape, and only the field name says whether the
+ * value was ever a calendar day.
  *
  * The precondition {@link calendarDateOfDateOnlyInstant} cannot check for
  * itself. That decoder takes an `Instant`, which is a bare `Date`, so it cannot
