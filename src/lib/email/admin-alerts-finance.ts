@@ -25,7 +25,6 @@ import {
   lateCaptureHandBackConflictSubjectLabel,
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
-import { formatNZDate } from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { applyXeroOrgShortCode } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
@@ -34,6 +33,10 @@ import {
   sendUnmuteableAdminAlert,
 } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
+import {
+  emailCalendarDay,
+  emailCalendarDayOrUnknown,
+} from "@/lib/email-templates-club-time";
 
 /**
  * Stamp the club's Xero organisation onto an outbound deep link, at SEND time
@@ -73,8 +76,14 @@ async function stampXeroOrganisation(
 // N-04: Admin alert - payment failure
 export async function sendAdminPaymentFailureAlert(data: {
   memberName: string;
-  checkIn: Date;
-  checkOut: Date;
+  /**
+   * Nullable for the three senders that raise this alert without a resolvable
+   * booking; `adminPaymentFailureTemplate` carries the full reasoning. Both
+   * arms below render a null through the same helper, so the default body and
+   * an operator's override say the same word.
+   */
+  checkIn: Date | null;
+  checkOut: Date | null;
   amountCents: number;
   errorMessage: string;
   paymentIntentId: string;
@@ -85,8 +94,8 @@ export async function sendAdminPaymentFailureAlert(data: {
     templateName: "admin-payment-failure",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDayOrUnknown(data.checkIn),
+      checkOut: emailCalendarDayOrUnknown(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
     },
     preferenceKey: "adminPaymentFailure",
@@ -150,8 +159,8 @@ export async function sendAdminLateCaptureAutoRefundAlert(data: {
     templateName: "admin-late-capture-auto-refund",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
       bookingId: data.bookingId,
       paymentIntentId: data.paymentIntentId,
@@ -222,8 +231,8 @@ export async function sendAdminLateCaptureHandBackConflictAlert(data: {
     templateName: "admin-late-capture-hand-back-conflict",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
       bookingId: data.bookingId,
       paymentIntentId: data.paymentIntentId,
@@ -288,8 +297,8 @@ export async function sendAdminDuplicateCaptureRefundAlert(data: {
     templateName: "admin-duplicate-capture-refund",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
       paymentIntentId: data.paymentIntentId,
       operation: data.operationReference,
@@ -347,8 +356,8 @@ export async function sendAdminManualSettlementConflictAlert(data: {
     templateName: "admin-manual-settlement-conflict",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
       bookingId: data.bookingId,
       status: data.bookingStatus,
@@ -382,8 +391,8 @@ export async function sendAdminManualRefundTaskAlert(data: {
     templateName: "admin-manual-refund-task",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       refundAmount: formatMoneyCents(data.refundAmountCents),
       bookingId: data.bookingId,
       reason: data.reason,
@@ -584,8 +593,8 @@ export async function sendAdminRefundRequestAlert(data: {
     templateName: "admin-refund-request",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       paidAmount: formatMoneyCents(data.paidAmountCents),
       refundedAmount: formatMoneyCents(data.refundedAmountCents),
       remainingAmount: formatMoneyCents(

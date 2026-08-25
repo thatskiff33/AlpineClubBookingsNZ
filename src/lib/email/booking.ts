@@ -41,16 +41,13 @@ import {
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { sendEmail } from "./core";
 import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /**
  * #2328 (review): what the confirmation renders when the applied-credit read
@@ -198,7 +195,7 @@ export async function sendBookingConfirmedEmail(
           provisionalGuests.guestCount === 1 ? "" : "s"
         } ${
           provisionalGuests.guestCount === 1 ? "is" : "are"
-        } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${formatNZDateTime(
+        } held provisionally as a linked booking — no bed is reserved for them yet, and the payment above covers only your member places. If beds remain around ${emailClubDateTime(
           provisionalGuests.holdUntil,
         )}, we'll automatically take that guest portion from your saved payment method and your guests are confirmed. If we can't take payment, we'll contact you to arrange it. If the lodge fills with member bookings first, that portion is not charged and those guests are bumped.`
       : "";
@@ -361,8 +358,8 @@ export async function sendBookingConfirmedEmail(
     templateName: "booking-confirmed",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount,
       provisionalGuestsNote,
       promoSummary,
@@ -458,10 +455,10 @@ export async function sendBookingPendingEmail(
     templateName: "booking-pending",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount,
-      holdUntil: formatNZDateTime(holdUntil),
+      holdUntil: emailClubDateTime(holdUntil),
     },
     lodgeId,
   });
@@ -532,8 +529,8 @@ export async function sendBookingPolicyExceptionApprovedEmail(
     templateName: "booking-policy-exception-approved",
     templateData: {
       firstName: args.firstName,
-      checkIn: formatNZDate(args.checkIn),
-      checkOut: formatNZDate(args.checkOut),
+      checkIn: emailCalendarDay(args.checkIn),
+      checkOut: emailCalendarDay(args.checkOut),
       guestCount: args.guestCount,
       paymentNote,
       adminNotesLine,
@@ -621,8 +618,8 @@ export async function sendBookingPolicyExceptionRefusedEmail(params: {
     templateName: "booking-policy-exception-refused",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       askDescription,
       reasonLine,
       // The raw value behind the composed line, so an override written against
@@ -680,8 +677,8 @@ export async function sendBookingBumpedEmail(
     templateName: "booking-bumped",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount,
       // The caption and the path only — the body keeps {{BASE_URL}} in front of
       // the path so the club's own configured public URL still resolves it.
@@ -710,8 +707,8 @@ export async function sendBookingGuestsCancelledEmail(
     templateName: "booking-guests-cancelled",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
     },
     lodgeId,
   });
@@ -746,8 +743,8 @@ export async function sendBookingCancelledEmail(
     templateName: "booking-cancelled",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       refundAmount: formatMoneyCents(refundCents),
       refundMessage:
         refundCents > 0 && refundMethod === "manual"
@@ -805,8 +802,8 @@ export async function sendSplitGuestPortionCancelledEmail(params: {
     templateName: "split-guest-portion-cancelled",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       bookingReference: params.parentBookingReference ?? "",
       // #2268: pre-composed optional line — a member whose own booking
       // reference is not cheaply available must not read a dangling
@@ -853,8 +850,8 @@ export async function sendBookingReviewApprovedEmail(params: {
     lodgeId: params.lodgeId,
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       adminNotes: params.adminNotes,
       // #2268: pre-composed optional line — an approval with no admin note
       // must not print a bare "Note from admin:".
@@ -894,8 +891,8 @@ export async function sendBookingReviewRejectedEmail(params: {
     lodgeId: params.lodgeId,
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       adminNotes: params.adminNotes,
       // #2268: pre-composed optional line — see sendBookingReviewApprovedEmail.
       adminNotesLine: composeOptionalEmailLine(
@@ -933,8 +930,8 @@ export async function sendCheckinReminderEmail(
     templateName: "checkin-reminder",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount: guests.length,
       // #2307: the audited/overridable body renders one guest per line. This
       // used to supply every FIRST name comma-joined into {{guestFirstName}} and
@@ -1053,8 +1050,8 @@ export async function sendPreArrivalReminderEmail(params: {
     templateName: "pre-arrival-reminder",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       expectedArrivalTime: params.expectedArrivalTime ?? "",
       doorCode: settings.doorCode ?? "",
@@ -1150,8 +1147,8 @@ export async function sendWholeLodgeGuestNamesReminderEmail(params: {
     templateName: "whole-lodge-guest-names-reminder",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       unnamedGuestCount: params.unnamedGuestCount,
       namingUrgencyNote: urgencyNote,
@@ -1192,9 +1189,9 @@ export async function sendAdditionalPaymentReminderEmail(params: {
     templateData: {
       firstName: params.firstName,
       additionalAmount: formatMoneyCents(params.additionalAmountCents),
-      requestedOn: formatNZDate(params.requestedOn),
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      requestedOn: emailClubDate(params.requestedOn),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
     lodgeId: params.lodgeId,
   });
@@ -1275,10 +1272,10 @@ export async function sendBookingModifiedEmail(params: {
       // before {{changeSummary}} existed keeps rendering (#2267). They cannot
       // express "only show what changed", which is why the default body no
       // longer builds its rows out of them.
-      oldCheckIn: formatNZDate(params.oldCheckIn),
-      oldCheckOut: formatNZDate(params.oldCheckOut),
-      newCheckIn: formatNZDate(params.newCheckIn),
-      newCheckOut: formatNZDate(params.newCheckOut),
+      oldCheckIn: emailCalendarDay(params.oldCheckIn),
+      oldCheckOut: emailCalendarDay(params.oldCheckOut),
+      newCheckIn: emailCalendarDay(params.newCheckIn),
+      newCheckOut: emailCalendarDay(params.newCheckOut),
       oldGuestCount: params.oldGuestCount,
       newGuestCount: params.newGuestCount,
       oldTotal: formatMoneyCents(params.oldFinalPriceCents),
@@ -1337,9 +1334,9 @@ export async function sendPolicyExceptionRequestExpiredEmail(params: {
     templateName: "policy-exception-request-expired",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
-      expiresAt: formatNZDateTime(params.expiresAt),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
     lodgeId: params.lodgeId,
   });
@@ -1396,8 +1393,8 @@ export async function sendHostingCoverageLostEmail(params: {
     templateName: "hosting-coverage-lost",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       uncoveredNights: params.uncoveredNights,
     },
     lodgeId: params.lodgeId,
@@ -1423,8 +1420,8 @@ export async function sendSetupIntentFailedEmail(params: {
     templateName: "setup-intent-failed",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
     lodgeId: params.lodgeId,
   });

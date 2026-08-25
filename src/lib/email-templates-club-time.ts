@@ -105,7 +105,10 @@
 
 import {
   bindClubTime,
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
   requireClubTimeZone,
+  requireStoredCalendarDay,
   type BoundClubTime,
   type ClubTimeZone,
   type Instant,
@@ -215,6 +218,91 @@ export async function primeEmailClubTimeZone(): Promise<void> {
 /** "16 Apr 2026" — the club calendar day a moment falls on. */
 export function emailClubDate(value: Instant): string {
   return emailClubTime().instantDate(value);
+}
+
+/**
+ * "16 Apr 2026" — a STORED CALENDAR DAY, rendered without consulting any zone.
+ *
+ * ## Why this is a different function from `emailClubDate`, and not a shape of it
+ *
+ * A lodge night, a hut-leader assignment's start date and a capacity-warning day
+ * are `@db.Date` columns. Such a column stores an ENCODING, not a moment: it
+ * round-trips as a `Date` pinned to exactly UTC midnight, and the calendar day it
+ * means is read back in UTC (`INV-DATE-019`'s first exact boundary, plus
+ * `INV-DATE-026`). Handing one to `emailClubDate` projects that encoding through
+ * the club's zone, and `formatCalendarDateShape` in the kernel states what that
+ * costs: it is "byte-identical to what the tree renders today ... which works
+ * only because New Zealand is east of Greenwich, and is a day early for any club
+ * that is not."
+ *
+ * Measured on this tree: the stored night `2026-08-01T00:00:00.000Z` renders as
+ * `1 Aug 2026` zone-free and for `Pacific/Auckland`, `UTC`, `Europe/London` and
+ * `Atlantic/Azores` — and as `31 Jul 2026` for `America/Denver` and
+ * `Pacific/Honolulu`. So every current adopter sees no change from this function
+ * at all, and a club behind Greenwich stops being told the wrong night.
+ *
+ * **The name deliberately omits "Club".** Its two siblings above take a zone
+ * because an instant needs one to become a civil date; this one consults no zone
+ * and could not be changed by one, so carrying the club's name in it would
+ * promise a projection that does not happen.
+ *
+ * ## Why it refuses a value carrying a time of day
+ *
+ * `calendarDateOfDateOnlyInstant` alone would silently take the UTC day of a real
+ * timestamp, which is the `INV-DATE-019` defect and is silently RIGHT for a club
+ * east of Greenwich — the hardest kind of wrong to notice, and the one this epic
+ * exists to remove. `requireStoredCalendarDay` (#3082) proves the `Date` really
+ * carries a `@db.Date` encoding first, so a caller that has wired a `createdAt`
+ * or an `expiresAt` into a calendar-day token fails loudly instead of mailing a
+ * plausible wrong day. PostgreSQL cannot keep a time in a `date` column, so the
+ * throw is unreachable for every value that came from one; what it catches is a
+ * `Date` some code path built wrong.
+ *
+ * An instant that genuinely needs rendering as a bare day — a consent expiry, a
+ * payment-recorded stamp — keeps `emailClubDate`, because THAT one really is a
+ * projection and the club's zone really is the right authority for it.
+ */
+export function emailCalendarDay(value: Date): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "An email's calendar-day token",
+        instead:
+          "A real timestamp rendered as a bare day is a projection: use " +
+          "emailClubDate, which reads it in the club's persisted zone.",
+      }),
+    ),
+  );
+}
+
+/**
+ * `emailCalendarDay`, or the literal "Unknown" for a date the sender does not have.
+ *
+ * ## Why this exists at all, rather than each caller writing the ternary
+ *
+ * An email renders twice — the default HTML body, and a rebuild from
+ * `templateData` when an operator has saved a body override — and #3113 is
+ * entirely about those two paths disagreeing. A null fallback written out
+ * longhand at both is two chances to write a different word, in the one place
+ * where a difference is the whole defect. One function means the two paths agree
+ * by construction, not by review.
+ *
+ * ## Why "Unknown" rather than an empty string or a dash
+ *
+ * It matches the `memberName: "Unknown group organiser"` its callers already
+ * pass beside it, so a reader of the alert sees one vocabulary for "we could not
+ * resolve this" instead of a blank cell they have to interpret. A blank row also
+ * reads as a rendering fault, which sends an officer looking for a bug rather
+ * than at the money event the alert is about.
+ *
+ * This is deliberately NOT the general shape of `emailCalendarDay`. A caller
+ * that HAS a stored calendar day must keep the refusal — that guard is what
+ * stops a real timestamp being mailed as a plausible wrong lodge night. Reach
+ * for this only where the value is genuinely absent and the message still has to
+ * go out.
+ */
+export function emailCalendarDayOrUnknown(value: Date | null | undefined): string {
+  return value ? emailCalendarDay(value) : "Unknown";
 }
 
 /** "16 Apr 2026, 2:30 pm" — the club civil date and time of a moment. */

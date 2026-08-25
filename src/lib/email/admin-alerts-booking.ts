@@ -24,14 +24,11 @@ import {
   adminSplitSettlementUnpaidLeadParagraph,
   composeOptionalEmailLine,
 } from "../email-message-notes";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { sendToAdmins } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // N-02: Admin alert - new booking
 export async function sendAdminNewBookingAlert(data: {
@@ -52,8 +49,8 @@ export async function sendAdminNewBookingAlert(data: {
     templateName: "admin-new-booking",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       total: formatMoneyCents(data.totalCents),
       reviewReason: data.reviewReason ?? "",
       // #2268: pre-composed optional line — the flat body has no conditional
@@ -84,8 +81,8 @@ export async function sendAdminMinorsOnlyReviewAlert(data: {
     templateName: "admin-minors-review",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       reviewReason: data.reviewReason,
     },
@@ -115,7 +112,7 @@ export async function sendAdminPartnerShareSweptAlert(data: {
       reason: data.reason,
       count: data.nights.length,
       s: data.nights.length === 1 ? "" : "s",
-      date: data.nights.map((night) => formatNZDate(night)).join(", "),
+      date: data.nights.map((night) => emailCalendarDay(night)).join(", "),
     },
     preferenceKey: "adminBookingReviewRequired",
   });
@@ -154,8 +151,8 @@ export async function sendAdminOwnerSubstitutionAlert(data: {
       reason: data.reason,
       requesterName: data.requesterName,
       memberEmail: data.requesterEmail,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
     },
     preferenceKey: "adminXeroSyncError",
   });
@@ -181,14 +178,14 @@ export async function sendAdminPendingDeadlineAlert(
       s: bookings.length === 1 ? "" : "s",
       memberName: bookings.map((booking) => booking.memberName).join(", "),
       checkIn: bookings
-        .map((booking) => formatNZDate(booking.checkIn))
+        .map((booking) => emailCalendarDay(booking.checkIn))
         .join(", "),
       checkOut: bookings
-        .map((booking) => formatNZDate(booking.checkOut))
+        .map((booking) => emailCalendarDay(booking.checkOut))
         .join(", "),
       guestCount: bookings.map((booking) => booking.guestCount).join(", "),
       deadline: bookings
-        .map((booking) => formatNZDateTime(booking.deadline))
+        .map((booking) => emailClubDateTime(booking.deadline))
         .join(", "),
       hoursRemaining: bookings
         .map((booking) => Math.round(booking.hoursRemaining))
@@ -213,8 +210,8 @@ export async function sendAdminBookingBumpedAlert(data: {
     templateName: "admin-booking-bumped",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
     },
     preferenceKey: "adminBookingBumped",
   });
@@ -240,7 +237,7 @@ export async function sendAdminCapacityWarningAlert(
       count: days.length,
       s: days.length === 1 ? "" : "s",
       lodgeName: lodgeName ?? "",
-      date: days.map((day) => formatNZDate(day.date)).join(", "),
+      date: days.map((day) => emailCalendarDay(day.date)).join(", "),
       occupiedBeds: days.map((day) => day.occupiedBeds).join(", "),
       availableBeds: days.map((day) => day.availableBeds).join(", "),
       percent: days
@@ -268,8 +265,8 @@ export async function sendAdminWaitlistOfferAlert(data: {
     templateName: "admin-waitlist-offer",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
     },
     preferenceKey: "adminWaitlistOffer",
   });
@@ -305,8 +302,8 @@ export async function sendAdminBookingChangeRequestAlert(data: {
     templateName: "admin-booking-change-request",
     templateData: {
       ...data,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       reason: data.reason ?? "",
       // #2268: pre-composed optional line — no dangling "Reason:".
       reasonNote: composeOptionalEmailLine("Reason", data.reason),
@@ -337,8 +334,8 @@ export async function sendAdminBookingRequestPendingEmail(data: {
     templateName: "admin-booking-request-pending",
     templateData: {
       requesterName: data.requesterName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       reviewUrl,
     },
@@ -371,11 +368,11 @@ export async function sendAdminBookingRequestHoldExpiredEmail(data: {
     templateName: "admin-booking-request-hold-expired",
     templateData: {
       requesterName: data.requesterName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       total: formatMoneyCents(data.totalCents),
-      holdUntil: formatNZDateTime(data.holdUntil),
+      holdUntil: emailClubDateTime(data.holdUntil),
       reviewUrl,
     },
     preferenceKey: "adminBookingRequest",
@@ -414,8 +411,8 @@ export async function sendAdminBookingRequestHoldCancelledEmail(data: {
     templateName: "admin-booking-request-hold-cancelled",
     templateData: {
       requesterName: data.requesterName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       total: formatMoneyCents(data.totalCents),
       reviewUrl,
@@ -462,11 +459,11 @@ export async function sendAdminSplitSettlementUnpaidAlert(data: {
     templateName: "admin-split-settlement-unpaid",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       total: formatMoneyCents(data.totalCents),
-      holdUntil: formatNZDateTime(data.holdUntil),
+      holdUntil: emailClubDateTime(data.holdUntil),
       // #2268: the outcome-dependent lead paragraph, built from the same
       // helper as the hand-built HTML. The flat body used to assert that a
       // payment link had been emailed even when none was sent.
@@ -513,8 +510,8 @@ export async function sendAdminSplitSettlementCancelledAlert(data: {
     templateName: "admin-split-settlement-cancelled",
     templateData: {
       memberName: data.memberName,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       total: formatMoneyCents(data.totalCents),
       // #2268: the outcome-dependent lead paragraph, built from the same
@@ -557,8 +554,8 @@ export async function sendAdminSchoolManualInvoiceEmail(data: {
     templateData: {
       schoolName: data.schoolName,
       contactEmail: data.contactEmail,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       totalCents: data.totalCents,
       amount: formatMoneyCents(data.totalCents),
@@ -618,8 +615,8 @@ export async function sendAdminWholeLodgeManualInvoiceEmail(data: {
     templateData: {
       memberName: data.memberName,
       contactEmail: data.contactEmail,
-      checkIn: formatNZDate(data.checkIn),
-      checkOut: formatNZDate(data.checkOut),
+      checkIn: emailCalendarDay(data.checkIn),
+      checkOut: emailCalendarDay(data.checkOut),
       guestCount: data.guestCount,
       // #2483: the amount to INVOICE, from the shared resolver the hand-built
       // HTML above and the member's own confirmation both use — so an admin

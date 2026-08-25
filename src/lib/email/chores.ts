@@ -12,10 +12,10 @@ import {
   CLUB_NAME,
 } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import { formatNZDate } from "../nzst-date";
 import { sendEmail } from "./core";
 import type { BookingScopedEmailContext } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 // #1285: the "Chore Roster" notification preference is honored by the caller
 // (`admin-roster-service.ts` via `shouldSendChoreRoster`), before a chore
@@ -95,8 +95,8 @@ export async function sendHutLeaderAssignmentEmail(params: {
     templateName: "hut-leader-assignment",
     templateData: {
       firstName: params.firstName,
-      startDate: formatNZDate(params.startDate),
-      endDate: formatNZDate(params.endDate),
+      startDate: emailCalendarDay(params.startDate),
+      endDate: emailCalendarDay(params.endDate),
       pin: params.pin,
     },
   });
