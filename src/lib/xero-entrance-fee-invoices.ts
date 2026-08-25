@@ -338,7 +338,12 @@ export async function createXeroEntranceFeeInvoice(
     const authenticatedXero = xero;
     const authenticatedTenantId = tenantId;
 
-    const contactId = await findOrCreateXeroContact(memberId, options);
+    // #3036 review P1-12: reuse the client built above.
+    const contactId = await findOrCreateXeroContact(memberId, {
+      ...options,
+      xero,
+      tenantId,
+    });
     const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
     const incomeCode = incomeMapping.code ?? "200";
 

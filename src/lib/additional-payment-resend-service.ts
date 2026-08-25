@@ -329,8 +329,15 @@ export async function resendAdditionalPaymentEmail(params: {
       would risk the member getting a second copy.
     */
     const replayable =
-      outcome.status === "withheld_for_booking" &&
-      outcome.reason === "booking_flag_unreadable";
+      (outcome.status === "withheld_for_booking" &&
+        outcome.reason === "booking_flag_unreadable") ||
+      // #3035: every environment-safety withhold EXCEPT the confirmed-copy one
+      // leaves a FAILED EmailLog the retry cron replays once the configuration is
+      // fixed, so handing the stamp back here would risk the member getting two
+      // copies. Written as "not the terminal one" rather than as a list of faults,
+      // so a fault added later is replayable by default.
+      (outcome.status === "withheld_for_environment" &&
+        outcome.reason !== "environment_non_production");
     if (!replayable) {
       await restoreStamps(outcome.status);
     }
@@ -346,7 +353,8 @@ export async function resendAdditionalPaymentEmail(params: {
       // (a state of the booking), 422 for an address that cannot receive mail.
       status: replayable
         ? 503
-        : outcome.status === "withheld_for_booking"
+        : outcome.status === "withheld_for_booking" ||
+            outcome.status === "withheld_for_environment"
           ? 409
           : 422,
       error: describeUntransmittedResend(outcome),
@@ -471,7 +479,25 @@ async function explainLostClaim(params: {
   return cooldownAnswer;
 }
 
-/** Plain English for a send the mailer withheld rather than transmitted. */
+/**
+ * Plain English for a send the mailer withheld rather than transmitted.
+ *
+ * THE "IT WILL GO OUT ON ITS OWN" SENTENCES BELOW DEPEND ON ONE FACT, and it is
+ * worth naming rather than leaving as a coincidence (#3035 review). A blocked
+ * EmailLog row is only replayable while it still holds a rendered body, and
+ * `sendEmail` persists none for the twenty-six `SENSITIVE_EMAIL_LOG_TEMPLATES`.
+ * This service sends `additional-payment-reminder`, which is NOT one of them, so
+ * the row keeps its body, the retry cron picks it up, and "do not re-send it by
+ * hand" is correct advice — telling an admin to retry would only spend the hour's
+ * cooldown on a message already on its way.
+ *
+ * If this service is ever pointed at a sensitive template, these sentences become
+ * false in the expensive direction: the message would be gone and the admin would
+ * have been told to leave it alone. The mail gate is what makes that visible —
+ * such a row is written at the retry ceiling and lands in the email-failure review
+ * queue — but the sentence here would still be wrong, so change it in the same
+ * breath.
+ */
 function describeUntransmittedResend(outcome: EmailSendOutcome): string {
   switch (outcome.status) {
     case "withheld_for_booking":
@@ -483,6 +509,18 @@ function describeUntransmittedResend(outcome: EmailSendOutcome): string {
           // send the admin straight into the hour's cooldown for a message that
           // is already on its way.
           "We could not confirm this booking's email settings, so the message was held back and queued to be sent automatically once they can be read. Do not re-send it by hand — that is blocked for the next hour so the member cannot receive two copies.";
+    case "withheld_for_environment":
+      if (outcome.reason === "environment_non_production") {
+        return "This site is a test or staging copy, not the club's live site, so it does not email real members and nothing was sent. Send this from the club's live site instead.";
+      }
+      if (outcome.reason === "capture_transport_in_production") {
+        return "This site is set up as the club's live site and as a test mail capture at the same time, so it held the message back rather than quietly throw it away. It is queued and will go out on its own once that is corrected — do not re-send it by hand.";
+      }
+      // Same shape as the unreadable-switch case above, and for the same reason:
+      // the message is already queued and goes out by itself once somebody
+      // declares what this installation is, so telling an admin to try again
+      // would only spend the hour's cooldown.
+      return "This site has not been told whether it is the club's live site or a copy, so it held the message back rather than risk emailing a real member. It is queued and will go out on its own once that is set — do not re-send it by hand.";
     case "suppressed":
       return "This member's email address is blocked after a bounce or spam complaint, so nothing was sent. Contact them another way, or clear the suppression first.";
     case "skipped_placeholder_recipient":

@@ -12,6 +12,12 @@ export const AUDITED_KEYS = Object.freeze([
   "NODE_ENV", "SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD", "SEED_LODGE_PASSWORD", "SENTRY_AUTH_TOKEN", "SENTRY_DSN",
   "SENTRY_ORG", "SENTRY_PROJECT", "SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN", "SES_SNS_TOPIC_ARN", "SMTP_HOST", "SMTP_PORT",
   "TZ", "USE_AWS_SES", "USE_SMTP_RELAY", "XERO_MOCK_API_ORIGIN", "XERO_MOCK_INTERNAL_ORIGIN",
+  // ENV-SAFETY (#3034/#3035): the two variables that decide whether this stack
+  // can contact anybody at all. They were outside the frozen-env audit while
+  // being exactly what the audit exists to freeze, so a stack could silently
+  // change from "captures its mail" to "sends nothing" or the reverse without
+  // the audit noticing.
+  "APP_ENVIRONMENT_ROLE", "USE_LOCAL_CAPTURE",
 ].sort());
 export const LIVE_PROVIDER_KEYS = Object.freeze([
   "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "BACKUP_ENABLED", "BACKUP_S3_ACCESS_KEY_ID", "BACKUP_S3_BUCKET", "BACKUP_S3_ENDPOINT",
@@ -47,7 +53,15 @@ export function auditAppEnvironment(inspect, hmacKey) {
   if (values.APP_RUNTIME_ROLE !== "web-measure" || values.CRON_ENABLED !== "false" || values.NODE_ENV !== "production" || values.TZ !== "Pacific/Auckland" || values.KEEP_ALIVE_TIMEOUT !== "65000" || values.LOG_LEVEL !== "info") fail("measurement app runtime role/cron/runtime constants differ from the reviewed profile");
   if (values.BACKUP_CRON_SCHEDULE !== "0 3 * * *" || values.MIRO_JWT_EXP !== "1h") fail("inert backup/Miro runtime defaults differ from the reviewed profile");
   if (values.AUTH_TRUST_HOST !== "true" || values.AUTH_SECRET === "" || values.NEXTAUTH_SECRET === "" || values.AUTH_SECRET !== values.NEXTAUTH_SECRET || values.CRON_SECRET === "") fail("measurement auth/cron secret invariants failed");
-  if (values.USE_AWS_SES !== "false" || values.USE_SMTP_RELAY !== "true" || values.EMAIL_SERVER_HOST !== "mailpit" || values.EMAIL_SERVER_PORT !== "1025") fail("measurement email provider is not the local Mailpit relay");
+  // ENV-SAFETY 2 (#3035): mailpit is now declared a CAPTURE transport rather than
+  // an ordinary relay, and the difference is load-bearing rather than cosmetic.
+  // This stack declares APP_ENVIRONMENT_ROLE=non-production, and a copy pointed at
+  // an ordinary relay has EVERY send suppressed at the delivery boundary — so the
+  // old pairing (USE_SMTP_RELAY=true) would now describe a stack that sends
+  // nothing, and the harness would be measuring the wrong thing while reporting a
+  // clean audit.
+  if (values.APP_ENVIRONMENT_ROLE !== "non-production") fail("the measurement app must declare itself a non-production copy");
+  if (values.USE_AWS_SES !== "false" || values.USE_SMTP_RELAY !== "false" || values.USE_LOCAL_CAPTURE !== "true" || values.EMAIL_SERVER_HOST !== "mailpit" || values.EMAIL_SERVER_PORT !== "1025") fail("measurement email provider is not the DECLARED local Mailpit capture");
   if (values.EMAIL_SERVER_USER === "" || values.EMAIL_SERVER_PASSWORD === "" || !/@(?:measurement\.)?invalid$/i.test(values.EMAIL_FROM)) fail("measurement local email identity/credentials are incomplete");
   for (const key of ["AWS_SES_ACCESS_KEY_ID", "AWS_SES_SECRET_ACCESS_KEY", "SES_SNS_TOPIC_ARN", "SENTRY_DSN", "NEXT_PUBLIC_SENTRY_DSN", "SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT", "ADDY_API_KEY", "ADDY_API_SECRET", "LEGACY_DASHBOARD_EXPORT_TOKEN", "SMTP_HOST", "SMTP_PORT", "AI_DIAGNOSTICS_DATABASE_URL", "MIROTALK_URL", "MIRO_JWT_KEY", "MIRO_MEETING_USERNAME", "MIRO_MEETING_PASSWORD", "MIRO_MEETING_PRESENTER", "XERO_MOCK_API_ORIGIN", "XERO_MOCK_INTERNAL_ORIGIN", "NEXT_PUBLIC_GA_MEASUREMENT_ID", "SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD", "SEED_LODGE_PASSWORD"]) {
     if (values[key] !== "") fail(`${key} must be blank in the measurement app`);

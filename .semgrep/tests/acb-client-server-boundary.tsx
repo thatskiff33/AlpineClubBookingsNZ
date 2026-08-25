@@ -61,6 +61,20 @@ import { getXeroClient } from "@/lib/xero";
 // ruleid: acb-client-server-boundary
 import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";
 
+// The environment-role declaration and its resolver (#3034, epic #2986). Neither
+// is `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
+// `npm run setup` entrypoint — and the declaration module reads
+// `process.env.APP_ENVIRONMENT_ROLE`, which is deliberately NOT `NEXT_PUBLIC_*`
+// and therefore inlines as `undefined` in a browser. A client import would read
+// "nothing has declared this installation" while the server reads `production`,
+// and what is keyed on that answer is whether the club's real members get
+// emailed (INV-CONFIG-003). Both spellings are fixtures because the `$` anchor
+// means the shorter alternative cannot match the longer module name.
+// ruleid: acb-client-server-boundary
+import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
+// ruleid: acb-client-server-boundary
+import { getEnvironmentRole } from "@/lib/environment-role";
+
 // RE-EXPORTS. `export … from …` evaluates the module and puts it in the bundle
 // exactly as an import does, while reading like harmless barrel plumbing. All
 // three of these walked straight through the first version of the rule.

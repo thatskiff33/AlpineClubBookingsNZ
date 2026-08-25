@@ -989,6 +989,18 @@ file). All work happens in a throwaway Postgres 16 container bound to
   the Postgres major version).
 - Any time you need confidence that a specific backup file is restorable.
 
+> **Restoring a dump into a REAL installation carries its environment-safety
+> override with it.** The drill above is safe — it restores into a throwaway
+> container. But a restore into a live installation is different: the
+> "treat this as a copy" switch lives in the database, so restoring a staging or
+> rehearsal dump into the club's live site makes the live site behave as a copy
+> — member email held back, and a replaced address on every Xero contact it
+> touches. Nothing stops the restore, and the deployment's own setting cannot
+> overrule it in the unsafe direction. Read
+> [Environment Safety → Restoring a database dump carries the override with it](guides/environment-role.md#restoring-a-database-dump-carries-the-override-with-it)
+> before restoring anything into an installation that matters, and check
+> **Admin → Environment** afterwards.
+
 ### Local self-contained mode (default)
 
 No arguments, no production data. The script starts the container, seeds a

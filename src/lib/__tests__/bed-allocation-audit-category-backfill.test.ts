@@ -30,7 +30,7 @@
  *
  * That figure is not transcribed twice by hand any more: it went stale after
  * #2755 (3 low) and again after #2765 (16 low), so `audit-writer-census.test.ts`
- * now counts the union of the four per-site maps and asserts 127 pinned / 327
+ * now counts the union of the four per-site maps and asserts 127 pinned / 328
  * unpinned. If this sentence and INV-OPS-012 disagree with each other, that test
  * is the one that measured it.
  */

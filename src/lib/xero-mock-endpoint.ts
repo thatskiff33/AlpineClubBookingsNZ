@@ -19,6 +19,7 @@
 import {
   saveXeroTokens,
 } from "@/lib/xero-token-store";
+import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { getOperationalXeroRedirectUri } from "@/lib/xero-config";
 import { XERO_OAUTH_CALLBACK_NO_TENANT_MESSAGE } from "@/lib/xero-oauth-callback-messages";
 
@@ -39,15 +40,32 @@ export const MOCK_XERO_ORG_SHORT_CODE = "!mock1";
  * hard backstop so the mock stays inert even if `XERO_MOCK_API_ORIGIN` ever
  * leaked into a genuine deployment (#2080 review, CORRECTNESS-F2).
  *
- * NOTE: the E2E staging stack legitimately runs the PRODUCTION build
- * (`NODE_ENV=production`, `node server.js`) with the mock enabled, so
- * `NODE_ENV` alone cannot be the gate — it would disable the E2E happy-path.
- * The staging stack is distinguished by `APP_RUNTIME_ROLE=staging`
- * (docker-compose.staging.yml); real production roles are `web-blue` /
- * `web-green` / `cron-leader`. So "real production" is a production build whose
- * runtime role is NOT the staging harness.
+ * THE DECLARATION IS ASKED FIRST (ENV-SAFETY 3, #3036; INV-CONFIG-003). A
+ * deployment that declares itself `APP_ENVIRONMENT_ROLE=production` is a real
+ * production runtime, full stop — that is the canonical answer and it is read
+ * through the canonical parser rather than re-derived here. This is a strict
+ * WIDENING of the old rule: everything that returned true before still does.
+ *
+ * WHAT IS LEFT UNDERNEATH IS A BACKSTOP AND NO LONGER AN AUTHORITY, which is why
+ * #3034's inference census keeps listing it and why collapsing it away was
+ * REJECTED rather than deferred. `NODE_ENV` is a build mode and
+ * `APP_RUNTIME_ROLE` is a container slot name, so neither can answer "is this
+ * production?" — but here they are only ever used to *disable* a harness that
+ * already requires an explicit `XERO_MOCK_API_ORIGIN` opt-in. Deleting them and
+ * trusting the declaration alone would make an UNDECLARED installation — the
+ * live club that upgraded without adding the line, which is this epic's headline
+ * case — pass a gate that today's build-mode check fails. So both stay, in an OR,
+ * and the guarantee only ever gets stronger.
+ *
+ * The E2E staging stack legitimately runs the PRODUCTION build
+ * (`NODE_ENV=production`, `node server.js`) with the mock enabled, so `NODE_ENV`
+ * alone could never have been the gate — it would disable the E2E happy path.
+ * That stack declares `APP_ENVIRONMENT_ROLE=non-production` and sets
+ * `APP_RUNTIME_ROLE=staging` (docker-compose.staging.yml), so it falls through
+ * both halves and the mock stays available there.
  */
 export function isRealProductionRuntime(): boolean {
+  if (readEnvironmentRoleDeclaration().kind === "production") return true;
   return (
     process.env.NODE_ENV === "production" &&
     process.env.APP_RUNTIME_ROLE !== "staging"

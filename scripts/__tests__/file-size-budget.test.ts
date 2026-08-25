@@ -215,7 +215,8 @@ describe("blocking CI wiring", () => {
     );
     const verify = verifyJobSource(workflow);
     expect(verify).toContain(
-      "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false)" +
+      "BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false" +
+        " && !startsWith(github.ref, 'refs/heads/epic/'))" +
         " && github.event.before || 'origin/main' }}",
     );
   });
@@ -244,6 +245,22 @@ describe("blocking CI wiring", () => {
       expect(line, `${line.trim()} must skip the all-zero base of a ref-creating push`).toContain(
         "github.event.created == false",
       );
+      /*
+        And the second half of the same rule (#2986). A NON-creating push to an
+        integration branch carries `before = the previous epic commit`, against
+        which a landed child's one-shot allowance reads as spent while it is
+        still required against `main` — the base that branch's own pull request
+        is judged on. Measured on epic #2986: 8 findings against the previous
+        epic commit, OK against `origin/main`, identical tree. No allowance file
+        can satisfy both, so an `epic/**` push is judged against `origin/main`.
+        Asserted over every `*_BASE` line for the reason the guard above is:
+        a rule only one of two identical expressions follows drifts back.
+      */
+      expect(
+        line,
+        `${line.trim()} must judge an epic integration branch against origin/main, ` +
+          "not against the previous commit on that branch",
+      ).toContain("!startsWith(github.ref, 'refs/heads/epic/')");
     }
   });
 

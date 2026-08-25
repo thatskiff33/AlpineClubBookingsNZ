@@ -66,6 +66,27 @@ export function formatNZDateTime(date: Date): string {
 }
 
 /**
+ * An ISO instant from a JSON payload, in club time, falling back to the raw
+ * string when it will not parse.
+ *
+ * The fallback is the point: a screen that renders `Invalid Date` for a value it
+ * did not expect has told the reader nothing, while the raw string at least says
+ * what arrived. Client components on the environment-safety screens share this
+ * rather than each carrying their own three-line copy.
+ *
+ * IT IS `formatNZDateTime`, which is the same formatter `/admin/audit-log` uses
+ * for the very same class of timestamp — the audit row an override save writes.
+ * One admin screen quietly spelling an instant in a different zone from the
+ * screen beside it is worse than both sitting on one shared formatter, and
+ * pinning locale and zone together is what `INV-DATE-015` and the ESLint date
+ * guard require of any formatter on this surface.
+ */
+export function formatNZInstantOrRaw(iso: string): string {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? iso : formatNZDateTime(parsed);
+}
+
+/**
  * Long, spelled-out date in club time — "16 April 2026". Reserved for the
  * member-facing surfaces the owner asked to keep it on (#2264): booking
  * messages and the emails built from them, the lodge/hut-leader instruction

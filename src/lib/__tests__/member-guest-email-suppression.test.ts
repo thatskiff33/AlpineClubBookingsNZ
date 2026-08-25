@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
     member: { findUnique: mocks.memberFindUnique },
@@ -101,6 +102,9 @@ vi.mock("@/lib/email/internal", () => ({
     modeLabel: "test",
   }),
   shouldPersistEmailHtml: () => true,
+  // #3035: `sendEmail` names which transport carried a delivered message
+  // through this helper, so a factory that omits it dies at import.
+  logDeliveredTransport: () => {},
 }));
 
 import {
@@ -109,6 +113,7 @@ import {
 } from "@/lib/booking-email-suppression";
 import { parseDateOnly } from "@/lib/date-only";
 import { __resetFailClosedAlertThrottle } from "@/lib/email/core";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 import {
   sendMemberGuestAddedEmail,
   sendMemberGuestConsentExpiredEmail,
@@ -284,6 +289,20 @@ beforeEach(() => {
   );
   __resetFailClosedAlertThrottle();
   vi.stubEnv("NODE_ENV", "production");
+});
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
 });
 
 describe("registry classification the switch depends on (#2307)", () => {

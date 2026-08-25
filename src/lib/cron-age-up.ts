@@ -409,7 +409,7 @@ export async function checkAgeUpMembers(): Promise<{
           continue;
         }
 
-        await sendAgeUpParentEmailHandoffEmail(
+        const handoffOutcome = await sendAgeUpParentEmailHandoffEmail(
           parentEmailHandoff.recipientEmail,
           {
             recipientName: parentEmailHandoff.recipientName,
@@ -421,22 +421,58 @@ export async function checkAgeUpMembers(): Promise<{
           }
         );
 
-        await recordAgeUpParentEmailHandoffAudit({
-          member,
-          handoff: parentEmailHandoff,
-          targetAgeTierLabel,
-          targetAgeTierMinAge,
-        });
+        /*
+          THE AUDIT ROW IS THE ONLY THING THAT STOPS THIS BEING ATTEMPTED AGAIN
+          (#3035) — `hasAgeUpParentEmailHandoffAudit` above reads it. `sendEmail`
+          returns rather than throws when it withholds, so writing the row
+          unconditionally recorded a handoff that never happened and closed the
+          door on ever asking the parent again.
 
-        handoff++;
-        logger.info(
-          {
-            memberId: member.id,
-            firstName: member.firstName,
-            handoffReason: parentEmailHandoff.reason,
-          },
-          "Age-up: parent email handoff sent; member login not enabled"
-        );
+          The confirmed-copy withhold DOES write the row, because that outcome is
+          terminal: a copy is a copy until somebody re-declares it, and without
+          the row an idle staging box would re-attempt this handoff on every run
+          and write a new counted `SKIPPED_NON_PRODUCTION` row each pass — which
+          is the number that tells a live club wrongly declared a copy from a
+          genuine one (owner decision 1, 23 Aug 2026).
+        */
+        const handoffSent = handoffOutcome.status === "sent";
+        const handoffTerminalHere =
+          handoffOutcome.status === "withheld_for_environment" &&
+          handoffOutcome.reason === "environment_non_production";
+
+        if (handoffSent || handoffTerminalHere) {
+          await recordAgeUpParentEmailHandoffAudit({
+            member,
+            handoff: parentEmailHandoff,
+            targetAgeTierLabel,
+            targetAgeTierMinAge,
+          });
+        }
+
+        if (handoffSent) {
+          handoff++;
+          logger.info(
+            {
+              memberId: member.id,
+              firstName: member.firstName,
+              handoffReason: parentEmailHandoff.reason,
+            },
+            "Age-up: parent email handoff sent; member login not enabled"
+          );
+        } else {
+          failed++;
+          logger.error(
+            {
+              memberId: member.id,
+              handoffReason: parentEmailHandoff.reason,
+              outcome: handoffOutcome.status,
+              reason:
+                "reason" in handoffOutcome ? handoffOutcome.reason : undefined,
+              willRetry: !handoffTerminalHere,
+            },
+            "Age-up: the parent email handoff was not transmitted, so nobody has been asked for this member's own address"
+          );
+        }
         continue;
       }
 
@@ -555,7 +591,7 @@ export async function checkAgeUpMembers(): Promise<{
       }
 
       // Send invitation email (fire-and-forget style within the loop)
-      await sendAgeUpInvitationEmail(
+      const invitation = await sendAgeUpInvitationEmail(
         member.email,
         member.firstName,
         upgradeResult.token,
@@ -565,13 +601,65 @@ export async function checkAgeUpMembers(): Promise<{
           targetAgeTierMinAge,
         }
       );
+
+      /*
+        A WITHHELD INVITATION IS ROLLED BACK, because the tier flip and the token
+        are already committed and nothing else will ever finish the job (#3035).
+
+        `sendEmail` RETURNS rather than throws when nothing was transmitted, so the
+        `catch` below never fired for any of these and `upgradeResult = null`
+        disarmed the rollback unconditionally. The member became an adult with a
+        login and no invitation — and it is permanent: the `alreadySent` guard
+        above only matches `SENT`/`QUEUED` rows so it does not stop a retry, but
+        the transaction's own re-check sees `canLogin: true` and `ageTier: ADULT`
+        and returns null, so every later run counts them as skipped. Nobody is
+        ever told they now have a login, and the reset token expires in a week.
+
+        Rolling back puts them back a tier with their inherited mailbox intact
+        (`rollbackAgeUpUpgrade` restores the choice column too), so the next run
+        tries again cleanly once an operator has fixed the configuration.
+
+        THE CONFIRMED COPY IS THE EXCEPTION and keeps the upgrade: that outcome is
+        terminal, and rolling back would have a staging box age the same member up
+        and down on every run, writing a new counted `SKIPPED_NON_PRODUCTION` row
+        each pass. That count is what distinguishes a live club wrongly declared a
+        copy from an idle one (owner decision 1, 23 Aug 2026), so an idle copy must
+        not manufacture it.
+      */
+      const invited = invitation.status === "sent";
+      const invitationTerminalHere =
+        invitation.status === "withheld_for_environment" &&
+        invitation.reason === "environment_non_production";
+
+      if (!invited && !invitationTerminalHere) {
+        await rollbackAgeUpUpgrade(member.id, upgradeResult);
+        upgradeResult = null;
+        failed++;
+        logger.error(
+          {
+            memberId: member.id,
+            outcome: invitation.status,
+            reason: "reason" in invitation ? invitation.reason : undefined,
+          },
+          "Age-up: the invitation was not transmitted, so the upgrade was rolled back and a later run will retry it"
+        );
+        continue;
+      }
+
       upgradeResult = null;
 
       upgraded++;
-      logger.info(
-        { memberId: member.id, firstName: member.firstName },
-        "Age-up: member upgraded to ADULT with login"
-      );
+      if (invited) {
+        logger.info(
+          { memberId: member.id, firstName: member.firstName },
+          "Age-up: member upgraded to ADULT with login"
+        );
+      } else {
+        logger.warn(
+          { memberId: member.id, firstName: member.firstName },
+          "Age-up: member upgraded to ADULT with login, but this installation is a copy so the invitation was held back and will not be retried"
+        );
+      }
 
       // Best-effort Xero contact-group re-sync after the tier flip (E8, #1934).
       // Non-fatal and idempotent on re-run; a no-op unless grouping is enabled

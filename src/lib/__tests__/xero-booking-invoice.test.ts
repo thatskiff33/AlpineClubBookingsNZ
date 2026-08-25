@@ -11,6 +11,17 @@ const mocks = vi.hoisted(() => {
   };
 
   const prisma = {
+  environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
+  /*
+    #3036 (ENV-SAFETY 3, INV-CONFIG-005): on a confirmed copy the funnel proves
+    the invoice's contact can no longer reach a member BEFORE returning its id,
+    and a missing delegate here is a refusal — which is the point, so it is
+    declared rather than worked around.
+  */
+  xeroSandboxContactContainment: {
+    findUnique: vi.fn().mockResolvedValue(null),
+    upsert: vi.fn().mockResolvedValue({}),
+  },
     $transaction: vi.fn(async (callback) => callback(tx)),
     // #1355: contact resolution now reads the member on the GLOBAL client
     // (phase 0/1) and re-reads via the tx client (phase 2). Alias the same
@@ -76,6 +87,9 @@ const mocks = vi.hoisted(() => {
       createCreditNotes: vi.fn(),
       createContacts: vi.fn(),
       getContacts: vi.fn(),
+      // #3036: read the contact back, and contain it on a copy.
+      getContact: vi.fn(),
+      updateContact: vi.fn(),
     },
   };
 
@@ -223,6 +237,8 @@ import {
 } from "@/lib/xero";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { toXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 
 // encryptToken is async (#2079); precompute the fixture ciphertexts once so the
 // synchronous mock-setup blocks below need no await. The stubbed token key
@@ -232,6 +248,17 @@ let encryptedRefresh: string;
 beforeAll(async () => {
   encryptedAccess = await encryptToken("access");
   encryptedRefresh = await encryptToken("refresh");
+});
+
+/*
+  #3035 (ENV-SAFETY 2): asking Xero to email an invoice is a provider SEND, so it
+  now goes through the environment-safety boundary. Both halves of the role have
+  to be declared or it resolves UNKNOWN and no invoice is emailed — a missing
+  `environmentSafetySettings` delegate is an UNREADABLE override, not "no
+  override". See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
 });
 
 describe("createXeroInvoiceForBooking", () => {
@@ -244,6 +271,20 @@ describe("createXeroInvoiceForBooking", () => {
     );
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+    // #3036: on a copy the funnel reads the linked contact back and contains it
+    // before returning its id. On the club's live site none of this runs.
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_1", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
 
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.tx.$executeRaw.mockResolvedValue(1);
@@ -613,6 +654,166 @@ describe("createXeroInvoiceForBooking", () => {
     );
   });
 
+  /*
+    #3035 (ENV-SAFETY 2, INV-CONFIG-004). The invoice is still raised and its
+    ids still persisted; only the emailing is withheld, and the two non-allow
+    outcomes are reported differently because they need different remedies.
+  */
+  describe("the environment-safety boundary", () => {
+    function internetBankingBooking() {
+      return {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1", email: "member@example.test" },
+        lodgeId: "lodge_1",
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+        createdAt: "2026-05-15T10:30:00.000Z",
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        noEmails: false,
+        guests: [
+          {
+            firstName: "Jordan",
+            lastName: "Hartley-Smith",
+            ageTier: "ADULT",
+            isMember: true,
+            priceCents: 10000,
+          },
+        ],
+        payment: {
+          id: "pay_1",
+          status: "PENDING",
+          amountCents: 10000,
+          stripePaymentIntentId: null,
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          source: "INTERNET_BANKING",
+        },
+      };
+    }
+
+    it("raises the invoice but emails nobody on a confirmed copy, and stays SUCCEEDED", async () => {
+      declareEnvironmentRole("non-production");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_1"
+      );
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice
+      ).not.toHaveBeenCalled();
+      // NOT a withheld-email audit row: that row asserts an administrator turned
+      // the booking's "No emails" switch on, and nobody did.
+      expect(mocks.prisma.emailLog.create).not.toHaveBeenCalled();
+      // The invoice ids are still persisted, so the booking is not left thinking
+      // no invoice exists.
+      expect(mocks.prisma.payment.update).toHaveBeenCalled();
+      expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+        "op_1",
+        expect.objectContaining({
+          status: "SUCCEEDED",
+          responsePayload: expect.objectContaining({
+            invoiceEmailError: null,
+            invoiceEmailSkipped: true,
+            invoiceEmailWithheldByNoEmails: false,
+            invoiceEmailWithheldForEnvironment: true,
+          }),
+        })
+      );
+    });
+
+    it("contains the invoice's contact BEFORE the invoice exists, and keeps it AUTHORISED", async () => {
+      /*
+        #3036 (INV-CONFIG-005). The half #3035 could not cover: the invoice is
+        AUTHORISED and stays that way, and XERO emails its own reminders for an
+        outstanding authorised invoice with no API call from here. So the contact
+        this invoice is raised against has to lose its real address BEFORE the
+        invoice exists.
+      */
+      declareEnvironmentRole("non-production");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+
+      await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe(
+        "inv_1"
+      );
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.updateContact
+      ).toHaveBeenCalledWith(
+        "tenant_1",
+        "contact_1",
+        {
+          contacts: [
+            {
+              contactID: "contact_1",
+              emailAddress: toXeroSandboxContactEmail("member@example.com"),
+            },
+          ],
+        },
+        expect.any(String)
+      );
+      const [, invoicePayload] =
+        mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0];
+      expect(invoicePayload.invoices[0].status).toBe("AUTHORISED");
+    });
+
+    it("raises NO invoice at all when the contact cannot be contained", async () => {
+      // The point of putting the gate inside the funnel: an invoice writer that
+      // cannot prove its contact is safe raises nothing, without needing to know
+      // anything about containment itself.
+      declareEnvironmentRole("non-production");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+      mocks.xeroClientInstance.accountingApi.updateContact.mockRejectedValue(
+        new Error("400 from Xero")
+      );
+
+      await expect(createXeroInvoiceForBooking("booking_1")).rejects.toThrow(
+        /still able to reach a member/
+      );
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.createInvoices
+      ).not.toHaveBeenCalled();
+    });
+
+    /*
+      REWRITTEN BY #3036, and the change is the point rather than a test fix.
+      Under #3035 alone an UNDECLARED installation raised the invoice and merely
+      declined to email it, reporting PARTIAL so an operator could see the
+      unemailed invoice. #3036 refuses EARLIER: the contact cannot be resolved at
+      all without knowing which installation this is, because the answer decides
+      what address may sit on that contact — so no invoice is raised, and there
+      is nothing to report PARTIAL about.
+
+      The PARTIAL / `invoiceEmailError` shape #3035 built is still asserted, in
+      `xero-invoice-email-boundary.test.ts` ("withholds as a FAULT when the
+      installation is undeclared"), and it is still reachable from these
+      workflows in the narrow window where the role is readable when the contact
+      is resolved and unreadable a moment later when the invoice is emailed.
+    */
+    it("raises no invoice at all when nobody has said what this installation is", async () => {
+      vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+      mocks.prisma.booking.findUnique.mockResolvedValue(internetBankingBooking());
+
+      await expect(createXeroInvoiceForBooking("booking_1")).rejects.toThrow(
+        /APP_ENVIRONMENT_ROLE/
+      );
+
+      expect(
+        mocks.xeroClientInstance.accountingApi.createInvoices
+      ).not.toHaveBeenCalled();
+      expect(
+        mocks.xeroClientInstance.accountingApi.updateContact
+      ).not.toHaveBeenCalled();
+      expect(
+        mocks.xeroClientInstance.accountingApi.emailInvoice
+      ).not.toHaveBeenCalled();
+      expect(mocks.prisma.emailLog.create).not.toHaveBeenCalled();
+    });
+  });
+
   it("emails Internet Banking invoices and updates the Internet Banking transaction", async () => {
     mocks.prisma.booking.findUnique.mockResolvedValue({
       id: "booking_1",
@@ -924,6 +1125,243 @@ describe("createXeroInvoiceForBooking", () => {
       undefined,
       "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-05:v1"
     );
+  });
+
+  /** The booking shape the update path needs: a payment carrying an invoice id. */
+  function bookingWithExistingInvoice() {
+    return {
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-08-03T00:00:00.000Z",
+      checkOut: "2026-08-05T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 0,
+      guests: [
+        {
+          firstName: "Jordan",
+          lastName: "Hartley-Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          priceCents: 10000,
+        },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        amountCents: 10000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    };
+  }
+
+  /*
+    INV-CONFIG-005 (#3036 review P0-2). Re-pricing an invoice can RAISE its
+    amount due, and this path never goes through `findOrCreateXeroContact` — so
+    on a copy restored from the club's live database nothing here had ever looked
+    at what the invoice's contact holds, while Xero goes on emailing reminders
+    for an outstanding AUTHORISED invoice from its own servers.
+  */
+  it("contains the invoice's contact before re-pricing it on a copy", async () => {
+    declareEnvironmentRole("non-production");
+    mocks.prisma.booking.findUnique.mockResolvedValue(
+      bookingWithExistingInvoice()
+    );
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      email: "member@example.com",
+      xeroContactId: "contact_1",
+    });
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            status: "AUTHORISED",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description: "old",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1" }] },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe(
+      "inv_1"
+    );
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact
+    ).toHaveBeenCalledWith(
+      "tenant_1",
+      "contact_1",
+      {
+        contacts: [
+          {
+            contactID: "contact_1",
+            emailAddress: toXeroSandboxContactEmail("member@example.com"),
+          },
+        ],
+      },
+      expect.any(String)
+    );
+  });
+
+  it("contains the INVOICE's contact, not the member's link, when they differ", async () => {
+    /*
+      The permissive defect this replaced. The update re-sends
+      `currentInvoice.contact`, and after a member merge or an admin re-link that
+      is a DIFFERENT contact from `Member.xeroContactId`. The first version of
+      this check ran at the top of the function against the member's link, so it
+      proved containment of a contact this update never touches while raising the
+      amount due on one it does.
+    */
+    declareEnvironmentRole("non-production");
+    mocks.prisma.booking.findUnique.mockResolvedValue(
+      bookingWithExistingInvoice()
+    );
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      email: "member@example.com",
+      xeroContactId: "contact_survivor",
+    });
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            status: "AUTHORISED",
+            contact: { contactID: "contact_loser" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description: "old",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_loser", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1" }] },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe(
+      "inv_1"
+    );
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.getContact
+    ).toHaveBeenCalledWith("tenant_1", "contact_loser");
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact
+    ).toHaveBeenCalledWith(
+      "tenant_1",
+      "contact_loser",
+      expect.objectContaining({
+        contacts: [
+          expect.objectContaining({ contactID: "contact_loser" }),
+        ],
+      }),
+      expect.any(String)
+    );
+  });
+
+  it("re-prices nothing on a copy that cannot prove the contact contained", async () => {
+    declareEnvironmentRole("non-production");
+    mocks.prisma.booking.findUnique.mockResolvedValue(
+      bookingWithExistingInvoice()
+    );
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      email: "member@example.com",
+      xeroContactId: "contact_1",
+    });
+    mocks.xeroClientInstance.accountingApi.getContact.mockRejectedValue(
+      new Error("503 from Xero")
+    );
+
+    await expect(
+      updateXeroBookingInvoiceForBooking("booking_1")
+    ).rejects.toThrow(/cannot prove the contact is unable to reach a member/);
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateInvoice
+    ).not.toHaveBeenCalled();
+  });
+
+  it("asks none of that on the club's live site", async () => {
+    declareEnvironmentRole("production");
+    mocks.prisma.booking.findUnique.mockResolvedValue(
+      bookingWithExistingInvoice()
+    );
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            status: "AUTHORISED",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description: "old",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: { invoices: [{ invoiceID: "inv_1", invoiceNumber: "INV-1" }] },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe(
+      "inv_1"
+    );
+
+    expect(
+      mocks.xeroClientInstance.accountingApi.updateContact
+    ).not.toHaveBeenCalled();
+    expect(
+      mocks.prisma.xeroSandboxContactContainment.findUnique
+    ).not.toHaveBeenCalled();
   });
 
   // The Stripe payment recorded against a freshly raised invoice is
@@ -1327,6 +1765,20 @@ describe("createXeroCreditNoteForModification", () => {
     );
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+    // #3036: on a copy the funnel reads the linked contact back and contains it
+    // before returning its id. On the club's live site none of this runs.
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_1", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
 
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.tx.$executeRaw.mockResolvedValue(1);
@@ -1411,6 +1863,20 @@ describe("createXeroRefundPaymentForInvoice", () => {
     );
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+    // #3036: on a copy the funnel reads the linked contact back and contains it
+    // before returning its id. On the club's live site none of this runs.
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_1", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
 
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
@@ -1478,6 +1944,20 @@ describe("createXeroCreditNote", () => {
     );
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+    // #3036: on a copy the funnel reads the linked contact back and contains it
+    // before returning its id. On the club's live site none of this runs.
+    mocks.prisma.xeroSandboxContactContainment.findUnique.mockResolvedValue(null);
+    mocks.prisma.xeroSandboxContactContainment.upsert.mockResolvedValue({});
+    mocks.xeroClientInstance.accountingApi.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          { contactID: "contact_1", emailAddress: "member@example.com" },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateContact.mockResolvedValue({
+      body: {},
+    });
     mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue(null);
     mocks.prisma.xeroObjectLink.findMany.mockResolvedValue([]);
     // Default: every refunded cent is provider-backed cash (#2902 cases

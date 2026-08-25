@@ -68,6 +68,10 @@ import { AGE_TIER_DEFAULTS, invalidateAgeTierCache } from "../age-tier";
 import { getAuditRetentionExpiresAt } from "../audit";
 import { checkAgeUpMembers } from "../cron-age-up";
 import { withTimeZoneAsync } from "./helpers/timezone";
+import {
+  EMAIL_SENT,
+  emailWithheldForEnvironment,
+} from "@/lib/__tests__/helpers/email-outcomes";
 
 const mockedFindMany = vi.mocked(prisma.member.findMany);
 const mockedMemberFindFirst = vi.mocked(prisma.member.findFirst);
@@ -241,7 +245,7 @@ describe("checkAgeUpMembers", () => {
       mockedEmailLogFind.mockResolvedValue(null);
       mockedUpdate.mockResolvedValue({} as any);
       mockedCreateToken.mockResolvedValue({} as any);
-      mockedSendEmail.mockResolvedValue(undefined);
+      mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
       // The upgrade write happens through `member.update`, and reconciliation
       // reads AFTER it — so the fake applies it, exactly as the database would.
@@ -362,7 +366,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -467,7 +471,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -539,7 +543,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     // The transaction's own view: a link landed while this member was queued.
     // ONLY the resolved-source column is set, so this test isolates the first
     // half of the disjunction — with `inheritParentEmail`/`parentMemberId` also
@@ -591,7 +595,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -631,7 +635,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -716,7 +720,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as never);
     mockedCreateToken.mockResolvedValue({} as never);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
     mockTxMemberFindUnique.mockResolvedValue({
       canLogin: false,
       ageTier: "YOUTH",
@@ -774,7 +778,7 @@ describe("checkAgeUpMembers", () => {
     };
 
     mockedFindMany.mockResolvedValue([member] as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -844,7 +848,7 @@ describe("checkAgeUpMembers", () => {
     };
 
     mockedFindMany.mockResolvedValue([member] as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     await checkAgeUpMembers();
 
@@ -891,7 +895,7 @@ describe("checkAgeUpMembers", () => {
         email: "legacy-parent@example.com",
       }),
     });
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -961,7 +965,7 @@ describe("checkAgeUpMembers", () => {
       }),
       nan: familyRow({ id: "nan", email: "nan@example.com" }),
     });
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1036,7 +1040,7 @@ describe("checkAgeUpMembers", () => {
       firstName: "Alex",
       lastName: "Holder",
     } as any);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1098,7 +1102,7 @@ describe("checkAgeUpMembers", () => {
     mockedAuditLogFind
       .mockResolvedValueOnce({ id: "existing-audit" } as any)
       .mockResolvedValueOnce(null);
-    mockedSendHandoffEmail.mockResolvedValue(undefined);
+    mockedSendHandoffEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1283,7 +1287,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1308,7 +1312,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     await checkAgeUpMembers();
 
@@ -1414,7 +1418,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await withTimeZoneAsync("Pacific/Auckland", () =>
       checkAgeUpMembers(),
@@ -1465,7 +1469,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await withTimeZoneAsync("Pacific/Auckland", () =>
       checkAgeUpMembers(),
@@ -1522,7 +1526,7 @@ describe("checkAgeUpMembers", () => {
     mockedEmailLogFind.mockResolvedValue(null);
     mockedUpdate.mockResolvedValue({} as any);
     mockedCreateToken.mockResolvedValue({} as any);
-    mockedSendEmail.mockResolvedValue(undefined);
+    mockedSendEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await checkAgeUpMembers();
 
@@ -1606,5 +1610,162 @@ describe("sendAgeUpInvitationEmail", () => {
   it("should be importable and callable", async () => {
     // Verify the function exists and accepts the right params
     expect(typeof sendAgeUpInvitationEmail).toBe("function");
+  });
+});
+
+// --- #3035 (ENV-SAFETY 2): a withheld invitation must not leave a stranded adult
+//
+// THE SHAPE OF THE DEFECT. By the time this cron calls the mailer it has already
+// committed the tier flip, granted `canLogin`, cleared the member's inherited
+// mailbox and minted a single-use invitation token. `sendEmail` RETURNS rather
+// than throws when it withholds, so the `catch`-block rollback never fired and
+// `upgradeResult = null` disarmed it unconditionally.
+//
+// And the harm is PERMANENT, not merely a missed run: the `alreadySent` guard
+// only matches SENT/QUEUED EmailLog rows so it does not block a retry, but the
+// transaction's own re-check sees `canLogin: true` and `ageTier: "ADULT"` and
+// returns null — so every later run counts the member as skipped. They have a
+// login they were never told about, and the reset token expires in a week.
+describe("checkAgeUpMembers environment-safety withholds (#3035)", () => {
+  function agingYouth() {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "youth@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: null,
+        inheritEmailFrom: null,
+      },
+    ] as any);
+    mockedEmailLogFind.mockResolvedValue(null);
+    mockedUpdate.mockResolvedValue({} as any);
+    mockedCreateToken.mockResolvedValue({} as any);
+  }
+
+  /** The compensating age-DOWN write, if the cron made one. */
+  function rollbackWrite() {
+    return mockTxMemberUpdateMany.mock.calls.find(
+      (call) =>
+        (call[0] as { data?: { canLogin?: unknown } }).data?.canLogin === false,
+    );
+  }
+
+  it("rolls the upgrade back when the installation's role is unknown", async () => {
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()?.[0]).toEqual(
+      expect.objectContaining({
+        where: { id: "m1", canLogin: true, ageTier: "ADULT" },
+        data: expect.objectContaining({ canLogin: false, ageTier: "YOUTH" }),
+      }),
+    );
+    // The minted invitation token goes with it — an unusable password-reset token
+    // must not sit in the table for a week.
+    expect(mockTxTokenDeleteMany).toHaveBeenCalled();
+    expect(result.upgraded).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  it("rolls the upgrade back when the live site declares a capture mailbox", async () => {
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("capture_transport_in_production"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()).toBeDefined();
+    expect(result.failed).toBe(1);
+  });
+
+  it("KEEPS the upgrade on a confirmed copy, so a copy does not age one member up and down forever", async () => {
+    /*
+      Terminal rather than a fault: a copy is a copy until somebody re-declares
+      it. Rolling back there would have a staging box flip the same member up and
+      down on every run, writing a new counted SKIPPED_NON_PRODUCTION row each
+      pass — the number that tells a live club wrongly declared a copy from an
+      idle one (owner decision 1, 23 Aug 2026).
+    */
+    agingYouth();
+    mockedSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(rollbackWrite()).toBeUndefined();
+    expect(result.upgraded).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  it("does not write the handoff audit row when the handoff email was withheld", async () => {
+    /*
+      The audit row is the ONLY thing that stops the handoff being attempted
+      again — `hasAgeUpParentEmailHandoffAudit` reads it — so writing it for a
+      message that never went out closes the door on ever asking the parent for
+      this member's own address.
+    */
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "shared@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: "p1",
+        inheritEmailFrom: {
+          id: "p1",
+          email: "shared@example.com",
+          firstName: "Pat",
+          lastName: "Smith",
+        },
+      },
+    ] as any);
+    mockedAuditLogFind.mockResolvedValue(null);
+    mockedSendHandoffEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await checkAgeUpMembers();
+
+    expect(mockedAuditLogCreate).not.toHaveBeenCalled();
+    expect(result.handoff).toBe(0);
+    expect(result.failed).toBe(1);
+    // No login was granted either: the handoff branch returns before the upgrade.
+    expect(mockedUpdate).not.toHaveBeenCalled();
+  });
+
+  it("DOES write the handoff audit row on a confirmed copy, so a copy stops re-attempting it", async () => {
+    mockedFindMany.mockResolvedValue([
+      {
+        id: "m1",
+        email: "shared@example.com",
+        firstName: "Alice",
+        lastName: "Smith",
+        dateOfBirth: dobForAge(18),
+        inheritEmailFromId: "p1",
+        inheritEmailFrom: {
+          id: "p1",
+          email: "shared@example.com",
+          firstName: "Pat",
+          lastName: "Smith",
+        },
+      },
+    ] as any);
+    mockedAuditLogFind.mockResolvedValue(null);
+    mockedSendHandoffEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    await checkAgeUpMembers();
+
+    expect(mockedAuditLogCreate).toHaveBeenCalled();
   });
 });

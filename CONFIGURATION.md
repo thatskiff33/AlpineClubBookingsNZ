@@ -1238,6 +1238,7 @@ test/demo mode or disabled:
 
 | Variable                | Description                                                      |
 | ----------------------- | ---------------------------------------------------------------- |
+| `APP_ENVIRONMENT_ROLE`  | **Required.** Whether this installation is the club's live site or a copy: exactly `production` or `non-production`. Nothing is inferred; see "Environment Role" below and [`docs/guides/environment-role.md`](docs/guides/environment-role.md). |
 | `DATABASE_URL`          | PostgreSQL connection string used by Prisma.                     |
 | `DB_PASSWORD`           | PostgreSQL password used by Docker Compose.                      |
 | `AUTH_SECRET`           | Auth.js session secret. Also the root of 2FA-secret and in-app provider-credential encryption (#2079) — use a strong value (>= 32 chars); rotating it is a planned maintenance event (see `DEPLOYMENT.md`). |
@@ -1886,10 +1887,114 @@ action; scoped admins cannot merge.
 | ~~`NEXT_PUBLIC_GA_MEASUREMENT_ID`~~ | **Removed as configuration (#2573).** The GA4 measurement id, the consent-banner mode and the banner wording now live **only** in the database, entered in-app at Admin → Integrations → Google Analytics. Nothing in the app reads the environment variable, there is no fallback to it, and its value is **not** imported automatically — so after deploying this release Google Analytics stays inactive until an authorised admin saves a valid measurement id in-app. Remove the variable from your environment. See the Google Analytics section below. |
 | ~~`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`~~ | **Removed as configuration (#2087).** Google OAuth credentials now live **only** in the encrypted `IntegrationCredential` store, entered and verified in-app (Admin → Integrations → Google sign-in). Any legacy `GOOGLE_CLIENT_*` env vars are **detected, warned about, and ignored** — re-enter the credentials in the wizard, then remove the env vars. This reverses the earlier #2035 "bootstrap-class secret, never in the DB" posture by owner decision (epic #2078). See the Google sign-in section below. |
 | `LOG_LEVEL`                        | Pino log level such as `debug`, `info`, `warn`, `error`, or `fatal`.                                 |
-| `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose.                               |
+| `APP_ENVIRONMENT_ROLE`             | **Required, and the only authority for whether this installation is the club's live site.** Exactly `production` or `non-production`. See "Environment Role" below — and note it is **not** `APP_RUNTIME_ROLE` on the next line. |
+| `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
 | `npm_package_version`              | Package version exposed by npm scripts.                                                              |
+
+## Environment Role
+
+**Is this installation the club's live site, or a copy of it?** One environment
+variable answers that, and nothing else does:
+
+```
+APP_ENVIRONMENT_ROLE=production      # the club's live site
+APP_ENVIRONMENT_ROLE=non-production  # a staging site, a copy, a developer's checkout
+```
+
+It matters because a copy restored from the live database holds the club's real
+members and their real email addresses. Anything that leaves this application —
+an email to a member, an invoice written into the club's Xero organisation — has
+to know which installation it is running on before it goes out.
+
+**Nothing is inferred, deliberately** (`INV-CONFIG-003`). Not `NODE_ENV`, which
+is a build mode — a staging container runs a production build, so `NODE_ENV` says
+`production` there too. Not the hostname, the branch, the URL or the
+`DATABASE_URL`, because a restored copy looks identical to the site it was copied
+from. And **not `APP_RUNTIME_ROLE`**, which names which container slot this is
+(`web-blue`, `cron-leader`, `staging`) and is a deployment naming convention.
+Every one of those is right until somebody stands up a copy that breaks the
+convention, and that is precisely the day it matters.
+
+### The three states
+
+| Effective role | When | What it means |
+| --- | --- | --- |
+| `PRODUCTION` | `APP_ENVIRONMENT_ROLE=production` and the safer override is off | Ordinary live behaviour. |
+| `NON_PRODUCTION` | `APP_ENVIRONMENT_ROLE=non-production`, **or** an administrator has switched the safer override on | Treated as a copy. |
+| `UNKNOWN` | The variable is unset, or holds anything other than those two words | **Not production, and not confirmed non-production either.** Anything whose safety depends on knowing which installation this is is held back until it is declared. |
+
+A near miss — `prod`, `staging`, `true`, `non_production` — is **refused**, not
+guessed at, because guessing is how a typo silently becomes "production". The
+refused value is shown back to you on the setup checklist and at
+**Admin → Setup & Configuration → Environment Safety** (`/admin/environment`) so
+you can see the typo.
+
+### The safer override
+
+A Full Administrator can force an installation to be treated as a copy at
+`/admin/environment`, whatever the deployment says. It is stored in the database
+(`EnvironmentSafetySettings`), and it can only ever move the answer **towards**
+non-production — the table has no column in which "this is production" could be
+expressed, so a restored production dump cannot carry a production claim into a
+copy. Switching the override **off** is not an elevation: the deployment
+declaration decides again, so an undeclared installation goes back to `UNKNOWN`
+rather than becoming the live site. Both directions are Full-Admin-only and
+audited (`ENVIRONMENT_SAFETY_OVERRIDE_UPDATED`).
+
+### Upgrading an existing production installation
+
+An installation that predates this release has no declaration, so it would
+resolve `UNKNOWN`. Four things stop that becoming a silent outage:
+
+1. **The production deploy refuses to run without it, and refuses the wrong
+   value too.** `scripts/run-production-blue-green-deploy.sh` validates the `.env`
+   entry at **step 3 of 20** — before the migration (step 13), before the new
+   release's first process starts (step 14) and long before the Caddy cutover
+   (step 17). It requires **exactly `production`**, which is narrower than the
+   application parser on purpose: that script deploys the club's live site and
+   nothing else, so a `.env` saying `non-production` is the one value it can prove
+   is wrong. `.env.example` ships `non-production` (right for a local checkout,
+   wrong for a live deployment) and is also the file operators diff against their
+   real `.env` when upgrading, so copying that value across is the likeliest
+   error — and it would produce a live site holding back member email and, once
+   Xero containment lands, rewriting the club's real contact addresses. Either
+   mistake aborts with the old release still serving and nothing changed.
+2. **The deploy also asks each container what IT got, not only what the file
+   says.** Those are different questions. The step-3 check reads `.env`; Docker
+   Compose prefers a value set in the invoking shell over the env file, and takes
+   the last of any duplicate assignments rather than the first. So at **step 14**
+   — new colour started, old colour still serving every request — the deploy
+   asks **the running application** (`GET /api/deploy/runtime-status`, from inside
+   the container) which declaration it read, and aborts before the cutover if any
+   container answers anything other than `production`. Asking the application
+   rather than re-parsing the container's environment is deliberate: a second
+   implementation of the rule is a second thing that can drift from the first, and
+   this is the check that has to hold when the file check does not. It checks the
+   *declaration*, not the effective role, so a production deployment whose
+   administrator has switched the safer override on still deploys normally.
+3. **The app says so loudly.** A boot with an unresolved role logs an error
+   explaining the specific cause — an absent declaration and an unreadable
+   override are different faults with different repairs — and the setup
+   checklist's **Production Or Non-Production** step reports `blocked` with the
+   repair. A boot that resolves non-production says that too, at info level, and
+   names which source decided it.
+4. **Confirm the answer after the deploy, from the message rather than the
+   tick.** On `/admin/setup` the **Production Or Non-Production** step must read
+   *production*. A non-production installation shows a green tick there too, since
+   both are validly configured states and the checklist cannot know which one this
+   installation is meant to be — so the tick means "answered", and the message
+   means "which answer".
+
+For a deployment brought up by hand rather than through the deploy script, set
+`APP_ENVIRONMENT_ROLE` in the Compose `.env` before starting the app. The base
+`docker-compose.yml` passes it through with **no default** on purpose: a default
+would be exactly the silent inference this design removes.
+`docker-compose.staging.yml` hard-codes `non-production`, so a staging or E2E
+stack is never blocked on it.
+
+Full operator walkthrough: [`docs/guides/environment-role.md`](docs/guides/environment-role.md).
 
 ## Module Controls And Admin Modules
 
@@ -2465,15 +2570,17 @@ read `MemberAccessRole` rows.
 | Variable                                 | Description                                                                                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `USE_AWS_SES`                            | Boolean toggle (`true`/`false`) to use AWS SES SMTP credentials.                                                                                             |
-| `USE_SMTP_RELAY`                         | Boolean toggle (`true`/`false`) to use an external SMTP relay. Exactly one provider flag should be `true` (legacy default is AWS SES when both are omitted). |
+| `USE_SMTP_RELAY`                         | Boolean toggle (`true`/`false`) to use an external SMTP relay. Exactly one provider flag may be `true` (legacy default is AWS SES when all three are omitted). |
+| `USE_LOCAL_CAPTURE`                      | Boolean toggle (`true`/`false`) declaring that the SMTP relay below is a **capture mailbox** that forwards mail nowhere (mailpit, MailHog, a developer's sink). It reads the same four `EMAIL_SERVER_*` settings as `USE_SMTP_RELAY`; only the declaration differs, and nothing is ever inferred from the host name. Its purpose is that a confirmed **non-production** installation may transmit into a capture instead of suppressing every send (ENV-SAFETY 2, #3035 — `INV-CONFIG-004`), which is how the browser suite reads its own mail back. **Leave it `false` on the club's live site:** an installation declaring `APP_ENVIRONMENT_ROLE=production` *and* `USE_LOCAL_CAPTURE=true` is refused, because a live site in capture mode would accept every message and deliver none. It also does NOT cover invoice emails, which the accounting provider sends from its own servers to the member's real address. **On a developer's laptop this is what makes local email work at all:** with `.env.example`'s shipped values (`APP_ENVIRONMENT_ROLE=non-production`, all three provider flags false) every send is held back and the "Email sent (dev mode)" log line never appears — run a capture mailbox, point `EMAIL_SERVER_*` at it, and set this `true`. |
 | `SMTP_HOST`                              | SMTP host for AWS SES SMTP mode (defaults to `email-smtp.ap-southeast-2.amazonaws.com` when unset).                                                          |
 | `SMTP_PORT`                              | SMTP port for AWS SES SMTP mode (defaults to `587` when unset).                                                                                              |
 | `AWS_SES_ACCESS_KEY_ID`                  | SES SMTP/API access key (required when `USE_AWS_SES=true`).                                                                                                  |
 | `AWS_SES_SECRET_ACCESS_KEY`              | SES SMTP/API secret key (required when `USE_AWS_SES=true`).                                                                                                  |
-| `EMAIL_SERVER_HOST`                      | SMTP relay host (required when `USE_SMTP_RELAY=true`).                                                                                                       |
-| `EMAIL_SERVER_PORT`                      | SMTP relay port (required when `USE_SMTP_RELAY=true`).                                                                                                       |
-| `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true`).                                                                                                   |
-| `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true`).                                                                                                   |
+| `EMAIL_SERVER_HOST`                      | SMTP relay host (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                            |
+| `EMAIL_SERVER_PORT`                      | SMTP relay port (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                            |
+| `EMAIL_SERVER_USER`                      | SMTP relay username (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
+| `EMAIL_SERVER_PASSWORD`                  | SMTP relay password (required when `USE_SMTP_RELAY=true` or `USE_LOCAL_CAPTURE=true`).                                                                        |
+| `EMAIL_CAPTURE_ALLOW_PUBLIC_HOST`        | Boolean toggle (`true`/`false`, default `false`). Allows `USE_LOCAL_CAPTURE=true` when `EMAIL_SERVER_HOST` names a host on the **public internet**, which is otherwise **refused** with every send held back (#3071 review). The refusal exists because that combination was a live defect: an installation already running `USE_SMTP_RELAY` against a real relay, told to "set `USE_LOCAL_CAPTURE=true`", flipped the one flag and kept its live relay host — so a copy emailed the club's real members while the log recorded that the message reached nobody. Accepted **without** this flag: a container or service name (`mailpit`, `mailhog`), `localhost`, any loopback/RFC1918/CGNAT/link-local/unique-local address, and the reserved suffixes `.local`, `.internal`, `.home.arpa`, `.test`, `.invalid`, `.example`. Set this `true` only for a sink that genuinely forwards nothing but has a public name — **nothing verifies that, and nothing can**: a mail server on a private address can relay outward too, so the declaration is what carries it. |
 | `EMAIL_FROM`                             | Envelope / Return-Path sender address (bootstrap; must be a provider-verified SES address in production). The ONLY email-identity env var besides transport secrets — from display name, support address, and contact-form recipient are admin-managed DB-first (Admin > Email Messages). |
 | `SES_SNS_TOPIC_ARN`                      | SNS topic ARN for SES bounce/complaint webhooks (required for full SES feedback handling when `USE_AWS_SES=true`).                                           |
 | `SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN` | Local/dev escape hatch only; never enable for deployed SES feedback ingestion.                                                                               |
