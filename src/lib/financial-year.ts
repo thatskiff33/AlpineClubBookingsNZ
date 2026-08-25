@@ -94,12 +94,28 @@ export function setFinancialYearEndMonth(month: number): void {
 }
 
 /**
- * The 1-based calendar month in which the membership season starts (the month
- * after the year-end month). For a March year-end this is April (4); for a
- * December year-end it is January (1).
+ * The 1-based calendar month a membership season starts in, for an EXPLICIT
+ * year-end month - the month after it. For a March year-end that is April (4);
+ * for a December year-end it is January (1), which is why a December club's
+ * season is one calendar year rather than two.
+ *
+ * THE ONE HOME FOR THAT ROLLOVER. It was written out twice - here and inside
+ * {@link seasonYearOfCalendarDate} - and the season LABEL
+ * (`@/lib/season-label`) needs it a third time, for a year-end its caller holds
+ * rather than the cached one. Three copies of a one-line modular step is the
+ * drift class this epic exists to remove, so it is a function.
+ */
+export function seasonStartMonthOf(yearEndMonth: number): number {
+  return (normalizeYearEndMonth(yearEndMonth) % 12) + 1;
+}
+
+/**
+ * The 1-based calendar month in which the membership season starts, for the
+ * club's CONFIGURED year-end. A cache accessor, so it takes no override; every
+ * DERIVATION in this module takes one.
  */
 export function getSeasonStartMonth(): number {
-  return (getFinancialYearEndMonth() % 12) + 1;
+  return seasonStartMonthOf(getFinancialYearEndMonth());
 }
 
 /**
@@ -118,7 +134,7 @@ export function seasonYearOfCalendarDate(
   date: CalendarDate,
   yearEndMonth: number = getFinancialYearEndMonth(),
 ): number {
-  const startMonth = (normalizeYearEndMonth(yearEndMonth) % 12) + 1;
+  const startMonth = seasonStartMonthOf(yearEndMonth);
   const { year, month } = calendarDateParts(date);
   return month >= startMonth ? year : year - 1;
 }

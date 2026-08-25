@@ -20,6 +20,7 @@ import {
   formatClubLongWeekdayDate,
   formatClubLongWeekdayDayMonth,
   formatClubMonthYear,
+  formatClubShortMonth,
   formatClubShortMonthYear,
   formatClubWeekday,
   formatClubWeekdayDate,
@@ -134,13 +135,21 @@ describe("the six shapes are byte-identical to the helpers they replace", () => 
   });
 });
 
-describe("the four shapes CT-4 added, and the local formatters they retire", () => {
+describe("the five shapes CT-4 added, and the local formatters four of them retire", () => {
   /*
-    EACH ONE EXISTED AS A LOCAL `Intl.DateTimeFormat` FIRST, with a comment saying
-    the kernel had no such shape. So the strongest evidence available is the same
-    as for the six originals: the old options written out BY HAND here — not
-    imported, which would compare the kernel with itself — and swept over 400
-    consecutive days that cross both New Zealand transitions and a leap year.
+    FOUR OF THE FIVE EXISTED AS A LOCAL `Intl.DateTimeFormat` FIRST, with a
+    comment saying the kernel had no such shape. So the strongest evidence
+    available is the same as for the six originals: the old options written out BY
+    HAND here — not imported, which would compare the kernel with itself — and
+    swept over 400 consecutive days that cross both New Zealand transitions and a
+    leap year.
+
+    `shortMonth` IS THE EXCEPTION AND THE COMPARISON MEANS SOMETHING WEAKER FOR
+    IT. It retired a hard-coded `"(Apr-Mar)"` STRING on the subscriptions page
+    rather than a local formatter, so there is no shipped `Intl` spelling to
+    compare against — only the options the shape declares. Its sweep therefore
+    pins that a bare `{ month: "short" }` under a `"UTC"` pin is what it renders,
+    which is what stops it drifting into a sliced `shortMonthYear` later.
 
     Every one is a CALENDAR-DATE shape, so the comparison feeds the old formatter
     the UTC-midnight encoding under a `"UTC"` pin, which is what the call sites
@@ -163,10 +172,16 @@ describe("the four shapes CT-4 added, and the local formatters they retire", () 
     const oldShortMonthYear = pinnedUtc({ month: "short", year: "numeric" });
     // the calendar subsystem's recurrence labels.
     const oldLongWeekday = pinnedUtc({ weekday: "long" });
+    // the membership season label — no shipped formatter to compare against, so
+    // this pins the declared shape rather than reproducing a retired one.
+    const oldShortMonth = pinnedUtc({ month: "short" });
 
     let date = cd("2026-01-01");
     for (let step = 0; step < 400; step += 1) {
       const encoded = new Date(`${date}T00:00:00.000Z`);
+      expect(formatClubShortMonth(date), date).toBe(
+        oldShortMonth.format(encoded),
+      );
       expect(formatClubLongWeekdayDate(date), date).toBe(
         oldLongWeekdayDate.format(encoded),
       );
@@ -186,14 +201,20 @@ describe("the four shapes CT-4 added, and the local formatters they retire", () 
     expect(formatClubDayMonth(cd("2026-04-16"))).toBe("16 Apr");
     expect(formatClubShortMonthYear(cd("2026-04-16"))).toBe("Apr 2026");
     expect(formatClubLongWeekday(cd("2026-04-16"))).toBe("Thursday");
+    expect(formatClubShortMonth(cd("2026-04-16"))).toBe("Apr");
+    // en-NZ abbreviates September to FOUR characters while every other month
+    // takes three, so a shape or a consumer that assumed a fixed width is wrong
+    // here and nowhere else. `season-label.test.ts` carries the label-width half.
+    expect(formatClubShortMonth(cd("2026-09-16"))).toBe("Sept");
   });
 
-  it("the sweep is not vacuous: all four shapes really differ", () => {
+  it("the sweep is not vacuous: all five shapes really differ", () => {
     /*
-      Four equalities pass perfectly if the four shapes are the same shape. They
+      Five equalities pass perfectly if the five shapes are the same shape. They
       must also differ from the SIX that already existed, because a new shape that
       silently duplicated `longWeekdayDayMonth` or `monthYear` would satisfy every
-      assertion above while adding nothing.
+      assertion above while adding nothing. `shortMonth` is the one most at risk
+      of that: a sliced `shortMonthYear` is a month name too.
     */
     const day = cd("2026-04-16");
     const rendered = [
@@ -201,6 +222,7 @@ describe("the four shapes CT-4 added, and the local formatters they retire", () 
       formatClubDayMonth(day),
       formatClubShortMonthYear(day),
       formatClubLongWeekday(day),
+      formatClubShortMonth(day),
       formatClubDate(day),
       formatClubLongDate(day),
       formatClubMonthYear(day),
@@ -249,6 +271,7 @@ describe("the four shapes CT-4 added, and the local formatters they retire", () 
         formatClubDayMonth(cd("2026-04-16")),
         formatClubShortMonthYear(cd("2026-04-16")),
         formatClubLongWeekday(cd("2026-04-16")),
+        formatClubShortMonth(cd("2026-04-16")),
       ]);
     expect(answersIn("UTC")).toEqual(answersIn("America/Los_Angeles"));
     expect(answersIn("UTC")).toEqual([
@@ -256,18 +279,29 @@ describe("the four shapes CT-4 added, and the local formatters they retire", () 
       "16 Apr",
       "Apr 2026",
       "Thursday",
+      "Apr",
     ]);
   });
 
   it("survives a day a club zone would have moved", () => {
     // 2026-04-05 ends NZDT, 2026-03-08 is Havana's midnight jump, 2028-02-29 is a
     // leap day. A shape that secretly projected through a zone would slip on one.
+    // `shortMonth` is the shape with the least to hold on to — no year and no day
+    // to check — so its expectation is spelled out per day, and 2026-09-27 is the
+    // four-character month at the same time.
+    const expectedShortMonth: Record<string, string> = {
+      "2026-03-08": "Mar",
+      "2026-04-05": "Apr",
+      "2026-09-27": "Sept",
+      "2028-02-29": "Feb",
+    };
     for (const day of ["2026-03-08", "2026-04-05", "2026-09-27", "2028-02-29"]) {
       expect(formatClubLongWeekdayDate(cd(day)), day).toContain(day.slice(0, 4));
       expect(formatClubDayMonth(cd(day)), day).toContain(
         String(Number(day.slice(8, 10))),
       );
       expect(formatClubShortMonthYear(cd(day)), day).toContain(day.slice(0, 4));
+      expect(formatClubShortMonth(cd(day)), day).toBe(expectedShortMonth[day]);
     }
   });
 });
