@@ -166,6 +166,36 @@ shows a PASS with a date. The rehearsal runs the same wave migrations against a
 staging copy of live data; it is the evidence that the migrate step behaves on
 your data shape.
 
+### 1.6 Declare that this deployment is the live site (#3034)
+
+Add this line to the production `.env` **before** you start, or the deploy aborts
+in its own preflight at step 3 of 20:
+
+```
+APP_ENVIRONMENT_ROLE=production
+```
+
+**Exactly one such line.** The usual `.env` shapes are all accepted — an
+`export ` prefix, spaces around the `=`, quotes round the value, a leading indent
+— but a SECOND line assigning the same key is refused, in any of those shapes,
+because Docker Compose would use the last one and you would not know which you
+had deployed. Search the file rather than trusting the top of it.
+
+Also make sure nothing has exported `APP_ENVIRONMENT_ROLE` into the shell you will
+run the deploy from (`unset APP_ENVIRONMENT_ROLE` if in doubt): Compose prefers
+the shell's value over the file's, and the deploy refuses when the two disagree.
+
+An abort here is safe by design: the previous release is still serving, nothing
+has been migrated and nothing has been switched. Fix the line and run the deploy
+again. It is refused rather than defaulted because from this release on an
+installation that has not declared itself resolves UNKNOWN and holds back member
+email and Xero writes — see `docs/UPGRADING.md` and
+`docs/guides/environment-role.md`.
+
+On a **staging rehearsal** the value is `non-production`;
+`docker-compose.staging.yml` already hard-codes it, so a rehearsal on that stack
+needs nothing.
+
 ---
 
 ## 2. Migrate
@@ -807,6 +837,20 @@ capture), after confirming provider/setup readiness for each:
 
 Saving the module page stamps `updatedByMemberId`, so this reset is a one-time
 event, not a recurring one.
+
+### 3.1a Confirm the environment role reads *production* (#3034)
+
+Open **Admin > Setup** and read the **Production Or Non-Production** step. It
+must say **production**, and **read the message rather than the tick**: a
+*non-production* installation also shows a green tick there, because both are
+validly configured states and the checklist cannot know which one this
+installation is meant to be. The tick means "answered"; the message means "which
+answer". **Admin > Setup & Configuration > Environment Safety**
+(`/admin/environment`) says the same in more detail.
+
+If it says anything else, member email and writes into the club's Xero
+organisation are being held back. Fix `APP_ENVIRONMENT_ROLE` in the production
+`.env` and restart.
 
 ### 3.2 Re-run the bed-allocation audit category backfill
 

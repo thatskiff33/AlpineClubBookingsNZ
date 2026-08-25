@@ -259,6 +259,10 @@ import {
 import { HostingCoverageParticipantRetryError } from "@/lib/adult-member-hosting-queue-participants";
 import { reconcileBedAllocationsForBookingWithGlobalLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
+import {
+  EMAIL_SENT,
+  emailWithheldForEnvironment,
+} from "@/lib/__tests__/helpers/email-outcomes";
 
 const mockedModuleEnabled = vi.mocked(isEffectiveModuleEnabled);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
@@ -606,7 +610,7 @@ describe("sendBookingRequestQuote", () => {
 
   it("reports emailDelivered true when the quote email sends", async () => {
     mockDraftQuoteForSend();
-    mockSendQuoteEmail.mockResolvedValue(undefined);
+    mockSendQuoteEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await sendBookingRequestQuote({
       requestId: "req-1",
@@ -614,6 +618,40 @@ describe("sendBookingRequestQuote", () => {
     });
 
     expect(result.emailDelivered).toBe(true);
+  });
+
+  // #3035 (ENV-SAFETY 2): the mailer RETURNS rather than throws when it
+  // withholds, so this used to report `emailDelivered: true` and write an audit
+  // row reading "Booking request quote sent" for a quote the requester has never
+  // seen — while its response token sat live in the database.
+  it("reports emailDelivered false when the environment boundary held the quote back", async () => {
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result.emailDelivered).toBe(false);
+  });
+
+  it("reports emailDelivered false on a confirmed copy too", async () => {
+    // Terminal for that installation, and still not a delivery. A copy telling an
+    // officer the quote went out is the same false statement.
+    mockDraftQuoteForSend();
+    mockSendQuoteEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    const result = await sendBookingRequestQuote({
+      requestId: "req-1",
+      adminMemberId: "admin-1",
+    });
+
+    expect(result.emailDelivered).toBe(false);
   });
 
   it("threads a mapped owner contact through the auto-hold placed on send (#1255)", async () => {
@@ -667,7 +705,7 @@ describe("sendBookingRequestQuote", () => {
       guests: [],
     } as never);
     vi.mocked(prisma.bookingRequest.update).mockResolvedValue({} as never);
-    mockSendQuoteEmail.mockResolvedValue(undefined);
+    mockSendQuoteEmail.mockResolvedValue(EMAIL_SENT);
 
     await sendBookingRequestQuote({
       requestId: "req-1",
@@ -700,7 +738,7 @@ describe("sendBookingRequestQuote", () => {
 
   it("applies the admin-configured response window and resets the reminder flag", async () => {
     mockDraftQuoteForSend();
-    mockSendQuoteEmail.mockResolvedValue(undefined);
+    mockSendQuoteEmail.mockResolvedValue(EMAIL_SENT);
     mocks.mockGetSettings.mockResolvedValue({
       showPricingToNonMembers: false,
       quoteResponseTtlDays: 7,
@@ -814,7 +852,7 @@ describe("sendBookingRequestQuote", () => {
 
   it("still sends when the request is in a live quoteable state (#1504 happy path)", async () => {
     mockDraftQuoteForSend();
-    mockSendQuoteEmail.mockResolvedValue(undefined);
+    mockSendQuoteEmail.mockResolvedValue(EMAIL_SENT);
 
     const result = await sendBookingRequestQuote({
       requestId: "req-1",

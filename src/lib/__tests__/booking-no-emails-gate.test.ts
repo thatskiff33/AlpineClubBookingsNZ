@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 /**
  * Per-booking "No emails" switch — the MAILER GATE (#2258, owner decision D10).
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: { create: mocks.emailLogCreate, update: mocks.emailLogUpdate },
     booking: { findUnique: mocks.bookingFindUnique },
   },
@@ -61,6 +63,9 @@ vi.mock("@/lib/email/internal", () => ({
     modeLabel: "test",
   }),
   shouldPersistEmailHtml: () => true,
+  // #3035: `sendEmail` names which transport carried a delivered message
+  // through this helper, so a factory that omits it dies at import.
+  logDeliveredTransport: () => {},
 }));
 
 import {
@@ -93,6 +98,20 @@ beforeEach(() => {
   // fails confusingly.
   __resetFailClosedAlertThrottle();
   vi.stubEnv("NODE_ENV", "production");
+});
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
 });
 
 describe('sendEmail gate: booking "No emails" switch on', () => {

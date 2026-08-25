@@ -25,6 +25,11 @@ const mocks = vi.hoisted(() => ({
   upsertXeroObjectLink: vi.fn(),
   syncManagedXeroContactGroupForMember: vi.fn(),
   recordProviderCreatedContactPendingLocalLink: vi.fn(),
+  environmentSafetySettingsFindUnique: vi.fn(),
+  containmentFindUnique: vi.fn(),
+  containmentUpsert: vi.fn(),
+  getContact: vi.fn(),
+  updateContact: vi.fn(),
 }));
 
 vi.mock("@/lib/xero-contact-create-recovery", async (importOriginal) => {
@@ -41,6 +46,17 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: mocks.memberFindUnique },
     $transaction: mocks.transaction,
+    // #3034/#3036: a MISSING delegate here is an UNREADABLE override, which
+    // resolves UNKNOWN and makes #3036 refuse every Xero contact write — so the
+    // payload-hygiene assertions below would never be reached. Inline, because
+    // `vi.mock` factories hoist above this file's imports.
+    environmentSafetySettings: {
+      findUnique: mocks.environmentSafetySettingsFindUnique,
+    },
+    xeroSandboxContactContainment: {
+      findUnique: mocks.containmentFindUnique,
+      upsert: mocks.containmentUpsert,
+    },
   },
 }));
 
@@ -82,6 +98,14 @@ import {
 } from "@/lib/xero-contacts";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import {
+  declareEnvironmentRole,
+  expectEnvironmentRolePremise,
+} from "@/lib/__tests__/helpers/environment-role";
+import {
+  toXeroSandboxContactEmail,
+  xeroSandboxContainmentTarget,
+} from "@/lib/xero-sandbox-contact-email";
+import {
   ambiguousMemberContactCreateReservationWhere,
   XeroContactCreateInProgressError,
 } from "@/lib/xero-contact-create-recovery";
@@ -114,7 +138,15 @@ const SPARSE_MEMBER = {
 function primeHappyPath(member: Record<string, unknown>) {
   mocks.memberFindUnique.mockResolvedValue({ ...member });
   mocks.getAuthenticatedXeroClient.mockResolvedValue({
-    xero: { accountingApi: { createContacts: mocks.createContacts } },
+    xero: {
+      accountingApi: {
+        createContacts: mocks.createContacts,
+        // #3036: containment reads the created contact back before it records
+        // that the contact can no longer reach a member.
+        getContact: mocks.getContact,
+        updateContact: mocks.updateContact,
+      },
+    },
     tenantId: "tenant-1",
   });
   mocks.createContacts.mockResolvedValue({
@@ -133,6 +165,10 @@ function primeHappyPath(member: Record<string, unknown>) {
     async (_strings: TemplateStringsArray, memberId: string) => [{ id: memberId }],
   );
   mocks.txMemberUpdate.mockResolvedValue({ id: member.id });
+  mocks.getContact.mockResolvedValue({
+    body: { contacts: [{ contactID: "contact-new", emailAddress: "" }] },
+  });
+  mocks.updateContact.mockResolvedValue({ body: {} });
   mocks.transaction.mockImplementation(
     async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
@@ -162,9 +198,82 @@ function sentContact() {
 describe("createXeroContactForMember payload hygiene (#2089)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The club's LIVE site: #3036's containment is a no-op, so the payload this
+    // suite inspects is byte-for-byte the payload it always inspected.
+    declareEnvironmentRole("production");
+    mocks.environmentSafetySettingsFindUnique.mockResolvedValue(null);
+    mocks.containmentFindUnique.mockResolvedValue(null);
+    mocks.containmentUpsert.mockResolvedValue({});
+  });
+
+  it("on a COPY it sends the contained address and records the proof (#3036)", async () => {
+    // `createXeroContactForMember` is the admin "push this member to Xero"
+    // entry point and does not go through the funnel, so it needs its own proof
+    // that INV-CONFIG-005 covers it.
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    primeHappyPath(SPARSE_MEMBER);
+    mocks.getContact.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact-new",
+            emailAddress: toXeroSandboxContactEmail("alice@example.org"),
+          },
+        ],
+      },
+    });
+
+    await expect(createXeroContactForMember("member-1")).resolves.toBe(
+      "contact-new",
+    );
+
+    const [, payload] = mocks.createContacts.mock.calls[0];
+    expect(payload.contacts[0].emailAddress).toBe(
+      toXeroSandboxContactEmail("alice@example.org"),
+    );
+    expect(payload.contacts[0].emailAddress).not.toContain("alice@example.org");
+    expect(mocks.getContact).toHaveBeenCalledWith("tenant-1", "contact-new");
+    expect(mocks.updateContact).not.toHaveBeenCalled();
+    expect(mocks.containmentUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { xeroContactId: "contact-new" },
+        create: {
+          xeroContactId: "contact-new",
+          containedEmail: xeroSandboxContainmentTarget("alice@example.org"),
+          // The contact was created carrying the contained address, so nothing
+          // deliverable was overwritten and there is no rewrite to date.
+          rewroteAddress: false,
+          rewrittenAt: null,
+        },
+      }),
+    );
+  });
+
+  it("reports created-and-linked when the containment proof fails afterwards (#3036)", async () => {
+    /*
+      The contact EXISTS and is LINKED by the time containment runs, so a bare
+      error would tell the operator nothing was recorded and leave them pressing
+      Create again — which the reservation refuses for an already-linked member.
+      The partial-success phase carries the created contact id instead, and the
+      route renders it as created-and-linked with post-processing pending, which
+      is exactly what is true. It still FAILS rather than proceeding.
+    */
+    declareEnvironmentRole("non-production");
+    await expectEnvironmentRolePremise("NON_PRODUCTION");
+    primeHappyPath(SPARSE_MEMBER);
+    mocks.getContact.mockRejectedValue(new Error("503 from Xero"));
+
+    await expect(createXeroContactForMember("member-1")).rejects.toMatchObject({
+      name: "XeroContactCreatePartialSuccessError",
+      phase: "LOCAL_MEMBER_LINK_COMMITTED",
+      xeroContactId: "contact-new",
+    });
+    expect(mocks.containmentUpsert).not.toHaveBeenCalled();
   });
 
   it("creates a sparse member with no address blocks and no phone entry", async () => {
+    await expectEnvironmentRolePremise("PRODUCTION");
     primeHappyPath(SPARSE_MEMBER);
 
     const result = await createXeroContactForMember("member-1");

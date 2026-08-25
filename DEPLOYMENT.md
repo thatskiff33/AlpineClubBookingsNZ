@@ -393,6 +393,24 @@ encryption variables.
 
 Minimum production categories:
 
+- Environment safety: `APP_ENVIRONMENT_ROLE` — set it to exactly `production` on
+  the club's live deployment (ENV-SAFETY 1, #3034). This is the deployment's own
+  declaration of whether it is the club's **live site** or a **copy** of it, and
+  nothing infers it: not `NODE_ENV`, not the hostname, not which database it is
+  pointed at. A deployment that does not declare itself resolves **UNKNOWN**, and
+  UNKNOWN fails closed — member email and writes into the club's Xero
+  organisation are held back until it is declared. A staging site, a rehearsal
+  after restoring a backup, or a developer's checkout uses
+  `APP_ENVIRONMENT_ROLE=non-production` instead; `docker-compose.staging.yml`
+  already hard-codes that for the staging and E2E stacks, so only a copy you have
+  brought up yourself needs the line by hand.
+  `scripts/run-production-blue-green-deploy.sh` refuses to run without exactly
+  `production` — at step 3 of 20, before the migration and long before the
+  cutover — so a live deployment cannot reach UNKNOWN through the supported path.
+  **It is not `APP_RUNTIME_ROLE`**, which sits beside it in the same Compose
+  environment, names which container *slot* a process is (`web-blue`,
+  `web-green`, `cron-leader`, `staging`), and is never read to decide whether
+  this is the live site. Full guide: `docs/guides/environment-role.md`.
 - Database: `DATABASE_URL`, `DB_PASSWORD`
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`.

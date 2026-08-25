@@ -66,6 +66,7 @@ a `GAP`, replace it with a relative link to that file (e.g.
 | `bookings-setup` | bookings | — | [guide](guides/bookings-setup.md) | 1 |
 | `chores` | lodge | — | [guide](guides/chores.md) | 3 |
 | `club-time` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-002`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/club-time.md) | — (CT-1 #2989, epic #2988; postdates #2050) |
+| `environment` | support (route map); **Full Admin** enforced in the routes | [`invariants/product-configuration.md`](invariants/product-configuration.md) (`INV-CONFIG-003`), [`CONFIGURATION.md`](../CONFIGURATION.md) | [guide](guides/environment-role.md) | — (ENV-SAFETY 1 #3034, epic #2986; postdates #2050) |
 | `committee` | membership | `ARCHITECTURE.md` (committee roles/assignments) | [guide](guides/committee.md) | 2 |
 | `communications` | membership | `src/lib/email-message-registry.ts` | [guide](guides/communications.md) | 4 |
 | `config-transfer` | support | `config-transfer/README.md` (planned feature) | [guide](guides/config-transfer.md) | 4 |

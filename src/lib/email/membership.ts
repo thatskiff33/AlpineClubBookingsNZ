@@ -404,7 +404,12 @@ export async function sendAgeUpInvitationEmail(
     context.targetAgeTierLabel?.trim() || "Adult (18+)";
   const targetAgeTierMinAge = context.targetAgeTierMinAge ?? 18;
 
-  await sendEmail({
+  // RETURNS the mailer's outcome (#3035). The age-up cron has already flipped the
+  // tier and minted the invitation token by the time it calls this, and a withheld
+  // send does not throw — so swallowing the outcome left a member an adult with a
+  // login and no invitation, permanently, because the cron's own re-check then
+  // skips them for good.
+  return sendEmail({
     to: email,
     subject: `You're now ${targetAgeTierLabel} — set up your ${CLUB_NAME} account`,
     html: await renderEmailHtml(() => ageUpInvitationTemplate(firstName, resetUrl, {
@@ -447,7 +452,10 @@ export async function sendAgeUpParentEmailHandoffEmail(
     .join(" ")
     .trim();
 
-  await sendEmail({
+  // RETURNS the mailer's outcome (#3035), for the same reason as the invitation
+  // above: its caller writes a "handoff sent" audit row that permanently stops the
+  // handoff being attempted again.
+  return sendEmail({
     to: email,
     subject: `Email address needed for ${memberName}'s ${CLUB_NAME} login`,
     html: await renderEmailHtml(() => ageUpParentEmailHandoffTemplate({

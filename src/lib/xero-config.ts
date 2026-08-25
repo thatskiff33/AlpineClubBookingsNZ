@@ -17,6 +17,7 @@ import {
   getIntegrationCredentialValue,
   resolveIntegrationCredential,
 } from "@/lib/integration-credentials";
+import { readEnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
 import { XERO_TOKEN_KEY_LABEL } from "@/lib/integration-crypto";
 
 function readEnv(name: string): string | undefined {
@@ -132,7 +133,14 @@ function xeroMockHarnessActive(): boolean {
   // Mirrors isXeroMockActive() (xero-mock-endpoint.ts) — duplicated here
   // because importing it would form the cycle xero-config -> xero-mock-endpoint
   // -> xero-token-store -> xero-config. Same double gate: env origin set AND
-  // not a real production runtime (production build with a non-staging role).
+  // not a real production runtime.
+  //
+  // The DECLARATION half is not duplicated — both copies read the one canonical
+  // parser, which is a leaf and forms no cycle (ENV-SAFETY 3, #3036;
+  // INV-CONFIG-003). What remains duplicated is the build-mode/slot-name
+  // backstop underneath it; see `isRealProductionRuntime` for why that backstop
+  // stays rather than being collapsed onto the resolver.
+  if (readEnvironmentRoleDeclaration().kind === "production") return false;
   if (
     process.env.NODE_ENV === "production" &&
     process.env.APP_RUNTIME_ROLE !== "staging"

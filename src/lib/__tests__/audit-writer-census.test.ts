@@ -1261,7 +1261,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // the site and named in none of the four per-site maps, so it lands unpinned
     // like every other new feature's writer. 454 sites measured minus 127 pinned;
     // `pinned` is unchanged, which is the point — no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 327 });
+    ).toEqual({ pinned: 127, unpinned: 328 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

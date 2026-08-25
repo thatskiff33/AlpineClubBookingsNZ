@@ -5310,6 +5310,51 @@ enum EmailLogStatus {
   // outcome — distinct from BOUNCED (an undeliverable address, an operator
   // problem) and from FAILED (a transport error the retry cron replays).
   SKIPPED_NO_EMAILS
+  // #3035 (ENV-SAFETY 2, epic #2986): held back because this installation is a
+  // CONFIRMED COPY, not the club's live site. Terminal and non-retryable: a copy
+  // stays a copy until somebody re-declares it, and replaying weeks of stale
+  // confirmations at real members if they ever did would be worse than never
+  // sending them.
+  //
+  // ITS OWN VALUE RATHER THAN A REUSE OF SKIPPED_NO_EMAILS, which was the
+  // tempting shortcut. That value means the CLUB chose not to email this person
+  // about this booking, and it renders on the booking page as exactly that
+  // claim; a copy holding mail back is not a decision anybody made. It is also
+  // what makes the withheld-email count on Admin -> Environment countable at
+  // all (`environment-safety-withheld.ts`), which is the one signal that
+  // separates a live club wrongly declared a copy from a copy nobody is using.
+  SKIPPED_NON_PRODUCTION
+}
+
+/**
+ * Why a send failed closed because this installation's environment role could
+ * not be confirmed (#3035, INV-CONFIG-004).
+ *
+ * Only ever set beside `EmailLogStatus.FAILED`, which is deliberate: an
+ * unconfirmed role is a FAULT and the message stays retryable, so it goes out by
+ * itself once an operator declares the role. The column is what makes that row
+ * distinguishable from an ordinary transport failure by something sturdier than a
+ * message string, and the three values are kept apart because the repair differs —
+ * set the variable, fix the value you already set, or restore database access.
+ */
+enum EmailDeliveryBlockReason {
+  ENVIRONMENT_DECLARATION_MISSING
+  ENVIRONMENT_DECLARATION_INVALID
+  ENVIRONMENT_OVERRIDE_UNREADABLE
+  // The deployment declares itself the club's live site AND declares a local
+  // capture mailbox (USE_LOCAL_CAPTURE). Those cannot both be true: left to run,
+  // it would accept every message, report every one as sent, and deliver none —
+  // a silent total mail outage, which is the same harm as a wrongly-declared copy
+  // arriving from the opposite direction.
+  CAPTURE_TRANSPORT_IN_PRODUCTION
+  // A COPY declares a local capture mailbox (USE_LOCAL_CAPTURE) while
+  // EMAIL_SERVER_HOST names a host on the public internet, so the "capture" would
+  // have delivered the message to a real member (#3071 review). Deliberately NOT
+  // the value above: that one asserts this installation is the club's live site,
+  // and environment-safety-withheld.ts counts it separately as precisely that
+  // alarm, so writing it from a copy would report a live-site emergency that is
+  // not happening.
+  CAPTURE_TRANSPORT_PUBLIC_HOST
 }
 
 enum EmailSuppressionReason {
@@ -5349,6 +5394,12 @@ model EmailLog {
   // in legacy htmlBody. A rolled-back pre-#2362 worker filters on htmlBody and
   // therefore cannot replay a new row without the new authority checks.
   bookingRetryHtmlBody           String?        @db.Text
+  // #3035: why an environment-safety block held this message back, or NULL for
+  // every other row — an ordinary send, a business withhold, or a genuine
+  // transport failure. Nullable and additive on purpose: the previously deployed
+  // Prisma client selects explicit column lists, so it cannot see this column at
+  // all and a blue/green drain is unaffected.
+  deliveryBlockReason            EmailDeliveryBlockReason?
   createdAt                      DateTime       @default(now())
   updatedAt                      DateTime       @updatedAt
 
@@ -6888,4 +6939,145 @@ model LodgeMaintenanceReportToken {
   lastUsedAt  DateTime?
 
   lodge Lodge @relation(fields: [lodgeId], references: [id], onDelete: Cascade)
+}
+
+/// The installation's environment-safety override (ENV-SAFETY 1, #3034; epic
+/// #2986). One row, id "default", exactly like ClubTimeSettings and every other
+/// settings singleton.
+///
+/// THE SHAPE IS THE GUARANTEE, not the code above it. There is deliberately NO
+/// column here that can assert "this instance IS production": the only lever is
+/// `forceNonProduction`, and the only direction it moves the answer in is
+/// towards the safer non-production state. An operator who has to make a copy of
+/// production safe can do it from inside the app; nobody — not an admin, not a
+/// restored database, not a hand-written UPDATE — can make an instance claim to
+/// be production from in here. Production is declared by the DEPLOYMENT
+/// (`APP_ENVIRONMENT_ROLE`) and by nothing else. Adding an `isProduction`,
+/// `forceProduction` or `role` column to this model would remove that
+/// structural guarantee and turn INV-CONFIG-003 back into a convention; the
+/// no-elevation test reads this model out of the Prisma DMMF and fails if such a
+/// field appears.
+///
+/// THE ROW IS NOT SEEDED. Absent means "no override", which is the same answer
+/// as `forceNonProduction = false`, so a read path never has to create anything.
+model EnvironmentSafetySettings {
+  id String @id @default("default")
+
+  /// When true, this installation resolves NON_PRODUCTION whatever the
+  /// deployment declares. When false (or when no row exists) the deployment
+  /// declaration decides — which is not an elevation: an undeclared
+  /// installation goes back to UNKNOWN, never to production.
+  forceNonProduction Boolean @default(false)
+
+  updatedByMemberId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
+/// Proof that one Xero contact's stored email address has been CONTAINED on this
+/// installation (ENV-SAFETY 3, #3036; epic #2986; INV-CONFIG-005).
+///
+/// WHY THE PROOF HAS TO BE DURABLE. A copy restored from the club's live
+/// database arrives with every member already linked to a real Xero contact, so
+/// `findOrCreateXeroContact` returns from its steady-state fast path without
+/// ever looking at what that contact holds. Xero then emails its own invoice
+/// reminders, from its own servers, to the address stored on the contact — with
+/// no API call from this application at all. So a copy has to KNOW, before it
+/// raises an invoice, that the contact it is invoicing can no longer reach a
+/// member; and it has to know it without asking Xero once per invoice.
+///
+/// ONE ROW PER XERO CONTACT, and deliberately NOT per member. Containment is a
+/// property of the provider-side contact, not of the person: two members can
+/// never share a contact (the link writers refuse it), a contact can outlive the
+/// member it was linked to, and a member merge moves a link without changing
+/// what Xero holds. Keying on the contact also means there is no `memberId`
+/// column here for a merge or a deletion sweep to have an opinion about.
+///
+/// `containedEmail` IS THE FINGERPRINT, not a second copy of anything. It is the
+/// contained address this application derives from the member's current stored
+/// address — a SHA-256 of that address on the reserved `.invalid` domain, so it
+/// identifies the source address without carrying it, and an operator surface
+/// can report containment without exposing a member's real email. The fast path
+/// requires it to MATCH what the application would write today: if the member's
+/// address has moved since, the row no longer describes the address we would
+/// put on this contact, so the application re-reads the contact from Xero
+/// instead of trusting a claim made before the change. That is the whole reason
+/// a bare "this contact is contained" boolean was rejected.
+///
+/// `rewroteAddress` records whether Xero was actually holding a deliverable
+/// address that this installation overwrote, as opposed to a contact that was
+/// already unreachable (blank, or a club-internal walk-in/deleted placeholder).
+/// It is what lets the operator surface say how much real accounting data a copy
+/// has rewritten, which is the number somebody wants when they discover a copy
+/// was pointed at the club's real Xero organisation.
+///
+/// PRODUCTION NEVER WRITES A ROW HERE. Containment runs only on a confirmed
+/// NON_PRODUCTION installation, so on the club's live site this table stays
+/// empty for ever — which is also why an empty table is not evidence of anything
+/// on its own and every surface shows the effective role beside the count.
+///
+/// NOTHING EVER DELETES A ROW, and that is a decision rather than an omission
+/// (#3036 review P2-18). A row for a Xero contact that has since been archived,
+/// deleted in Xero, or unlinked from every member is still a true record that
+/// THIS installation edited that contact in the club's accounting, and it is
+/// exactly the record somebody wants when they discover the copy was pointed at
+/// the real organisation. A sweep that tidied it away would delete the evidence
+/// and quietly reduce the number the operator surface reports — the
+/// reassuring-false-record shape this whole epic is about.
+///
+/// THE BOUND IS THEREFORE THE NUMBER OF CONTACTS A COPY HAS EVER RESOLVED, one
+/// row each, upserted. On the largest club that is thousands of narrow rows, not
+/// a log, and it grows only when the copy meets a contact it has not met before.
+/// A copy that has finished with a Xero organisation is thrown away with its
+/// database; there is no long-lived installation for this to accumulate on.
+model XeroSandboxContactContainment {
+  id String @id @default(cuid())
+
+  /// The Xero contact this row is about. Unique: one contact, one containment
+  /// record, upserted rather than appended, so the table cannot grow per
+  /// invoice.
+  xeroContactId String @unique
+
+  /// The contained address derived from the member's stored address at the
+  /// moment containment was last verified. See the model comment: this is the
+  /// staleness fingerprint, not decoration.
+  containedEmail String
+
+  /// True when Xero was holding a deliverable address and this installation
+  /// replaced it; false when the contact was already unreachable and nothing
+  /// was written to the provider.
+  ///
+  /// MONOTONE: it goes false -> true and never back. A re-verification finds the
+  /// contained address already in place and would otherwise recompute this as
+  /// `false`, silently retracting the record of a real address this installation
+  /// really did overwrite — and the operator surface would then positively
+  /// assert that nothing was overwritten. The writer omits the column from its
+  /// update rather than setting it to `false`.
+  rewroteAddress Boolean
+
+  /// When containment was first established for this contact, and when it was
+  /// last re-verified. Both, because "we have been containing this contact
+  /// since June" and "we last checked five minutes ago" are different operator
+  /// questions, and both are read: the operator surface reports the earliest
+  /// `containedAt` and the latest `updatedAt`.
+  ///
+  /// `updatedAt` IS ALSO THE PROOF'S AGE, which is what bounds how long a
+  /// provider-side change can go unnoticed. Nothing this application does can
+  /// invalidate a proof from the Xero side — somebody editing the contact in
+  /// Xero, or the live site pushing the member's real address back onto it — so
+  /// the fast path additionally requires the proof to be younger than
+  /// `XERO_CONTAINMENT_PROOF_MAX_AGE_MS` and re-reads the contact past that.
+  containedAt DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  /// When a DELIVERABLE address was last actually replaced on this contact, or
+  /// `null` if one never was.
+  ///
+  /// Separate from `updatedAt`, which moves on every re-verification. The
+  /// operator question behind the urgent number is "when did this copy last edit
+  /// the club's real books", and answering it with the most recent re-check
+  /// would date the damage to whenever the copy last ran anything at all.
+  rewrittenAt DateTime?
 }

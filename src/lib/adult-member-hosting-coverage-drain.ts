@@ -611,5 +611,15 @@ async function notifyOwnerOfLostCoverage(
   ) {
     return "retry";
   }
+  // #3035: an environment-safety CONFIGURATION fault is the same class of
+  // transient fault as an unreadable switch — nothing is wrong with the recipient
+  // and the answer changes as soon as somebody fixes the deployment. A CONFIRMED
+  // copy is terminal: it will still be a copy on the next pass.
+  if (
+    outcome.status === "withheld_for_environment" &&
+    outcome.reason !== "environment_non_production"
+  ) {
+    return "retry";
+  }
   return "terminal";
 }

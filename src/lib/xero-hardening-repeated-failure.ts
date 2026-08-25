@@ -70,6 +70,27 @@ export async function maybeNotifyXeroRepeatedFailure(
   }
 
   const subject = getRepeatedFailureAlertSubject(operation.correlationKey);
+  /*
+    THE DEDUP ASKS "HAS THIS ALERT ALREADY BEEN RAISED", not "did it arrive"
+    (#3035 review).
+
+    It used to look for `QUEUED`/`SENT` only, which was every outcome that
+    existed when it was written. Since #3035 the environment-safety boundary
+    lands this alert as `SKIPPED_NON_PRODUCTION` on a copy and as `FAILED` on an
+    installation nobody has declared — so on those installations the dedup
+    matched nothing, every qualifying operation re-attempted the alert, and each
+    attempt wrote another counted withheld row. Bounded by the per-correlation-key
+    threshold rather than a storm, but it inflates the very count that tells a
+    live club wrongly declared a copy from an idle one.
+
+    `FAILED` is included and that is not a lost alert: this template is NOT in
+    `NON_RETRYABLE_EMAIL_LOG_TEMPLATES`, so its body is retained and the email
+    retry cron replays the row. Re-raising a second alert alongside a replay would
+    just double it. `BOUNCED` is included for the plainer reason — the alert was
+    raised and the admin mailbox is the problem, which re-raising cannot fix.
+    Listing the statuses that mean "already raised" rather than "arrived" is what
+    makes this stable against the next status somebody adds.
+  */
   const recentAlert = await prisma.emailLog.findFirst({
     where: {
       templateName: "admin-xero-repeated-failure",
@@ -78,7 +99,14 @@ export async function maybeNotifyXeroRepeatedFailure(
         gte: windowStart,
       },
       status: {
-        in: ["QUEUED", "SENT"],
+        in: [
+          "QUEUED",
+          "SENT",
+          "FAILED",
+          "BOUNCED",
+          "SKIPPED_NON_PRODUCTION",
+          "SKIPPED_NO_EMAILS",
+        ],
       },
     },
   });

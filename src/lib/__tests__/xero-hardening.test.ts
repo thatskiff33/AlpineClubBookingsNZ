@@ -161,6 +161,56 @@ describe("maybeNotifyXeroRepeatedFailure", () => {
     });
     expect(mocks.sendRepeatedFailureAlert).not.toHaveBeenCalled();
   });
+
+  it("dedups on every status that means the alert was RAISED, not just delivered", async () => {
+    /*
+      #3035 review. This dedup used to look for `QUEUED`/`SENT` only, which was
+      every outcome that existed when it was written. Since #3035 the
+      environment-safety boundary lands this alert as `SKIPPED_NON_PRODUCTION` on
+      a copy and `FAILED` on an installation nobody has declared — so on those the
+      dedup matched nothing, every qualifying operation re-attempted the alert,
+      and each attempt wrote another counted withheld row into the very number
+      that distinguishes a live club wrongly declared a copy from an idle one.
+
+      `FAILED` is not a lost alert: this template retains its body, so the email
+      retry cron replays that row.
+    */
+    const statuses = await (async () => {
+      mocks.emailFindFirst.mockResolvedValue(null);
+      await maybeNotifyXeroRepeatedFailure({
+        id: "op_1",
+        correlationKey: "payment:pay_1:invoice:v1",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        lastErrorMessage: "Rate limit exceeded",
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_1",
+        xeroObjectUrl: null,
+      });
+      const where = mocks.emailFindFirst.mock.calls.at(-1)?.[0]?.where as {
+        status?: { in?: string[] };
+      };
+      return where?.status?.in ?? [];
+    })();
+
+    // Anti-vacuity: an absent filter would make `.toContain` on an empty array
+    // fail rather than pass, but say so out loud.
+    expect(statuses.length).toBeGreaterThan(2);
+    for (const status of [
+      "QUEUED",
+      "SENT",
+      "FAILED",
+      "SKIPPED_NON_PRODUCTION",
+      "SKIPPED_NO_EMAILS",
+      "BOUNCED",
+    ]) {
+      expect(statuses, `${status} means the alert was already raised`).toContain(
+        status,
+      );
+    }
+  });
 });
 
 describe("buildXeroReconciliationReport", () => {

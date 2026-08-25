@@ -11,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import {
@@ -120,6 +121,21 @@ export async function POST(request: NextRequest) {
     if (!email) {
       return NextResponse.json(
         { error: "This Xero contact has no email address and cannot be imported as a member." },
+        { status: 422 }
+      );
+    }
+    // INV-CONFIG-005 (#3036): a contained address must never become a
+    // `Member.email`. It is a hash of somebody's real address on a reserved
+    // domain, so importing it would create a member who LOOKS reachable
+    // (`isPlaceholderContactEmail` says nothing about this domain, deliberately)
+    // and can never receive anything — the silent-unreachability defect #2716
+    // exists to prevent, arriving from a new direction.
+    if (isXeroSandboxContactEmail(email)) {
+      return NextResponse.json(
+        {
+          error:
+            "This Xero contact's email address has been replaced with a non-deliverable one because this installation is a copy, so it cannot be imported as a member. Import it on the club's live site instead.",
+        },
         { status: 422 }
       );
     }
