@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { getSeasonStartDate } from "@/lib/policies/age-tier";
+import { requireCalendarDate } from "@/lib/club-time";
+import { getSeasonStartCalendarDate } from "@/lib/policies/age-tier";
 import { dateOfBirthPrefilterBoundForMinAge } from "@/lib/date-of-birth-prefilter";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 
 /**
- * The age-up candidate prefilter's date-of-birth bound (#2859, #2872).
+ * The age-up candidate prefilter's date-of-birth bound (#2859, #2872, #3082).
  *
- * TWO SHIPPED OFF-BY-ONES ARE PINNED HERE, and they pull in opposite
+ * THREE SHIPPED OFF-BY-ONES ARE PINNED HERE, and the first two pull in opposite
  * directions, which is why the bound needs a suite of its own rather than only
  * the one assertion `cron-age-up.test.ts` makes through the query:
  *
@@ -19,14 +20,29 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
  *   `Member.dateOfBirth` is `@db.Date` and the adapter narrows a bound `Date`
  *   to its UTC day. A local-midnight instant east of UTC narrows to the day
  *   BEFORE, which reopens #2859.
+ * - #3082 — the ARGUMENT is now a calendar day too. It used to be a host-local
+ *   midnight `Date` whose parts were read back with host-local getters, which
+ *   was correct only because `getSeasonStartDate` constructed it with the
+ *   matching local setters. That round trip really was total (swept: 418 zones,
+ *   2015-2036, all twelve possible season-start months, zero failures) — and it
+ *   still had to go, because it made this bound's correctness a property of its
+ *   CALLER's encoding, and the caller had to move when `computeAge` did.
  *
- * EVERY ASSERTION RUNS UNDER THREE HOST ZONES, one behind UTC and one ahead, so
- * a bound that quietly depends on the container cannot pass. That is the whole
- * claim of #2872 and a suite pinned to this machine's zone could not make it.
+ * EVERY ASSERTION RUNS UNDER THREE HOST ZONES, one behind UTC and one ahead. On
+ * the old signature that was the only way to state the claim at all. It is kept
+ * deliberately now that the input is text: the property is that no host can move
+ * this answer, and a suite that stopped checking it could not tell a regression
+ * back to a `Date` argument from the fix. What changed is that it is no longer
+ * the whole argument — the discriminating assertion for the host-local READ now
+ * lives in `age-tier-club-calendar.test.ts`, on `computeAge`, which is where the
+ * defect actually was.
  */
 
 /** One zone behind UTC, one ahead, and UTC itself. */
 const HOST_ZONES = ["UTC", "America/Denver", "Pacific/Auckland"];
+
+/** 1 April 2026 — the default season start, as a calendar day. */
+const SEASON_START = requireCalendarDate("2026-04-01");
 
 function onEveryHostZone(assert: (hostZone: string) => void): void {
   for (const hostZone of HOST_ZONES) {
@@ -37,11 +53,7 @@ function onEveryHostZone(assert: (hostZone: string) => void): void {
 describe("the age-tier date-of-birth prefilter bound", () => {
   it("is the UTC-midnight day AFTER the cutoff day, on every host zone", () => {
     onEveryHostZone((hostZone) => {
-      // 1 April 2026 as `getSeasonStartDate` builds it: HOST-LOCAL midnight.
-      const bound = dateOfBirthPrefilterBoundForMinAge(
-        new Date(2026, 3, 1),
-        18,
-      );
+      const bound = dateOfBirthPrefilterBoundForMinAge(SEASON_START, 18);
 
       expect(bound.toISOString(), hostZone).toBe("2008-04-02T00:00:00.000Z");
     });
@@ -49,10 +61,7 @@ describe("the age-tier date-of-birth prefilter bound", () => {
 
   it("admits the member born on exactly the season-start anniversary (#2859)", () => {
     onEveryHostZone((hostZone) => {
-      const bound = dateOfBirthPrefilterBoundForMinAge(
-        new Date(2026, 3, 1),
-        18,
-      );
+      const bound = dateOfBirthPrefilterBoundForMinAge(SEASON_START, 18);
 
       // A stored date of birth is UTC midnight (INV-DATE-024). This member turns
       // 18 on season start and must be proposed; the pre-#2859 bound excluded
@@ -64,10 +73,7 @@ describe("the age-tier date-of-birth prefilter bound", () => {
 
   it("excludes the member born the day after, so it is not merely wide", () => {
     onEveryHostZone((hostZone) => {
-      const bound = dateOfBirthPrefilterBoundForMinAge(
-        new Date(2026, 3, 1),
-        18,
-      );
+      const bound = dateOfBirthPrefilterBoundForMinAge(SEASON_START, 18);
       const bornTheDayAfter = new Date("2008-04-02T00:00:00.000Z");
 
       expect(bornTheDayAfter < bound, hostZone).toBe(false);
@@ -79,10 +85,7 @@ describe("the age-tier date-of-birth prefilter bound", () => {
     // UTC calendar date and discards the time. Any non-zero UTC time component
     // here would mean the value carries information the column silently drops.
     onEveryHostZone((hostZone) => {
-      const bound = dateOfBirthPrefilterBoundForMinAge(
-        new Date(2026, 3, 1),
-        18,
-      );
+      const bound = dateOfBirthPrefilterBoundForMinAge(SEASON_START, 18);
 
       expect(
         [
@@ -96,12 +99,12 @@ describe("the age-tier date-of-birth prefilter bound", () => {
     });
   });
 
-  it("names the same day whatever the container's zone is (#2872)", () => {
+  it("names the same day whatever the container's zone is (#2872, #3082)", () => {
     // The property, stated directly rather than inferred from the three
     // per-zone assertions above: one season start, three containers, one answer.
     const bounds = HOST_ZONES.map((hostZone) =>
       withTimeZone(hostZone, () =>
-        dateOfBirthPrefilterBoundForMinAge(new Date(2026, 3, 1), 18).toISOString(),
+        dateOfBirthPrefilterBoundForMinAge(SEASON_START, 18).toISOString(),
       ),
     );
 
@@ -110,45 +113,63 @@ describe("the age-tier date-of-birth prefilter bound", () => {
 
   it("follows the configured minimum age rather than assuming 18", () => {
     onEveryHostZone((hostZone) => {
-      const seasonStart = new Date(2026, 3, 1);
-
       expect(
-        dateOfBirthPrefilterBoundForMinAge(seasonStart, 21).toISOString(),
+        dateOfBirthPrefilterBoundForMinAge(SEASON_START, 21).toISOString(),
         hostZone,
       ).toBe("2005-04-02T00:00:00.000Z");
       expect(
-        dateOfBirthPrefilterBoundForMinAge(seasonStart, 0).toISOString(),
+        dateOfBirthPrefilterBoundForMinAge(SEASON_START, 0).toISOString(),
         hostZone,
       ).toBe("2026-04-02T00:00:00.000Z");
     });
   });
 
-  it("composes with getSeasonStartDate, which is where the round trip is real", () => {
-    // The host-local getters inside the derivation are only safe because the
-    // value they read was CONSTRUCTED with the matching local setters. This is
-    // that composition, not a hand-built stand-in for it.
+  it("composes with getSeasonStartCalendarDate, which is the pair it belongs to", () => {
+    // #3082: this used to be the round-trip test — "the host-local getters
+    // inside the derivation are only safe because the value they read was
+    // CONSTRUCTED with the matching local setters". There is no round trip left
+    // to check, so what it checks now is that the two really are one pair: the
+    // bound is derived from the same season-start day the age-tier authority
+    // judges the candidate against, with nothing in between a host could move.
     onEveryHostZone((hostZone) => {
-      const seasonStart = getSeasonStartDate(2026);
+      const seasonStart = getSeasonStartCalendarDate(2026);
       const bound = dateOfBirthPrefilterBoundForMinAge(seasonStart, 18);
 
-      expect(bound.getUTCFullYear(), hostZone).toBe(2008);
-      expect(bound.getUTCMonth(), hostZone).toBe(seasonStart.getMonth());
-      expect(bound.getUTCDate(), hostZone).toBe(2);
+      expect(seasonStart, hostZone).toBe("2026-04-01");
+      expect(bound.toISOString(), hostZone).toBe("2008-04-02T00:00:00.000Z");
     });
   });
 
   it("rolls a month or year boundary rather than emitting an impossible day", () => {
     // Reachable only if a club's season ever starts on the last day of a month,
-    // but the encoding must be total: `dateOnlyFromParts` rolls day 32 forward
-    // instead of producing 31 December + 1.
+    // but the encoding must be total: the day after 31 December is 1 January of
+    // the next year, not 32 December.
     onEveryHostZone((hostZone) => {
       expect(
         dateOfBirthPrefilterBoundForMinAge(
-          new Date(2025, 11, 31),
+          requireCalendarDate("2025-12-31"),
           1,
         ).toISOString(),
         hostZone,
       ).toBe("2025-01-01T00:00:00.000Z");
+    });
+  });
+
+  it("clamps a 29 February season start rather than rolling into March", () => {
+    // Unreachable from `getSeasonStartCalendarDate`, which always names day 1 —
+    // but the year step must be total, and the two wrong answers are opposite:
+    // the retired `Date.setFullYear` spelling rolled 29 February FORWARD to
+    // 1 March, and `calendarDateFromParts(year - 1, 2, 29)` would have thrown.
+    // Clamping to 28 February is `addMonthsDateOnly`'s and `member-age.ts`'s
+    // convention, so the bound is one day later: 1 March.
+    onEveryHostZone((hostZone) => {
+      expect(
+        dateOfBirthPrefilterBoundForMinAge(
+          requireCalendarDate("2024-02-29"),
+          1,
+        ).toISOString(),
+        hostZone,
+      ).toBe("2023-03-01T00:00:00.000Z");
     });
   });
 });

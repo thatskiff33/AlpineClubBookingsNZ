@@ -73,24 +73,26 @@ describe("seasonYearOfStoredDate with a configurable year-end", () => {
 });
 
 describe("getSeasonStartDate with a configurable year-end", () => {
+  // Asserted as UTC instants (#3082): the season start is a calendar day encoded
+  // at UTC midnight, and the host-local getters these used to read would answer
+  // the previous day for any club behind Greenwich.
   it("returns April 1 by default", () => {
-    const d = getSeasonStartDate(2026);
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(3); // April (0-based)
-    expect(d.getDate()).toBe(1);
+    expect(getSeasonStartDate(2026).toISOString()).toBe(
+      "2026-04-01T00:00:00.000Z",
+    );
   });
 
   it("returns July 1 for a June year-end", () => {
     __setFinancialYearEndMonthForTesting(6);
-    const d = getSeasonStartDate(2026);
-    expect(d.getMonth()).toBe(6); // July
-    expect(d.getDate()).toBe(1);
+    expect(getSeasonStartDate(2026).toISOString()).toBe(
+      "2026-07-01T00:00:00.000Z",
+    );
   });
 
   it("returns January 1 for a December year-end", () => {
     __setFinancialYearEndMonthForTesting(12);
-    const d = getSeasonStartDate(2026);
-    expect(d.getMonth()).toBe(0); // January
-    expect(d.getDate()).toBe(1);
+    expect(getSeasonStartDate(2026).toISOString()).toBe(
+      "2026-01-01T00:00:00.000Z",
+    );
   });
 });
