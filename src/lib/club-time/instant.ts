@@ -157,11 +157,14 @@ export function clubCalendarDateOf(
  * calendar date, so a bound built as midnight in the club's zone — or, worse, on
  * the host — silently becomes the PREVIOUS day.
  *
- * DO NOT CITE `INV-DATE-010` FOR THE DECODE. It says that no rule may be derived
- * from **the UTC reading** of a stored value; a docblock in this file used to
- * paraphrase it as its own inverse ("no rule may be derived from reading the
- * result in any zone but UTC"), and four call sites plus two test files copied
- * that inverse from here before it was caught. The authority for reading a
+ * DO NOT CITE `INV-DATE-010` FOR THE DECODE — the rule now says so in as many
+ * words. What it forbids deriving a rule from is one of these values read as a
+ * **moment**, an instant carrying a time of day. Its earlier wording ("no rule
+ * may be derived from the UTC reading of these values") is what a docblock in
+ * this file paraphrased as that sentence's own inverse ("no rule may be derived
+ * from reading the result in any zone but UTC"), and four call sites plus two
+ * test files copied the inverse from here before it was caught (#3080). The
+ * authority for reading a
  * `@db.Date` back in UTC is `INV-DATE-019`'s first exact boundary — truncating an
  * existing `@db.Date` value is fine because it already encodes a calendar day —
  * together with `INV-DATE-026`, which is what guarantees the column really is
@@ -188,10 +191,11 @@ export function dateOnlyInstantOf(date: CalendarDate): Instant {
  * UTC midnight and encode a calendar day, not an instant" — together with
  * `INV-DATE-026`, which is what makes the column a `@db.Date` in the first place
  * rather than a bare `DateTime` its writers merely agree to keep at midnight.
- * **Do not cite `INV-DATE-010` for this direction**: that rule forbids deriving a
- * rule from the UTC READING of a stored value, so citing it here states the
- * opposite of what it says. {@link dateOnlyInstantOf} records where that inverse
- * paraphrase came from and how far it spread.
+ * **Do not cite `INV-DATE-010` for this direction**: what that rule forbids is
+ * deriving a rule from one of these values read as a MOMENT, and it names these
+ * two ids rather than itself as the authority for a decode.
+ * {@link dateOnlyInstantOf} records where the inverse paraphrase came from and
+ * how far it spread.
  *
  * Hand it a real `DateTime` and you get that column's UTC day, which is the
  * `INV-DATE-019` defect. Use {@link clubCalendarDateOf} for a moment.

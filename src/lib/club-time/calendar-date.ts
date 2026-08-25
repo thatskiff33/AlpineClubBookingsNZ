@@ -12,8 +12,10 @@
  * while the club sits east of Greenwich: for `America/Denver`,
  * `2026-04-05T00:00:00Z` reads back as **2026-04-04**, so every label derived
  * that way is a day early. `INV-DATE-010` already forbids deriving a rule from
- * the UTC reading of a date-only value; holding the day as text removes the
- * reading to derive a rule from.
+ * one of these values read as a **moment**; holding the day as text removes the
+ * instant there was to misread. (It is not the citation for a UTC decode — that
+ * is `INV-DATE-019`'s first exact boundary with `INV-DATE-026`, and the rule
+ * says so itself; #3080.)
  *
  * THE ARITHMETIC IS INTEGER CIVIL-CALENDAR ARITHMETIC, not `Date` arithmetic.
  * Howard Hinnant's `days_from_civil`/`civil_from_days` pair converts a
