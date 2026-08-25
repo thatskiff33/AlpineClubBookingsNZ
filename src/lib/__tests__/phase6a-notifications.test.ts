@@ -860,6 +860,22 @@ describe("Admin member request alerts", () => {
 // N-01: Check-in reminders cron
 // ============================================================================
 
+/**
+ * Tomorrow as a `@db.Date` value: exactly UTC midnight, which is the only shape
+ * a date-only column round-trips as. Built from the repository's frozen clock
+ * rather than the wall clock, so it is stable forever.
+ */
+function utcMidnightDaysFromNow(days: number): Date {
+  const now = new Date();
+  return new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + days,
+    ),
+  );
+}
+
 describe("N-01: sendCheckinReminders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -870,9 +886,12 @@ describe("N-01: sendCheckinReminders", () => {
   });
 
   it("sends reminders for confirmed bookings checking in tomorrow", async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // `Booking.checkIn` is `@db.Date`, so Prisma hands the cron a Date pinned to
+    // exactly UTC midnight. `setHours(0, 0, 0, 0)` sets HOST-LOCAL midnight,
+    // which on any host east of Greenwich is the previous UTC day at noon — not
+    // a value this column can hold, and the calendar-day formatter now refuses
+    // it outright rather than projecting it (#3113).
+    const tomorrow = utcMidnightDaysFromNow(1);
 
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -897,9 +916,12 @@ describe("N-01: sendCheckinReminders", () => {
   });
 
   it("skips bookings where reminder already sent", async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
+    // `Booking.checkIn` is `@db.Date`, so Prisma hands the cron a Date pinned to
+    // exactly UTC midnight. `setHours(0, 0, 0, 0)` sets HOST-LOCAL midnight,
+    // which on any host east of Greenwich is the previous UTC day at noon — not
+    // a value this column can hold, and the calendar-day formatter now refuses
+    // it outright rather than projecting it (#3113).
+    const tomorrow = utcMidnightDaysFromNow(1);
 
     mockPrisma.booking.findMany.mockResolvedValue([
       {

@@ -42,7 +42,7 @@ import {
   bookingPaymentDueNote,
   splitGuestPortionOwnBookingLine,
 } from "@/lib/email-message-notes";
-import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /**
  * The "how to get to the lodge" block: travel note, and the door code when the
@@ -153,8 +153,8 @@ export function bookingConfirmedTemplate(
         )
       : "";
   const rows: Array<{ label: string; value: string }> = [
-    { label: "Check-in", value: emailClubDate(checkIn) },
-    { label: "Check-out", value: emailClubDate(checkOut) },
+    { label: "Check-in", value: emailCalendarDay(checkIn) },
+    { label: "Check-out", value: emailCalendarDay(checkOut) },
     { label: "Guests", value: String(guestCount) },
   ];
 
@@ -287,8 +287,8 @@ export function bookingPendingTemplate(
     ${heading("Booking Pending")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been received and is currently pending.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(checkIn) },
-      { label: "Check-out", value: emailClubDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guestCount) },
       { label: "Hold Until", value: emailClubDateTime(holdUntil) },
     ])}
@@ -316,8 +316,8 @@ export function bookingBumpedTemplate(
     ${heading("Booking Update")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", unfortunately your pending lodge booking has been bumped due to member demand.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(checkIn) },
-      { label: "Check-out", value: emailClubDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guestCount) },
     ])}
     ${alertBox("Your card has not been charged.", "info")}
@@ -378,8 +378,8 @@ export function bookingCancelledTemplate(
     ${heading("Booking Cancelled")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been cancelled.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(checkIn) },
-      { label: "Check-out", value: emailClubDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
     ])}
     ${refundInfo}
     ${creditRestoredInfo}
@@ -397,8 +397,8 @@ export function bookingGuestsCancelledTemplate(
     ${heading("Booking Cancelled")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", you asked us to cancel your whole booking if your non-member guests couldn't come. The lodge filled up with member bookings, so we've cancelled it.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(checkIn) },
-      { label: "Check-out", value: emailClubDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
     ])}
     ${alertBox("Your card has not been charged.", "info")}
     ${paragraph("You're welcome to rebook for different dates where availability exists.")}
@@ -519,7 +519,7 @@ export function setupIntentFailedTemplate(data: {
   // whatever zone the sending process happened to run in — a 2026-04-15T23:30Z
   // check-in reads as 15 April from a UTC worker and 16 April in New Zealand.
   // emailClubDate pins both the zone and the house "16 Apr 2026" format.
-  const dates = `${emailClubDate(data.checkIn)} – ${emailClubDate(data.checkOut)}`;
+  const dates = `${emailCalendarDay(data.checkIn)} – ${emailCalendarDay(data.checkOut)}`;
   return layout(`
     ${heading("Card Setup Failed")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
@@ -553,8 +553,8 @@ export function splitGuestPortionCancelledTemplate(data: {
     ${heading("Your Guests' Provisional Place Was Cancelled")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the provisional place we were holding for your non-member guests stayed unpaid up to the check-in day, so it has now been automatically cancelled. Nothing was ever charged for it, and no beds were held.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       ...(data.parentBookingReference
         ? [
             {

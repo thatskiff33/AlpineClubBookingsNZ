@@ -1184,8 +1184,8 @@ async function alertSupersededGroupSettlementIntent(
       memberName: group
         ? `${group.organiserMember.firstName} ${group.organiserMember.lastName}`
         : "Unknown group organiser",
-      checkIn: group?.organiserBooking.checkIn ?? new Date(),
-      checkOut: group?.organiserBooking.checkOut ?? new Date(),
+      checkIn: group?.organiserBooking.checkIn ?? null,
+      checkOut: group?.organiserBooking.checkOut ?? null,
       amountCents: paymentIntent.amount,
       errorMessage,
       paymentIntentId: paymentIntent.id,

@@ -18,7 +18,7 @@ import {
   supportContactSentence,
 } from "./layout";
 import { type MemberGuestPartyList } from "@/lib/member-guest-email-notes";
-import { emailClubDate } from "@/lib/email-templates-club-time";
+import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 
 /** Shared stay facts every member-guest email states the same way. */
 function memberGuestStayRows(data: {
@@ -33,7 +33,7 @@ function memberGuestStayRows(data: {
     { label: "Lodge", value: escapeHtml(data.lodgeName) },
     {
       label: "Stay",
-      value: `${escapeHtml(emailClubDate(data.checkIn))} - ${escapeHtml(emailClubDate(data.checkOut))}`,
+      value: `${escapeHtml(emailCalendarDay(data.checkIn))} - ${escapeHtml(emailCalendarDay(data.checkOut))}`,
     },
     ...(data.guestNightsLabel
       ? [
@@ -185,7 +185,7 @@ export function memberGuestConsentExpiredTemplate(data: {
   return layout(`
     ${heading("That request has lapsed")}
     ${paragraph(
-      `Hi ${escapeHtml(data.firstName)}, the request from <strong>${booker}</strong> to add you to a booking at ${escapeHtml(data.lodgeName)} on ${escapeHtml(emailClubDate(data.checkIn))} - ${escapeHtml(emailClubDate(data.checkOut))} has lapsed, and the bed that was held for you has been released.`,
+      `Hi ${escapeHtml(data.firstName)}, the request from <strong>${booker}</strong> to add you to a booking at ${escapeHtml(data.lodgeName)} on ${escapeHtml(emailCalendarDay(data.checkIn))} - ${escapeHtml(emailCalendarDay(data.checkOut))} has lapsed, and the bed that was held for you has been released.`,
     )}
     ${paragraph(`You do not need to do anything. If you did want to come, ask ${booker} to add you again.`)}
   `);
@@ -232,7 +232,7 @@ export function memberGuestRequestWithdrawnTemplate(data: {
       { label: "Lodge", value: escapeHtml(data.lodgeName) },
       {
         label: "Stay",
-        value: `${escapeHtml(emailClubDate(data.checkIn))} - ${escapeHtml(emailClubDate(data.checkOut))}`,
+        value: `${escapeHtml(emailCalendarDay(data.checkIn))} - ${escapeHtml(emailCalendarDay(data.checkOut))}`,
       },
     ])}
     ${supportContactSentence("You do not need to do anything. If you think this is a mistake, contact the club at ")}

@@ -11,11 +11,6 @@ import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
-import { emailClubDateTime } from "@/lib/email-templates-club-time";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import {
@@ -23,6 +18,7 @@ import {
   type BookingEmailSourceContext,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -63,10 +59,10 @@ export async function sendBookingRequestVerificationEmail(params: {
       firstName: params.firstName,
       token: params.token,
       verifyUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -113,8 +109,8 @@ export async function sendBookingRequestApprovedEmail(params: {
       firstName: params.firstName,
       token: params.token,
       payUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
@@ -179,8 +175,8 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       firstName: params.firstName,
       token: params.token,
       payUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
@@ -243,15 +239,15 @@ export async function sendBookingRequestQuoteEmail(params: {
       firstName: params.firstName,
       token: params.token,
       respondUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       requestType: params.requestType,
       schoolName: params.schoolName ?? "",
       quoteOptions: params.options
         .map((option) => `${option.label}: ${formatMoneyCents(option.totalCents)}`)
         .join("\n"),
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -284,8 +280,8 @@ export async function sendBookingRequestDeclinedEmail(params: {
     templateName: "booking-request-declined",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       reason: params.reason ?? "",
       // #2268: pre-composed optional line — a decline with no note must not
       // print a dangling "Note:".
@@ -328,8 +324,8 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
     templateName: "booking-request-payment-expired",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
   });
 }
@@ -381,8 +377,8 @@ export async function sendSchoolAttendeeConfirmationEmail(params: {
       // flat body's "{{schoolName}}'s stay" is never orphaned as "'s stay"
       // when the booking records no school name.
       schoolName: params.schoolName ?? "your school group",
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       isReminder: params.isReminder,
     },

@@ -27,10 +27,10 @@ import {
   memberGuestConsentRequestTemplate,
   memberGuestRequestWithdrawnTemplate,
 } from "@/lib/email-templates/member-guest";
-import { formatNZDate } from "../nzst-date";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import type { BookingEmailRecipient } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 
 /**
  * The six member-guest emails (epic #2305, MG2 #2307 and MG4 #2309).
@@ -139,10 +139,10 @@ export async function sendMemberGuestConsentRequestEmail(
       bookerName: params.bookerName,
       askHeading: ask.heading,
       askContextNote: ask.contextNote,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestNightsLabel,
-      consentExpiresAt: formatNZDate(params.consentExpiresAt),
+      consentExpiresAt: emailClubDate(params.consentExpiresAt),
       consentUrl: params.consentUrl,
       // The flat twin of the `<ul>` above, from the same one call to the same
       // one helper — so the editable body and the HTML cannot list different
@@ -224,8 +224,8 @@ export async function sendMemberGuestAddedEmail(
       firstName: params.firstName,
       addedHeading: added.heading,
       addedContextNote: added.contextNote,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestNightsLabel,
       partyListNote: partyList.text,
       removalNote,
@@ -288,8 +288,8 @@ export async function sendMemberGuestRequestWithdrawnEmail(
       firstName: params.firstName,
       withdrawnHeading: copy.heading,
       withdrawnContextNote: copy.contextNote,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
     lodgeId: params.lodgeId,
   });
@@ -421,8 +421,8 @@ export async function sendMemberGuestConsentExpiredEmail(
     templateData: {
       firstName: params.firstName,
       bookerName: params.bookerName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
     lodgeId: params.lodgeId,
   });

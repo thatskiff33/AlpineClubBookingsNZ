@@ -634,15 +634,31 @@ describe("email-templates", () => {
       ).toContain("16 Apr 2026 – 18 Apr 2026");
     });
 
-    it("renders a mid-day instant on the NZ side of the date line", () => {
-      // 2026-04-15T23:30Z is already 16 April in New Zealand.
-      const html = setupIntentFailedTemplate({
-        firstName: "Ada",
-        checkIn: new Date("2026-04-15T23:30:00.000Z"),
-        checkOut: new Date("2026-04-17T23:30:00.000Z"),
-      });
-
-      expect(html).toContain("16 Apr 2026 – 18 Apr 2026");
+    it("REFUSES a stay carrying a time of day, rather than projecting it (#3113)", () => {
+      // This case used to assert the opposite: it fed `checkIn`
+      // 2026-04-15T23:30Z and expected "16 Apr 2026", because 23:30Z is already
+      // 16 April in New Zealand. That pinned a PROJECTION of a value the
+      // template documents as a stored calendar day, and it was green only
+      // because New Zealand is east of Greenwich — the identical input renders
+      // 15 April for a club in Denver or Honolulu.
+      //
+      // The fixture was also impossible. `Booking.checkIn`/`checkOut` are
+      // `@db.Date`, PostgreSQL will not keep a time in a `date` column, and the
+      // template's only production caller reads both straight off a `booking`
+      // row (`stripe-webhook-service.ts` -> `handleSetupIntentFailed`). So the
+      // old assertion described no reachable state while pinning the behaviour
+      // this epic exists to remove.
+      //
+      // What replaces it is the same intent stated positively: a value carrying
+      // a time of day is a REAL INSTANT that reached a calendar-day token, and
+      // the guard says so loudly instead of mailing a plausible wrong day.
+      expect(() =>
+        setupIntentFailedTemplate({
+          firstName: "Ada",
+          checkIn: new Date("2026-04-15T23:30:00.000Z"),
+          checkOut: new Date("2026-04-17T23:30:00.000Z"),
+        }),
+      ).toThrow(/takes a stored calendar day, not a moment/);
     });
   });
 

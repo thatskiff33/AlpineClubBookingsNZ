@@ -20,7 +20,7 @@ import {
   supportContactSentence,
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
-import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -36,8 +36,8 @@ export function bookingRequestVerificationTemplate(data: {
     ${heading("Confirm Your Booking Request")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", thanks for your booking request for " + escapeHtml(CLUB_NAME) + "'s lodge.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
     ])}
     ${paragraph("Please confirm your email address so the club can review your request. Your request will not be reviewed until you confirm.")}
@@ -59,8 +59,8 @@ export function bookingRequestApprovedTemplate(data: {
     ${heading("Your Booking Request Has Been Approved")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", good news — the club has approved your booking request.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Price", value: formatCents(data.priceCents) },
     ])}
@@ -91,8 +91,8 @@ export function splitGuestPaymentLinkTemplate(data: {
     ${heading("Pay for Your Guests to Confirm Their Place")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", your own place is taken care of separately, but your non-member guests still need to be paid for before we can hold beds for them. Because there is no card on file for this part of your booking, please use the secure link below to pay for your guests.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Amount due", value: formatCents(data.priceCents) },
     ])}
@@ -131,8 +131,8 @@ export function bookingRequestQuoteTemplate(data: {
     )}
     ${infoTable([
       ...(data.schoolName ? [{ label: "School", value: data.schoolName }] : []),
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       ...optionRows,
     ])}
@@ -152,7 +152,7 @@ export function bookingRequestDeclinedTemplate(data: {
   return layout(`
     ${heading("Update on Your Booking Request")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", thank you for your interest in staying at " + escapeHtml(CLUB_NAME) + "'s lodge.")}
-    ${paragraph("Unfortunately the club is unable to accommodate your request for " + escapeHtml(emailClubDate(data.checkIn)) + " to " + escapeHtml(emailClubDate(data.checkOut)) + " at this time.")}
+    ${paragraph("Unfortunately the club is unable to accommodate your request for " + escapeHtml(emailCalendarDay(data.checkIn)) + " to " + escapeHtml(emailCalendarDay(data.checkOut)) + " at this time.")}
     ${data.reason ? multilineBlock("<strong>Note from the club:</strong>\n" + escapeHtml(data.reason)) : ""}
     ${paragraph("You are welcome to submit another request for different dates.")}
     ${supportContactSentence("If you have questions, contact the club at ")}
@@ -177,8 +177,8 @@ export function bookingRequestPaymentExpiredTemplate(data: {
     ${heading("Your Booking Was Released — Payment Not Received")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the booking we approved from your request stayed unpaid up to the check-in day, so it has now been released. Nothing was ever charged.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}
     ${paragraph("If you still want to stay, you are welcome to submit a new booking request for these or other dates.")}
     ${supportContactSentence("If you have questions, contact the club at ")}
@@ -205,8 +205,8 @@ export function schoolAttendeeConfirmationTemplate(data: {
     ${heading(data.isReminder ? "Reminder: Confirm Your Attendee List" : "Confirm Your Attendee List")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + stayLabel + " at " + escapeHtml(CLUB_NAME) + "'s lodge is coming up, and the booking currently lists placeholder attendee names. Please tell us who is coming so the lodge roster shows real names on arrival.")}
     ${infoTable([
-      { label: "Check-in", value: emailClubDate(data.checkIn) },
-      { label: "Check-out", value: emailClubDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Attendees", value: String(data.guestCount) },
     ])}
     ${paragraph("Use the secure link below to update the names and confirm the list. You can come back and edit until you confirm; the link stays valid until check-in.")}
