@@ -28,10 +28,13 @@
  * ## What this file may and may not assert
  *
  * `dateOnlyKey` — this module's key derivation for a `Date` argument — still
- * projects a stored `@db.Date` value through the environment zone, which is a
- * SEPARATE defect and outside #3100's scope. So no assertion here may pin an
- * absolute day derived from a `Date`, or it would pin that defect as correct.
- * Two groups, therefore:
+ * projects a stored `@db.Date` value through the environment zone. That is a
+ * SEPARATE defect, outside #3100's scope and tracked as #3107, and it is NOT
+ * merely cosmetic: because a `string` night is taken verbatim while a `Date`
+ * night is projected, the two live in different frames, and both frames occur in
+ * production. The measured consequence is in the #3107 group at the foot of this
+ * file. So no assertion here may pin an absolute day derived from a `Date`, or it
+ * would pin that defect as correct. Two groups, therefore:
  *
  * - **String-fed** cases reach no projection at all (`nightEntryKey` returns a
  *   `yyyy-mm-dd` string verbatim), so they assert EXACT days, and those days are
@@ -66,6 +69,7 @@ import {
   getExplicitGuestBedNightKeys,
   getGuestDepartureMorningKeys,
   getGuestOperationalDayPresence,
+  isGuestActiveOnNight,
   isGuestDepartureMorning,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
@@ -342,5 +346,57 @@ describe("#3100 the envelope expander steps by a day, so its loop ends", () => {
         ).toHaveLength(3);
       });
     }
+  });
+});
+
+describe("#3107 the frame split this fix does NOT close", () => {
+  /*
+    THE AGREEMENT NOBODY WAS ASSERTING. This file's two groups deliberately run
+    in two different key frames — the string-fed group takes its nights verbatim,
+    the `Date`-fed group has them projected by `dateOnlyKey` — and nothing
+    anywhere asserted that they describe the same nights. They do not, behind
+    Greenwich, and that gap is what let #3106's own pull-request body claim an
+    internal agreement that does not hold.
+
+    IT IS NOT CONFINED TO TESTS. `ProposalGuest.nights` is declared `string[]`
+    (`booking-exception-requests.ts`), and `createModificationExceptionRequest`
+    passes it straight through as `GuestStayRange.nights` into
+    `checkCapacityForGuestRanges`, which keys each night with `dateOnlyKey`.
+    Measured on `America/Denver` for a two-guest, three-night proposal, the
+    admission check counted 0 proposed beds on two of the three nights instead of
+    2 — under `acquireGlobalBookingLock` + `acquireLodgeCapacityLock`, on the
+    branch that reserves beds. That is a capacity-admission defect, it predates
+    #3100, and #3100 does not touch it: `isGuestActiveOnNight` takes no shift.
+
+    WHY THIS ASSERTS THE SPLIT RATHER THAN THE AGREEMENT. The agreement cannot
+    pass until #3107 lands, and this file's own rule forbids pinning an absolute
+    `Date`-derived day as correct. So the split is asserted as an INEQUALITY: it
+    is a real measurement today, it cannot be satisfied vacuously, and it goes
+    RED the moment #3107 makes the two frames agree — which is when it must be
+    rewritten to `toEqual`. Do not delete it then; flip it.
+  */
+  const LOGICAL_NIGHTS = ["2026-07-04", "2026-07-05", "2026-07-06"];
+
+  it("string-fed and Date-fed nights DISAGREE for the same logical stay", () => {
+    const stringFed = getExplicitGuestBedNightKeys({ nights: LOGICAL_NIGHTS });
+    const dateFed = getExplicitGuestBedNightKeys({ nights: LOGICAL_NIGHTS.map(day) });
+
+    // Verbatim: no projection is reachable from a `yyyy-mm-dd` string, in any zone.
+    expect(stringFed).toEqual(LOGICAL_NIGHTS);
+    // Same nights, same count — and, behind Greenwich, different days.
+    expect(dateFed).toHaveLength(LOGICAL_NIGHTS.length);
+    expect(
+      dateFed,
+      "#3107 has landed: the two frames now agree. Rewrite this case as toEqual.",
+    ).not.toEqual(stringFed);
+  });
+
+  it("so one logical night is both occupied and unoccupied, depending on the input type", () => {
+    const night = day("2026-07-04");
+    expect(isGuestActiveOnNight({ nights: [night] }, night, BOOKING)).toBe(true);
+    expect(
+      isGuestActiveOnNight({ nights: ["2026-07-04"] }, night, BOOKING),
+      "#3107 has landed: both input shapes now agree. Rewrite this case.",
+    ).toBe(false);
   });
 });
