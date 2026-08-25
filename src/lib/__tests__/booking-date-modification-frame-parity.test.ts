@@ -204,6 +204,7 @@ import {
   getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { rosterOperationalDayRange } from "@/lib/roster-lock";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   adminShiftBookingDates,
@@ -285,10 +286,18 @@ function primeTx(booking: Booking) {
 // ---------------------------------------------------------------------------
 
 /**
- * `modify-quote/route.ts`'s self-service window gate, transcribed. Its
- * `editPolicy.today` is the container's day on both sides of the pair (CT-6,
- * #2991, is what moves that), so the only thing this pins is that the REQUESTED
- * day is read as the day it is.
+ * `modify-quote/route.ts`'s self-service window gate, transcribed.
+ *
+ * `editPolicy.today` is the day in `APP_TIME_ZONE` — `TZ || NEXT_PUBLIC_TZ ||
+ * "Pacific/Auckland"` — and NOT "the container's day", which is what three
+ * shipped comments used to call it. Under this file's mocks it is Denver's day
+ * while the host is UTC, which is the whole reason the PREMISE case below can
+ * assert `2026-06-30` off a `2026-07-01T00:00Z` clock. Moving it onto the club's
+ * persisted zone is CT-6's (#2991).
+ *
+ * Both sides of the pair get it from the same `getBookingEditPolicy` call, so
+ * they agree whatever it is. The only thing this pins is that the REQUESTED day
+ * is read as the day it is.
  */
 function previewRefusesSelfServiceWindow(
   booking: Booking,
@@ -342,9 +351,60 @@ function previewShift(booking: Booking, requestedCheckInStr: string) {
   };
 }
 
+/**
+ * The `roster:<date>` keys the preview's two ranges imply, sorted.
+ *
+ * The most concurrency-significant consumer of `oldCheckIn` and the one nothing
+ * pinned. `roster-lock-contract.test.ts` enforces that this file's writers CALL
+ * `rosterOperationalDayRange(` and write no raw `{ start: checkIn, end: checkOut }`,
+ * and exercises the helper with literal dates — it never inspects the value a
+ * caller hands in, which is exactly the frame this file is about. A contract over
+ * the call is not a contract over the argument.
+ *
+ * `rosterOperationalDayRange` is imported rather than transcribed: the +1 day
+ * that reaches the check-out partition (#2622) is pinned by that contract file,
+ * so re-deriving it here would only duplicate it. What is asserted here is which
+ * DATES go in.
+ */
+function previewRosterKeys(preview: ReturnType<typeof previewShift>): string[] {
+  const ranges = [
+    rosterOperationalDayRange(
+      preview.previousRange.checkIn,
+      preview.previousRange.checkOut,
+    ),
+    rosterOperationalDayRange(preview.newRange.checkIn, preview.newRange.checkOut),
+  ];
+  return [
+    ...new Set(
+      ranges
+        .flatMap((range) => eachDateOnlyInRange(range.start, range.end))
+        .map(formatDateOnly),
+    ),
+  ]
+    .sort()
+    .map((day) => `roster:${day}`);
+}
+
 // ---------------------------------------------------------------------------
 // The apply path, reduced to the same terms.
 // ---------------------------------------------------------------------------
+
+/**
+ * The roster keys the service really asked for, in acquisition order.
+ *
+ * `lockRosterDate` is the only `$executeRaw` on this path that interpolates a
+ * value; `pg_advisory_xact_lock(1)` interpolates none and the lodge key goes
+ * through a mocked `acquireLodgeCapacityLock`, so filtering on the `roster:`
+ * prefix cannot pick up anything else.
+ */
+function rosterKeysAcquired(): string[] {
+  return h.executeRaw.mock.calls
+    .map((call) => call[1])
+    .filter(
+      (value): value is string =>
+        typeof value === "string" && value.startsWith("roster:"),
+    );
+}
 
 /**
  * True when `modifyBookingDates` refuses on the self-service window.
@@ -391,6 +451,9 @@ async function runAdminShift(booking: Booking, requestedCheckInStr: string) {
     input: { checkIn: requestedCheckInStr },
     ipAddress: "1.1.1.1",
   });
+  // Observation port, not a consumer: the callee ignores `previousRange` (see
+  // the note above the shift cases). It is where the `oldCheckIn` /
+  // `oldCheckOut` locals are visible with no other arithmetic applied.
   const previousRange = h.reconcileBedAllocations.mock.calls[0][0]
     .previousRange as { checkIn: Date; checkOut: Date };
   const nightDates = (
@@ -507,8 +570,17 @@ describe("the preview and the apply service read the same date window", () => {
   // `oldCheckIn` by accident — the delta absorbs the same one-day error that
   // produced it — so a test that only checked the shifted nights would have
   // passed throughout. The previous range does NOT survive it, and it is what
-  // the bed-allocation release, the modification history, the waitlist release
-  // and the member's email are all built from.
+  // the modification history, the audit payload, the waitlist release, the
+  // member's email, the roster-date lock keys and the no-op guard are all built
+  // from.
+  //
+  // NOT the bed allocations. `reconcileBedAllocationsForBookingWithLodgeLockHeld`
+  // destructures only `{ bookingId, db }`, so its `previousRange` argument is
+  // discarded; pruning runs off the booking re-read inside the call, and
+  // `BedAllocation` cascades from `BookingGuest` rather than
+  // `BookingGuestNight`. The wrong `oldCheckIn` released no bed. The argument is
+  // still read below because it is the cheapest OBSERVATION PORT onto the
+  // `oldCheckIn` local — a pin on the value, not on a consumer.
   it("shifts by the delta the preview quoted, from the range it quoted", async () => {
     const booking = makeBooking("2026-07-05", "2026-07-08");
     expect(await runAdminShift(booking, "2026-07-09")).toEqual(
@@ -516,7 +588,7 @@ describe("the preview and the apply service read the same date window", () => {
     );
   });
 
-  it("releases the beds and the waitlist for the range the preview showed", async () => {
+  it("releases the waitlist and mails the member the range the preview showed", async () => {
     const booking = makeBooking("2026-07-05", "2026-07-08");
     const preview = previewShift(booking, "2026-07-09");
     await runAdminShift(booking, "2026-07-09");
@@ -528,6 +600,53 @@ describe("the preview and the apply service read the same date window", () => {
       oldCheckIn: preview.previousRange.checkIn,
       oldCheckOut: preview.previousRange.checkOut,
     });
+  });
+
+  it("locks the roster keys of the range the preview showed, not a day earlier", async () => {
+    // The change's most concurrency-significant consequence, and the one no
+    // suite pinned. Behind Greenwich this stay locked `roster:2026-07-04 …
+    // roster:2026-07-07`: the real check-out day 07-08 — the exact day #2622
+    // extended the range to cover — went unlocked unless a chore row already sat
+    // on it, while an irrelevant 07-04 was locked instead. See
+    // `previewRosterKeys` for why the existing contract test could not see this.
+    const booking = makeBooking("2026-07-05", "2026-07-08");
+    const preview = previewShift(booking, "2026-07-09");
+    await runAdminShift(booking, "2026-07-09");
+    const acquired = rosterKeysAcquired();
+    expect(acquired).toEqual(previewRosterKeys(preview));
+    // Anti-vacuity: a filter that matched nothing would satisfy the line above
+    // against an equally empty oracle.
+    expect(acquired.length).toBe(8);
+    // Deadlock safety, which is a property of the SET and not of its frame:
+    // `lockRosterDates` sorts before acquiring, so changing which dates are in
+    // the set cannot invert an acquisition order.
+    expect([...acquired].sort()).toEqual(acquired);
+  });
+
+  it("HOST AXIS: the roster keys do not follow the host either", async () => {
+    const booking = makeBooking("2026-07-05", "2026-07-08");
+    const expected = previewRosterKeys(previewShift(booking, "2026-07-09"));
+    await withTimeZoneAsync("Pacific/Pago_Pago", async () => {
+      await runAdminShift(booking, "2026-07-09");
+      expect(rosterKeysAcquired()).toEqual(expected);
+    });
+  });
+
+  it("allows a one-day-earlier shift the no-op guard used to refuse", async () => {
+    // The MIRROR of the no-op case below, and the more user-visible half. Read
+    // through Denver, `oldCheckIn` was `checkIn − 1`, so an officer moving the
+    // stay back exactly one day submitted precisely the pair the guard was
+    // comparing against — both bounds matched and the shift was refused with
+    // "The booking already has these dates". A legitimate operation was
+    // impossible, on every club west of Greenwich, for any one-day-earlier move.
+    const booking = makeBooking("2026-07-05", "2026-07-08");
+    const preview = previewShift(booking, "2026-07-04");
+    // The case is only discriminating while it is a REAL move of exactly the
+    // distance that used to collide with the guard.
+    expect(preview.deltaDays).toBe(-1);
+    expect(formatDateOnly(preview.newRange.checkOut)).toBe("2026-07-07");
+    expect(await runAdminShift(booking, "2026-07-04")).toEqual(preview);
+    expect(h.txModificationCreate).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a no-op shift the preview would have priced at zero nights", async () => {

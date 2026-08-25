@@ -1046,6 +1046,12 @@ export async function POST(
         { status: 400 }
       );
     }
+    // TRANSCRIBED, so editing it needs a second edit (#3088).
+    // `booking-date-modification-frame-parity.test.ts` reproduces this gate in
+    // `previewRefusesSelfServiceWindow` and compares the apply path against
+    // that copy — it deliberately does not import this route, so nothing here
+    // can fail it. Change this condition and update that oracle in the same
+    // commit, or the pair silently stops being compared.
   } else if (
     !isAdmin &&
     storedDateOnly(finalRequestedCheckIn) <= editPolicy.today
@@ -2151,6 +2157,19 @@ export async function POST(
  * money field echoes the stored booking; the only thing that can vary is
  * whether the shifted nights are over capacity, which the UI surfaces as an
  * explicit confirm rather than a hard error.
+ */
+/**
+ * TRANSCRIBED, so editing this needs a second edit (#3088).
+ *
+ * `booking-date-modification-frame-parity.test.ts` reproduces this function's
+ * previous range, night count, delta and translated ranges in `previewShift`,
+ * and asserts that `adminShiftBookingDates` agrees with THAT copy. Importing
+ * this route into the oracle was deliberately rejected — it drags the whole
+ * module graph in and proves nothing about the text that ships here — so the
+ * cost of the design is that a change to the semantics below goes unnoticed by
+ * that file. Measured: moving the delta base from `oldCheckIn` to `oldCheckOut`
+ * leaves the parity suite fully green. `modify-quote-shift.test.ts` is what
+ * caught it. Update the oracle in the same commit as any change here.
  */
 async function buildShiftPreviewResponse({
   booking,
