@@ -327,6 +327,9 @@ function previewShift(booking: Booking, requestedCheckInStr: string) {
   }));
   return {
     previousRange: { checkIn: oldCheckIn, checkOut: oldCheckOut },
+    // The preview derives the missing check-out from the night count it read
+    // off the previous range, so the envelope it quotes belongs in the pair too.
+    newRange: { checkIn: newCheckIn, checkOut: newCheckOut },
     deltaDays,
     translatedRanges,
     // What the guest envelope row must become, which is the same pair of days
@@ -397,8 +400,13 @@ async function runAdminShift(booking: Booking, requestedCheckInStr: string) {
     previousData: { checkIn: string };
     newData: { checkIn: string };
   };
+  const envelope = h.txBookingUpdate.mock.calls[0][0].data as {
+    checkIn: Date;
+    checkOut: Date;
+  };
   return {
     previousRange,
+    newRange: { checkIn: envelope.checkIn, checkOut: envelope.checkOut },
     deltaDays: Math.round(
       (parseDateOnly(modification.newData.checkIn).getTime() -
         parseDateOnly(modification.previousData.checkIn).getTime()) /

@@ -269,6 +269,27 @@ Two honest limits while both exist:
   new-booking freeze and `booking-range-less-guest-frame.test.ts` for the
   modification resolver, each on the environment and the host axis.
 
+  **The booking-modification date window had THREE apply-path mirrors, and the
+  third one (#3088) is the entry worth reading before writing a test for this
+  class.** Group B (#3056) moved the preview — `modify-quote/route.ts` — onto
+  `storedDateOnly` and left the apply paths projecting the same `@db.Date` lodge
+  nights through `APP_TIME_ZONE`; F4b closed `booking-modify-validation.ts` and
+  #3088 closed `booking-date-modification-service.ts`. What the last one
+  measured is that **a wrong stored day can hide inside a correct-looking
+  result.** The admin date shift computes its delta from the projected
+  `oldCheckIn` and then applies that delta to equally-projected guest rows, so
+  the two one-day errors cancel and every translated night lands on the right
+  day. A test asserting the shifted nights would have passed throughout. The
+  same `oldCheckIn` is *also* the bed-allocation release range, the modification
+  history's `previousData`, the waitlist release and the member's email — none of
+  which cancel — and the equality guard that refuses a no-op shift, which never
+  matched, so re-submitting a booking's own dates wrote a change record and
+  mailed the member. **Pin what the wrong value REACHES, not the one derived
+  quantity that happens to be self-correcting.**
+  `booking-date-modification-frame-parity.test.ts` compares the apply path
+  against a transcription of the preview rather than against fixed dates, so the
+  pair cannot drift apart and still pass.
+
   So "is this application running on the persisted zone?" still has a different
   answer per surface until CT-6 (#2991) retires the adapters, and until then no
   green suite settles it: on a deployment where the environment and the persisted
