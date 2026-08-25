@@ -720,6 +720,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-001` | The scoped tier is the default; the global key is deliberate |
 | `INV-LOCK-002` | Global before per-lodge; one helper mints the per-lodge capacity key |
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
+| `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client, never the module one |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |

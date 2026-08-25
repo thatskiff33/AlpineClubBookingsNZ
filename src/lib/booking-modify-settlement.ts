@@ -16,6 +16,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
   getNonMemberHoldPolicy,
+  type CancellationPolicyDb,
 } from "@/lib/cancellation";
 import {
   queueSupersededPrimaryIntentCancellations,
@@ -65,12 +66,20 @@ export type PaymentAdjustmentResult = {
 // isSettledBookingStatus moved to booking-payment-state (#1729) so the Xero
 // period lock-date guard shares the hasIssuedPrimaryXeroInvoice derivation.
 
+/**
+ * `db` is REQUIRED and reads the cancellation policy set: this module is
+ * transaction-scoped and imports no module-level client, so a default would hide
+ * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
+ * `CancellationPolicyDb` in `cancellation.ts`.
+ */
 export async function calculateModificationSettlementOptions({
   booking,
   netChargeCents,
+  db,
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
   netChargeCents: number;
+  db: CancellationPolicyDb;
 }): Promise<BookingModificationSettlementOptions | null> {
   const reductionAmountCents = Math.max(0, -netChargeCents);
   const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
@@ -85,7 +94,7 @@ export async function calculateModificationSettlementOptions({
     return null;
   }
 
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const daysUntilCheckIn = daysUntilDate(booking.checkIn);
   const {
     cardRefundAmountCents,
@@ -345,7 +354,7 @@ export async function applyLifecycleTransitions(
   // non-member guests would stamp a meaningless nonMemberHoldUntil onto it.
   const isDraftEdit = booking.status === BookingStatus.DRAFT;
   if (!skipBookingLifecycleRules && hasNonMembers && !isDraftEdit) {
-    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId);
+    const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
     const holdDecision = calculateBookingHoldDecision({
       hasNonMembers,
       checkIn: newCheckIn,
