@@ -42,6 +42,18 @@ vi.mock("@/lib/booking-confirmation-credit", () => ({
   loadBookingAppliedCredit: loadAppliedCreditMock,
 }));
 
+// Fork #35: the sender resolves booking-link authority before composing its
+// add-to-calendar links. Mocked to "unauthorized" so no calendar material
+// enters these renders — this suite's byte-parity and log-count assertions
+// are about the money story, and the calendar path has its own dedicated
+// suite (booking-confirmed-calendar-authority.test.ts). Unmocked, the real
+// resolver would hit unmocked prisma and add a second logged error.
+vi.mock("@/lib/booking-email-authority", () => ({
+  resolveBookingEmailLink: vi
+    .fn()
+    .mockResolvedValue({ authority: "unauthorized", bookingUrl: null }),
+}));
+
 vi.mock("@/lib/email-message-settings", () => ({
   EMAIL_DEFAULT_LODGE_NAME: "Example Club Lodge",
   EMAIL_DEFAULT_FROM_NAME: "Example Club - Online Booking System",

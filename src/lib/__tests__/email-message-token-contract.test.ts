@@ -960,6 +960,10 @@ describe("#2320 review — live optional tokens are declared", () => {
     ["booking-cancelled", "creditRestoredMessage"],
     // sendBookingConfirmedEmail composes "" for a lodge with no door code.
     ["booking-confirmed", "doorCodeNote"],
+    // Fork #35: sendBookingConfirmedEmail composes "" when the recipient's
+    // booking-link authority denies the id in outbound mail, or link building
+    // fails.
+    ["booking-confirmed", "ical"],
   ])("declares %s's optional {{%s}}", (key, token) => {
     expect(OPTIONAL_TEMPLATE_TOKENS[key]).toContain(token);
   });

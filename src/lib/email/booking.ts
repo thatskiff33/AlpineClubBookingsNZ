@@ -1,4 +1,10 @@
 import { loadBookingAppliedCredit } from "@/lib/booking-confirmation-credit";
+import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
+import {
+  type BookingCalendarLinks,
+  bookingAddToCalendarBlock,
+  bookingCalendarLinks,
+} from "@/lib/calendar-links";
 import logger from "@/lib/logger";
 import {
   bookingBumpedTemplate, bookingCancelledTemplate, bookingConfirmedTemplate,
@@ -137,7 +143,7 @@ export async function sendBookingConfirmedEmail(
   // alerting all still happen. The settings load beside it keeps its existing
   // throw-on-failure behaviour; that pre-existing hole is not #2328's to widen
   // or to close.
-  const [settings, appliedCredit] = await Promise.all([
+  const [settings, appliedCredit, calendarLinkDecision] = await Promise.all([
     loadEmailMessageSettingsForLodge(options?.lodgeId),
     loadBookingAppliedCredit(
       bookingContext.bookingId,
@@ -151,6 +157,30 @@ export async function sendBookingConfirmedEmail(
         "Failed to read applied account credit for a booking confirmation; sending without the credit lines (#2328)",
       );
       return NO_APPLIED_CREDIT;
+    }),
+    // Fork issue #35 (review F1): the {{ical}} block embeds the booking id in
+    // a sessionless bearer URL, so it is governed by the SAME privacy decision
+    // as {{bookingUrl}} — resolveBookingEmailLink, "the privacy gate that
+    // decides whether the booking id may be placed in outbound mail". The
+    // outbound HTML sanitiser only recognises /bookings paths, so an
+    // unauthorized send must never contain the calendar links in the first
+    // place. sendEmail resolves the same decision again for the button; the
+    // two reads cannot disagree in a way that leaks (a race can only differ
+    // toward the later, more current state, and each read gates its own
+    // artifact). FAILS CLOSED on error — a resolver failure means no calendar
+    // links, never links to an unverified recipient — while the send itself
+    // still goes out.
+    resolveBookingEmailLink({
+      bookingId: bookingContext.bookingId,
+      templateName: "booking-confirmed",
+      recipient: { kind: "member", memberId: bookingContext.recipientMemberId },
+      deliveryAddress: email,
+    }).catch((err) => {
+      logger.error(
+        { err, bookingId: bookingContext.bookingId },
+        "Failed to resolve booking-link authority for calendar links; sending without them (fork #35)",
+      );
+      return null;
     }),
   ]);
   // #2267: derived by the same shared helper the HTML template uses, so the
@@ -331,6 +361,32 @@ export async function sendBookingConfirmedEmail(
     : outstandingBalance
       ? `Booking Total: ${formatMoneyCents(totalCents)}\nPaid: ${formatMoneyCents(outstandingPaidCents)}\n${creditNote}Still Owing: ${formatMoneyCents(outstandingBalance.amountCents)}\n\n${outstandingBalanceNote}`
       : `Total Paid: ${formatMoneyCents(totalCents)}\n${creditNote}\nPayment has been processed successfully.`;
+  // Fork issue #35: the add-to-calendar links and their flat {{ical}} block —
+  // built ONLY when the recipient's booking-link authority above allows the
+  // booking id in outbound mail (review F1: the links carry the id in a
+  // bearer URL the outbound sanitiser does not recognise, so gating at
+  // composition is the guard). Within that, the build FAILS OPEN exactly like
+  // the applied-credit read (#2328's reasoning): the only realistic throw is
+  // a missing auth secret in a misconfigured environment, and that must
+  // degrade to a confirmation without calendar links, never abort the send.
+  // An empty {{ical}} is declared in OPTIONAL_TEMPLATE_TOKENS so the
+  // dangling-line guard proves the default body survives its absence.
+  let calendarLinks: BookingCalendarLinks | undefined;
+  let icalBlock = "";
+  if (calendarLinkDecision?.bookingUrl) {
+    try {
+      calendarLinks = bookingCalendarLinks({
+        stay: { bookingId: bookingContext.bookingId, checkIn, checkOut },
+        lodgeName: settings.lodgeName,
+      });
+      icalBlock = bookingAddToCalendarBlock(calendarLinks);
+    } catch (err) {
+      logger.error(
+        { err, bookingId: bookingContext.bookingId },
+        "Failed to build add-to-calendar links for a booking confirmation; sending without them (fork #35)",
+      );
+    }
+  }
   // #2262: the outcome is RETURNED so a caller that promised the admin a
   // receipt can report honestly what became of it (queued vs withheld vs
   // failed) instead of turning a decision into a delivery claim. Existing
@@ -352,6 +408,7 @@ export async function sendBookingConfirmedEmail(
         // #2328: the same figures the {{creditNote}} token above is built from,
         // handed to the hand-built HTML so both render the shared rows.
         appliedCredit,
+        calendarLinks,
       },
     )),
     bookingContext: bookingOwnerEmailContext(
@@ -427,6 +484,9 @@ export async function sendBookingConfirmedEmail(
       // Legacy bare value, still supplied so an existing override that writes
       // its own "Door code: {{doorCode}}" line keeps rendering (#2267).
       doorCode: settings.doorCode ?? "",
+      // Fork issue #35: pre-composed add-to-calendar block; empty only when
+      // link building failed above.
+      ical: icalBlock,
     },
     lodgeId: options?.lodgeId,
   });

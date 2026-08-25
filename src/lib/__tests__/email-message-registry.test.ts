@@ -642,6 +642,30 @@ describe("#2320 review — {{choreLinkNote}} is subject-sensitive", () => {
   });
 });
 
+// Fork #35 (review A): the composed add-to-calendar block CARRIES the signed
+// .ics bearer URL, so it must be subject-forbidden exactly like
+// {{choreLinkNote}} above — EmailLog persists subjects for every template and
+// mail headers travel in the clear.
+describe("fork #35 — {{ical}} is subject-sensitive", () => {
+  it("classifies the composed block like the bearer link it carries", () => {
+    expect(SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has("ical")).toBe(true);
+  });
+
+  it("rejects it in a booking-confirmed subject line", () => {
+    const definition = getEmailTemplateDefinition("booking-confirmed");
+    if (!definition) throw new Error("missing booking-confirmed");
+
+    const validation = validateEmailTemplateContent({
+      templateName: "booking-confirmed",
+      subject: "Booking Confirmed {{ical}}",
+      bodyText: definition.defaultBody,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.sensitiveSubjectTokens).toEqual(["ical"]);
+  });
+});
+
 // #2320 review (LOW-4): the editor preview is the admin's only picture of what
 // a recipient reads, so a per-template sample must match what that template's
 // SENDER actually composes — not the global fallthrough for the token name.

@@ -61,6 +61,10 @@ export const OPTIONAL_TEMPLATE_TOKENS: Record<string, readonly string[]> = {
     "promoSummary",
     "provisionalGuestsNote",
     "doorCodeNote",
+    // Fork issue #35: the add-to-calendar block is a fail-open decoration —
+    // empty only when the sender could not build the links (missing auth
+    // secret), so guard 4 proves the default body survives without it.
+    "ical",
   ],
   // The credit-restored sentence is composed whole by the sender and empty
   // when no applied credit was restored (#1164 D7) — declared for the same

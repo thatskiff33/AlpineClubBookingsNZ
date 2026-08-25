@@ -73,6 +73,20 @@ it — or nothing whatsoever. Put one of those tokens on its own, with no label 
 your own in front of it, and the email reads correctly whether or not the value
 exists.
 
+One of these blocks is several lines at once: **`{{ical}}`** on the Booking
+Confirmed message renders a short add-to-calendar section — a link that
+downloads the stay as a calendar file (`.ics`), plus links for Google Calendar
+and Outlook.com (personal Microsoft accounts — a work Microsoft 365 account
+cannot use that one), each covering the whole stay as all-day entries from
+check-in through checkout day. The links are built per booking by the system;
+the download link carries its own signed key, works for a recipient who is not
+signed in, and expires 60 days after checkout. Place the token on a line of
+its own; like every block token, it renders complete lines or nothing at all.
+Know what it looks like in an override: a body you write yourself renders as
+plain text, so the three links come through as full written-out web addresses
+(long ones), not as tidy click-words the way the built-in message shows them —
+use Preview, which shows realistic-length addresses, before adopting it.
+
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to
 two very different people — a club member whose pending booking lost its beds,
