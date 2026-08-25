@@ -1,4 +1,8 @@
-import { plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import { layout, plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import {
+  renderEmailBodyHtml,
+  renderHtmlTemplateString,
+} from "@/lib/email-body-html";
 import {
   applyEmailMessageSettingsToHtml,
   applyEmailMessageSettingsToSubject,
@@ -14,7 +18,18 @@ import {
 } from "@/lib/email-message-registry";
 import { findBracketAnnotations } from "@/lib/email-message-token-contract";
 import { prisma } from "@/lib/prisma";
-import { renderEmailHtml } from "@/lib/email-theme";
+import { emailPalette, renderEmailHtml } from "@/lib/email-theme";
+
+// The container a RICH override body (fork #38) renders inside: the same
+// text colour and size `multilineBlock` gives the plain path, inherited by
+// the sanitised children — the shell's own cell sets neither (review M5).
+// Local to this module DELIBERATELY: `src/lib/email-templates/` is the #2689
+// render-census directory, and a new exported render function there demands
+// a byte pin this environment cannot generate (drift lens finding 1).
+function richBodyContainer(html: string): string {
+  const p = emailPalette();
+  return `<div style="color: ${p.deep}; font-size: 15px;">${html}</div>`;
+}
 
 type EmailTemplateValue = string | number | boolean | null | undefined;
 export type EmailTemplateData = Record<string, EmailTemplateValue>;
@@ -23,6 +38,10 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
+  // Fork #38: the rich-editor body, sanitised before storage. Optional so a
+  // mocked or pre-migration row reads as absent — a legacy body renders
+  // through the plain path unchanged.
+  bodyHtml?: string | null;
   updatedAt?: Date | string | null;
   updatedByMemberId?: string | null;
 }
@@ -785,10 +804,26 @@ export async function prepareEmailMessage({
     overrideApplied = true;
   }
 
+  const overrideBodyHtml = override?.bodyHtml?.trim();
   const overrideBodyText = override?.bodyText?.trim();
-  if (overrideBodyText) {
+  if (overrideBodyHtml) {
+    // Fork #38: a rich-editor body. Tokens substitute with every VALUE
+    // HTML-escaped, then the final sanitise-and-style pass runs (defence in
+    // depth over the save-time sanitise), inside the same themed shell and
+    // render gate (#2900) as every other body.
+    nextHtml = await renderEmailHtml(() =>
+      layout(
+        richBodyContainer(
+          renderEmailBodyHtml(renderHtmlTemplateString(overrideBodyHtml, data)),
+        ),
+      ),
+    );
+    overrideApplied = true;
+    bodyOverrideApplied = true;
+  } else if (overrideBodyText) {
     // A stored body override re-renders the whole themed shell, so it goes
-    // through the render gate too (#2900).
+    // through the render gate too (#2900). Every row saved before fork #38
+    // lands here and renders byte-for-byte as it always has.
     nextHtml = await renderEmailHtml(() =>
       plainTextEmailTemplate(renderTemplateString(overrideBodyText, data)),
     );
@@ -812,11 +847,16 @@ export async function renderEmailTemplatePreview({
   templateName,
   subject,
   bodyText,
+  bodyHtml,
   templateData,
 }: {
   templateName: string;
   subject: string;
   bodyText: string;
+  // Fork #38: when the editor is previewing a rich body, it sends the HTML
+  // and the render uses the same path a save-then-send would, so the admin
+  // sees formatting exactly as members will receive it.
+  bodyHtml?: string;
   templateData?: EmailTemplateData;
 }) {
   const settings = await loadEmailMessageSettings();
@@ -834,9 +874,18 @@ export async function renderEmailTemplatePreview({
     ),
     settings,
   );
+  const trimmedBodyHtml = bodyHtml?.trim();
   const html = applyEmailMessageSettingsToHtml(
     await renderEmailHtml(() =>
-      plainTextEmailTemplate(renderTemplateString(bodyText, data)),
+      trimmedBodyHtml
+        ? layout(
+            richBodyContainer(
+              renderEmailBodyHtml(
+                renderHtmlTemplateString(trimmedBodyHtml, data),
+              ),
+            ),
+          )
+        : plainTextEmailTemplate(renderTemplateString(bodyText, data)),
     ),
     settings,
   );

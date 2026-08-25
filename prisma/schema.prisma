@@ -4742,7 +4742,16 @@ model EmailTemplateOverride {
   id                String   @id @default(cuid())
   templateName      String   @unique
   subject           String?
+  // With a rich body (below), bodyText is DERIVED on save — the block-aware
+  // text extraction of bodyHtml — so audit rows, diffs, stale-content
+  // comparison and token validation keep operating on text. For legacy rows
+  // it remains the authored body and the render source.
   bodyText          String?
+  // Fork #38 (owner decision, 25 Aug 2026): the rich-editor body, sanitised
+  // against the email policy BEFORE storage. Null for every row saved before
+  // the feature — those keep rendering through the plain-text path
+  // byte-for-byte until re-saved. Additive and nullable — blue/green safe.
+  bodyHtml          String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

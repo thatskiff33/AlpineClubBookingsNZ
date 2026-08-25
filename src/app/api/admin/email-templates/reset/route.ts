@@ -20,7 +20,11 @@ const resetSchema = z.object({
 // 1748-character body into 1014 characters ending "[TRUNCATED]" (#2269 second
 // review). Secret, card-number and sensitive-key redaction all still run; see
 // AuditMetadataOptions.
-const RESET_ARCHIVE_MAX_STRING_LENGTH = 10_000;
+// Fork #38 raised this to the bodyHtml cap (20k): the archive is the ONLY
+// surviving copy of a club's wording after a reset, and since #38 that
+// wording can be a rich body whose formatting would otherwise be destroyed
+// irrecoverably (review finding M6).
+const RESET_ARCHIVE_MAX_STRING_LENGTH = 20_000;
 
 export async function POST(request: NextRequest) {
   const guard = await requireAdmin({
@@ -96,6 +100,10 @@ export async function POST(request: NextRequest) {
           ? {
               subject: before.subject,
               bodyText: before.bodyText,
+              // Fork #38: the rich body IS the club's wording now — without
+              // this the formatting survives nowhere after a reset (M6).
+              bodyHtml:
+                (before as { bodyHtml?: string | null }).bodyHtml ?? null,
               updatedByMemberId: before.updatedByMemberId,
               updatedAt: before.updatedAt.toISOString(),
             }

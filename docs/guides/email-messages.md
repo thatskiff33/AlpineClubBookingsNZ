@@ -55,9 +55,32 @@ permission area; a view-only support role can read but not save.
    **Save Template**. Use **Restore Default** to drop your override and return to
    the built-in wording.
 
+### Formatting: the rich body editor
+
+The body is edited in a rich editor like the message board's composer
+(fork #38): select text and use the toolbar — **bold**, *italic*,
+underline, a heading, bullet and numbered lists, and left/centre/right
+alignment — and the styling shows in place as you type. `{{token}}` markers
+are ordinary text in the editor and substitute exactly as before.
+
+What the editor deliberately does **not** offer, so emails stay on the club
+theme in every mail client: colours, fonts, text sizes, images and links
+(web addresses are written out in full, as before). Anything pasted from
+elsewhere is reduced to the allowed formatting when you save — pasted
+colours, fonts and pictures are dropped, and pasted HTML can never reach a
+member as markup. Always check **Preview**, which shows the exact email a
+member receives.
+
+A body saved before this feature keeps rendering exactly as it always has.
+When you open one, the editor shows its first line as the email's heading
+and the rest as paragraphs, ready to format — nothing changes until you
+save. The Heading toolbar button turns any line into (or back out of) that
+heading style, so the heading is always yours to keep, move or remove.
+
 ### There is no "only if" — write lines that always read correctly
 
-The body is plain text with token substitution and **nothing else**. There is no
+The body substitutes tokens and **nothing else** — whether you write it as
+plain text or format it in the rich editor, there is no
 `if`, no conditional, no way to show a line only when a value exists. A token
 whose value is not applicable to a particular send simply renders as **nothing
 at all** — so a line you write as `Door code: {{doorCode}}` prints a bare

@@ -384,9 +384,11 @@ describe("email template saved-copy staleness surface (#2269)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Show differences/ }));
     expect(screen.queryByText(/You have unsaved edits/)).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Body"), {
-      target: { value: "Something else entirely." },
-    });
+    // Fork #38: the body is a contentEditable rich editor — edits arrive as
+    // input events over innerHTML, not change events over a value.
+    const body = screen.getByLabelText("Body");
+    body.innerHTML = "<p>Something else entirely.</p>";
+    fireEvent.input(body);
     expect(screen.getByText(/You have unsaved edits/)).toBeInTheDocument();
   });
 

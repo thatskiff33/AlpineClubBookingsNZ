@@ -1100,6 +1100,85 @@ describe("admin email message APIs", () => {
     );
   });
 
+  // Fork #38: the rich body path through the same PUT.
+  it("saves a rich body sanitised, with its derived text stored beside it", async () => {
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        bodyHtml:
+          '<h2>Booking Confirmed</h2><p>Hi <b>{{firstName}}</b>!</p><p>{{promoSummary}}{{paymentOutcome}}</p><p>{{CLUB_LODGE_TRAVEL_NOTE}}</p><p>{{doorCodeNote}}</p><script>alert(1)</script>',
+      }),
+    );
+    expect(response.status).toBe(200);
+    const upsert = mocks.emailTemplateOverrideUpsert.mock.calls.at(-1)?.[0];
+    expect(upsert.update.bodyHtml).toContain("<b>{{firstName}}</b>");
+    expect(upsert.update.bodyHtml).not.toContain("<script>");
+    expect(upsert.update.bodyText).toContain("Hi {{firstName}}!");
+    expect(upsert.update.bodyText).not.toContain("<b>");
+  });
+
+  it("treats an EMPTIED rich body as no body at all — the default renders, not a blank email (review H1)", async () => {
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        // What Chrome leaves after select-all + Delete: markup, no text.
+        bodyHtml: "<p><br /></p>",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const upsert = mocks.emailTemplateOverrideUpsert.mock.calls.at(-1)?.[0];
+    expect(upsert.update.bodyHtml).toBeNull();
+    expect(upsert.update.bodyText).toBeNull();
+  });
+
+  it("refuses a rich body whose derived text exceeds the plain 10k cap — the column contract is path-independent", async () => {
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        bodyHtml: `<p>{{CLUB_LODGE_TRAVEL_NOTE}}{{doorCodeNote}}{{promoSummary}}{{paymentOutcome}}${"x".repeat(10_500)}</p>`,
+      }),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(JSON.stringify(body.issues)).toContain("body_too_long");
+  });
+
+  it("previews an EMPTIED rich body as the built-in default — exactly what a send would render (drift lens 6)", async () => {
+    const definition = getEmailTemplateDefinition("booking-confirmed");
+    if (!definition) throw new Error("missing booking-confirmed");
+    const previewResponse = await previewEmailTemplate(
+      postRequest("/api/admin/email-templates/preview", {
+        templateName: "booking-confirmed",
+        subject: definition.defaultSubject,
+        bodyHtml: "<p><br /></p>",
+      }),
+    );
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    // The default body's own heading proves the fallback rendered.
+    expect(preview.html).toContain("Booking Confirmed");
+    expect(preview.html).toContain("How to get to the lodge");
+  });
+
+  it("a plain bodyText save clears any stored rich body, so it cannot be shadowed", async () => {
+    const definition = getEmailTemplateDefinition("booking-confirmed");
+    if (!definition) throw new Error("missing booking-confirmed");
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: definition.defaultSubject,
+        bodyText: definition.defaultBody,
+      }),
+    );
+    expect(response.status).toBe(200);
+    const upsert = mocks.emailTemplateOverrideUpsert.mock.calls.at(-1)?.[0];
+    expect(upsert.update.bodyHtml).toBeNull();
+    expect(upsert.update.bodyText).toBe(definition.defaultBody);
+  });
+
   it("resets every registered template", async () => {
     for (const definition of EMAIL_TEMPLATE_DEFINITIONS) {
       const response = await resetEmailTemplate(
