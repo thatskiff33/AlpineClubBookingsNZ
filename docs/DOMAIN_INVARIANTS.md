@@ -135,7 +135,7 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-007` | Departing lodge A and arriving at lodge B on one date is legal |
 | `INV-DATE-008` | Zero-night bookings expand to no nights and every route refuses them |
 | `INV-DATE-009` | Six areas sit deliberately outside the boundary and must not be aligned |
-| `INV-DATE-010` | `@db.Date` holds an NZ calendar date; UTC midnight is encoding, not meaning |
+| `INV-DATE-010` | `@db.Date` holds a club calendar date; UTC midnight is encoding, not meaning — and not the citation for a decode |
 | `INV-DATE-011` | Lodge bookings use NZ date-only nights, not arbitrary timestamps |
 | `INV-DATE-012` | `BookingGuest.stayStart`/`stayEnd` are date-only occupancy in the envelope |
 | `INV-DATE-013` | Compare date columns only against date-only values, never a raw clock |
