@@ -23,9 +23,10 @@ import {
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
 import { escapeHtml } from "./escape";
-import { sanitizeEmailHref } from "@/lib/app-url";
-import type { BookingCalendarLinks } from "@/lib/calendar-links";
-import { emailPalette } from "@/lib/email-theme";
+import {
+  type BookingCalendarLinks,
+  bookingAddToCalendarHtmlRow,
+} from "@/lib/calendar-links";
 import {
   alertBox,
   BASE_URL,
@@ -81,24 +82,11 @@ export function arrivalInstructionsSection({
   `;
 }
 
-// The HTML twin of the flat {{ical}} block (fork issue #35; icons per fork
-// issue #41): three tappable icon links after the lead-in. The icons are
-// self-hosted originals under /branding/calendar (the email logo pattern —
-// no third-party image hosts), and each carries its destination as alt text
-// because many mail clients block remote images by default, so the blocked
-// state must still read as the three service names. The Google/Outlook
-// targets are cross-origin by nature, so the href sanitiser runs without the
-// same-origin restriction the View Booking button uses. "Outlook.com", not
-// "Outlook": the deeplink serves personal Microsoft accounts only, and the
-// name must not promise a Microsoft 365 work/school reader a link that lands
-// them on a consumer sign-in.
+// The built-in template's {{ical}} row (fork #35/#41/#43): one shared
+// composer in calendar-links.ts renders the icons here AND in admin override
+// bodies via the renderer's sentinel swap, so the two paths cannot drift.
 function addToCalendarLine(links: BookingCalendarLinks): string {
-  const p = emailPalette();
-  const iconLink = (alt: string, icon: string, url: string) =>
-    `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" title="${escapeHtml(alt)}" style="display: inline-block; margin: 0 10px 0 0; text-decoration: none;"><img src="${BASE_URL}/branding/calendar/${icon}" alt="${escapeHtml(alt)}" width="28" height="28" style="display: inline-block; width: 28px; height: 28px; vertical-align: middle; border: 0;"></a>`;
-  return paragraph(
-    `<span style="display: inline-block; margin-right: 10px; color: ${p.deep};">Add this stay to your calendar:</span>${iconLink("Calendar file (.ics)", "ics.png", links.icsUrl)}${iconLink("Google Calendar", "google-calendar.png", links.googleUrl)}${iconLink("Outlook.com", "outlook.png", links.outlookUrl)}`,
-  );
+  return paragraph(bookingAddToCalendarHtmlRow(links));
 }
 
 export function bookingConfirmedTemplate(

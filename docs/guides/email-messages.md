@@ -105,10 +105,12 @@ check-in through checkout day. The links are built per booking by the system;
 the download link carries its own signed key, works for a recipient who is not
 signed in, and expires 60 days after checkout. Place the token on a line of
 its own; like every block token, it renders complete lines or nothing at all.
-Know what it looks like in an override: a body you write yourself renders as
-plain text, so the three links come through as full written-out web addresses
-(long ones), not as tidy click-words the way the built-in message shows them —
-use Preview, which shows realistic-length addresses, before adopting it.
+In your own override wording the token renders exactly as the built-in
+message does: three tappable icons (a calendar-file tile, Google Calendar,
+Outlook.com) after the "Add this stay to your calendar:" lead-in. A mail app
+that blocks images shows the three service names instead — members never see
+the written-out addresses. Place the token on its own line inside your
+wording and Preview to see the row in place.
 
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to

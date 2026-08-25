@@ -12,6 +12,7 @@ import {
   renderEmailTemplatePreview,
   validateEmailTemplateContent,
 } from "@/lib/email-message-renderer";
+import { bookingAddToCalendarHtmlRow } from "@/lib/calendar-links";
 import { requireAdmin } from "@/lib/session-guards";
 
 const previewSchema = z
@@ -101,12 +102,28 @@ export async function POST(request: NextRequest) {
   const previewBodyText =
     parsed.data.bodyText ??
     (sanitizedBodyHtml ? "" : (definition?.defaultBody ?? ""));
+  // Fork #43: preview {{ical}} as the ICON ROW the send renders, not the
+  // flat sample text — the editor must tell the truth. The fixture URLs
+  // mirror sampleValue("ical")'s documented sample set.
+  const sampleData = definition?.sampleData?.ical
+    ? {
+        ...definition.sampleData,
+        icalHtml: bookingAddToCalendarHtmlRow({
+          icsUrl:
+            "https://bookings.example.org/api/booking-calendar/bkg_example?token=sample&exp=1791244800",
+          googleUrl:
+            "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Example+Lodge+stay&dates=20260801/20260806",
+          outlookUrl:
+            "https://outlook.live.com/calendar/0/deeplink/compose?rru=addevent&allday=true&startdt=2026-08-01&enddt=2026-08-06",
+        }),
+      }
+    : definition?.sampleData;
   const preview = await renderEmailTemplatePreview({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
     bodyText: previewBodyText,
     bodyHtml: sanitizedBodyHtml,
-    templateData: definition?.sampleData,
+    templateData: sampleData,
   });
 
   return NextResponse.json(preview);

@@ -24,7 +24,9 @@
  * booking can never verify for another.
  */
 import { createHmac, timingSafeEqual } from "crypto";
-import { getAppBaseUrl } from "@/lib/app-url";
+import { getAppBaseUrl, sanitizeEmailHref } from "@/lib/app-url";
+import { escapeHtml } from "@/lib/email-templates/escape";
+import { emailPalette } from "@/lib/email-theme";
 import {
   addDaysDateOnly,
   formatDateOnly,
@@ -282,6 +284,28 @@ export function bookingCalendarLinks(input: {
  * id in outbound mail (the same decision that governs `{{bookingUrl}}`),
  * which is why `ical` is declared in OPTIONAL_TEMPLATE_TOKENS.
  */
+/**
+ * The icon row `{{ical}}` renders EVERYWHERE — the built-in template and,
+ * via the renderer's sentinel swap (fork #43), admin override bodies too.
+ * Icons first (owner direction, 26 Aug 2026); the service names appear only
+ * when a mail client blocks images, through each icon's alt text; the raw
+ * URLs are never member-visible. Icons are self-hosted originals under
+ * /branding/calendar (the email logo pattern — no third-party image hosts).
+ * The Google/Outlook targets are cross-origin by nature, so the href
+ * sanitiser runs without a same-origin restriction. "Outlook.com", not
+ * "Outlook": the deeplink serves personal Microsoft accounts only, and the
+ * name must not promise a Microsoft 365 work/school reader a link that
+ * lands them on a consumer sign-in.
+ */
+export function bookingAddToCalendarHtmlRow(
+  links: BookingCalendarLinks,
+): string {
+  const p = emailPalette();
+  const iconLink = (alt: string, icon: string, url: string) =>
+    `<a href="${escapeHtml(sanitizeEmailHref(url))}" target="_blank" title="${escapeHtml(alt)}" style="display: inline-block; margin: 0 10px 0 0; text-decoration: none;"><img src="${getAppBaseUrl()}/branding/calendar/${icon}" alt="${escapeHtml(alt)}" width="28" height="28" style="display: inline-block; width: 28px; height: 28px; vertical-align: middle; border: 0;"></a>`;
+  return `<span style="display: inline-block; margin-right: 10px; color: ${p.deep};">Add this stay to your calendar:</span>${iconLink("Calendar file", "ics.png", links.icsUrl)}${iconLink("Google Calendar", "google-calendar.png", links.googleUrl)}${iconLink("Outlook.com", "outlook.png", links.outlookUrl)}`;
+}
+
 export function bookingAddToCalendarBlock(links: BookingCalendarLinks): string {
   return [
     "Add this stay to your calendar",

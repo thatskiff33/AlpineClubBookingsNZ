@@ -1991,8 +1991,11 @@ const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   // Fork #35 (review A): the composed add-to-calendar block carries the signed
   // .ics bearer URL itself, so it is subject-forbidden exactly like
   // {{choreLinkNote}} above — EmailLog persists subjects and mail headers
-  // travel in the clear.
+  // travel in the clear. #43: the icon-row twin the renderer swaps in is
+  // forbidden on the same grounds (it is not an approved token at all; this
+  // is belt-and-braces).
   "ical",
+  "icalHtml",
   "loginUrl",
   "payUrl",
   "pin",

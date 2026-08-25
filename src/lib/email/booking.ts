@@ -3,6 +3,7 @@ import { resolveBookingEmailLink } from "@/lib/booking-email-authority";
 import {
   type BookingCalendarLinks,
   bookingAddToCalendarBlock,
+  bookingAddToCalendarHtmlRow,
   bookingCalendarLinks,
 } from "@/lib/calendar-links";
 import logger from "@/lib/logger";
@@ -373,6 +374,7 @@ export async function sendBookingConfirmedEmail(
   // dangling-line guard proves the default body survives its absence.
   let calendarLinks: BookingCalendarLinks | undefined;
   let icalBlock = "";
+  let icalHtmlRow = "";
   if (calendarLinkDecision?.bookingUrl) {
     try {
       calendarLinks = bookingCalendarLinks({
@@ -380,6 +382,9 @@ export async function sendBookingConfirmedEmail(
         lodgeName: settings.lodgeName,
       });
       icalBlock = bookingAddToCalendarBlock(calendarLinks);
+      // Fork #43: the icon row an OVERRIDE body's {{ical}} renders, injected
+      // by the renderer's sentinel swap so token-value escaping stays intact.
+      icalHtmlRow = bookingAddToCalendarHtmlRow(calendarLinks);
     } catch (err) {
       logger.error(
         { err, bookingId: bookingContext.bookingId },
@@ -485,8 +490,12 @@ export async function sendBookingConfirmedEmail(
       // its own "Door code: {{doorCode}}" line keeps rendering (#2267).
       doorCode: settings.doorCode ?? "",
       // Fork issue #35: pre-composed add-to-calendar block; empty only when
-      // link building failed above.
+      // link building failed above. #43: the icon-row HTML the renderer
+      // swaps in wherever {{ical}} renders — never a token an admin can
+      // reference ({{icalHtml}} is not approved, and it is subject-forbidden
+      // belt-and-braces).
       ical: icalBlock,
+      icalHtml: icalHtmlRow,
     },
     lodgeId: options?.lodgeId,
   });
