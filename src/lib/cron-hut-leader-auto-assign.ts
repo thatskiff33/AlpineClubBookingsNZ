@@ -86,9 +86,6 @@ export async function autoAssignHutLeaders(): Promise<{
       // Find distinct adult members with PAID bookings for this date at this
       // lodge. Scoped, so the "exactly one adult member" test below counts the
       // people actually at THIS lodge rather than pooling every lodge's guests.
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-
       const bookingsForDate = await prisma.booking.findMany({
         where: {
           status: "PAID",

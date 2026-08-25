@@ -376,7 +376,7 @@ describe("chooseDivergentClubZone checks the pinned literal against its own zone
           answerKey: "day",
           answerFor: dayOfId,
         }),
-      ).toThrowError(/pins day = "2026-08-16".*but that zone actually answers "2026-08-14"/s);
+      ).toThrowError(/pins day = "2026-08-16".*but that zone actually answers "2026-08-14"/);
     });
   });
 });

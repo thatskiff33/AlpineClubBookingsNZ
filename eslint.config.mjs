@@ -641,6 +641,157 @@ const NO_UNZONED_INTL_DATE_TIME_FORMAT = {
 
 const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
 
+// ---------------------------------------------------------------------------
+// CT-6 (#2991) — the two recurrence paths the epic left mechanically open.
+// ---------------------------------------------------------------------------
+//
+// The three arms above cover the RENDERING escapes (`toLocale*`, an unzoned
+// `Intl.DateTimeFormat`) and the date-only ENCODING escapes. Two classes were
+// still guarded by nothing at all, and each is the shape a whole CT-4 group was
+// spent removing:
+//
+//   * reading a `Date` back through its HOST clock face — `getFullYear()`,
+//     `getMonth()`, `getDate()` — which answers in the container's zone rather
+//     than the club's, so west of Greenwich a stored lodge night reads a day
+//     early. `#3082` (a boundary birthday selecting the wrong price band) and
+//     `#3100` (a stay expander that did not terminate) were both this;
+//   * taking the ENVIRONMENT's zone as civil-time authority, either by reading
+//     `process.env.TZ` directly or by importing `APP_TIME_ZONE`. Since CT-1
+//     (#2989) the club's zone is the persisted `ClubTimeSettings.timeZone`
+//     (`INV-CONFIG-002`); `TZ` seeds that row at setup and has no further say.
+//
+// Both are expressed as `no-restricted-syntax` arms rather than as
+// `no-restricted-imports`, deliberately. Flat config REPLACES a rule's options
+// rather than merging them, and `src/lib/xero-*.ts` already sets
+// `no-restricted-imports` for its own facade rule — so an import-based guard
+// here would be silently lifted for exactly the Xero modules that date
+// financial documents. Everything mandatory lives in ONE array, which is the
+// architecture the fold below already insists on.
+
+const HOST_CLOCK_FACE_READERS =
+  "^(getFullYear|getMonth|getDate|getDay|getHours|getMinutes|getSeconds)$";
+const HOST_CLOCK_FACE_WRITERS =
+  "^(setFullYear|setMonth|setDate|setHours|setMinutes|setSeconds)$";
+
+const HOST_CLOCK_FACE_MESSAGE =
+  "INV-DATE-014 / INV-CONFIG-002: This reads or writes a Date through the HOST's clock face, so it answers in whatever zone the container happens to run in (CT-6, #2991). A `@db.Date` lodge night is UTC midnight, and west of Greenwich `.getDate()` on one returns the PREVIOUS day — that is #3082 (a boundary birthday priced a year young) and #3100 (a stay expander that never terminated). Calendar arithmetic on a stay day: addDaysDateOnly / addMonthsDateOnly / eachDateOnlyInRange / countNightsDateOnly from @/lib/date-only, which are UTC-based and zone-free. A civil date or time from a real instant: clubCalendarDateOf(instant, zone) or a house shape from @/lib/club-time. A DURATION: subtract milliseconds from the instant, which is what `setDate(getDate() - n)` was approximating and gets wrong by an hour across DST. The getUTC* readers are untouched — they name their frame.";
+
+// Both spellings a member access can reach these through, matching the
+// encoding arm above: `d.getDate()` reads `property.name`, `d["getDate"]()`
+// reads `property.value`. The computed form is the documented escape from every
+// syntactic rule in this file, so a new rule should close it on the way in
+// rather than record it as a known limitation.
+const NO_HOST_CLOCK_FACE = [
+  `CallExpression > MemberExpression.callee[property.name=/${HOST_CLOCK_FACE_READERS}/]`,
+  `CallExpression > MemberExpression.callee[property.value=/${HOST_CLOCK_FACE_READERS}/]`,
+  `CallExpression > MemberExpression.callee[property.name=/${HOST_CLOCK_FACE_WRITERS}/]`,
+  `CallExpression > MemberExpression.callee[property.value=/${HOST_CLOCK_FACE_WRITERS}/]`,
+].map((selector) => ({ selector, message: HOST_CLOCK_FACE_MESSAGE }));
+
+const ENVIRONMENT_ZONE_MESSAGE =
+  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only's zone-defaulting helpers and @/lib/nzst-date are the compatibility adapters this issue retires; do not add a caller.";
+
+// `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
+// modules whose job is to read them once.
+const NO_ENVIRONMENT_ZONE_ENV_READ = {
+  selector:
+    'MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  message: ENVIRONMENT_ZONE_MESSAGE,
+};
+
+// Importing the environment zone by name. `@/config/operational` exports it as
+// a plain string, so nothing downstream of the import can tell it from a club
+// zone — which is how 133 call sites came to take it as a default without one
+// review noticing.
+const NO_ENVIRONMENT_ZONE_IMPORT = [
+  'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.name="APP_TIME_ZONE"]',
+  'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.value="APP_TIME_ZONE"]',
+].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
+
+const ENVIRONMENT_ZONE_RESTRICTIONS = [
+  NO_ENVIRONMENT_ZONE_ENV_READ,
+  ...NO_ENVIRONMENT_ZONE_IMPORT,
+];
+
+/**
+ * The modules still allowed to name the ENVIRONMENT's zone, each with the
+ * reason it is not simply a defect. Exported so
+ * `club-time-boundary-census.test.ts` reads this record rather than keeping a
+ * copy that drifts out of step with the config that ships.
+ *
+ * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. Two entries are structural — the
+ * environment has to be read somewhere for the setup wizard to offer it — and
+ * the rest are callers CT-6 measured and could not migrate without threading a
+ * club zone through a surface belonging to another issue. Each names what is
+ * blocking it. Adding a file here re-opens the class the guard exists to close,
+ * so the census test asserts the list has not grown.
+ *
+ * `src/lib/date-only.ts` is deliberately NOT here: it already has a block of
+ * its own further down, and that block drops this group as well. Listing it
+ * twice would give it two matching blocks, the later of which silently wins.
+ */
+const ENVIRONMENT_ZONE_ADAPTER_FILES = [
+  "src/config/operational.ts",
+  "src/lib/club-time-zone-env.ts",
+  "src/lib/nzst-date.ts",
+  "src/lib/ai-assistant-usage.ts",
+  "src/lib/ai-diagnostics-usage.ts",
+  "src/lib/induction-display.ts",
+  "src/lib/member-guest-consent-labels.ts",
+  "src/lib/member-guest-delegate-page.ts",
+  "src/lib/member-merge-field-kinds.ts",
+];
+
+export const ENVIRONMENT_ZONE_ADAPTERS = [
+  {
+    file: "src/config/operational.ts",
+    reason:
+      "STRUCTURAL. The one read of `process.env.TZ` in the tree, and the definition of APP_TIME_ZONE itself. CT-1 (#2989) kept it as the SEED the setup wizard offers and the self-heal step backfills the persisted row from, so it has to exist somewhere.",
+  },
+  {
+    file: "src/lib/club-time-zone-env.ts",
+    reason:
+      "STRUCTURAL. CT-1's seed reader (#2989): exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
+  },
+  {
+    file: "src/lib/nzst-date.ts",
+    reason:
+      "The rendering compatibility adapter this issue retires, and the last module that BINDS the environment zone at module load. Its remaining production callers are counted by the census; the count may only fall.",
+  },
+  {
+    file: "src/lib/ai-assistant-usage.ts",
+    reason:
+      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the five below.",
+  },
+  {
+    file: "src/lib/ai-diagnostics-usage.ts",
+    reason:
+      "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
+  },
+  {
+    file: "src/lib/induction-display.ts",
+    reason:
+      "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
+  },
+  {
+    file: "src/lib/member-guest-consent-labels.ts",
+    reason:
+      "Three module-level formatters whose own comment already defers them to CT-4 group F. Left as the group scoped them rather than re-scoped here.",
+  },
+  {
+    file: "src/lib/member-guest-delegate-page.ts",
+    reason:
+      "An `en-CA` extractor whose locale is deliberately NOT APP_LOCALE, because changing it would change the field order and break the parse the page depends on. It needs the club zone threaded from the route, not a formatter swap.",
+  },
+  {
+    file: "src/lib/member-merge-field-kinds.ts",
+    reason:
+      "The member-merge comparison renderer, which is a client component (#2860). Same blocker as `induction-display.ts`: the zone must arrive as data.",
+  },
+];
+
 /**
  * The three `toLocale*` DATE-RENDERING arms (#2256, #2264), as a NAMED array
  * rather than three literals repeated in four blocks.
@@ -668,6 +819,20 @@ const DATE_RENDERING_RESTRICTIONS = [
  * from HERE rather than from a copy, because a copy passes happily while the
  * config that ships has dropped the arm.
  */
+/**
+ * The CT-6 (#2991) arm families, as bare selector strings, for
+ * `club-time-boundary-guard.test.ts` — the same mirror `DATE_GUARD_ARMS`
+ * provides for the #2684 families.
+ *
+ * Read from HERE rather than from a copy in the suite: a copy passes happily
+ * while the config that ships has dropped the arm, which is the exact failure
+ * the roster audit below exists to catch.
+ */
+export const CLUB_TIME_GUARD_ARMS = {
+  hostClock: HOST_CLOCK_RESTRICTIONS.map((entry) => entry.selector),
+  environmentZone: ENVIRONMENT_ZONE_RESTRICTIONS.map((entry) => entry.selector),
+};
+
 export const DATE_GUARD_ARMS = {
   encoding: DATE_ONLY_ENCODING_RESTRICTIONS.map((entry) => entry.selector),
   zonedFormatter: ZONED_FORMATTER_RESTRICTIONS.map((entry) => entry.selector),
@@ -720,6 +885,8 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...RAW_SQL_RESTRICTIONS,
   ...DATE_ONLY_ENCODING_RESTRICTIONS,
   ...ZONED_FORMATTER_RESTRICTIONS,
+  ...HOST_CLOCK_RESTRICTIONS,
+  ...ENVIRONMENT_ZONE_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
 ];
 
@@ -734,9 +901,15 @@ const ALWAYS_RESTRICTED_IN_SRC = [
 export const SRC_RESTRICTION_EXEMPTIONS = [
   {
     files: ["src/lib/date-only.ts"],
-    omits: DATE_ONLY_ENCODING_RESTRICTIONS,
+    omits: [...DATE_ONLY_ENCODING_RESTRICTIONS, ...ENVIRONMENT_ZONE_RESTRICTIONS],
     reason:
-      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere.",
+      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere. It is also the adapter CT-6 (#2991) retires, so it still defaults six helpers to APP_TIME_ZONE for the callers CT-4 has not reached; `ENVIRONMENT_ZONE_ADAPTERS` carries that reason and the census counts what is left.",
+  },
+  {
+    files: ENVIRONMENT_ZONE_ADAPTER_FILES,
+    omits: ENVIRONMENT_ZONE_RESTRICTIONS,
+    reason:
+      "The two structural readers of the environment's zone plus the seven measured callers CT-6 (#2991) could not migrate without threading a club zone through another issue's surface. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
@@ -968,6 +1141,25 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // CT-6 (#2991) — the files allowed to name the ENVIRONMENT's zone. The
+    // reason for each is on `ENVIRONMENT_ZONE_ADAPTERS` above, where the census
+    // test can read it; only the group is dropped here.
+    //
+    // The DATE_RENDERING arms are re-stated rather than inherited, because flat
+    // config REPLACES a rule's options: a block that merely dropped one group
+    // would take the three rendering arms down with it, silently, for
+    // `nzst-date.ts` among others -- and CT-2 (#2990) removed that file's
+    // rendering exemption on purpose. This is the failure the fold above exists
+    // to prevent, arriving through a new block rather than through a merge.
+    files: ENVIRONMENT_ZONE_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        ENVIRONMENT_ZONE_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
     // The raw-SQL guard (#2289) is NOT an `src/`-only rule, even though the date
     // rules above are. Operator CLIs and seed/migration helpers are where
     // hand-written SQL is most likely — Prisma cannot express a bulk correlated
@@ -1058,9 +1250,10 @@ const eslintConfig = defineConfig([
       // Drops ONE named group. Every other guard — the raw-SQL restrictions and
       // the money restrictions today, anything added later — stays on this file
       // automatically.
-      "no-restricted-syntax": srcRestrictedSyntaxWithout(
-        DATE_ONLY_ENCODING_RESTRICTIONS,
-      ),
+      "no-restricted-syntax": srcRestrictedSyntaxWithout([
+        ...DATE_ONLY_ENCODING_RESTRICTIONS,
+        ...ENVIRONMENT_ZONE_RESTRICTIONS,
+      ]),
     },
   },
   {

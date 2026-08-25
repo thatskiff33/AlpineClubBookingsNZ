@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { addDaysDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
@@ -1014,9 +1015,17 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        const holdDate = new Date(booking.checkIn);
-        holdDate.setDate(holdDate.getDate() - holdPolicy.holdDays);
-        updateData.nonMemberHoldUntil = holdDate;
+        // The hold deadline is a whole number of lodge nights before
+        // check-in, so it is stepped with the zone-free calendar helper rather
+        // than through the host's clock face (INV-DATE-014, CT-6 #2991).
+        // `booking.checkIn` is a `@db.Date` value at UTC midnight; walking it
+        // back with `setDate(getDate() - n)` moved n LOCAL days, which agrees
+        // with n calendar days everywhere except across a daylight-saving
+        // transition, where the hold expired an hour early or late.
+        updateData.nonMemberHoldUntil = addDaysDateOnly(
+          booking.checkIn,
+          -holdPolicy.holdDays
+        );
       }
 
       const claimed = await tx.booking.updateMany({

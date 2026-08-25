@@ -271,10 +271,18 @@ export async function getRecentBackupRuns(
  */
 export const BACKUP_RUN_RETENTION_DAYS = 90;
 
+const MILLISECONDS_PER_DAY = 86_400_000;
+
 /** Auto-prune old BackupRun records (older than the retention window). */
 export async function pruneBackupRuns(): Promise<{ count: number }> {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - BACKUP_RUN_RETENTION_DAYS);
+  // A retention window is a DURATION, not a calendar span, so it is measured
+  // in milliseconds rather than by stepping a host-local clock face
+  // (INV-DATE-014, CT-6 #2991). `setDate(getDate() - n)` moved n LOCAL days,
+  // which is n x 24h except across a daylight-saving transition, where it is an
+  // hour out — and it answered in whichever zone the container ran in.
+  const cutoff = new Date(
+    Date.now() - BACKUP_RUN_RETENTION_DAYS * MILLISECONDS_PER_DAY
+  );
   const { count } = await prisma.backupRun.deleteMany({
     where: { startedAt: { lt: cutoff } },
   });

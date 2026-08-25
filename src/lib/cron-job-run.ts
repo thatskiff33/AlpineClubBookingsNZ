@@ -1,6 +1,11 @@
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 
+const MILLISECONDS_PER_DAY = 86_400_000;
+
+/** How long a CronJobRun row is kept before the daily prune removes it. */
+const CRON_RUN_RETENTION_DAYS = 90;
+
 export type CronJobRunStatus = "SUCCESS" | "FAILURE" | "SKIPPED";
 
 export interface RecordCronJobRunInput {
@@ -55,8 +60,11 @@ export async function recordCronJobRunSafe(input: RecordCronJobRunInput) {
  */
 export async function pruneCronRuns() {
   try {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 90);
+    // A retention window is a DURATION measured in milliseconds, not a walk
+    // back through the host's clock face (INV-DATE-014, CT-6 #2991).
+    const cutoff = new Date(
+      Date.now() - CRON_RUN_RETENTION_DAYS * MILLISECONDS_PER_DAY
+    );
     const { count } = await prisma.cronJobRun.deleteMany({
       where: { startedAt: { lt: cutoff } },
     });
