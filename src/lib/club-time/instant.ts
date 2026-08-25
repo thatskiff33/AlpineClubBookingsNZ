@@ -39,6 +39,9 @@ import type { CalendarDate, ClubTimeZone, ClubWallTime, Instant } from "./types"
 
 const MS_PER_SECOND = 1000;
 
+/** A whole UTC day in milliseconds - the stride a `@db.Date` encoding lands on. */
+const MS_PER_DAY = 86_400_000;
+
 /** An ISO 8601 value that actually pins a moment: it carries `Z` or an offset. */
 const OFFSET_BEARING_ISO =
   /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$/;
@@ -262,4 +265,50 @@ export function calendarDateOfSerialisedDbDateOrNull(
   value: string | null | undefined,
 ): CalendarDate | null {
   return value == null ? null : parseCalendarDate(value.slice(0, 10));
+}
+
+/**
+ * {@link calendarDateOfDateOnlyInstant}, REFUSING a value that carries a UTC
+ * time of day instead of flooring it.
+ *
+ * The lenient decoder above cannot tell a `@db.Date` encoding from a real
+ * timestamp, and it says so — hand it a `createdAt` and you get that instant's
+ * UTC day, which for a club east of Greenwich is the right answer for most of
+ * the day and the wrong one for the rest. That is the hardest kind of wrong to
+ * notice, so a caller whose whole contract is "this argument is a stored
+ * calendar day" declines to answer rather than guessing which kind it was
+ * handed. F2 (#3076) established the shape on `normalizeBookingDate`, and
+ * `seasonYearOfStoredDate` and `computeAge` are the two derivations that now
+ * share it — a `@db.Date` column round-trips as UTC midnight, so a time of day
+ * means the value is not from one.
+ *
+ * IT IS A GUARD, NOT A CONVERTER: there is no repair for a moment handed to a
+ * calendar-day rule, because the caller has to decide whose calendar the day
+ * should come from. `refusal.instead` is that sentence, supplied by the caller
+ * because only the caller knows what it should have been asked instead.
+ *
+ * On today's schema the throw is unreachable from the database — PostgreSQL will
+ * not keep a time in a `date` column — so it fires for a value some code path
+ * built wrong, which is exactly when a loud failure is worth more than an
+ * answer.
+ */
+export function calendarDateOfStoredCalendarDay(
+  value: Date,
+  refusal: { subject: string; instead: string },
+): CalendarDate {
+  if (!isInstant(value)) {
+    throw new RangeError(
+      `${refusal.subject} needs a valid Date holding a @db.Date calendar-day ` +
+        `encoding; got ${String(value)}.`,
+    );
+  }
+  if (value.getTime() % MS_PER_DAY !== 0) {
+    throw new RangeError(
+      `${refusal.subject} takes a stored calendar day, not a moment: ${value.toISOString()} ` +
+        "carries a UTC time of day. A @db.Date column round-trips as UTC midnight, so a value with " +
+        "a time of day is a real timestamp - flooring it to its UTC day is the INV-DATE-019 defect " +
+        `and would be silently right for a club east of Greenwich. ${refusal.instead}`,
+    );
+  }
+  return calendarDateOfDateOnlyInstant(value);
 }

@@ -47,18 +47,13 @@
  */
 
 import {
-  calendarDateOfDateOnlyInstant,
+  calendarDateOfStoredCalendarDay,
   calendarDateParts,
   clubToday,
-  isInstant,
   type CalendarDate,
   type ClubClock,
   type ClubTimeZone,
-  type Instant,
 } from "@/lib/club-time";
-
-/** A whole UTC day in milliseconds - the stride a `@db.Date` encoding lands on. */
-const MS_PER_DAY = 86_400_000;
 
 /** Default financial year-end month: March (NZ convention, 31 March year-end). */
 export const DEFAULT_FINANCIAL_YEAR_END_MONTH = 3;
@@ -148,24 +143,12 @@ export function seasonYearOfStoredDate(
   value: Date,
   yearEndMonth?: number,
 ): number {
-  if (!isInstant(value)) {
-    throw new RangeError(
-      "seasonYearOfStoredDate needs a valid Date holding a @db.Date calendar-day " +
-        `encoding; got ${String(value)}.`,
-    );
-  }
-  const instant: Instant = value;
-  if (instant.getTime() % MS_PER_DAY !== 0) {
-    throw new RangeError(
-      `seasonYearOfStoredDate takes a stored calendar day, not a moment: ${instant.toISOString()} ` +
-        "carries a UTC time of day. A @db.Date column round-trips as UTC midnight, so a value with " +
-        "a time of day is a real timestamp - flooring it to its UTC day is the INV-DATE-019 defect " +
-        "and would be silently right for a club east of Greenwich. If you meant \"the club's season " +
-        'year now", call clubSeasonYear(zone) instead.',
-    );
-  }
   return seasonYearOfCalendarDate(
-    calendarDateOfDateOnlyInstant(instant),
+    calendarDateOfStoredCalendarDay(value, {
+      subject: "seasonYearOfStoredDate",
+      instead:
+        `If you meant "the club's season year now", call clubSeasonYear(zone) instead.`,
+    }),
     yearEndMonth,
   );
 }

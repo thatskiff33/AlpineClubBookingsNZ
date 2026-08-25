@@ -66,6 +66,7 @@ export {
   calendarDateOfDateOnlyInstant,
   calendarDateOfSerialisedDbDate,
   calendarDateOfSerialisedDbDateOrNull,
+  calendarDateOfStoredCalendarDay,
   clubCalendarDateOf,
   clubWallTimeOf,
   clubZoneOffsetMs,
