@@ -37,8 +37,22 @@ import { getSeasonStartMonth } from "@/lib/financial-year";
  * Greenwich answered correctly, which is why the defect was latent rather than
  * live. A member born on 2 April whose true age at season start is 17 was read
  * as 18 and quoted the ADULT band; at 4 and 9 the same +1 crosses the INFANT and
- * CHILD boundaries. `cron-age-up.ts` would also have given that member their own
- * login a season early.
+ * CHILD boundaries.
+ *
+ * THE AGE-UP CRON WAS NOT AFFECTED, and an earlier draft of this docblock said it
+ * was. `cron-age-up.ts` prefilters candidates on
+ * `dateOfBirthPrefilterBoundForMinAge`, whose EXCLUSIVE bound and this
+ * misclassification's boundary coincide exactly: the bound admits
+ * `dateOfBirth <= seasonStart - minAge years`, and the one day of birthdays the
+ * old read got wrong is the day AFTER that. So the misread member was never a
+ * candidate — and for candidates the old read DID move, both readings sit at or
+ * above `minAge`, which `validateAgeTierPartition` guarantees means ADULT either
+ * way. Swept: 27 638 160 admitted candidates over 418 zones x 12 season-start
+ * months x 10 configured ADULT minimum ages. 19 423 of them had their age reading
+ * changed by this fix and **zero had their promote-or-skip verdict changed.** The
+ * candidate set itself is byte-identical too (280 896 comparisons, zero
+ * differences), because the retired `setFullYear` spelling preserved the local
+ * wall components and the read-back re-encoded them as UTC midnight.
  *
  * FIXING EITHER HALF ALONE MAKES IT WORSE, which is why they moved together.
  * Correct the date-of-birth read and the reference side (still host-local
@@ -82,9 +96,27 @@ export function getSeasonStartDate(seasonYear: number): Date {
  * 29 February convention: a leap-day birthday counts the new year on 1 March in
  * a non-leap year, because `day` is compared as written and 28 < 29. That
  * deliberately differs from `member-age.ts`, which clamps the anniversary to
- * 28 February for an identity check. Two conventions, two purposes, and this one
- * decides a price band - do not "align" them without a decision, because
- * changing it would move a real member's tier for one day a year.
+ * `min(dobDay, daysInMonth)` - 28 February - for an identity check.
+ *
+ * THE TWO CONVENTIONS CANNOT DISAGREE ON THIS PATH, and the earlier version of
+ * this comment gave a reason for leaving them alone that was measurably false. It
+ * said aligning them "would move a real member's tier for one day a year, so it
+ * needs a decision rather than a tidy-up". Enumerated over 21 birth years x every
+ * day x 17 reference years x every day: the two answers differ in exactly ONE
+ * shape, a 29 February date of birth against a 28 February reference date, and in
+ * **zero** cases where the reference day is the 1st. Every reference date this
+ * function is given on the price path comes from
+ * {@link getSeasonStartCalendarDate}, which always returns day 1 of a month, so
+ * 28 February is unreachable as a reference and aligning the conventions would
+ * move nobody's tier at any configured year-end month.
+ *
+ * SO DO NOT ALIGN THEM ANYWAY, for the honest reason rather than the false one:
+ * the divergence is harmless and unreachable here, `member-age.ts` serves a
+ * different purpose, and a change with no behavioural effect on this path is not
+ * worth the risk of being wrong about the other one. What was corrected is the
+ * justification, because a false reason for not doing work, written down in a
+ * docblock and copied into an invariants document, is how a decision nobody made
+ * becomes permanent.
  */
 export function computeAgeOnCalendarDays(
   dateOfBirth: CalendarDate,

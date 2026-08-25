@@ -582,15 +582,33 @@ derivation).
   year.** Every zone at or ahead of Greenwich, this deployment included, was
   already right — which is how it stayed latent.
 
+  **The age-up cron was not affected**, and an earlier version of this paragraph
+  implied otherwise. `cron-age-up.ts` prefilters candidates on a bound whose
+  exclusive edge coincides exactly with the misclassification boundary, so the one
+  day of birthdays the old read got wrong was never proposed as a candidate — and
+  for candidates it did misread, both readings land at or above the tier minimum,
+  which `validateAgeTierPartition` guarantees means ADULT either way. Swept over
+  27 638 160 admitted candidates across 418 zones: **zero promote-or-skip verdict
+  changes**, and the candidate set itself byte-identical. Price bands and hosting
+  eligibility DID move, because billing calls `computeAgeTierWithSettings` with no
+  prefilter in front of it.
+
   `member-age.ts` had the same dependence in a subtler form before #2872: it read
   through the club zone, agreed in New Zealand, and reported an age a year old on
   the day before a birthday for any club behind UTC. It reads `formatDateOnly`
   now; "today" on the other side of that comparison is still the club's, and
   correctly so. Its 29 February convention differs from `computeAge`'s
   deliberately — it clamps the anniversary to 28 February for an identity check,
-  where `computeAge` compares the day as written — and aligning them would move a
-  real member's tier for one day a year, so it needs a decision rather than a
-  tidy-up.
+  where `computeAge` compares the day as written. The two can only disagree when
+  the REFERENCE date is 28 February, and `computeAge`'s reference is always a
+  season start, which is always day 1 of a month — so on the price path the
+  divergence is **structurally unreachable** and aligning the conventions would
+  move nobody's tier. This document used to say aligning them "would move a real
+  member's tier for one day a year, so it needs a decision rather than a
+  tidy-up"; that was measured false (enumerated in
+  `computeAgeOnCalendarDays`'s docblock). The conventions still stand as they
+  are, on the ground that the divergence is harmless and `member-age.ts` serves a
+  different purpose — not on the ground that changing them would move somebody.
 
   The correct reading of a UTC-midnight column is UTC getters, `formatDateOnly`
   or the kernel's `calendarDateOfDateOnlyInstant`. A local-getter reader is

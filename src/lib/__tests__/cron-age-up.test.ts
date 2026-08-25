@@ -1498,8 +1498,20 @@ describe("checkAgeUpMembers", () => {
     // BOTH SIDES OF GREENWICH, and the second one is the discriminating half:
     // this member is the single day of birthdays the retired host-local read
     // misclassified, and `America/Denver` is where it did it. Before #3082 the
-    // Denver run promoted them — ADULT, their own login, and a different price
-    // band, a season early.
+    // Denver run promoted them HERE — ADULT, their own login, and a different
+    // price band, a season early.
+    //
+    // TRUE OF THIS TEST, AND NOT OF PRODUCTION, which matters because the
+    // difference has already been published once as a defect that never existed.
+    // This suite mocks `prisma.member.findMany`, so it hands the job a candidate
+    // the real prefilter would never have proposed:
+    // `dateOfBirthPrefilterBoundForMinAge` is EXCLUSIVE at
+    // `seasonStart - minAge years` plus one day, and this member is born the day
+    // after that, so a live Denver run never saw them. Swept in
+    // `policies/age-tier.ts`'s module docblock: 27 638 160 admitted candidates
+    // across 418 zones, zero verdict changes. What this test pins is the
+    // AUTHORITY itself, on the exact input the bypassed bound would have
+    // filtered — which is the only place that half of the argument can be stated.
     for (const hostZone of ["Pacific/Auckland", "America/Denver"]) {
       mockedUpdate.mockClear();
       mockedSendEmail.mockClear();

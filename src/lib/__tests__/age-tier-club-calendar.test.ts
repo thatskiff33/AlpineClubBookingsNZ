@@ -39,9 +39,11 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
  * `Etc/UTC` and every zone at or ahead of Greenwich were already correct, which
  * is why this shipped latent rather than live.
  *
- * At a true age of 4, 9 or 17 that +1 crosses an `AGE_TIER_DEFAULTS` boundary,
- * so an ADULT band gets quoted where YOUTH is correct — and `cron-age-up` would
- * hand that member their own login a season early.
+ * At a true age of 4, 9 or 17 that +1 crosses an `AGE_TIER_DEFAULTS` boundary, so
+ * an ADULT band gets quoted where YOUTH is correct. It did NOT reach the age-up
+ * cron: that job's prefilter bound excludes exactly the day of birthdays this
+ * misread, and for the candidates it does admit both readings classify ADULT.
+ * `policies/age-tier.ts`'s module docblock carries the sweep.
  *
  * ## WHY THE HOST PIN IS THE WHOLE TEST
  *
@@ -107,8 +109,8 @@ describe("computeAge reads a stored date of birth as the day it names (#3082)", 
     //
     // Under `America/Denver` the retired body read 2008-04-02T00:00:00Z as
     // 1 April locally — the same month and day as the season start — decided the
-    // birthday had passed, and returned 18. ADULT, a season early, and a
-    // different price band.
+    // birthday had passed, and returned 18: ADULT where YOUTH is correct, and a
+    // different price band for the season.
     withTimeZone(BEHIND_GREENWICH, () => {
       const dob = storedDay("2008-04-02");
       const seasonStart = getSeasonStartDate(2026);
@@ -288,9 +290,14 @@ describe("computeAgeOnCalendarDays keeps the arithmetic it always had", () => {
     // DELIBERATELY DIFFERENT from `member-age.ts`, which clamps the anniversary
     // to 28 February for an identity check. This one decides a price band and
     // its convention is unchanged by #3082: `day` is compared as written, so
-    // 28 < 29 and the birthday has not arrived. Two conventions, two purposes —
-    // aligning them would move a real member's tier for one day a year and needs
-    // a decision, not a tidy-up.
+    // 28 < 29 and the birthday has not arrived.
+    //
+    // THE TWO CAN ONLY DISAGREE WHEN THE REFERENCE DATE IS 28 FEBRUARY, and this
+    // function's reference date is always day 1 of a month, so on the price path
+    // they cannot disagree at all. `computeAgeOnCalendarDays`'s docblock carries
+    // the enumeration. The convention is still not being changed; what was
+    // corrected is the REASON — it used to claim aligning them would move a real
+    // member's tier for one day a year.
     const dob = requireCalendarDate("2008-02-29");
 
     expect(computeAgeOnCalendarDays(dob, requireCalendarDate("2026-02-28"))).toBe(17);
