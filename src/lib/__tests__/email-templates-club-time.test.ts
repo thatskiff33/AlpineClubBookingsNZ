@@ -322,3 +322,125 @@ describe("a read that finds nothing", () => {
     expect(clubTime.emailClubTimeZoneForTests()).toBe("America/Denver");
   });
 });
+
+/**
+ * The calendar-day formatter, pinned DIRECTLY rather than through a template.
+ *
+ * `emailCalendarDay` is reached from 22 source files and, before this block, from
+ * no test file at all: the only assertion on its refusal was indirect, through
+ * one template, and nothing pinned the boundary the refusal turns on. That is the
+ * wrong way round for the one function in this module whose whole job is to
+ * REFUSE a value the others accept.
+ *
+ * Two directions are pinned, because the two mistakes fail differently:
+ *
+ *  - a real instant handed to the zone-free formatter throws LOUDLY, and that is
+ *    asserted here. It is the safe direction, and worth saying so plainly: it
+ *    bounds how bad a misclassification can be.
+ *  - a stored calendar day handed to `emailClubDate` is SILENT, and right for
+ *    every club east of Greenwich. That is the dangerous direction and the reason
+ *    the two functions exist separately, so it is measured rather than described.
+ */
+describe("emailCalendarDay: the stored-calendar-day boundary", () => {
+  const STORED = new Date("2026-04-16T00:00:00.000Z");
+
+  it("accepts exact UTC midnight and refuses one millisecond past it", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+
+    expect(clubTime.emailCalendarDay(STORED)).toBe("16 Apr 2026");
+
+    // The boundary itself, from both sides — a guard pinned only at a value far
+    // from its threshold does not pin the threshold.
+    expect(() =>
+      clubTime.emailCalendarDay(new Date(STORED.getTime() + 1)),
+    ).toThrow(RangeError);
+    expect(() =>
+      clubTime.emailCalendarDay(new Date(STORED.getTime() - 1)),
+    ).toThrow(RangeError);
+    expect(() =>
+      clubTime.emailCalendarDay(new Date(STORED.getTime() - 86_400_000)),
+    ).not.toThrow();
+  });
+
+  it("hands the caller the remedy, not just a refusal", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    // A guard whose message does not name the alternative sends whoever trips it
+    // looking for one, and the likeliest guess is to floor the value — which is
+    // the defect the guard exists to stop.
+    expect(() => clubTime.emailCalendarDay(new Date("2026-04-16T09:30:00.000Z")))
+      .toThrow(/emailClubDate/);
+  });
+
+  it("accepts a pre-1970 exact midnight rather than refusing it spuriously", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    // The check is a remainder against a day of milliseconds, and before 1970
+    // that arithmetic runs on a negative number. A date of birth is the obvious
+    // real value in this class, so a sign bug here would refuse a member's
+    // stored birthday.
+    expect(clubTime.emailCalendarDay(new Date("1953-06-02T00:00:00.000Z"))).toBe(
+      "2 Jun 1953",
+    );
+  });
+
+  it("consults NO zone: neither the club's nor the host's can move it", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+
+    for (const persisted of ["Pacific/Honolulu", "Pacific/Auckland"]) {
+      clubTime.__resetEmailClubTimeZoneForTests();
+      mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue(persisted);
+      await clubTime.primeEmailClubTimeZone();
+      for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+        withTimeZone(hostZone, () => {
+          expect(
+            clubTime.emailCalendarDay(STORED),
+            `persisted ${persisted}, host ${hostZone}`,
+          ).toBe("16 Apr 2026");
+        });
+      }
+    }
+  });
+
+  it("differs from emailClubDate for a club west of Greenwich, which is why both exist", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    clubTime.__resetEmailClubTimeZoneForTests();
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue("Pacific/Honolulu");
+    await clubTime.primeEmailClubTimeZone();
+
+    // The silent, dangerous direction, measured: projecting a stored night
+    // through the club's own zone reads it as the PREVIOUS day. This is what a
+    // sweep onto the persisted zone would have done to 131 lodge nights.
+    expect(clubTime.emailClubDate(STORED)).toBe("15 Apr 2026");
+    expect(clubTime.emailCalendarDay(STORED)).toBe("16 Apr 2026");
+
+    // And east of Greenwich the two agree, which is exactly why the defect
+    // survived: every current adopter sees no difference.
+    clubTime.__resetEmailClubTimeZoneForTests();
+    mocks.readPersistedClubTimeZoneOutsideRequest.mockResolvedValue("Pacific/Auckland");
+    await clubTime.primeEmailClubTimeZone();
+    expect(clubTime.emailClubDate(STORED)).toBe(clubTime.emailCalendarDay(STORED));
+  });
+});
+
+describe("emailCalendarDayOrUnknown", () => {
+  const STORED = new Date("2026-04-16T00:00:00.000Z");
+
+  it("renders Unknown for an absent date and defers to emailCalendarDay otherwise", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    expect(clubTime.emailCalendarDayOrUnknown(null)).toBe("Unknown");
+    expect(clubTime.emailCalendarDayOrUnknown(undefined)).toBe("Unknown");
+    expect(clubTime.emailCalendarDayOrUnknown(STORED)).toBe(
+      clubTime.emailCalendarDay(STORED),
+    );
+  });
+
+  it("is NOT an escape hatch: a real instant still throws", async () => {
+    const clubTime = await import("@/lib/email-templates-club-time");
+    // The whole point of the nullable variant is to let a sender say "I do not
+    // have this night". If it also swallowed a wrong-KIND value it would become
+    // the quiet way round the guard, and the next `?? new Date()` would render a
+    // plausible wrong day instead of failing.
+    expect(() =>
+      clubTime.emailCalendarDayOrUnknown(new Date("2026-04-16T09:30:00.000Z")),
+    ).toThrow(RangeError);
+  });
+});
