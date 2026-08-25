@@ -271,15 +271,41 @@ describe("#3100 the -1 sites, one frame: the presence relation", () => {
 });
 
 describe("#3100 the envelope expander steps by a day, so its loop ends", () => {
-  // NOTE FOR A MUTATION PROBE: reinstating the projection does not make this
-  // group FAIL, it makes it HANG. `expandStayEnvelopeToNightKeys` steps with
-  // `shiftDateOnlyKey`, and a step that returns its own argument never reaches
-  // `endKey` — measured at 719,694 identical keys pushed in two seconds (~91 MB)
-  // before this fix, and Vitest cannot time out a synchronous loop. The fast,
-  // clean kill for the same step is the string-fed group above; this group is
-  // here because the expander is the third `+1` call site, and its loop stays a
-  // loop because `guest-stay-expansion-census.test.ts` pins the half-open
-  // `key < endKey;` shape in the source.
+  /*
+    NOTE FOR A MUTATION PROBE: reinstating the projection does not make this
+    group FAIL, it makes it run away. `expandStayEnvelopeToNightKeys` steps with
+    `shiftDateOnlyKey`, and a step that returns its own argument never reaches
+    `endKey`.
+
+    BE PRECISE ABOUT WHY THAT DEFEATS VITEST, because the obvious explanation is
+    wrong and an earlier revision of this note published it. Vitest cannot
+    INTERRUPT a synchronous loop, but it does report a timeout: measured, an
+    8-second terminating busy loop under `{ timeout: 1000 }` ran to completion
+    and vitest then failed it with `Error: Test timed out in 1000ms.` So a slow
+    synchronous assertion CAN be bounded with `timeout`, and a reader who
+    believes otherwise skips a bound that would have worked. What defeats vitest
+    here is NON-TERMINATION, not synchrony.
+
+    Nor does the mutant hang for ever. It pushes one identical string until V8
+    aborts: `FATAL ERROR: Reached heap limit Allocation failed`, process exit
+    134 — under a second at `--max-old-space-size=256`, minutes at the default
+    cap, and on CI a slow worker crash rather than an assertion. Deliberately
+    stated qualitatively: the array holds hundreds of thousands of references to
+    a SINGLE retained string, so the cost is tens of MB per million iterations,
+    and the throughput and heap-delta samples this lane took differ by machine
+    (719,694 vs 817,152 keys in ~2 s; 19.1 vs 31.1 MB for the same 719,694
+    pushes). A figure that moves between machines does not belong in a comment as
+    if it were a constant — an earlier revision of this note said `~91 MB`, which
+    is a whole vitest worker's `heapUsed`, not this loop's footprint.
+
+    The fast, clean kill for the same step is the string-fed group above. Since
+    #3106 there is also a source-text one:
+    `guest-stay-expansion-census.test.ts` → "and its STEP is calendar arithmetic,
+    by a literal one day" fails in 6 ms, which is the guard a future regression
+    actually wants. That file also pins the half-open `key < endKey;` shape,
+    which is why the loop stays a loop; this group is here because the expander
+    is the third `+1` call site.
+  */
 
   it("agrees with the explicit night set it must be equivalent to", () => {
     // Both sides derive their keys from the same `Date`s through the same

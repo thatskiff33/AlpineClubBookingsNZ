@@ -340,6 +340,12 @@ export function countActiveGuestsForNight(
  *
  * An empty or reversed envelope yields no nights, which is what makes a
  * zero-night booking present on no day (INV-DATE-008).
+ *
+ * IT TERMINATES BECAUSE THE STEP BELOW IS A LITERAL FORWARD DAY, not because of
+ * anything {@link shiftDateOnlyKey} guarantees: `addCalendarDays(key, 0)` is a
+ * fixpoint by design, so parameterising the step reinstates a loop that runs
+ * until V8 aborts on the heap limit. #3100 was that loop, and
+ * `guest-stay-expansion-census.test.ts` pins the literal for this reason.
  */
 export function expandStayEnvelopeToNightKeys(
   stayStart: Date,
