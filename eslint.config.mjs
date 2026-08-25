@@ -715,6 +715,108 @@ const ENVIRONMENT_ZONE_RESTRICTIONS = [
   ...NO_ENVIRONMENT_ZONE_IMPORT,
 ];
 
+// ---------------------------------------------------------------------------
+// CT-6 (#2991) — the class no syntactic guard above can see.
+// ---------------------------------------------------------------------------
+//
+// The host-clock arm matches `.getDate()` where it is WRITTEN. `date-fns` does
+// the identical read inside `node_modules`, so a file that imports `format` or
+// `startOfMonth` has every one of that arm's defects and is clean under every
+// selector in this file. That is not a theory — measured on this runtime, with
+// one `@db.Date` lodge night stored at `2026-09-01T00:00:00.000Z`:
+//
+//   format(night, "yyyy-MM-dd")   UTC -> "2026-09-01"   Denver -> "2026-08-31"
+//   startOfMonth(night)           UTC -> 1 Sep 00:00Z   Denver -> 1 AUG 06:00Z
+//   addDays(26 Sep night, 1)      Auckland -> 2026-09-26T23:00:00.000Z, an hour
+//                                 short of UTC midnight, because it crossed the
+//                                 27 September daylight-saving transition
+//
+// So a stay day renders a day early west of Greenwich, a report bucket lands in
+// the wrong MONTH, and a `@db.Date` range bound built by adding a day falls on
+// the wrong side of a stored night on one weekend a year.
+//
+// Not every export is a hazard: `formatDistanceToNow` measures a DURATION and
+// `differenceInCalendarDays` between two UTC-midnight values shifts both ends
+// equally, so both are zone-independent here. The ban is on the MODULE anyway,
+// because which exports are safe is a judgement that belongs in a reviewed
+// allowlist entry rather than in a regular expression somebody widens later.
+
+const NO_DATE_FNS = [
+  'ImportDeclaration[source.value="date-fns"]',
+  'ImportDeclaration[source.value=/^date-fns\\//]',
+  'CallExpression[callee.name="require"][arguments.0.value="date-fns"]',
+].map((selector) => ({
+  selector,
+  message:
+    "INV-DATE-014 / INV-CONFIG-002: `date-fns` reads and writes the HOST's clock face, so it carries every defect the host-clock ban above exists for while being invisible to it (CT-6, #2991). Measured on a `@db.Date` lodge night at UTC midnight: `format(night, \"yyyy-MM-dd\")` answers the PREVIOUS day west of Greenwich, `startOfMonth(night)` lands in the previous MONTH, and `addDays(night, 1)` returns an hour short of UTC midnight across a daylight-saving transition. Calendar arithmetic on stay days: addCalendarDays / addCalendarMonths / startOfCalendarMonth / eachCalendarDate / countClubNights from @/lib/club-time, which are zone-free. Rendering: formatClubDate for a calendar day, formatClubInstant* for a real instant. A relative DURATION (`formatDistanceToNow`) is genuinely zone-free — if that is all you need, say so on DATE_FNS_ADAPTERS rather than importing the module here.",
+}));
+
+const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
+
+/**
+ * The files still importing `date-fns`, each with what it uses and why it has
+ * not moved. A RATCHET, like `ENVIRONMENT_ZONE_ADAPTERS`: it only shrinks, and
+ * `club-time-boundary-guard.test.ts` refuses to let it grow.
+ *
+ * None of these is a new decision by CT-6. Two are the admin report
+ * bucket/date-series residual #2870's ledger already names; the rest are
+ * relative-duration hints and chart tick labels.
+ */
+const DATE_FNS_ADAPTER_FILES = [
+  "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+  "src/app/(admin)/admin/reports/page.tsx",
+  "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+  "src/components/admin/member-password-action-button.tsx",
+  "src/lib/admin-dataset-reset-state.ts",
+  "src/lib/admin-reports.ts",
+  "src/lib/cron-hut-leader-auto-assign.ts",
+];
+
+export const DATE_FNS_ADAPTERS = [
+  {
+    file: "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+    uses: "formatDistanceToNow",
+    reason:
+      "A relative DURATION (\"3 hours ago\") for a refresh hint, which is zone-independent: it is the gap between two instants and no civil date is derived from it.",
+  },
+  {
+    file: "src/components/admin/member-password-action-button.tsx",
+    uses: "formatDistanceToNow",
+    reason:
+      "The same relative-duration hint on a password action, zone-independent for the same reason.",
+  },
+  {
+    file: "src/app/(admin)/admin/reports/page.tsx",
+    uses: "format",
+    reason:
+      "The admin report date-series surface #2870's ledger carries as an open residual. Migrating it is a report-shape change, not a formatter swap, so it is scoped there rather than re-scoped here.",
+  },
+  {
+    file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+    uses: "format",
+    reason:
+      "Chart tick labels for the same surface and the same residual; they must agree with the series that feeds them, so the two move together or not at all.",
+  },
+  {
+    file: "src/lib/admin-reports.ts",
+    uses: "addDays, addMonths, addWeeks, differenceInCalendarDays, endOfMonth, endOfWeek, format, isAfter, startOfMonth, startOfWeek",
+    reason:
+      "The report BUCKETING itself, and the largest single remaining escape hatch in the tree: ten host-local helpers deciding which week or month a booking falls in. #2870's ledger names it as the admin-report bucket/date-series residual. CT-6 measured it rather than moved it, because a bucket boundary change alters what every historical report says.",
+  },
+  {
+    file: "src/lib/admin-dataset-reset-state.ts",
+    uses: "endOfMonth, format, startOfMonth, subMonths",
+    reason:
+      "Month windows for the dataset-reset screen, sharing the report residual's shape and blocked on the same decision about bucket boundaries.",
+  },
+  {
+    file: "src/lib/cron-hut-leader-auto-assign.ts",
+    uses: "addDays, eachDayOfInterval",
+    reason:
+      "The lookahead window over which the job scans for uncovered nights. It reads a club `today` from the kernel and then steps it with host-local helpers, so the LAST day of a long lookahead can shift by one across a daylight-saving transition. Narrow and inside a cron, but real; it is the cheapest of the seven to move and the one to take next.",
+  },
+];
+
 /**
  * The modules still allowed to name the ENVIRONMENT's zone, each with the
  * reason it is not simply a defect. Exported so
@@ -831,6 +933,7 @@ const DATE_RENDERING_RESTRICTIONS = [
 export const CLUB_TIME_GUARD_ARMS = {
   hostClock: HOST_CLOCK_RESTRICTIONS.map((entry) => entry.selector),
   environmentZone: ENVIRONMENT_ZONE_RESTRICTIONS.map((entry) => entry.selector),
+  dateFns: DATE_FNS_RESTRICTIONS.map((entry) => entry.selector),
 };
 
 export const DATE_GUARD_ARMS = {
@@ -887,6 +990,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...ZONED_FORMATTER_RESTRICTIONS,
   ...HOST_CLOCK_RESTRICTIONS,
   ...ENVIRONMENT_ZONE_RESTRICTIONS,
+  ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
 ];
 
@@ -904,6 +1008,12 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     omits: [...DATE_ONLY_ENCODING_RESTRICTIONS, ...ENVIRONMENT_ZONE_RESTRICTIONS],
     reason:
       "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere. It is also the adapter CT-6 (#2991) retires, so it still defaults six helpers to APP_TIME_ZONE for the callers CT-4 has not reached; `ENVIRONMENT_ZONE_ADAPTERS` carries that reason and the census counts what is left.",
+  },
+  {
+    files: DATE_FNS_ADAPTER_FILES,
+    omits: DATE_FNS_RESTRICTIONS,
+    reason:
+      "The seven files still importing `date-fns`, measured by CT-6 (#2991). Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
   },
   {
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
@@ -1138,6 +1248,18 @@ const eslintConfig = defineConfig([
     files: ["src/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(...DATE_RENDERING_RESTRICTIONS),
+    },
+  },
+  {
+    // CT-6 (#2991) — the files still importing `date-fns`. Reasons are on
+    // `DATE_FNS_ADAPTERS` above. The rendering arms are re-stated for the same
+    // reason as the block below: flat config replaces, it does not merge.
+    files: DATE_FNS_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        DATE_FNS_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
     },
   },
   {

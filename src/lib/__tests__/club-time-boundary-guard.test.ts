@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   CLUB_TIME_GUARD_ARMS,
+  DATE_FNS_ADAPTERS,
   ENVIRONMENT_ZONE_ADAPTERS,
   SRC_RESTRICTION_EXEMPTIONS,
 } from "../../../eslint.config.mjs";
@@ -23,8 +24,8 @@ import {
  * somewhere other than the club's persisted timezone. Removing them is only half
  * the job: the epic's own definition of done says "new hand-rolled temporal
  * bypasses fail mechanically", because every one of those call sites was written
- * by somebody who did not know a rule existed. Two of the classes were guarded
- * by nothing at all until this issue:
+ * by somebody who did not know a rule existed. THREE of the classes were
+ * guarded by nothing at all until this issue:
  *
  * - **the HOST's clock face** — `.getDate()` and its family, which answer in
  *   whatever zone the container runs in. A `@db.Date` lodge night is UTC
@@ -34,7 +35,11 @@ import {
  * - **the ENVIRONMENT's zone** — `process.env.TZ`, `NEXT_PUBLIC_TZ`, and the
  *   `APP_TIME_ZONE` those two feed. Since CT-1 (#2989) the club's civil time is
  *   the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`); the
- *   environment SEEDS that row at setup and has no say afterwards.
+ *   environment SEEDS that row at setup and has no say afterwards;
+ * - **a library doing the first of those on your behalf** — every `date-fns`
+ *   calendar helper reads the host's clock face inside `node_modules`, where
+ *   no selector in this repository can see it. Measured rather than assumed;
+ *   the numbers are on that block below.
  *
  * ## Why the assertions are shaped the way they are
  *
@@ -133,6 +138,31 @@ const ENVIRONMENT_ZONE_EXEMPT_FILES = new Set(
 
 const isEnvironmentZoneExempt = (file: string): boolean =>
   ENVIRONMENT_ZONE_EXEMPT_FILES.has(file);
+
+/** The same derivation for the `date-fns` group. */
+const DATE_FNS_EXEMPT_FILES = new Set(
+  SRC_RESTRICTION_EXEMPTIONS.filter((exemption) =>
+    exemption.omits.some((restriction) =>
+      CLUB_TIME_GUARD_ARMS.dateFns.includes(restriction.selector),
+    ),
+  ).flatMap((exemption) => exemption.files),
+);
+
+const isDateFnsExempt = (file: string): boolean =>
+  DATE_FNS_EXEMPT_FILES.has(file);
+
+/** A host-local calendar helper reached through the library instead of by hand. */
+const DATE_FNS_VIOLATION = `
+import { startOfMonth } from "date-fns";
+const lodgeNight = new Date("2026-09-01T00:00:00.000Z");
+export const bucket = startOfMonth(lodgeNight);
+`;
+
+/** Its control: an ordinary import of anything else must stay clean. */
+const DATE_FNS_CONTROL = `
+import { z } from "zod";
+export const schema = z.string();
+`;
 
 let eslint: ESLint;
 
@@ -355,5 +385,95 @@ describe("the environment-zone allowlist is a ratchet", () => {
       return !/APP_TIME_ZONE|process\.env\.(TZ|NEXT_PUBLIC_TZ)/.test(source);
     }).map((entry) => entry.file);
     expect(stale).toEqual([]);
+  });
+});
+
+/**
+ * The third arm, and the one that exists because the first two cannot see it.
+ *
+ * `date-fns` performs the identical host-clock reads the arm above bans, inside
+ * `node_modules` where no selector can reach them. Measured on this runtime with
+ * a `@db.Date` lodge night at `2026-09-01T00:00:00.000Z`: `format(night,
+ * "yyyy-MM-dd")` answers `"2026-08-31"` in `America/Denver`, and
+ * `startOfMonth(night)` lands in AUGUST. So a guard that stops at what the
+ * source spells would report a clean tree while a report bucket sat in the wrong
+ * month.
+ */
+describe("the date-fns guard closes the class no selector can see", () => {
+  it("resolves with all three arms wherever production code lives", async () => {
+    const problems = await auditResolvedGuardCoverage({
+      eslint,
+      repoRoot: ROOT,
+      requiredSelectorsFor: (file) =>
+        isDateFnsExempt(file) ? [] : CLUB_TIME_GUARD_ARMS.dateFns,
+    });
+    expect(problems).toEqual([]);
+  }, 120_000);
+
+  it("reports a date-fns import at every one of them", async () => {
+    const problems = await auditEnforcedGuardCoverage({
+      eslint,
+      repoRoot: ROOT,
+      violatingCode: DATE_FNS_VIOLATION,
+      messagePrefix: HOST_CLOCK_PREFIX,
+      isExempt: isDateFnsExempt,
+    });
+    expect(problems).toEqual([]);
+  }, 120_000);
+
+  it("catches a deep subpath import too", async () => {
+    const messages = await messagesFor(
+      'import { addDays } from "date-fns/addDays";\nexport const f = addDays;\n',
+      "src/lib/x.ts",
+      HOST_CLOCK_PREFIX,
+    );
+    expect(messages).toHaveLength(1);
+  });
+
+  it("leaves every other module import alone", async () => {
+    for (const entry of PRODUCTION_GUARD_ROSTER) {
+      expect(
+        await messagesFor(DATE_FNS_CONTROL, entry.file, HOST_CLOCK_PREFIX),
+        `${entry.file} rejected an ordinary import, so this arm bans importing rather than banning date-fns`,
+      ).toEqual([]);
+    }
+  }, 120_000);
+
+  it("tells the reader which date-fns calls are actually safe", async () => {
+    const [message] = await messagesFor(
+      DATE_FNS_VIOLATION,
+      "src/lib/x.ts",
+      HOST_CLOCK_PREFIX,
+    );
+    // Two of the seven remaining callers use only `formatDistanceToNow`, which
+    // is a duration and genuinely zone-free. A message that did not say so would
+    // send them to rewrite correct code.
+    expect(message).toContain("formatDistanceToNow");
+    expect(message).toContain("addCalendarDays");
+    expect(message).toContain("startOfMonth(night)");
+  });
+
+  it("excuses exactly the files it gives reasons for", () => {
+    const excused = [...DATE_FNS_EXEMPT_FILES].sort();
+    const explained = DATE_FNS_ADAPTERS.map((entry) => entry.file).sort();
+    expect(excused).toEqual(explained);
+  });
+
+  it("still imports date-fns in every file it excuses", () => {
+    const stale = DATE_FNS_ADAPTERS.filter((entry) => {
+      const source = fs.readFileSync(path.join(ROOT, entry.file), "utf8");
+      return !/from\s+["']date-fns/.test(source);
+    }).map((entry) => entry.file);
+    expect(stale).toEqual([]);
+  });
+
+  it("records what each file uses, so the next lane can start with the cheapest", () => {
+    for (const entry of DATE_FNS_ADAPTERS) {
+      expect(
+        entry.uses.length,
+        `${entry.file} must name the symbols it imports`,
+      ).toBeGreaterThan(0);
+      expect(entry.reason.length).toBeGreaterThan(80);
+    }
   });
 });
