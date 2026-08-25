@@ -23,7 +23,7 @@ dangling-line guard must prove the default body survives that). The table's own
 docblock mandates recording the declaration in the same change as the sender.
 
 file: src/lib/email/booking.ts
-lines: 1487
+lines: 1491
 reason: +60 — the authority-gated (resolveBookingEmailLink), fail-open compose of the calendar links and the {{ical}}
 templateData supply in the booking-confirmed sender. The module's docblock
 names it the family boundary for booking sends; the reusable logic itself lives
