@@ -1,13 +1,14 @@
 import {
   addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  calendarDateOfSerialisedDbDate,
   requireCalendarDate,
+  requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
 import {
   addDaysDateOnly,
-  formatDateOnlyForTimeZone,
   getTodayDateOnly,
-  isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
 
@@ -34,34 +35,87 @@ export type BookingStayRange = {
   checkOut: Date;
 };
 
-function dateOnlyKey(value: Date): string {
-  return formatDateOnlyForTimeZone(value);
+/**
+ * The lodge-night key a stored calendar day carries.
+ *
+ * IT DECODES, AND IT DOES NOT PROJECT (#3107). Every value reaching it is a
+ * `@db.Date` column - `booking.checkIn` / `checkOut`, `BookingGuest.stayStart` /
+ * `stayEnd`, `BookingGuestNight.stayDate` - or a date-only `Date` a caller built
+ * from one. Those are ENCODINGS of a calendar day rather than moments, so the day
+ * is read straight back out in UTC: `INV-DATE-019`'s first exact boundary,
+ * together with `INV-DATE-026`, which is what says the column really is
+ * date-only. Do not cite `INV-DATE-010` for this direction - that rule names
+ * these two ids rather than itself, and what it forbids is deriving a rule from
+ * one of these values read as a MOMENT.
+ *
+ * IT USED TO PROJECT THROUGH THE ENVIRONMENT ZONE (`formatDateOnlyForTimeZone`),
+ * which is the identity for a club at or ahead of Greenwich and the PREVIOUS day
+ * for one behind it - so every key this module produced was a day early there.
+ * Worse than uniformly early: {@link nightEntryKey} takes a `yyyy-mm-dd` string
+ * VERBATIM, so the same logical night landed in two different frames depending on
+ * the shape it arrived in. The measured consequence was a capacity UNDER-COUNT.
+ * `ProposalGuest.nights` is declared `string[]` and
+ * `createModificationExceptionRequest` passes it straight into
+ * `checkCapacityForGuestRanges`; for a two-guest three-night proposal on
+ * `America/Denver` the admission check saw 0 proposed beds on two of the three
+ * nights instead of 2, inside `acquireGlobalBookingLock` and
+ * `acquireLodgeCapacityLock`, on the branch that reserves beds. A proposal that
+ * should have been refused for want of beds could be admitted.
+ *
+ * THE PRECONDITION IS ASSERTED RATHER THAN ASSUMED, and that is the whole
+ * difference between this and quietly swapping the reader for a UTC one. A bare
+ * `Date` cannot say whether it encodes a stored day or holds a real timestamp,
+ * and a timestamp decoded here would yield its UTC day - the same
+ * `INV-DATE-019` defect from the other direction, which is precisely why #3100
+ * refused to fold this fix into itself. So a value carrying a UTC time of day is
+ * refused by name. That refusal is unreachable from today's callers: every one
+ * derives its argument from `parseDateOnly`, `eachDateOnlyInRange`,
+ * `getTodayDateOnly`, `storedDateOnly` or a `@db.Date` read, each of which is UTC
+ * midnight by construction.
+ */
+function dateOnlyKey(value: Date): CalendarDate {
+  return calendarDateOfDateOnlyInstant(
+    requireStoredCalendarDay(value, {
+      subject: "A lodge-night key",
+      instead:
+        "Pass the stored calendar day the night is, or resolve a real timestamp's club " +
+        "day with clubCalendarDateOf first and pass that.",
+    })
+  );
 }
 
 /**
  * Derive the date-only key for one explicit night entry.
  *
- * IT DOES NOT USE ONE KEY SCHEME, and the comment that said it did was wrong in
- * the way that matters (#3107). A `yyyy-mm-dd` string is returned VERBATIM — the
- * true calendar day, in any zone. A `Date` goes through {@link dateOnlyKey},
- * which PROJECTS it into the environment zone, so for a club behind Greenwich it
- * comes back a day early. The two input shapes therefore land in different
- * frames, and both shapes occur in production: `BookingGuestNight` rows and
- * booking envelopes arrive as `Date`s, while `ProposalGuest.nights` is declared
- * `string[]` and reaches {@link countActiveGuestsForNight} verbatim through
- * `checkCapacityForGuestRanges`.
+ * ONE KEY FRAME - and the comment here previously claimed that when it was false,
+ * which is the shape of mistake #3107 exists to remove. Both input shapes now
+ * decode the calendar day they carry and neither consults a zone: a `yyyy-mm-dd`
+ * string is its own day, a serialised `@db.Date` (`"2026-07-04T00:00:00.000Z"`)
+ * carries the day in its first ten characters, and a `Date` goes through
+ * {@link dateOnlyKey}.
  *
- * Measured behind Greenwich, one logical night is simultaneously occupied
- * (`Date`-fed) and unoccupied (string-fed), and a policy-exception capacity
- * admission check counted zero proposed beds where it should have counted the
- * party's. `operational-day-shift-club-zone.test.ts` → "#3107 the frame split
- * this fix does NOT close" holds the measurement and fails the day the frames
- * agree. `GuestNightInput` is exported, so a fork passing strings gets keys a day
- * off every `Date`-derived one until #3107 lands.
+ * BOTH SHAPES OCCUR IN PRODUCTION, which is why the split mattered rather than
+ * being a tidiness point. `BookingGuestNight` rows and booking envelopes arrive
+ * as `Date`s; `ProposalGuest.nights` is declared `string[]` and reaches
+ * {@link countActiveGuestsForNight} verbatim through
+ * `checkCapacityForGuestRanges`. While the `Date` side was projected and the
+ * string side was not, one logical night was simultaneously occupied and
+ * unoccupied depending on the shape it arrived in, and the capacity admission
+ * check under-counted proposed beds inside the lodge capacity lock.
+ * `operational-day-shift-club-zone.test.ts` holds that measurement and now
+ * asserts the two frames AGREE.
+ *
+ * THE STRING BRANCH READS THE PREFIX INSTEAD OF REPARSING, which is
+ * {@link calendarDateOfSerialisedDbDate}'s own reason for existing: reparsing
+ * would project an offset-bearing string into UTC, so
+ * `"2026-07-04T12:00:00+13:00"` would decode a day early. It replaces
+ * `dateOnlyKey(new Date(entry))`, which projected through the environment zone. A
+ * string naming no real day is now refused rather than turned into a plausible
+ * wrong key.
  */
-function nightEntryKey(entry: GuestNightInput): string {
+function nightEntryKey(entry: GuestNightInput): CalendarDate {
   if (typeof entry === "string") {
-    return isDateOnlyString(entry) ? entry : dateOnlyKey(new Date(entry));
+    return calendarDateOfSerialisedDbDate(entry);
   }
   if (entry instanceof Date) {
     return dateOnlyKey(entry);
