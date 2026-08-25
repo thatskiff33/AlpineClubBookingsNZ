@@ -1015,17 +1015,9 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        // The hold deadline is a whole number of lodge nights before
-        // check-in, so it is stepped with the zone-free calendar helper rather
-        // than through the host's clock face (INV-DATE-014, CT-6 #2991).
-        // `booking.checkIn` is a `@db.Date` value at UTC midnight; walking it
-        // back with `setDate(getDate() - n)` moved n LOCAL days, which agrees
-        // with n calendar days everywhere except across a daylight-saving
-        // transition, where the hold expired an hour early or late.
-        updateData.nonMemberHoldUntil = addDaysDateOnly(
-          booking.checkIn,
-          -holdPolicy.holdDays
-        );
+        // INV-DATE-014: calendar arithmetic, never the host's clock face.
+        const holdDate = addDaysDateOnly(booking.checkIn, -holdPolicy.holdDays);
+        updateData.nonMemberHoldUntil = holdDate;
       }
 
       const claimed = await tx.booking.updateMany({
