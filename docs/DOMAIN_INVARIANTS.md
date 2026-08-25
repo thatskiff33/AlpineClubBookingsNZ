@@ -491,6 +491,7 @@ Prefix `INV-EXCEPT`.
 | `INV-EXCEPT-019` | Never a false keep-pending, including once the post-commit phase has begun |
 | `INV-EXCEPT-020` | A kept-pending capacity conflict is always recorded, on either store |
 | `INV-EXCEPT-021` | The live proposal is verified by replaying the frozen delta, not by trust |
+| `INV-EXCEPT-035` | A refusal names only what was established, never a cause the engine cannot see |
 | `INV-EXCEPT-022` | One implementation computes what the delta produces, for all four surfaces |
 | `INV-EXCEPT-023` | Only the reviewed rules are overridden; ADMIN is never borrowed for guest authorisation |
 | `INV-EXCEPT-024` | An approved hosting exception is recorded as decided in the same transaction |

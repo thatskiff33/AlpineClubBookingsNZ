@@ -1015,8 +1015,23 @@ export async function resolvePolicyExceptionRequestTerminal(params: {
 
 export const PROPOSAL_TAMPERED_MESSAGE =
   "This request's stored proposal no longer matches its signature. Please resubmit the request.";
+/**
+ * The replay of the frozen delta no longer hashes to the frozen `proposalHash`
+ * (`INV-EXCEPT-021`). That is ONE signal, and it does not say WHY: the live
+ * booking may have been edited since the request was made, or corrected code may
+ * now re-derive the same evidence differently — the CT-4 shape, where a
+ * range-less added guest used to be frozen a night early (#3087). The engine
+ * keeps no record of which reader produced the stored snapshot, so it cannot
+ * tell those apart, and this message therefore names NEITHER (`INV-EXCEPT-035`,
+ * #3089). It used to assert the live booking had changed, which sent an officer
+ * hunting for an edit that, for the re-derivation cause, never happened.
+ *
+ * The next step is the same either way, which is why nothing useful is lost:
+ * the member resubmits against the booking as it now stands, and the officer
+ * reviews that.
+ */
 export const PROPOSAL_DRIFT_MESSAGE =
-  "The live booking has changed since this request was made. Please resubmit the request.";
+  "This request can no longer be applied exactly as it was reviewed, so nothing has been changed. Ask the member to submit it again, then review it against the booking as it stands now.";
 /**
  * The request carries no replayable proposal at all — a row written before the
  * replayable-delta format existed, or one edited into nonsense. The remedy is the
@@ -1025,7 +1040,16 @@ export const PROPOSAL_DRIFT_MESSAGE =
  */
 export const PROPOSAL_UNREPLAYABLE_MESSAGE =
   "This request was made before the current approval format and cannot be applied. Ask the member to resubmit it; nothing about the booking has changed.";
+/**
+ * A reviewed violation's fingerprint moved, or a violation appeared that nobody
+ * reviewed. Again ONE signal with more than one possible cause: a policy really
+ * may have been edited, but `violationFingerprint` also covers the AFFECTED
+ * NIGHTS, so a re-derived night set moves it while every policy stands exactly
+ * as reviewed. So this message reports what was established — the exceptions
+ * being asked for are not the ones that were reviewed — and not a policy edit it
+ * cannot see (`INV-EXCEPT-035`, #3089).
+ */
 export const POLICY_DRIFT_MESSAGE =
-  "The booking policies have changed since this request was reviewed. Please resubmit the request so an admin can review the current situation.";
+  "The exceptions this request needs are no longer the ones that were reviewed, so nothing has been changed. Ask the member to submit it again, then review it against the situation as it stands now.";
 export const CAPACITY_CONFLICT_MESSAGE =
   "The lodge no longer has room for this booking. The request stays pending so it can be approved once capacity frees up.";
