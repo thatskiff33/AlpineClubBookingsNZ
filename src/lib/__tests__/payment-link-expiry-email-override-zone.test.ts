@@ -125,7 +125,10 @@ import {
   __resetEmailClubTimeZoneForTests,
   primeEmailClubTimeZone,
 } from "@/lib/email-templates-club-time";
-import { prepareEmailMessage } from "@/lib/email-message-renderer";
+import {
+  prepareEmailMessage,
+  type EmailTemplateData,
+} from "@/lib/email-message-renderer";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import { formatNZDateTime } from "@/lib/nzst-date";
 import {
@@ -252,7 +255,7 @@ async function renderOverrideBody(sender: (typeof SENDERS)[number]) {
     templateName: string;
     subject: string;
     html: string;
-    templateData: Record<string, unknown>;
+    templateData: EmailTemplateData;
   };
   expect(sent.templateName).toBe(sender.templateName);
   const prepared = await prepareEmailMessage({
@@ -325,7 +328,7 @@ describe("the emailed payment deadline is the club's, on the override branch too
           templateName: string;
           subject: string;
           html: string;
-          templateData: Record<string, unknown>;
+          templateData: EmailTemplateData;
         };
         const untouched = await prepareEmailMessage({
           templateName: sent.templateName,
