@@ -1072,11 +1072,41 @@ describe("the read-only form's season basis (#2376)", () => {
   it("derives the season from the check-in night when no caller supplies one", async () => {
     // Unchanged behaviour for every writer: they reach this rule through a gated
     // request that has already seeded the process-level financial-year cache, so
-    // `getSeasonYear(checkIn)` is correct for them. The fixture's check-in is
+    // `seasonYearOfStoredDate(checkIn)` is correct for them. The fixture's check-in is
     // 4 July 2026, which is season 2026 on the default 31-March year-end.
+    //
+    // ON ITS OWN THIS ASSERTION IS NOT DISCRIMINATING, and the sibling below is why
+    // it needs one. The frozen clock is 1 July 2026, also season 2026, so an
+    // implementation that answered from "now" instead of from the booking would pass
+    // here. That is not hypothetical: the retired `getSeasonYear(date = new Date())`
+    // silently substituted "now" whenever a caller handed it an absent `checkIn`, and
+    // four reuse-path doubles in `booking-request.test.ts` were doing exactly that
+    // with nothing failing (#2870, correctness review).
     const { db } = makeDb(bookingRow(), [CLUB_ON]);
     await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);
     expect(seasonAsked()).toBe(2026);
+  });
+
+  it("asks about the BOOKING's season even when it is not the current one", async () => {
+    // The discriminating half. A February check-in is season 2025 on a 31-March
+    // year-end, while the frozen clock's "now" is season 2026 — so this fails for any
+    // implementation that reads the process's day rather than the stored night, and
+    // it fails for the one that reads a missing `checkIn` as "now".
+    //
+    // It matters because the season selects `MemberSubscription` by
+    // `(memberId, seasonYear)`: the wrong season reports a settled member as
+    // unfinancial, which disqualifies them as an adult-member host and can refuse a
+    // party the club's own rules allow.
+    const { db } = makeDb(
+      bookingRow({
+        checkIn: new Date("2026-02-10T00:00:00.000Z"),
+        checkOut: new Date("2026-02-12T00:00:00.000Z"),
+        guests: [guest("g1", ["2026-02-10", "2026-02-11"])],
+      }),
+      [CLUB_ON],
+    );
+    await evaluatePersistedBookingAdultMemberHostingReadOnly("booking-1", db);
+    expect(seasonAsked()).toBe(2025);
   });
 
   it("leaves the sibling read UNBOUNDED when no ceiling is supplied", async () => {

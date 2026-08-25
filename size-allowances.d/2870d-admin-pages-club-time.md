@@ -118,11 +118,13 @@ lines: 1216
 reason: one import pair, one hook, and the shared note on the stamp formatter.
 
 file: src/app/(admin)/admin/membership-types/page.tsx
-lines: 1865
-reason: no code changed here. The addition is a twelve-line note recording why the
-  season-year derivation was left on its host-local clock — a measured
-  decision, not an oversight, and this epic has already fixed the same thing
-  the wrong way once.
+lines: 1859
+reason: SUPERSEDED IN PLACE. Group D added a twelve-line note recording why the
+  season-year derivation was left on its host-local clock; CT-4 group F1 has since
+  migrated it to `clubSeasonYear(clubTime.zone)` and replaced that note with a
+  shorter one, so the file is now SHORTER than this allowance was written for. Kept
+  rather than deleted so the number stays true to the tree, and corrected so the
+  prose does not assert a decision that has been reversed on purpose.
 
 file: src/app/(admin)/admin/mountain-conditions/_components/mountain-conditions-panel.tsx
 lines: 903
@@ -174,16 +176,18 @@ reason: the roster's opening day moved onto the club's zone, and the long-date
   the growth.
 
 file: src/app/(admin)/admin/subscriptions/page.tsx
-lines: 840
-reason: `paidAt` was read with host-local getters. The rest of the addition is the
-  note recording why the season-year derivation beside it was deliberately not
-  moved, which is the more useful half for whoever picks that up.
-  CT-4 REVIEW: the note beside `getSeasonYear` called it "a local copy of the
-  shared season rule", which is wrong — the shared rule derives the season start
-  from the CONFIGURABLE financial year-end and this copy hard-codes April. The
-  extra lines record that second problem, why it is inert today (the setter is
-  reachable only from a Prisma-importing module the boundary census keeps off
-  the client graph) and what would make it live.
+lines: 845
+reason: `paidAt` was read with host-local getters, and that part is group D's.
+  SUPERSEDED IN PLACE for the rest: group D's addition was a note explaining why the
+  season-year derivation beside it was deliberately not moved, and CT-4 group F1 has
+  moved it. This file carried a LOCAL `getSeasonYear` — host-local getters AND a
+  hard-coded April, at module scope in a `"use client"` file, which group D
+  correctly identified as two problems rather than one. Both are closed: the
+  derivation is now `clubSeasonYear(clubTime.zone)` inside the component, so it uses
+  the persisted zone and follows the configurable year-end. The note that remains
+  records what was wrong and what the measurement was, because that is the part a
+  future reader needs; the note explaining why it was left is gone with the reason
+  for it.
 
 file: src/app/(admin)/admin/waitlist/page.tsx
 lines: 1014

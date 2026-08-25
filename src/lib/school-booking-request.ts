@@ -104,7 +104,7 @@ import {
   resolveGroupDiscountRateType,
   resolveGuestRateMembershipTypes,
 } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
@@ -271,7 +271,7 @@ async function priceSchoolGuests(input: {
   // School requests are non-member (NON_MEMBER_DEFAULT); resolve the rate
   // membership type so pricing keys on the NON_MEMBER type (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: getSeasonYear(input.checkIn),
+    seasonYear: seasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,

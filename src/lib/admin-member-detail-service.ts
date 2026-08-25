@@ -9,7 +9,8 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   getXeroContactGroupMemberships,
   isXeroConnected,
@@ -693,6 +694,15 @@ export async function getAdminMemberDetail(params: {
         })
     : null;
 
+  // ONE read of the club's current season for this whole payload, from the
+  // club's PERSISTED zone rather than the container's month (CT-4, #2870;
+  // INV-CONFIG-002). Two separate reads could straddle midnight in the club's
+  // zone and describe two different seasons three lines apart on one screen,
+  // which is the shape group D found on the admin dashboard.
+  const currentSeasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+  );
+
   return jsonResult({
     ...member,
     dependentEmailSource,
@@ -722,13 +732,13 @@ export async function getAdminMemberDetail(params: {
       name: fg.familyGroup.name,
     })),
     familyGroupMemberships: undefined,
-    currentSeasonYear: getSeasonYear(),
+    currentSeasonYear,
     // #2106: age-exemption of the member's CURRENT-season membership type, so
     // the edit dialog can force/allow/omit the N/A age tier. null when the
     // member has no current-season assignment.
     currentSeasonAgeExemption: (() => {
       const current = (member.seasonalMembershipAssignments ?? []).find(
-        (assignment) => assignment.seasonYear === getSeasonYear(),
+        (assignment) => assignment.seasonYear === currentSeasonYear,
       );
       if (!current) return null;
       return membershipTypeAgeExemption(
@@ -800,6 +810,11 @@ export async function updateAdminMember(params: {
     request: req,
     data,
   } = params;
+  // The club's current season, from its PERSISTED zone (CT-4, #2870), read once
+  // before the parallel loads that consume it.
+  const clubCurrentSeasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+  );
   const [existing, roleDefinitions, currentSeasonTypeExemption] =
     await Promise.all([
       prisma.member.findUnique({
@@ -809,7 +824,7 @@ export async function updateAdminMember(params: {
       loadAccessRoleDefinitions(prisma),
       // #2106: the member's current-season membership type decides whether N/A
       // is forced (FORCED), hand-pickable (ALLOWED) or rejected (DISALLOWED).
-      loadMemberCurrentSeasonTypeExemption(prisma, id, getSeasonYear()),
+      loadMemberCurrentSeasonTypeExemption(prisma, id, clubCurrentSeasonYear),
     ]);
   if (!existing) {
     return jsonResult({ error: "Member not found" }, { status: 404 });
@@ -1221,18 +1236,21 @@ export async function updateAdminMember(params: {
     });
 
     const restoringFromNotApplicable = existing.ageTier === "NOT_APPLICABLE";
+    // One reference point for both branches, from the CLUB's current season
+    // (CT-4, #2870): an age tier decides a price band, so the two branches must
+    // never be able to judge the same member against two different seasons.
+    const restoreSeasonStart = getSeasonStartDate(
+      clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+    );
     let restorePersonTier: AgeTier;
     if (dobProvided) {
       restorePersonTier = await computeAgeTier(
         updateData.dateOfBirth as Date,
-        getSeasonStartDate(getSeasonYear()),
+        restoreSeasonStart,
       );
     } else if (restoringFromNotApplicable) {
       restorePersonTier = existing.dateOfBirth
-        ? await computeAgeTier(
-            existing.dateOfBirth,
-            getSeasonStartDate(getSeasonYear()),
-          )
+        ? await computeAgeTier(existing.dateOfBirth, restoreSeasonStart)
         : "ADULT";
     } else {
       restorePersonTier =

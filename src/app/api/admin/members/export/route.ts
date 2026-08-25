@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
@@ -18,6 +18,7 @@ import {
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
+import { fixedClubClock } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
@@ -57,7 +58,10 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q") || undefined;
   const now = new Date();
-  const currentSeasonYear = getSeasonYear(now);
+  // The season the CLUB is in at `now`, from its persisted zone rather than the
+  // container's month (CT-4, #2870). `now` is pinned so the whole export is one
+  // moment's answer.
+  const currentSeasonYear = clubSeasonYear(club.zone, fixedClubClock(now));
   const ageTierSettings = await getAgeTierSettings();
   const notRequiredAgeTiers = new Set(
     ageTierSettings

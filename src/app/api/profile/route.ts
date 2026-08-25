@@ -3,7 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   isXeroConnected,
   syncManagedXeroContactGroupForMember,
@@ -279,14 +280,18 @@ export async function PUT(req: NextRequest) {
   // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when
   // the member supplied a DOB (self-service edits never submit a tier directly).
   if (dobProvided) {
+    // ONE season for both halves of this decision, from the club's PERSISTED zone
+    // (CT-4, #2870): the tier the date of birth implies and the exemption that may
+    // override it must be judged in the same season.
+    const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
     const dobDerivedTier = await computeAgeTier(
       updateData.dateOfBirth as Date,
-      getSeasonStartDate(getSeasonYear()),
+      getSeasonStartDate(clubCurrentSeasonYear),
     );
     const typeExemption = await loadMemberCurrentSeasonTypeExemption(
       prisma,
       session.user.id,
-      getSeasonYear(),
+      clubCurrentSeasonYear,
     );
     const resolved = resolveEnforcedAgeTier({
       isOrganisation: isOrganisationMember({

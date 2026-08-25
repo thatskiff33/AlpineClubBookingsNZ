@@ -131,7 +131,6 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/pricing", () => ({
-  getSeasonYear: vi.fn(),
   getStayNights: vi.fn(),
 }));
 

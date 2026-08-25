@@ -17,8 +17,13 @@ import {
 import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-settings-defaults";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  getSeasonStartMonth,
+  seasonYearOfStoredDate,
+} from "@/lib/financial-year";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
@@ -274,7 +279,34 @@ export async function buildSubscriptionBillingPreview(input: {
   store?: Prisma.TransactionClient | typeof prisma;
 }): Promise<SubscriptionBillingPreview> {
   const db = input.store ?? prisma;
-  const decisionDate = input.decisionDate ?? getTodayDateOnly();
+  // "Today" means the CLUB's calendar day, from its PERSISTED timezone, encoded
+  // as the UTC-midnight value every `decisionDate` comparison in this module
+  // reads with UTC getters (CT-4, #2870; INV-CONFIG-002). `getTodayDateOnly()`
+  // stood here and answered from `APP_TIME_ZONE` — the container's environment,
+  // which for a deployment that sets only `TZ` is not the club's zone at all.
+  // This value bounds a season and is written into immutable charges.
+  //
+  // THE DEFAULT IS REFUSED INSIDE A TRANSACTION, and that is a concurrency rule
+  // rather than tidiness. `getTodayDateOnly()` was pure; resolving the club's zone
+  // is a `ClubTimeSettings` read. Both in-module callers that pass `store` are
+  // inside `prisma.$transaction` holding `pg_advisory_xact_lock` on this season,
+  // and both already supply an explicit `decisionDate` — so today the read never
+  // happens under that lock. Refusing makes that an ENFORCED contract instead of a
+  // coincidence a future caller can break silently: a settings query under a
+  // held lock buys nothing and lengthens the hold (`booking-request.ts` records
+  // the same judgement in its own words), and the confirm path must in any case
+  // re-derive from the FROZEN preview's date rather than from a fresh "today".
+  if (input.store && !input.decisionDate) {
+    throw new SubscriptionBillingError(
+      "A preview built inside a transaction must be given its decision date. " +
+        "Defaulting it here would read the club's timezone from the database while " +
+        "this transaction holds the season's advisory lock, and a confirm must " +
+        "re-derive from the frozen preview's date rather than from a fresh today.",
+    );
+  }
+  const decisionDate =
+    input.decisionDate ??
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   // Validate the date against the selected membership year before querying,
   // including an otherwise-empty preview.
   const bounds = seasonBounds(input.seasonYear);
@@ -1385,9 +1417,31 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   approvedByMemberId: string;
   decisionDate?: Date;
 }) {
-  const decisionDate = input.decisionDate ?? getTodayDateOnly();
-  const { getSeasonYear } = await import("@/lib/utils");
-  const seasonYear = getSeasonYear(decisionDate);
+  // THE TRAP THIS LANE EXISTS FOR, and it looked like a one-line fix.
+  //
+  // Approving a membership application arrives here with NO decision date, so
+  // this default decides which season the member's FIRST subscription charge —
+  // and the Xero invoice queued from it — is written against. On the financial
+  // year boundary that is a whole SEASON YEAR, not a day, and the charge is
+  // immutable once created.
+  //
+  // Two things were wrong and only one of them was visible. `getTodayDateOnly()`
+  // answered from `APP_TIME_ZONE` (the container's environment) rather than the
+  // club's persisted zone; and the season was then derived by
+  // `getSeasonYear(decisionDate)`, which read this UTC-midnight encoding with
+  // HOST-LOCAL getters — so on any host behind Greenwich 1 April decoded as
+  // 31 March and the whole of that day was charged to the previous season.
+  //
+  // DO NOT "IMPROVE" THIS BY PASSING A BETTER `Date` INTO A HOST-LOCAL READER.
+  // Measured across a host x club matrix (#2870, group A): that gives zero wrong
+  // days for a host at or ahead of UTC and one ENTIRE wrong day for any host
+  // behind it, which took a self-consistent Denver deployment from right to
+  // wrong. The club's day is minted here and decoded as an encoding, in UTC, by
+  // `seasonYearOfStoredDate`.
+  const decisionDate =
+    input.decisionDate ??
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  const seasonYear = seasonYearOfStoredDate(decisionDate);
   const preview = await buildSubscriptionBillingPreview({ seasonYear, decisionDate, memberIds: input.memberIds });
   const result = await confirmSubscriptionBillingPreview({
     preview,

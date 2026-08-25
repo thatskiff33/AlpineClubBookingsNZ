@@ -103,7 +103,7 @@ import {
   buildSameOwnerCoverageRefusalBody,
   hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
@@ -416,7 +416,7 @@ export async function POST(
         excludeBookingId: bookingId,
       });
 
-      const seasonYear = getSeasonYear(booking.checkIn);
+      const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
         ownerMemberId: booking.memberId,
         guests: [

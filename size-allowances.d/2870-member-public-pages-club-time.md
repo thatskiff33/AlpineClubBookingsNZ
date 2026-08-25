@@ -35,13 +35,17 @@ reason: one local formatter here was being handed BOTH lodge nights and real
   reasoning that stops the next edit merging the two back together.
 
 file: src/app/(authenticated)/profile/page.tsx
-lines: 683
-reason: eleven of the sixteen lines are a warning left ON PURPOSE beside
-  `getSeasonYear(new Date())`, which is deliberately NOT migrated: a sibling
-  lane measured that handing it a club-derived date makes a behind-UTC
-  deployment worse, not better, and the honest fix is a zone-aware helper in
-  `src/lib` that another group owns. Without that note the next reader makes
-  exactly the change that was measured and rejected.
+lines: 678
+reason: SUPERSEDED IN PLACE, and the correction matters more than the number. This
+  entry used to justify eleven lines of warning left beside
+  `getSeasonYear(new Date())`, "which is deliberately NOT migrated" — true when
+  group E wrote it, and false now: CT-4 group F1 built the zone-aware helper that
+  warning pointed at, migrated this line onto `clubSeasonYear(club.zone)`, and
+  deleted the warning. The file is SHORTER than when the allowance was written. It
+  is kept rather than deleted because it still covers the rest of group E's growth
+  in this page — the instant/calendar-day split on the profile stamps — and because
+  an allowance whose prose asserts the opposite of what shipped is worse than a
+  stale line count: the count a gate checks, the prose only a reader does.
 
 file: src/app/(authenticated)/book/_components/review-step.tsx
 lines: 976

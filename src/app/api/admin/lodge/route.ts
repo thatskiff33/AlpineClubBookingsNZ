@@ -8,6 +8,8 @@ import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { ensureDefaultSeasonSubscriptionForNewMember } from "@/lib/member-subscription-defaults";
 import { isFullAdmin } from "@/lib/access-roles";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -162,10 +164,15 @@ export async function GET() {
     });
     // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type, so seed a
     // NOT_REQUIRED current-season row (#2149).
-    await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
-      id: lodge.id,
-      role: "LODGE",
-    });
+    await ensureDefaultSeasonSubscriptionForNewMember(
+      prisma,
+      { id: lodge.id, role: "LODGE" },
+      // The CLUB's current season, from its persisted zone (#2870). The season is
+      // required rather than defaulted so no caller can resolve it from inside
+      // somebody else's transaction; this route holds no transaction and reads it
+      // through the request-cached server binding.
+      clubSeasonYear(await clubTimeZone()),
+    );
     logAudit({
       action: "LODGE_ACCOUNT_CREATED",
       category: "lodge",
@@ -422,10 +429,11 @@ export async function POST(request: NextRequest) {
   // LODGE accounts resolve to the NOT_REQUIRED built-in LODGE type (#2149);
   // normalized access rows mirror the compatibility fields (same as the
   // auto-create path).
-  await ensureDefaultSeasonSubscriptionForNewMember(prisma, {
-    id: created.id,
-    role: "LODGE",
-  });
+  await ensureDefaultSeasonSubscriptionForNewMember(
+    prisma,
+    { id: created.id, role: "LODGE" },
+    clubSeasonYear(await clubTimeZone()),
+  );
   await ensureMemberAccessRolesFromCompatibilityFields(prisma, {
     memberId: created.id,
     role: "LODGE",

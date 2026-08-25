@@ -119,6 +119,17 @@ time-zone work ships. Keep the two the same and the distinction never matters.
 **Lodge nights are unaffected.** A stay is a set of calendar dates — "the nights
 of 12 and 13 July" — and calendar dates are not converted by a time zone change.
 
+**The membership season is decided from this zone.** "Which membership year is it
+now?" is a club decision, so it is answered from the club's day here rather than
+from the server's. That matters on exactly one day a year — the first day of the
+month after the club's financial year-end, 1 April by default — where a club and
+a server in different parts of the world can be on different sides of the
+boundary. It decides which season a new member's first subscription is charged
+for, which age band a date of birth falls in and therefore which price a bed is
+quoted at, and which season's rates a stay is priced against. Setting this zone
+correctly is what makes those agree; the club's financial year-end month itself is
+set separately, under membership settings.
+
 If you change the zone, expect to spend a moment reading a few recent records
 before assuming something is wrong: a timestamp that now reads a day earlier or
 later has not moved, it is being written in a different zone.

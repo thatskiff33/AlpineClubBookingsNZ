@@ -7,7 +7,7 @@ import {
   resolveMemberSubscriptionSettlement,
   subscriptionIsUnpaid,
 } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 interface BookingGuestLike {
   isMember: boolean;
@@ -88,7 +88,7 @@ export async function findUnpaidMemberGuests(
   }
 
   const uniqueIds = [...new Set(memberGuestIds)];
-  const seasonYear = getSeasonYear(params.checkIn);
+  const seasonYear = seasonYearOfStoredDate(params.checkIn);
   const ageTierSettings = await getAgeTierSettings();
   const subscriptions = await db.memberSubscription.findMany({
     where: {

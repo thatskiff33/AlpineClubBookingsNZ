@@ -76,7 +76,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   getDefaultLodgeId,
   lodgeNullTolerantScope,
@@ -573,7 +573,7 @@ export async function calculateIndicativeNonMemberPriceCents(input: {
   // (all NON_MEMBER_DEFAULT here) so pricing keys on the NON_MEMBER type
   // (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: getSeasonYear(input.checkIn),
+    seasonYear: seasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,

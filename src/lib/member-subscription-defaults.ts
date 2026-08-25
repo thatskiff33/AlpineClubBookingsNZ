@@ -4,7 +4,6 @@ import type {
   Role,
 } from "@prisma/client";
 import { effectiveSubscriptionBehavior } from "@/lib/membership-types";
-import { getSeasonYear } from "@/lib/utils";
 
 // Structural client type so the helper works with PrismaClient, a transaction
 // client, and the seed script alike.
@@ -39,7 +38,19 @@ interface MemberSubscriptionUpsertDb {
 export async function ensureDefaultSeasonSubscriptionForNewMember(
   db: MemberSubscriptionUpsertDb,
   member: { id: string; role: Role },
-  seasonYear: number = getSeasonYear()
+  /**
+   * The club's current season year.
+   *
+   * REQUIRED since the correctness review of #2870. It was briefly optional, with
+   * the fallback resolving the club's zone here — but every read in this function
+   * goes through the caller's `db`, and its one caller passes a TRANSACTION client
+   * (`admin-members-service.ts`, inside `createAdminMember`'s transaction). A
+   * fallback would therefore have opened a second pool connection on the GLOBAL
+   * client from inside somebody else's transaction, which is the shape this lane
+   * closed in three other places. `createAdminMember` already resolves the club's
+   * season before that transaction opens, so the value simply arrives.
+   */
+  seasonYear: number
 ): Promise<void> {
   if (effectiveSubscriptionBehavior(null, member.role) !== "NOT_REQUIRED") {
     return;

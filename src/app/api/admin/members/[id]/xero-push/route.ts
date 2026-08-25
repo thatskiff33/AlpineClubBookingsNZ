@@ -17,7 +17,8 @@ import { buildXeroContactUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { z } from "zod";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
@@ -163,7 +164,7 @@ export async function POST(
       const seasonYearsToRefresh =
         flushedSubscriptionHistory.seasonYears.length > 0
           ? [
-              getSeasonYear(new Date()),
+              clubSeasonYear(await clubTimeZone()),
               ...flushedSubscriptionHistory.seasonYears,
             ]
           : undefined;
@@ -224,10 +225,14 @@ export async function POST(
         }
 
         const queuedEntranceFeeInvoice =
-          await enqueueXeroEntranceFeeInvoiceOperation(
-            id,
-            entranceFeeInvoiceOptions
-          );
+          await enqueueXeroEntranceFeeInvoiceOperation(id, {
+            ...entranceFeeInvoiceOptions,
+            // No transaction here, so the enqueue would resolve the club's zone
+            // itself — but this route already holds it, React-cached for the
+            // render pass, so pass the season rather than paying for a second
+            // uncached read (#2870, correctness review).
+            seasonYear: clubSeasonYear(await clubTimeZone()),
+          });
 
         entranceFeeInvoiceQueued = Boolean(
           queuedEntranceFeeInvoice.queueOperationId

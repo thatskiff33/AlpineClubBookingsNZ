@@ -20,7 +20,8 @@ import {
   type StructuredAuditEvent,
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
   isOrganisationMember,
@@ -437,6 +438,17 @@ export async function getSeasonalMembershipChangePreview(params: {
   applyFrom?: string | null;
   now?: Date;
   db?: SeasonalMembershipReadClient;
+  /**
+   * The club's CURRENT season year, when the caller already holds it.
+   *
+   * The bulk membership-type preview route calls this once per selected member in
+   * a loop, and resolving the club's zone here is an uncached `ClubTimeSettings`
+   * read — so a fifty-member preview made fifty of them, and a preview straddling
+   * club midnight on a season boundary could judge two members' age tiers in two
+   * different seasons (#2870, correctness review). Passing it makes the whole
+   * batch one answer and one read.
+   */
+  clubCurrentSeasonYear?: number;
 }): Promise<JsonRouteResult> {
   const db = params.db ?? prisma;
   const today = params.now ?? getTodayDateOnly();
@@ -606,7 +618,10 @@ export async function getSeasonalMembershipChangePreview(params: {
       : member.dateOfBirth
         ? await computeAgeTier(
             member.dateOfBirth,
-            getSeasonStartDate(getSeasonYear()),
+            getSeasonStartDate(
+              params.clubCurrentSeasonYear ??
+                clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+            ),
           )
         : "ADULT";
   const resolvedAgeTier = resolveEnforcedAgeTier({
@@ -941,7 +956,11 @@ export async function saveSeasonalMembershipAssignment(params: {
   // the current season's assignment can alter a member's effective grouping —
   // future-season edits are left for their own trigger/bulk run. Non-fatal,
   // idempotent, and a no-op unless grouping is enabled.
-  if (params.seasonYear === getSeasonYear() && !params.skipXeroContactGroupSync) {
+  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  if (
+    params.seasonYear === clubCurrentSeasonYear &&
+    !params.skipXeroContactGroupSync
+  ) {
     await triggerMemberXeroContactGroupSync(params.memberId, {
       createdByMemberId: params.adminMemberId,
       reason: "seasonal_membership_assignment",
@@ -1197,7 +1216,8 @@ export async function bulkSaveSeasonalMembershipAssignments(params: {
   // timeout mid-reconcile cannot lose a committed change (the nightly reconcile
   // finishes any group sync the daily API budget or a timeout left undone).
   let xeroReconcile: BulkSeasonalMembershipXeroReconcile | null = null;
-  if (changedMemberIds.length > 0 && params.seasonYear === getSeasonYear()) {
+  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  if (changedMemberIds.length > 0 && params.seasonYear === clubCurrentSeasonYear) {
     const reconcileResult = await reconcileMembersXeroContactGroups(
       changedMemberIds,
       {
@@ -1319,7 +1339,13 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
     assignedByMemberId: params.adminMemberId,
   }));
 
-  const targetIsCurrentSeason = params.toSeasonYear === getSeasonYear();
+  // ONE read of the club's current season for this whole roll-forward, from the
+  // club's PERSISTED zone (CT-4, #2870). A long run must not be able to answer
+  // "is the target the current season?" differently at its start and its end,
+  // and the age-tier reconcile below reads its reference day from the same value.
+  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const targetIsCurrentSeason = params.toSeasonYear === clubCurrentSeasonYear;
+  const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
   const rollSweptByMember: Array<{
     memberId: string;
     memberName: string;
@@ -1482,7 +1508,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                   : member.dateOfBirth
                     ? await computeAgeTier(
                         member.dateOfBirth,
-                        getSeasonStartDate(getSeasonYear()),
+                        clubCurrentSeasonStart,
                       )
                     : "ADULT";
               const resolved = resolveEnforcedAgeTier({
@@ -1606,7 +1632,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
     // only for candidates that actually hold a target-season assignment now —
     // createMany(skipDuplicates) may have skipped rows created concurrently
     // since the pre-read, and those members' grouping did not change here.
-    if (copiedCount > 0 && params.toSeasonYear === getSeasonYear()) {
+    if (copiedCount > 0 && targetIsCurrentSeason) {
       const copiedRows = await db.seasonalMembershipAssignment.findMany({
         where: {
           seasonYear: params.toSeasonYear,

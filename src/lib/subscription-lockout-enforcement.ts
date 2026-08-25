@@ -35,7 +35,7 @@ import {
   type AgeTierSettingsReader,
   type MemberSubscriptionSettlement,
 } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * The ONE place the five booking write paths ask "what does this club's
@@ -690,8 +690,8 @@ export async function evaluateProposedPaidUpAdultPresence(
      * The membership season these nights fall in, when the caller has already
      * resolved it AUTHORITATIVELY.
      *
-     * Omit it and the season comes from `getSeasonYear`, which reads the
-     * process-level financial-year cache in `financial-year.ts`. Every product
+     * Omit it and the season comes from `seasonYearOfStoredDate`, whose year-end
+     * month defaults to the process-level cache in `financial-year.ts`. Every product
      * caller of this function is a booking write behind a gated request that has
      * seeded that cache, so omitting it is correct for them and this parameter
      * changes nothing about their answer.
@@ -732,7 +732,7 @@ export async function evaluateProposedPaidUpAdultPresence(
       ? { readAgeTierSettings: input.readAgeTierSettings }
       : {}),
     lodgeId: input.lodgeId,
-    seasonYear: input.seasonYear ?? getSeasonYear(input.checkIn),
+    seasonYear: input.seasonYear ?? seasonYearOfStoredDate(input.checkIn),
     checkIn: input.checkIn,
     checkOut: input.checkOut,
     bookingOwnerMemberId: input.bookingOwnerMemberId ?? null,

@@ -87,7 +87,7 @@
  *
  * The repo-wide frozen clock (#2481) pins "now" at 2026-07-01T00:00:00Z, which is
  * midday 1 July 2026 in the club's zone, so NZ and UTC agree on the calendar day.
- * `getSeasonYear()` is therefore 2026 and `getTodayDateOnly()` is 2026-07-01.
+ * the club's season year is therefore 2026 and its calendar day 2026-07-01.
  * Every fixture date below is written relative to that and nothing here reads the
  * real calendar.
  *
@@ -139,6 +139,11 @@ const {
     memberSubscription: { findUnique: vi.fn() },
     memberInduction: { findFirst: vi.fn() },
     membershipLockoutSettings: { findUnique: vi.fn() },
+    // #2870: the club's persisted timezone, read THROUGH THE TRANSACTION so the
+    // season the club is currently in stays inside the seam's READ ONLY fence,
+    // snapshot and statement timeout. Present on both doubles because it is a
+    // `tx` read; the first version of that code used the global client instead.
+    clubTimeSettings: { findUnique: vi.fn() },
     xeroToken: { findFirst: vi.fn() },
     $executeRaw: vi.fn(),
     $transaction: vi.fn(),
@@ -168,6 +173,7 @@ const {
     memberSubscription: prismaMock.memberSubscription,
     memberInduction: prismaMock.memberInduction,
     membershipLockoutSettings: prismaMock.membershipLockoutSettings,
+    clubTimeSettings: prismaMock.clubTimeSettings,
     xeroToken: prismaMock.xeroToken,
     $executeRaw: prismaMock.$executeRaw,
   };
@@ -1345,6 +1351,9 @@ beforeEach(() => {
     financialYearEndMonthOverride: DEFAULT_FINANCIAL_YEAR_END_MONTH,
   });
   prismaMock.xeroToken.findFirst.mockResolvedValue(null);
+  prismaMock.clubTimeSettings.findUnique.mockResolvedValue({
+    timeZone: "Pacific/Auckland",
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3730,9 +3739,44 @@ describe("member eligibility: the season year is the SEASON's, not the calendar'
     },
   );
 
+  it("answers from the CLUB's calendar day, not the UTC one", async () => {
+    /*
+      THE ZONE AXIS, WHICH THIS SUITE WAS BLIND TO (#2870, review round 2).
+
+      Every other instant this file pins puts the club's day and the UTC day on the
+      SAME side of a season edge, so an implementation that ignored its `zone`
+      argument and read the encoding in UTC answered identically — measured, 0 of
+      184 tests failed under exactly that mutation. Worse, UTC is what the CI runner
+      resolves, so no host pin closes it either. It is the mirror of the host-axis
+      blindness this lane found on the billing path, and it needs the same remedy:
+      an instant where the two genuinely differ.
+
+      At 13:00Z on 31 March, a club at UTC+13 is already on 1 April — the first day
+      of season 2027 — while UTC is still on 31 March, the last day of season 2026.
+      A UTC read answers 2026 and fails here.
+    */
+    vi.setSystemTime(new Date("2027-03-31T13:00:00.000Z"));
+    seedMember({});
+    const row = await eligibilityRow();
+    expect(row.season_year).toBe(2027);
+  });
+
+  it("refuses rather than guessing when the club's timezone is not stored", async () => {
+    // The same discipline `requireStoredYearEndMonth` applies to the other half of
+    // this derivation. Guessing a zone would report a member's subscription state
+    // for a season that is not the club's, with an observed-at stamp that makes it
+    // look freshly measured; the executor renders this rejection as
+    // `evidence_unavailable` (#2870).
+    prismaMock.clubTimeSettings.findUnique.mockResolvedValue(null);
+    seedMember({});
+    await expect(eligibilityRow()).rejects.toThrow(
+      /club's timezone is not stored locally/,
+    );
+  });
+
   it("moves the boundary with the CLUB's financial year-end rather than assuming April", async () => {
     // The assertion that separates "calls the platform's helper" from "hard-codes
-    // the NZ default". `getSeasonYear` reads `getSeasonStartMonth()`, which is the
+    // the NZ default". The season derivation reads `getSeasonStartMonth()`, which is the
     // month after the club's configured `financialYearEndMonth`; a club on a
     // December year-end starts its season in January, so the same January instant
     // belongs to the NEW season year there. A local re-derivation would have to

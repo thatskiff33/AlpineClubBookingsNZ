@@ -88,7 +88,6 @@ vi.mock("@/lib/capacity", () => ({
   acquireLodgeCapacityLock: vi.fn().mockResolvedValue(undefined),
   checkCapacityForGuestRanges: mocks.checkCapacityForGuestRanges,
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: () => 2026 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: vi
     .fn()

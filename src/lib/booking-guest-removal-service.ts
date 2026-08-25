@@ -53,7 +53,7 @@ import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-clean
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   evaluateNonMemberPricingRequirements,
@@ -506,7 +506,7 @@ export async function removeBookingGuestInTransaction({
     // guest must return exactly that guest's own price, policy permitting.
     lockedNightPrices: lockedNightPricesForGuest(guest),
   }));
-  const seasonYear = getSeasonYear(booking.checkIn);
+  const seasonYear = seasonYearOfStoredDate(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: booking.memberId,
     guests: guestsForPricing,
@@ -546,7 +546,7 @@ export async function removeBookingGuestInTransaction({
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(booking.checkIn),
+      seasonYear: seasonYearOfStoredDate(booking.checkIn),
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       // Owner decision, 3 Aug 2026. It matters most on this path: an unfinancial

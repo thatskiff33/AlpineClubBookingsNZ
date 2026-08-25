@@ -125,7 +125,7 @@ reason: three lines on a 338-line export route: a two-line comment and an
   not used.
 
 file: src/app/api/members/family/[memberId]/details/route.ts
-lines: 399
+lines: 405
 reason: five lines on a 394-line route — a four-line comment and an import — on
   the "date of birth cannot be in the future" gate. The gate now reads the club's
   day rather than the container's, and the date of birth itself still takes no
@@ -139,7 +139,7 @@ reason: six lines on a 491-line route: the same four-line comment on the same
   derived rather than at each use.
 
 file: src/app/api/profile/route.ts
-lines: 496
+lines: 501
 reason: five lines on a 491-line route. The existing comment already explained
   why this comparison is day-against-day rather than day-against-instant
   (#2682); two lines are added saying WHOSE day it now is, and the rest is the

@@ -42,7 +42,6 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn(() => new Date("2026-04-01")),
 }));
 
-import { getSeasonYear } from "@/lib/utils";
 import {
   bulkSaveSeasonalMembershipAssignments,
   getSeasonalMembershipChangePreview,
@@ -241,7 +240,13 @@ async function tokenFor(
 }
 
 describe("bulkSaveSeasonalMembershipAssignments", () => {
-  const currentSeason = getSeasonYear();
+// The season the club is in at the frozen instant, WRITTEN OUT rather than derived
+// (#2870, correctness review). Computing it by calling the same function the code
+// under test calls, with the same arguments, holds for any implementation at all —
+// including one that returns a constant. `club-season-year.test.ts` is where the
+// derivation itself is proved; here the literal is the oracle.
+  // The frozen clock is 1 July 2026: season 2026 on the default 31-March year-end.
+  const currentSeason = 2026;
 
   beforeEach(() => {
     vi.clearAllMocks();

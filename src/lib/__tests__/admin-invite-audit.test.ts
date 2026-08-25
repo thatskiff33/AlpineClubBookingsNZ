@@ -84,7 +84,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/utils", () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" "),
-  getSeasonYear: vi.fn().mockReturnValue(2026),
 }));
 vi.mock("@/lib/xero", () => ({
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,

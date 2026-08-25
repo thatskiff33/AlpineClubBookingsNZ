@@ -2,11 +2,11 @@ import { type Invoice } from "xero-node";
 import { prisma } from "@/lib/prisma";
 import { clubToday } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
-import { getSeasonStartMonth } from "@/lib/financial-year";
 import {
+  getFinancialYearEndMonth,
   seasonYearOfCalendarDate,
-  xeroCalendarDate,
-} from "@/lib/xero-provider-dates";
+} from "@/lib/financial-year";
+import { xeroCalendarDate } from "@/lib/xero-provider-dates";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
@@ -39,12 +39,12 @@ function buildSkippedInvoiceReconciliation(
 /**
  * The membership season a Xero invoice belongs to, from its CALENDAR DATE.
  *
- * `Invoice.date` is a calendar day, and `getSeasonYear` decides from
+ * `Invoice.date` is a calendar day. The retired `getSeasonYear` decided from
  * `date.getMonth()`/`getFullYear()` — the HOST's calendar components — so the old
  * `new Date(invoice.date)` made the season boundary move with the container's
  * timezone as well as with the wire shape Xero happened to send (#2869). Both
  * halves are now explicit: the day is classified at the Xero boundary, and the
- * season is derived from that day's own parts.
+ * season is derived from that day's own parts by the shared calendar-date rule.
  *
  * When Xero sends no date at all the fallback is the CLUB's today, not the UTC
  * clock's (`INV-DATE-019`).
@@ -52,7 +52,7 @@ function buildSkippedInvoiceReconciliation(
 async function buildSeasonYearFromInvoice(invoice: Invoice): Promise<number> {
   const zone = await readClubTimeZoneOutsideRequest();
   const invoiceDate = xeroCalendarDate(invoice.date) ?? clubToday(zone);
-  return seasonYearOfCalendarDate(invoiceDate, getSeasonStartMonth());
+  return seasonYearOfCalendarDate(invoiceDate, getFinancialYearEndMonth());
 }
 
 export async function reconcileXeroInvoice(

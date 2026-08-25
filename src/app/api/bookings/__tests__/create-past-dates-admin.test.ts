@@ -197,7 +197,6 @@ vi.mock("@/lib/policies/booking-route-decisions", () => ({
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: () => 2026 }));
 vi.mock("@/lib/internet-banking-settings", () => ({
   checkInternetBankingLeadTime: () => ({ allowed: true }),
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),

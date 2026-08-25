@@ -59,7 +59,7 @@ import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { formatDateOnly } from "@/lib/date-only";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1386,7 +1386,7 @@ export async function holdBookingRequestSlots(input: {
   // annotation nothing would check that it supplies a night set at all.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(prisma, {
-      seasonYear: getSeasonYear(request.checkIn),
+      seasonYear: seasonYearOfStoredDate(request.checkIn),
       guests: guests.map((guest, index) => {
         const memberId = linkedMembers.get(index);
         return {

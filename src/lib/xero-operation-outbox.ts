@@ -7,7 +7,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolveStripeCashRefundEvidence } from "@/lib/stripe-cash-refund-evidence";
 import { claimXeroSyncOperationToRunning } from "@/lib/xero-operation-claim";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   buildXeroIdempotencyKey,
   completeXeroSyncOperation,
@@ -184,6 +185,15 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     amountCents?: number | null;
     description?: string | null;
     store?: Prisma.TransactionClient;
+    /**
+     * The membership season the joining fee is resolved in. REQUIRED alongside
+     * `store`: the chain below (`getEntranceFeeContext` ->
+     * `resolveMemberJoiningFeeClassification`) would otherwise read the club's
+     * timezone on the global client while the caller's transaction holds its
+     * advisory locks, and that season picks the `JoiningFee` row whose amount
+     * lands on an immutable invoice (#2870, correctness review).
+     */
+    seasonYear?: number;
   }
 ) {
   // Optional transaction client (#1886, F22) so membership approval can write
@@ -217,7 +227,11 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     };
   }
 
-  const entranceFee = await getEntranceFeeContext(memberId, db);
+  const entranceFee = await getEntranceFeeContext(
+    memberId,
+    db,
+    options?.seasonYear,
+  );
 
   // Organisations/schools are exempt from joining fees (owner decision,
   // 2026-07-07) — checked before the amount override so an explicitly
@@ -2010,7 +2024,7 @@ export async function queueApprovedMembershipCancellationXeroOperations(params: 
   participantId: string;
   createdByMemberId?: string;
 }) {
-  const seasonYear = getSeasonYear(new Date());
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const subscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: {

@@ -15,7 +15,7 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
 
 const querySchema = z.object({
@@ -116,7 +116,13 @@ export async function GET(request: NextRequest) {
     ? (isDateOnlyString(parsed.data.decisionDate) ? parseDateOnly(parsed.data.decisionDate) : null)
     : dateOnlyInstantOf((await clubTime()).today());
   if (!decisionDate) return NextResponse.json({ error: "Decision date must be YYYY-MM-DD." }, { status: 400 });
-  const seasonYear = parsed.data.seasonYear ?? getSeasonYear(decisionDate);
+  // `decisionDate` is now a UTC-midnight encoding of a calendar day — either the
+  // club's own today (minted above) or an explicit `YYYY-MM-DD` — so the season
+  // comes from the DAY, with no zone. Reading it with host-local getters, which is
+  // what the retired `getSeasonYear` did, put the whole of 1 April in the previous
+  // season for any host behind Greenwich (CT-4, #2870).
+  const seasonYear =
+    parsed.data.seasonYear ?? seasonYearOfStoredDate(decisionDate);
   try {
     return NextResponse.json(await loadBillingData(seasonYear, decisionDate));
   } catch (error) {

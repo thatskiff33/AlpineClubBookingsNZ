@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { requireClubTimeZone } from "@/lib/club-time";
+import { seasonYearOfCalendarDate } from "@/lib/financial-year";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
   classifyXeroWireTemporal,
-  seasonYearOfCalendarDate,
   xeroCalendarDate,
   xeroCalendarDateAsDateOnly,
   xeroCalendarDateText,
@@ -290,23 +290,29 @@ describe("an invoice's issue and due dates together", () => {
 });
 
 describe("the season a Xero invoice belongs to", () => {
-  // `getSeasonYearForYearEndMonth` reads the HOST's calendar components, so
-  // handing it a Xero invoice date made the boundary move with the container.
+  // The retired `getSeasonYearForYearEndMonth` read the HOST's calendar
+  // components, so handing it a Xero invoice date made the boundary move with the
+  // container. This module used to carry its own `seasonYearOfCalendarDate(date,
+  // seasonStartMonth)`; CT-4 group F1 (#2870) converged it onto the one in
+  // `@/lib/financial-year`, whose second argument is the financial YEAR-END month.
+  // Two same-named functions differing only in that argument was a silent
+  // off-by-one-month waiting for the first caller to import the wrong one, so the
+  // arguments here move from 4/1 (season start) to 3/12 (year end).
   it("puts the first day of a season in that season, on every host zone", () => {
     onEveryHostZone((hostZone) => {
       const first = xeroCalendarDate("2026-04-01");
       expect(first, hostZone).not.toBeNull();
-      expect(seasonYearOfCalendarDate(first!, 4), hostZone).toBe(2026);
+      expect(seasonYearOfCalendarDate(first!, 3), hostZone).toBe(2026);
     });
   });
 
   it("puts the last day before a season in the previous one", () => {
     const last = xeroCalendarDate("2026-03-31");
-    expect(seasonYearOfCalendarDate(last!, 4)).toBe(2025);
+    expect(seasonYearOfCalendarDate(last!, 3)).toBe(2025);
   });
 
   it("handles a January season start (a December year-end)", () => {
-    expect(seasonYearOfCalendarDate(xeroCalendarDate("2026-01-01")!, 1)).toBe(2026);
-    expect(seasonYearOfCalendarDate(xeroCalendarDate("2025-12-31")!, 1)).toBe(2025);
+    expect(seasonYearOfCalendarDate(xeroCalendarDate("2026-01-01")!, 12)).toBe(2026);
+    expect(seasonYearOfCalendarDate(xeroCalendarDate("2025-12-31")!, 12)).toBe(2025);
   });
 });

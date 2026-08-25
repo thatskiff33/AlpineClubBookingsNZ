@@ -37,7 +37,7 @@ import {
   calculateBookingHoldDecision,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import {
@@ -163,7 +163,7 @@ async function repriceWaitlistCandidate(
       guests: guestsForPricing,
       seasons: seasonRateData,
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
-      seasonYear: getSeasonYear(candidate.checkIn),
+      seasonYear: seasonYearOfStoredDate(candidate.checkIn),
       subscriptionLockoutMode,
       // Finding 2 (privacy re-review of MG3 #2308). An unattended sweep with no
       // member on the other end of the response: there is nobody to collapse the
@@ -536,7 +536,7 @@ export async function processWaitlistForDates(freedDates: {
       const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
         mode: subscriptionLockoutMode,
         lodgeId: offerDetails.offeredLodgeId ?? offerDetails.lodgeId ?? "",
-        seasonYear: getSeasonYear(offerDetails.checkIn),
+        seasonYear: seasonYearOfStoredDate(offerDetails.checkIn),
         checkIn: offerDetails.checkIn,
         checkOut: offerDetails.checkOut,
         // Owner decision, 3 Aug 2026. Threaded for consistency with the confirm
@@ -845,7 +845,7 @@ export async function confirmWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offerLodgeId,
-      seasonYear: getSeasonYear(offerKind.checkIn),
+      seasonYear: seasonYearOfStoredDate(offerKind.checkIn),
       checkIn: offerKind.checkIn,
       checkOut: offerKind.checkOut,
       // Owner decision, 3 Aug 2026. The guard above has already established that

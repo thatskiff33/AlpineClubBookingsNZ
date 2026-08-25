@@ -21,7 +21,7 @@ import {
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { evaluateNonMemberPricingRequirements } from "@/lib/subscription-lockout-enforcement";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
@@ -382,7 +382,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: quoteLodgeId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: an unfinancial member triggers the
