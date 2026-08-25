@@ -21,3 +21,12 @@
 
   Nothing stored was rewritten and no booking, night or deadline was changed —
   only the wording of what a member is told.
+
+  One admin alert is also fixed on the way through. The alert that warns
+  officers a payment needs attention by hand is sometimes raised for a money
+  event whose booking cannot be looked up — a group settlement that has been
+  superseded, for instance. It used to fill the two stay dates in with the
+  current date and time; once a lodge night was correctly no longer allowed to
+  be a time of day, that stopped the alert being sent at all, and nothing
+  reported it because the send is deliberately non-blocking. Those dates now
+  read "Unknown" and the alert arrives.
