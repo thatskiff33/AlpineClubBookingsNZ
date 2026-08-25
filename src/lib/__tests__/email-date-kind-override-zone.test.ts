@@ -86,6 +86,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Type-only, so it emits nothing and cannot warm the module registry
+// ahead of the container-zone re-import below.
+import type { EmailTemplateData } from "@/lib/email-message-renderer";
+
 /**
  * The container's zone, chosen BEHIND Greenwich so the retired environment-zone
  * reading of a stored calendar day lands on a different day.
@@ -193,7 +197,6 @@ const { sendAdditionalPaymentReminderEmail, sendSetupIntentFailedEmail } =
 const { sendHutLeaderAssignmentEmail } = await import("@/lib/email/chores");
 const { sendWaitlistOfferEmail } = await import("@/lib/email/waitlist");
 
-type EmailTemplateData = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
 // Fixtures and the independent oracles
