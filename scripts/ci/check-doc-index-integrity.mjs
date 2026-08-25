@@ -324,6 +324,50 @@ const MOJIBAKE_EXAMPLE = String.fromCharCode(0xe2, 0x20ac, 0x201d);
 /** The Unicode byte-order mark, as `fs.readFileSync(path, "utf8")` leaves it. */
 export const BYTE_ORDER_MARK = String.fromCharCode(0xfeff);
 
+/**
+ * Every C0 control character except the three that structure a text file, plus
+ * DEL.
+ *
+ * TAB (0x09), LF (0x0A) and CR (0x0D) are excluded because they ARE the text
+ * format. Everything else in 0x00-0x1F, and 0x7F, is an editing accident: see
+ * {@link auditControlCharacters}.
+ *
+ * Built from code points, like the mojibake classes above, so that this file
+ * stays pure ASCII and cannot trip its own check.
+ */
+export const CONTROL_CHARACTER_PATTERN = new RegExp(
+  "[" +
+    `${String.fromCharCode(0x00)}-${String.fromCharCode(0x08)}` +
+    String.fromCharCode(0x0b, 0x0c) +
+    `${String.fromCharCode(0x0e)}-${String.fromCharCode(0x1f)}` +
+    String.fromCharCode(0x7f) +
+    "]",
+  "g",
+);
+
+/**
+ * The escape sequence each commonly-mistaken byte spells, for the message.
+ *
+ * These are the ones an editing tool interprets: a heredoc, a `sed` script or a
+ * Python string that was meant to carry the two characters and wrote the one
+ * byte instead. Naming the escape in the failure is the difference between "a
+ * control character is here" and "you meant a word boundary".
+ */
+const BACKSLASH = String.fromCharCode(92);
+const ESCAPE_SPELLING = new Map([
+  [0x00, `${BACKSLASH}0`],
+  [0x07, `${BACKSLASH}a`],
+  [0x08, `${BACKSLASH}b`],
+  [0x0b, `${BACKSLASH}v`],
+  [0x0c, `${BACKSLASH}f`],
+  [0x1b, `${BACKSLASH}e`],
+]);
+
+/** `0x08`, for a message. Two hex digits, so 0x0B never reads as 0xB. */
+function hexByte(codePoint) {
+  return `0x${codePoint.toString(16).padStart(2, "0")}`;
+}
+
 // Inline links/images: ![alt](target) and [text](target).
 const INLINE_LINK = /!?\[[^\]]*\]\(\s*(<[^>]+>|[^)\s]+)/g;
 // Reference definitions at line start: [label]: target
@@ -1712,6 +1756,219 @@ export function auditEncoding(files) {
 }
 
 /**
+ * No tracked text file contains a raw control character.
+ *
+ * ## Why this is worth a gate of its own
+ *
+ * An editing tool — a shell or Python heredoc, a `sed` script, anything that
+ * interprets escapes on the way in — turns the two characters `\b` into the one
+ * byte they name, 0x08. The damage is **completely invisible in every normal
+ * view**: an editor, `git diff`, a GitHub blob and `JSON.stringify` all render
+ * 0x08 back as `\b`, so the source reads as correct and a reviewer cannot see
+ * it. Only `cat -A`, or a grep over the raw bytes, shows what is really there.
+ *
+ * In a regex it is fatal. `/\bINTERVAL\b/i` becomes a pattern demanding a
+ * literal backspace either side of the word, and no source file contains one —
+ * so it matches nothing. When the assertion built on it is NEGATIVE, as
+ * `.not.toMatch()` is, the guard then passes unconditionally: it is not merely
+ * weakened, it can never fail again.
+ *
+ * ## What was actually measured (#3072)
+ *
+ * Censused over all 5,074 tracked files on the epic branch: **8 of the 4,959
+ * Git-classified text files carried a control byte**, 14 bytes in all. They
+ * split cleanly in two, and the split is the reason this check phrases its
+ * failure the way it does.
+ *
+ * **Five files, 9 bytes, were the accident** — an escape eaten on the way in:
+ *
+ * - two were NEGATIVE assertions that could never fail again. One banned
+ *   `INTERVAL` from every SQL statement in the booking/membership diagnostics
+ *   pack, so timestamp arithmetic on a lodge night was unguarded; the other
+ *   asserted that no member email address can reach the Xero containment
+ *   screen, so a privacy claim was passing unconditionally.
+ * - two more were forbidden-patterns 11 and 12 of a list of twelve. The other
+ *   ten still matched, so the suite stayed green and nothing named the two dead
+ *   ones.
+ * - one was a normalisation step (`.replace(/\btype\b/g, " ")`) that stripped
+ *   nothing. It is equivalent on today's inputs because no scanned import
+ *   carries the token, which is exactly why it survived: a latent trap, armed
+ *   for whoever next writes `import { type Editor }`.
+ * - one was comment prose, where `D:\var\backups` had become unreadable.
+ *
+ * **Three files, 5 bytes, were deliberate data** and behaviourally correct: a
+ * PKZIP magic number in a fixture, a form feed fed to the HTML sanitiser, and a
+ * NUL separating the halves of a composite map key in application source. Each
+ * now spells the same value as an escape, which is why this check needs no
+ * exemption for them. A tenth site, the same NUL-separator shape in
+ * `src/lib/config-transfer/import-types.ts`, had already been normalised — see
+ * `.gitattributes`, which still carries the `diff` attribute that made it
+ * reviewable.
+ *
+ * Nothing else in the toolchain sees any of this: lint, typecheck, knip and the
+ * full test suite all stayed green, exactly as they did for the BOM and the
+ * double-encoding above.
+ *
+ * ## No allowlist, deliberately
+ *
+ * A control byte in a tracked text file has no legitimate use here, **including
+ * inside a comment** — a comment is where you look to understand the code under
+ * it. Where a control character is genuinely wanted as DATA, the escape
+ * sequence denotes exactly the same value (`"\0"` is byte 0x00, `"PK\x03\x04"`
+ * is the PKZIP magic), so writing it as an escape costs nothing, changes no
+ * behaviour, and keeps the file readable. That is what the three deliberate
+ * sites above now do.
+ *
+ * TAB, LF and CR are excluded because they are the text format itself.
+ *
+ * ## The one hole, and why {@link auditTextScanCoverage} exists
+ *
+ * This scan sees the file set `loadTrackedFiles` hands it, which is Git's own
+ * text classification. Measured against git 2.53: Git calls a file binary when
+ * it finds a **NUL in the first 8,000 bytes** — and only then. So 0x08, 0x0B,
+ * 0x0C and 0x7F are seen at any offset, and the whole accident class above is
+ * fully covered; a NUL is covered only past byte 8,000. The real NUL site sat
+ * at byte 12,529 and was seen, but that was luck, not coverage.
+ *
+ * A blind spot is worse than an allowlist, because an allowlist is at least
+ * written down. {@link auditTextScanCoverage} closes it without widening this
+ * scan into binary assets: it fails when a file `.gitattributes` DECLARES to be
+ * text is nevertheless missing from the text scan, which for a declared-text
+ * file means precisely an early NUL.
+ */
+export function auditControlCharacters(files) {
+  const problems = [];
+
+  for (const rel of [...files.keys()].sort()) {
+    files.get(rel).split(/\r?\n/).forEach((line, index) => {
+      const hits = [...line.matchAll(CONTROL_CHARACTER_PATTERN)];
+      if (hits.length === 0) return;
+
+      // Column, not just line: the byte is invisible, so "look on line 1600" is
+      // not enough to find it by eye.
+      const found = hits.map((hit) => {
+        const codePoint = hit[0].charCodeAt(0);
+        const spelling = ESCAPE_SPELLING.get(codePoint);
+        const at = `column ${hit.index + 1}`;
+        return spelling
+          ? `${hexByte(codePoint)} at ${at}, the byte a ${spelling} escape names`
+          : `${hexByte(codePoint)} at ${at}`;
+      });
+
+      problems.push(
+        `${rel}:${index + 1} contains ${hits.length} raw control character(s): ` +
+          `${found.join("; ")}. Write the ESCAPE SEQUENCE instead of the byte it names. ` +
+          "This is almost always an editing tool that interpreted the escape on the way " +
+          "in — a shell or Python heredoc, a sed script — and it is invisible in every " +
+          "normal view: an editor, git diff, a GitHub blob and JSON.stringify all render " +
+          `the byte back as the characters that spell it, so the diff looks identical to ` +
+          "correct code. In a regex it is fatal, because a word-boundary escape becomes a " +
+          "demand for a literal control character that no source file contains, and the " +
+          "pattern then matches nothing — which silently makes a `.not.toMatch()` guard " +
+          "pass unconditionally (#3072). If the character is genuinely wanted as data, the " +
+          "escape denotes the identical value, so nothing is lost by spelling it out.",
+      );
+    });
+  }
+
+  return problems;
+}
+
+/**
+ * Nothing `.gitattributes` declares to be text is missing from the text scan.
+ *
+ * {@link auditControlCharacters} can only judge files it is given, and
+ * {@link loadTrackedFiles} gets them from `git grep -I`. Measured against git
+ * 2.53, that excludes a file with a NUL in its first 8,000 bytes — so a single
+ * early NUL would hide a source file, and every other check in this script with
+ * it. `text eol=lf` alone does not rescue it; only a `diff` attribute does.
+ *
+ * So this asks Git a different question. `.gitattributes` here declares `*.ts`,
+ * `*.tsx`, `*.md`, `*.json`, `*.sh`, `*.txt` and the rest to be `text`; a real
+ * binary asset (`.png`, `.zip`, `.ico`, `.gif`) is declared nothing at all. A
+ * file the repository DECLARES text but Git's content scan calls binary is
+ * therefore a contradiction, and for a text file the only way to earn it is a
+ * control byte this script exists to reject.
+ *
+ * That keeps the no-allowlist stance honest without widening the scan into
+ * binary assets: the declaration is the repository's, not this script's, and the
+ * 113 measured binary assets are excluded because nobody declared them text.
+ */
+export function auditTextScanCoverage(hiddenDeclaredTextFiles) {
+  return [...hiddenDeclaredTextFiles].sort().map(
+    (rel) =>
+      `${rel} is declared \`text\` in .gitattributes but Git's content scan ` +
+      "classifies it as BINARY, so it is invisible to every check in this " +
+      "script — including the control-character check. For a declared-text " +
+      "file that means a NUL byte (0x00) in its first 8000 bytes, which is the " +
+      "one control character Git's binary detection keys on. Find it with " +
+      "`node -e` over the raw buffer (`cat -A` and `git diff` will not show " +
+      "it), and write the `\\0` escape instead of the byte: the escape denotes " +
+      "the identical value. If the file genuinely must carry the byte, add a " +
+      "`diff` attribute for it in .gitattributes — that is measured to restore " +
+      "Git's textual classification, and it is what this repository already " +
+      "did for `src/lib/config-transfer/import-types.ts` (#3072).",
+  );
+}
+
+/**
+ * Tracked paths that `.gitattributes` declares `text` yet Git treats as binary.
+ *
+ * Impure, and kept out of {@link auditDocs} for the same reason
+ * {@link loadInvariantFilesAtRef} is: the rules stay testable without a
+ * repository, and the git calls happen once at the entry point.
+ */
+export function findFilesHiddenFromTextScan(repoRoot) {
+  const run = (args) => {
+    const result = spawnSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 1 << 28,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.error) throw result.error;
+    // `git grep` exits 1 for "no match", which is not a failure here.
+    if (result.status !== 0 && result.status !== 1) {
+      throw new Error(
+        `git ${args[0]} failed (status ${result.status}): ${result.stderr.trim()}`,
+      );
+    }
+    return result.stdout.split("\0").filter(Boolean);
+  };
+
+  const tracked = run(["ls-files", "-z"]);
+  const scanned = new Set(run(["grep", "-Il", "-z", "-e", "", "--"]));
+  const hidden = tracked.filter((rel) => !scanned.has(rel));
+  if (hidden.length === 0) return [];
+
+  // One bulk `check-attr`, so a repository of any size costs one process. The
+  // -z form emits flat path/attribute/value triples.
+  const attrs = spawnSync(
+    "git",
+    ["check-attr", "-z", "--stdin", "text"],
+    {
+      cwd: repoRoot,
+      input: `${hidden.join("\0")}\0`,
+      encoding: "utf8",
+      maxBuffer: 1 << 28,
+    },
+  );
+  if (attrs.error) throw attrs.error;
+  if (attrs.status !== 0) {
+    throw new Error(
+      `git check-attr failed (status ${attrs.status}): ${attrs.stderr.trim()}`,
+    );
+  }
+
+  const fields = attrs.stdout.split("\0");
+  const declaredText = [];
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    if (fields[i + 2] === "set") declaredText.push(fields[i]);
+  }
+  return declaredText;
+}
+
+/**
  * Every Markdown file under `docs/` is reachable from a front door by following
  * relative Markdown links.
  *
@@ -1915,6 +2172,7 @@ export function auditDocs(
     baselineFiles = null,
     baselineLabel = "the base revision",
     stableIndexHeadings = null,
+    hiddenDeclaredTextFiles = [],
   } = {},
 ) {
   return [
@@ -1926,6 +2184,8 @@ export function auditDocs(
     ...auditLineNumberCitations(files),
     ...auditDocReachability(files),
     ...auditEncoding(files),
+    ...auditControlCharacters(files),
+    ...auditTextScanCoverage(hiddenDeclaredTextFiles),
     ...auditNumberSequences(files),
     ...(baselineFiles
       ? auditPermanentInvariantIds(files, baselineFiles, baselineLabel)
@@ -2266,6 +2526,7 @@ if (invokedPath === import.meta.url) {
       baselineFiles,
       baselineLabel: baselineRef.slice(0, 12),
       stableIndexHeadings: STABLE_INDEX_HEADINGS,
+      hiddenDeclaredTextFiles: findFilesHiddenFromTextScan(repoRoot),
     });
 
     if (problems.length > 0) {
@@ -2284,7 +2545,9 @@ if (invokedPath === import.meta.url) {
           `every id present at base ${baselineRef.slice(0, 12)} is still defined, ` +
           `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
-          "number is cited into the invariants, and no file is BOM'd or double-encoded. " +
+          "number is cited into the invariants, no file is BOM'd or double-encoded, and " +
+          "no file carries a raw control character (nor is any declared-text file hidden " +
+          "from this scan by an early NUL). " +
           `Scanned ${files.size} tracked file(s).`,
       );
     }

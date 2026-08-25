@@ -14,10 +14,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BYTE_ORDER_MARK,
+  auditControlCharacters,
   auditDefinitionHeadingShapes,
   auditDocReachability,
   auditDocs,
   auditEncoding,
+  auditTextScanCoverage,
   auditIndexRows,
   auditInvariantFilesLinkedFromIndex,
   auditInvariantIds,
@@ -2470,5 +2472,221 @@ describe("auditEncoding", () => {
     ].join("\n");
 
     expect(auditEncoding(repo({ "docs/example.md": prose }))).toEqual([]);
+  });
+});
+
+// Every control byte below is CONSTRUCTED from its code point, never typed as a
+// literal. That is the rule this check enforces, and obeying it here is what
+// keeps this test file itself scannable: a literal 0x08 in a fixture would make
+// the suite fail its own subject when the real repository is scanned.
+const ctrl = (codePoint) => String.fromCharCode(codePoint);
+
+describe("auditControlCharacters", () => {
+  it("passes the clean fixture repository", () => {
+    expect(auditControlCharacters(repo())).toEqual([]);
+  });
+
+  it("names the file, the line, the column and the escape the author meant", () => {
+    // The real defect: `/\bINTERVAL\b/i` written with the byte 0x08 names.
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/example.test.ts": [
+          "const banned = [",
+          `  /${ctrl(0x08)}INTERVAL${ctrl(0x08)}/i,`,
+          "];",
+        ].join("\n"),
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/example.test.ts:2");
+    expect(problems[0]).toContain("0x08");
+    // The escape, not just the code point: "a control character is here" sends
+    // the reader hunting a corrupt file, and this is a dead word boundary.
+    expect(problems[0]).toContain("a \\b escape names");
+    // Both hits on the line are counted and located.
+    expect(problems[0]).toContain("2 raw control character(s)");
+    // `  /` is columns 1-3, so the opening byte is 4 and `INTERVAL` runs 5-12.
+    expect(problems[0]).toContain("column 4");
+    expect(problems[0]).toContain("column 13");
+  });
+
+  it("spells out each byte an editing tool commonly eats", () => {
+    for (const [codePoint, escape] of [
+      [0x00, "\\0"],
+      [0x07, "\\a"],
+      [0x08, "\\b"],
+      [0x0b, "\\v"],
+      [0x0c, "\\f"],
+      [0x1b, "\\e"],
+    ]) {
+      const problems = auditControlCharacters(
+        repo({ "src/lib/example.ts": `const x = "${ctrl(codePoint)}";\n` }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`a ${escape} escape names`);
+    }
+  });
+
+  it("still reports a byte that spells no common escape", () => {
+    const problems = auditControlCharacters(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x01)}";\n` }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x01");
+    // Two hex digits always, so 0x0B can never be read as 0xB.
+    expect(problems[0]).not.toContain("escape names");
+  });
+
+  it("reports DEL, which is outside the C0 range", () => {
+    const problems = auditControlCharacters(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x7f)}";\n` }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x7f");
+  });
+
+  it("leaves TAB, LF and CR alone, because they are the text format", () => {
+    expect(
+      auditControlCharacters(
+        repo({
+          "src/lib/example.ts": `const x = 1;${ctrl(0x09)}// tab\r\n\tindented\n`,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("has no allowlist: a comment is scanned like any other line", () => {
+    // #3072 found `D:\var\backups` rendered unreadable inside a comment. A
+    // comment is where you look to understand the code under it.
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/example.test.ts": `// a path like D:${ctrl(0x0b)}ar${ctrl(0x08)}ackups\n`,
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x0b");
+    expect(problems[0]).toContain("0x08");
+  });
+
+  it("reports Markdown too, including inside a fenced example", () => {
+    // Unlike the invariant-id scan, a fence is not a hiding place here: a
+    // control byte in a code sample is the same editing accident.
+    const problems = auditControlCharacters(
+      repo({
+        "docs/example.md": [
+          "# Example",
+          "",
+          "```ts",
+          `const re = /${ctrl(0x08)}word${ctrl(0x08)}/;`,
+          "```",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("docs/example.md:4");
+  });
+
+  it("reports every offending file, sorted, so a failure is a work list", () => {
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/zebra.ts": `const z = "${ctrl(0x08)}";\n`,
+        "src/lib/alpha.ts": `const a = "${ctrl(0x0c)}";\n`,
+      }),
+    );
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/lib/alpha.ts");
+    expect(problems[1]).toContain("src/lib/zebra.ts");
+  });
+});
+
+describe("auditTextScanCoverage", () => {
+  it("passes when nothing declared text is missing from the scan", () => {
+    expect(auditTextScanCoverage([])).toEqual([]);
+  });
+
+  it("fails a declared-text file Git calls binary, and names the remedy", () => {
+    // Measured against git 2.53: Git calls a file binary on a NUL in the first
+    // 8000 bytes and only then, so this is the one way the scan above can be
+    // blinded. Without this check the file silently leaves the file set and the
+    // whole run goes green having scanned one file fewer.
+    const problems = auditTextScanCoverage(["src/lib/hidden.ts"]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/hidden.ts");
+    expect(problems[0]).toContain("declared `text` in .gitattributes");
+    expect(problems[0]).toContain("0x00");
+    expect(problems[0]).toContain("8000");
+    expect(problems[0]).toContain("diff` attribute");
+  });
+
+  it("sorts, so the failure reads the same way twice", () => {
+    const problems = auditTextScanCoverage(["src/b.ts", "src/a.ts"]);
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/a.ts");
+    expect(problems[1]).toContain("src/b.ts");
+  });
+});
+
+describe("the control-character checks are wired into the whole check", () => {
+  // The regression this exists for: #3072's first attempt defined and EXPORTED
+  // `auditControlCharacters` but never added it to `auditDocs`, so
+  // `docs:indexcheck` passed a tree that still carried the bytes. An audit
+  // function nobody calls is indistinguishable from no check at all, and
+  // nothing else in this suite would have noticed.
+  it("auditDocs reports a raw control character", () => {
+    const problems = auditDocs(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x08)}";\n` }),
+    );
+
+    expect(
+      problems.filter((problem) => problem.includes("raw control character")),
+    ).toHaveLength(1);
+  });
+
+  it("auditDocs reports a file hidden from the text scan", () => {
+    const problems = auditDocs(repo(), {
+      hiddenDeclaredTextFiles: ["src/lib/hidden.ts"],
+    });
+
+    expect(
+      problems.filter((problem) => problem.includes("src/lib/hidden.ts")),
+    ).toHaveLength(1);
+  });
+
+  it("auditDocs stays clean when neither applies", () => {
+    expect(
+      auditDocs(repo()).filter(
+        (problem) =>
+          problem.includes("raw control character") ||
+          problem.includes("declared `text`"),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("the checker's own source", () => {
+  it("carries no control byte, so it cannot trip its own rule", () => {
+    // #3072's first attempt wrote a literal NUL into the very docblock
+    // explaining that a literal NUL is an accident, which would have failed the
+    // check it was adding. Every byte class in this file is built with
+    // `String.fromCharCode`, and this keeps it that way.
+    const checkerSource = readFileSync(
+      path.join(REPO_ROOT, "scripts/ci/check-doc-index-integrity.mjs"),
+      "utf8",
+    );
+
+    expect(
+      auditControlCharacters(
+        new Map([["scripts/ci/check-doc-index-integrity.mjs", checkerSource]]),
+      ),
+    ).toEqual([]);
   });
 });
