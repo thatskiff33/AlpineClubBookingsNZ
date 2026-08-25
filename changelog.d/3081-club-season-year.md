@@ -1,5 +1,3 @@
-### Fixed
-
 - **The club's membership season is now worked out from the club's own calendar,
   not the server's (#2870).** Everything keyed on a membership year — which
   season a subscription is charged for, which age band a date of birth falls in

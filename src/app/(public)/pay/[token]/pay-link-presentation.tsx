@@ -121,31 +121,40 @@ export function formatStayDay(value: string): string {
  *
  * This used to render the bare civil DAY. Two lines above it the stay reads
  * "Dates: 16 Apr 2026 to 18 Apr 2026", so a second bare day underneath read as
- * a restatement of the stay — and it could name a different one. `expiresAt` is
- * minted as `endOfDateOnlyForTimeZone(checkIn)` (`src/lib/payment-link.ts`),
- * whose zone DEFAULTS TO `APP_TIME_ZONE`, so for a club whose persisted zone is
- * not the container's the instant lands on the following civil day: a club in
+ * a restatement of the stay — and it could name a different one. `expiresAt` was
+ * then minted through `APP_TIME_ZONE`, so for a club whose persisted zone is not
+ * the container's the instant landed on the following civil day: a club in
  * `Pacific/Auckland` on a `TZ=UTC` host got "expires on 17 Apr 2026" beside a
  * stay starting on the 16th, and the link in fact died at 11:59 AM on the 17th.
  * A bare day therefore misstated the deadline by most of a day, in the direction
  * that costs the payer their link.
  *
- * `instantDateTime` states the moment as a moment. It also makes this page AGREE
- * WITH THE EMAIL THAT DELIVERED THE LINK: `email-templates/booking-requests.ts`
+ * `instantDateTime` states the moment as a moment. It also makes this page agree
+ * with the email that delivered the link: `email-templates/booking-requests.ts`
  * renders the same value into the same sentence with `emailClubDateTime`, which
  * is `instantDateTime` through the same persisted zone (CT-5, #2869). This page
  * was the one surface spelling it short.
  *
- * WHAT IS STILL WRONG, AND WHOSE IT IS. The mint reads the environment's zone,
- * so on a divergent deployment the deadline is not the end of the check-in day
- * in the club's own reckoning. That is `src/lib`, it is nine call sites across
- * four files — three of them inside `prisma.$transaction` callbacks holding the
- * per-lodge capacity lock, and two of them capacity-releasing PENDING ->
- * CANCELLED terminal-state decisions in `cron-confirm-pending.ts` whose own
- * comment binds them to this boundary "so the two can never disagree" — and it
- * needs an answer for links already minted. Group F's, recorded on #2870. It is
- * not a straddle: page, email and cron gate all read the one value under the one
- * authority, so nothing here contradicts anything there.
+ * THAT EMAIL HAS TWO RENDERERS, NOT ONE, and the second one had to be moved
+ * before this paragraph was true. A club that has saved a body override gets its
+ * whole message rebuilt from `templateData` by `prepareEmailMessage`, and the
+ * shipped default body for both payment-link templates contains `{{expiresAt}}`
+ * — so the copy in `src/lib/email/booking-requests.ts` is a real member-facing
+ * rendering and not an internal detail. It went through `formatNZDateTime`, the
+ * CONTAINER's zone, so on a divergent deployment an edited-wording club read a
+ * different time from this page and from an unedited club. Both copies now use
+ * `emailClubDateTime` (#2870), which is what lets this say "agree" without a
+ * qualifier. The ~146 sibling `templateData` date sites across the email surface
+ * still carry the same two-authority split and are their own census.
+ *
+ * THE MINT NOW AGREES, so this page states the end of the check-in day in the
+ * club's own reckoning rather than a moment that merely renders faithfully. All
+ * nine `src/lib` sites go through `paymentLinkExpiryForCheckIn`, which takes the
+ * persisted zone (#2870). A link minted BEFORE that change keeps the instant it
+ * was stored with — `INV-CONFIG-002` rewrites nothing — so on a divergent
+ * deployment such a row can still render as the following civil day until it
+ * lapses or is re-issued. This line reports the row faithfully either way, which
+ * is the whole point of stating the moment as a moment.
  *
  * FAIL-SOFT FOR THE SAME REASON `formatStayDay` IS, which is the half that was
  * missing: this line sits nine below one whose docblock justifies its own

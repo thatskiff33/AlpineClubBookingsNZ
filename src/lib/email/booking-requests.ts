@@ -115,6 +115,16 @@ export async function sendBookingRequestApprovedEmail(params: {
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
       bookingReference: params.bookingReference,
+      // PERSISTED zone, matching the HTML body two blocks up (#2870, CT-4).
+      // A saved body override re-renders the WHOLE email from this object
+      // (`email-message-renderer.ts` -> `prepareEmailMessage`), and the shipped
+      // default body for this template already contains `{{expiresAt}}` — so
+      // `formatNZDateTime` here spelled the payment deadline in the CONTAINER's
+      // zone for any club that has edited the wording, while the default body
+      // spelled the same instant in the club's. On a divergent deployment those
+      // two readings named different times, and in the club-behind direction a
+      // different DAY. `emailClubDateTime` is the same accessor the default body
+      // uses, so the override and the default can no longer disagree.
       expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
@@ -171,6 +181,8 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
       bookingReference: params.bookingReference,
+      // PERSISTED zone — see the identical note on `booking-request-approved`
+      // above. Same value, same override branch, same defect.
       expiresAt: emailClubDateTime(params.expiresAt),
     },
   });

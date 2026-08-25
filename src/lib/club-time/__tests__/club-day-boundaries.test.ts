@@ -4,9 +4,11 @@
  * The defect this suite exists for: `startOfDateOnlyForTimeZone` resolved a wall
  * time by applying the zone offset twice, and for a club whose clocks spring
  * forward AT MIDNIGHT that lands before the transition — on the PREVIOUS
- * calendar day. Fifty-eight call sites in sixteen files depend on that pair, and
- * no test could see it because the configured zone is `Pacific/Auckland`, where
- * nothing transitions at midnight.
+ * calendar day. Production call sites depend on that pair — 31 in 16 files when
+ * this suite was written, and `date-only.ts` holds the count, the predicate and
+ * the command rather than this docblock restating a number that can go stale —
+ * and no test could see it because the configured zone is `Pacific/Auckland`,
+ * where nothing transitions at midnight.
  *
  * THE MUTATION THAT MATTERS: reimplement `resolveClubWallTime` as the old
  * two-pass offset correction. `startOfClubDay` for `America/Havana` on
@@ -206,7 +208,7 @@ describe("a club day starts at the first instant that exists on it", () => {
       The exclusive END of the last day is a different thing and genuinely has no
       answer — it is the year 10000 — so that one throws, and
       `endOfDateOnlyForTimeZone` turns it back into the Invalid Date its
-      fifty-eight legacy call sites have always had for an unanswerable input.
+      legacy call sites have always had for an unanswerable input.
     */
     expect(startOfClubDay(cd("9999-12-31"), AUCKLAND).toISOString()).toBe(
       "9999-12-30T11:00:00.000Z",
@@ -274,7 +276,7 @@ describe("a club day starts at the first instant that exists on it", () => {
 
 describe("Pacific/Auckland is unaffected, which is what makes the fix safe to land", () => {
   /*
-    The delegation in `date-only.ts` changes fifty-eight call sites, so the claim
+    The delegation in `date-only.ts` changes every legacy call site, so the claim
     that this deployment sees no change at all has to be measured rather than
     asserted. Every day of 2015-2036 was swept against the old two-pass
     algorithm for Auckland, Chatham, UTC and Denver with zero differences; this
@@ -608,7 +610,7 @@ describe("the inclusive end of a club day", () => {
     /*
       9999-12-31 has no successor a `CalendarDate` can name, so the half-open end
       throws a `RangeError` and so does this. The legacy adapter in `date-only.ts`
-      catches that and answers `new Date(NaN)` for its fifty-eight existing call
+      catches that and answers `new Date(NaN)` for its existing call
       sites; the kernel refuses out loud, because a new caller handed an Invalid
       Date discovers it three modules later.
     */
