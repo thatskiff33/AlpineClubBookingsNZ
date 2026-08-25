@@ -206,8 +206,10 @@ export function buildBookingTrendSeries(
  * EVERY KEY IN HERE IS A CALENDAR DAY AND NO ZONE TOUCHES ANY OF THEM (CT-4,
  * #2870). `BookingGuest.stayStart`/`stayEnd` and `Booking.checkIn`/`checkOut`
  * are `@db.Date`, and the route hands `rangeStart`/`rangeEnd` in the same
- * encoding, so all four sides are UTC-midnight encodings of a day and
- * `formatDateOnly` is the whole of the decoding (INV-DATE-010).
+ * encoding, so all four sides are UTC-midnight encodings of a day and not
+ * moments (INV-DATE-010), and `formatDateOnly` is the whole of the decoding —
+ * INV-DATE-019's first exact boundary with INV-DATE-026, which are the citation
+ * for a decode where INV-DATE-010 is not (#3080).
  *
  * BOTH SIDES USED TO BE ZONE-DEPENDENT, in two DIFFERENT zones, and that is the
  * defect rather than a tidy-up. The guest keys went through

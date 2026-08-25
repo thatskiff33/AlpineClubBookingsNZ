@@ -283,7 +283,9 @@ export async function createXeroCreditNote(
   // The credit note's own date decides which GST period and financial year the
   // refund lands in, so it is the club's calendar day (INV-DATE-019, #2834). The
   // stay dates in the line description above are `@db.Date` lodge nights and are
-  // correctly left on truncation (INV-DATE-010). Read once, outside the closure,
+  // correctly left on truncation (INV-DATE-019's first exact boundary, with
+  // INV-DATE-026; INV-DATE-010 is why they are an encoding rather than a moment,
+  // and is not the citation for a decode — #3080). Read once, outside the closure,
   // which runs for the recorded payload and again per contact-repair attempt.
   const creditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
