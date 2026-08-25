@@ -889,7 +889,7 @@ derivation).
   issue that blocks them. What a selector cannot express is counted instead:
   `club-time-escape-hatch-census.test.ts` pins 123 call sites in 56 files that
   still let a zone-defaulting `@/lib/date-only` helper take the environment's
-  answer, and 25 production files still importing `nzst-date`. Both numbers are
+  answer, and 13 production files still importing `nzst-date`. Both numbers are
   ceilings and may only fall.
 
 ### INV-DATE-016

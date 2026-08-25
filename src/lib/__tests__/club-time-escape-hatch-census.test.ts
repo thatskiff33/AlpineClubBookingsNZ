@@ -392,8 +392,16 @@ const CENSUS_CEILING = {
   defaultedZoneCalls: 123,
   /** Production files containing at least one of them. */
   defaultedZoneFiles: 56,
-  /** Production files importing the retired rendering adapter. */
-  nzstDateImporters: 25,
+  /**
+   * Production files importing the retired rendering adapter.
+   *
+   * Was 25 when CT-6 first measured it; #3113/#3118 landed on this branch
+   * mid-lane and took twelve of them -- the whole of `src/lib/email/**` -- so
+   * the ceiling came down in the same sitting. That is the ratchet doing its
+   * job, and it is worth leaving the history here as the worked example of how
+   * to resolve a failure in the pleasant direction.
+   */
+  nzstDateImporters: 13,
   /**
    * Production files importing the date-only adapter, zone-free uses included.
    *
