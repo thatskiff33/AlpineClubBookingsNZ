@@ -111,8 +111,9 @@ Points worth knowing:
   person this is.
 - The two are worked out **as at different dates**, so they can look like they
   disagree and still both be right. The age is as at today. An age tier is fixed
-  at the **season start** (1 April) and stays put until the next season rollover,
-  so a member whose birthday has passed since 1 April can show an age above their
+  at the **season start** — the month after the club's financial year-end, so
+  1 April by default — and stays put until the next season rollover, so a member
+  whose birthday has passed since then can show an age above their
   tier's range — `5 years` beside **Infant (0-4)**, or `18 years` beside
   **YOUTH**. Where a tier label with a numeric range is shown next to an age, the
   screen says "as at season start" so the pair reads as two facts rather than as

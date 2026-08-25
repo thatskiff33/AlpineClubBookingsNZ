@@ -96,15 +96,15 @@ import {
 //
 // 2. THE SEASON START, which this was NOT a copy of. The hard-coded April was a
 //    copy of the shipped DEFAULT rather than of the rule — the shared rule derives
-//    the start month from the CONFIGURABLE financial year-end. Going through
-//    `clubSeasonYear` means a club that moves its year-end is followed here as
-//    soon as the value reaches the client. It still does not reach it today
-//    (`setFinancialYearEndMonth`'s one non-test caller imports Prisma and is kept
-//    off the client graph by `INV-OPS-013`), so the answer is unchanged for now —
-//    but the RULE is shared, so the divergence cannot reappear.
+//    the start month from the CONFIGURABLE financial year-end.
 //
 // 3. THE SELECT'S LABEL, the deferral this comment used to record. Both halves
 //    were literal text; `season-label.ts` derives both and says why.
+//
+// NEITHER 2 NOR 3 MOVES A PIXEL YET, for ONE reason rather than two: the year-end
+// month reaches no client, so `currentYear` below and the label both read the
+// March default. `INV-OPS-013` prescribes the remedy rather than forbidding it,
+// and plumbing the LABEL alone would name one season while selecting another.
 
 interface Subscription {
   id: string;
