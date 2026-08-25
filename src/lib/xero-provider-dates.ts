@@ -71,8 +71,10 @@
  *
  * A date-only field arriving as a `Date` (shapes 1 and 2) is decoded by reading
  * its **UTC** day, because the Microsoft-JSON encoding of a date-only value IS
- * UTC midnight — the same rule `INV-DATE-010` states for a `@db.Date` column, and
- * the same one `calendarDateOfDateOnlyInstant` implements. A date-only field
+ * UTC midnight — the same encoding `INV-DATE-010` states for a `@db.Date`
+ * column, decoded under `INV-DATE-019`'s first exact boundary with
+ * `INV-DATE-026` (cite those for the decode, not `INV-DATE-010`; #3080), by the
+ * same `calendarDateOfDateOnlyInstant` a stored column goes through. A date-only field
  * arriving as TEXT (shapes 3 and 4) is decoded by taking its literal date half,
  * with no zone applied at all, because a calendar day is never
  * timezone-converted. The two rules agree on every value Xero actually sends and
@@ -229,10 +231,16 @@ export function xeroCalendarDateText(value: unknown): string | null {
 
 /**
  * A Xero date-only field as the UTC-midnight `Date` that a `@db.Date` column —
- * and every date-only comparison in this codebase — round-trips through
- * (`INV-DATE-010`).
+ * and every date-only comparison in this codebase — round-trips through.
  *
- * An ENCODING, not a moment: nothing may read the result in any zone but UTC.
+ * The result is an ENCODING of a calendar day and not a moment, which is what
+ * `INV-DATE-010` rules and the only thing it is cited for here. Reading the day
+ * back out of it in UTC is `INV-DATE-019`'s first exact boundary plus
+ * `INV-DATE-026` — cite those for a decode, not `INV-DATE-010`, which forbids
+ * deriving a rule from one of these values read as a MOMENT and expressly says
+ * not to be cited as a prohibition on decoding one in UTC. This docblock used to
+ * carry that prohibition as its own line ("nothing may read the result in any
+ * zone but UTC"), which is the inverse paraphrase #3080 swept up.
  */
 export function xeroCalendarDateAsDateOnly(value: unknown): Instant | null {
   const date = xeroCalendarDate(value);
@@ -280,8 +288,10 @@ export function xeroInstant(value: unknown): Instant | null {
 /**
  * A document date from a `@db.Date` column — a lodge night, a season edge.
  *
- * The column holds UTC midnight as an ENCODING, so the day is read back in UTC
- * and no zone is involved (`INV-DATE-010`).
+ * The column holds UTC midnight as an ENCODING and not a moment
+ * (`INV-DATE-010`), so the day is read back in UTC and no zone is involved —
+ * `INV-DATE-019`'s first exact boundary with `INV-DATE-026`, which are the
+ * citation for a decode rather than `INV-DATE-010` (#3080).
  */
 export function xeroDocumentDateFromDateOnlyColumn(value: Date): string {
   return calendarDateOfDateOnlyInstant(value);
@@ -324,8 +334,9 @@ export function xeroDocumentDateForClubToday(zone: ClubTimeZone): string {
  *
  * The ISSUE date is a `@db.Date` column — for the group-settlement caller, the
  * organiser booking's check-in: a lodge night, an abstract calendar day already
- * pinned to UTC midnight, so truncating it reads back the day it encodes
- * (INV-DATE-010).
+ * pinned to UTC midnight (INV-DATE-010), so truncating it reads back the day it
+ * encodes — INV-DATE-019's first exact boundary with INV-DATE-026, which is the
+ * authority for that decode rather than INV-DATE-010 (#3080).
  *
  * The DUE date is derived from a `DateTime` — for that caller,
  * `GroupBookingSettlement.createdAt` — which is a real instant. Truncating an
