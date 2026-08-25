@@ -67,11 +67,17 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+import { AgeTier } from "@prisma/client";
 import { APP_TIME_ZONE } from "@/config/operational";
 import {
   checkCapacityForGuestRanges,
   type NightAvailability,
 } from "@/lib/capacity";
+import {
+  getCapacityGuestRanges,
+  resolveBookingDateEnvelope,
+} from "@/lib/booking-create-guests";
+import type { BookingGuestInput } from "@/lib/booking-create-types";
 import {
   getGuestBedNightKeys,
   getNextGuestBedNightAfter,
@@ -109,6 +115,22 @@ function proposal(nights: GuestStayRange["nights"]): GuestStayRange[] {
   return [{ nights }, { nights }];
 }
 
+/** The `yyyy-mm-dd` day a returned bound or night carries, read in UTC. */
+function storedDay(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/** A create-path guest: only the stay fields matter to the envelope. */
+function guest(stay: Partial<BookingGuestInput>): BookingGuestInput {
+  return {
+    firstName: "A",
+    lastName: "Guest",
+    ageTier: AgeTier.ADULT,
+    isMember: true,
+    ...stay,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // An EMPTY lodge, so every bed the check reports as occupied is the proposal's
@@ -142,8 +164,12 @@ describe("#3107 the capacity admission check counts the proposal's beds", () => 
     expect(
       result.nightDetails.map((night) => night.date.toISOString().slice(0, 10)),
     ).toEqual(PROPOSAL_NIGHTS);
-    // THE MEASUREMENT. Before the fix this was [2, 0, 0] - one night matched and
-    // two counted no beds at all, on an empty lodge, inside the capacity lock.
+    // THE MEASUREMENT. Before the fix this was [0, 0, 2], over the nights
+    // 07-03/04/05: the window was a day early AND every key derived inside it a
+    // further day early, so exactly one night matched the proposal's string set
+    // and two counted no beds at all - on an empty lodge, inside the capacity
+    // lock. (Not [2, 0, 0]; that is the offset-bearing single-night vector
+    // asserted at the foot of this file, and it was copied here by mistake.)
     expect(beds(result.nightDetails)).toEqual([2, 2, 2]);
     expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([
       8, 8, 8,
@@ -339,5 +365,157 @@ describe("#3107 a real timestamp is refused rather than silently decoded", () =>
         BOOKING,
       ),
     ).toThrow(/takes a stored calendar day, not a moment/);
+  });
+});
+
+describe("#3107 the create envelope is stored, and admitted, on the true calendar", () => {
+  // Two guests over the three proposed nights, as `POST /api/bookings` builds
+  // them once the consent plan has run.
+  const withNights = [
+    guest({ nights: PROPOSAL_NIGHTS }),
+    guest({ nights: PROPOSAL_NIGHTS }),
+  ];
+
+  it("resolves to the days the member asked for", () => {
+    const envelope = resolveBookingDateEnvelope(
+      withNights,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    // Before the fix, on this zone, 2026-07-02 -> 2026-07-06: the seeds decoded
+    // and every contribution and both returned bounds were projected.
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+  });
+
+  it("resolves to them when NO guest carries an explicit night set either", () => {
+    // The projection was in the RETURN as well as in the contributions, so this
+    // case was wrong too: a member asking 07-04 -> 07-07 had 07-03 -> 07-06
+    // written to `booking.checkIn` / `checkOut` while `pricing.ts`'s zone-free
+    // `normalizeBookingDate` wrote `BookingGuestNight.stayDate` on the true
+    // calendar. The created row straddled itself.
+    const envelope = resolveBookingDateEnvelope(
+      [guest({}), guest({})],
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-04");
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-07");
+  });
+
+  it("still auto-expands to cover a guest night outside the stated range (#713)", () => {
+    const envelope = resolveBookingDateEnvelope(
+      [guest({ nights: ["2026-07-02", ...PROPOSAL_NIGHTS, "2026-07-08"] })],
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    expect(storedDay(envelope.checkIn)).toBe("2026-07-02");
+    // The night set's last night is 07-08, so the exclusive check-out is 07-09.
+    expect(storedDay(envelope.checkOut)).toBe("2026-07-09");
+  });
+
+  it("does not straddle the night rows written inside the same envelope", () => {
+    const envelope = resolveBookingDateEnvelope(
+      withNights,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    const nightKeys = getGuestBedNightKeys(withNights[0], envelope);
+    expect(nightKeys).toEqual(PROPOSAL_NIGHTS);
+    // Every night the guest holds lies inside the envelope the booking stores.
+    // Before the fix the last one (07-06) fell on or after the stored check-out
+    // (07-06), which is what "the row straddles itself" means concretely.
+    for (const key of nightKeys) {
+      expect(
+        key >= storedDay(envelope.checkIn) && key < storedDay(envelope.checkOut),
+        key,
+      ).toBe(true);
+    }
+  });
+
+  it("counts every proposed bed when the admission check runs on that envelope", async () => {
+    const envelope = resolveBookingDateEnvelope(
+      withNights,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+    // Exactly the composition `createBooking` performs inside
+    // `acquireLodgeCapacityLock`: the resolved envelope is both the window and
+    // the value the booking stores.
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      envelope.checkIn,
+      envelope.checkOut,
+      getCapacityGuestRanges(withNights, envelope.checkIn, envelope.checkOut),
+    );
+
+    expect(result.nightDetails.map((night) => storedDay(night.date))).toEqual(
+      PROPOSAL_NIGHTS,
+    );
+    // THE MEASUREMENT. With the envelope still projected this was [0, 0, 2, 2]
+    // over 07-02..07-05 - a four-night window two days early, counting no beds
+    // on two of its nights and never inspecting 07-06 at all.
+    expect(beds(result.nightDetails)).toEqual([2, 2, 2]);
+  });
+
+  it("REFUSES a proposal that does not fit the lodge, on that envelope", async () => {
+    mocks.lodgeSettingsFindUnique.mockResolvedValue({ capacity: 1 });
+    const envelope = resolveBookingDateEnvelope(
+      withNights,
+      PROPOSAL_CHECK_IN,
+      PROPOSAL_CHECK_OUT,
+    );
+
+    const result = await checkCapacityForGuestRanges(
+      LODGE,
+      envelope.checkIn,
+      envelope.checkOut,
+      getCapacityGuestRanges(withNights, envelope.checkIn, envelope.checkOut),
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([
+      -1, -1, -1,
+    ]);
+  });
+
+  it("HOST AXIS: neither offset extreme moves the envelope", () => {
+    for (const zone of HOST_EXTREMES) {
+      withTimeZone(zone, () => {
+        const envelope = resolveBookingDateEnvelope(
+          withNights,
+          PROPOSAL_CHECK_IN,
+          PROPOSAL_CHECK_OUT,
+        );
+        expect(storedDay(envelope.checkIn), zone).toBe("2026-07-04");
+        expect(storedDay(envelope.checkOut), zone).toBe("2026-07-07");
+      });
+    }
+  });
+
+  it("reads a night entry in every shape the create path can carry", () => {
+    const shapes: Array<[string, BookingGuestInput["nights"]]> = [
+      ["date-only strings", PROPOSAL_NIGHTS],
+      ["Date values", PROPOSAL_NIGHTS.map(day)],
+      [
+        "serialised @db.Date rows",
+        PROPOSAL_NIGHTS.map((value) => ({
+          stayDate: `${value}T00:00:00.000Z`,
+        })),
+      ],
+      [
+        "@db.Date rows",
+        PROPOSAL_NIGHTS.map((value) => ({ stayDate: day(value) })),
+      ],
+    ];
+    for (const [label, nights] of shapes) {
+      const envelope = resolveBookingDateEnvelope(
+        [guest({ nights })],
+        PROPOSAL_CHECK_IN,
+        PROPOSAL_CHECK_OUT,
+      );
+      expect(storedDay(envelope.checkIn), label).toBe("2026-07-04");
+      expect(storedDay(envelope.checkOut), label).toBe("2026-07-07");
+    }
   });
 });
