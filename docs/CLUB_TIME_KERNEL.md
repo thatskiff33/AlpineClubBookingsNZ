@@ -177,7 +177,7 @@ one of these, there is a function.
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
 | a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; four shapes were added in #2870 for exactly this |
-| the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, and #3100 shipped both: see "The stay window" below |
+| the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, of which #3100 shipped one and armed the other: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 
 Two rules the table cannot express.
@@ -220,6 +220,13 @@ environment zone — where for a club behind Greenwich the projection ATE the
 shift, so "the next night" was the same night and "the previous night" skipped
 one, on every call. Swapping only the reader is not the fix: it is correct until
 the next person changes the encoder.
+
+Of those two defects #3100 shipped ONE. The projection was live; the millisecond
+step was **latent**, because against a UTC-midnight anchor `days * 24h` is exact —
+measured over 4,000 consecutive days in both directions, zero mismatches, since a
+UTC day is always 86,400,000 ms. It arms itself the moment the anchor becomes
+club-local, which is the measurement above. Both are named here because a reader
+who fixes only the live half re-creates the other.
 
 ## The legacy adapters
 
