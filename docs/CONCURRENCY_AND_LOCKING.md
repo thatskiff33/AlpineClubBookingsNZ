@@ -857,6 +857,62 @@ one request can disagree if an admin saves the panel between them, which on
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
 
+#### Which client reads the cancellation and non-member-hold policy (#3110)
+
+`getNonMemberHoldPolicy`, `getNonMemberHoldDays` and `loadCancellationPolicy`
+(`cancellation.ts`) each take an optional trailing `db` that defaults to the
+module-level Prisma client, under the same one-line rule the two sections above
+state: **a caller already inside `prisma.$transaction` MUST pass its own `tx`.**
+The three share a private helper, `getBookingPeriodForDate`, which holds two of
+the reads, so the parameter is threaded through it as well.
+
+**Nine call sites are in that position**, every one of them holding
+`pg_advisory_xact_lock(1)` **and** the per-lodge capacity lock. Six pass `tx`
+directly: the guest-add route, `modifyBookingDates` (two reads),
+`adminShiftBookingDates`, `booking-cancel.ts`'s paid-cancel path, and the
+waitlist confirm. Three are reached indirectly, through helpers that hold no
+transaction opener of their own:
+
+- `applyLifecycleTransitions` already takes `tx` as its first parameter and
+  passes it on;
+- `calculateModificationSettlementOptions` and `calculateModificationChangeFee`
+  take a **required** `db`. Required rather than defaulted, and deliberately:
+  neither `booking-modify-settlement.ts` nor `booking-modify-plan.ts` imports a
+  module-level Prisma client at all, so a `db = prisma` default would place a
+  silent fall-back to a second pooled connection inside a transaction-scoped
+  helper — the exact failure the parameter removes, in the hardest place to see
+  it. It also turns the caller census into a typecheck rather than a grep.
+
+Hoisting these reads above their transactions was considered and rejected at
+every site. All nine feed the readers a `checkIn` and `lodgeId` taken from a
+booking row re-read by `tx.booking.findUnique` **after** both locks, and two of
+them read against `newCheckIn` — a value the transaction is itself computing. A
+hoisted read would resolve the policy against a check-in the transaction is in
+the middle of changing, which reintroduces the snapshot divergence passing `tx`
+exists to remove.
+
+**Eleven other call sites are deliberately outside a transaction and keep the
+default:** the quote route, booking create, the exception-approval path, the
+booking-request approval, the group-join and cross-lodge waitlist offers, the
+pending-confirm cron, the advisory `modify-quote` route (which now passes the
+module client explicitly, because its helper requires the choice), the
+cancel-preview route, the booking detail page and `group-cancel.ts`. Those are
+pre-write or read-only checks with no lock held, so the module client is correct
+and cheapest there.
+
+This is a **pool** argument, not a lock-order one: no cancellation-policy or
+booking-period writer takes a per-lodge capacity lock, and no booking path takes
+a policy-set key, so the two keyspaces are disjoint and cannot deadlock in
+either order.
+
+`cancellation-policy-client-contract.test.ts` pins both halves off the real
+source, with **no allowlist of sites**, so a tenth in-transaction call site is
+caught the day it is written rather than by the next audit. It reads the
+transaction spans lexically — including `withOptionalTransaction`, which a scan
+built only from `prisma.$transaction(` misses — and separately requires any
+reader call inside a function that *receives* a client to pass that client on,
+which is the only way to reach the three indirect sites.
+
 ### Composition: application-approval mapping (E10, #1936)
 
 The membership-application approval transaction is the one writer that composes
