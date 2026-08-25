@@ -3,7 +3,9 @@ import {
   eachDateOnlyInRange,
   formatDateOnly,
   normalizeDateOnlyForTimeZone,
+  parseDateOnly,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   isGuestActiveOnNight,
   type GuestStayRange,
@@ -179,8 +181,8 @@ function requestedNightsByMember(
   checkIn: Date,
   checkOut: Date,
 ) {
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const end = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, end);
   const byMember = new Map<string, Set<string>>();
 
@@ -216,8 +218,8 @@ export async function findBookingMemberNightConflicts(
     excludeBookingId?: string;
   },
 ): Promise<BookingMemberNightConflict[]> {
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const end = storedDateOnly(checkOut);
   const requested = requestedNightsByMember(guests, start, end);
   const memberIds = [...requested.keys()];
   if (memberIds.length === 0) return [];
@@ -276,12 +278,14 @@ export async function findBookingMemberNightConflicts(
       checkIn: guest.booking.checkIn,
       checkOut: guest.booking.checkOut,
     };
+    // #3107: `parseDateOnly`, not `normalizeDateOnlyForTimeZone`. `night` is
+    // already a `yyyy-mm-dd` key, and `bookingRange` above is the existing
+    // booking's raw `@db.Date` columns - so projecting the night through the
+    // environment zone compared a day-early night against a true-calendar
+    // envelope, and behind Greenwich a member was told the wrong nights clashed
+    // (INV-DATE-013).
     const conflictingNights = [...requestedNights].filter((night) =>
-      isGuestActiveOnNight(
-        guest,
-        normalizeDateOnlyForTimeZone(new Date(`${night}T00:00:00.000Z`)),
-        bookingRange,
-      ),
+      isGuestActiveOnNight(guest, parseDateOnly(night), bookingRange),
     );
     if (conflictingNights.length === 0) continue;
 
