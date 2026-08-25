@@ -8,7 +8,7 @@ import { ClubTimeProvider } from "@/components/club-time-provider";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import type { Member } from "../../_types";
 import { MemberTable } from "../member-table";
 

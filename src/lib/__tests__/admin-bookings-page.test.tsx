@@ -61,7 +61,7 @@ import AdminBookingsPage, {
   formatAdminBookingGuestCount,
 } from "@/app/(admin)/admin/bookings/page";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import {
   adminBookingsQuerySchema,
   listAdminBookings,

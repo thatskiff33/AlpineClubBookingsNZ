@@ -35,11 +35,11 @@ import { withTimeZone } from "./timezone";
  * move it.
  *
  * `@/config/operational` has exactly four exports, so the mock is cheap to keep
- * complete. It is file-scoped, which is why this is its own file: group D's
- * `club-zone-choice.ts` notes that mocking that module inside a COMPONENT suite
- * changes what the file's other tests see, because `APP_LOCALE` and
- * `APP_CURRENCY` reach money and date formatting in the same render graph. Here
- * the graph is one helper.
+ * complete. It is file-scoped, which is why this is its own file: the chooser
+ * docblock now beside it in this same module notes that
+ * mocking that module inside a COMPONENT suite changes what the file's other
+ * tests see, because `APP_LOCALE` and `APP_CURRENCY` reach money and date
+ * formatting in the same render graph. Here the graph is one helper.
  */
 vi.mock("@/config/operational", () => ({
   APP_TIME_ZONE: "Pacific/Kiritimati",

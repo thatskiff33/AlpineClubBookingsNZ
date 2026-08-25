@@ -29,7 +29,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { FamilyGroupRequestReviewCard } from "@/components/admin/family-groups/request-review-card";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import type { FamilyGroupRequest } from "@/lib/admin-family-group-ui-helpers";

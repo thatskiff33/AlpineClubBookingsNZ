@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const openRemovalDialogMock = vi.hoisted(() => vi.fn());
 const openMoveDialogMock = vi.hoisted(() => vi.fn());

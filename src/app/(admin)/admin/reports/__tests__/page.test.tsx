@@ -39,7 +39,7 @@ import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const EMPTY_REPORT = {
   summary: {

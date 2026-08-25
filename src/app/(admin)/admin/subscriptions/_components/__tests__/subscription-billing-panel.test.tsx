@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests_
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -52,7 +52,7 @@ const CLUB_TODAY = "2026-07-01";
  * is 25 hours, -11 (Pacific/Midway) to +14 (Pacific/Kiritimati), so at UTC hour
  * 10 there are THREE calendar days at once. This fixture is at UTC hour 0. If
  * you move it, re-derive the count before reusing the reasoning above — see
- * `chooseDivergentClubZone` in `admin/_lib/__tests__/club-zone-choice.ts`.
+ * `chooseDivergentClubZone` in `src/lib/__tests__/helpers/club-time-zone.ts`.
  *
  * Not needing that rival is a fact about the code, not a convenience: the only
  * zone `clubToday` consults is the one it is handed, so "the panel read the

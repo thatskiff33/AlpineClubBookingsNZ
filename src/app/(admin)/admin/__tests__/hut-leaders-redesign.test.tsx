@@ -8,7 +8,7 @@ import { settleLodgeScopedPage } from "@/lib/__tests__/helpers/lodge-scope-settl
 import type { ReactNode } from "react";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 // Capture the props the page passes to the (mocked) calendar so we can assert on
 // the computed overlay, and drive selection / month-change from the test.

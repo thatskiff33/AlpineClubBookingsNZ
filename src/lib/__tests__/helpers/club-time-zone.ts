@@ -234,3 +234,301 @@ export function divergentClubZone<T>(
       "to a time of day at which the candidates disagree.",
   );
 }
+
+/* -------------------------------------------------------------------------
+ * The HAND-WRITTEN-LITERAL chooser — the default (CT-6, #2991).
+ *
+ * `divergentClubZone` above computes its oracle from the kernel. That is the
+ * stronger guarantee about ZONES and the weaker one about ASSERTIONS: an
+ * expected value derived from the same kernel the subject calls lets a wrong
+ * kernel satisfy both sides of the comparison. `chooseDivergentClubZone` below
+ * keeps the suite's own hand-written literals and only chooses WHICH pair is in
+ * force, so a wrong kernel is caught and a mistyped fixture fails loudly.
+ *
+ * Orchestrator decision on #2991 (25 Aug 2026), taken so this lane did not
+ * re-litigate two docblocks that each argue soundly against the other: the
+ * hand-written-literal oracle is the DEFAULT, and the always-both-rivals
+ * guarantee is available as an OPT-IN whose fixture constraint the helper
+ * ASSERTS rather than documents. Both live here, in one file, because these two
+ * implementations spent this epic in separate trees — one under
+ * `src/app/(admin)/admin/_lib/__tests__` and one here — and four lanes each
+ * worked around the absence of whichever one they could not import.
+ * ------------------------------------------------------------------------- */
+
+/** A candidate club zone plus whatever literals the suite pinned for it. */
+export interface ClubZoneCase {
+  /** The IANA identifier handed to `ClubTimeProvider` or `bindClubTime`. */
+  readonly zone: string;
+}
+
+/** Any field of a case other than the zone itself may hold the oracle's answer. */
+type AnswerKey<Case extends ClubZoneCase> = Exclude<keyof Case, "zone">;
+
+export interface ChooseDivergentClubZoneOptions<
+  Case extends ClubZoneCase,
+  Key extends AnswerKey<Case>,
+> {
+  /**
+   * What the assertion is about, for the failure message — e.g.
+   * "the club's today" or "the Xero cache stamp".
+   */
+  readonly subject: string;
+  /** Candidates in preference order; the first divergent one wins. */
+  readonly cases: readonly Case[];
+  /**
+   * Which field of a case holds the value `answerFor` produces. Every
+   * candidate's literal is checked against its own zone's answer before
+   * anything is chosen, so a mistyped fixture fails here rather than weakening
+   * the assertion downstream. Other literals on the case (a derived label, a
+   * second bound) are the suite's own and are not checked.
+   */
+  readonly answerKey: Key;
+  /**
+   * The answer the code under test would produce for a given zone. Keep it to
+   * the ONE operation the suite asserts: two zones can agree on the day and
+   * disagree on the hour, and a chooser told about the wrong one picks a zone
+   * that leaves the real assertion vacuous.
+   */
+  readonly answerFor: (zone: string) => string;
+  /**
+   * Extra zones the chosen answer must also differ from. The environment is
+   * always a rival; add `"UTC"` when reading the host would be a plausible bug
+   * the assertion should exclude — but see the "today" note above.
+   */
+  readonly alsoDifferFrom?: readonly string[];
+  /**
+   * OPT IN to the stronger guarantee: the chosen answer must also differ from
+   * the answer THIS PROCESS's own resolved zone gives, so the assertion
+   * discriminates a host-local `getFullYear`/`getMonth`/`getDate`
+   * implementation as well as an `APP_TIME_ZONE` one.
+   *
+   * Pass the instant the suite's `answerFor` reads. It is not decoration: for a
+   * CALENDAR-DAY answer the helper asserts the instant can actually produce a
+   * third distinct day, because outside the 10:00-10:59 UTC hour only two
+   * calendar days exist on earth and both can already be taken — one by
+   * `APP_TIME_ZONE`, one by the host. Documenting that constraint was the
+   * previous arrangement and it degrades quietly: a suite whose host and
+   * environment happen to coincide (a New Zealand developer with `TZ` unset)
+   * passes locally at any hour and then finds no candidate at all on a CI
+   * runner whose host is `UTC`. Asserted, the fixture is wrong in the same way
+   * on every machine.
+   */
+  readonly alsoDifferFromHostAt?: Date;
+}
+
+/** `YYYY-MM-DD` — the answer shape the three-calendar-days constraint governs. */
+const CALENDAR_DAY_ANSWER = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The UTC hour during which THREE calendar days exist on earth at once.
+ *
+ * Offsets span UTC-11 to UTC+14, twenty-five hours, so for one hour a day the
+ * far side of the date line has turned over while the near side has not. At
+ * `2026-07-01T10:00:00Z` the zones read 30 June, 1 July and 2 July at once; at
+ * every other hour there are two.
+ */
+const THREE_CALENDAR_DAYS_UTC_HOUR = 10;
+
+/** Milliseconds in a fixed 24-hour span — UTC day arithmetic only, never civil. */
+const UTC_DAY_MS = 86_400_000;
+
+/**
+ * The first candidate whose answer differs from the environment's and from
+ * every extra rival.
+ *
+ * @throws when a candidate's pinned literal disagrees with its own zone's
+ * answer, when the environment's zone cannot be projected at all, when
+ * {@link ChooseDivergentClubZoneOptions.alsoDifferFromHostAt} names an instant
+ * that cannot produce a third calendar day, or when no candidate diverges —
+ * each deliberately, rather than skipping.
+ */
+export function chooseDivergentClubZone<
+  Case extends ClubZoneCase,
+  Key extends AnswerKey<Case>,
+>({
+  subject,
+  cases,
+  answerKey,
+  answerFor,
+  alsoDifferFrom = [],
+  alsoDifferFromHostAt,
+}: ChooseDivergentClubZoneOptions<Case, Key>): Case {
+  const hostZoneId = hostResolvedZone();
+  const rivalZones = [
+    ...new Set([
+      APP_TIME_ZONE,
+      ...alsoDifferFrom,
+      ...(alsoDifferFromHostAt === undefined ? [] : [hostZoneId]),
+    ]),
+  ];
+  const rivals = rivalZones.map((zone) => ({
+    zone,
+    /*
+     * `APP_TIME_ZONE` is an unvalidated `process.env.TZ` passthrough, so it can
+     * be a Windows zone name ("New Zealand Standard Time") or a POSIX TZ string
+     * ("NZST-12NZDT,M9.5.0,M4.1.0/3"), and `Intl` answers either with a bare
+     * `RangeError: Invalid time zone specified`. Unwrapped, that surfaces as a
+     * mystery failure from inside a test helper — precisely the "environment
+     * problem misread as a product bug" this file exists to prevent — so it is
+     * re-thrown carrying the same diagnosis as the no-candidate case.
+     */
+    answer: safeAnswer(zone, answerFor, subject),
+  }));
+
+  if (alsoDifferFromHostAt !== undefined) {
+    assertThirdCalendarDayIsReachable({
+      subject,
+      instant: alsoDifferFromHostAt,
+      environmentAnswer: rivals[0].answer,
+      hostZoneId,
+    });
+  }
+
+  for (const candidate of cases) {
+    const answer = answerFor(candidate.zone);
+    const pinned = String(candidate[answerKey]);
+    if (pinned !== answer) {
+      throw new Error(
+        `Candidate zone "${candidate.zone}" pins ${String(answerKey)} = ` +
+          `${JSON.stringify(pinned)} for ${subject}, but that zone actually answers ` +
+          `${JSON.stringify(answer)} (CT-4, #2870). The pinned literal is what the suite ` +
+          `asserts, so a wrong one would demand the wrong value — and if it happened to ` +
+          `match the environment's answer the test would pass against the defect it ` +
+          `describes. Fix the literal, or the candidate's zone.`,
+      );
+    }
+  }
+
+  const chosen = cases.find((candidate) => {
+    const answer = answerFor(candidate.zone);
+    return rivals.every((rival) => rival.answer !== answer);
+  });
+  if (chosen) return chosen;
+
+  throw new Error(
+    `No candidate club zone disagrees with the environment about ${subject}, so an ` +
+      `assertion under any of them would pass whether or not the club's persisted zone ` +
+      `was used (CT-4, #2870; INV-CONFIG-002). This is an environment problem, not the ` +
+      `defect the suite describes: ${describeEnvironment()}. Add a candidate zone that ` +
+      `diverges here, with its own expected literals — do NOT relax the rivals.\n` +
+      describeTable(rivals, cases, answerFor),
+  );
+}
+
+/**
+ * The fixture constraint that `alsoDifferFromHostAt` opts into, ASSERTED.
+ *
+ * Two things are checked, and the second is the one that stops a caller
+ * satisfying the first by naming an instant its derivation does not read:
+ *
+ * 1. the instant sits in the hour during which a third calendar day exists;
+ * 2. the environment's own answer is one of the three calendar days that
+ *    instant can produce anywhere on earth, so the derivation demonstrably
+ *    reads it.
+ *
+ * Both are skipped when the answers are not calendar days. A wall-clock hour, a
+ * formatted time or a whole instant has far more than three possible answers
+ * across the zone set, so no window constrains it.
+ */
+function assertThirdCalendarDayIsReachable({
+  subject,
+  instant,
+  environmentAnswer,
+  hostZoneId,
+}: {
+  subject: string;
+  instant: Date;
+  environmentAnswer: string;
+  hostZoneId: string;
+}): void {
+  if (!CALENDAR_DAY_ANSWER.test(environmentAnswer)) return;
+
+  if (Number.isNaN(instant.getTime())) {
+    throw new Error(
+      `alsoDifferFromHostAt for ${subject} is an Invalid Date (CT-6, #2991). Pass the ` +
+        `instant the suite's answerFor reads, so the three-calendar-days constraint ` +
+        `can be checked against it.`,
+    );
+  }
+
+  const utcHour = instant.getUTCHours();
+  if (utcHour !== THREE_CALENDAR_DAYS_UTC_HOUR) {
+    throw new Error(
+      `alsoDifferFromHostAt asks that ${subject} differ from the HOST's answer as well ` +
+        `as the environment's, but the fixture instant ${instant.toISOString()} is at ` +
+        `${String(utcHour).padStart(2, "0")}:xx UTC, and THREE calendar days exist on ` +
+        `earth only while the UTC hour is ${THREE_CALENDAR_DAYS_UTC_HOUR} (offsets span ` +
+        `UTC-11 to UTC+14, twenty-five hours). At every other hour there are two, and ` +
+        `both can already be taken — one by APP_TIME_ZONE, one by the host — so no ` +
+        `candidate can differ from both and this chooser could only fail (CT-6, #2991). ` +
+        `Move the fixture into the 10:00-10:59 UTC hour, or drop alsoDifferFromHostAt ` +
+        `and rely on the environment rival alone.\n${describeEnvironment()}, host ` +
+        `${JSON.stringify(hostZoneId)}.`,
+    );
+  }
+
+  const reachable = [
+    shiftUtcDay(instant, -1),
+    shiftUtcDay(instant, 0),
+    shiftUtcDay(instant, 1),
+  ];
+  if (!reachable.includes(environmentAnswer)) {
+    throw new Error(
+      `alsoDifferFromHostAt for ${subject} names ${instant.toISOString()}, but the ` +
+        `environment zone answers ${JSON.stringify(environmentAnswer)}, which is not one ` +
+        `of the three calendar days that instant can produce anywhere on earth ` +
+        `(${reachable.join(", ")}). The derivation is therefore reading a DIFFERENT ` +
+        `instant from the one this call claims, so the fixture-window check above proved ` +
+        `nothing about it (CT-6, #2991). Pass the instant answerFor actually reads.`,
+    );
+  }
+}
+
+/** The UTC calendar day `offsetDays` either side of `instant`'s own. */
+function shiftUtcDay(instant: Date, offsetDays: number): string {
+  return new Date(instant.getTime() + offsetDays * UTC_DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function describeEnvironment(): string {
+  return (
+    `APP_TIME_ZONE is ${JSON.stringify(APP_TIME_ZONE)} (process.env.TZ = ` +
+    `${JSON.stringify(process.env.TZ)}, host resolves ` +
+    `${JSON.stringify(hostResolvedZone())})`
+  );
+}
+
+function describeTable<Case extends ClubZoneCase>(
+  rivals: ReadonlyArray<{ zone: string; answer: string }>,
+  cases: readonly Case[],
+  answerFor: (zone: string) => string,
+): string {
+  return [
+    ...rivals.map((rival) => `  rival     ${rival.zone} -> ${rival.answer}`),
+    ...cases.map(
+      (candidate) =>
+        `  candidate ${candidate.zone} -> ${answerFor(candidate.zone)}`,
+    ),
+  ].join("\n");
+}
+
+function safeAnswer(
+  zone: string,
+  answerFor: (zone: string) => string,
+  subject: string,
+): string {
+  try {
+    return answerFor(zone);
+  } catch (cause) {
+    throw new Error(
+      `The rival zone ${JSON.stringify(zone)} could not be projected at all while ` +
+        `choosing a club zone for ${subject} (CT-4, #2870). ${describeEnvironment()}. ` +
+        `An IANA identifier is what this needs; a Windows zone name or a POSIX TZ ` +
+        `string is not one, and Intl rejects it with a bare RangeError. This is an ` +
+        `environment problem, not the defect the suite describes — set TZ to an IANA ` +
+        `identifier, or unset it so the shipped default applies.`,
+      { cause },
+    );
+  }
+}
