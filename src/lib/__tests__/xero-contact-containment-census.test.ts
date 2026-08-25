@@ -592,7 +592,29 @@ describe("Xero contact containment census (INV-CONFIG-005)", () => {
       "the total must still be shown when the list is truncated, so a page of " +
         "fifty cannot read as the whole of the damage",
     ).toContain("containment.rewrittenContacts > listed.length");
-    // No email address may reach this screen, in any form.
+    /*
+      No email address reaches this screen, and the REAL guarantee of that is
+      the type, not this regex (#3072).
+
+      `RewrittenXeroContact` declares exactly five fields — `xeroContactId`,
+      `xeroContactUrl`, `memberName`, `memberId`, `rewrittenAt` — so TypeScript
+      already refuses `contact.email` outright, and the component contains no
+      destructuring or bracket access that could route around it. Measured: its
+      only `contact.*` references are those five.
+
+      This assertion is the cheap second line, and it is deliberately narrow. It
+      cannot see `const { email } = contact`, `contact["email"]`, a different
+      identifier name, or an address smuggled inside `memberName`. Widening it to
+      `/email/i` was considered and rejected: nine lines of legitimate operator
+      copy in this same file mention email, so the wide form would fail on
+      correct code, and a guard that cries wolf gets exempted and is then worth
+      nothing. Keep it narrow, and do not let it carry the privacy claim on its
+      own — the type does that.
+
+      Its `\b` was a literal 0x08 byte until #3072, which made the pattern
+      unmatchable and this negative assertion unconditionally true. It passes on
+      merit now: re-run after the repair, it finds no violation.
+    */
     expect(
       block,
       "the payload carries no member email address and this screen must not " +
