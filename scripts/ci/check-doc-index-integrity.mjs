@@ -1787,9 +1787,11 @@ export function auditEncoding(files) {
  *   pack, so timestamp arithmetic on a lodge night was unguarded; the other
  *   asserted that no member email address can reach the Xero containment
  *   screen, so a privacy claim was passing unconditionally.
- * - two more were forbidden-patterns 11 and 12 of a list of twelve. The other
- *   ten still matched, so the suite stayed green and nothing named the two dead
- *   ones.
+ * - two more were the FIRST TWO of the eleven forbidden patterns in one
+ *   provenance guard's list. The other nine still matched, so the suite stayed
+ *   green and nothing named the two dead ones. (Counted, not recalled: the
+ *   inherited docblock said "patterns 11 and 12 of a list of twelve … the other
+ *   ten", and all three numbers were wrong.)
  * - one was a normalisation step (`.replace(/\btype\b/g, " ")`) that stripped
  *   nothing. It is equivalent on today's inputs because no scanned import
  *   carries the token, which is exactly why it survived: a latent trap, armed
@@ -1821,6 +1823,18 @@ export function auditEncoding(files) {
  *
  * TAB, LF and CR are excluded because they are the text format itself.
  *
+ * **The one case this stance has no answer for, stated because it is the real
+ * limit rather than the comfortable one.** "The escape denotes the identical
+ * value" holds only in a format that HAS escapes. A plain-text pin file has
+ * none: `*.txt`, `*.tsv` and `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` are
+ * class-pinned `text`, and a pin file that genuinely had to hold an ESC or DEL
+ * byte could not be written at all under this rule. The same is true of a
+ * vitest inline snapshot, which vitest rewrites from the runtime value rather
+ * than from what you typed (`help-corpus.test.ts` carries one). Neither case
+ * exists in the tree today, and neither has a fix that is better than an
+ * allowlist — so if one ever arrives, it is a decision about this rule, not a
+ * bug in this function.
+ *
  * ## The one hole, and why {@link auditTextScanCoverage} exists
  *
  * This scan sees the file set `loadTrackedFiles` hands it, which is Git's own
@@ -1832,9 +1846,11 @@ export function auditEncoding(files) {
  *
  * A blind spot is worse than an allowlist, because an allowlist is at least
  * written down. {@link auditTextScanCoverage} closes it without widening this
- * scan into binary assets: it fails when a file `.gitattributes` DECLARES to be
- * text is nevertheless missing from the text scan, which for a declared-text
- * file means precisely an early NUL.
+ * scan into binary assets, and {@link findFilesHiddenFromTextScan} explains why
+ * it asks the question the way round that it does: a file that drops out of the
+ * text scan fails UNLESS `.gitattributes` declares it a binary asset, so a file
+ * class nobody has thought about fails closed rather than leaving the scan in
+ * silence.
  */
 export function auditControlCharacters(files) {
   const problems = [];
@@ -1875,48 +1891,138 @@ export function auditControlCharacters(files) {
 }
 
 /**
- * Nothing `.gitattributes` declares to be text is missing from the text scan.
+ * No file has an early NUL hiding it from the text scan, unless it is a
+ * declared binary asset.
  *
  * {@link auditControlCharacters} can only judge files it is given, and
  * {@link loadTrackedFiles} gets them from `git grep -I`. Measured against git
  * 2.53, that excludes a file with a NUL in its first 8,000 bytes — so a single
  * early NUL would hide a source file, and every other check in this script with
- * it. `text eol=lf` alone does not rescue it; only a `diff` attribute does.
+ * it.
  *
- * So this asks Git a different question. `.gitattributes` here declares `*.ts`,
- * `*.tsx`, `*.md`, `*.json`, `*.sh`, `*.txt` and the rest to be `text`; a real
- * binary asset (`.png`, `.zip`, `.ico`, `.gif`) is declared nothing at all. A
- * file the repository DECLARES text but Git's content scan calls binary is
- * therefore a contradiction, and for a text file the only way to earn it is a
- * control byte this script exists to reject.
+ * ## The question is asked the SAFE way round, and that took two attempts
  *
- * That keeps the no-allowlist stance honest without widening the scan into
- * binary assets: the declaration is the repository's, not this script's, and the
- * 113 measured binary assets are excluded because nobody declared them text.
+ * The first version of this check asked whether `.gitattributes` DECLARED the
+ * hidden file `text`, on the stated grounds that "every tracked text class here
+ * is pinned". **Measured at the time of writing, that was false for 43 of the
+ * 4,960 Git-classified text files, across 18 classes** — the 24 `.html`
+ * mockups, `knip.jsonc`, `Dockerfile`, `Caddyfile`, `deploy/caddy/*.caddy`,
+ * `scripts/lib/split-sql-statements.awk`, `.env.example`, two `.tsv` files,
+ * `.gitignore`, `.dockerignore`, `.nvmrc`, `.node-version`, `LICENSE` and the
+ * rest. Those pins exist to stop Windows materialising CRLF, and nobody ever
+ * promised they were exhaustive.
+ *
+ * So the check they backed was vacuous for exactly the files most exposed to
+ * the accident: a `.awk` script, a `Dockerfile` and a `Caddyfile` are what a
+ * shell heredoc or a `sed` one-liner edits. Proven end to end on `knip.jsonc`,
+ * which gates a required check: a NUL at byte 200 made `git grep -I` drop it,
+ * the declaration test filtered it out, and the run exited **0** printing
+ * "Scanned 4959 tracked file(s)" — one fewer than the truth — while the success
+ * line asserted the very property that had just been broken.
+ *
+ * A rule that fails open on a class nobody thought of is not a rule. So the
+ * predicate is inverted: a hidden file fails UNLESS `.gitattributes` declares
+ * it `-text` (which the standard `binary` macro sets). Adding a new text class
+ * now needs no action at all, and adding a new BINARY class fails loudly until
+ * somebody declares what it is — the direction an omission should point.
+ *
+ * ## Two things this is careful not to be
+ *
+ * **Not an allowlist for control bytes.** `*.png binary` says what a PNG IS; it
+ * does not exempt a text file from {@link auditControlCharacters}. A declared
+ * binary asset was never in the text scan to begin with.
+ *
+ * **Not a heuristic.** {@link findFilesHiddenFromTextScan} reads the file and
+ * confirms the NUL is really there before reporting it, so the message is true
+ * by construction rather than inferred from an absence.
  */
-export function auditTextScanCoverage(hiddenDeclaredTextFiles) {
-  return [...hiddenDeclaredTextFiles].sort().map(
-    (rel) =>
-      `${rel} is declared \`text\` in .gitattributes but Git's content scan ` +
-      "classifies it as BINARY, so it is invisible to every check in this " +
-      "script — including the control-character check. For a declared-text " +
-      "file that means a NUL byte (0x00) in its first 8000 bytes, which is the " +
-      "one control character Git's binary detection keys on. Find it with " +
-      "`node -e` over the raw buffer (`cat -A` and `git diff` will not show " +
-      "it), and write the `\\0` escape instead of the byte: the escape denotes " +
-      "the identical value. If the file genuinely must carry the byte, add a " +
-      "`diff` attribute for it in .gitattributes — that is measured to restore " +
-      "Git's textual classification, and it is what this repository already " +
-      "did for `src/lib/config-transfer/import-types.ts` (#3072).",
-  );
+export function auditTextScanCoverage(hiddenFilesWithEarlyNul) {
+  return [...hiddenFilesWithEarlyNul]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map(
+      ({ path: rel, byteOffset }) =>
+        `${rel} carries a NUL byte (0x00) at byte ${byteOffset}, and Git is ` +
+        "therefore classifying this file as BINARY — a NUL early in a file is " +
+        "the one thing Git's binary detection keys on (measured window: the " +
+        "first 8,000 bytes, on git 2.53). So the file is invisible to every " +
+        "check in this script, INCLUDING the control-character check, which is " +
+        "why a NUL cannot be left to that check to find. `cat -A` and " +
+        "`git diff` will not show it; `node -e` over the raw buffer will. " +
+        "There are exactly two remedies. If this is " +
+        "TEXT, write the `\\0` escape instead of the byte — the escape denotes " +
+        "the identical value, which is what `src/lib/member-guest-find.ts` and " +
+        "`src/lib/config-transfer/import-types.ts` both do for a composite-key " +
+        "separator. If this is a BINARY ASSET, declare it as one in " +
+        "`.gitattributes` (`*.png binary`, and so on): that is a statement " +
+        "about what the file is, not an exemption, and it is what keeps this " +
+        "check failing closed on a file class nobody has pinned. Do NOT reach " +
+        "for a `diff` attribute — it does restore Git's textual " +
+        "classification, but that only moves the file into the scan where the " +
+        "control-character check then rejects it permanently, and there is no " +
+        "allowlist there by design (#3072).",
+    );
 }
 
 /**
- * Tracked paths that `.gitattributes` declares `text` yet Git treats as binary.
+ * The byte offset of the first NUL in a file, or `null` if it holds none.
+ *
+ * Read in fixed chunks rather than whole, so an undeclared binary asset of any
+ * size costs bounded memory. Deliberately scans the ENTIRE file rather than
+ * Git's 8,000-byte detection window: the window is a measured property of one
+ * Git version, and hard-coding it here would put the fail-open behaviour back
+ * the moment a future Git widened it. The caller already knows Git hid this
+ * file; all this has to establish is that a NUL is what did it.
+ *
+ * `null` for a path that is not on disk. A tracked-but-deleted path in a dirty
+ * working tree is not this check's business — `git status` reports it, and
+ * {@link loadTrackedFiles} makes the same exclusion for the same reason.
+ */
+function firstNulByteOffset(absolutePath) {
+  let handle;
+  try {
+    handle = fs.openSync(absolutePath, "r");
+  } catch {
+    return null;
+  }
+
+  try {
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    let consumed = 0;
+    for (;;) {
+      const read = fs.readSync(handle, chunk, 0, chunk.length, consumed);
+      if (read === 0) return null;
+      const index = chunk.subarray(0, read).indexOf(0);
+      if (index !== -1) return consumed + index;
+      consumed += read;
+    }
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
+/**
+ * `{ trackedCount, hiddenWithEarlyNul }` — the tracked-file total, and the paths
+ * an early NUL hides from the text scan, excluding declared binary assets.
+ *
+ * The count comes back with the finding because the two belong together in the
+ * success line: printing "scanned N of M, and M-N are declared binary" is what
+ * makes a file silently leaving the scan visible in the log, which is precisely
+ * what "Scanned 4959" did not do when the number had just dropped from 4960.
  *
  * Impure, and kept out of {@link auditDocs} for the same reason
  * {@link loadInvariantFilesAtRef} is: the rules stay testable without a
  * repository, and the git calls happen once at the entry point.
+ *
+ * Two false positives the first version of this had, both fixed by reading the
+ * file instead of inferring from its absence. `git grep` also omits a file with
+ * NO LINE CONTENT — measured: 0 bytes is omitted and so is a lone newline,
+ * while `\r\n`, ` \n` and `\n\n\n` are all matched — so an empty `.md` stub or
+ * a deliberately-empty `"handles empty input"` fixture was reported as carrying
+ * an invisible NUL, and told to go hunting for a byte that was not there. (Live
+ * example at the time of writing: the two 0-byte `docs/images/**\/.gitkeep`
+ * files.) `git grep` also omits a tracked-but-deleted path and exits 0, so a
+ * dirty working tree reported a deleted file the same wrong way. Both now
+ * require the byte to actually be present.
  */
 export function findFilesHiddenFromTextScan(repoRoot) {
   const run = (args) => {
@@ -1939,7 +2045,9 @@ export function findFilesHiddenFromTextScan(repoRoot) {
   const tracked = run(["ls-files", "-z"]);
   const scanned = new Set(run(["grep", "-Il", "-z", "-e", "", "--"]));
   const hidden = tracked.filter((rel) => !scanned.has(rel));
-  if (hidden.length === 0) return [];
+  if (hidden.length === 0) {
+    return { trackedCount: tracked.length, hiddenWithEarlyNul: [] };
+  }
 
   // One bulk `check-attr`, so a repository of any size costs one process. The
   // -z form emits flat path/attribute/value triples.
@@ -1960,12 +2068,23 @@ export function findFilesHiddenFromTextScan(repoRoot) {
     );
   }
 
+  // `-text`, which the standard `binary` macro sets, is the ONLY exemption —
+  // and it is the repository declaring what the file is, not this script
+  // excusing it. `unspecified` is deliberately NOT exempt: a file class nobody
+  // has thought about has to fail closed, which is the whole point.
   const fields = attrs.stdout.split("\0");
-  const declaredText = [];
+  const declaredBinary = new Set();
   for (let i = 0; i + 2 < fields.length; i += 3) {
-    if (fields[i + 2] === "set") declaredText.push(fields[i]);
+    if (fields[i + 2] === "unset") declaredBinary.add(fields[i]);
   }
-  return declaredText;
+
+  const hiddenWithEarlyNul = [];
+  for (const rel of hidden) {
+    if (declaredBinary.has(rel)) continue;
+    const byteOffset = firstNulByteOffset(path.join(repoRoot, rel));
+    if (byteOffset !== null) hiddenWithEarlyNul.push({ path: rel, byteOffset });
+  }
+  return { trackedCount: tracked.length, hiddenWithEarlyNul };
 }
 
 /**
@@ -2172,7 +2291,7 @@ export function auditDocs(
     baselineFiles = null,
     baselineLabel = "the base revision",
     stableIndexHeadings = null,
-    hiddenDeclaredTextFiles = [],
+    hiddenFilesWithEarlyNul = [],
   } = {},
 ) {
   return [
@@ -2185,7 +2304,7 @@ export function auditDocs(
     ...auditDocReachability(files),
     ...auditEncoding(files),
     ...auditControlCharacters(files),
-    ...auditTextScanCoverage(hiddenDeclaredTextFiles),
+    ...auditTextScanCoverage(hiddenFilesWithEarlyNul),
     ...auditNumberSequences(files),
     ...(baselineFiles
       ? auditPermanentInvariantIds(files, baselineFiles, baselineLabel)
@@ -2522,11 +2641,13 @@ if (invokedPath === import.meta.url) {
     const baselineRef = resolveInvariantBaselineRef(repoRoot);
     const baselineFiles = loadInvariantFilesAtRef(repoRoot, baselineRef);
     const definitions = collectDefinitions(files);
+    const textScan = findFilesHiddenFromTextScan(repoRoot);
+    const trackedCount = textScan.trackedCount;
     const problems = auditDocs(files, {
       baselineFiles,
       baselineLabel: baselineRef.slice(0, 12),
       stableIndexHeadings: STABLE_INDEX_HEADINGS,
-      hiddenDeclaredTextFiles: findFilesHiddenFromTextScan(repoRoot),
+      hiddenFilesWithEarlyNul: textScan.hiddenWithEarlyNul,
     });
 
     if (problems.length > 0) {
@@ -2545,10 +2666,11 @@ if (invokedPath === import.meta.url) {
           `every id present at base ${baselineRef.slice(0, 12)} is still defined, ` +
           `every docs/ page is reachable, ${routedRows} routing row(s) resolve, all ` +
           `${STABLE_INDEX_HEADINGS.length} pre-split index headings are intact, no line ` +
-          "number is cited into the invariants, no file is BOM'd or double-encoded, and " +
-          "no file carries a raw control character (nor is any declared-text file hidden " +
-          "from this scan by an early NUL). " +
-          `Scanned ${files.size} tracked file(s).`,
+          "number is cited into the invariants, no file is BOM'd or double-encoded, no " +
+          "file carries a raw control character, and nothing outside the declared binary " +
+          "assets has an early NUL hiding it from this scan. " +
+          `Scanned ${files.size} of ${trackedCount} tracked file(s) — the gap is Git's ` +
+          "binary classification, and the clause above is what accounts for it.",
       );
     }
   } catch (error) {
