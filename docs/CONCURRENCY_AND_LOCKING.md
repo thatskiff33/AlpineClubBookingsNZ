@@ -857,12 +857,62 @@ one request can disagree if an admin saves the panel between them, which on
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
 
+#### Which client reads the club's timezone (#2870)
+
+The same rule again, and the one place it decides whether a member keeps a bed.
+A payment link expires at the end of the check-in day in the club's **persisted**
+timezone (`INV-CONFIG-002`), and four decisions read that one boundary: the mint
+in `payment-link.ts` / `booking-request.ts` / `group-booking.ts`, the refusal to
+mint a link that would be born expired, and the two capacity-releasing
+`PENDING -> CANCELLED` terminal cancels in `cron-confirm-pending.ts`. Three of
+those sites are inside a `prisma.$transaction` already holding
+`acquireLodgeCapacityLock`, one of them under `lock(1)` as well.
+
+Resolving the zone is a `clubTimeSettings.findUnique`. So the zone is **resolved
+once, outside the transaction, and passed as a value** to
+`paymentLinkExpiryForCheckIn(checkIn, zone)`, which is pure and takes no client —
+`mintSplitGuestPaymentLinkIfAbsent` and `resolveHoldWindowUnderLock` both take
+the zone as a parameter rather than reading it. The reader is
+`readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`, not
+`clubTime()`, because all four files are reachable from
+`src/instrumentation.node.ts`; `docs/CLUB_TIME_KERNEL.md` -> "Where the zone
+comes from" is the rule and the measurement.
+
+`confirmPendingBookings` reads it **once per run** rather than once per booking,
+for the second, non-pool reason as well: two bookings resolved in one tick must
+be judged against the same club day, or a zone change mid-run would cancel one
+booking's hold and extend another's on different boundaries.
+
+**What enforces it, and why it is a source contract.** `paymentLinkExpiryForCheckIn`
+imports no reader at all, so it cannot resolve the zone under a lock however it is
+called — the refuse-when-handed-a-transaction-client shape used by
+`buildSubscriptionBillingPreview` has nothing to key on here, because there is no
+client to key on. What is left to protect is a property of the four **callers**:
+each one's own `await` must sit outside its own transaction. Two guards hold it.
+
+- `payment-link-expiry-club-zone.test.ts` -> `reads the club's zone outside every
+  transaction, in all four writers` reads the four files off disk, paren-matches
+  every `$transaction(...)` argument list, and fails on a
+  `readClubTimeZoneOutsideRequest(` found inside one. It covers all four writers
+  at once, including `approveBookingRequest` and `verifyAndCreateNonMemberJoin`,
+  which no runtime test reaches — measured: a read added straight after
+  `acquireLodgeCapacityLock` in both of those files left every suite covering them
+  green. A companion case fails if the scanner stops matching anything, so it
+  cannot go quietly vacuous.
+- `cron-confirm-pending.test.ts` counts the zone reads that happen **while a
+  `$transaction` callback is running**, and requires zero. A per-run call count
+  cannot stand in for that: a read that moved inside the transaction but still ran
+  once per run keeps the count at 1 and passes.
+
+If you add a fifth writer on this boundary, the first guard already covers it the
+moment its file joins that census's list; add the file, do not add a bespoke test.
+
 #### Which client reads the cancellation and non-member-hold policy (#3110)
 
 `getNonMemberHoldPolicy`, `getNonMemberHoldDays` and `loadCancellationPolicy`
 (`cancellation.ts`) each take an optional trailing `db` that defaults to the
-module-level Prisma client, under the same one-line rule the two sections above
-state: **a caller already inside `prisma.$transaction` MUST pass its own `tx`.**
+module-level Prisma client, under the same one-line rule the three sections
+above state: **a caller already inside `prisma.$transaction` MUST pass its own `tx`.**
 The three share a private helper, `getBookingPeriodForDate`, which holds two of
 the reads, so the parameter is threaded through it as well.
 

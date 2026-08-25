@@ -144,9 +144,13 @@ const mockRevokePaymentLinksForBooking = vi.fn().mockResolvedValue(0);
 // #1967: the settlement cron mints a guest-portion payment link for a split
 // child with no card on file (default: first transition — returns a fresh
 // link), and revokes a just-minted link by id when the member email fails.
+// `expiresAt` is part of the mint's contract since #2870: the caller emails the
+// instant the row really holds rather than deriving the boundary again.
+const MINTED_LINK_EXPIRES_AT = new Date("2026-08-02T11:59:59.999Z");
 const mockMintSplitGuestPaymentLinkIfAbsent = vi.fn().mockResolvedValue({
   token: "tok_split_1",
   paymentLinkId: "pl_split_1",
+  expiresAt: MINTED_LINK_EXPIRES_AT,
 });
 const mockRevokePaymentLinkById = vi.fn().mockResolvedValue(1);
 vi.mock("@/lib/payment-link", () => ({
@@ -201,6 +205,19 @@ const mockExecuteRaw = vi.fn();
 // never fires. Present because the production path reads them, not because these
 // tests exercise them.
 const mockAdultMemberHostingPolicyFindMany = vi.fn().mockResolvedValue([]);
+/*
+  #2870: the club's persisted timezone, which the cron now reads ONCE per run
+  (outside every transaction) and threads into the terminal-state decisions and
+  the link mint.
+
+  It defaults to NO ROW so every test above resolves the same zone it always
+  did: `readClubTimeZoneOutsideRequest` folds an absent row into the environment
+  seed, which is `APP_TIME_ZONE`. The club-zone block at the end of this file is
+  the only one that persists a value.
+*/
+const mockClubTimeSettingsFindUnique = vi.fn().mockResolvedValue(null);
+/** Zone reads that happened inside a `$transaction` callback. Contract: 0. */
+let zoneReadsInsideTransaction = 0;
 const mockHostingCoverageReevaluationCreate = vi
   .fn()
   .mockResolvedValue({ id: "hcr_1" });
@@ -242,6 +259,10 @@ vi.mock("../prisma", () => ({
       findMany: (...args: unknown[]) =>
         mockHostingCoverageReevaluationFindMany(...args),
     },
+    clubTimeSettings: {
+      findUnique: (...args: unknown[]) =>
+        mockClubTimeSettingsFindUnique(...args),
+    },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
   },
 }));
@@ -251,6 +272,20 @@ const {
   splitSettlementExtensionNumber,
   shouldAlertOnSplitSettlementExtension,
 } = await import("../cron-confirm-pending");
+
+/*
+  The environment's answer, IMPORTED rather than rebuilt.
+
+  The club-zone block below used to compose it by hand as
+  `process.env.TZ || process.env.NEXT_PUBLIC_TZ || "Pacific/Auckland"`. Same
+  precedence, but not the same value: `src/config/operational.ts` TRIMS the
+  variable, so a `TZ` carrying a stray space made the hand-rolled copy and the
+  code under test disagree — and the zone chooser below excludes candidates by
+  comparing against exactly this string, so a disagreement there hands the suite
+  a candidate equal to the environment's and quietly stops it discriminating.
+  One import cannot drift from the constant it is asserting against.
+*/
+const { APP_TIME_ZONE } = await import("@/config/operational");
 
 function makePendingBooking(
   id: string,
@@ -436,12 +471,14 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
     mockPaymentTransactionFindMany.mockResolvedValue([]);
     mockCancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    mockClubTimeSettingsFindUnique.mockResolvedValue(null);
     mockPromoRedemptionFindUnique.mockResolvedValue(null);
     mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockRevokePaymentLinksForBooking.mockResolvedValue(0);
     mockMintSplitGuestPaymentLinkIfAbsent.mockResolvedValue({
       token: "tok_split_1",
       paymentLinkId: "pl_split_1",
+      expiresAt: MINTED_LINK_EXPIRES_AT,
     });
     mockRevokePaymentLinkById.mockResolvedValue(1);
     mockSendSplitGuestPaymentLinkEmail.mockResolvedValue({ status: "sent" });
@@ -454,9 +491,19 @@ describe("Cron: Confirm Pending Bookings", () => {
     mockReconcileBedAllocationsForBooking.mockResolvedValue(undefined);
     mockGetNonMemberHoldDays.mockResolvedValue(7);
     mockBookingEventCreate.mockResolvedValue({ id: "evt_1" });
+    zoneReadsInsideTransaction = 0;
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
-        return arg({
+        // #2870: how many `clubTimeSettings` reads happened WHILE this callback
+        // was running. Zero is the contract — the callback holds
+        // `pg_advisory_xact_lock(1)` and the per-lodge capacity lock for its
+        // whole length, and a settings query in there lengthens a lock every
+        // cancel, capture, hold-release and capacity claim contends for. A
+        // per-run call count cannot see this: a read that MOVED inside the
+        // transaction but still ran once per run keeps that count at 1.
+        const zoneReadsBefore = mockClubTimeSettingsFindUnique.mock.calls.length;
+        try {
+          return await arg({
           $executeRaw: (...args: unknown[]) => mockExecuteRaw(...args),
           lodge: {
             findFirst: (...args: unknown[]) => mockLodgeFindFirst(...args),
@@ -490,7 +537,11 @@ describe("Cron: Confirm Pending Bookings", () => {
             create: (...args: unknown[]) =>
               mockHostingCoverageReevaluationCreate(...args),
           },
-        });
+          });
+        } finally {
+          zoneReadsInsideTransaction +=
+            mockClubTimeSettingsFindUnique.mock.calls.length - zoneReadsBefore;
+        }
       }
 
       return Promise.all(arg as Promise<unknown>[]);
@@ -1519,7 +1570,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     // extended via the status-guarded claim.
     expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn })
+      expect.objectContaining({ id: "child_1", checkIn: booking.checkIn }),
+      // #2870: the zone is threaded in, never read under the lock.
+      expect.any(String)
     );
     expect(mockBookingUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1536,6 +1589,10 @@ describe("Cron: Confirm Pending Bookings", () => {
         priceCents: 12000,
         guestCount: 2,
         bookingReference: "child_1",
+        // #2870: the email states the instant the ROW holds. A second
+        // derivation here is what let the page, the email and the stored value
+        // mean three different moments.
+        expiresAt: MINTED_LINK_EXPIRES_AT,
       })
     );
     expect(mockSendAdminSplitSettlementUnpaidAlert).toHaveBeenCalledWith(
@@ -1882,6 +1939,7 @@ describe("Cron: Confirm Pending Bookings", () => {
         return {
           token: `tok_${mintCounter}`,
           paymentLinkId: `pl_${mintCounter}`,
+          expiresAt: MINTED_LINK_EXPIRES_AT,
         };
       }
     );
@@ -2475,6 +2533,267 @@ describe("Cron: Confirm Pending Bookings", () => {
         "pi_link_2"
       );
       expect(result.confirmedBookingIds).toEqual(["child_1"]);
+    });
+  });
+  /*
+    #2870 — WHOSE CIVIL DAY ENDS THE HOLD.
+
+    The two branches below decide `PENDING -> CANCELLED` for a booking whose
+    check-in day has ended. The request-origin one RELEASES REAL CAPACITY. Both
+    were bound by comment to the payment link's mint boundary "so the two can
+    never disagree", and both resolved that boundary in `APP_TIME_ZONE` — the
+    deployment's `TZ` seed — while the mint, the pay page and the approval email
+    moved onto the club's PERSISTED zone (#3068). They now call one function that
+    takes the zone.
+
+    Measured before this block existed: replacing the threaded `clubZone` with
+    `APP_TIME_ZONE` at both sites left all 57 tests in this file GREEN. The two
+    highest-consequence sites in the change had no coverage of the defect at all.
+
+    ## Why the fixtures are searched for rather than written down
+
+    Discriminating needs `now` to fall strictly between the club's boundary and
+    BOTH wrong answers' — `APP_TIME_ZONE`'s and the host's own resolved zone.
+    `divergentClubZone` guarantees three DIFFERENT answers, which is not the same
+    thing: a club boundary sitting between the two wrong ones would leave the
+    observable identical to one of them. So this searches the same candidate list
+    for a (zone, check-in day) pair that really does straddle, and THROWS with the
+    three boundaries printed when none exists. A premise failure is a failure and
+    never a skip (owner decision, #2870).
+  */
+  describe("#2870 the terminal cancel closes on the CLUB's civil day", () => {
+    /** The instant this file's `beforeEach` pins. */
+    const NOW = new Date("2026-07-09T00:00:00.000Z");
+
+    const CANDIDATE_ZONES = [
+      "Pacific/Pago_Pago",
+      "Pacific/Honolulu",
+      "America/Denver",
+      "America/Sao_Paulo",
+      "Europe/Berlin",
+      "Asia/Tokyo",
+      "Pacific/Kiritimati",
+    ] as const;
+
+    /** `yyyy-MM-dd`, `offset` days from the pinned now. */
+    function dayOffsetFromNow(offset: number): string {
+      return new Date(NOW.getTime() + offset * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+    }
+
+    /** The civil date an instant falls on in a zone — an independent oracle. */
+    function civilDateIn(zone: string, at: Date): string {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(at);
+    }
+
+    /**
+     * The last millisecond whose civil date in `zone` is `day`, by bisecting
+     * `Intl`. Deliberately shares no offset arithmetic with the code under test.
+     */
+    function endOfCivilDay(zone: string, day: string): number {
+      const anchor = Date.parse(`${day}T00:00:00.000Z`);
+      let lo = anchor - 2 * 86_400_000;
+      let hi = anchor + 2 * 86_400_000;
+      while (hi - lo > 1) {
+        const mid = lo + Math.floor((hi - lo) / 2);
+        if (civilDateIn(zone, new Date(mid)) <= day) lo = mid;
+        else hi = mid;
+      }
+      return lo;
+    }
+
+    const environmentZone = APP_TIME_ZONE;
+    const hostZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    /**
+     * A club zone and a check-in day for which the club's day has NOT ended while
+     * both wrong answers say it has. So the correct behaviour is to EXTEND the
+     * hold, and either mutant cancels the booking and releases its beds.
+     */
+    function straddlingFixture(): { zone: string; checkIn: string } {
+      const tried: string[] = [];
+      for (let offset = -3; offset <= 0; offset += 1) {
+        const checkIn = dayOffsetFromNow(offset);
+        const environmentEnd = endOfCivilDay(environmentZone, checkIn);
+        const hostEnd = endOfCivilDay(hostZone, checkIn);
+        if (environmentEnd > NOW.getTime() || hostEnd > NOW.getTime()) continue;
+        for (const zone of CANDIDATE_ZONES) {
+          if (zone === environmentZone || zone === hostZone) continue;
+          const clubEnd = endOfCivilDay(zone, checkIn);
+          if (clubEnd > NOW.getTime()) return { zone, checkIn };
+          tried.push(`${checkIn} ${zone} -> ${new Date(clubEnd).toISOString()}`);
+        }
+      }
+      throw new Error(
+        "No (club zone, check-in day) pair leaves the club's day still running " +
+          `while both APP_TIME_ZONE (${environmentZone}) and the host (${hostZone}) ` +
+          "say it has ended. Without one, this assertion cannot tell the club's " +
+          "persisted zone from either wrong answer and would pass for both. " +
+          `Tried: ${tried.join(", ") || "no candidate day had both wrong answers ended"}.`,
+      );
+    }
+
+    const FIXTURE = straddlingFixture();
+
+    beforeEach(() => {
+      // The club HAS chosen a zone, so the real reader resolves the persisted
+      // value rather than the environment seed. Only the row is a fake.
+      mockClubTimeSettingsFindUnique.mockResolvedValue({
+        timeZone: FIXTURE.zone,
+      });
+      mockCheckCapacityForGuestRanges.mockResolvedValue({
+        available: true,
+        minAvailable: 5,
+        nightDetails: [],
+      });
+    });
+
+    it("proves the fixture really splits the club's day from both wrong answers", () => {
+      // Without this the tests below could pass against a tree that read
+      // APP_TIME_ZONE. Stated separately so an ICU or candidate-list change fails
+      // here, legibly, rather than as a cancelled/extended mismatch.
+      expect(endOfCivilDay(environmentZone, FIXTURE.checkIn)).toBeLessThanOrEqual(
+        NOW.getTime(),
+      );
+      expect(endOfCivilDay(hostZone, FIXTURE.checkIn)).toBeLessThanOrEqual(
+        NOW.getTime(),
+      );
+      expect(endOfCivilDay(FIXTURE.zone, FIXTURE.checkIn)).toBeGreaterThan(
+        NOW.getTime(),
+      );
+    });
+
+    it("does NOT cancel a request booking whose club day is still running, and keeps its beds", async () => {
+      mockPendingBookings([
+        makePendingBooking("b_zone", {
+          checkIn: FIXTURE.checkIn,
+          checkOut: dayOffsetFromNow(2),
+          hasPaymentMethod: false,
+          originBookingRequest: { id: "req_zone" },
+          finalPriceCents: 14_000,
+        }),
+      ]);
+
+      const result = await confirmPendingBookings();
+
+      expect(
+        result.cancelledBookingIds,
+        "INV-CONFIG-002: the club's check-in day has not ended, so the requester's " +
+          "/pay link is still live and this booking must keep its hold. Closing " +
+          "the day on APP_TIME_ZONE cancels it and RELEASES ITS BEDS a whole club " +
+          "day early, and REVOKES THE MEMBER'S LINK with them: the terminal " +
+          "branch calls `revokePaymentLinksForBooking` in the same transaction, " +
+          "which is why the assertion below is `not.toHaveBeenCalled()`. So the " +
+          "harm is not a live link on a dead booking — it is a member who was " +
+          "given a deadline, and finds the link dead and their beds gone before " +
+          "it arrives.",
+      ).toEqual([]);
+      expect(mockReconcileBedAllocationsForBooking).not.toHaveBeenCalled();
+      expect(mockRevokePaymentLinksForBooking).not.toHaveBeenCalled();
+      // The hold was extended instead, which is the branch that must run.
+      expect(mockBookingUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { nonMemberHoldUntil: expect.any(Date) },
+        }),
+      );
+    });
+
+    it("does NOT cancel a split child whose club day is still running", async () => {
+      mockPendingBookings([
+        makePendingBooking("child_zone", {
+          checkIn: FIXTURE.checkIn,
+          checkOut: dayOffsetFromNow(2),
+          hasPaymentMethod: false,
+          parentBookingId: "parent_zone",
+          parentBooking: {
+            id: "parent_zone",
+            status: "CONFIRMED",
+            payment: {
+              id: "pay_parent",
+              source: "INTERNET_BANKING",
+              stripeCustomerId: null,
+              stripePaymentMethodId: null,
+            },
+          },
+          finalPriceCents: 12_000,
+        }),
+      ]);
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual([]);
+      // The link mint is the branch that runs instead — and it is handed the
+      // club's zone, which is what keeps the mint and this decision in step.
+      expect(mockMintSplitGuestPaymentLinkIfAbsent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ id: "child_zone" }),
+        FIXTURE.zone,
+      );
+    });
+
+    it("still cancels once the CLUB's day has genuinely ended", async () => {
+      // The boundary is a real boundary, not an absence of the branch: four days
+      // back is past the end of the check-in day in every zone on earth.
+      mockPendingBookings([
+        makePendingBooking("b_past", {
+          checkIn: dayOffsetFromNow(-4),
+          checkOut: dayOffsetFromNow(-2),
+          hasPaymentMethod: false,
+          originBookingRequest: { id: "req_past" },
+          finalPriceCents: 14_000,
+        }),
+      ]);
+
+      const result = await confirmPendingBookings();
+
+      expect(result.cancelledBookingIds).toEqual(["b_past"]);
+    });
+
+    it("reads the club's zone once per RUN, not once per booking, and never inside a lock transaction", async () => {
+      mockPendingBookings([
+        makePendingBooking("b_one", {
+          checkIn: FIXTURE.checkIn,
+          checkOut: dayOffsetFromNow(2),
+          hasPaymentMethod: false,
+          originBookingRequest: { id: "req_one" },
+        }),
+        makePendingBooking("b_two", {
+          checkIn: FIXTURE.checkIn,
+          checkOut: dayOffsetFromNow(2),
+          hasPaymentMethod: false,
+          originBookingRequest: { id: "req_two" },
+        }),
+      ]);
+
+      await confirmPendingBookings();
+
+      expect(
+        mockClubTimeSettingsFindUnique,
+        "Two bookings, one settings read. A read per booking would sit inside " +
+          "`resolveHoldWindowUnderLock`, which holds pg_advisory_xact_lock(1) AND " +
+          "the per-lodge capacity lock for the whole callback — so every cancel, " +
+          "capture, hold-release and capacity claim in the system would wait on a " +
+          "settings query. It would also let two bookings in one tick be judged " +
+          "against different club days.",
+      ).toHaveBeenCalledTimes(1);
+
+      // THE OTHER HALF, and the call count above cannot stand in for it: a read
+      // that moved INSIDE `resolveHoldWindowUnderLock` but still ran once per
+      // run keeps that count at 1 and passes. Two bookings only catch a read
+      // that became per-booking. This counter catches the placement.
+      expect(
+        zoneReadsInsideTransaction,
+        "`resolveHoldWindowUnderLock` holds pg_advisory_xact_lock(1) AND the " +
+          "per-lodge capacity lock for its whole callback. A `clubTimeSettings` " +
+          "query in there is a settings read under both — resolve the zone " +
+          "before the transaction and thread it in (`payment-link-expiry.ts`).",
+      ).toBe(0);
     });
   });
 });

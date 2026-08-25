@@ -55,6 +55,13 @@ permission area; a view-only support role can read but not save.
    **Save Template**. Use **Restore Default** to drop your override and return to
    the built-in wording.
 
+**Editing the wording never changes a date, a time or a deadline in it.** Every
+date and time a token fills in is the club's own — the timezone set under
+[Club Time Zone](club-time.md) — and it is worked out before your wording is
+applied. So a saved override and the built-in wording always name the same
+moment. If they ever appear not to, that is a defect worth reporting rather than
+something to fix by rewording.
+
 ### There is no "only if" — write lines that always read correctly
 
 The body is plain text with token substitution and **nothing else**. There is no

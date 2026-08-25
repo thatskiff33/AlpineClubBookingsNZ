@@ -1,5 +1,3 @@
-### Fixed
-
 - Booking screens and the booking API now use the day a stay is actually
   stored against, instead of shifting it into the club's time zone and back.
   For a club west of Greenwich that was showing and using the wrong day in
