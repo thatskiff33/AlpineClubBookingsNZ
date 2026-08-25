@@ -10,8 +10,10 @@ import { NextRequest } from "next/server";
  *  - **"what day is it?"** — a real zone question, whose answer is the club's
  *    PERSISTED `ClubTimeSettings.timeZone` (INV-CONFIG-002, INV-DATE-019); and
  *  - **"which day does this booking start?"** — NOT a zone question at all.
- *    `Booking.checkIn` is `@db.Date`, a calendar day encoded as UTC midnight,
- *    and the UTC reading is the meaning (INV-DATE-010, INV-DATE-026). The old
+ *    `Booking.checkIn` is `@db.Date`, a calendar day encoded as UTC midnight and
+ *    never a moment (INV-DATE-010), read back in UTC under INV-DATE-019's first
+ *    exact boundary with INV-DATE-026 — the citation for a decode, where
+ *    INV-DATE-010 is not (#3080). The old
  *    `normalizeDateOnlyForTimeZone` projected it into the environment's zone,
  *    which is the identity for a club ahead of Greenwich and the PREVIOUS day
  *    for one behind it.
