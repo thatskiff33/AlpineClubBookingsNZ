@@ -1,4 +1,9 @@
 import {
+  addCalendarDays,
+  requireCalendarDate,
+  type CalendarDate,
+} from "@/lib/club-time";
+import {
   addDaysDateOnly,
   formatDateOnlyForTimeZone,
   getTodayDateOnly,
@@ -34,8 +39,25 @@ function dateOnlyKey(value: Date): string {
 }
 
 /**
- * Derive the date-only key for one explicit night entry, matching the key
- * scheme used everywhere else (NZ time zone via formatDateOnlyForTimeZone).
+ * Derive the date-only key for one explicit night entry.
+ *
+ * IT DOES NOT USE ONE KEY SCHEME, and the comment that said it did was wrong in
+ * the way that matters (#3107). A `yyyy-mm-dd` string is returned VERBATIM — the
+ * true calendar day, in any zone. A `Date` goes through {@link dateOnlyKey},
+ * which PROJECTS it into the environment zone, so for a club behind Greenwich it
+ * comes back a day early. The two input shapes therefore land in different
+ * frames, and both shapes occur in production: `BookingGuestNight` rows and
+ * booking envelopes arrive as `Date`s, while `ProposalGuest.nights` is declared
+ * `string[]` and reaches {@link countActiveGuestsForNight} verbatim through
+ * `checkCapacityForGuestRanges`.
+ *
+ * Measured behind Greenwich, one logical night is simultaneously occupied
+ * (`Date`-fed) and unoccupied (string-fed), and a policy-exception capacity
+ * admission check counted zero proposed beds where it should have counted the
+ * party's. `operational-day-shift-club-zone.test.ts` → "#3107 the frame split
+ * this fix does NOT close" holds the measurement and fails the day the frames
+ * agree. `GuestNightInput` is exported, so a fork passing strings gets keys a day
+ * off every `Date`-derived one until #3107 lands.
  */
 function nightEntryKey(entry: GuestNightInput): string {
   if (typeof entry === "string") {
@@ -155,19 +177,34 @@ export function isGuestActiveOnNight(
 // that capacity, pricing and the whole-lodge rules are built on — is untouched
 // and deliberately separate; do not conflate the two.
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 /**
- * Shift a `yyyy-mm-dd` NZ date-only key by whole days.
+ * Shift a `yyyy-mm-dd` lodge-night key by whole days.
  *
- * The key is re-anchored at UTC midnight, which is midday NZ (UTC+12/+13), so
- * adding or subtracting whole days can never land on an NZ daylight-saving
- * transition and roll the calendar day the wrong way.
+ * A lodge-night key IS a calendar day, so this is integer civil-calendar
+ * arithmetic on that day and nothing else. `addCalendarDays` constructs no
+ * `Date` and reads no zone, so the answer cannot be moved by where the club or
+ * the host sits — and a fractional step or one leaving the four-digit year
+ * range throws there rather than returning a key that is not one.
+ *
+ * IT USED TO ROUND-TRIP THROUGH AN INSTANT, and the comment that justified
+ * doing so was the disproved premise this epic exists to remove (#3100). It said
+ * the key was re-anchored at "UTC midnight, which is midday NZ (UTC+12/+13)" and
+ * so could never roll the calendar day the wrong way. That holds only for a club
+ * at or ahead of Greenwich; `INV-DATE-010` no longer asserts it. The body it
+ * justified added `days * 24h` to that instant and read the result back through
+ * `APP_TIME_ZONE`, which for a club behind Greenwich ATE THE SHIFT: `+1` came
+ * back as the same day and `-1` skipped one, on every call rather than at a
+ * boundary, and {@link expandStayEnvelopeToNightKeys} — which steps with this
+ * function — did not terminate at all.
+ *
+ * `operational-day-shift-club-zone.test.ts` holds the measurements, and the two
+ * near-miss spellings that are also wrong: adding 24 hours to an instant, which
+ * breaks on a 25-hour day even with the zone read correctly, and keeping the
+ * round trip with a UTC reader, which is correct only until somebody changes the
+ * encoder.
  */
-function shiftDateOnlyKey(key: string, days: number): string {
-  return formatDateOnlyForTimeZone(
-    new Date(new Date(`${key}T00:00:00.000Z`).getTime() + days * MS_PER_DAY)
-  );
+function shiftDateOnlyKey(key: string, days: number): CalendarDate {
+  return addCalendarDays(requireCalendarDate(key), days);
 }
 
 /**
@@ -320,6 +357,12 @@ export function countActiveGuestsForNight(
  *
  * An empty or reversed envelope yields no nights, which is what makes a
  * zero-night booking present on no day (INV-DATE-008).
+ *
+ * IT TERMINATES BECAUSE THE STEP BELOW IS A LITERAL FORWARD DAY, not because of
+ * anything {@link shiftDateOnlyKey} guarantees: `addCalendarDays(key, 0)` is a
+ * fixpoint by design, so parameterising the step reinstates a loop that runs
+ * until V8 aborts on the heap limit. #3100 was that loop, and
+ * `guest-stay-expansion-census.test.ts` pins the literal for this reason.
  */
 export function expandStayEnvelopeToNightKeys(
   stayStart: Date,

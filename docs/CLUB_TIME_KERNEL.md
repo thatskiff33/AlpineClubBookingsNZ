@@ -187,6 +187,7 @@ one of these, there is a function.
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
 | a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; five shapes were added in #2870 for exactly this |
 | a bare month name — the months a season or period runs between | `formatClubShortMonth(date)`. Declared as its own shape rather than the year sliced off `formatClubShortMonthYear`, per the rule below |
+| the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, of which #3100 shipped one and armed the other: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
 
 Two rules the table cannot express.
@@ -218,6 +219,24 @@ nothing else should compute one.
 Do not count nights by dividing elapsed milliseconds by 24 hours. Across a DST
 transition a night is 23 or 25 hours, and the kernel has a test where that
 arithmetic gives **0** nights for a stay the calendar says is 1.
+
+**And do not STEP a lodge night by adding 24 hours to an instant either** — the
+same 25-hour day sends the step back to where it started. Measured:
+`America/Denver` local midnight on 2026-11-01 plus 24 hours reads back as
+2026-11-01. `addCalendarDays` is the step, and #3100 is what happens without it:
+the operational-day helpers shifted a `yyyy-MM-dd` key by building a UTC-midnight
+instant, adding `days * 24h`, and reading the result back through the
+environment zone — where for a club behind Greenwich the projection ATE the
+shift, so "the next night" was the same night and "the previous night" skipped
+one, on every call. Swapping only the reader is not the fix: it is correct until
+the next person changes the encoder.
+
+Of those two defects #3100 shipped ONE. The projection was live; the millisecond
+step was **latent**, because against a UTC-midnight anchor `days * 24h` is exact —
+measured over 4,000 consecutive days in both directions, zero mismatches, since a
+UTC day is always 86,400,000 ms. It arms itself the moment the anchor becomes
+club-local, which is the measurement above. Both are named here because a reader
+who fixes only the live half re-creates the other.
 
 ## The legacy adapters
 
