@@ -46,9 +46,11 @@ import {
 import {
   addCalendarDays,
   calendarDateFromParts,
+  calendarDateOfDateOnlyInstant,
   calendarDateParts,
   dateOnlyInstantOf,
   daysInCalendarMonth,
+  formatClubDayMonth,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
@@ -67,22 +69,16 @@ import {
   buildUnsettledAdditionalStaysHref,
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
-import { APP_LOCALE } from "@/config/operational";
 
-// #2264: deliberately not one of the shared house shapes — the upcoming
-// check-ins list renders its date range in a fixed-width column, so it stays
-// compact (day + short month, no year).
+// #2264: the upcoming check-ins list renders its date range in a fixed-width
+// column, so it stays compact — day plus short month, no year. F3 (#3079)
+// declared that bag as the kernel's `dayMonth` shape, which is what the local
+// formatter here has become.
 //
-// CT-4 (#2870): `checkIn` and `checkOut` are CALENDAR DATES — `@db.Date`
-// columns Prisma hands back as UTC midnight — and a calendar date has no
-// timezone. Pinning to "UTC" over that encoding is the identity for every
-// club; reading it through APP_TIME_ZONE was a projection that named the night
-// before for any club behind UTC (INV-DATE-019).
-const COMPACT_DAY_MONTH = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  day: "numeric",
-  month: "short",
-});
+// CT-4 (#2870): `checkIn` and `checkOut` are CALENDAR DATES — `@db.Date` columns
+// Prisma hands back as UTC midnight — and a calendar date has no timezone, so the
+// shape takes none. Reading them through APP_TIME_ZONE was a projection that
+// named the night before for any club behind UTC (INV-DATE-019).
 
 async function getStats() {
   // CT-4 (#2870): every derivation below now starts from the club's PERSISTED
@@ -747,9 +743,13 @@ export default async function AdminDashboardPage() {
                         {booking.member.firstName} {booking.member.lastName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {COMPACT_DAY_MONTH.format(booking.checkIn)}
+                        {formatClubDayMonth(
+                          calendarDateOfDateOnlyInstant(booking.checkIn),
+                        )}
                         {" — "}
-                        {COMPACT_DAY_MONTH.format(booking.checkOut)}
+                        {formatClubDayMonth(
+                          calendarDateOfDateOnlyInstant(booking.checkOut),
+                        )}
                         {" · "}
                         {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""}
                       </p>

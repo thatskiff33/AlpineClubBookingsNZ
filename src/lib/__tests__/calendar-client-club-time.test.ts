@@ -8,6 +8,7 @@ import {
   requireCalendarDate,
   requireClubTimeZone,
   requireInstant,
+  startOfCalendarMonth,
   startOfClubDay,
   type CalendarDate,
 } from "@/lib/club-time";
@@ -22,7 +23,6 @@ import {
   isoEndFromDateTimeInputs,
   isoFromDateTimeInputs,
   monthGridRange,
-  startOfCalendarMonth,
   toDateInputValue,
   toTimeInputValue,
   weekdayLabels,

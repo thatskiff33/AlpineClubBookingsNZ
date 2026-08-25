@@ -3,8 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { APP_LOCALE } from "@/config/operational";
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
 import {
   computeFrequencyInfo,
   type FrequencyInfo,
@@ -67,19 +66,11 @@ const MAX_AGE_BY_TIER: Partial<Record<AgeTier, number>> = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Not one of the shared helpers: the roster header names the DAY OF THE WEEK in
-// full ("Wednesday, 15 April 2026") because that is what a hut leader scans for.
-// A CALENDAR DAY, SO NO TIMEZONE AT ALL (CT-4, #2870). The kernel has no
-// `HOUSE_SHAPES` entry for this bag, so the formatter stays local and is pinned
-// to `UTC` over the UTC-midnight encoding, which is provably the identity for
-// every club. `APP_TIME_ZONE` cancelled only east of Greenwich.
-const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
+// The roster header names the DAY OF THE WEEK in full ("Wednesday, 15 April
+// 2026") because that is what a hut leader scans for. A CALENDAR DAY, SO NO
+// TIMEZONE AT ALL (CT-4, #2870): the kernel's `longWeekdayDate` shape is that
+// exact bag, pinned to `UTC` over the UTC-midnight encoding, which is provably
+// the identity for every club.
 
 function displayDate(dateStr: string): string {
   // `parseCalendarDate`, not `requireCalendarDate`: this comes off the URL
@@ -88,9 +79,7 @@ function displayDate(dateStr: string): string {
   // `new Date(dateStr + "T00:00:00Z")` produced an invalid Date and `Intl` threw
   // `Invalid time value` out of the render.
   const date = parseCalendarDate(dateStr);
-  return date === null
-    ? dateStr
-    : LONG_WEEKDAY_DATE.format(dateOnlyInstantOf(date));
+  return date === null ? dateStr : formatClubLongWeekdayDate(date);
 }
 
 // `computeFrequencyInfo` — the "is this chore due tonight?" preview — lives in

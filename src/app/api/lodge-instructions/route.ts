@@ -4,8 +4,7 @@ import {
   canReadLodgeInstructions,
   getSanitizedLodgeInstructions,
 } from "@/lib/lodge-instructions";
-import { dateOnlyInstantOf } from "@/lib/club-time";
-import { clubTime } from "@/lib/club-time/server";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
@@ -27,7 +26,7 @@ async function getMemberInstructionLodgeIds(
     UTC MIDNIGHT: a club-local midnight bound narrows to the PREVIOUS day and
     silently drops an assignment that ends today (INV-DATE-026).
   */
-  const today = dateOnlyInstantOf((await clubTime()).today());
+  const today = await clubTodayDateOnlyInstant();
   const assignments = await prisma.hutLeaderAssignment.findMany({
     where: { memberId, endDate: { gte: today } },
     select: { lodgeId: true },

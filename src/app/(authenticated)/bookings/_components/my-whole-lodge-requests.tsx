@@ -10,7 +10,7 @@ import type {
   MyWholeLodgeRequestItem,
   MyWholeLodgeRequestStatus,
 } from "@/lib/member-whole-lodge-requests";
-import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 
 /*
   #2263 — "My requests" on My bookings.
@@ -45,13 +45,13 @@ const DECLINED_COPY =
 
 function formatRange(checkIn: string, checkOut: string) {
   // Date-only lodge nights, which are CALENDAR DATES and take no zone at all
-  // (CT-4, #2870): the kernel decodes the UTC-midnight encoding back to the day
-  // it encodes and formats it pinned to `UTC`, so no viewer's clock and no
+  // (CT-4, #2870): the kernel reads the day out of the serialised value's first
+  // ten characters and formats it pinned to `UTC`, so no viewer's clock and no
   // club's setting can move it. `formatNZDate` projected it through
   // `APP_TIME_ZONE`, which cancelled only because New Zealand is east of
   // Greenwich.
   const format = (value: string) =>
-    formatClubDate(calendarDateOfDateOnlyInstant(new Date(`${value}T00:00:00Z`)));
+    formatClubDate(calendarDateOfSerialisedDbDate(value));
   return `${format(checkIn)} – ${format(checkOut)}`;
 }
 

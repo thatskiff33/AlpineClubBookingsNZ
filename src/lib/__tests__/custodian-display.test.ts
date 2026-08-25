@@ -54,16 +54,21 @@ vi.mock("@/lib/lodge-instructions", () => ({
   the authority.
 */
 vi.mock("@/lib/club-time/server", async () => {
-  const { bindClubTime, requireCalendarDate, requireClubTimeZone } =
-    await import("@/lib/club-time");
+  const {
+    bindClubTime,
+    dateOnlyInstantOf,
+    requireCalendarDate,
+    requireClubTimeZone,
+  } = await import("@/lib/club-time");
   const zone = requireClubTimeZone("Pacific/Auckland");
   const bound = bindClubTime(zone);
+  const today = () => requireCalendarDate("2026-07-02");
   return {
     clubTimeZone: async () => zone,
-    clubTime: async () => ({
-      ...bound,
-      today: () => requireCalendarDate("2026-07-02"),
-    }),
+    clubTime: async () => ({ ...bound, today }),
+    // `clubTodayDateOnlyInstant` IS `dateOnlyInstantOf(clubTime().today())` in the
+    // real module (F4a, #2870), so the double composes it from the same pinned day.
+    clubTodayDateOnlyInstant: async () => dateOnlyInstantOf(today()),
   };
 });
 

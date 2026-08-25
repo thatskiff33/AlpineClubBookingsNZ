@@ -1,22 +1,28 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   formatDateOnly,
   getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  formatClubShortMonthYear,
+  requireCalendarDate,
+} from "@/lib/club-time";
 import { getFinancialYearEndMonth } from "@/lib/financial-year";
 import { isMonthKey, shiftMonthKey } from "@/lib/finance-monthly-facts";
 import { formatNZDate, formatNZMonthYear } from "@/lib/nzst-date";
 
 // Trend-axis month label ("Jun 2026"). Deliberately the SHORT month, unlike the
 // shared `formatNZMonthYear` ("June 2026") used for headings: chart axes have to
-// fit a dozen ticks side by side, so this keeps its own pinned formatter.
-const TREND_MONTH_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  month: "short",
-  year: "numeric",
-});
+// fit a dozen ticks side by side. That bag is the kernel's `shortMonthYear` shape
+// (F3, #3079), so the local formatter this file kept is gone.
+//
+// CT-4 (#2870): THIS ALSO CORRECTS THE MONTH. A month key is a CALENDAR concept
+// and takes no zone, and the local formatter was still pinned to
+// `APP_TIME_ZONE` — a projection over the first-of-month's UTC-midnight encoding
+// that cancelled only because New Zealand is east of Greenwich. For a club west
+// of it every finance trend axis, and the sync-health freshness sentences, named
+// the PREVIOUS month (INV-DATE-019).
 
 export const FINANCE_DASHBOARD_VIEWS = [
   "bookings",
@@ -631,7 +637,7 @@ function formatDate(dateOnly: string) {
 
 /** Short month label ("Jun 2026") for trend axes. */
 export function financeDashboardTrendMonthLabel(monthKey: string) {
-  return TREND_MONTH_LABEL.format(parseDateOnly(monthStartString(monthKey)));
+  return formatClubShortMonthYear(requireCalendarDate(monthStartString(monthKey)));
 }
 
 export function financeDashboardWindowDetail(

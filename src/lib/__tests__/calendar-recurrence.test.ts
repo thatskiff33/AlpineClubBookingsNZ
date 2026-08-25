@@ -4,6 +4,7 @@ import { APP_TIME_ZONE } from "@/config/operational";
 import {
   addCalendarDays,
   calendarDateParts,
+  calendarDayOfWeek,
   clubCalendarDateOf,
   clubWallTimeOf,
   clubZoneOffsetMs,
@@ -15,7 +16,6 @@ import {
   type Instant,
 } from "@/lib/club-time";
 import {
-  calendarDayOfWeek,
   describeRecurrence,
   generateOccurrenceStarts,
   recurrenceOptionsForDate,
