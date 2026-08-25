@@ -14,9 +14,18 @@ merge re-conflicts, which is the exact problem
 `scripts/quality/file-size-baseline.txt` to end. So this follows the pattern
 this repository already used to solve the identical problem for `CHANGELOG.md`:
 **one new file per pull request**, at a path no other pull request touches. Two
-branches cannot conflict over files they do not share. See
-[`changelog.d/README.md`](../changelog.d/README.md) for the original of the
-pattern.
+branches cannot conflict over files they do not share.
+
+That is not a local trick, it is a rule: **an artifact every lane adds an entry
+to is a directory of per-lane fragments, never one shared file.** It lives in
+`AGENTS.md` -> "Change Discipline", and
+[`changelog.d/README.md`](../changelog.d/README.md) - the original of the
+pattern - carries the full statement, the other instances, and when
+`merge=union` is the right remedy instead. This directory being one *instance*
+of that rule rather than a special case is the point of
+[#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111): while
+the two directories read as unrelated one-offs, the next artifact of the same
+shape got a shared file, and four lanes appended to it before anyone noticed.
 
 **Splitting the file is still the better answer wherever it is available.** An
 allowance is for the case where the split is genuinely worse — where the rule
