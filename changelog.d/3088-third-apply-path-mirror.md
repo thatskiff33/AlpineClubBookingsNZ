@@ -13,14 +13,28 @@
   read the requested day as the day it is, so they decide identically.
 
   **For a booking officer shifting a booking's dates.** The shift itself moved
-  the stay by the right number of nights, but everything recorded *about* it was
-  built from a start date a day early: the change history and audit entry named
-  the wrong original dates, the email to the member said the booking had moved
-  from the wrong night, the beds released for the old stay and the nights offered
-  back to the waitlist were the night before the real ones, and re-submitting a
-  booking's own dates was not recognised as "no change" — so a booking that moved
-  nowhere still created a change record, emailed the member and released a night
-  it had never occupied. All of those now use the stay's stored dates.
+  the stay by the right number of nights, and the beds it allocated were correct
+  — those are worked out from the booking's new dates after the move. But
+  everything recorded *about* the change was built from a start date a day early:
+  the change history and audit entry named the wrong original dates, the email to
+  the member said the booking had moved from the wrong night, and the nights
+  offered back to the waitlist were the night before the ones the booking had
+  actually given up.
+
+  **Two things an officer could see go wrong on the dates themselves.** Moving a
+  booking exactly one day earlier was refused with "The booking already has these
+  dates", because the day-early reading of the old dates happened to match what
+  was being asked for. That move is now possible. In the other direction,
+  re-submitting a booking's own dates was *not* recognised as "no change", so a
+  booking that moved nowhere still wrote a change record, emailed the member and
+  offered its nights to the waitlist. That is now refused, as it always should
+  have been — including when two identical shift requests arrive at once, where
+  the second one now correctly does nothing.
+
+  Behind the scenes the same correction moves the internal lock a date shift
+  takes over the chore roster onto the days the stay really occupies, so a
+  concurrent whole-roster save can no longer slip a departure-morning chore row
+  past a change that has already decided to clear it.
 
   Nothing changes for a club in New Zealand, and no stored booking, change
   record or audit entry is rewritten by this — it corrects what is written from

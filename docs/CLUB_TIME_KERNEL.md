@@ -279,16 +279,61 @@ Two honest limits while both exist:
   result.** The admin date shift computes its delta from the projected
   `oldCheckIn` and then applies that delta to equally-projected guest rows, so
   the two one-day errors cancel and every translated night lands on the right
-  day. A test asserting the shifted nights would have passed throughout. The
-  same `oldCheckIn` is *also* the bed-allocation release range, the modification
-  history's `previousData`, the waitlist release and the member's email — none of
-  which cancel — and the equality guard that refuses a no-op shift, which never
-  matched, so re-submitting a booking's own dates wrote a change record and
-  mailed the member. **Pin what the wrong value REACHES, not the one derived
-  quantity that happens to be self-correcting.**
-  `booking-date-modification-frame-parity.test.ts` compares the apply path
-  against a transcription of the preview rather than against fixed dates, so the
-  pair cannot drift apart and still pass.
+  day. A test asserting the shifted nights would have passed throughout.
+
+  **The same `oldCheckIn` reaches six other places, and none of them cancel:**
+  the roster-date lock key set, the persisted `BookingModification.previousData`,
+  the `booking.modify.admin_override` audit payload, the member's date-change
+  email, `processWaitlistForDates`, and the equality guard that is supposed to
+  refuse a no-op shift. That guard is the sharpest case, because it failed in
+  BOTH directions: it never matched a true no-op, so re-submitting a booking's
+  own dates wrote a change record, mailed the member and offered the nights to
+  the waitlist — and it falsely matched a legitimate one-day-earlier shift,
+  which was refused with "The booking already has these dates". Because the
+  writer re-reads the booking under `pg_advisory_xact_lock(1)`, the same guard is
+  what makes two concurrent identical shifts idempotent; before the fix the loser
+  wrote a second phantom modification instead. **Pin what the wrong value
+  REACHES, not the one derived quantity that happens to be self-correcting.**
+
+  **The lock keys are the example to copy, and the reason a contract test did
+  not catch this.** `rosterOperationalDayRange(oldCheckIn, oldCheckOut)` builds
+  the `roster:<date>` set, so behind Greenwich a stay of
+  `2026-07-05 → 2026-07-08` locked `roster:07-04 … roster:07-07`: the real
+  check-out day — the exact day #2622 extended the range to cover — went
+  unlocked unless a chore row already sat on it, while an irrelevant `07-04` was
+  locked instead. `roster-lock-contract.test.ts` enforces that every caller
+  *calls* `rosterOperationalDayRange(` and writes no raw
+  `{ start: checkIn, end: checkOut }`; it never inspects the VALUE handed in, and
+  its key-set cases exercise the helper with literal dates rather than a caller's
+  derived ones. **A contract over the call is not a contract over the argument.**
+  Changing which dates are in the set is deadlock-safe by construction:
+  `lockRosterDates` sorts the whole set by formatted date before acquiring any of
+  it, so no membership change can invert an acquisition order.
+
+  **`previousRange` on the bed-allocation reconciler is NOT one of the six, and
+  an earlier version of this entry said it was.** It is a dead parameter:
+  `reconcileBedAllocationsForBookingWithLodgeLockHeld` destructures only
+  `{ bookingId, db }`, pruning is driven entirely by the freshly re-read booking
+  (`bookingGuestId notIn guestIds`, `stayDate notIn nightDates`), and
+  `BedAllocation` cascades from `BookingGuest` rather than `BookingGuestNight`,
+  so the night delete/recreate leaves allocations alone. The wrong `oldCheckIn`
+  released no bed and left no stale row. That correction is recorded here rather
+  than quietly dropped, because this entry exists to record exactly this failure
+  — a plausible mechanism written into the ledger as the durable lesson, ahead
+  of the call graph that would have refuted it.
+
+  **What `booking-date-modification-frame-parity.test.ts` does and does not
+  guarantee.** It compares the apply path against a *transcription* of the
+  preview rather than against fixed dates, so the apply path cannot drift away
+  from the preview **as transcribed there**. It cannot see preview-side drift at
+  all: the oracles deliberately do not import `modify-quote/route.ts`, and a
+  measured mutation moving that route's shift delta base from `oldCheckIn` to
+  `oldCheckOut` left the parity suite at 10 passed / 0 failed. Preview-side drift
+  is caught by `modify-quote-shift.test.ts` (which did fail on that mutation) and
+  by `api-club-time-convergence.test.ts`'s import ban, not by the parity file.
+  The design is right — importing the route drags its whole module graph in and
+  proves nothing about the text that ships — but a transcription goes stale
+  silently, so both transcribed sites carry a back-pointer naming the oracle.
 
   So "is this application running on the persisted zone?" still has a different
   answer per surface until CT-6 (#2991) retires the adapters, and until then no

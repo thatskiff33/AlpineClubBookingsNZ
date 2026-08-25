@@ -74,13 +74,22 @@ function isInProgressEditStatusAllowed(status: string): boolean {
 export function getBookingEditPolicy(
   input: BookingEditPolicyInput
 ): BookingEditPolicy {
-  // STILL THE CONTAINER'S DAY, deliberately, and callers must not claim
-  // otherwise. `getTodayDateOnly()` reads `APP_TIME_ZONE` (`process.env.TZ`),
-  // where `INV-CONFIG-002` makes the persisted `ClubTimeSettings.timeZone` the
-  // only authority. Moving it means resolving the zone from the database, which
-  // makes this synchronous, pure, widely-called function `async`; that plumbing
-  // is CT-6's (#2991), not CT-4's. The `@db.Date` decodes below are a different
-  // question with a local answer, and they are fixed.
+  // STILL THE ENVIRONMENT ZONE'S DAY, deliberately, and callers must describe it
+  // that way rather than as "the container's day" (#3088 — three shipped
+  // comments said the latter, copied from an earlier version of this one).
+  // `getTodayDateOnly()` reads `APP_TIME_ZONE`, which is
+  // `TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` (`src/config/operational.ts`).
+  // That equals the container's own day ONLY when `TZ` is the variable that is
+  // set: with `NEXT_PUBLIC_TZ=America/Denver` in a UTC container — the exact
+  // deployment shape epic #2988 exists for — this is Denver's day, and with
+  // neither set it is Auckland's whatever the host is.
+  //
+  // `INV-CONFIG-002` makes the persisted `ClubTimeSettings.timeZone` the only
+  // authority, so this read is still wrong in principle. Moving it means
+  // resolving the zone from the database, which makes this synchronous, pure,
+  // widely-called function `async`; that plumbing is CT-6's (#2991), not
+  // CT-4's. The `@db.Date` decodes below are a different question with a local
+  // answer, and they are fixed.
   const today = getTodayDateOnly();
   const tomorrow = addDaysDateOnly(today, 1);
   const checkIn = storedDateOnly(input.checkIn);

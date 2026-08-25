@@ -424,10 +424,18 @@ export async function modifyBookingDates({
 
     // CT-4 (#2870), #3088: THE STORED DAY, NOT A ZONE PROJECTION OF IT. The
     // preview twin — the `editPolicy.today` gate in `modify-quote/route.ts` —
-    // reads it through `storedDateOnly`, and `editPolicy.today` is the
-    // container's day on both sides, so a projection here alone quoted one
-    // window and refused another, a day apart, for a club behind Greenwich.
-    // Reasoning in full beside the same reads in `booking-modify-validation.ts`.
+    // reads the requested day through `storedDateOnly`, so a projection here
+    // alone quoted one window and refused another, a day apart, for a club
+    // behind Greenwich.
+    //
+    // `editPolicy.today` itself is the day in `APP_TIME_ZONE`
+    // (`TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`) — the CONFIGURED
+    // environment zone, which is NOT the container's day unless `TZ` is what is
+    // set. Both sides of this pair get it from the same `getBookingEditPolicy`
+    // call, so they agree whatever it is; moving it onto the club's persisted
+    // zone is CT-6's (#2991). Only the requested day was ever asymmetric, and
+    // that is what this line fixes. Reasoning in full beside the same reads in
+    // `booking-modify-validation.ts`.
     if (
       actor.role !== "ADMIN" &&
       storedDateOnly(newCheckIn) <= editPolicy.today
