@@ -1744,8 +1744,8 @@ async function alertStalePaymentRecoveryQueueIfNeeded() {
     memberName: oldest.booking?.member
       ? `${oldest.booking.member.firstName} ${oldest.booking.member.lastName}`
       : "Unknown member",
-    checkIn: oldest.booking?.checkIn ?? new Date(),
-    checkOut: oldest.booking?.checkOut ?? new Date(),
+    checkIn: oldest.booking?.checkIn ?? null,
+    checkOut: oldest.booking?.checkOut ?? null,
     amountCents: oldest.amountCents,
     errorMessage:
       "Stripe payment recovery queue is stalled. Confirm that /api/cron/payments?task=recovery is running every 5 minutes.",

@@ -1489,8 +1489,11 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
         memberName: settlementDetail
           ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
           : "Unknown group organiser",
-        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? new Date(),
-        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? new Date(),
+        // null rather than a synthesised instant, for the reason recorded on
+        // `adminPaymentFailureTemplate`: this send is swallowed by the .catch
+        // below, so a refused date would silently drop the alert (#3113 review).
+        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
+        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
         amountCents: settlementDetail?.amountCents ?? 0,
         errorMessage:
           applied.outcome === "cancelled"

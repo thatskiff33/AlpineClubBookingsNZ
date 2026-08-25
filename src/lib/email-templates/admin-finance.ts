@@ -27,14 +27,40 @@ import {
   lateCapturePaymentLabel,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
-import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
+import {
+  emailCalendarDay,
+  emailCalendarDayOrUnknown,
+  emailClubDateTime,
+} from "@/lib/email-templates-club-time";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
 export function adminPaymentFailureTemplate(data: {
   memberName: string;
-  checkIn: Date;
-  checkOut: Date;
+  /**
+   * NULLABLE, and that is load-bearing rather than defensive (#3113 review).
+   *
+   * This is the club's general payment-anomaly alert, and three of its senders
+   * reach it from a money event whose booking they could not resolve — a
+   * superseded group-settlement intent, a paid settlement invoice whose group
+   * detail is gone, a stalled recovery queue. Those senders already pass
+   * `memberName: "Unknown group organiser"`, so the shape is established: the
+   * alert still has to go out, naming what IS known.
+   *
+   * Before this was nullable they passed `?? new Date()` instead, which is a
+   * wall-clock instant — and `emailCalendarDay` REFUSES one, correctly, because
+   * a lodge night is a stored calendar day and projecting an instant onto one is
+   * the defect epic #2988 exists to remove. But both callers wrap the send in a
+   * `catch` that only logs, so the refusal did not surface a bad date: it
+   * deleted the alert. That alert is the only notice that an organiser has been
+   * charged with nothing settled, so losing it is strictly worse than printing
+   * one odd field.
+   *
+   * `null` renders "Unknown". A caller that HAS the night keeps passing it and
+   * keeps the refusal, which is the guard doing its job.
+   */
+  checkIn: Date | null;
+  checkOut: Date | null;
   amountCents: number;
   errorMessage: string;
   /**
@@ -54,8 +80,8 @@ export function adminPaymentFailureTemplate(data: {
     ${alertBox("A payment has failed and may require manual attention.", "warning")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
-      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDayOrUnknown(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDayOrUnknown(data.checkOut) },
       { label: "Amount", value: formatCents(data.amountCents) },
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },

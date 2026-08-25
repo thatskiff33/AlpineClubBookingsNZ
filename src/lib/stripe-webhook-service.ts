@@ -1184,8 +1184,12 @@ async function alertSupersededGroupSettlementIntent(
       memberName: group
         ? `${group.organiserMember.firstName} ${group.organiserMember.lastName}`
         : "Unknown group organiser",
-      checkIn: group?.organiserBooking.checkIn ?? new Date(),
-      checkOut: group?.organiserBooking.checkOut ?? new Date(),
+      // null, not a synthesised `new Date()`: the alert renders the night as a
+      // stored calendar day and refuses an instant, and this send is wrapped in a
+      // log-only catch — so a synthesised date deleted the alert rather than
+      // showing an odd one (#3113 review). Renders "Unknown".
+      checkIn: group?.organiserBooking.checkIn ?? null,
+      checkOut: group?.organiserBooking.checkOut ?? null,
       amountCents: paymentIntent.amount,
       errorMessage,
       paymentIntentId: paymentIntent.id,

@@ -275,6 +275,36 @@ export function emailCalendarDay(value: Date): string {
   );
 }
 
+/**
+ * `emailCalendarDay`, or the literal "Unknown" for a date the sender does not have.
+ *
+ * ## Why this exists at all, rather than each caller writing the ternary
+ *
+ * An email renders twice — the default HTML body, and a rebuild from
+ * `templateData` when an operator has saved a body override — and #3113 is
+ * entirely about those two paths disagreeing. A null fallback written out
+ * longhand at both is two chances to write a different word, in the one place
+ * where a difference is the whole defect. One function means the two paths agree
+ * by construction, not by review.
+ *
+ * ## Why "Unknown" rather than an empty string or a dash
+ *
+ * It matches the `memberName: "Unknown group organiser"` its callers already
+ * pass beside it, so a reader of the alert sees one vocabulary for "we could not
+ * resolve this" instead of a blank cell they have to interpret. A blank row also
+ * reads as a rendering fault, which sends an officer looking for a bug rather
+ * than at the money event the alert is about.
+ *
+ * This is deliberately NOT the general shape of `emailCalendarDay`. A caller
+ * that HAS a stored calendar day must keep the refusal — that guard is what
+ * stops a real timestamp being mailed as a plausible wrong lodge night. Reach
+ * for this only where the value is genuinely absent and the message still has to
+ * go out.
+ */
+export function emailCalendarDayOrUnknown(value: Date | null | undefined): string {
+  return value ? emailCalendarDay(value) : "Unknown";
+}
+
 /** "16 Apr 2026, 2:30 pm" — the club civil date and time of a moment. */
 export function emailClubDateTime(value: Instant): string {
   return emailClubTime().instantDateTime(value);

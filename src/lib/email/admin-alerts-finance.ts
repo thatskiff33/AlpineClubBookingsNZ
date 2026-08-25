@@ -33,7 +33,10 @@ import {
   sendUnmuteableAdminAlert,
 } from "./admin-alerts-shared";
 import { renderEmailHtml } from "@/lib/email-theme";
-import { emailCalendarDay } from "@/lib/email-templates-club-time";
+import {
+  emailCalendarDay,
+  emailCalendarDayOrUnknown,
+} from "@/lib/email-templates-club-time";
 
 /**
  * Stamp the club's Xero organisation onto an outbound deep link, at SEND time
@@ -73,8 +76,14 @@ async function stampXeroOrganisation(
 // N-04: Admin alert - payment failure
 export async function sendAdminPaymentFailureAlert(data: {
   memberName: string;
-  checkIn: Date;
-  checkOut: Date;
+  /**
+   * Nullable for the three senders that raise this alert without a resolvable
+   * booking; `adminPaymentFailureTemplate` carries the full reasoning. Both
+   * arms below render a null through the same helper, so the default body and
+   * an operator's override say the same word.
+   */
+  checkIn: Date | null;
+  checkOut: Date | null;
   amountCents: number;
   errorMessage: string;
   paymentIntentId: string;
@@ -85,8 +94,8 @@ export async function sendAdminPaymentFailureAlert(data: {
     templateName: "admin-payment-failure",
     templateData: {
       ...data,
-      checkIn: emailCalendarDay(data.checkIn),
-      checkOut: emailCalendarDay(data.checkOut),
+      checkIn: emailCalendarDayOrUnknown(data.checkIn),
+      checkOut: emailCalendarDayOrUnknown(data.checkOut),
       amount: formatMoneyCents(data.amountCents),
     },
     preferenceKey: "adminPaymentFailure",
