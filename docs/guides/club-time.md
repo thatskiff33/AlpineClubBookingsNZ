@@ -111,6 +111,30 @@ same date; an invoice keeps its date. Nothing is edited, converted, or migrated.
   the new zone, so its date or clock time on screen can read differently.
 - **The club-local hour overnight work runs at.** Scheduled jobs are set by a
   club-local time, so they move with the zone.
+- **The deadline on payment links issued from then on, and the deadline the
+  overnight job holds existing ones to.** A payment link for a booking request
+  lasts until the end of the check-in day, and which moment that is depends on
+  this zone. Links issued after the change get the new zone's deadline, which is
+  what you want. The catch is the links **already out with members**: each keeps
+  the exact moment it was issued with, because nothing recorded is rewritten — but
+  the overnight job that cancels unpaid requests now works the new zone's day out
+  afresh. So for a short window the two can disagree.
+
+  It matters in one direction. If you move the club **eastward** — to a zone whose
+  clocks are ahead of the old one, say from London to Auckland — the new zone's
+  check-in day ends *earlier* in real terms, so the overnight job can cancel an
+  unpaid request, release its beds and kill its payment link **before** the
+  deadline the member was given. Up to about a day, in the extreme. Moving
+  **westward** is harmless the other way about: the beds stay held a little past a
+  link that has already stopped working, and the next night's run tidies it up.
+
+  This only affects requests that were **already approved and still unpaid** when
+  you changed the zone, and it clears itself as those are paid or lapse. If that
+  set is not empty and you are moving the club eastward by more than an hour or
+  two, the safe order is: change the zone, then look at
+  **Admin → Booking Requests** for approved-and-unpaid requests, and re-send a
+  fresh link to anyone whose check-in has not passed. A re-sent link is minted on
+  the new zone, so it and the overnight job then agree exactly.
 
 Both of those follow the note in **What it is** while `TZ` still exists: today the
 displayed times come from `TZ`, and this setting takes over as the rest of the
@@ -158,6 +182,7 @@ authority and changing them does not change the club's time. See
 | Times look wrong and the club time zone is correct | Something outside this setting is formatting a date on its own | This is a defect, not a configuration problem. Raise it with the club's technical contact and quote `INV-CONFIG-002` |
 | A scheduled job still runs at the old time after a zone change | Expected, and it needs an action. The nightly jobs read the zone once when the application starts, so they keep the old one until it is restarted | Restart the application. Until you do, **Admin → Setup & Configuration → System health** says so in a banner on the Cron Jobs section, and shows the zone the jobs are **actually running** alongside the one that has been configured |
 | A job is due at 2am and the clocks change that night | One hour is skipped in spring and one happens twice in autumn, and several nightly jobs are scheduled between 2am and 3am | Nothing to configure. The zone panel warns about this at the point of change; if a job matters on those two nights, ask the club's technical contact to move it outside that hour |
+| A member says their payment link stopped working before the date they were given, shortly after the club's zone was changed | The link was issued under the old zone and keeps the exact deadline it was issued with; the overnight job now works the check-in day out in the new zone, and if the new zone is ahead of the old one that day ends earlier. So the job cancelled the request and revoked the link first. Nothing was lost or miscalculated — the two were simply measured in different zones | Re-send the member a payment link from **Admin → Booking Requests**. A new link is issued on the current zone, so it and the overnight job agree. To avoid it in the first place, re-send links to approved-and-unpaid requests straight after moving the club eastward — see **What changing it does and does not do** above |
 | Someone changed the zone and nobody knows who | It is audited | **Admin → Audit Log**, action `CLUB_TIME_ZONE_UPDATED`. The entry names the administrator, and the zone before and after |
 
 ## Related links

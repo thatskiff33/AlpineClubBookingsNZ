@@ -21,9 +21,33 @@
  * no change at all — see `club-day-boundaries.test.ts`.
  *
  * `endOfDateOnlyForTimeZone` keeps its INCLUSIVE "one millisecond before the
- * next day" shape, unchanged, because fifty-eight call sites depend on it. The
- * kernel's own boundary is half-open (`endOfClubDayExclusive`) and new code
- * should use that.
+ * next day" shape, unchanged, because its call sites depend on it. The kernel's
+ * own boundary is half-open (`endOfClubDayExclusive`) and new code should use
+ * that.
+ *
+ * THAT SENTENCE USED TO READ "fifty-eight call sites", AND HALF OF IT WAS WRONG.
+ * The claim was about the PAIR — `startOfDateOnlyForTimeZone` together with
+ * `endOfDateOnlyForTimeZone` — so the pair is what has to be measured, under a
+ * stated predicate. This one is: calls in `src/`, excluding this file's own
+ * definitions, excluding `__tests__`, and excluding comment lines.
+ *
+ *     git grep -nE "(startOf|endOf)DateOnlyForTimeZone\(" -- src/ \
+ *       ':!src/lib/date-only.ts' ':!*__tests__*' \
+ *       | grep -vE ':[0-9]+: *(\*|//)'
+ *
+ * At `613cc552e`, the commit that wrote the sentence, that yields **31 call
+ * sites in 16 files**. So "sixteen files" was exactly right and "fifty-eight"
+ * was not, and no predicate reproduces 58 — the most generous reading available,
+ * every non-comment reference including the import lines, is 55. At this head it
+ * is **8 call sites in 5 files**, of which 3 are `endOfDateOnlyForTimeZone`,
+ * after #2870 moved the nine payment-link expiry sites onto
+ * `paymentLinkExpiryForCheckIn`.
+ *
+ * The method is the point, not the arithmetic. A count without the predicate it
+ * was counted under cannot be checked, so it gets copied instead — which is how
+ * one wrong figure reached six places. State the predicate, publish a command
+ * that yields exactly the stated number, and the next reader can re-run it
+ * instead of trusting it.
  */
 
 import { APP_TIME_ZONE } from "@/config/operational";
@@ -71,7 +95,7 @@ export function startOfDateOnlyForTimeZone(
  *
  * `new Date(NaN)` FOR A DAY THE KERNEL CANNOT ANSWER, which is this adapter's
  * long-standing contract for an input it cannot interpret and is what every one
- * of its fifty-eight call sites already behaves correctly against. There is
+ * of its call sites already behaves correctly against. There is
  * exactly one such day: `9999-12-31`, whose exclusive end lies in the year
  * 10000 and so has no `CalendarDate`, where the kernel throws a `RangeError`
  * (see the four-digit-year guard in `club-time/calendar-date.ts`). Before CT-2

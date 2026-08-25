@@ -98,6 +98,15 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   cron tick no memo to win anyway. So the reader choice is: **static CLI reach,
   or reach from instrumentation — either one means the runtime reader**, and only
   a module that neither can touch should take `club-time/server`.
+
+  Measured again for the payment-link expiry mint (#2870): `payment-link.ts`,
+  `booking-request.ts`, `group-booking.ts` and `cron-confirm-pending.ts` are
+  reachable from **no** CLI root, and from `src/instrumentation.node.ts` by all
+  four — the cron through `general-cron-runner`, `group-booking` through the Xero
+  inbound chain. So all four take the runtime reader, and the rule decided the
+  answer without a judgement call. Where such a module also runs under a lock, it
+  resolves the zone before the transaction and threads it in as a value; see
+  `docs/CONCURRENCY_AND_LOCKING.md` -> "Which client reads the club's timezone".
 - **Client component** — `useClubTime()`, from `@/components/club-time-provider`.
   The zone is resolved on the server and delivered through a context mounted by
   exactly two components, `AppProviders` and `WebsiteChrome`, which between them
