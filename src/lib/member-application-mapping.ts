@@ -24,14 +24,16 @@ import {
   type PersonRef,
 } from "@/lib/member-application-decisions";
 import {
-  applicationDateOfBirthDay,
-  dependentSubject,
   parseApplicantPhone,
   parseApplicationAddress,
   parseApplicationFamilyMembers,
-  unreadableDateOfBirthRefusal,
   type ApplicationFamilyMember,
 } from "@/lib/nomination";
+import {
+  applicationDateOfBirthDay,
+  dependentSubject,
+  unreadableDateOfBirthRefusal,
+} from "@/lib/member-application-date-of-birth";
 import { formatDateOnly } from "@/lib/date-only";
 import { dateOnlyInstantOf } from "@/lib/club-time";
 
@@ -411,16 +413,12 @@ export async function computeApprovalMappingOutcomes(params: {
   const applicantPhone = parseApplicantPhone(application.applicantPhone);
   const applicantAddress = parseApplicationAddress(application.applicantAddress);
   // A DATE OF BIRTH THAT NAMES NO REAL DAY IS A BLOCKING ERROR, NOT A THROW
-  // (#3082 fix round).
-  //
-  // This function is the approval PREVIEW as well as the approval's own
-  // recompute, and it is the surface an admin uses to decide MAP versus CREATE.
-  // Throwing here would blank the preview with no cause; `blockingErrors` is the
-  // channel this module already has for "the approval cannot proceed, and here is
-  // why", and `approveMemberApplication` turns the first one into a 409 with the
-  // same sentence. `computeAgeTierWithSettings` is only called for a day that
-  // decoded, so a malformed stored value can no longer reach
-  // `requireStoredCalendarDay` and throw a `RangeError` out of either path.
+  // (#3082). This function is the approval PREVIEW as well as the approval's own
+  // recompute, so throwing would blank the surface an admin needs in order to
+  // act; `blockingErrors` already means "cannot proceed, and here is why", and
+  // `approveMemberApplication` turns the first one into a 409 carrying the same
+  // sentence. Why the value can be malformed at all, and why the read schema
+  // stays loose: `member-application-date-of-birth.ts`.
   const dateOfBirthErrors: string[] = [];
   const applicantDayOfBirth = applicationDateOfBirthDay(
     formatDateOnly(application.applicantDateOfBirth),
@@ -480,11 +478,9 @@ export async function computeApprovalMappingOutcomes(params: {
     const label = familyMember
       ? `${familyMember.firstName} ${familyMember.lastName}`.trim()
       : `Dependent ${ref.index + 1}`;
-    // BEFORE the CREATE early return, so the preview reports an unreadable date
-    // whichever mode the admin picked. Only the MAP branch computes a tier from
-    // it, but the approval writes the date on BOTH paths, and an admin who is
-    // told at approval time what the preview could have told them is an admin
-    // chasing the wrong thing.
+    // BEFORE the CREATE early return: only the MAP branch computes a tier from
+    // this, but the approval writes the date on BOTH paths, so the preview has to
+    // report it either way.
     const familyDayOfBirth = familyMember
       ? applicationDateOfBirthDay(familyMember.dateOfBirth)
       : null;

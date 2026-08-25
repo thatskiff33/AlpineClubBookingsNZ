@@ -81,12 +81,12 @@ vi.mock("@/lib/rate-limit", () => ({
   rateLimiters: { membershipApplication: {} },
 }));
 
+import { parseApplicationFamilyMembers } from "@/lib/nomination";
 import {
   applicationDateOfBirthDay,
   dependentSubject,
-  parseApplicationFamilyMembers,
   unreadableDateOfBirthRefusal,
-} from "@/lib/nomination";
+} from "@/lib/member-application-date-of-birth";
 import {
   computeApprovalMappingOutcomes,
   type MappingApplicationInput,

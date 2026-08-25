@@ -80,11 +80,12 @@ import {
   getNominationTokenExpiryDate,
 } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import {
-  dateOnlyInstantOf,
-  parseCalendarDate,
-  type CalendarDate,
-} from "@/lib/club-time";
+  applicationDateOfBirthDay,
+  dependentSubject,
+  unreadableDateOfBirthRefusal,
+} from "@/lib/member-application-date-of-birth";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -320,73 +321,6 @@ export function parseApplicationFamilyMembers(raw: unknown): ApplicationFamilyMe
     lastName: cleanString(member.lastName),
     dateOfBirth: member.dateOfBirth,
   }));
-}
-
-/**
- * THE CALENDAR DAY AN APPLICATION'S STORED DATE OF BIRTH NAMES, or `null` when it
- * names none (#3082 fix round).
- *
- * `MemberApplication.familyMembers` is a `Json` column, so PostgreSQL validates
- * nothing in it, and the UNAUTHENTICATED `POST /api/applications` used to accept
- * any `\d{4}-\d{2}-\d{2}` for those dates. `1990-13-01`, `1990-06-32`,
- * `1990-00-15` and `0000-05-05` were all stored verbatim, and `1990-02-31` was
- * stored and then silently rolled to 3 March by `new Date`.
- *
- * WHY THIS EXISTS RATHER THAN A TIGHTER `isoDateSchema`. That schema is the READ
- * schema: `parseApplicationFamilyMembers` runs it over already-stored JSON on
- * four surfaces, including the admin application list and the nominating
- * member's own landing page. Tightening it would take those down for a value
- * that is already in the database — which is the rule
- * `nominations/[token]/page.tsx` states in its own docblock: reading a value must
- * not be able to take a page down whatever was written. So the WRITE paths were
- * tightened instead (this function's callers, plus the route's own schema), and
- * the readers stay loose and echo what they hold.
- *
- * WHAT IT REPLACED, and why the replacement matters more than it looks. Every
- * consumer used to do `new Date(familyMember.dateOfBirth)`. Before #3082 that
- * produced `NaN` for a malformed value, `computeAge` returned `NaN`, no age tier
- * matched, and `computeAgeTierWithSettings` fell through to its ADULT default —
- * a wrong price band, silently. After #3082 the same input throws a `RangeError`
- * out of `requireStoredCalendarDay`, INSIDE `approveMemberApplication`'s
- * transaction, where the route only special-cases
- * {@link MembershipApplicationError} — so the admin got a bare 500 with no
- * cause, on every retry, and the application could never be approved. Neither is
- * acceptable: this answers `null` so the caller can refuse with a message that
- * names WHO the bad value belongs to.
- */
-export function applicationDateOfBirthDay(
-  value: string | null | undefined,
-): CalendarDate | null {
-  return value == null ? null : parseCalendarDate(value);
-}
-
-/**
- * The refusal an unreadable date of birth earns, naming the person and the field
- * and NEVER the value.
- *
- * A date of birth is personal information and an error string travels further
- * than the request that produced it, so the existing refusals in this file report
- * a subject rather than a stored value and this one keeps that. The admin does
- * not need the bad value to act: rejecting the application and asking for a fresh
- * one is the repair, because there is no admin screen that edits a dependent's
- * date on a pending application.
- */
-export function dependentSubject(
-  familyMember: { firstName: string; lastName: string },
-  index: number,
-): string {
-  const name = `${familyMember.firstName} ${familyMember.lastName}`.trim();
-  const ordinal = `Dependent ${index + 1}`;
-  return name ? `${ordinal} (${name})` : ordinal;
-}
-
-export function unreadableDateOfBirthRefusal(subject: string): string {
-  return (
-    `${subject} has a date of birth that is not a real calendar day, so an age tier — ` +
-    "and therefore a price band — cannot be worked out for them. This application cannot be " +
-    "approved until it is resubmitted with a date that names a real day; reject it and ask the " +
-    "applicant to apply again."
-  );
 }
 
 /**
