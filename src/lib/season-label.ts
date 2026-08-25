@@ -79,6 +79,17 @@
  * profile page (which inlines it TWICE, and is not an admin surface) and the
  * member data-export route.
  *
+ * **AND NO GREP RETURNS EXACTLY THOSE NINETEEN.** Measured on this branch,
+ * excluding tests and this file: `/[Ss]easonYear \+ 1/` matches 24 lines, and
+ * FIVE of them are date ARITHMETIC rather than a label - a season's end bound in
+ * `membership-subscription-billing.ts`, two in `xero-membership-sync.ts` (one
+ * inside a Xero query string), and two building a picker's year window.
+ * Rewriting one of those does not change a label, it changes a date. Meanwhile
+ * the obvious lower-case `/seasonYear \+ 1/` matches only 18 lines and misses
+ * FOUR of the nineteen outright, because they spell it `currentSeasonYear + 1`.
+ * So 24 minus 5 is the nineteen, and the short grep silently finds fifteen of
+ * them. Read each call site rather than trusting either number.
+ *
  * **FOUR OF THE NINETEEN ARE ON MONEY AND PROVIDER PATHS AND ARE OUT OF SCOPE.**
  * Do not sweep them in, and do not reach them by grepping the template:
  *
