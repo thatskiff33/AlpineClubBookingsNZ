@@ -12,6 +12,8 @@
 import {
   addCalendarDays,
   addCalendarMonths,
+  calendarDateFromParts,
+  calendarDateParts,
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
@@ -20,7 +22,19 @@ import {
  * The EXCLUSIVE upper bound on `Member.dateOfBirth` for a member who has reached
  * `minAge` by `seasonStart`, as a `@db.Date` calendar-day encoding.
  *
- * IT DELIBERATELY OVER-ADMITS, and everything below is why.
+ * IT IS EXACT, AND THE `+1` DAY IS WHAT MAKES IT EXACT — not slack. Everything
+ * below is why, because the framing has been wrong twice.
+ *
+ * The bound admits precisely `dateOfBirth <= seasonStart - minAge years`, which
+ * is precisely `age >= minAge` as `computeAge` now computes it. That equivalence
+ * only became true with #3082: while the two sides read different frames the
+ * bound really did have to be wide enough to cover the disagreement, and this
+ * docblock said so ("it deliberately over-admits"). Both sides are calendar days
+ * now, so there is no disagreement left to absorb, and **a future author must not
+ * widen this bound believing slack is expected here.** The `+1` day is still
+ * load-bearing for the opposite reason: the comparison is EXCLUSIVE, so without
+ * it the member born on exactly the season-start anniversary — who has reached
+ * `minAge` — is dropped, which is #2859.
  *
  * #2859: this comparison used to be instant-against-instant with the two sides
  * encoded differently. `cutoffDate` derived from `getSeasonStartDate`, which was
@@ -39,10 +53,12 @@ import {
  * rows #2859's migration repairs are re-encoded into this same correct shape, so
  * they join the exposure rather than create it.)
  *
- * So the prefilter is widened to the END of the cutoff calendar day. Widening is
- * the safe direction: the query this bound feeds only proposes candidates, and
- * `computeAgeTierWithSettings` at the call site is the authority that promotes
- * or skips each one.
+ * So the bound moved to the END of the cutoff calendar day. At the time that was
+ * reasoned about as WIDENING towards the safe direction — the query only proposes
+ * candidates and `computeAgeTierWithSettings` at the call site is the authority
+ * that promotes or skips each one. That reasoning was correct and its conclusion
+ * survives, but read it as history: with both sides on one calendar frame the same
+ * bound is now exact rather than generous, per the opening paragraph.
  *
  * #2872 (CT-3): THE BOUND IS THE CALENDAR DAY, NOT LOCAL MIDNIGHT ON IT.
  * `Member.dateOfBirth` is now `DateTime @db.Date`, and `@prisma/adapter-pg`
@@ -79,8 +95,12 @@ import {
  * site remains the authority on who is promoted, and #3082 corrected that
  * authority as well — the two now read the same frame, so a candidate this bound
  * admits is judged against the same calendar day the bound was derived from.
- * What this bound has to be is wide enough never to drop a candidate, and
- * host-zone-independent so it is the same width everywhere.
+ * What this bound has to be is exact in the sense above, and
+ * host-zone-independent so it is the same bound everywhere. Both halves are
+ * pinned: `date-of-birth-prefilter.test.ts` asserts the host-independence across
+ * three zones, and asserts the RELATION to the authority directly — every date of
+ * birth `computeAgeTierWithSettings` would promote is admitted, and the first day
+ * it would not promote is excluded.
  *
  * It is also behaviour-identical against the OLD column type — a stored date of
  * birth is UTC midnight, so `< 2008-04-02T00:00:00Z` admits all of 1 April 2008
@@ -96,6 +116,21 @@ export function dateOfBirthPrefilterBoundForMinAge(
   seasonStart: CalendarDate,
   minAge: number,
 ): Date {
+  // A `minAge` NOBODY CAN HAVE REACHED admits nobody, rather than aborting the
+  // caller (#3082 fix round). `minAge` is validated as `z.number().int().min(0)`
+  // with no ceiling, so an ADULT tier configured at `minAge >= seasonYear` is
+  // absurd but permitted — and it would step this cutoff back past year 1, where
+  // the kernel's calendar arithmetic correctly refuses to go. That `RangeError`
+  // would abort the whole nightly age-up run, which also sends email and syncs
+  // contact groups for everyone else. Admitting nobody is not a fudge: nobody HAS
+  // reached that age, so the empty candidate set is the right answer, and it is
+  // what the retired host-local spelling produced by accident (a far-past date
+  // matching no member) rather than by decision.
+  const seasonStartYear = calendarDateParts(seasonStart).year;
+  if (minAge > seasonStartYear - 1) {
+    return dateOnlyInstantOf(calendarDateFromParts(1, 1, 1));
+  }
+
   // Whole years back, spelled as months so the step is the kernel's clamping
   // one: a season start is always day 1 of a month, so the clamp is unreachable
   // from `getSeasonStartCalendarDate` — but a 29 February argument must land on

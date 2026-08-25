@@ -323,11 +323,13 @@ export async function checkAgeUpMembers(): Promise<{
   const targetAgeTierMinAge = adultAgeTierSetting?.minAge ?? 18;
 
   // Find non-login members whose DOB puts them in the ADULT tier on season start.
-  // The bound comes from the configured ADULT minimum age, and it deliberately
-  // OVER-ADMITS: `dateOfBirthPrefilterBoundForMinAge` carries the whole
-  // derivation and the two off-by-ones (#2859, #2872) that shaped it, including
-  // why `computeAgeTierWithSettings` below — not this query — decides who is
-  // actually promoted.
+  // The bound comes from the configured ADULT minimum age and is EXACT since
+  // #3082 — it admits precisely the members whose age reaches that minimum, not a
+  // widened superset, because the bound and the authority below now read one
+  // calendar frame. `dateOfBirthPrefilterBoundForMinAge` carries the whole
+  // derivation and the three off-by-ones (#2859, #2872, #3082) that shaped it,
+  // including why `computeAgeTierWithSettings` below — not this query — remains
+  // the authority on who is actually promoted.
   const cutoffWindowEnd = dateOfBirthPrefilterBoundForMinAge(
     seasonStartDay,
     targetAgeTierMinAge,

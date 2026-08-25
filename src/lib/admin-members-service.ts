@@ -15,7 +15,11 @@ import {
   getXeroContactIdsForGroup,
 } from "@/lib/xero";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
-import { fixedClubClock } from "@/lib/club-time";
+import {
+  dateOnlyInstantOf,
+  fixedClubClock,
+  parseCalendarDate,
+} from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
@@ -1446,10 +1450,15 @@ export async function createAdminMember(
   let dateOfBirth: Date | null = null;
   let joinedDate: Date | null = null;
   if (data.dateOfBirth) {
-    dateOfBirth = new Date(data.dateOfBirth);
-    if (isNaN(dateOfBirth.getTime())) {
+    // `parseCalendarDate`, not `new Date` + `isNaN` (#3082 fix round) — see the
+    // same swap in `admin-member-detail-service.ts`. It matters more here: this
+    // create defaults `canLogin` from the tier computed just below, so a rolled
+    // or year-0 date could hand somebody a login off a band nobody chose.
+    const day = parseCalendarDate(data.dateOfBirth);
+    if (day === null) {
       return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
     }
+    dateOfBirth = dateOnlyInstantOf(day);
     ageTier = await computeAgeTier(dateOfBirth, clubCurrentSeasonStart);
   }
   // Organisation-type members have no age (#1440): force NOT_APPLICABLE for

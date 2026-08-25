@@ -80,6 +80,11 @@ import {
   getNominationTokenExpiryDate,
 } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
+import {
+  dateOnlyInstantOf,
+  parseCalendarDate,
+  type CalendarDate,
+} from "@/lib/club-time";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -318,6 +323,73 @@ export function parseApplicationFamilyMembers(raw: unknown): ApplicationFamilyMe
 }
 
 /**
+ * THE CALENDAR DAY AN APPLICATION'S STORED DATE OF BIRTH NAMES, or `null` when it
+ * names none (#3082 fix round).
+ *
+ * `MemberApplication.familyMembers` is a `Json` column, so PostgreSQL validates
+ * nothing in it, and the UNAUTHENTICATED `POST /api/applications` used to accept
+ * any `\d{4}-\d{2}-\d{2}` for those dates. `1990-13-01`, `1990-06-32`,
+ * `1990-00-15` and `0000-05-05` were all stored verbatim, and `1990-02-31` was
+ * stored and then silently rolled to 3 March by `new Date`.
+ *
+ * WHY THIS EXISTS RATHER THAN A TIGHTER `isoDateSchema`. That schema is the READ
+ * schema: `parseApplicationFamilyMembers` runs it over already-stored JSON on
+ * four surfaces, including the admin application list and the nominating
+ * member's own landing page. Tightening it would take those down for a value
+ * that is already in the database — which is the rule
+ * `nominations/[token]/page.tsx` states in its own docblock: reading a value must
+ * not be able to take a page down whatever was written. So the WRITE paths were
+ * tightened instead (this function's callers, plus the route's own schema), and
+ * the readers stay loose and echo what they hold.
+ *
+ * WHAT IT REPLACED, and why the replacement matters more than it looks. Every
+ * consumer used to do `new Date(familyMember.dateOfBirth)`. Before #3082 that
+ * produced `NaN` for a malformed value, `computeAge` returned `NaN`, no age tier
+ * matched, and `computeAgeTierWithSettings` fell through to its ADULT default —
+ * a wrong price band, silently. After #3082 the same input throws a `RangeError`
+ * out of `requireStoredCalendarDay`, INSIDE `approveMemberApplication`'s
+ * transaction, where the route only special-cases
+ * {@link MembershipApplicationError} — so the admin got a bare 500 with no
+ * cause, on every retry, and the application could never be approved. Neither is
+ * acceptable: this answers `null` so the caller can refuse with a message that
+ * names WHO the bad value belongs to.
+ */
+export function applicationDateOfBirthDay(
+  value: string | null | undefined,
+): CalendarDate | null {
+  return value == null ? null : parseCalendarDate(value);
+}
+
+/**
+ * The refusal an unreadable date of birth earns, naming the person and the field
+ * and NEVER the value.
+ *
+ * A date of birth is personal information and an error string travels further
+ * than the request that produced it, so the existing refusals in this file report
+ * a subject rather than a stored value and this one keeps that. The admin does
+ * not need the bad value to act: rejecting the application and asking for a fresh
+ * one is the repair, because there is no admin screen that edits a dependent's
+ * date on a pending application.
+ */
+export function dependentSubject(
+  familyMember: { firstName: string; lastName: string },
+  index: number,
+): string {
+  const name = `${familyMember.firstName} ${familyMember.lastName}`.trim();
+  const ordinal = `Dependent ${index + 1}`;
+  return name ? `${ordinal} (${name})` : ordinal;
+}
+
+export function unreadableDateOfBirthRefusal(subject: string): string {
+  return (
+    `${subject} has a date of birth that is not a real calendar day, so an age tier — ` +
+    "and therefore a price band — cannot be worked out for them. This application cannot be " +
+    "approved until it is resubmitted with a date that names a real day; reject it and ask the " +
+    "applicant to apply again."
+  );
+}
+
+/**
  * `seasonStart` is passed in, and that is a CONCURRENCY requirement rather than a
  * style (#2870, correctness review).
  *
@@ -337,14 +409,17 @@ export function parseApplicationFamilyMembers(raw: unknown): ApplicationFamilyMe
  * lane closed on the admin member page and the bulk role change.
  */
 async function computeTier(
-  dateOfBirth: string | null | undefined,
+  dateOfBirth: CalendarDate | null,
   seasonStart: Date,
 ) {
   if (!dateOfBirth) {
     return AgeTier.ADULT;
   }
 
-  return computeAgeTier(new Date(dateOfBirth), seasonStart);
+  // `dateOnlyInstantOf`, not `new Date(dateOfBirth)`: the argument is a validated
+  // calendar day, and the encoder is the one spelling `computeAge`'s
+  // stored-calendar-day precondition accepts on every host (#3082).
+  return computeAgeTier(dateOnlyInstantOf(dateOfBirth), seasonStart);
 }
 
 async function verifyNominator(email: string): Promise<VerifiedNominator> {
@@ -616,6 +691,30 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
     });
   }
 
+  // A REAL DAY, not merely a date-shaped string (#3082 fix round). The route's
+  // own schema refuses this first; the check is repeated here because this is the
+  // library boundary and a caller that skips the route must not be able to store
+  // a value that later wedges its own approval. See
+  // {@link applicationDateOfBirthDay} for the whole reasoning, including why the
+  // READ schema stays loose.
+  const applicantDayOfBirth = applicationDateOfBirthDay(applicantDateOfBirth);
+  if (!applicantDayOfBirth) {
+    throw new MembershipApplicationError("Date of birth must be a real date", 422, {
+      applicantDateOfBirth: ["Date of birth must be a real date"],
+    });
+  }
+
+  const dependentDayErrors = familyMembers.flatMap((familyMember, index) =>
+    applicationDateOfBirthDay(familyMember.dateOfBirth)
+      ? []
+      : [`Dependent ${index + 1} date of birth must be a real date`],
+  );
+  if (dependentDayErrors.length > 0) {
+    throw new MembershipApplicationError(dependentDayErrors[0], 422, {
+      familyMembers: dependentDayErrors,
+    });
+  }
+
   if (nominator1Email === nominator2Email) {
     throw new MembershipApplicationError("Please provide two different nominators", 422, {
       nominator2Email: ["Please provide two different nominators"],
@@ -647,7 +746,10 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
         applicantFirstName,
         applicantLastName,
         applicantEmail,
-        applicantDateOfBirth: applicantDateOfBirth ? new Date(applicantDateOfBirth) : null,
+        // `dateOnlyInstantOf` of the VALIDATED day, not `new Date(rawString)`:
+        // the raw form rolled `1990-02-31` to 3 March and made `0000-05-05` a
+        // year-0 value that no `CalendarDate` reader can decode (#3082).
+        applicantDateOfBirth: dateOnlyInstantOf(applicantDayOfBirth),
         applicantPhone,
         applicantAddress,
         familyMembers,
@@ -1457,8 +1559,41 @@ export async function approveMemberApplication(
       );
     }
 
+    // The applicant's own stored day, decoded once and refused if it names none.
+    // `applicantDateOfBirth` IS a `@db.Date` column, so this is not the
+    // `familyMembers` JSON hole — what it catches is a year outside the
+    // `CalendarDate` range, which `createMemberApplication` could once write from
+    // `new Date("0000-05-05")`. Left unguarded that value throws a `RangeError`
+    // out of `computeAge` inside this transaction and the route answers a bare
+    // 500 (#3082 fix round).
+    const applicantDayOfBirth = applicationDateOfBirthDay(
+      formatDateOnly(lockedApplication.applicantDateOfBirth),
+    );
+    if (!applicantDayOfBirth) {
+      throw new MembershipApplicationError(
+        unreadableDateOfBirthRefusal("The applicant"),
+        422
+      );
+    }
+
     const address = parseApplicationAddress(lockedApplication.applicantAddress);
     const familyMembers = parseApplicationFamilyMembers(lockedApplication.familyMembers);
+    // EVERY dependent's day, decoded in ONE pass before anything is written, and
+    // refused by name if any of them names no real day (#3082 fix round). Doing
+    // it here rather than inside the write loop below means the refusal is the
+    // same 422 with the same message on the mapping path and the all-CREATE path
+    // — the mapping recompute reports the same condition as a blocking 409, and
+    // two statuses for one cause is how an admin ends up chasing the wrong thing.
+    const dependentDaysOfBirth = familyMembers.map((familyMember, index) => {
+      const day = applicationDateOfBirthDay(familyMember.dateOfBirth);
+      if (!day) {
+        throw new MembershipApplicationError(
+          unreadableDateOfBirthRefusal(dependentSubject(familyMember, index)),
+          422
+        );
+      }
+      return { day, instant: dateOnlyInstantOf(day) };
+    });
     const applicantPhone = parseApplicantPhone(lockedApplication.applicantPhone);
     // E10 (#1936): when any person is mapped, age tiers are computed from
     // AgeTierSetting rows read via `tx` (bypassing the 5-minute process cache)
@@ -1475,10 +1610,7 @@ export async function approveMemberApplication(
           mappingSeasonStart,
           mappingAgeTierSettings
         )
-      : await computeTier(
-          formatDateOnly(lockedApplication.applicantDateOfBirth),
-          mappingSeasonStart
-        );
+      : await computeTier(applicantDayOfBirth, mappingSeasonStart);
     // The application form captures the booking-gate profile details, so
     // approval counts as initial confirmation for the applicant and dependents.
     const profileConfirmedAt = new Date();
@@ -1773,13 +1905,17 @@ export async function approveMemberApplication(
     for (let index = 0; index < familyMembers.length; index += 1) {
       const familyMember = familyMembers[index];
       const familyDecision = decisions[index + 1].decision;
+      // The day decoded once above, so the tier and the stored date can never
+      // come from two readings of one string.
+      const { day: dependentDayOfBirth, instant: dependentDateOfBirth } =
+        dependentDaysOfBirth[index];
       const dependentAgeTier = mappingAgeTierSettings
         ? computeAgeTierWithSettings(
-            new Date(familyMember.dateOfBirth),
+            dependentDateOfBirth,
             mappingSeasonStart,
             mappingAgeTierSettings
           )
-        : await computeTier(familyMember.dateOfBirth, mappingSeasonStart);
+        : await computeTier(dependentDayOfBirth, mappingSeasonStart);
 
       if (familyDecision.mode === "MAP") {
         const outcome = outcomeByRef.get(`family:${index}`);
@@ -1793,7 +1929,7 @@ export async function approveMemberApplication(
         const dependentUpdate: Prisma.MemberUncheckedUpdateInput = {
           firstName: familyMember.firstName,
           lastName: familyMember.lastName,
-          dateOfBirth: new Date(familyMember.dateOfBirth),
+          dateOfBirth: dependentDateOfBirth,
           ageTier: dependentAgeTier,
           phoneCountryCode: applicantPhone.phoneCountryCode,
           phoneAreaCode: applicantPhone.phoneAreaCode,
@@ -1973,7 +2109,7 @@ export async function approveMemberApplication(
           emailVerified: true,
           firstName: familyMember.firstName,
           lastName: familyMember.lastName,
-          dateOfBirth: new Date(familyMember.dateOfBirth),
+          dateOfBirth: dependentDateOfBirth,
           role: "USER",
           ageTier: dependentAgeTier,
           active: true,
