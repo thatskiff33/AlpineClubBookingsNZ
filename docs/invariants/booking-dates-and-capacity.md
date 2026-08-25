@@ -773,9 +773,11 @@ derivation).
   for a booker far enough from New Zealand. The value submitted, the club-pinned
   label displayed, the night count, and the hold deadline are all derived from
   the string via `parseDateOnly` / `addDaysDateOnly` / `countNightsDateOnly`,
-  which encode the NZ calendar day internally at UTC midnight (the
-  storage-encoding note in the stay-boundary invariant above: the instant that
-  renders as club midday, the same calendar day in every zone).
+  which encode the club calendar day internally at UTC midnight — an encoding and
+  not a moment, per `INV-DATE-010`, which is also where the qualification lives:
+  that encoding renders as club midday only for a club at or ahead of Greenwich,
+  and the day it names comes back correctly because it is decoded in UTC rather
+  than projected.
   `formatCalendarDayOnly(year, monthIndex, day)` is the
   canonical encoder; the #2264 `localCalendarDayToDateOnly` bridge, which patched
   only the display half of this hazard while the fragile encoding lived on, is

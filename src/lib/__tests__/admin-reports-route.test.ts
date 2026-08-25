@@ -212,9 +212,11 @@ describe("admin reports route", () => {
     const newMemberQuery = mockPrisma.member.count.mock.calls.at(-1)![0];
     expect(
       newMemberQuery.where.OR[0],
-      "INV-DATE-010: the joinedDate arm must bind the two calendar days. A " +
+      "INV-DATE-026: the joinedDate arm must bind the two calendar days. A " +
         "club-midnight instant here narrows to the previous UTC day and the " +
-        "new-member count starts a day early.",
+        "new-member count starts a day early. That narrowing is 026's " +
+        "corollary; INV-DATE-010 rules what the stored value means, not what a " +
+        "bound against it has to be.",
     ).toEqual({
       joinedDate: { gte: day("2026-04-08"), lte: day("2026-04-10") },
     });

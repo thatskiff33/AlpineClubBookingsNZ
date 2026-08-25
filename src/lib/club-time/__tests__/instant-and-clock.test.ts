@@ -273,11 +273,14 @@ describe("the Prisma @db.Date encoding", () => {
     expect(calendarDateOfDateOnlyInstant(encoded)).toBe("2026-04-16");
   });
 
-  it("decodes in UTC, not in club time (INV-DATE-010)", () => {
+  it("decodes in UTC, not in club time (INV-DATE-019, INV-DATE-026)", () => {
     /*
-      The column stores an ENCODING, not a moment, and the encoding is defined in
-      UTC. Reading it in a club's zone is the defect from the other direction:
-      for America/Denver, `2026-04-05T00:00:00Z` is 4 April.
+      The column stores an ENCODING, not a moment (INV-DATE-010), and the encoding
+      is defined in UTC. Reading it in a club's zone is the defect from the other
+      direction: for America/Denver, `2026-04-05T00:00:00Z` is 4 April.
+
+      The decode itself is INV-DATE-019's first exact boundary with INV-DATE-026 —
+      cite those and not INV-DATE-010, which this case's name used to (#3080).
     */
     const encoded = dateOnlyInstantOf(cd("2026-04-05"));
     expect(calendarDateOfDateOnlyInstant(encoded)).toBe("2026-04-05");

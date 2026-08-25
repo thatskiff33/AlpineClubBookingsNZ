@@ -131,9 +131,10 @@ export function seasonYearOfCalendarDate(
  * definition is UTC midnight (`INV-DATE-019`'s first exact boundary, and
  * `INV-DATE-026`); the day it names is the same day in every zone, so projecting
  * it through one - the club's or the host's - is the defect rather than the
- * remedy. Do NOT cite `INV-DATE-010` for the decode: it forbids deriving a rule
- * from the UTC READING of such a value, which is the opposite of what it gets
- * quoted for (#3076 corrected four such citations).
+ * remedy. Do NOT cite `INV-DATE-010` for the decode: it names the two ids above
+ * as that authority rather than itself, and what it forbids is deriving a rule
+ * from such a value read as a MOMENT (#3076 corrected four such citations;
+ * #3080 the rest).
  *
  * IT REFUSES A VALUE CARRYING A UTC TIME OF DAY, for the reason F2 recorded on
  * `normalizeBookingDate` (#3076). `calendarDateOfDateOnlyInstant` silently FLOORS

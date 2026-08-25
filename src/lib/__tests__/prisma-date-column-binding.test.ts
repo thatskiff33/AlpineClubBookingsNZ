@@ -222,10 +222,11 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
 
     expect(
       whereValues(1, '"dateOfBirth" < $1'),
-      "INV-DATE-010: `Member.dateOfBirth` is `@db.Date` since #2872. If this " +
-        "comes back with a time on it the migration has not been applied to the " +
-        "schema the client was generated from, and every bound below is asking " +
-        "a different question than it reads as.",
+      "INV-DATE-026: `Member.dateOfBirth` is `@db.Date` since #2872, and this " +
+        "file is that rule's executable form. If this comes back with a time on " +
+        "it the migration has not been applied to the schema the client was " +
+        "generated from, and every bound below is asking a different question " +
+        "than it reads as.",
     ).toEqual(["2008-04-02"]);
   });
 
@@ -358,7 +359,7 @@ describe("the columns #2872 narrowed bind as calendar DAYS (CT-3, epic #2988)", 
       whereValues(2, '"dateOfBirth" < $1'),
       "One statement, two columns of two different kinds, two encodings. If " +
         "these agree, either an instant has been narrowed or a calendar day has " +
-        "not been — and INV-DATE-019 or INV-DATE-010 is broken either way.",
+        "not been — and INV-DATE-019 or INV-DATE-026 is broken either way.",
     ).toEqual(["2008-04-02", "2026-07-01 12:00:00"]);
 
     captured.length = 0;

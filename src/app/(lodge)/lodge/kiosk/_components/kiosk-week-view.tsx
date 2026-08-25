@@ -111,9 +111,13 @@ const rosterStatusMeta: Record<
   enough west, local midnight on the 15th is already the 16th in Auckland, and
   the strip would label a column with the wrong night.
 
-  UTC midnight has no such edge. New Zealand is UTC+12/+13, so a UTC-midnight
-  instant is always midday-ish the SAME calendar day in club time, and the key,
-  the arithmetic and the rendered label can never disagree.
+  UTC midnight has no such edge, and the reason is NOT the one this block used to
+  give. It said "New Zealand is UTC+12/+13, so a UTC-midnight instant is always
+  midday-ish the SAME calendar day in club time" — the accident INV-DATE-010
+  records as holding only for a club at or ahead of Greenwich, and false for one
+  behind it. What actually removes the edge is that nothing here projects: the key
+  and the label are both read in UTC over the UTC-midnight encoding, so the key,
+  the arithmetic and the rendered label can never disagree, for any club.
 
   The way BACK is `formatDateOnly` from `@/lib/date-only`, called by name at each
   site. There used to be a `formatDateKey` helper here that assembled the string
@@ -121,8 +125,11 @@ const rosterStatusMeta: Record<
   encoding written a fourth way, in an EXPORTED function, which is precisely the
   shape that put roughly eighteen Xero document dates beyond the reach of #2682's
   census (#2684). Every value it was handed is a `parseDateKey` result, so it is
-  a date-only value and the canonical encoder reads back the day it encodes
-  (INV-DATE-010). Deliberately NOT `formatDateOnlyForTimeZone`: the key and the
+  a date-only value and the canonical encoder reads back the day it encodes —
+  INV-DATE-019's first exact boundary, with INV-DATE-026, which are the citation
+  for that decode rather than INV-DATE-010 (#3080).
+
+  Deliberately NOT `formatDateOnlyForTimeZone`: the key and the
   instant are two spellings of the same abstract calendar day, and converting one
   into the club's zone would reintroduce the very drift this block removed.
 */

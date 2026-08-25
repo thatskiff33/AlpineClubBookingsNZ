@@ -29,8 +29,11 @@ import {
  * of Greenwich. For a club in `America/Denver`, `2026-04-05T00:00:00Z` renders
  * as 4 April — so the weekday came from the previous day while the
  * `getUTCDate()` half came from the right one, and the label named two different
- * days at once. `INV-DATE-010` already forbids deriving a rule from the UTC
- * reading of a date-only value.
+ * days at once. `INV-DATE-010` already forbids deriving a rule from a date-only
+ * value read as a MOMENT, which is what pinning the day to UTC midnight in order
+ * to format it does. (The rule is about the value's nature, not about which zone
+ * decodes it: the decode authority is `INV-DATE-019`'s first exact boundary with
+ * `INV-DATE-026`; #3080.)
  *
  * The fix is structural rather than a correction: a lodge night is a CALENDAR
  * DAY, so it is formatted as one, with no zone anywhere in the call. See

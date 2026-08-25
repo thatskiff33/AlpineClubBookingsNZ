@@ -336,9 +336,10 @@ describe("admin subscription billing route", () => {
   The value's SHAPE matters as much as its day. An explicit `?decisionDate=` is
   parsed to a date-only value at UTC midnight, and the default has to be the same
   kind of thing: the billing engine and the `@db.Date` columns it compares
-  against both read UTC midnight as the encoding of a calendar day
+  against both hold UTC midnight as the encoding of a calendar day
   (`INV-DATE-010`). A club-midnight instant would be the previous day once
-  narrowed.
+  narrowed — that is `INV-DATE-026`'s corollary, which is the rule for a bound
+  against one of these columns.
 */
 describe("subscription billing — the default decision date is the club's day (CT-4, #2870)", () => {
   beforeEach(() => {

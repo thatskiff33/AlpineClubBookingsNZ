@@ -13,8 +13,10 @@ import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
  * - **Date-only, and a date of birth carries no time zone at all.** Every column
  *   this reads — `Member.dateOfBirth`, `FamilyGroupJoinRequest.childDateOfBirth`
  *   and `requestedDateOfBirth` — is `DateTime @db.Date` since #2872: a calendar
- *   day, encoded as UTC midnight. A `Date` or an ISO string is therefore read by
- *   TRUNCATION (`formatDateOnly`, INV-DATE-010, INV-DATE-026), which returns the
+ *   day, encoded as UTC midnight and never a moment (INV-DATE-010). A `Date` or
+ *   an ISO string is therefore read by TRUNCATION (`formatDateOnly`,
+ *   INV-DATE-019's first exact boundary with INV-DATE-026 — the citation for a
+ *   decode, which INV-DATE-010 is not; #3080), which returns the
  *   stored day from any zone on earth. "Today" is a different question with a
  *   different answer and keeps the club's calendar date
  *   (`todayDateOnlyForTimeZone`), never the server's or the browser's UTC date —

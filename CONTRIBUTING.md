@@ -74,7 +74,10 @@ the full environment and club config contract.
   a guard rather than a sandbox: `eslint.config.mjs` lists beside the rule both
   what it catches and the forms that still get past it. Pick the helper that
   matches what the value MEANS: `formatDateOnly` for a `@db.Date` calendar day
-  (INV-DATE-010), `formatDateOnlyForTimeZone` for a real instant such as
+  (INV-DATE-010 says the stored value is an encoding rather than a moment;
+  INV-DATE-019's first exact boundary, with INV-DATE-026, is what blesses reading
+  it back in UTC — do not cite 010 for a decode, #3080),
+  `formatDateOnlyForTimeZone` for a real instant such as
   `createdAt`, whose UTC day is the previous New Zealand day all morning, and
   `todayDateOnlyForTimeZone` / `getTodayDateOnly` for "today" (INV-DATE-019).
   Do not wrap an encoder in an exported one-line rename, and do not rebuild the

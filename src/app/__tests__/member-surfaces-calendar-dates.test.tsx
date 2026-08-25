@@ -6,7 +6,11 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 
 /**
  * A LODGE NIGHT RENDERS AS THE DAY IT IS STORED AS, ON EVERY CLUB (CT-4 group E,
- * #2870; epic #2988; INV-DATE-010).
+ * #2870; epic #2988; INV-DATE-019's first exact boundary, with INV-DATE-026).
+ *
+ * INV-DATE-010 is why the stored value is an encoding of a calendar day rather
+ * than a moment, and that is the only claim it is cited for here: it is not the
+ * authority for reading one back, and it says so itself (#3080).
  *
  * ## The defect these assertions are about
  *

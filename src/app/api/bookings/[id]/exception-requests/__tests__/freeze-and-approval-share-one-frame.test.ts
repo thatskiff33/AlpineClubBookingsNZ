@@ -308,9 +308,10 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
       existing `@db.Date` value the same way is fine … it is not fine for a
       `DateTime` column" — over the columns `INV-DATE-026` establishes as calendar
       days. `INV-DATE-010` is why the value is an ENCODING rather than a moment,
-      and is NOT the citation for the decode: its closing clause says no rule may
-      be derived from the UTC READING of these values, which is the opposite
-      sentence, and this comment used to attribute the inverse to it. Either way
+      and is NOT the citation for the decode: its closing clause names those two
+      ids as that authority, and what it forbids is deriving a rule from one of
+      these values read as a MOMENT. This comment used to attribute the inverse
+      of that to it (#3080). Either way
       the nights are the stored days: 4, 5 and 6 July for the requested
       `[04, 07)` envelope.
 

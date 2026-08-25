@@ -102,8 +102,12 @@ export function endOfDateOnlyForTimeZone(
  * THE CANONICAL ENCODER, and the only place in `src/` allowed to write the
  * truncation by hand (#2684). The receiver must be a date-only value — a
  * `@db.Date` column, or a `Date` this module produced — whose instant is UTC
- * midnight, because that is what makes the UTC reading and the NZ calendar day
- * the same day (INV-DATE-010).
+ * midnight, because that is what makes the UTC reading and the day the value
+ * encodes the same day, for EVERY club rather than only for one east of
+ * Greenwich. That truncation is `INV-DATE-019`'s first exact boundary, over the
+ * columns `INV-DATE-026` establishes as calendar days. `INV-DATE-010` is why the
+ * value is an encoding rather than a moment, and is not the citation for the
+ * decode — it says so itself (#3080).
  *
  * It is NOT the encoder for a real instant. `createdAt`, `updatedAt` and every
  * other bare `DateTime` column is a moment, and its UTC calendar day is the

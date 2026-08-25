@@ -137,7 +137,10 @@ export async function GET(req: NextRequest) {
       // schema is strictly date-only (#1931 item 15).
       //
       // TRUNCATION, NOT THE CLUB-ZONE FORMATTER, AND THE TWO ARE NOT
-      // INTERCHANGEABLE (#2872, INV-DATE-010). `applicantDateOfBirth` is
+      // INTERCHANGEABLE (#2872; INV-DATE-019's first exact boundary, with
+      // INV-DATE-026 — not INV-DATE-010, which rules that the value is an
+      // encoding rather than a moment and is not the citation for a decode;
+      // #3080). `applicantDateOfBirth` is
       // `@db.Date`: it holds a CALENDAR DAY, encoded as UTC midnight, and
       // `formatDateOnly` reads back exactly the day that was stored from any
       // zone on earth. `formatDateOnlyForTimeZone` — which this used to call —
