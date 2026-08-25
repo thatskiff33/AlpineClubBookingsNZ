@@ -98,6 +98,7 @@ import {
   type InboundMemberContactPatch,
 } from "./xero-contact-create-recovery";
 import { buildXeroContactUrl } from "./xero-links";
+import { isXeroSandboxContactEmail } from "@/lib/xero-sandbox-contact-email";
 import { upsertXeroObjectLink } from "./xero-sync";
 import {
   DEFAULT_XERO_SYNC_SCOPE,
@@ -250,7 +251,12 @@ export async function importMembersFromXeroGroups(
   skippedExisting: number;
   linkedExisting: number;
   skippedNoEmail: number;
-  skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }>;
+  skippedNoEmailDetails: Array<{
+    name: string;
+    xeroContactId: string;
+    /** Present only when the contact HAS an address that cannot be used (#3036). */
+    reason?: string;
+  }>;
   skippedArchived: number;
   skippedArchivedDetails: SkippedXeroContactDetail[];
   createdMembers: ImportedXeroMemberDetail[];
@@ -269,7 +275,11 @@ export async function importMembersFromXeroGroups(
   let skippedExisting = 0;
   let linkedExisting = 0;
   let skippedNoEmail = 0;
-  const skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }> = [];
+  const skippedNoEmailDetails: Array<{
+    name: string;
+    xeroContactId: string;
+    reason?: string;
+  }> = [];
   let skippedArchived = 0;
   const skippedArchivedDetails: SkippedXeroContactDetail[] = [];
   const createdMembers: ImportedXeroMemberDetail[] = [];
@@ -572,11 +582,22 @@ export async function importMembersFromXeroGroups(
           continue;
         }
 
-        if (!contact.emailAddress) {
+        // INV-CONFIG-005 (#3036): a contained address is not an address we may
+        // give a member. It is a hash of somebody's real address on a reserved
+        // domain, written onto the contact because this installation is a copy,
+        // and a Member created from it would look reachable while being able to
+        // receive nothing. So it joins the no-usable-address skip and carries
+        // its own reason, because "no email address" would be false — the
+        // contact has one, it just cannot be used.
+        const containedAddress = isXeroSandboxContactEmail(contact.emailAddress);
+        if (!contact.emailAddress || containedAddress) {
           skippedNoEmail++;
           skippedNoEmailDetails.push({
             name: contactName,
             xeroContactId: contact.contactId,
+            reason: containedAddress
+              ? "This contact's email address was replaced with a non-deliverable one because this installation is a copy. Import it on the club's live site instead."
+              : undefined,
           });
           continue;
         }

@@ -17,7 +17,6 @@ import {
   Invoice,
   LineAmountTypes,
   LineItem,
-  RequestEmpty,
 } from "xero-node";
 import { BookingStatus, GroupBookingStatus } from "@prisma/client";
 import { prisma } from "./prisma";
@@ -41,6 +40,11 @@ import {
   callXeroApi,
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
+import {
+  reassertXeroInvoiceEmailPolicy,
+  resolveXeroInvoiceEmailPolicy,
+  sendXeroInvoiceEmail,
+} from "@/lib/xero-invoice-email";
 import {
   getHutFeeItemCodeMap,
   getResolvedAccountMapping,
@@ -270,7 +274,8 @@ export async function createXeroInvoiceForGroupSettlement(
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(organiserMemberId, options);
+  // #3036 review P1-12: reuse the client built above rather than rebuilding one.
+  const contactId = await findOrCreateXeroContact(organiserMemberId, { ...options, xero, tenantId });
 
   const [hutFeeMapping, hutFeeItemCodeMap] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
@@ -488,6 +493,14 @@ export async function createXeroInvoiceForGroupSettlement(
       createdInvoice.invoiceID,
       "v1"
     );
+    // Environment-safety boundary (#3035; INV-CONFIG-004), resolved OUT HERE so a
+    // copy does nothing further and no lock is taken on its behalf. #3071: it is
+    // RE-PROVED inside the lock before the send — `reassertXeroInvoiceEmailPolicy`.
+    const invoiceEmailPolicy = await resolveXeroInvoiceEmailPolicy();
+    // Recorded from what the GATE did, never from the policy alone (#3035
+    // review) — see `resolveXeroInvoiceEmailPolicy` on why two withhold reasons
+    // must never both claim one event.
+    let invoiceEmailWithheldForEnvironment = false;
     try {
       const emailGate = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -520,6 +533,7 @@ export async function createXeroInvoiceForGroupSettlement(
             cancelled: true,
             responseBody: null,
             withheld: false,
+            environmentPolicy: null,
             organiserBookingId: null as string | null,
             organiserEmail: null as string | null,
           };
@@ -546,36 +560,53 @@ export async function createXeroInvoiceForGroupSettlement(
             cancelled: false,
             responseBody: null,
             withheld: true,
+            environmentPolicy: null,
             organiserBookingId: fresh.groupBooking
               .organiserBookingId as string | null,
             organiserEmail: fresh.groupBooking.organiserBooking.member
               .email as string | null,
           };
         }
-        const emailResponse = await callXeroApi(
-          () =>
-            xero.accountingApi.emailInvoice(
-              tenantId,
-              createdInvoice.invoiceID!,
-              new RequestEmpty(),
-              invoiceEmailIdempotencyKey
-            ),
-          {
-            operation: "emailInvoice",
-            resourceType: "INVOICE",
-            workflow: "createXeroInvoiceForGroupSettlement",
-            context: `emailInvoice(group settlement ${settlementId})`,
-          }
-        );
+        // #3035: the club's own switch above is checked FIRST, so it stays
+        // recorded as the club's decision on a copy. No withheld-email audit row
+        // for this branch — that row asserts an administrator set the switch.
+        const freshPolicy =
+          await reassertXeroInvoiceEmailPolicy(invoiceEmailPolicy, tx);
+        if (freshPolicy.kind !== "allow") {
+          // Record from THIS answer, not the outer one (the helper says why).
+          return {
+            cancelled: false,
+            responseBody: null,
+            withheld: false,
+            environmentPolicy: freshPolicy,
+            organiserBookingId: null as string | null,
+            organiserEmail: null as string | null,
+          };
+        }
+        const emailResponse = await sendXeroInvoiceEmail({
+          clearance: freshPolicy.clearance,
+          xero,
+          tenantId,
+          invoiceId: createdInvoice.invoiceID!,
+          idempotencyKey: invoiceEmailIdempotencyKey,
+          workflow: "createXeroInvoiceForGroupSettlement",
+          context: `emailInvoice(group settlement ${settlementId})`,
+        });
         return {
           cancelled: false,
-          responseBody: emailResponse.body ?? null,
+          responseBody: emailResponse.body,
           withheld: false,
+          environmentPolicy: null,
           organiserBookingId: null as string | null,
           organiserEmail: null as string | null,
         };
       });
       invoiceEmailWithheld = emailGate.withheld;
+      // Mutually exclusive by construction, and narrowed to the confirmed-copy
+      // case exactly as the booking path is: an UNKNOWN role is an ERROR below.
+      invoiceEmailWithheldForEnvironment =
+        emailGate.environmentPolicy?.kind === "withhold" &&
+        emailGate.environmentPolicy.suppressedForNonProduction;
       if (
         emailGate.withheld &&
         emailGate.organiserBookingId &&
@@ -603,6 +634,16 @@ export async function createXeroInvoiceForGroupSettlement(
           'Skipped the Xero group settlement invoice email for an organiser booking with "No emails" turned on'
         );
       }
+      if (emailGate.environmentPolicy?.kind === "withhold") {
+        const withheld = emailGate.environmentPolicy;
+        const context = { settlementId, invoiceId: createdInvoice.invoiceID };
+        if (withheld.error) {
+          invoiceEmailError = withheld.error;
+          logger.error(context, withheld.logMessage);
+        } else {
+          logger.info(context, withheld.logMessage);
+        }
+      }
       if (emailGate.cancelled) {
         await voidCancelledGroupSettlementInvoice({
           settlementId: settlement.id,
@@ -629,6 +670,9 @@ export async function createXeroInvoiceForGroupSettlement(
         invoiceEmail: invoiceEmailResponseBody,
         invoiceEmailError,
         invoiceEmailWithheldByNoEmails: invoiceEmailWithheld,
+        // #3035: a THIRD, distinct reason nothing was emailed — a confirmed
+        // copy. Never conflated with the switch above or a provider failure.
+        invoiceEmailWithheldForEnvironment,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: createdInvoice.invoiceID,

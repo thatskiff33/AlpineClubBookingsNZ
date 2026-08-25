@@ -542,6 +542,31 @@ jobs:
       # step below carries the identical guard for the identical reason; keep
       # the two in step.
       #
+      # AND THAT REASONING WAS HALF THE PROBLEM. It handled the CREATING push of
+      # an epic branch and stopped there; a NON-creating push to one — a child
+      # merging in, which happens once per child — carries `before = the previous
+      # epic commit`, and against that base the landed child's one-shot
+      # allowances read as already spent. The gate then correctly says "delete
+      # the entry" for entries that are still REQUIRED against `main`, which is
+      # the base the epic's own pull request is judged on. Measured on epic
+      # #2986: `--base <previous epic commit>` failed with 8 findings while
+      # `--base origin/main` reported OK over the identical tree, so `verify` was
+      # red on the integration branch for the whole epic and the final pull
+      # request carried a stale failure under the same context name. That is the
+      # one-shot allowance model meeting an integration branch, and no allowance
+      # file can satisfy both bases at once.
+      #
+      # So an `epic/**` push is judged against `origin/main` too. THE NARROWNESS
+      # IS THE POINT: `origin/main` must NOT become the base for a push to `main`
+      # itself, because there it IS the commit under test — the merge base is
+      # HEAD, the diff is empty, and the gate reports "0 production file(s)
+      # changed" over any tree at all. `file-size-budget.test.ts` reproduced that
+      # with two lanes each adding 60 lines to a 600-line file: both pass their
+      # own pull-request gate, merge to 720 against a 700 budget, and a push gate
+      # based on `origin/main` says nothing. An epic branch is not the commit
+      # under test, so the comparison there is real and is exactly the one its
+      # pull request will make.
+      #
       # `fetch-depth: 0` on this job's checkout is load-bearing for a quieter
       # reason than it used to say here: a shallow clone does NOT fail: it
       # resolves the ref, returns HEAD as the merge base, and reports OK over a
@@ -553,7 +578,7 @@ jobs:
       # behind the slower gates.
       - name: File-size budget ratchet
         env:
-          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false) && github.event.before || 'origin/main' }}
+          BUDGET_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
         run: npm run quality:budget -- --base "$BUDGET_BASE"
 
       - name: Generate Prisma client
@@ -679,7 +704,7 @@ jobs:
       # matters now that `epic/**` branches are created routinely.
       - name: Check migration safety ledger coverage
         env:
-          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false) && github.event.before || 'origin/main' }}
+          MIGRATION_SAFETY_BASE: ${{ (github.event_name == 'push' && github.event.created == false && !startsWith(github.ref, 'refs/heads/epic/')) && github.event.before || 'origin/main' }}
         run: bash scripts/check-migration-safety-coverage.sh --base "$MIGRATION_SAFETY_BASE"
 
       # #2418: a data-REWRITING migration (backfill, repair, value transform)

@@ -11,6 +11,22 @@ import {
   classifyEnvironmentClubTimeZoneSeed,
   type EnvironmentClubTimeZoneSeed,
 } from "@/lib/club-time-zone-env";
+/*
+  TYPE-ONLY, and it has to stay that way. `environment-role.ts` imports
+  `@/lib/prisma`, and this module is imported by the `tsx` entrypoints
+  `npm run setup` / `npm run setup:check` as well as by the admin API. An
+  `import type` is erased before anything runs, so the resolution arrives here as
+  DATA on the injected snapshot (`SetupDatabaseSnapshot.environmentRole`,
+  resolved in `setup-readiness-db.ts`) and `buildSetupReadiness` stays
+  synchronous over injected data. Making it async to call the resolver from in
+  here would ripple through every caller and every test that builds a readiness
+  report.
+*/
+import type { EnvironmentRoleResolution } from "@/lib/environment-role";
+import type { EnvironmentRoleDeclaration } from "@/lib/environment-role-declaration";
+// Type-only for the same reason as the line above, so this module keeps no
+// runtime edge to anything that reads a database.
+import type { WithheldApplicationEmail } from "@/lib/environment-safety-withheld";
 import { clubConfigSchema, type ClubConfig } from "../config/schema";
 import {
   DEFAULT_ADMIN_MODULE_SETTINGS,
@@ -28,6 +44,7 @@ import { authSecretWeaknessReason } from "@/lib/integration-crypto";
 export const SETUP_STEP_IDS = [
   "club-config",
   "club-time-zone",
+  "environment-role",
   "runtime-env",
   "auth-secret-strength",
   "seed-admin",
@@ -141,6 +158,21 @@ export interface SetupDatabaseSnapshot {
   // wait for something that cannot happen. Undefined (older callers, a snapshot
   // taken before this field existed) means the read succeeded.
   clubTimeZoneUnreadable?: boolean;
+  // Whether this installation is production, non-production or not yet declared
+  // (ENV-SAFETY 1, #3034; epic #2986), already RESOLVED by
+  // `resolveEnvironmentRole()` in `setup-readiness-db.ts`. It is carried as data
+  // rather than resolved here because the resolver reads the database and this
+  // file is deliberately synchronous over an injected snapshot. Optional so an
+  // older caller — and a DB-less `setup:check` run, which passes no snapshot at
+  // all — still compiles; undefined means the question was not asked, which the
+  // check below reports as "not checked" rather than guessing at an answer.
+  environmentRole?: EnvironmentRoleResolution;
+  // How much application email this installation has held back for
+  // environment-safety reasons (ENV-SAFETY 1, #3034), read in
+  // `setup-readiness-db.ts`. Optional so an older caller and a DB-less
+  // `setup:check` still compile; undefined is reported the same way
+  // `{ available: false }` is, because neither one is a count.
+  withheldEmail?: WithheldApplicationEmail;
   // Resolved booking capacity of the club's DEFAULT lodge
   // (getDefaultLodgeCapacity). Since #1982 the club-config check warns when this
   // is 0 — a default lodge with no active beds AND no capacity override accepts
@@ -910,6 +942,274 @@ function buildClubTimeZoneCheck(
               `Stored as "${stored}", which this runtime knows as ${canonical} — the same place, the current spelling.`,
             ]),
         CLUB_VERSUS_SERVER_TIME_ZONE_DETAIL,
+      ],
+    },
+    progress,
+  );
+}
+
+/**
+ * Plain-English state of the deployment declaration, for the readiness details.
+ *
+ * The raw value in the `invalid` case has ALREADY been stripped of control
+ * characters and capped by `sanitizeEnvironmentRoleRawValue`, which is why it can
+ * be quoted straight into a line that ends up in an operator's terminal.
+ */
+function describeEnvironmentRoleDeclaration(
+  declaration: EnvironmentRoleDeclaration,
+): string {
+  switch (declaration.kind) {
+    case "production":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE=production.";
+    case "non-production":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE=non-production.";
+    case "invalid":
+      return `Deployment declaration: APP_ENVIRONMENT_ROLE is set to "${declaration.raw}", which is not one of the two accepted values (production, non-production), so it is refused rather than guessed at.`;
+    case "absent":
+      return "Deployment declaration: APP_ENVIRONMENT_ROLE is not set.";
+  }
+}
+
+/** Plain-English state of the database safer override. */
+function describeEnvironmentRoleOverride(
+  resolution: EnvironmentRoleResolution,
+): string {
+  switch (resolution.databaseOverride.kind) {
+    case "force-non-production":
+      return "Safer override: ON — an administrator has forced this installation to behave as non-production. It can be switched off at /admin/environment, which hands the decision back to the deployment declaration and never makes an installation production on its own.";
+    case "none":
+      return "Safer override: off — nothing in the database is forcing this installation to be treated as non-production.";
+    case "unreadable":
+      return "Safer override: could not be read. The EnvironmentSafetySettings table is most likely missing because the migration has not been applied on this database yet — run prisma migrate deploy (or npm run db:migrate in development), then check again.";
+  }
+}
+
+/**
+ * The withheld-email line, which is the ONLY signal that separates a live club
+ * that is not sending from a copy nobody is using (ENV-SAFETY 1, #3034).
+ *
+ * Rendered for NON_PRODUCTION **and** UNKNOWN, because both hold delivery back —
+ * UNKNOWN is the fail-closed state, and it is the one a live installation reaches
+ * by upgrading without adding the declaration. Not rendered for PRODUCTION, where
+ * nothing is held back for this reason and the line would be noise.
+ *
+ * The reasoning, and why a database-content heuristic cannot do this job, is in
+ * `environment-safety-withheld.ts`. What matters here is that the three states
+ * read differently, because two of them look identical on a checklist and mean
+ * opposite things: "nothing has been held back" says nobody is using this
+ * installation, while "the count could not be read" says nobody knows.
+ *
+ * NO SENTENCE HERE MAY NAME ONE STATE'S REASON, because this line renders under
+ * two. Telling the operator of an UNDECLARED live site that mail is held back
+ * "because it is treated as a copy" sends them hunting for the safer override
+ * instead of the missing declaration (#3035). The step's own message already
+ * says which state applies; this line says only how much, and how lately.
+ */
+function describeWithheldEmail(
+  withheldEmail: WithheldApplicationEmail | undefined,
+): string {
+  if (!withheldEmail || !withheldEmail.available) {
+    return "Held back email: the count could not be read on this installation. That is NOT the same as none — one says nothing has been held back, the other says nobody knows — so this line cannot tell you whether this installation is quietly holding back mail the club's members are waiting for. Apply any pending migrations, then check again.";
+  }
+  if (withheldEmail.count === 0) {
+    return "Held back email: none. Nothing has been held back on this installation for environment-safety reasons, which is what an installation nobody is using looks like.";
+  }
+  const mostRecent = withheldEmail.mostRecentAt
+    ? ` The most recent was ${withheldEmail.mostRecentAt}.`
+    : "";
+  return `Held back email: ${withheldEmail.count} message(s) have been held back on this installation for environment-safety reasons.${mostRecent} A steady and recent count is what a LIVE club looks like when it has been wrongly declared a copy, or left undeclared — if members are waiting for that mail, the answer above is wrong.`;
+}
+
+/**
+ * The line that stops an operator repairing the WRONG variable.
+ *
+ * `APP_RUNTIME_ROLE` already exists in the same Compose environment block, and on
+ * the staging stack it holds the literal word "staging". Two variables whose
+ * names differ by one word, one of which looks like it answers this question and
+ * does not, is a mistake worth naming rather than hoping about.
+ */
+const ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL =
+  "This is APP_ENVIRONMENT_ROLE, not APP_RUNTIME_ROLE. APP_RUNTIME_ROLE names which container slot this is (web-blue, web-green, cron-leader, staging) and is never read to decide whether this installation is production — setting it to production changes nothing here.";
+
+/**
+ * Environment-role gate (ENV-SAFETY 1, #3034; epic #2986). INV-CONFIG-003.
+ *
+ * WHY THIS IS A BLOCK AND NOT A WARNING when nothing has declared the
+ * installation. An UNKNOWN role is the state in which #3035 and #3036 refuse to
+ * send email and refuse to write to Xero, because neither can tell whether the
+ * recipients are the club's real members. So an operator meeting UNKNOWN is
+ * looking at a site that is not doing its job, and a warning would be the wrong
+ * volume for that. It is also entirely fixable in one line of deployment
+ * configuration, which is what the details say.
+ *
+ * THE STATES:
+ * 1. **No snapshot** — `setup:check` ran with no database access. "Not checked",
+ *    the same as its DB-backed siblings. It deliberately does not answer from the
+ *    environment alone: the safer override is half of the answer, and reporting
+ *    "production" from a declaration whose override could not be read is exactly
+ *    the confident-wrong answer the resolver itself refuses to give.
+ * 2. **The snapshot predates this field** — an older caller. Also "not checked",
+ *    for the same reason.
+ * 3. **PRODUCTION** — complete, and the message SAYS production, because an
+ *    operator who has just stood up a copy needs to see at a glance that they
+ *    are looking at the live club and not at their copy.
+ * 4. **NON_PRODUCTION** — complete, naming which source decided it. A declared
+ *    non-production and an administrator-forced one are both fine and are
+ *    different facts, so the message distinguishes them.
+ * 5. **UNKNOWN** — blocked, naming both sources, the repair, and the
+ *    APP_RUNTIME_ROLE trap. Two quite different situations land here — nothing
+ *    declared, and a declaration this app refuses to interpret — so the
+ *    declaration line says which.
+ *
+ * AN OPERATOR MAY ACKNOWLEDGE THIS STEP, exactly as they may acknowledge
+ * `runtime-env`, and that changes the CHECKLIST and nothing else: `applyProgress`
+ * moves `progress` to `completed` and never touches `status`. So a ticked box
+ * cannot make an UNKNOWN installation start sending email — the resolver is the
+ * only thing #3035 and #3036 read, and it has never heard of the checklist.
+ *
+ * Deliberately clock-free: nothing here formats a date, so the answer is the
+ * same at every instant.
+ */
+function buildEnvironmentRoleCheck(
+  db: SetupDatabaseSnapshot | undefined,
+  progress: SetupProgressState,
+): SetupStepCheck {
+  const base = {
+    id: "environment-role" as const,
+    title: "Production Or Non-Production",
+    description:
+      "Whether this installation is the club's live site or a copy — which decides whether real members can be emailed.",
+    required: true,
+    href: "/admin/environment",
+  };
+
+  // 1 / 2. Nothing to report on.
+  if (!db || !db.environmentRole) {
+    return applyProgress(
+      {
+        ...base,
+        status: "warning",
+        message: "Database state was not checked.",
+        details: [
+          "Run setup:check again inside an environment with database access, or review /admin/setup after login.",
+          "Half of this answer is a database setting (the safer override), so it cannot be reported from the deployment environment alone.",
+          ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  const resolution = db.environmentRole;
+  const sources = [
+    describeEnvironmentRoleDeclaration(resolution.declaration),
+    describeEnvironmentRoleOverride(resolution),
+  ];
+
+  // 3. Confirmed production.
+  if (resolution.role === "PRODUCTION") {
+    /*
+      THE ONE WAY A LIVE SITE HOLDS MAIL BACK, and it used to be invisible here
+      (#3035 review). A live club that declares `USE_LOCAL_CAPTURE=true` is in a
+      total mail outage: every message lands `FAILED` carrying
+      `CAPTURE_TRANSPORT_IN_PRODUCTION`, and this step reported "complete —
+      emails go to real members" with no withheld line at all, because the line
+      was rendered only under NON_PRODUCTION and UNKNOWN.
+
+      Keyed on the capture-in-production count specifically, not on the total:
+      `SKIPPED_NON_PRODUCTION` rows are terminal, so an installation that spent an
+      afternoon as a forced copy carries them for ever and a permanent banner on a
+      healthy live site is a line operators learn to scroll past. This number can
+      only be non-zero while the transport flags are wrong.
+    */
+    const captureInProduction =
+      db.withheldEmail?.available === true
+        ? db.withheldEmail.captureInProduction
+        : 0;
+    if (captureInProduction > 0) {
+      return applyProgress(
+        {
+          ...base,
+          status: "warning",
+          message:
+            "This installation is declared PRODUCTION — the club's live site — but it ALSO declares a local capture mailbox, so it is sending no member email at all.",
+          details: [
+            `Held back email: ${captureInProduction} message(s) were refused because this deployment says it is the club's live site AND that its mail goes to a capture mailbox that forwards nothing. Those cannot both be true, so nothing was sent rather than every message being silently swallowed.`,
+            "Set USE_AWS_SES or USE_SMTP_RELAY and remove USE_LOCAL_CAPTURE (or set it to false). Messages whose contents are stored then go out by themselves; ones carrying a sign-in link, a door code or a payment link keep no stored copy and are listed for a manual re-send under Admin -> Email.",
+            ...sources,
+            ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+          ],
+        },
+        progress,
+      );
+    }
+    return applyProgress(
+      {
+        ...base,
+        status: "complete",
+        message:
+          "This installation is declared PRODUCTION — the club's live site. Emails go to real members and accounting goes to the club's real Xero organisation.",
+        details: [...sources, ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL],
+      },
+      progress,
+    );
+  }
+
+  // 4. Confirmed non-production.
+  if (resolution.role === "NON_PRODUCTION") {
+    return applyProgress(
+      {
+        ...base,
+        status: "complete",
+        message:
+          resolution.decidedBy === "database-safer-override"
+            ? "This installation is treated as NON-PRODUCTION because an administrator has switched the safer override on."
+            : "This installation is declared NON-PRODUCTION — a copy, a staging site or a developer's checkout.",
+        /*
+          THE WITHHELD COUNT GOES FIRST. It answers the question an operator
+          meeting an unexpected non-production installation actually has — "is
+          this costing my members their mail?" — and it is the only signal that
+          can answer it, because a copy restored from the live database is
+          indistinguishable from the live site by its data (#3034).
+        */
+        details: [
+          describeWithheldEmail(db.withheldEmail),
+          ...sources,
+          ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
+        ],
+      },
+      progress,
+    );
+  }
+
+  // 5. Nothing has said.
+  return applyProgress(
+    {
+      ...base,
+      status: "blocked",
+      message:
+        "Nothing says whether this installation is the club's live site or a copy, so it is treated as neither. Set APP_ENVIRONMENT_ROLE to production or non-production in this deployment's environment.",
+      /*
+        AND THE WITHHELD COUNT HERE TOO, which a third review lens was right to
+        insist on. The first version rendered it only for NON_PRODUCTION,
+        reasoning that "on a PRODUCTION or UNKNOWN installation nothing is being
+        held back for this reason" — and this file's own next sentence contradicts
+        that: UNKNOWN fails closed, so no email is sent to members and nothing is
+        written to Xero. The boot advisory and the deploy script say the same.
+
+        Which makes UNKNOWN the case the count matters MOST for: it is exactly the
+        live installation that upgraded without adding the declaration, the
+        scenario this whole issue exists to prevent. That operator needs to see
+        "312 held back, most recently four minutes ago" rather than have it
+        withheld from them on a premise the rest of the code denies.
+      */
+      details: [
+        describeWithheldEmail(db.withheldEmail),
+        ...sources,
+        "Until it is declared, anything whose safety depends on knowing which installation this is does not run: no email is sent to members and nothing is written to the club's Xero organisation. That is deliberate — a copy of the live database holds real members' real email addresses, and guessing wrong emails them.",
+        "It is NOT assumed to be production, and it is NOT assumed to be a copy either. Both would be a guess, and one of them is a guess that contacts the club's members from a test system.",
+        "Set APP_ENVIRONMENT_ROLE=production in the .env of the club's live deployment, or APP_ENVIRONMENT_ROLE=non-production on a copy, then restart. A production deploy through scripts/run-production-blue-green-deploy.sh refuses to start without it (step 3 of 20), so a live site cannot reach this state through that path.",
+        ENVIRONMENT_ROLE_VERSUS_RUNTIME_ROLE_DETAIL,
       ],
     },
     progress,
@@ -1778,6 +2078,7 @@ export function buildSetupReadiness(
     foundation: [
       buildClubConfigCheck(club, input.database, progress),
       buildClubTimeZoneCheck(input.database, progress),
+      buildEnvironmentRoleCheck(input.database, progress),
       buildRuntimeEnvCheck(env, progress),
       buildAuthSecretStrengthCheck(env, progress),
       buildSeedAdminCheck(input.database, progress),

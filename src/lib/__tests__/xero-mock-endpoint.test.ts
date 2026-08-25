@@ -89,6 +89,60 @@ describe("xero-mock-endpoint production inertness", () => {
     expect(isXeroMockActive()).toBe(true);
   });
 
+  /*
+    ENV-SAFETY 3 (#3036, INV-CONFIG-003). #3034's inference census listed this
+    function as a build-mode guess owned by this issue. The resolution is to make
+    the CANONICAL DECLARATION the authority and keep the build-mode read
+    underneath it as a backstop — a strict widening, never a replacement, because
+    an UNDECLARED installation is exactly the live club that upgraded without the
+    line, and that installation must still be caught by the build-mode check.
+  */
+  it("is inert when the deployment DECLARES production, whatever the build mode says", () => {
+    process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
+    // A development build and no runtime role: the OLD rule said "not real
+    // production" and left the mock available.
+    vi.stubEnv("NODE_ENV", "development");
+    delete process.env.APP_RUNTIME_ROLE;
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "production");
+
+    expect(isRealProductionRuntime()).toBe(true);
+    expect(getXeroMockApiOrigin()).toBeUndefined();
+    expect(isXeroMockActive()).toBe(false);
+  });
+
+  it("still catches an UNDECLARED production runtime, which is why the backstop stays", () => {
+    process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.APP_RUNTIME_ROLE = "web-blue";
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "");
+
+    expect(isRealProductionRuntime()).toBe(true);
+    expect(isXeroMockActive()).toBe(false);
+  });
+
+  it("leaves the E2E staging stack ACTIVE when it declares non-production", () => {
+    process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.APP_RUNTIME_ROLE = "staging";
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "non-production");
+
+    expect(isRealProductionRuntime()).toBe(false);
+    expect(isXeroMockActive()).toBe(true);
+  });
+
+  it("refuses to read a typo as production, exactly as the canonical parser does", () => {
+    process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
+    vi.stubEnv("NODE_ENV", "test");
+    delete process.env.APP_RUNTIME_ROLE;
+    vi.stubEnv("APP_ENVIRONMENT_ROLE", "prod");
+
+    // `prod` is `invalid`, not `production`, so the declaration half does not
+    // fire and the build-mode backstop decides — which here leaves the mock
+    // available, the same answer as before this change.
+    expect(isRealProductionRuntime()).toBe(false);
+    expect(isXeroMockActive()).toBe(true);
+  });
+
   it("is active for a non-production runtime with the origin set", () => {
     process.env.XERO_MOCK_API_ORIGIN = "http://localhost:3000";
     vi.stubEnv("NODE_ENV", "test");

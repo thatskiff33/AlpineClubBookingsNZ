@@ -26,7 +26,34 @@ services:
     ports:
       - "${STAGING_HTTP_PORT:-3001}:3000"
     environment:
+      # This target is a COPY, always, by construction (ENV-SAFETY 1 #3034, epic
+      # #2986). Hard-coded rather than passed through from the env file: the whole
+      # point of this override is that it cannot accidentally be a production
+      # stack, and reading it from .env.staging would let a stray value there make
+      # this stack claim to be the club's live site. The base compose passes
+      # ${APP_ENVIRONMENT_ROLE} with no default; this line overrides it, so the
+      # staging and E2E stacks are never blocked on an undeclared role and the
+      # browser suite never meets the UNKNOWN fail-closed path by accident.
+      APP_ENVIRONMENT_ROLE: non-production
+      # Which container slot this is. A deployment naming convention, and
+      # deliberately NOT an input to the environment-role decision above.
       APP_RUNTIME_ROLE: staging
+      # This stack's mail transport is the mailpit capture container below, and
+      # it is hard-coded here for the same reason the role above is (ENV-SAFETY 2
+      # #3035, INV-CONFIG-004). Two separate hazards:
+      #
+      #  - a copy suppresses every send unless its transport is DECLARED to be a
+      #    capture mailbox, so without USE_LOCAL_CAPTURE the mailbox stays empty
+      #    and every mail-reading browser spec fails on an empty inbox;
+      #  - the base anchor defaults USE_AWS_SES to `true`, so a run without an
+      #    env file would set two provider flags at once, resolve the transport
+      #    `invalid`, and throw on every send.
+      #
+      # Reading these from .env.staging would let a stray value there point the
+      # E2E or accessibility stack at a real provider. They are not overridable.
+      USE_AWS_SES: "false"
+      USE_SMTP_RELAY: "false"
+      USE_LOCAL_CAPTURE: "true"
       CRON_ENABLED: "false"
       # Backups are configured in-app (#2095); staging leaves them unconfigured.
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
@@ -45,8 +72,9 @@ services:
       # during keep-alive idle, so it does not need raising for this.
       KEEP_ALIVE_TIMEOUT: "65000"
     # mailpit is the non-production SMTP capture the E2E suite relays outbound
-    # mail to (USE_SMTP_RELAY). It is listed here so `up --wait app` also starts
-    # it and the app never comes up expecting an SMTP host that is not running.
+    # mail to (USE_LOCAL_CAPTURE). It is listed here so `up --wait app` also
+    # starts it and the app never comes up expecting an SMTP host that is not
+    # running.
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,7 +82,7 @@ services:
         condition: service_healthy
 
   # Non-production SMTP capture container. The staging app relays all outbound
-  # email here (see USE_SMTP_RELAY in .env.staging.example); Playwright reads the
+  # email here (see USE_LOCAL_CAPTURE in .env.staging.example); Playwright reads the
   # captured two-factor code back over mailpit's HTTP API
   # (e2e/two-factor-email.spec.ts, docs/E2E_PLAYWRIGHT.md). It accepts any SMTP
   # credentials over the compose-internal network and never forwards mail
@@ -79,11 +107,25 @@ services:
     mem_limit: 128m
     cpus: 0.2
 
+  # The blue/green slots are the production deploy runner's concern; a staging or
+  # E2E stack runs the single `app` service above. Parking them behind a profile
+  # disables them — but they still DECLARE the role (ENV-SAFETY 1 #3034, epic
+  # #2986), because a profile is a switch somebody can turn on and an app service
+  # started from THIS file must never inherit the base file's
+  # ${APP_ENVIRONMENT_ROLE}: that is the live deployment's variable, and a staging
+  # stack reading it would be one stray env value away from claiming to be the
+  # club's live site. Hard-coded for the same reason as the `app` service above.
+  # The compose census in
+  # src/lib/__tests__/deploy-environment-role-contract.test.ts found this gap.
   app_blue:
     profiles: ["production-bluegreen"]
+    environment:
+      APP_ENVIRONMENT_ROLE: non-production
 
   app_green:
     profiles: ["production-bluegreen"]
+    environment:
+      APP_ENVIRONMENT_ROLE: non-production
 
   caddy:
     profiles: ["production-caddy"]

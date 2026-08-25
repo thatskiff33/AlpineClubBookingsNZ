@@ -40,6 +40,12 @@ import { buildXeroContactUpdatePayload } from "./xero-contact-sync";
 import { buildXeroContactCompanyNumberPatch } from "@/lib/xero-contact-date-of-birth";
 import { isPlaceholderContactEmail } from "@/lib/placeholder-contact-email";
 import {
+  applyXeroContactEmailPolicy,
+  resolveXeroContactEmailPolicy,
+  type XeroContactEmailPolicy,
+} from "@/lib/xero-contact-containment";
+import { ensureXeroContactContained } from "@/lib/xero-contact-containment-proof";
+import {
   ambiguousMemberContactCreateReservationWhere,
   assertMemberAvailableForXeroContactChange,
   closeProviderCreatedContactRecoveryForLinkedContact,
@@ -69,6 +75,24 @@ export class XeroContactValidationError extends Error {
 export interface FindOrCreateXeroContactOptions {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
+  /**
+   * An already-authenticated Xero client, for the containment verification on
+   * the steady-state path (#3036 review P1-12).
+   *
+   * PURELY AN OPTIMISATION, and it is safe to omit: containment builds its own
+   * client when it needs one. What it saves is a DUPLICATE build. The
+   * steady-state path returns before `getAuthenticatedXeroClient()` — which is
+   * right, since a proof that matches costs no provider call at all — but when
+   * the proof is stale or absent, containment then authenticates a second time
+   * even though every document writer built a client two lines before calling
+   * this function. On a restored copy's first pass that is one extra token read
+   * plus one extra `xero.initialize()` (an OIDC discovery round trip, not
+   * cached) PER CONTACT.
+   *
+   * Both must be supplied together or neither is used.
+   */
+  xero?: XeroClient;
+  tenantId?: string;
 }
 
 type ContactCreateOperationInput = Omit<
@@ -465,8 +489,18 @@ function stripPersonNameFromStoredContactPayload(payload: unknown): unknown {
   };
 }
 
+/*
+  INV-CONFIG-005 (#3036): the `policy` argument is the compile-time half of Xero
+  contact containment. It cannot be constructed outside
+  `xero-contact-containment.ts`, so a new contact-payload builder cannot be
+  written without first asking what installation this is; and on the club's live
+  site `applyXeroContactEmailPolicy` is the identity function, so the payload
+  below — and therefore its stored request payload and its idempotency key — is
+  byte-identical to what it was before that issue.
+*/
 function buildMemberXeroContactCreatePayload(
   member: LockedMemberContactCreateSnapshot,
+  policy: XeroContactEmailPolicy,
 ): Contact {
   const missingFields = getMissingFieldsForXeroContactCreate(member);
   if (missingFields.length > 0) {
@@ -482,7 +516,10 @@ function buildMemberXeroContactCreatePayload(
     name: `${member.firstName} ${member.lastName}`,
     firstName: member.firstName,
     lastName: member.lastName,
-    emailAddress: isPlaceholderContactEmail(member.email) ? "" : member.email,
+    emailAddress: applyXeroContactEmailPolicy(
+      policy,
+      isPlaceholderContactEmail(member.email) ? "" : member.email,
+    ),
     // #2859: the member's date of birth, in the `dd/mm/yyyy` shape the import
     // side has always read back out of this field. `null` — an EXPLICIT "the
     // field is known to be empty" — because this payload creates the contact,
@@ -635,6 +672,29 @@ export async function findOrCreateXeroContact(
   //             resolver).
   //   Op-log completion runs POST-COMMIT so an operation is never recorded
   //   SUCCEEDED for work whose surrounding transaction rolled back.
+  //   INV-CONFIG-005 (#3036) — FIRST, before any provider work: what
+  //             installation is this? On the club's live site this is a no-op
+  //             and everything below is unchanged. On a confirmed copy every
+  //             contact address is contained. When NOTHING has declared which
+  //             this is, `resolveXeroContactEmailPolicy` throws here, so an
+  //             undeclared installation raises no invoice against a contact it
+  //             cannot vouch for.
+  /*
+    THE POLICY IS RESOLVED ONCE AND PHASE 1 IS LONG, so an administrator switching
+    the safer override on during it leaves this contact written under the previous
+    answer — a real TOCTOU window, documented rather than closed (#3071 review).
+    Re-resolving later could not un-send it: by Phase 2 the contact already exists
+    in Xero. It SELF-HEALS but not instantly — the next document writer to resolve
+    this member takes the steady-state path above, which resolves afresh and
+    contains the address — and until then an invoice raised in the same workflow is
+    raised against a real address, which Xero's own reminders would email. Remedy:
+    Admin -> Environment lists uncontained contacts, and `guides/environment-role.md`
+    -> "Putting a replaced address back" covers the repair. Not closed here because
+    a lock spanning the provider calls is the F7 (#1355) failure this function was
+    restructured to remove, and a mid-Phase re-resolve would narrow the window
+    while inviting a reader to think it gone.
+  */
+  const { policy: emailPolicy } = await resolveXeroContactEmailPolicy();
   const member = await prisma.member.findUnique({
     where: { id: memberId },
   });
@@ -661,6 +721,27 @@ export async function findOrCreateXeroContact(
         { store: tx },
       );
       return fresh.xeroContactId;
+    });
+    /*
+      THE RESTORED-DATABASE PATH, and the reason this issue exists. Every member
+      in a copy restored from the club's live database is already linked, so this
+      branch is the one all twelve document writers take — with no provider write
+      and no look at what the contact holds. Xero then emails its own reminders
+      for outstanding AUTHORISED invoices, from its own servers, to that stored
+      address. So containment happens HERE, after the short link transaction has
+      committed (a provider call must never run inside it) and before the id
+      reaches anything that can raise an invoice.
+    */
+    await ensureXeroContactContained({
+      policy: emailPolicy,
+      xeroContactId,
+      sourceEmail: member.email,
+      workflow: "findOrCreateXeroContact",
+      // The caller's client when it has one — see the option's docblock. Only
+      // reached when the proof is stale or absent; a matching proof returns
+      // above without a provider call at all.
+      xero: options?.xero,
+      tenantId: options?.tenantId,
     });
     await syncContactGroupsBestEffort(memberId, xeroContactId, options);
     return xeroContactId;
@@ -785,7 +866,7 @@ export async function findOrCreateXeroContact(
     } = await reserveMemberContactCreateOperation(
       memberId,
       (locked) => {
-        const contact = buildMemberXeroContactCreatePayload(locked);
+        const contact = buildMemberXeroContactCreatePayload(locked, emailPolicy);
         return {
           input: {
             direction: "OUTBOUND",
@@ -1042,6 +1123,24 @@ export async function findOrCreateXeroContact(
   }
 
   const xeroContactId = linkOutcome.contactId;
+  /*
+    Also on this path, and for three cases the create payload does not cover: a
+    contact MATCHED by email or exact name (somebody else's real address may be
+    on it), a contact this resolution lost the write race for (the id returned is
+    a concurrent resolver's, not ours), and a contact we did create — which is
+    contained by construction and is still VERIFIED rather than assumed, because
+    a record asserting something we did not look at is the defect shape this epic
+    kept finding. `xero` and `tenantId` are already authenticated here, so the
+    verification costs one provider read and no second token refresh.
+  */
+  await ensureXeroContactContained({
+    policy: emailPolicy,
+    xeroContactId,
+    sourceEmail: member.email,
+    workflow: "findOrCreateXeroContact",
+    xero,
+    tenantId,
+  });
   await syncContactGroupsBestEffort(memberId, xeroContactId, options);
   return xeroContactId;
 }
@@ -1135,6 +1234,10 @@ export async function createXeroContactForMember(
   // transaction. This function's contract is create-and-overwrite (an admin
   // explicitly minting a fresh contact), so no first-writer re-check applies;
   // the member-scoped idempotency key bounds concurrent duplicates.
+  // INV-CONFIG-005 (#3036): same first question as the funnel, and for the same
+  // reason — this function creates a contact carrying an email address, so an
+  // undeclared installation must not reach the provider at all.
+  const { policy: emailPolicy } = await resolveXeroContactEmailPolicy();
   const idempotencyKey = buildXeroIdempotencyKey(
       "member",
       memberId,
@@ -1144,7 +1247,7 @@ export async function createXeroContactForMember(
     );
   const { operation, value: contact } =
     await reserveMemberContactCreateOperation(memberId, (locked) => {
-      const contact = buildMemberXeroContactCreatePayload(locked);
+      const contact = buildMemberXeroContactCreatePayload(locked, emailPolicy);
       return {
         input: {
           direction: "OUTBOUND",
@@ -1257,6 +1360,44 @@ export async function createXeroContactForMember(
   }
 
   const xeroContactId = createdContactId;
+  /*
+    Verified rather than assumed, exactly as on the funnel's create branch: the
+    payload above already carried the contained address, and the row that proves
+    it is still written only after reading back what Xero stored.
+
+    WRAPPED IN THE PARTIAL-SUCCESS PHASE THIS FUNCTION ALREADY OWNS, because a
+    bare throw here would lose the one fact the admin needs. The contact EXISTS
+    and is LINKED by the time this runs; only the proof is missing. A plain error
+    reaches `/api/admin/members/[id]/xero-push` with no created-contact id, so
+    the operator is told nothing was recorded, and pressing Create again is a
+    dead end — the reservation refuses an already-linked member without an
+    explicit repair. `LOCAL_MEMBER_LINK_COMMITTED` is the phase for exactly this
+    shape and the route already renders it as "created and linked, post-processing
+    pending", which is true. It still FAILS: the caller gets an error, and the
+    proof is re-attempted by the next document writer that resolves this member
+    (the funnel's steady-state path contains it), so it self-heals without an
+    operator retry.
+  */
+  try {
+    await ensureXeroContactContained({
+      policy: emailPolicy,
+      xeroContactId,
+      // Already the CONTAINED form (the payload builder above applied the
+      // policy), and `ensureXeroContactContained` fingerprints it through an
+      // idempotent transform — so this is the same fingerprint the funnel derives
+      // from the member's stored address for the same member.
+      sourceEmail: contact.emailAddress ?? "",
+      workflow: "createXeroContactForMember",
+      xero,
+      tenantId,
+    });
+  } catch (containmentError) {
+    throw new XeroContactCreatePartialSuccessError(
+      "LOCAL_MEMBER_LINK_COMMITTED",
+      xeroContactId,
+      containmentError,
+    );
+  }
   await syncContactGroupsBestEffort(memberId, xeroContactId, options);
   return xeroContactId;
 }
@@ -1429,6 +1570,15 @@ export async function updateXeroContact(
     preserveXeroName?: boolean;
   }
 ): Promise<void> {
+  // INV-CONFIG-005 (#3036): this function writes an email address onto a Xero
+  // contact, so it asks the same first question as the create paths. On the
+  // club's live site `applyXeroContactEmailPolicy` below is the identity
+  // function and every payload, stored request payload and idempotency key is
+  // unchanged; on a confirmed copy the address is contained; on an undeclared
+  // installation this throws before anything reaches Xero.
+  //
+  // It ALSO proves containment, below, before its own write — see the call site.
+  const { policy: emailPolicy } = await resolveXeroContactEmailPolicy();
   // #2859: what Xero is known to hold in the NZBN field right now, so the date
   // of birth below never overwrites a real New Zealand Business Number. Read
   // from the local contact cache — no provider call, and nothing here may run
@@ -1509,7 +1659,7 @@ export async function updateXeroContact(
   ): Contact => {
     const contact: Contact = {
       contactID: contactId,
-      emailAddress: contactData.email,
+      emailAddress: applyXeroContactEmailPolicy(emailPolicy, contactData.email),
       ...companyNumberPatchFor(contactId, contactData),
       phones: contactData.phoneNumber
         ? [
@@ -1631,6 +1781,47 @@ export async function updateXeroContact(
     // transactions. The committed RUNNING reservation is their authority, and
     // authentication failure closes it through the same failure path.
     const { xero, tenantId } = await getAuthenticatedXeroClient();
+    /*
+      INV-CONFIG-005 (#3036): CONTAIN BEFORE WRITING, not after.
+
+      This function is reachable with no invoice anywhere near it — an
+      administrator editing a member, a member saving their profile, an
+      email-change confirmation — and on a copy it overwrites whatever Xero holds
+      with the contained form. Recording nothing meant the operator surface could
+      say "no Xero contact has been touched yet" while this installation had
+      already rewritten real accounting records, which is precisely the
+      reassuring-false-record shape this epic keeps finding.
+
+      Recording it AFTERWARDS would have been the wrong repair: every row in that
+      table is written after reading Xero's stored value back, and by then the
+      value read back is the contained address this function just sent, so the
+      row would say "nothing was overwritten" about a real overwrite. Containing
+      FIRST puts the read where it can still see the truth: containment reads the
+      contact, replaces a deliverable address if one is there, and records what
+      it actually saw. The write below then sends the contained form of the
+      member's current address.
+
+      COST, stated honestly. On the live site this is a no-op — no read, no
+      provider call, no row. On a copy whose proof is fresh it is one indexed
+      read. On a copy meeting a contact for the first time it is one provider
+      read plus, if a real address is there, one provider write — so a contact
+      holding a real address takes two provider writes on this path rather than
+      one. Contact updates are rare (a profile save), the duplicate only happens
+      once per contact per freshness window, and paying it is how the count is a
+      measurement rather than a guess.
+
+      The repair leg is covered elsewhere: `retryXeroWriteWithContactRepair` can
+      retry against a DIFFERENT contact, and it reaches that id through
+      `findOrCreateXeroContact`, which contains it.
+    */
+    await ensureXeroContactContained({
+      policy: emailPolicy,
+      xeroContactId,
+      sourceEmail: authoritativeData.email,
+      workflow: "updateXeroContact",
+      xero,
+      tenantId,
+    });
     const response = await retryXeroWriteWithContactRepair({
       memberId:
         options?.localModel === "Member" && options.localId

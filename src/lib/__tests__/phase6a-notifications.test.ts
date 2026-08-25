@@ -6,6 +6,7 @@ import { getAppBaseUrl } from "../app-url";
 // EMAIL_DEFAULT_FROM_NAME and the envelope equals EMAIL_FROM.
 import { EMAIL_FROM } from "@/lib/email-sender";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
+import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -19,6 +20,7 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
     error: vi.fn(),
   };
   const mockPrisma = {
+    environmentSafetySettings: { findUnique: vi.fn().mockResolvedValue(null) },
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
@@ -93,6 +95,20 @@ function adminRecipient(
 // ============================================================================
 // N-10: EmailLog tracking in sendEmail
 // ============================================================================
+
+/*
+  #3035 (ENV-SAFETY 2): this suite exercises a real SEND, so it has to say which
+  installation it is pretending to be. `resolveEnvironmentRole()` answers from the
+  APP_ENVIRONMENT_ROLE declaration AND the EnvironmentSafetySettings row, and both
+  are absent by default in the unit suite — a missing Prisma delegate is an
+  UNREADABLE override, not "no override", so the role resolves UNKNOWN and the
+  delivery boundary withholds every message. Declaring production plus a
+  no-override delegate is what makes these tests exercise live behaviour.
+  See src/lib/__tests__/helpers/environment-role.ts.
+*/
+beforeEach(() => {
+  declareEnvironmentRole("production");
+});
 
 describe("N-10: EmailLog tracking", () => {
   beforeEach(() => {

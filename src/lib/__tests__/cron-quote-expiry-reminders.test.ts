@@ -53,12 +53,17 @@ vi.mock("@/lib/email", () => ({
 vi.mock("@/lib/action-tokens", () => ({
   issueActionToken: (...args: unknown[]) => mocks.mockIssueToken(...args),
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+const mockLogAudit = vi.fn();
+vi.mock("@/lib/audit", () => ({ logAudit: (...args: unknown[]) => mockLogAudit(...args) }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 import { prisma } from "@/lib/prisma";
+import {
+  EMAIL_SENT,
+  emailWithheldForEnvironment,
+} from "@/lib/__tests__/helpers/email-outcomes";
 import { sendQuoteExpiryReminders } from "@/lib/cron-quote-expiry-reminders";
 
 // The one findMany mock serves both phases; discriminate by the where clause.
@@ -83,6 +88,11 @@ function stubQuoteFindMany({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The mailer RETURNS its outcome (#3035), and this cron now inspects it before
+  // it stamps `reminderSentAt` or writes a `success` audit row. An `undefined`
+  // stub would throw inside the loop and every case here would silently be
+  // measuring the catch branch.
+  mocks.mockSendEmail.mockResolvedValue(EMAIL_SENT);
   mocks.mockIssueToken.mockReturnValue({ token: "raw-token", tokenHash: "hash-token" });
   mocks.mockParseOptions.mockReturnValue([{ label: "Quote", totalCents: 1000 }]);
   mocks.mockParseGuests.mockReturnValue([{}, {}]);
@@ -406,5 +416,115 @@ describe("sendQuoteExpiryReminders — stale MODIFY/QUERY hold release (issue #1
     expect(mocks.tx.bookingRequest.update).not.toHaveBeenCalled();
     // The pre-lock guard short-circuits before opening a transaction.
     expect(mocks.prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// --- #3035 (ENV-SAFETY 2): a withheld reminder is not a sent one --------------
+//
+// This loop used to write `reminderSentAt` AND an audit row reading
+// `outcome: "success"`, "Sent a pre-expiry reminder for an outstanding quote"
+// whatever the mailer answered. `sendEmail` RETURNS rather than throws when it
+// withholds, so both were written for a reminder the requester never received —
+// on a quote that is about to expire, and with a false audit record left behind
+// for whoever asks later why nobody responded.
+describe("sendQuoteExpiryReminders environment-safety withholds (#3035)", () => {
+  function oneReminderDue() {
+    mocks.mockGetSettings.mockResolvedValue({
+      showPricingToNonMembers: false,
+      quoteResponseTtlDays: 14,
+      quoteReminderLeadDays: 3,
+    });
+    stubQuoteFindMany({
+      reminderQuotes: [
+        {
+          id: "quote-1",
+          bookingRequestId: "req-1",
+          version: 1,
+          options: [],
+          message: null,
+          responseTokenExpiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+          bookingRequest: {
+            id: "req-1",
+            contactEmail: "tara@example.test",
+            contactFirstName: "Tara",
+            checkIn: new Date(),
+            checkOut: new Date(),
+            guests: [],
+            type: BookingRequestType.GENERAL,
+            schoolName: null,
+          },
+        },
+      ],
+    });
+    vi.mocked(prisma.bookingRequestQuote.update).mockResolvedValue({} as never);
+  }
+
+  /** The `reminderSentAt` stamp, if the cron wrote one. */
+  function stampWrite() {
+    return vi
+      .mocked(prisma.bookingRequestQuote.update)
+      .mock.calls.find(
+        (call) =>
+          (call[0] as { data?: { reminderSentAt?: unknown } }).data
+            ?.reminderSentAt !== undefined,
+      );
+  }
+
+  it("neither stamps nor audits a success when the role is unknown", async () => {
+    oneReminderDue();
+    mocks.mockSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_unknown"),
+    );
+
+    const result = await sendQuoteExpiryReminders();
+
+    // Nothing stamped, so the token is rotated and the reminder re-sent on the
+    // next run — exactly what this cron's own comment already promised for a
+    // delivery failure.
+    expect(stampWrite()).toBeUndefined();
+    expect(result.remindedCount).toBe(0);
+    expect(result.failedCount).toBe(1);
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking_request.quote_reminder_sent",
+        outcome: "failure",
+        metadata: expect.objectContaining({
+          emailOutcome: "withheld_for_environment",
+          emailWithheldReason: "environment_unknown",
+        }),
+      }),
+    );
+  });
+
+  it("stamps on a confirmed copy, so an idle copy writes no new suppression row each run", async () => {
+    oneReminderDue();
+    mocks.mockSendEmail.mockResolvedValue(
+      emailWithheldForEnvironment("environment_non_production"),
+    );
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(stampWrite()).toBeDefined();
+    // Still not a success: the requester was not reminded.
+    expect(result.remindedCount).toBe(0);
+    expect(result.failedCount).toBe(1);
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "failure" }),
+    );
+  });
+
+  it("stamps and audits a success when the reminder really went out", async () => {
+    oneReminderDue();
+
+    const result = await sendQuoteExpiryReminders();
+
+    expect(stampWrite()).toBeDefined();
+    expect(result.remindedCount).toBe(1);
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "success",
+        metadata: expect.objectContaining({ emailOutcome: "sent" }),
+      }),
+    );
   });
 });
