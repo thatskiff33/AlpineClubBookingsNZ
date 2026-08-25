@@ -41,7 +41,7 @@
  * live in a file this test also asserts is clean. Without that case, a pattern
  * broken by a later edit would report every file as adopted.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -62,13 +62,53 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const TWO_CALENDAR_YEAR_NAME =
   /[Ss]easonYear\}\s*\/\s*\$?\{[^}]*[Ss]easonYear \+ 1/;
 
-/** The four files the #3103 decision moved onto the shared derivation. */
+/**
+ * The files the #3103 decision moved onto the shared derivation.
+ *
+ * The last three are the admin member detail screen's other three season
+ * renderings. They were NOT in the decision's own list of four, and were added
+ * once adopting the card alone was measured to leave that ONE screen naming a
+ * single season three ways: `2026 - 2027 (Apr-Mar)` in the card, beside
+ * `2026/2027 season` in the summary strip and `2026/2027` in the history table.
+ * That was a defect this change introduced rather than a pre-existing one, which
+ * is why it is fixed here instead of filed. The screen-wide scan below is the
+ * assertion that stops it being re-split.
+ */
 const ADOPTED = [
   "src/app/(authenticated)/profile/page.tsx",
   "src/app/(admin)/admin/members/[id]/_components/member-seasonal-membership-card.tsx",
   "src/app/(admin)/admin/membership-types/page.tsx",
   "src/app/api/member/data-export/route.ts",
+  "src/app/(admin)/admin/members/[id]/_components/member-summary-strip.tsx",
+  "src/app/(admin)/admin/members/[id]/_components/member-subscription-history-table.tsx",
+  "src/lib/admin-member-detail-helpers.ts",
 ];
+
+/**
+ * Everything that renders on `admin/members/[id]`, scanned as a TREE rather than
+ * as a list, so a component added to that screen later is covered without anyone
+ * remembering to come here. `admin-member-detail-helpers.ts` lives in `src/lib`
+ * but builds this screen's section-nav previews, so it is named explicitly.
+ */
+const MEMBER_DETAIL_SCREEN_DIR = "src/app/(admin)/admin/members/[id]";
+const MEMBER_DETAIL_SCREEN_EXTRA = ["src/lib/admin-member-detail-helpers.ts"];
+
+/** Every non-test `.ts`/`.tsx` under a directory, recursively. */
+function sourceFilesUnder(relativeDir: string): string[] {
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(path.join(REPO_ROOT, dir), {
+      withFileTypes: true,
+    })) {
+      if (entry.name === "__tests__") continue;
+      const child = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) walk(child);
+      else if (/\.tsx?$/.test(entry.name)) found.push(child);
+    }
+  };
+  walk(relativeDir);
+  return found;
+}
 
 /**
  * The four money and provider sites the decision explicitly excluded. Each entry
@@ -147,4 +187,44 @@ describe("the money and provider sites the decision held back (#3103)", () => {
       expect(read(relative)).toMatch(TWO_CALENDAR_YEAR_NAME);
     },
   );
+});
+
+describe("the admin member detail screen names a season exactly one way (#3103)", () => {
+  const screenFiles = [
+    ...sourceFilesUnder(MEMBER_DETAIL_SCREEN_DIR),
+    ...MEMBER_DETAIL_SCREEN_EXTRA,
+  ];
+
+  it("reaches the whole screen, so a rename cannot make this vacuous", () => {
+    // The four files known to render a season on this screen today. If any is
+    // renamed or moved out of the tree, this fails rather than quietly scanning
+    // a smaller screen - which is the failure mode a hard-coded list has.
+    for (const expected of [
+      `${MEMBER_DETAIL_SCREEN_DIR}/page.tsx`,
+      `${MEMBER_DETAIL_SCREEN_DIR}/_components/member-seasonal-membership-card.tsx`,
+      `${MEMBER_DETAIL_SCREEN_DIR}/_components/member-summary-strip.tsx`,
+      `${MEMBER_DETAIL_SCREEN_DIR}/_components/member-subscription-history-table.tsx`,
+      "src/lib/admin-member-detail-helpers.ts",
+    ]) {
+      expect(screenFiles, `${expected} is no longer scanned`).toContain(expected);
+    }
+    expect(screenFiles.length).toBeGreaterThan(5);
+  });
+
+  it("has no file on it still writing the two-calendar-year name", () => {
+    // The whole point: one screen, one naming. An admin reading the card, the
+    // summary tile beside it and the history table below it must not see the
+    // same season written three ways.
+    const offenders = screenFiles.filter((relative) =>
+      TWO_CALENDAR_YEAR_NAME.test(read(relative)),
+    );
+
+    expect(
+      offenders,
+      `These render on admin/members/[id] and still name a season as two ` +
+        `calendar years, so that screen now disagrees with itself. Adopt ` +
+        `seasonSelectLabel from @/lib/season-label. Offending file(s): ` +
+        `${offenders.join(", ")}`,
+    ).toEqual([]);
+  });
 });

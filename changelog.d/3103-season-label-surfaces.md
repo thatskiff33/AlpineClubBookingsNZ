@@ -1,10 +1,11 @@
 - **How a membership season is named now reads the same everywhere, and it
   changes what members see on three pages and in the data they download
   (#3103).** A season that used to read `2026/2027` now reads
-  `2026 - 2027 (Apr-Mar)` on a member's profile page, on the seasonal-membership
-  card of an admin's member page, and in the roll-forward summary on the
-  membership-types page. The same wording now appears in the season label of the
-  file a member gets from "Export my data".
+  `2026 - 2027 (Apr-Mar)` on a member's profile page, everywhere on an admin's
+  member page — the seasonal-membership card, the membership summary tile, the
+  subscription history table and the collapsed membership summary line — and in
+  the roll-forward summary on the membership-types page. The same wording now
+  appears in the season label of the file a member gets from "Export my data".
 
   Members will notice. Nothing about their membership, their subscription or
   what they owe has changed — only the words the season is written in. A file a
