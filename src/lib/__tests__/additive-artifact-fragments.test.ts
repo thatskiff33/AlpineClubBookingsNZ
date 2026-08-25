@@ -266,21 +266,28 @@ describe("additive artifacts stay fragment-backed (#3111)", () => {
     expect(routingRow).toContain("the fragment-directory rule");
   });
 
-  it("has each fragment directory's README point at the general rule", () => {
+  it("has each fragment directory's README state the general rule", () => {
+    // Deliberately keyed on the rule's own operative words rather than on a
+    // citation. An earlier version of this assertion asked only for the string
+    // "#3111", and a mutation that stripped the rule out of the README survived
+    // it: the bare issue number was still there in a table cell, so the check
+    // passed over a README that no longer stated the rule. A citation token is
+    // cheap to satisfy accidentally; the sentence is not.
     const offenders = fragmentDirectories()
       .filter((artifact) => {
         const readme = readFileSync(join(artifact.path, "README.md"), "utf8");
-        return !readme.includes("AGENTS.md") || !readme.includes("#3111");
+        return !readme.includes("AGENTS.md") || !readme.includes("never one shared file");
       })
       .map((artifact) => artifact.path);
 
     expect(
       offenders,
-      `Each fragment directory's README must link the general rule in AGENTS.md ` +
-        `and cite #3111. The two existing directories read as unrelated special ` +
-        `cases for months, which is exactly why nobody recognised the third ` +
-        `artifact as a member of the same class.\n\n` +
-        `Missing the link: ${offenders.join(", ")}\n${BLIND_SPOT}`,
+      `Each fragment directory's README must state the general rule - the words ` +
+        `"never one shared file" - and name AGENTS.md as its home, so the ` +
+        `directory does not read as a local trick. The two existing directories ` +
+        `read as unrelated special cases for months, which is exactly why nobody ` +
+        `recognised the next artifact as a member of the same class.\n\n` +
+        `Missing the rule: ${offenders.join(", ")}\n${BLIND_SPOT}`,
     ).toEqual([]);
   });
 });
