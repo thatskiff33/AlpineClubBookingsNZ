@@ -63,7 +63,8 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   sendAdminBookingRequestPendingEmail,
   sendBookingRequestApprovedEmail,
@@ -2013,11 +2014,16 @@ export async function approveBookingRequest(input: {
     reviewedAt
   );
   // The payment link stays valid while the booking remains payable; the hard
-  // ceiling is the end of the check-in day in NZT (not midnight UTC, which
-  // would cut the day short in New Zealand — issue #740). Booking status checks
-  // gate actual payment.
-  const paymentLinkExpiresAt = endOfDateOnlyForTimeZone(
-    formatDateOnly(request.checkIn)
+  // ceiling is the end of the check-in day in the CLUB's persisted zone (not
+  // midnight UTC, which would cut the day short — issue #740). Booking status
+  // checks gate actual payment. Resolved HERE, before the transaction below,
+  // which holds both the global and the per-lodge advisory lock: the same
+  // ordering rule the member-guest policy read a few lines down follows, and
+  // `payment-link-expiry.ts` is why the cron's terminal cancel cannot disagree
+  // with this value.
+  const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
+    request.checkIn,
+    await readClubTimeZoneOutsideRequest()
   );
   const { token: paymentToken, tokenHash: paymentTokenHash } = issueActionToken();
 

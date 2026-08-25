@@ -22,7 +22,9 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   sendAdminPaymentFailureAlert,
   sendBookingRequestApprovedEmail,
@@ -360,7 +362,12 @@ export async function reissuePaymentLinkForToken(
     throw new PaymentLinkError(NOT_PAYABLE_MESSAGE, 410);
   }
 
-  const expiresAt = endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn));
+  // Read the zone BEFORE the mint transaction below, which holds the per-lodge
+  // capacity lock — see `payment-link-expiry.ts`.
+  const expiresAt = paymentLinkExpiryForCheckIn(
+    booking.checkIn,
+    await readClubTimeZoneOutsideRequest()
+  );
   if (expiresAt.getTime() < Date.now()) {
     throw new PaymentLinkError(
       "These dates have already passed, so a new payment link can't be issued.",
@@ -833,10 +840,16 @@ export async function createPaymentIntentForPaymentLink(
 
 /** A freshly minted split-guest link: the raw token (emailable exactly once)
  * plus the row id so a caller whose email fails can revoke THIS link — and
- * only this link — without touching a newer one minted concurrently. */
+ * only this link — without touching a newer one minted concurrently.
+ *
+ * `expiresAt` IS THE STORED INSTANT, handed back so the email that carries the
+ * token states the deadline the row really holds instead of deriving it a second
+ * time. Two derivations is how the page and the mint came to mean different
+ * moments (#3068); returning the value makes them the same by construction. */
 export type MintedSplitGuestPaymentLink = {
   token: string;
   paymentLinkId: string;
+  expiresAt: Date;
 };
 
 /**
@@ -868,7 +881,7 @@ async function mintFreshSplitGuestPaymentLink(
   const created = await tx.paymentLink.create({
     data: { bookingId, tokenHash, expiresAt },
   });
-  return { token, paymentLinkId: created.id };
+  return { token, paymentLinkId: created.id, expiresAt };
 }
 
 /**
@@ -887,14 +900,21 @@ async function mintFreshSplitGuestPaymentLink(
  *
  * DB-only and safe to call inside a capacity-lock transaction; the email MUST
  * be sent by the caller OUTSIDE the transaction. The link expires at the end of
- * the check-in day in NZT, matching the #707/#740 request-origin convention.
+ * the check-in day in the CLUB's persisted zone, matching the #707/#740
+ * request-origin convention.
+ *
+ * `clubZone` IS A PARAMETER BECAUSE THIS RUNS UNDER A LOCK. Resolving the zone
+ * is a `clubTimeSettings` read, and the only caller is the settlement cron's
+ * global+per-lodge lock transaction; it resolves the zone once per run before
+ * the transaction and threads it in (`payment-link-expiry.ts`).
  */
 export async function mintSplitGuestPaymentLinkIfAbsent(
   tx: Prisma.TransactionClient,
-  booking: { id: string; checkIn: Date }
+  booking: { id: string; checkIn: Date },
+  clubZone: ClubTimeZone
 ): Promise<MintedSplitGuestPaymentLink | null> {
   const now = new Date();
-  const expiresAt = endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn));
+  const expiresAt = paymentLinkExpiryForCheckIn(booking.checkIn, clubZone);
   if (expiresAt.getTime() <= now.getTime()) {
     return null;
   }
@@ -1042,6 +1062,16 @@ export async function issueSplitGuestPaymentLink(
     return { outcome: "not_payable" };
   }
 
+  // BEFORE the transaction, which holds the per-lodge capacity lock: resolving
+  // the club's zone is a settings read, and `checkIn` is immutable on the row
+  // already loaded, so nothing under the lock can change this value. Computing
+  // it once is also what stops the stored instant and the emailed one drifting
+  // apart — they were two separate derivations of the same boundary.
+  const expiresAt = paymentLinkExpiryForCheckIn(
+    booking.checkIn,
+    await readClubTimeZoneOutsideRequest()
+  );
+
   const minted = await prisma.$transaction(
     async (
       tx
@@ -1063,9 +1093,6 @@ export async function issueSplitGuestPaymentLink(
       }
 
       const now = new Date();
-      const expiresAt = endOfDateOnlyForTimeZone(
-        formatDateOnly(booking.checkIn)
-      );
       if (expiresAt.getTime() <= now.getTime()) {
         // The check-in day has ended; a fresh link would be born expired.
         return { kind: "not_payable" };
@@ -1122,7 +1149,8 @@ export async function issueSplitGuestPaymentLink(
       guestCount: booking.guests.length,
       priceCents: booking.finalPriceCents,
       bookingReference: booking.id,
-      expiresAt: endOfDateOnlyForTimeZone(formatDateOnly(booking.checkIn)),
+      // The instant the row really carries, not a second derivation of it.
+      expiresAt: minted.expiresAt,
       lodgeId: booking.lodgeId ?? null,
     });
   } catch (err) {

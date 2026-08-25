@@ -104,11 +104,9 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
-import {
-  endOfDateOnlyForTimeZone,
-  formatDateOnly,
-  normalizeDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { formatDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   checkInternetBankingLeadTime,
   loadInternetBankingPaymentSettings,
@@ -1547,9 +1545,14 @@ export async function verifyAndCreateNonMemberJoin(
     holdDays,
     reviewedAt
   );
-  // The pay link stays valid to the end of the check-in day in NZT; booking
-  // status gates actual payment.
-  const paymentLinkExpiresAt = endOfDateOnlyForTimeZone(formatDateOnly(checkIn));
+  // The pay link stays valid to the end of the check-in day in the CLUB's
+  // persisted zone; booking status gates actual payment. Read here rather than
+  // inside the transaction below, which holds the per-lodge capacity lock —
+  // `payment-link-expiry.ts` states the rule and the coupling it protects.
+  const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
+    checkIn,
+    await readClubTimeZoneOutsideRequest()
+  );
   const { token: payToken, tokenHash: payTokenHash } = issueActionToken();
 
   let capacityFullNights: string[] | null = null;
