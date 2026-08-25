@@ -104,8 +104,17 @@ id and need the file it lives in.
     links to is a real tracked file; every `docs/` page is reachable from a
     front door by following links; nobody writes a line-number citation into
     `docs/DOMAIN_INVARIANTS.md` or `docs/invariants/**`, with no allowlist and
-    no exceptions; and no tracked text file carries a byte-order mark or
-    cp1252-through-UTF-8 double-encoding.
+    no exceptions; no tracked text file carries a byte-order mark or
+    cp1252-through-UTF-8 double-encoding; and no tracked text file carries a
+    **raw control character** — every C0 byte except TAB, LF and CR, plus DEL —
+    with no allowlist either, because where such a byte is genuinely wanted as
+    data the escape sequence denotes the identical value. That last rule is
+    #3072: an editing tool turns the two characters `\b` into the one byte they
+    name, every normal view renders it back as `\b`, and a `.not.toMatch()`
+    built on the result passes unconditionally for ever. A sibling check refuses
+    a file `.gitattributes` declares `text` that Git's content scan calls
+    binary, since a NUL in a file's first 8,000 bytes would otherwise drop it
+    out of every check in the list above.
   - **It does not enforce that every doc has a routing row.** There are roughly
     two hundred pages under `docs/` and most are correctly reached through a
     feature hub rather than through this file, so that rule would be almost

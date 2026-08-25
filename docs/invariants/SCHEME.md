@@ -774,7 +774,14 @@ shape guard flags every Xero invoice fixture in the test suite (§1.2.1).
    grandfather register: that pointer goes stale silently, which is the habit the
    IDs exist to replace.
 11. Every page under `docs/` is reachable from a documentation front door.
-12. No tracked text file carries a byte-order mark or double-encoded text.
+12. No tracked text file carries a byte-order mark or double-encoded text, and
+    none carries a **raw control character** — every C0 byte except TAB, LF and
+    CR, plus DEL. No allowlist, including inside a comment: where the character
+    is wanted as data the escape sequence denotes the identical value, so
+    spelling it out costs nothing. Its sibling check refuses a file
+    `.gitattributes` declares `text` that Git's content scan nevertheless calls
+    binary, because that is how an early NUL would hide a file from every check
+    on this list (#3072).
 13. Every prefix's numbers are **dense from `001`** — no gap between its lowest
     and its highest (§1.3.4).
 14. Every ID defined in the base revision is still defined in the current tree.
