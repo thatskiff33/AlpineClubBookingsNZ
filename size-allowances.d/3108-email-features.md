@@ -1,4 +1,4 @@
-# File-size allowances for the upstream email-features PR (fork PRs triyder#37 + triyder#40)
+# File-size allowances for #3108 (fork PRs triyder#37 + triyder#40)
 
 Each of these three files is the canonical single home for one facet of a new
 email token, and the token cannot land without touching all three. None of the
