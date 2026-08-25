@@ -309,12 +309,6 @@ export async function GET() {
       ],
       subscriptions: subscriptions.map((s) => ({
         seasonYear: s.seasonYear,
-        // Named by the shared derivation, so a member's download and their
-        // profile screen always agree (#3103). The KEY and its type are
-        // unchanged; the string it carries now follows the club's configured
-        // year-end instead of assuming a season spans two calendar years.
-        // `seasonYear` beside it is the stored column and is untouched, so a
-        // consumer reading the season as a number sees no change at all.
         seasonLabel: seasonSelectLabel(s.seasonYear),
         status: s.status,
         paidAt: s.paidAt ? s.paidAt.toISOString() : null,

@@ -241,12 +241,6 @@ export default async function ProfilePage({
   const subscriptionStatus = subscriptionRequired
     ? (currentSub?.status ?? null)
     : "NOT_REQUIRED";
-  // The season is NAMED by the shared derivation, which follows the club's
-  // configured year-end rather than assuming a season spans two calendar
-  // years (#3103; `src/lib/season-label.ts` holds the rule and the reasoning).
-  // It reads the same financial-year cache as `currentSeasonYear` above, so
-  // the label and the season it labels can never disagree with each other.
-  const seasonLabel = seasonSelectLabel(currentSeasonYear);
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
@@ -388,7 +382,7 @@ export default async function ProfilePage({
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription {seasonLabel}
+                Subscription {seasonSelectLabel(currentSeasonYear)}
               </span>
               <Badge
                 className={subscriptionStatusClass(

@@ -1016,12 +1016,8 @@ export default function AdminMembershipTypesPage() {
   // (CT-4 group F1, #2870). Before this it went through a helper that read a
   // `Date`'s host-local components, so it answered from whatever zone the bundle
   // was built with rather than the club's.
-  // Seasons are NAMED by `seasonSelectLabel`, which follows the club's
-  // configured year-end (#3103). On the client it reads the same unseeded
-  // financial-year cache as `clubSeasonYear` below, so both answer for the
-  // March default and the roll-forward banner cannot name a season the
-  // pickers beside it did not select; `src/lib/season-label.ts` holds why the
-  // year-end is not plumbed to the client yet.
+  // Season NAMES come from `season-label.ts`, which also records why the
+  // year-end is unplumbed here and why that keeps name and value in step.
   const clubTime = useClubTime();
   const defaultSeasonYear = clubSeasonYear(clubTime.zone);
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);

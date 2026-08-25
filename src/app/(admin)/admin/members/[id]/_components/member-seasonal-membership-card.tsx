@@ -206,11 +206,8 @@ export function MemberSeasonalMembershipCard({
   // `Date`'s host-local components, so the fallback answered from whatever zone
   // the bundle was built with rather than the club's — and no better argument
   // could have fixed that, which is why the helper was replaced instead.
-  // The seasons on this card are NAMED by `seasonSelectLabel`, which follows
-  // the club's configured year-end (#3103). On the client that reads the same
-  // unseeded financial-year cache as `clubSeasonYear` immediately below, so
-  // both answer for the March default and cannot disagree with each other;
-  // `src/lib/season-label.ts` holds why the year-end is not plumbed here yet.
+  // Season NAMES come from `season-label.ts`, which also records why the
+  // year-end is unplumbed here and why that keeps name and value in step.
   const effectiveCurrentSeasonYear =
     member.currentSeasonYear ?? clubSeasonYear(clubTime.zone);
   const seasonalAssignments =
