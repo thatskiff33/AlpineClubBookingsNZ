@@ -6,6 +6,7 @@ import { EMAIL_FROM } from "@/lib/email-sender";
 import { EMAIL_DEFAULT_FROM_NAME } from "@/lib/email-message-settings";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { declareEnvironmentRole } from "@/lib/__tests__/helpers/environment-role";
+import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
 // The cron resolves each lodge's own capacity; pin it to the club config
 // total so the fixtures keep their original arithmetic.
@@ -238,12 +239,18 @@ describe("N-03: checkCapacityWarnings", () => {
   });
 
   it("alerts when days have <= 5 beds remaining", async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dayAfter = new Date(tomorrow);
-    dayAfter.setDate(dayAfter.getDate() + 1);
+    // #3107: the cron derives its own window from `getTodayDateOnly()`, which is
+    // the club day encoded at UTC midnight. This was `new Date()` +
+    // `setHours(0,0,0,0)` - HOST-LOCAL midnight, a value no `@db.Date` column
+    // can hold and one whose UTC instant moves with the machine running the
+    // suite. Reading the same source the cron reads makes the fixture line up
+    // with the nights it actually asks about, on any host.
+    const today = getTodayDateOnly();
+    // `addDaysDateOnly` steps whole UTC days. `setDate` steps the LOCAL date and
+    // carries the local time of day with it, so on a host with a transition in
+    // range it moves the UTC instant by 23 or 25 hours off the day boundary.
+    const tomorrow = addDaysDateOnly(today, 1);
+    const dayAfter = addDaysDateOnly(today, 2);
 
     // Create a booking with 25 guests (only 4 beds remaining)
     mockPrisma.booking.findMany.mockResolvedValue([
@@ -269,10 +276,14 @@ describe("N-03: checkCapacityWarnings", () => {
   // a custodian is genuinely unavailable — excluding it would under-fire the
   // warning by the custodian count every night, all season.
   it("counts a custodian bed hold toward fullness, so the warning fires at TRUE fullness", async () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dayAfter = new Date(today);
-    dayAfter.setDate(dayAfter.getDate() + 2);
+    // #3107: the cron derives its own window from `getTodayDateOnly()`, which is
+    // the club day encoded at UTC midnight. This was `new Date()` +
+    // `setHours(0,0,0,0)` - HOST-LOCAL midnight, a value no `@db.Date` column
+    // can hold and one whose UTC instant moves with the machine running the
+    // suite. Reading the same source the cron reads makes the fixture line up
+    // with the nights it actually asks about, on any host.
+    const today = getTodayDateOnly();
+    const dayAfter = addDaysDateOnly(today, 2);
 
     // One bed above the threshold: LODGE_CAPACITY - 6 booked guests leaves 6
     // free, and the cron only warns at <= 5.

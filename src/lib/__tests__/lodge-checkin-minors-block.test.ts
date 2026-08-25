@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dateOnlyFromParts } from "@/lib/date-only";
 import { AdminReviewStatus } from "@prisma/client";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
 
@@ -70,8 +71,14 @@ const REVIEW_ALLOWED_FRAGMENT = {
   ],
 };
 
+// #3107: a `@db.Date` fixture is the calendar day encoded at UTC MIDNIGHT. This
+// was `new Date(y, m, d)` - HOST-LOCAL midnight, which on a UTC+12 host is noon
+// UTC the previous day. PostgreSQL cannot keep a time in a `date` column, so the
+// fixture described a row that cannot exist, and it read back correctly only
+// while the code under test projected it through a zone that undid the host
+// offset. `dateOnlyFromParts` avoids `Date.UTC` and its two-digit-year rule.
 function dateOnly(y: number, m: number, d: number) {
-  return new Date(y, m, d);
+  return dateOnlyFromParts(y, m, d);
 }
 
 describe("lodge check-in blocks a pending minors-only review (#1372)", () => {
