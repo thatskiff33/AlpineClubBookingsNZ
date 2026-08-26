@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  mapWhakapapaReportApiTrailAreas,
   fetchWhakapapaCurlData,
   findInvalidSelectorOverrides,
 } from "@/lib/whakapapa-report.server";
@@ -131,6 +132,8 @@ type MockResponseSpec = {
   status?: number;
   html?: string;
   location?: string;
+  /** JSON payload for the #45 /api/report fallback request. */
+  json?: unknown;
 };
 
 /**
@@ -148,6 +151,7 @@ type MockFetchImpl = (...args: Parameters<typeof fetch>) => Promise<{
   status: number;
   headers: Headers;
   text: () => Promise<string>;
+  json: () => Promise<unknown>;
   body: null;
 }>;
 
@@ -164,6 +168,12 @@ function mockFetchSequence(responses: MockResponseSpec[]) {
       status,
       headers: new Headers(next.location ? { location: next.location } : {}),
       text: async () => next.html ?? "",
+      json: async () => {
+        if (next.json === undefined) {
+          throw new Error("response has no JSON payload");
+        }
+        return next.json;
+      },
       body: null,
     };
   });
@@ -180,6 +190,20 @@ const CANONICAL_SECTIONS: SectionSpec[] = [
   },
   { id: "lifts", label: "Lifts", items: [["Sky Waka", "Open"]] },
 ];
+
+
+// One populated trails section for fixtures whose test is NOT about trails:
+// with it present, the #45 JSON fallback stays dormant and call-count
+// assertions keep measuring what their test names.
+const TRAILS_PRESENT = trailsSection("Sky Waka Area", [
+  {
+    name: "Hut Flat",
+    status: "Open",
+    grade: "beginner",
+    subInfo: "Groomed",
+    statusClass: "open_3CiH98",
+  },
+]);
 
 describe("fetchWhakapapaCurlData", () => {
   afterEach(() => {
@@ -411,7 +435,10 @@ describe("fetchWhakapapaCurlData redirect handling", () => {
 
   it("never lets the upstream follow redirects for us", async () => {
     const fetchMock = mockFetchSequence([
-      { status: 200, html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"]) },
+      {
+        status: 200,
+        html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"], TRAILS_PRESENT),
+      },
     ]);
 
     await fetchWhakapapaCurlData();
@@ -425,7 +452,10 @@ describe("fetchWhakapapaCurlData redirect handling", () => {
   it("follows a redirect that stays on an allowlisted host", async () => {
     const fetchMock = mockFetchSequence([
       { status: 301, location: "https://www.snow.nz/report" },
-      { status: 200, html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"]) },
+      {
+        status: 200,
+        html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"], TRAILS_PRESENT),
+      },
     ]);
 
     const data = await fetchWhakapapaCurlData();
@@ -528,5 +558,157 @@ describe("findInvalidSelectorOverrides", () => {
   it("returns [] for no overrides", () => {
     expect(findInvalidSelectorOverrides({})).toEqual([]);
     expect(findInvalidSelectorOverrides(null)).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Fork #45 — trails from the upstream /api/report JSON when the DOM has none.
+// Whakapapa's collapsible-UI update ships the Trails sections as EMPTY Lit
+// placeholders, so the scraper reads the same JSON the page renders from.
+// ---------------------------------------------------------------------------
+
+// XML-shaped JSON exactly as the live endpoint serves it: a single child is
+// an OBJECT (Happy Valley's one trail), several are an ARRAY.
+const REPORT_API_PAYLOAD = {
+  whakapapa: {
+    name: "Whakapapa",
+    facilities: {
+      areas: {
+        area: [
+          {
+            name: "Happy Valley Area",
+            trails: {
+              trail: {
+                name: "Happy Valley",
+                status: "Open",
+                comment: "",
+                groomed: "yes",
+                difficulty: "beginner",
+              },
+            },
+          },
+          {
+            name: "Sky Waka Area",
+            trails: {
+              trail: [
+                {
+                  name: "Hut Flat",
+                  status: "Open",
+                  groomed: "yes",
+                  difficulty: "intermediate",
+                },
+                {
+                  name: "Broken Leg Gully",
+                  status: "Closed",
+                  groomed: "no",
+                  difficulty: "expert",
+                },
+              ],
+            },
+          },
+          { name: "Empty Area", trails: {} },
+        ],
+      },
+    },
+  },
+};
+
+describe("fetchWhakapapaCurlData trails JSON fallback (#45)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("maps the payload's areas, coercing one-or-many and the vocabulary", () => {
+    expect(mapWhakapapaReportApiTrailAreas(REPORT_API_PAYLOAD)).toEqual([
+      {
+        name: "Happy Valley Area",
+        trails: [
+          {
+            name: "Happy Valley",
+            status: "Open",
+            groomed: true,
+            difficulty: "Beginner",
+            size: "",
+          },
+        ],
+      },
+      {
+        name: "Sky Waka Area",
+        trails: [
+          {
+            name: "Hut Flat",
+            status: "Open",
+            groomed: true,
+            difficulty: "Intermediate",
+            size: "",
+          },
+          {
+            name: "Broken Leg Gully",
+            status: "Closed",
+            groomed: false,
+            difficulty: "Expert",
+            size: "",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("returns [] for junk payloads rather than throwing", () => {
+    expect(mapWhakapapaReportApiTrailAreas(null)).toEqual([]);
+    expect(mapWhakapapaReportApiTrailAreas("nope")).toEqual([]);
+    expect(mapWhakapapaReportApiTrailAreas({ whakapapa: { facilities: 3 } })).toEqual([]);
+  });
+
+  it("falls back to /api/report when the DOM carries no trails, with the SSRF options pinned", async () => {
+    const fetchMock = mockFetchSequence([
+      { status: 200, html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"]) },
+      { status: 200, json: REPORT_API_PAYLOAD },
+    ]);
+
+    const data = await fetchWhakapapaCurlData();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://www.whakapapa.com/api/report",
+    );
+    // The fallback rides the SAME allowlisted fetcher: manual redirects, or
+    // an upstream 30x could point this cached, publicly-served read anywhere.
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "manual" });
+    expect(data.trails.map((area) => area.name)).toEqual([
+      "Happy Valley Area",
+      "Sky Waka Area",
+    ]);
+    // The rest of the report still comes from the DOM parse.
+    expect(data.lifts).toEqual([{ name: "Sky Waka", status: "Open" }]);
+  });
+
+  it("does NOT call the JSON endpoint when the DOM already has trails", async () => {
+    const fetchMock = mockFetchSequence([
+      {
+        status: 200,
+        html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"], TRAILS_PRESENT),
+      },
+    ]);
+
+    const data = await fetchWhakapapaCurlData();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(data.trails).toHaveLength(1);
+  });
+
+  it("degrades to a trail-less report when the JSON endpoint fails, keeping everything else", async () => {
+    const fetchMock = mockFetchSequence([
+      { status: 200, html: buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"]) },
+      { status: 503 },
+    ]);
+
+    const data = await fetchWhakapapaCurlData();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(data.trails).toEqual([]);
+    expect(data.lifts).toEqual([{ name: "Sky Waka", status: "Open" }]);
+    expect(data.conditions).toHaveLength(1);
   });
 });

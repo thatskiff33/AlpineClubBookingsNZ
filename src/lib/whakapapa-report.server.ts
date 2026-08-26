@@ -1,4 +1,5 @@
 import { JSDOM } from "jsdom";
+import logger from "@/lib/logger";
 import {
   emptyWhakapapaCurlData,
   resolveWhakapapaRedirectTarget,
@@ -251,6 +252,115 @@ function parseTrailAreas(
   return areas;
 }
 
+// ---------------------------------------------------------------------------
+// Trails via the upstream JSON API (fork #45).
+//
+// Whakapapa's UI update moved the Trails area behind collapsible sections
+// whose content is EMPTY in the served HTML — a Lit app renders it
+// client-side from the site's own same-origin JSON endpoint, /api/report.
+// A fetch-and-JSDOM scraper cannot "expand" anything (there is no JavaScript
+// execution and no per-section fetch to mimic), so when the DOM parse finds
+// no trails the scraper reads the SAME JSON the page renders from. The
+// payload is XML-shaped JSON: a single child arrives as an OBJECT and
+// several as an ARRAY, so every list is coerced one-or-many.
+// ---------------------------------------------------------------------------
+
+const WHAKAPAPA_REPORT_API_PATH = "/api/report";
+
+function objectField(value: unknown, key: string): unknown {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function coerceOneOrMany(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter(
+      (entry): entry is Record<string, unknown> =>
+        Boolean(entry) && typeof entry === "object",
+    );
+  }
+  if (value && typeof value === "object") {
+    return [value as Record<string, unknown>];
+  }
+  return [];
+}
+
+function stringField(value: unknown, key: string): string {
+  const raw = objectField(value, key);
+  return normalizeText(typeof raw === "string" ? raw : "");
+}
+
+// The JSON spells difficulty in lowercase ("beginner"); the DOM path's
+// vocabulary (parseTrailDifficulty) is capitalised, and downstream consumers
+// key off those exact strings, so the two sources must agree.
+function normalizeJsonDifficulty(value: unknown): string {
+  const raw = normalizeText(typeof value === "string" ? value : "").toLowerCase();
+  if (raw === "beginner") return "Beginner";
+  if (raw === "intermediate") return "Intermediate";
+  if (raw === "advanced") return "Advanced";
+  if (raw === "expert") return "Expert";
+  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "";
+}
+
+/** test seam — maps the /api/report payload's areas into trail areas. */
+export function mapWhakapapaReportApiTrailAreas(
+  payload: unknown,
+): WhakapapaTrailArea[] {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+  // Everything nests under one resort key ({ "whakapapa": {...} }); take the
+  // first object value rather than hard-coding the resort name.
+  const resort = Object.values(payload as Record<string, unknown>).find(
+    (value) => value && typeof value === "object",
+  );
+  const areaNodes = coerceOneOrMany(
+    objectField(objectField(objectField(resort, "facilities"), "areas"), "area"),
+  );
+
+  const areas: WhakapapaTrailArea[] = [];
+  for (const areaNode of areaNodes) {
+    const trails: WhakapapaTrail[] = coerceOneOrMany(
+      objectField(objectField(areaNode, "trails"), "trail"),
+    )
+      .map((trailNode) => ({
+        name: stringField(trailNode, "name"),
+        status: stringField(trailNode, "status"),
+        groomed: stringField(trailNode, "groomed").toLowerCase() === "yes",
+        difficulty: normalizeJsonDifficulty(objectField(trailNode, "difficulty")),
+        // The JSON carries no groomed/size descriptor line; size only ever
+        // came from the DOM sub-info text, so it stays empty here.
+        size: "",
+      }))
+      .filter((trail) => trail.name.length > 0);
+
+    if (trails.length > 0) {
+      areas.push({ name: stringField(areaNode, "name"), trails });
+    }
+  }
+  return areas;
+}
+
+/**
+ * Fetch trails from `<source-origin>/api/report`, through the SAME
+ * allowlisted, manual-redirect fetcher as the HTML — the SSRF guard applies
+ * to every hop of this request exactly as it does to the page itself.
+ */
+async function fetchTrailAreasFromReportApi(
+  sourceUrl: string,
+): Promise<WhakapapaTrailArea[]> {
+  const apiUrl = new URL(WHAKAPAPA_REPORT_API_PATH, sourceUrl).toString();
+  const response = await fetchAllowlistedReport(apiUrl);
+  if (!response.ok) {
+    throw new Error(
+      `Whakapapa report API fetch failed (status ${response.status}).`,
+    );
+  }
+  const payload: unknown = await response.json();
+  return mapWhakapapaReportApiTrailAreas(payload);
+}
+
 function isRedirectStatus(status: number): boolean {
   return status >= 300 && status <= 399;
 }
@@ -397,7 +507,22 @@ export async function fetchWhakapapaCurlData(
     }))
     .filter((item) => item.name.length > 0);
 
-  const trails = parseTrailAreas(document, selectors);
+  let trails = parseTrailAreas(document, selectors);
+  if (trails.length === 0) {
+    // Fork #45: the collapsed-UI case — the trail rows are not in the HTML at
+    // all, so read the JSON the page itself renders them from. DOM-first, so
+    // an upstream revert resumes the original scrape with no extra request;
+    // a JSON failure degrades to the pre-#45 (trail-less) report rather than
+    // failing the whole scrape, and says so in the log.
+    try {
+      trails = await fetchTrailAreasFromReportApi(sourceUrl);
+    } catch (error) {
+      logger.warn(
+        { err: error },
+        "Whakapapa trails JSON fallback failed; report continues without trails (fork #45)",
+      );
+    }
+  }
 
   const curlData = emptyWhakapapaCurlData();
   curlData.updated = new Date().toISOString();
