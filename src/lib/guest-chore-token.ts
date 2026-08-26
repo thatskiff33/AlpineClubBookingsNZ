@@ -4,6 +4,8 @@ import { formatDateOnly } from "@/lib/date-only";
 
 const TOKEN_EXPIRY_HOURS = 48;
 
+const MILLISECONDS_PER_HOUR = 3_600_000;
+
 // test seam
 /**
  * Generate a secure, URL-safe token for guest chore access.
@@ -21,8 +23,14 @@ export async function createGuestChoreToken(
   date: Date
 ): Promise<string> {
   const { token, tokenHash } = issueActionToken();
-  const expiresAt = new Date();
-  expiresAt.setHours(expiresAt.getHours() + TOKEN_EXPIRY_HOURS);
+  // A token lifetime is a DURATION, so it is measured in milliseconds rather
+  // than by adding to the host's clock face (INV-DATE-014, CT-6 #2991).
+  // `setHours(getHours() + n)` added n WALL-CLOCK hours, which is n hours except
+  // across a daylight-saving transition, where the token lived an hour longer or
+  // shorter than the constant says.
+  const expiresAt = new Date(
+    Date.now() + TOKEN_EXPIRY_HOURS * MILLISECONDS_PER_HOUR
+  );
 
   await prisma.guestChoreToken.create({
     data: {

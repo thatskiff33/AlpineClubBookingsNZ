@@ -15,8 +15,13 @@ import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
 export async function sendCheckinReminders(): Promise<{ sent: number; skipped: number }> {
   const now = new Date();
   const tomorrowNZ = addDaysDateOnly(getTodayDateOnly(), 1);
-  const dayAfterNZ = new Date(tomorrowNZ);
-  dayAfterNZ.setDate(dayAfterNZ.getDate() + 1);
+  // The exclusive upper bound of tomorrow's lodge night, stepped with the
+  // zone-free calendar helper rather than through the host's clock face
+  // (INV-DATE-014, CT-6 #2991). `setDate(getDate() + 1)` added one LOCAL day,
+  // which on a daylight-saving weekend is 23 or 25 hours -- so the bound landed
+  // an hour off UTC midnight and a `@db.Date` night stored exactly there fell
+  // on the wrong side of it.
+  const dayAfterNZ = addDaysDateOnly(tomorrowNZ, 1);
 
   // Find paid/operational bookings checking in tomorrow
   const bookings = await prisma.booking.findMany({

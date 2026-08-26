@@ -46,7 +46,7 @@ import {
 } from "@/lib/booking-status";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 

@@ -28,7 +28,7 @@ import { getPaymentsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
 import { CLUB_TIME_TEST_ZONE } from "@/lib/__tests__/support/club-time-render";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { APP_TIME_ZONE } from "@/config/operational";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { getDiagnosticsPageContextRoute } from "@/lib/diagnostics/page-context/registry";
 import { DIAGNOSTICS_PAGE_CONTEXT_BOUNDS } from "@/lib/diagnostics/page-context/types";
 

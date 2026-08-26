@@ -38,7 +38,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { APP_TIME_ZONE } from "@/config/operational"
 import { ClubTimeProvider } from "@/components/club-time-provider"
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice"
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 
 /** The stay's first night — 30 June, the day the two zones disagree about. */
 const CHECK_IN = "2026-06-30"

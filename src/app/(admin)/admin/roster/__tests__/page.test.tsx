@@ -34,7 +34,7 @@ import RosterPage from "@/app/(admin)/admin/roster/page"
 import type { ReactNode } from "react"
 import { ClubTimeProvider } from "@/components/club-time-provider"
 import { APP_TIME_ZONE } from "@/config/operational"
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice"
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 
 function roster(date = "2026-07-01", guestName = "Aroha Guest") {
   const [firstName, lastName] = guestName.split(" ")

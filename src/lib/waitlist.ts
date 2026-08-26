@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { addDaysDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
@@ -1014,8 +1015,8 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        const holdDate = new Date(booking.checkIn);
-        holdDate.setDate(holdDate.getDate() - holdPolicy.holdDays);
+        // INV-DATE-014: calendar arithmetic, never the host's clock face.
+        const holdDate = addDaysDateOnly(booking.checkIn, -holdPolicy.holdDays);
         updateData.nonMemberHoldUntil = holdDate;
       }
 

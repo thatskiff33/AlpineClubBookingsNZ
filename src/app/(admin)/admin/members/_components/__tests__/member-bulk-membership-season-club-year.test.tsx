@@ -41,7 +41,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ClubTimeProvider } from "@/components/club-time-provider"
 import { APP_TIME_ZONE } from "@/config/operational"
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice"
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import { MemberBulkMembershipDialog } from "../member-bulk-membership-dialog"
 
 /**

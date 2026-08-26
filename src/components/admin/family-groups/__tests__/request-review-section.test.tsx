@@ -73,7 +73,7 @@ vi.mock("@/components/admin/family-groups/request-review-card", () => ({
 }));
 
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
-import { chooseDivergentClubZone } from "@/app/(admin)/admin/_lib/__tests__/club-zone-choice";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import { ClubTimeProvider } from "@/components/club-time-provider";
 import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 
