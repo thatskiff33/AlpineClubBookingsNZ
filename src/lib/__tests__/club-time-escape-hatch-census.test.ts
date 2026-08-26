@@ -386,12 +386,45 @@ describe("the scanner counts what it claims to count", () => {
  * pleasant kind of failure and takes one line to resolve; a test that fails
  * because it went up is a new escape hatch, and the fix is the migration, not
  * the number.
+ *
+ * ## EVERY CEILING HERE IS TIGHT. NONE OF THIS HEADROOM IS DELIBERATE.
+ *
+ * Each number equals the live count at the commit that last touched it. There
+ * is no slack, no rounding up and no allowance for work in flight — so if you
+ * measure the tree and find fewer than a ceiling says, the ceiling is STALE and
+ * lowering it is the fix, not a nice-to-have.
+ *
+ * Saying so is not pedantry. The assertions below are `toBeLessThanOrEqual`,
+ * and a reader landing on one cannot tell deliberate slack from a number nobody
+ * lowered. That ambiguity is the whole failure mode: forty sites of unexplained
+ * headroom is forty sites in which the count can silently regrow while CI stays
+ * green, which is exactly the condition this file exists to prevent. A ratchet
+ * with slack in it is not a ratchet.
  */
 const CENSUS_CEILING = {
-  /** Call sites that left a club-facing zone to `APP_TIME_ZONE`. */
-  defaultedZoneCalls: 123,
+  /**
+   * Call sites that left a club-facing zone to `APP_TIME_ZONE`.
+   *
+   * Was 123 in 56 files when CT-6 first measured it. #3107/#3121 merged into
+   * this branch mid-lane and removed **42** of them while adding none, so both
+   * numbers came down in the same sitting — the second worked example of
+   * resolving this suite's failure in the pleasant direction, after
+   * `nzstDateImporters` below.
+   *
+   * The call count fell by exactly 42 and the FILE count by only 4, and the
+   * gap is worth knowing rather than rediscovering: four of that issue's seven
+   * files came fully clean, and three — `admin-booking-copy.ts`,
+   * `booking-guest-stay-ranges.ts` and `booking-member-night-conflicts.ts` —
+   * each still hold exactly one defaulted call. A file leaves this census only
+   * when its LAST site goes.
+   *
+   * What is left is lopsided in a way that should shape whoever takes it on:
+   * `getTodayDateOnly()` alone is 52 of the 81, one question — "what day is it
+   * at the club" — asked in 52 places.
+   */
+  defaultedZoneCalls: 81,
   /** Production files containing at least one of them. */
-  defaultedZoneFiles: 56,
+  defaultedZoneFiles: 52,
   /**
    * Production files importing the retired rendering adapter.
    *
@@ -409,7 +442,8 @@ const CENSUS_CEILING = {
    * this coarse number can and cannot express. CT-6 replaced a host-local
    * `setDate(getDate() - n)` in `waitlist.ts` with `addDaysDateOnly`, which is
    * zone-FREE UTC arithmetic — a strictly better state that nonetheless ADDS an
-   * importer. Measured on this branch, 169 of these files import only zone-free
+   * importer. Measured on the merged tree, 177 of these files import only
+   * zone-free
    * exports and never consult a timezone at all; the number that matters for
    * environment authority is `defaultedZoneCalls` above, not this one.
    */

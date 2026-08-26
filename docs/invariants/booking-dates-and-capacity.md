@@ -896,10 +896,14 @@ derivation).
   nine-file ratchet, of which two are structural (the config module that defines
   it and CT-1's seed reader) and seven are measured callers each carrying the
   issue that blocks them. What a selector cannot express is counted instead:
-  `club-time-escape-hatch-census.test.ts` pins 123 call sites in 56 files that
+  `club-time-escape-hatch-census.test.ts` pins 81 call sites in 52 files that
   still let a zone-defaulting `@/lib/date-only` helper take the environment's
-  answer, and 13 production files still importing `nzst-date`. Both numbers are
-  ceilings and may only fall.
+  answer, and 13 production files still importing `nzst-date` (40 call sites).
+  Every ceiling there is TIGHT — equal to the live count, with no deliberate
+  slack — so a measurement below one means the ceiling is stale, not that there
+  is room. They may only fall, and they already have twice: #3113/#3118 took
+  `nzst-date` from 25 importers to 13, and #3107/#3121 took the defaulted calls
+  from 123 in 56 files to 81 in 52.
 
 ### INV-DATE-016
 
