@@ -104,8 +104,8 @@ import {
 import {
   addDaysDateOnly,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
@@ -1237,9 +1237,13 @@ function guestNightBreakdown(entry: {
   return {
     priceCents: entry.priceCents,
     perNightCents: [...entry.perNightCents],
-    nightDates: entry.nights.map((night) =>
-      normalizeDateOnlyForTimeZone(night)
-    ),
+    // #3107: `storedDateOnly`, not `normalizeDateOnlyForTimeZone` (INV-DATE-013).
+    // These arrive from the in-progress plan already on the true calendar, and
+    // this is the projection that REACHES THE DATABASE - `syncGuestNights`
+    // writes these values into `BookingGuestNight.stayDate`, so an in-progress
+    // edit stored its nights a day early. The ordinary edit branch takes its
+    // nights from `pricing.ts`'s zone-free normaliser and never had the defect.
+    nightDates: entry.nights.map((night) => storedDateOnly(night)),
   };
 }
 

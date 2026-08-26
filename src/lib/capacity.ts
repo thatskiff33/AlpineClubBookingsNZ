@@ -11,14 +11,13 @@ import { mayShareDoubleBed } from "@/lib/double-bed-sharing";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
 import {
   countActiveGuestsForNight,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { buildLodgeCustodianNightCounter } from "@/lib/custodian-occupancy";
 import { buildLodgePolicyExceptionReservationCounter } from "@/lib/booking-exception-reservations";
 
@@ -117,8 +116,12 @@ function buildOccupancyIndex(bookings: OccupancyBooking[]): OccupancyIndexEntry[
       booking,
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
-      checkInKey: formatDateOnlyForTimeZone(booking.checkIn),
-      checkOutKey: formatDateOnlyForTimeZone(booking.checkOut),
+      // #3107: the SAME zone-free decode as the night key these are compared
+      // against. Built with `formatDateOnlyForTimeZone` they were a day apart
+      // from it behind Greenwich, so the occupancy window was off by one
+      // (INV-DATE-013).
+      checkInKey: formatDateOnly(booking.checkIn),
+      checkOutKey: formatDateOnly(booking.checkOut),
     });
   }
   return index;
@@ -174,8 +177,8 @@ function buildWholeLodgeHoldIndex(
       continue;
     }
     index.push({
-      checkInKey: formatDateOnlyForTimeZone(booking.checkIn),
-      checkOutKey: formatDateOnlyForTimeZone(booking.checkOut),
+      checkInKey: formatDateOnly(booking.checkIn),
+      checkOutKey: formatDateOnly(booking.checkOut),
     });
   }
   return index;
@@ -263,8 +266,8 @@ export async function findOverlappingCapacityHoldingBookings(
     excludeBookingId?: string;
   }
 ): Promise<HoldConflictBooking[]> {
-  const start = normalizeDateOnlyForTimeZone(input.checkIn);
-  const end = normalizeDateOnlyForTimeZone(input.checkOut);
+  const start = storedDateOnly(input.checkIn);
+  const end = storedDateOnly(input.checkOut);
   const rows = await db.booking.findMany({
     where: {
       checkIn: { lt: end },
@@ -334,8 +337,8 @@ export async function findOverlappingOverriddenNonHoldingBookings(
     excludeBookingId?: string;
   }
 ): Promise<HoldConflictBooking[]> {
-  const start = normalizeDateOnlyForTimeZone(input.checkIn);
-  const end = normalizeDateOnlyForTimeZone(input.checkOut);
+  const start = storedDateOnly(input.checkIn);
+  const end = storedDateOnly(input.checkOut);
   const rows = await db.booking.findMany({
     where: {
       checkIn: { lt: end },
@@ -393,8 +396,8 @@ export async function getLodgeHeldNights(
   tx?: TransactionClient
 ): Promise<string[]> {
   const db = tx ?? prisma;
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const end = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, end);
   if (nights.length === 0) return [];
 
@@ -570,8 +573,8 @@ export async function checkCapacity(
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
   const lodgeCapacity = await getLodgeCapacity(lodgeId, db);
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const exclusiveEnd = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
 
   const occupancy = await computeNightOccupancy({
@@ -647,8 +650,8 @@ export async function checkCapacityForGuestRanges(
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
   const lodgeCapacity = await getLodgeCapacity(lodgeId, db);
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const exclusiveEnd = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
 
   if (nights.length === 0) {
@@ -765,8 +768,8 @@ export async function checkCapacityForPartnerSharedAdmission(
   const baseCapacity = status.capacity;
   const headroom = status.partnerSharedHeadroom;
 
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const exclusiveEnd = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
   const envelope = { checkIn: start, checkOut: exclusiveEnd };
 
@@ -875,8 +878,8 @@ export async function checkCapacityForPartnerSharedAdmission(
       });
       const guestEnvelopes = partnerGuests.map((guest) => ({
         guest,
-        checkInKey: formatDateOnlyForTimeZone(guest.booking.checkIn),
-        checkOutKey: formatDateOnlyForTimeZone(guest.booking.checkOut),
+        checkInKey: formatDateOnly(guest.booking.checkIn),
+        checkOutKey: formatDateOnly(guest.booking.checkOut),
       }));
       for (const night of nights) {
         const nightKey = formatDateOnly(night);

@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import { dateOnlyFromParts } from "@/lib/date-only";
 import path from "path";
 import { BookingStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,8 +53,16 @@ function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
+// #3107: a `@db.Date` fixture is the calendar day encoded at UTC MIDNIGHT.
+// This was `new Date(year, monthIndex, day)` - HOST-LOCAL midnight, which on a
+// UTC+12 host is noon UTC the previous day and on a UTC-6 host is 06:00 UTC.
+// PostgreSQL cannot keep a time in a `date` column, so no such value can ever
+// come back from the database: the fixture described a row that cannot exist,
+// and it only read back correctly while the code under test projected it
+// through a zone that happened to undo the host offset. `dateOnlyFromParts`
+// avoids `Date.UTC`, whose two-digit-year rule would map year 47 onto 1947.
 function dateOnly(year: number, monthIndex: number, day: number) {
-  return new Date(year, monthIndex, day);
+  return dateOnlyFromParts(year, monthIndex, day);
 }
 
 function makeBooking(guestCount: number, status: BookingStatus) {
