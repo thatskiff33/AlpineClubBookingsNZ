@@ -26,3 +26,17 @@
   before this release keeps rendering exactly as it always has until an
   admin re-saves it from the new editor (it opens as plain paragraphs, ready
   to format).
+- **The add-to-calendar links on booking confirmations are now icons (fork
+  #41).** Instead of three written-out links, the confirmation shows three
+  tappable icons — a calendar-file tile for the `.ics` download, a
+  Google-Calendar tile and an Outlook.com tile — hosted by your own site
+  like the club logo, so no third-party image service is involved. When a
+  member's mail app blocks images, each icon still reads as its service
+  name, and the links work exactly as before.
+- **The add-to-calendar icons now appear in customised email wording too
+  (fork #43).** A club that has written its own Booking Confirmed body sees
+  `{{ical}}` render the same three icons as the built-in message — calendar
+  file, Google Calendar, Outlook.com — instead of long written-out web
+  addresses, with the service names shown when a mail app blocks images.
+  Members never see the raw links, and the editor's Preview shows the icon
+  row exactly as it sends.
