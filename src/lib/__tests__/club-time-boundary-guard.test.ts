@@ -310,6 +310,38 @@ describe("the environment-zone guard is present at every production path", () =>
     }
   }, 120_000);
 
+  it("catches the computed and destructured env reads too", async () => {
+    // Measured against the shipped config by a review lens: `process.env.TZ`
+    // was blocked and both of these were allowed, while the census beside this
+    // suite looked for `APP_TIME_ZONE` and could not see them either — so for
+    // these two spellings there was only ONE instrument, not two.
+    const spellings: Array<[string, string]> = [
+      ["computed member access", 'export const zone = process.env["TZ"];'],
+      ["destructuring", "const { TZ } = process.env;\nexport const zone = TZ;"],
+      [
+        "destructuring with a quoted key",
+        'const { "NEXT_PUBLIC_TZ": zone } = process.env;\nexport const z = zone;',
+      ],
+    ];
+    for (const [label, code] of spellings) {
+      expect(
+        await messagesFor(code, "src/lib/x.ts", ENVIRONMENT_ZONE_PREFIX),
+        label + " is not reported, so the ban has a documented way round it",
+      ).toHaveLength(1);
+    }
+  });
+
+  it("still leaves an unrelated destructure of process.env alone", async () => {
+    // The control for the arm above: destructuring is not itself the defect.
+    expect(
+      await messagesFor(
+        "const { LOCALE, NODE_ENV } = process.env;\nexport const l = LOCALE ?? NODE_ENV;",
+        "src/lib/x.ts",
+        ENVIRONMENT_ZONE_PREFIX,
+      ),
+    ).toEqual([]);
+  });
+
   it("sends the reader to the right replacement for their runtime", async () => {
     const [message] = await messagesFor(
       ENVIRONMENT_ZONE_VIOLATION,
@@ -420,6 +452,31 @@ describe("the date-fns guard closes the class no selector can see", () => {
     });
     expect(problems).toEqual([]);
   }, 120_000);
+
+  it("catches every spelling a review lens found walking past", async () => {
+    // Each of these was measured clean against the FIRST version of this arm.
+    // The re-export is the sharpest: one file writing it makes every downstream
+    // importer clean under every selector in the config.
+    const spellings: Array<[string, string]> = [
+      ["named re-export", 'export { addDays } from "date-fns";'],
+      ["star re-export", 'export * from "date-fns";'],
+      ["subpath re-export", 'export { addDays } from "date-fns/addDays";'],
+      [
+        "dynamic import",
+        'export const f = async () => (await import("date-fns")).addDays;',
+      ],
+      [
+        "subpath require",
+        'const { addDays } = require("date-fns/addDays");\nexport const f = addDays;',
+      ],
+    ];
+    for (const [label, code] of spellings) {
+      expect(
+        await messagesFor(code, "src/lib/x.ts", HOST_CLOCK_PREFIX),
+        label + " is not reported, so the ban has a documented way round it",
+      ).toHaveLength(1);
+    }
+  });
 
   it("catches a deep subpath import too", async () => {
     const messages = await messagesFor(

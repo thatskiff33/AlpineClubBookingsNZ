@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -220,6 +221,49 @@ export function findHostClockReads(source: string): number {
   ).length;
 }
 
+/**
+ * `new Date(y, m, d)` — a LOCAL-midnight construction, in the host's zone.
+ *
+ * The issue's census list names this class and nothing was counting it: it is a
+ * CONSTRUCTOR, so the host-clock lint arm (which matches method CALLS) and
+ * {@link findHostClockReads} (which matches `.getX(`) are both blind to it. It
+ * is the defect `INV-DATE-014` was raised for — #2474, where a browser built a
+ * lodge night at its own midnight and named the wrong day.
+ *
+ * ARITY is what separates it from the correct spellings. `new Date(ms)` and
+ * `new Date(iso)` take one argument, and `new Date(Date.UTC(y, m, d))` also
+ * takes ONE at the top level because its commas are inside the nested call —
+ * which is why this walks parentheses rather than counting commas, for the same
+ * reason {@link findDefaultedZoneCalls} does.
+ */
+export function findLocalMidnightConstruction(source: string): number {
+  let found = 0;
+  const pattern = /new\s+Date\s*\(/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    let index = match.index + match[0].length;
+    let depth = 1;
+    let current = "";
+    const parts: string[] = [];
+    while (index < source.length && depth > 0) {
+      const character = source[index];
+      if ("([{".includes(character)) depth++;
+      else if (")]}".includes(character)) {
+        depth--;
+        if (depth === 0) break;
+      }
+      if (character === "," && depth === 1) {
+        parts.push(current);
+        current = "";
+      } else current += character;
+      index++;
+    }
+    if (current.trim() !== "") parts.push(current);
+    if (parts.filter((part) => part.trim() !== "").length >= 3) found++;
+  }
+  return found;
+}
+
 /** Direct `Temporal` use, which belongs only inside the kernel. */
 export function findTemporalUse(source: string): number {
   return (
@@ -367,14 +411,57 @@ describe("the scanner counts what it claims to count", () => {
     expect(findHostClockReads("d.getUTCFullYear();")).toBe(0);
   });
 
-  it("actually reaches production files", () => {
-    // The premise for every count below. A walker that silently returned an
-    // empty list would make every assertion in this file pass while measuring
-    // nothing — the exact shape this epic has caught four times.
-    expect(PRODUCTION_FILES.length).toBeGreaterThan(500);
+  it("enumerates exactly what git says is there", () => {
+    // THE PREMISE FOR EVERY COUNT BELOW, and it is checked against a source
+    // that shares no code with the walker.
+    //
+    // A floor — `toBeGreaterThan(500)` against a real population of 2,082 —
+    // was the first version of this, and a review lens showed what it permits:
+    // a walk regression dropping the whole of `src/app` leaves 1,230 files, so
+    // the floor passes, a `toContain` anchor in `src/lib` passes, every ceiling
+    // below passes, and seven-plus defaulted sites go unmeasured. Anchors do
+    // not fix that either — they only ever prove the trees somebody remembered
+    // to name.
+    //
+    // `git ls-files` is the independent instrument. It reads the index rather
+    // than the filesystem and shares nothing with `walk()`, so the two can only
+    // agree by both being right. Set equality means no subtree can vanish
+    // silently, and it cannot go stale as the tree grows.
+    const tracked = execSync("git ls-files src", { cwd: ROOT, encoding: "utf8" })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter(
+        (file) =>
+          /\.(ts|tsx)$/.test(file) &&
+          !/\.(test|spec)\.(ts|tsx)$/.test(file) &&
+          !file.includes("/__tests__/") &&
+          !file.startsWith("src/lib/club-time/") &&
+          !KERNEL_SIBLINGS.has(file),
+      )
+      .sort();
+
+    expect([...PRODUCTION_FILES].sort()).toEqual(tracked);
+    // And the exclusions really excluded something, so set equality above is
+    // not two empty filters agreeing with each other.
     expect(PRODUCTION_FILES).toContain("src/lib/capacity.ts");
     expect(PRODUCTION_FILES).not.toContain("src/lib/club-time/instant.ts");
     expect(PRODUCTION_FILES).not.toContain("src/lib/club-time-zone-env.ts");
+  });
+
+  it("counts a local-midnight Date construction, which no selector sees", () => {
+    // `new Date(y, m, d)` is a CONSTRUCTOR, so neither the host-clock lint arm
+    // nor `findHostClockReads` above can see it — the issue's own census list
+    // names the class and nothing was counting it.
+    expect(findLocalMidnightConstruction("const d = new Date(2026, 7, 1);")).toBe(1);
+    // `Date.UTC(...)` is ONE argument at the top level and is the correct
+    // spelling, so it must not be counted.
+    expect(
+      findLocalMidnightConstruction("const d = new Date(Date.UTC(2026, 7, 1));"),
+    ).toBe(0);
+    // Neither is an ordinary instant or a parse.
+    expect(findLocalMidnightConstruction('new Date("2026-08-01T00:00:00Z");')).toBe(0);
+    expect(findLocalMidnightConstruction("new Date(ms);")).toBe(0);
   });
 });
 
@@ -394,12 +481,19 @@ describe("the scanner counts what it claims to count", () => {
  * measure the tree and find fewer than a ceiling says, the ceiling is STALE and
  * lowering it is the fix, not a nice-to-have.
  *
- * Saying so is not pedantry. The assertions below are `toBeLessThanOrEqual`,
- * and a reader landing on one cannot tell deliberate slack from a number nobody
- * lowered. That ambiguity is the whole failure mode: forty sites of unexplained
- * headroom is forty sites in which the count can silently regrow while CI stays
- * green, which is exactly the condition this file exists to prevent. A ratchet
- * with slack in it is not a ratchet.
+ * The assertions below are `toBe`, NOT `toBeLessThanOrEqual`, and that is the
+ * mechanism rather than a stylistic preference. This suite shipped with the
+ * looser form for exactly one merge, and a review lens measured what it cost:
+ * taking #3107/#3121 into the branch removed 42 sites and the suite stayed
+ * green, leaving 42 units of headroom in which the count could silently regrow.
+ * Hand-lowering the number closed that instance and left the mechanism intact,
+ * and the epic branch has to move again before #2988 reaches `main`, so the
+ * slack would simply have re-opened. A ratchet with slack in it is not a
+ * ratchet.
+ *
+ * With `toBe`, a count that goes DOWN fails too — deliberately. That failure
+ * takes one line to resolve and is the pleasant kind; it is also the only
+ * signal that a migration has landed and this file needs its number moved.
  */
 const CENSUS_CEILING = {
   /**
@@ -448,9 +542,18 @@ const CENSUS_CEILING = {
    * environment authority is `defaultedZoneCalls` above, not this one.
    */
   dateOnlyImporters: 232,
+  /**
+   * `new Date(y, m, d)` — local midnight in the HOST's zone.
+   *
+   * Counted here because it is the one class on the issue's census list that no
+   * lint selector reaches: a constructor, not a method call. Both live sites are
+   * reviewed report-surface adapters, so this is a recurrence counter rather
+   * than a backlog.
+   */
+  localMidnightConstructions: 3,
 } as const;
 
-describe("the escape-hatch census only shrinks", () => {
+describe("the escape-hatch census is exact, and only ever revised downward", () => {
   const defaulted = PRODUCTION_FILES.filter(
     (file) => !ADAPTER_MODULES.has(file),
   ).map((file) => ({ file, calls: findDefaultedZoneCalls(read(file)) }));
@@ -460,7 +563,7 @@ describe("the escape-hatch census only shrinks", () => {
     0,
   );
 
-  it("has no MORE environment-defaulted club-facing calls than measured", () => {
+  it("has EXACTLY the environment-defaulted club-facing calls measured", () => {
     expect(
       totalDefaulted,
       `The environment decides a club-facing answer at these sites:\n` +
@@ -470,25 +573,19 @@ describe("the escape-hatch census only shrinks", () => {
               `  ${entry.file}: ${entry.calls.map((call) => `${call.helper}@${call.line}`).join(", ")}`,
           )
           .join("\n"),
-    ).toBeLessThanOrEqual(CENSUS_CEILING.defaultedZoneCalls);
-    expect(withDefaults.length).toBeLessThanOrEqual(
-      CENSUS_CEILING.defaultedZoneFiles,
-    );
+    ).toBe(CENSUS_CEILING.defaultedZoneCalls);
+    expect(withDefaults.length).toBe(CENSUS_CEILING.defaultedZoneFiles);
   });
 
-  it("has no more legacy-adapter importers than measured", () => {
+  it("has EXACTLY the legacy-adapter importers measured", () => {
     const nzst = PRODUCTION_FILES.filter(
       (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "nzst-date"),
     );
     const dateOnly = PRODUCTION_FILES.filter(
       (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "date-only"),
     );
-    expect(nzst.length, nzst.join("\n")).toBeLessThanOrEqual(
-      CENSUS_CEILING.nzstDateImporters,
-    );
-    expect(dateOnly.length).toBeLessThanOrEqual(
-      CENSUS_CEILING.dateOnlyImporters,
-    );
+    expect(nzst.length, nzst.join("\n")).toBe(CENSUS_CEILING.nzstDateImporters);
+    expect(dateOnly.length).toBe(CENSUS_CEILING.dateOnlyImporters);
   });
 });
 
@@ -510,14 +607,46 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the two legacy adapters are the ONLY modules naming the environment zone", () => {
+  it("only the ratcheted modules name the environment zone, in ANY spelling", () => {
     // Everything else is either structurally allowed to (the config module and
     // the seed reader, both excluded above as kernel siblings) or on the lint
-    // ratchet. This asserts the ratchet's own membership from the tree rather
-    // than from the config, so the two would have to be wrong together.
+    // ratchet. This asserts that membership from the TREE rather than from the
+    // config, so the two would have to be wrong together.
+    //
+    // EVERY SPELLING, and that is a correction rather than thoroughness. This
+    // read used to be `/\bAPP_TIME_ZONE\b/` alone, which does not match
+    // `process.env["TZ"]` — so for that one spelling the "two instruments"
+    // claim this file makes was NOT true and the lint arm was the only thing
+    // looking. The arm now closes the computed and destructured forms too; this
+    // closes them here, so the pair is a pair for every spelling rather than
+    // for most of them.
     const naming = PRODUCTION_FILES.filter((file) =>
-      /\bAPP_TIME_ZONE\b/.test(read(file)),
+      /\bAPP_TIME_ZONE\b|process\s*\.\s*env\s*(?:\.\s*(?:TZ|NEXT_PUBLIC_TZ)\b|\[\s*["'](?:TZ|NEXT_PUBLIC_TZ)["']\s*\])/.test(
+        read(file),
+      ),
     );
-    expect(naming.length).toBeLessThanOrEqual(9);
+    expect(naming, naming.join("\n")).toHaveLength(9);
+  });
+
+  it("counts the local-midnight constructions no selector can reach", () => {
+    const offenders = PRODUCTION_FILES.map((file) => ({
+      file,
+      count: findLocalMidnightConstruction(read(file)),
+    })).filter((entry) => entry.count > 0);
+    // Three, in two files, both already reviewed: the admin report surface's
+    // own `host-local-day.ts`, which says what it is in its name, and
+    // `admin-dataset-reset-state.ts`, which is on the `date-fns` ratchet for
+    // the same report-bucketing reason. A FOURTH would not have been noticed
+    // before this counter existed, which is the whole point of adding it.
+    expect(
+      offenders.map((entry) => entry.file).sort(),
+      offenders.map((entry) => entry.file + ": " + entry.count).join("\n"),
+    ).toEqual([
+      "src/app/(admin)/admin/reports/_components/host-local-day.ts",
+      "src/lib/admin-dataset-reset-state.ts",
+    ]);
+    expect(
+      offenders.reduce((sum, entry) => sum + entry.count, 0),
+    ).toBe(CENSUS_CEILING.localMidnightConstructions);
   });
 });

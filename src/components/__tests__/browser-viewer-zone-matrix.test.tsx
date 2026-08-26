@@ -124,10 +124,14 @@ describe("the matrix premise: each viewer really sees a different day", () => {
     }
     hostTimeZone.restore();
 
-    // The club reads 15 April. Four viewers read the 16th and two read the
-    // 15th, so a component that took the viewer's day would be visibly wrong in
-    // four rows and accidentally right in two — which is exactly why the rows
-    // that agree cannot be dropped: they are the ones a weak test would keep.
+    // The club reads 15 April. FIVE viewers read the 16th and ONE reads the
+    // 15th — only `Pacific/Pago_Pago` at UTC-11, which is behind the club as
+    // well. So a component that took the viewer's day would be visibly wrong in
+    // five rows and accidentally right in one, and that single agreeing row is
+    // exactly the one a weaker test would have dropped for looking redundant.
+    // (Counted rather than assumed: an earlier version of this comment said
+    // four and two, which was wrong while every assertion below was right —
+    // the kind of drift that makes a reader trust the prose over the code.)
     expect(days.get("Asia/Tokyo")).toBe("2026-04-16");
     expect(days.get("Pacific/Kiritimati")).toBe("2026-04-16");
     expect(days.get("Pacific/Pago_Pago")).toBe("2026-04-15");

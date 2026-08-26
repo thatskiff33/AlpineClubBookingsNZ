@@ -693,11 +693,26 @@ const ENVIRONMENT_ZONE_MESSAGE =
 
 // `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
 // modules whose job is to read them once.
-const NO_ENVIRONMENT_ZONE_ENV_READ = {
-  selector:
-    'MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
-  message: ENVIRONMENT_ZONE_MESSAGE,
-};
+//
+// THREE SPELLINGS, because a syntactic rule that closes only the obvious one is
+// a rule with a documented way round it. The dotted form was all this arm
+// matched at first, and a review lens measured that `process.env["TZ"]` and
+// `const { TZ } = process.env` both walked straight past it — while the census
+// beside it looked for `APP_TIME_ZONE` and could not see them either, so for
+// those two spellings the "two instruments" claim was untrue. Both neighbouring
+// arms in this file already close their computed twin on principle
+// (`NO_HOST_CLOCK_FACE` has a `property.value` pair, `NO_ENVIRONMENT_ZONE_IMPORT`
+// an `imported.value` one); this now matches them. Live population is zero, so
+// this costs nothing today and is purely about what may be written next.
+const NO_ENVIRONMENT_ZONE_ENV_READ = [
+  // `process.env.TZ`
+  'MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  // `process.env["TZ"]`
+  'MemberExpression[object.object.name="process"][object.property.name="env"][property.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  // `const { TZ } = process.env`, and its quoted-key form
+  'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
 
 // Importing the environment zone by name. `@/config/operational` exports it as
 // a plain string, so nothing downstream of the import can tell it from a club
@@ -711,7 +726,7 @@ const NO_ENVIRONMENT_ZONE_IMPORT = [
 const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
 
 const ENVIRONMENT_ZONE_RESTRICTIONS = [
-  NO_ENVIRONMENT_ZONE_ENV_READ,
+  ...NO_ENVIRONMENT_ZONE_ENV_READ,
   ...NO_ENVIRONMENT_ZONE_IMPORT,
 ];
 
@@ -741,10 +756,33 @@ const ENVIRONMENT_ZONE_RESTRICTIONS = [
 // because which exports are safe is a judgement that belongs in a reviewed
 // allowlist entry rather than in a regular expression somebody widens later.
 
+//
+// SEVEN SPELLINGS, and the RE-EXPORT is the one that mattered most: a single
+// file writing `export { addDays } from "date-fns"` makes every downstream
+// importer clean under every selector in this file, so one line would have
+// re-opened the class wholesale. A review lens found four spellings walking
+// past the first three selectors; all four are closed here.
+//
+// WHAT IS STILL OPEN, said plainly rather than left to be discovered. A
+// dynamic import whose specifier is a VARIABLE — `const m = "date-fns";
+// await import(m)` — is not statically decidable and no selector can reach it,
+// and neither can a `require` assembled from a template. That is the same
+// residue every syntactic rule in this file carries; the census beside this one
+// is the second instrument, and `date-fns-tz` is deliberately not a dependency
+// so there is no sibling package to smuggle it in through.
 const NO_DATE_FNS = [
   'ImportDeclaration[source.value="date-fns"]',
   'ImportDeclaration[source.value=/^date-fns\\//]',
   'CallExpression[callee.name="require"][arguments.0.value="date-fns"]',
+  'CallExpression[callee.name="require"][arguments.0.value=/^date-fns\\//]',
+  // `export { addDays } from "date-fns"` and `export * from "date-fns"`
+  'ExportNamedDeclaration[source.value="date-fns"]',
+  'ExportNamedDeclaration[source.value=/^date-fns\\//]',
+  'ExportAllDeclaration[source.value="date-fns"]',
+  'ExportAllDeclaration[source.value=/^date-fns\\//]',
+  // `await import("date-fns")`
+  'ImportExpression[source.value="date-fns"]',
+  'ImportExpression[source.value=/^date-fns\\//]',
 ].map((selector) => ({
   selector,
   message:
