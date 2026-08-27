@@ -3336,7 +3336,7 @@ The disposition record below is the current one, and the **rule plus location**
 is what identifies a finding across both.
 
 **The dismissals were NOT an owner action, and the claim that they were is what
-kept this backlog open for nine days.** This paragraph previously said the
+kept this backlog open for eight days.** This paragraph previously said the
 machine account could not write code-scanning dispositions, and #2841 and #2959
 both closed with their first acceptance criterion undone on that basis. It is
 wrong. Probed on 28 August 2026 with a deliberately invalid update, the API
