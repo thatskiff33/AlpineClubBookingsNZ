@@ -40,13 +40,18 @@
  * ## What replaced the pin
  *
  * The hazard #3116 actually found is not de-duplication, it is the DEFAULT.
- * `seasonYearsLabel` defaults its year-end to the `financial-year.ts` process
- * cache, which no background worker seeds - so adopting the shared derivation
- * while taking that default would have reworded every existing club's invoices
- * AND still rendered the wrong season for the club the change was for. Every one
- * of these four now takes the year-end explicitly, and
+ * `seasonYearsLabel` USED TO default its year-end to the `financial-year.ts`
+ * process cache, which no background worker seeds - so adopting the shared
+ * derivation while taking that default would have reworded every existing club's
+ * invoices AND still rendered the wrong season for the club the change was for.
+ * Every one of these four now takes the year-end explicitly, and
  * `buildComponentLineDescription` REQUIRES it, so an unstated year-end is a
  * compile error rather than a silently wrong invoice line.
+ *
+ * #3133 then deleted the default itself, on `seasonYearsLabel` and
+ * `seasonMonthsLabel` both, so the shape that produced this whole issue can no
+ * longer be written at either. `seasonSelectLabel` keeps its default for the
+ * display sites, and `INV-SSOT-003` carries why.
  *
  * ## The regex is self-checked, because a source scan that matches nothing is
  * indistinguishable from a source scan that passes
