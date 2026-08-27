@@ -41,6 +41,8 @@ import {
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
@@ -134,6 +136,16 @@ async function repriceWaitlistCandidate(
   // own lodge. Upstream #1035 priced club-wide; per-lodge seasons make
   // that a lodge-scoped read here.
   lodgeId: string,
+  // #3123 — the club's own calendar day, resolved by the sweep BEFORE it opened
+  // this transaction, for exactly the same reason as the mode below and passed
+  // the same way. It decides the promotion's validity window in the reprice, and
+  // reading the club's persisted timezone here would be a
+  // `clubTimeSettings.findUnique` on a second pooled connection while this
+  // transaction holds every active lodge's capacity key (`INV-LOCK-004`).
+  //
+  // REQUIRED, and positioned ahead of the optional mode so it cannot be
+  // defaulted: the default is what put this decision on the container's zone.
+  todayAtClub: CalendarDate,
   // #2543 — the club's mode, resolved by the sweep BEFORE it opened this
   // transaction. This reprice inherits the unpaid-subscription reprice like every
   // other pricing call, and it passes no locked night prices, so the WHOLE stay
@@ -187,6 +199,7 @@ async function repriceWaitlistCandidate(
       booking: candidate,
       newTotalPriceCents,
       guestNightRates,
+      todayAtClub,
     });
     const newFinalPriceCents =
       newTotalPriceCents + promoResult.newPromoAdjustmentCents;
@@ -288,6 +301,13 @@ export async function processWaitlistForDates(freedDates: {
   // capacity lock. `resolveSubscriptionLockoutMode` can refresh the
   // financial-year cache from Xero, which must never happen inside it.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // #3123 — and the club's own day, resolved here for the same reason: the
+  // offer-time reprice inside the transaction below judges the booking's
+  // promotion against it, and the club's persisted timezone must not be read
+  // while every active lodge's capacity key is held (`INV-LOCK-004`). The
+  // runtime reader, not `club-time/server`: this module is reachable from
+  // `src/instrumentation.node.ts` through `cron-waitlist.ts`.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -457,6 +477,7 @@ export async function processWaitlistForDates(freedDates: {
             tx,
             candidate,
             offerLodgeId,
+            todayAtClub,
             subscriptionLockoutMode,
           );
         }

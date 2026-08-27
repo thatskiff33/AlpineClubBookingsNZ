@@ -1,6 +1,10 @@
 import "server-only";
 
-import { getTodayDateOnly } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+} from "@/lib/club-time";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { APP_CURRENCY } from "@/config/operational";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
 import { resolvePolicyRowsForLodge } from "@/lib/lodges";
@@ -97,14 +101,24 @@ async function isPublicContentEnabled(gate: PublicContentGate): Promise<boolean>
   return settings?.[gate] === true;
 }
 
+/**
+ * "1 Jun 2026 to 31 Aug 2026" — the season/period edges a public page names.
+ *
+ * Every `startDate`/`endDate` this is handed is `DateTime @db.Date`, so each is
+ * a stored calendar day and takes no timezone at all (`INV-DATE-026`). It used
+ * to build its own formatter and project them through a hard-coded
+ * `Pacific/Auckland` — not `APP_TIME_ZONE`, so one club's zone was baked into
+ * every adopter's public fee page (`INV-CONFIG-001`).
+ *
+ * NOTHING IS COMPOSED. `HOUSE_SHAPES.date` via `formatClubDate` is the declared
+ * whole shape and is byte-identical to the hand-rolled options for `en-NZ`
+ * (measured, all 1,461 days of 2024-2027). " to " stays a literal: it is copy,
+ * and `formatRange` would give an en dash and collapse a shared year.
+ */
 function dateRange(start: Date, end: Date): string {
-  const formatter = new Intl.DateTimeFormat("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Pacific/Auckland",
-  });
-  return `${formatter.format(start)} to ${formatter.format(end)}`;
+  const from = formatClubDate(calendarDateOfDateOnlyInstant(start));
+  const to = formatClubDate(calendarDateOfDateOnlyInstant(end));
+  return `${from} to ${to}`;
 }
 
 function sentenceCase(value: string): string {
@@ -217,7 +231,7 @@ export async function loadPublicJoiningFees(
   options: PublicJoiningFeeOptions = {},
 ): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("entranceFees"))) return [];
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const [types, tiers] = await Promise.all([
     prisma.membershipType.findMany({
       where: { isActive: true, publiclyListed: true },
@@ -311,7 +325,7 @@ export async function loadPublicAnnualFees(
   options: PublicAnnualFeeOptions = {},
 ): Promise<PublicFeeGroup[]> {
   if (!(await isPublicContentEnabled("annualFees"))) return [];
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const [types, tiers] = await Promise.all([
     prisma.membershipType.findMany({
       where: { isActive: true, publiclyListed: true },
@@ -573,7 +587,7 @@ export async function loadPublicBookingPolicy(slug?: string): Promise<PublicBook
   if (!(await isPublicContentEnabled("bookingPolicySummary"))) return null;
   const lodge = slug === undefined ? null : await findPublicLodge(slug);
   if (slug !== undefined && !lodge) return null;
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const [defaults, periods, minimumStays, discount, hostingRows] = await Promise.all([
     prisma.bookingDefaults.findUnique({
       where: { id: "default" },
@@ -730,7 +744,7 @@ export async function loadPublicCancellationPolicy(slug?: string): Promise<Publi
     }),
   ]);
   const effectiveRows = lodge ? resolvePolicyRowsForLodge(rows, lodge.id) : rows;
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const effectivePeriods = (lodge ? resolvePolicyRowsForLodge(periods, lodge.id) : periods).filter((period) => period.endDate >= today);
   return {
     lodge: lodge ? { name: lodge.name, slug: lodge.slug } : null,

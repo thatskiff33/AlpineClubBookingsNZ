@@ -3,7 +3,7 @@
  * states, system health, deliverability, background jobs, the audit log and
  * deletion requests.
  *
- * Section per the sidebar's `navSections`.
+ * Section per the sidebar's `buildAdminNavSections`.
  */
 import { entry, help, type HelpEntry } from "../types";
 

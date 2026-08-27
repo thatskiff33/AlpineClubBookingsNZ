@@ -74,6 +74,7 @@ import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { computeAgeTier } from "@/lib/age-tier";
 // From the module that DECLARES it rather than the `age-tier.ts` re-export: it is
 // pure, and suites here mock `@/lib/age-tier` wholesale to control `computeAgeTier`,
@@ -313,7 +314,15 @@ export async function importMembersFromXeroGroups(
   const groupsProcessed: string[] = [];
 
   // #2108 accumulators.
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  // ONE read of the club's persisted zone for the whole import. #3123 adds the
+  // club's DAY to the season year it already derived here: the seasonal preview
+  // called once per matched member below needs both, and used to default the day
+  // from the ENVIRONMENT's zone — one uncached `ClubTimeSettings` query per
+  // member, and a long import straddling club midnight judging its first and
+  // last members against different days.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const seasonYear = clubSeasonYear(clubZone);
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   // Derived from the SAME pinned season as every seasonal assignment below, so one
   // import cannot judge an age tier in one season and assign a membership in
   // another (#2870).
@@ -1092,6 +1101,8 @@ export async function importMembersFromXeroGroups(
           memberId,
           seasonYear,
           membershipTypeId,
+          now: clubTodayDateOnly,
+          clubCurrentSeasonYear: seasonYear,
         });
         if (previewResult.init?.status && previewResult.init.status >= 400) {
           errors++;

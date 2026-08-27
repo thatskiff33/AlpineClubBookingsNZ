@@ -240,6 +240,21 @@ export async function buildApprovalGuestCreates(
     checkOut: Date;
     adminMemberId: string;
     heldBookingId: string | null;
+    /**
+     * The CLUB's today, encoded at UTC midnight (`INV-DATE-026`), resolved by
+     * the caller BEFORE it opened the transaction this function runs in
+     * (`INV-CONFIG-002`).
+     *
+     * REQUIRED, no default. All three callers — the booking-request approval,
+     * the school approval and the member whole-lodge approval — invoke this
+     * from inside a `prisma.$transaction` that already holds
+     * `pg_advisory_xact_lock(1)` and the per-lodge capacity key, and the
+     * person-night guard below then takes one transaction-scoped advisory lock
+     * per member-linked guest on top. A `clubTimeSettings` read from in here
+     * would run on the MODULE client, not this `tx`, and so would need a second
+     * pooled connection while all of that is held: `INV-LOCK-004`.
+     */
+    today: Date;
   }
 ): Promise<HeldBookingGuestInput[]> {
   const {
@@ -251,6 +266,7 @@ export async function buildApprovalGuestCreates(
     checkOut,
     adminMemberId,
     heldBookingId,
+    today,
   } = params;
 
   const unratedGuestCreates = guests.map((guest, index) => {
@@ -322,6 +338,9 @@ export async function buildApprovalGuestCreates(
     checkOut,
     guests: guestCreates,
     excludeBookingId: heldBookingId ?? undefined,
+    // Supplied from outside this transaction (`INV-LOCK-004`) — see the
+    // `today` parameter above.
+    today,
   });
 
   return guestCreates;

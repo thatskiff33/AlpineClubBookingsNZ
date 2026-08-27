@@ -3,6 +3,7 @@ import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import {
   calendarDateOfDateOnlyInstant,
@@ -102,13 +103,15 @@ function requestTouchesLockedPeriod({
   // `parseDateOnly`, the booking's own dates from `storedDateOnly`, and
   // `editPolicy.today` / `editPolicy.editableFrom` from `getBookingEditPolicy`.
   //
-  // BE PRECISE ABOUT `today`, because a comment here once was not. It is still
-  // `getTodayDateOnly()` inside that policy — the CONTAINER's day, from
-  // `APP_TIME_ZONE`, not the persisted club zone `INV-CONFIG-002` names.
-  // Migrating it makes a synchronous, widely-called pure function async and is
-  // CT-6's (#2991). `editableFrom` IS on the club's frame: it is the booking's
-  // own `@db.Date` check-in, and CT-4 (#2870) stopped that one being projected
-  // through a zone on the way out.
+  // BE PRECISE ABOUT `today`, because a comment here once was not. Since #3123
+  // it is the CLUB's day — the persisted `ClubTimeSettings.timeZone` that
+  // `INV-CONFIG-002` names — supplied to `getBookingEditPolicy` as a REQUIRED
+  // parameter by this route. It used to be the environment's day, read from
+  // `APP_TIME_ZONE` inside that policy; migrating it as a threaded value rather
+  // than an `await` is what kept that synchronous, widely-called pure function
+  // synchronous. `editableFrom` was always on the club's frame: it is the
+  // booking's own `@db.Date` check-in, and CT-4 (#2870) stopped that one being
+  // projected through a zone on the way out.
   if (requestedEffectiveDate && requestedEffectiveDate <= today) {
     return true;
   }
@@ -299,6 +302,9 @@ export async function POST(
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone. This policy's `today` and
+    // `editableFrom` are quoted back to the member in the change-request copy.
+    today: await clubTodayDateOnlyInstant(),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(

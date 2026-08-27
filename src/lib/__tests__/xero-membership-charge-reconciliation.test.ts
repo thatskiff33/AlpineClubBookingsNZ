@@ -244,6 +244,8 @@ describe("membership charge reconciliation", () => {
     expect(mocks.enqueueHostingCoverage).toHaveBeenCalledWith(
       "family-member-2",
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE" },
     );
     expect(mocks.settleHostingCoverage).toHaveBeenCalledWith({ limit: 50 });
@@ -436,6 +438,8 @@ describe("flushMemberSubscriptionHistory (#1944)", () => {
     expect(mocks.enqueueHostingCoverage).toHaveBeenCalledWith(
       "member-1",
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE" },
     );
     expect(mocks.settleHostingCoverage).toHaveBeenCalledWith({ limit: 50 });

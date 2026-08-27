@@ -161,7 +161,7 @@ describe("admin dashboard deep links", () => {
     });
 
     const html = renderToStaticMarkup(await AdminDashboardPage());
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const todayKey = formatDateOnly(getTodayDateOnly(APP_TIME_ZONE));
 
     expect(html).toContain("Unpaid Finished Stays");
     expect(html).toContain(
@@ -176,7 +176,7 @@ describe("admin dashboard deep links", () => {
         where: {
           deletedAt: null,
           status: "PAYMENT_PENDING",
-          checkOut: { lte: getTodayDateOnly() },
+          checkOut: { lte: getTodayDateOnly(APP_TIME_ZONE) },
         },
       },
     ]);
@@ -219,7 +219,7 @@ describe("admin dashboard deep links", () => {
       {
         where: {
           deletedAt: null,
-          checkOut: { lte: getTodayDateOnly() },
+          checkOut: { lte: getTodayDateOnly(APP_TIME_ZONE) },
           status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
           payment: {
             is: {
@@ -254,7 +254,7 @@ describe("admin dashboard deep links", () => {
 
     await AdminDashboardPage();
 
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(APP_TIME_ZONE);
     const to = addDaysDateOnly(today, 7);
 
     // Bookings card count matches the list it links to (/admin/bookings?
@@ -416,12 +416,14 @@ describe("admin dashboard deep links", () => {
     /*
       THE HUT-LEADER COVERAGE CARD IS WINDOWED FROM THE SAME DAY, and it is
       asserted here because it is the one officer card on this page that has its
-      own fallback. `getUnassignedHutLeaderDates` defaults to
-      `getTodayDateOnly()` — `APP_TIME_ZONE` — when it is not told, so leaving
-      the argument off put TWO "today"s on one dashboard: on a boundary day the
-      coverage card counted a night the roster and bed-allocation cards beside it
-      had already dropped. A default that silently works is exactly the kind of
-      omission no other assertion on this page can see (CT-4, #2870).
+      own fallback. Since #3123 that fallback is `clubTodayDateOnlyInstant()`
+      rather than `getTodayDateOnly()`, so omitting the argument would no longer
+      answer from `APP_TIME_ZONE` — it would take a SECOND, independent reading
+      of the club's day. That is still two "today"s on one dashboard: a request
+      crossing club midnight between the two reads leaves the coverage card
+      counting a night the roster and bed-allocation cards beside it have already
+      dropped. A default that silently works is exactly the kind of omission no
+      other assertion on this page can see (CT-4, #2870).
     */
     expect(vi.mocked(getUnassignedHutLeaderDates)).toHaveBeenCalledWith({
       scope: { kind: "all" },

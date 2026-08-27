@@ -739,7 +739,6 @@ describe("money cents-conversion guard: the paths it must reach", () => {
     "src/app/(admin)/admin/xero/_components/x.tsx": "standard",
     "scripts/x.ts": "standard",
     "prisma/seed-x.ts": "standard",
-    "src/lib/nzst-date.ts": "standard",
     "src/lib/date-only.ts": "standard",
     "src/lib/email-templates/chores.ts": "standard",
     "src/app/(admin)/admin/site-style/site-style-wizard.tsx": "standard",

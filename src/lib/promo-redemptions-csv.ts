@@ -1,5 +1,5 @@
 import { escapeCsvCell } from "./csv";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 
 // The 13-column export header. Kept as the single source of truth so the header
 // row and every data row built by `buildPromoRedemptionCsvCells` stay aligned.
@@ -38,8 +38,28 @@ export interface PromoRedemptionCsvRow {
   memberUseIndex: number;
 }
 
-export function formatRedeemedAt(value: string): string {
-  return formatNZDateTime(new Date(value));
+/**
+ * The CSV's first column — when the promo code was redeemed.
+ *
+ * A REAL INSTANT, IN THE CLUB'S PERSISTED ZONE (#3123; `INV-CONFIG-002`).
+ * `PromoRedemption.createdAt` is a `DateTime @default(now())`, not a `@db.Date`,
+ * so it carries a time of day and has no civil date until a zone is chosen. It
+ * used to go through `formatNZDateTime` and so through `APP_TIME_ZONE`: for a
+ * club west of Greenwich that wrote the wrong day into a file somebody keeps,
+ * which is why this issue leads with the durable exports.
+ *
+ * The `checkIn`/`checkOut` columns beside it are `@db.Date` calendar days,
+ * passed straight through as the strings the payload carries, and are correct as
+ * they are — they take no zone and must not be given one.
+ *
+ * It degrades to the raw value rather than throwing. The bare `new Date(value)`
+ * this replaces reached a formatter that throws on an unparseable value, and an
+ * export a manager clicked is a bad place for a whole page to fall over; the raw
+ * text at least says what arrived.
+ */
+export function formatRedeemedAt(club: BoundClubTime, value: string): string {
+  const instant = parseInstant(value);
+  return instant === null ? value : club.instantDateTime(instant);
 }
 
 /**
@@ -48,10 +68,11 @@ export function formatRedeemedAt(value: string): string {
  * cell. Escaping is applied by `buildPromoRedemptionsCsvContent`.
  */
 export function buildPromoRedemptionCsvCells(
+  club: BoundClubTime,
   row: PromoRedemptionCsvRow
 ): string[] {
   return [
-    formatRedeemedAt(row.createdAt),
+    formatRedeemedAt(club, row.createdAt),
     row.member.name,
     row.member.email,
     row.booking.reference,
@@ -74,6 +95,7 @@ export function buildPromoRedemptionCsvCells(
  * existing client export semantics).
  */
 export function buildPromoRedemptionsCsvContent(
+  club: BoundClubTime,
   code: string,
   rows: PromoRedemptionCsvRow[]
 ): string {
@@ -81,7 +103,7 @@ export function buildPromoRedemptionsCsvContent(
   table.push([`Promo code redemptions: ${code}`]);
   table.push([...PROMO_REDEMPTIONS_CSV_HEADER]);
   for (const row of rows) {
-    table.push(buildPromoRedemptionCsvCells(row));
+    table.push(buildPromoRedemptionCsvCells(club, row));
   }
   return table
     .map((cells) => cells.map(escapeCsvCell).join(","))

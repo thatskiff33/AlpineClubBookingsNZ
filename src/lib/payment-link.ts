@@ -22,6 +22,7 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bookingHasCapacityOverride } from "@/lib/booking-status";
 import { getDefaultLodgeId } from "@/lib/lodges";
+import { bindClubTime } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   paymentLinkExpiryForCheckIn,
@@ -272,7 +273,15 @@ export async function getPaymentLinkContext(token: string): Promise<PaymentLinkC
     },
   });
 
+  // The narrative names the day a payment, cancellation or settlement landed
+  // AT THE CLUB, so it is read in the club's persisted zone rather than the
+  // container's (#3123). The runtime reader, not `clubTime()`: this module is
+  // reachable from `src/instrumentation.node.ts`, where `server-only` throws at
+  // import. Its stay dates are @db.Date lodge nights and take no zone.
+  const club = bindClubTime(await readClubTimeZoneOutsideRequest());
+
   const narrative = resolveBookingNarrative({
+    club,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,

@@ -282,10 +282,18 @@ export function resolveTargetDates({
   booking,
   role,
   input,
+  today,
 }: {
   booking: LoadedBookingForModify;
   role: Role;
   input: BatchModifyInput;
+  /**
+   * The club's today, threaded straight into `getBookingEditPolicy` — see it for
+   * why this is a required value rather than a read (#3123). This function is
+   * SYNCHRONOUS and its only production caller runs it inside
+   * `withOptionalTransaction`, so the day is resolved before that opens.
+   */
+  today: Date;
 }): ResolvedTargetDates {
   // Issue #1668: only an admin may drive the override; a member request that
   // somehow carried the flag falls through to the normal date-window policy.
@@ -296,6 +304,7 @@ export function resolveTargetDates({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride: effectiveAdminOverride,
+    today,
   });
   if (!editPolicy.canModify) {
     throw new ApiError(
@@ -349,11 +358,13 @@ export function resolveTargetDates({
   //
   // AND THE POLICY BESIDE THEM WAS ALREADY MIGRATED, which is why the straddle
   // was one-sided: `getBookingEditPolicy` reads `checkIn`/`checkOut` through
-  // `storedDateOnly` and compares them against `today`/`tomorrow`, which stay on
-  // `getTodayDateOnly()` — the CONTAINER's day, deliberately, and CT-6's (#2991)
-  // to move. So `storedDateOnly` here is not merely zone-free, it is the frame
-  // `editPolicy.today` and `editPolicy.editableFrom` are already expressed in. A
-  // projection on one side of those comparisons and not the other is the defect.
+  // `storedDateOnly` and compares them against `today`/`tomorrow`. Since #3123
+  // that `today` is the CLUB's day, arriving as a REQUIRED parameter this
+  // function threads in from its caller — it used to default to the
+  // environment's zone, which is the half CT-6 (#2991) left. So `storedDateOnly`
+  // here is not merely zone-free, it is the frame `editPolicy.today` and
+  // `editPolicy.editableFrom` are already expressed in. A projection on one side
+  // of those comparisons and not the other is the defect.
   // Pinned in `src/lib/__tests__/booking-modify-validation-frame-parity.test.ts`,
   // which transcribes the preview's decision as its oracle.
   const bookingCheckIn = storedDateOnly(booking.checkIn);

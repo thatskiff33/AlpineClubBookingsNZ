@@ -43,12 +43,24 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+/*
+ * The sign-changing zone, declared ONCE (#3123). `vi.mock` factories hoist above
+ * every plain `const`, so before this the zone was written out twice - as the
+ * mock's literal, and implicitly again as the projection helper's default - and
+ * only one of the two was pinned by the premise below. `vi.hoisted` lets the
+ * factory and the assertions name the same declaration, so they can no longer
+ * drift apart.
+ */
+const { SIGN_CHANGE_ZONE } = vi.hoisted(() => ({
+  SIGN_CHANGE_ZONE: "Atlantic/Azores",
+}));
+
 // `APP_TIME_ZONE` is frozen at module load, so the configured zone has to move
 // above the imports.
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "Atlantic/Azores",
+  APP_TIME_ZONE: SIGN_CHANGE_ZONE,
   APP_LOCALE: "en-NZ",
 }));
 
@@ -184,11 +196,13 @@ describe("#3107 premise: the configured zone really changes sign across DST", ()
     expect(APP_TIME_ZONE).toBe("Atlantic/Azores");
     // Inside DST the stored day reads as itself; outside it, a day early. It is
     // that DIFFERENCE, within one booking, that the old projection could not
-    // survive - a uniform shift would have cancelled.
-    expect(formatDateOnlyForTimeZone(day("2026-10-24"))).toBe("2026-10-24");
-    expect(formatDateOnlyForTimeZone(day("2026-10-25"))).toBe("2026-10-25");
-    expect(formatDateOnlyForTimeZone(day("2026-10-26"))).toBe("2026-10-25");
-    expect(formatDateOnlyForTimeZone(day("2026-10-27"))).toBe("2026-10-26");
+    // survive - a uniform shift would have cancelled. The zone is named at each
+    // call (#3123): these four lines model the REPLACED behaviour, so they have
+    // to say which zone they model rather than inherit one.
+    expect(formatDateOnlyForTimeZone(day("2026-10-24"), SIGN_CHANGE_ZONE)).toBe("2026-10-24");
+    expect(formatDateOnlyForTimeZone(day("2026-10-25"), SIGN_CHANGE_ZONE)).toBe("2026-10-25");
+    expect(formatDateOnlyForTimeZone(day("2026-10-26"), SIGN_CHANGE_ZONE)).toBe("2026-10-25");
+    expect(formatDateOnlyForTimeZone(day("2026-10-27"), SIGN_CHANGE_ZONE)).toBe("2026-10-26");
   });
 });
 

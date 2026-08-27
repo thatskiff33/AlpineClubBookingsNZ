@@ -29,6 +29,7 @@ import {
   startMemberGuestRefusalClock,
 } from "@/lib/member-guest-probe-guard";
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
+import { clubTime } from "@/lib/club-time/server";
 import { adminShiftBookingDates } from "@/lib/booking-date-modification-service";
 import { BookingModifyReviewJustificationRequiredError } from "@/lib/booking-modify-validation";
 import { MinimumStayPolicyViolationError } from "@/lib/booking-policy-exceptions";
@@ -276,6 +277,15 @@ export async function PUT(
     );
   }
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved HERE because this is the last position on this
+  // path that is outside every transaction on every route in. `modifyBookingBatch`
+  // is transaction-AWARE (`withOptionalTransaction`), so it cannot resolve one
+  // for itself without reading the club's zone under the caller's locks on the
+  // policy-exception path — `INV-LOCK-004`, and the reason its `todayAtClub` is
+  // a required parameter.
+  const todayAtClub = (await clubTime()).today();
+
   try {
     const result =
       adminOverride && pricingMode === "shift"
@@ -301,6 +311,7 @@ export async function PUT(
               : {}),
             input: parsed.data,
             ipAddress,
+            todayAtClub,
           });
 
     return NextResponse.json(result);

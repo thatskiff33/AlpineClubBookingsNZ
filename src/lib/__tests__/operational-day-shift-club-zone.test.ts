@@ -114,7 +114,9 @@ describe("#3100 premise: the projection this fix removes really is reachable", (
   it("pins the environment zone behind Greenwich, so nothing here is vacuous", () => {
     // If either assertion fails, every kill below is measuring the identity.
     expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnlyForTimeZone(day("2026-07-04"))).toBe("2026-07-03");
+    expect(formatDateOnlyForTimeZone(day("2026-07-04"), APP_TIME_ZONE)).toBe(
+      "2026-07-03",
+    );
   });
 
   it("MEASURES the forbidden fix: +24h on an instant loses a 25-hour day", () => {
@@ -126,7 +128,7 @@ describe("#3100 premise: the projection this fix removes really is reachable", (
     const zone = unvalidatedLegacyClubTimeZone("America/Denver");
     const fallBackDay = startOfClubDay(requireCalendarDate("2026-11-01"), zone);
     const plus24h = new Date(fallBackDay.getTime() + 24 * 60 * 60 * 1000);
-    expect(formatDateOnlyForTimeZone(plus24h)).toBe("2026-11-01");
+    expect(formatDateOnlyForTimeZone(plus24h, APP_TIME_ZONE)).toBe("2026-11-01");
 
     // The calendar answer, which takes no zone and no instant at all.
     expect(

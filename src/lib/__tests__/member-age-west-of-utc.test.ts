@@ -35,6 +35,9 @@ import {
   calculateMemberAgeParts,
   formatMemberIdentityAge,
 } from "@/lib/member-age";
+import { requireCalendarDate } from "@/lib/club-time";
+
+const day = requireCalendarDate;
 
 /** A New Year's Day birthday, stored the way a `@db.Date` column serialises. */
 const NEW_YEARS_DAY_BIRTH = new Date("2007-01-01T00:00:00.000Z");
@@ -42,7 +45,7 @@ const NEW_YEARS_DAY_BIRTH = new Date("2007-01-01T00:00:00.000Z");
 describe("member age reads the STORED day, not the club-zone reading of it", () => {
   it("is 18 on the day before an 1 January birthday, not 19", () => {
     expect(
-      formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, "2025-12-31"),
+      formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, day("2025-12-31")),
       "INV-DATE-026: projecting the UTC-midnight encoding into a zone behind " +
         "Greenwich reads the birthday as 31 December, so this member ages up a " +
         "day early and the strip shows an administrator the wrong year.",
@@ -50,7 +53,7 @@ describe("member age reads the STORED day, not the club-zone reading of it", () 
   });
 
   it("turns 19 on the birthday itself, and not before", () => {
-    expect(formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, "2026-01-01")).toBe(
+    expect(formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, day("2026-01-01"))).toBe(
       "19 years",
     );
   });
@@ -59,10 +62,10 @@ describe("member age reads the STORED day, not the club-zone reading of it", () 
     // A toddler, where the months half of the label is shown as well. The day
     // before the monthly anniversary is one completed month fewer.
     expect(
-      calculateMemberAgeParts(new Date("2024-01-01T00:00:00.000Z"), "2026-06-30"),
+      calculateMemberAgeParts(new Date("2024-01-01T00:00:00.000Z"), day("2026-06-30")),
     ).toEqual({ years: 2, months: 5 });
     expect(
-      calculateMemberAgeParts(new Date("2024-01-01T00:00:00.000Z"), "2026-07-01"),
+      calculateMemberAgeParts(new Date("2024-01-01T00:00:00.000Z"), day("2026-07-01")),
     ).toEqual({ years: 2, months: 6 });
   });
 
@@ -71,25 +74,26 @@ describe("member age reads the STORED day, not the club-zone reading of it", () 
     // first two went through the projection, so in this zone they used to
     // disagree with the third — the "two representations always agree" property
     // the old comment claimed is the one truncation actually delivers.
-    expect(formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, "2025-12-31")).toBe(
+    expect(formatMemberIdentityAge(NEW_YEARS_DAY_BIRTH, day("2025-12-31"))).toBe(
       "18 years",
     );
     expect(
-      formatMemberIdentityAge("2007-01-01T00:00:00.000Z", "2025-12-31"),
+      formatMemberIdentityAge("2007-01-01T00:00:00.000Z", day("2025-12-31")),
     ).toBe("18 years");
-    expect(formatMemberIdentityAge("2007-01-01", "2025-12-31")).toBe("18 years");
+    expect(formatMemberIdentityAge("2007-01-01", day("2025-12-31"))).toBe("18 years");
   });
 });
 
-describe('"today" is still the CLUB calendar day, which is a different question', () => {
-  it("takes the default reference date from the club zone, not from UTC", () => {
-    // The suite-wide frozen instant is 2026-07-01T00:00:00.000Z, which in Denver
-    // is still 30 June. A member born on 1 July has not had their birthday yet
-    // THERE, so 18 is the right answer and 19 would mean the default had been
-    // "fixed" into a UTC reading along with the date-of-birth half. The two
-    // halves are deliberately different: a birthday has no zone, and "what day
-    // is it" has nothing else.
-    expect(formatMemberIdentityAge("2007-07-01")).toBe("18 years");
-    expect(formatMemberIdentityAge("2007-06-30")).toBe("19 years");
-  });
-});
+/*
+  THE BLOCK THAT USED TO CLOSE THIS FILE asserted that the DEFAULT reference date
+  came from the club zone — under this file's `America/Denver` mock, which is
+  `APP_TIME_ZONE` and therefore the CONTAINER's claim rather than the club's.
+  #3123 deleted the default for exactly that reason, so the block was asserting
+  the defect. The club-day half of this module's contract now sits on its
+  callers, and is proved under a PERSISTED zone the host does not hold in
+  `member-age-club-time-authority.test.ts`.
+
+  What remains in this file is the half that is still `member-age.ts`'s own: a
+  date of birth is a stored calendar day and takes no zone at all, which is why
+  every assertion above holds with `APP_TIME_ZONE` pinned behind Greenwich.
+*/

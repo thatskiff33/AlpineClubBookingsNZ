@@ -67,7 +67,10 @@ describe("joining-fee narration referential reuse (sentinel)", () => {
   });
 
   it("the preview's defaultNarration comes FROM the same function, matching the invoice line", async () => {
-    const preview = await getJoiningFeePreviewForMember("m1");
+    const preview = await getJoiningFeePreviewForMember("m1", {
+      // #3123 - `asOf` is required; this suite is about narration, not dates.
+      asOf: new Date("2026-07-01T00:00:00.000Z"),
+    });
 
     expect(narrationSpy).toHaveBeenCalledWith("Adult");
     expect(preview.defaultNarration).toBe("SENTINEL-NARRATION(Adult)");

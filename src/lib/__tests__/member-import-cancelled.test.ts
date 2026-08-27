@@ -87,6 +87,8 @@ function mockCreateTransaction() {
   );
 }
 
+import { APP_TIME_ZONE } from "@/config/operational";
+
 /**
  * The club this suite is about. The route reads the PERSISTED zone (CT-4,
  * #2870), so the fixtures below have to be built in the SAME zone -- deriving
@@ -429,11 +431,11 @@ describe("issue #1946 — importing cancelled members", () => {
     CT-4 (#2870), epic #2988 -- WHOSE today the future-date rule is measured
     against.
 
-    The two cases above build their fixture from `todayDateOnlyForTimeZone()`,
-    the ENVIRONMENT's day, so they agree with the route whichever authority it
-    consulted and could not notice a regression to the container's `TZ`. This
-    one names an absolute date and persists a club zone the environment
-    disagrees with.
+    The two cases above build their fixture in `SUITE_CLUB_ZONE`, which is the
+    zone `beforeEach` persists AND the one the environment answers with, so they
+    agree with the route whichever authority it consulted and could not notice a
+    regression to the container's `TZ`. This one names an absolute date and
+    persists a club zone the environment disagrees with.
 
     The frozen clock is 2026-07-01T00:00:00Z: midday on 1 July in New Zealand,
     still the evening of 30 JUNE in Denver. So 1 July is TODAY for the
@@ -447,8 +449,16 @@ describe("issue #1946 — importing cancelled members", () => {
 
     // The premise, measured as an ANSWER rather than as a zone identifier: two
     // zone names can still name the same day, and then this proves nothing.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else in this file an
+     * explicit zone exists to get OFF the environment; here the environment IS
+     * the subject — the line measures what the environment authority answers so
+     * it can prove the persisted zone answers differently. A literal zone name
+     * would assert something about that name instead, and the premise would stop
+     * tracking the environment it is guarding.
+     */
     expect(
-      todayDateOnlyForTimeZone(),
+      todayDateOnlyForTimeZone(APP_TIME_ZONE),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this row cannot tell the two apart.",
     ).not.toBe("2026-06-30");

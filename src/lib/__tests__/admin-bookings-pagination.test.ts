@@ -13,16 +13,34 @@ import {
   ADMIN_BOOKINGS_PAGE_SIZE,
   adminBookingsQuerySchema,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
-import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
+import { addDaysDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
-// Distinct ascending check-in dates (relative to NZ today) so `sortBy:checkIn
-// asc` orders the fixtures b0, b1, ... deterministically and we know exactly
-// which booking each page window contains.
+// Distinct ascending check-in dates, relative to the club day this suite
+// states above rather than to a clock (#3123), so `sortBy:checkIn asc` orders
+// the fixtures b0, b1, ... deterministically and we know exactly which
+// booking each page window contains.
 function makeBooking(index: number, overrides: Record<string, unknown> = {}) {
-  const checkIn = addDaysDateOnly(getTodayDateOnly(), index);
+  const checkIn = addDaysDateOnly(TEST_CLUB_DAY.today, index);
   const checkOut = addDaysDateOnly(checkIn, 2);
   return {
     id: `b${index}`,
@@ -67,7 +85,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc" })
+      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.total).toBe(TOTAL);
@@ -84,7 +104,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "2" })
+      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "2" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.page).toBe(2);
@@ -109,7 +131,9 @@ describe("listAdminBookings pagination (#1738)", () => {
     installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "99" })
+      adminBookingsQuerySchema.parse({ sortBy: "checkIn", sortDir: "asc", page: "99" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.page).toBe(2);
@@ -130,7 +154,9 @@ describe("listAdminBookings pagination (#1738)", () => {
         sortDir: "asc",
         bedState: "complete",
         page: "2",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     // One bounded scan chunk (101 < chunk size) + one page hydration (#1884)
@@ -157,7 +183,9 @@ describe("listAdminBookings pagination (#1738)", () => {
         sortDir: "asc",
         paymentSource: "NONE",
         page: "2",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
+  parseDateOnly,
 } from "@/lib/date-only";
 import {
   buildAdditionalOwedWhere,
@@ -12,38 +12,43 @@ import {
   buildUnsettledAdditionalFinishedStaysWhere,
 } from "@/lib/unpaid-finished-stays";
 
+/**
+ * The day these helpers are ASKED about. Every one of them is a pure function
+ * of the day it is handed — none reads a clock or a zone — so a fixed calendar
+ * day exercises them exactly as "today" did, and this suite no longer depends
+ * on what day it is or on which zone names it (#3123).
+ */
+const GIVEN_DAY = parseDateOnly("2026-07-01");
+
 // Shared predicate/deep link for the dashboard attention card (#1709) and the
 // sidebar Needs Attention badge (#1731). If one of these assertions fails, the
 // queue definition changed — update every consuming surface (and its docs)
 // together.
 describe("unpaid finished stays helpers", () => {
   it("matches non-deleted PAYMENT_PENDING bookings with check-out on or before the given day", () => {
-    const today = getTodayDateOnly();
-
-    expect(buildUnpaidFinishedStaysWhere(today)).toEqual({
+    expect(buildUnpaidFinishedStaysWhere(GIVEN_DAY)).toEqual({
       deletedAt: null,
       status: "PAYMENT_PENDING",
-      checkOut: { lte: today },
+      checkOut: { lte: GIVEN_DAY },
     });
   });
 
   it("keeps the cutoff inclusive of the given day only", () => {
-    const today = getTodayDateOnly();
-    const where = buildUnpaidFinishedStaysWhere(today);
+    const where = buildUnpaidFinishedStaysWhere(GIVEN_DAY);
     const cutoff = (where.checkOut as { lte: Date }).lte;
 
-    // A stay checking out today is finished; tomorrow's is not yet.
-    expect(cutoff.getTime()).toBeGreaterThanOrEqual(today.getTime());
+    // A stay checking out ON the given day is finished; the next day's is not.
+    expect(cutoff.getTime()).toBeGreaterThanOrEqual(GIVEN_DAY.getTime());
     expect(cutoff.getTime()).toBeLessThan(
-      addDaysDateOnly(today, 1).getTime(),
+      addDaysDateOnly(GIVEN_DAY, 1).getTime(),
     );
   });
 
   it("builds the bookings-list deep link both surfaces share", () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const dayKey = formatDateOnly(GIVEN_DAY);
 
-    expect(buildUnpaidFinishedStaysHref(todayKey)).toBe(
-      `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${todayKey}`,
+    expect(buildUnpaidFinishedStaysHref(dayKey)).toBe(
+      `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${dayKey}`,
     );
   });
 });
@@ -76,11 +81,9 @@ describe("unsettled finished-stay additions helpers", () => {
   });
 
   it("scopes the queue to non-deleted bookings checked out on or before the given day", () => {
-    const today = getTodayDateOnly();
-
-    expect(buildUnsettledAdditionalFinishedStaysWhere(today)).toEqual({
+    expect(buildUnsettledAdditionalFinishedStaysWhere(GIVEN_DAY)).toEqual({
       deletedAt: null,
-      checkOut: { lte: today },
+      checkOut: { lte: GIVEN_DAY },
       ...buildAdditionalOwedWhere(),
     });
   });
@@ -89,18 +92,16 @@ describe("unsettled finished-stay additions helpers", () => {
     const additionsStatuses = (
       buildAdditionalOwedWhere().status as { in: string[] }
     ).in;
-    const primaryStatus = buildUnpaidFinishedStaysWhere(
-      getTodayDateOnly(),
-    ).status;
+    const primaryStatus = buildUnpaidFinishedStaysWhere(GIVEN_DAY).status;
 
     expect(additionsStatuses).not.toContain(primaryStatus);
   });
 
   it("builds the bookings-list deep link both surfaces share", () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const dayKey = formatDateOnly(GIVEN_DAY);
 
-    expect(buildUnsettledAdditionalFinishedStaysHref(todayKey)).toBe(
-      `/admin/bookings?additionalOwed=owed&checkOutTo=${todayKey}`,
+    expect(buildUnsettledAdditionalFinishedStaysHref(dayKey)).toBe(
+      `/admin/bookings?additionalOwed=owed&checkOutTo=${dayKey}`,
     );
   });
 });

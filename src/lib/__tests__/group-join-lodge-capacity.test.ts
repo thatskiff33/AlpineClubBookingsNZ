@@ -128,12 +128,22 @@ import {
   HostingCoverageParticipantRetryError,
 } from "@/lib/adult-member-hosting-queue-participants";
 
+/**
+ * The club's zone, named rather than left to `getTodayDateOnly`'s `APP_TIME_ZONE`
+ * default, which #3123 deletes. `group-booking` resolves its own "today" through
+ * `readClubTimeZoneOutsideRequest()`; prisma is mocked here with no
+ * `clubTimeSettings` delegate, so that read fails soft to the environment seed
+ * and then to `Pacific/Auckland` — the same day the ended-stay gate measures
+ * from.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // Kept relative to the real clock: the ended-stay gate (#1723 path 3) rejects
 // joins once the organiser booking's check-out reaches NZ today, so a
 // hardcoded calendar date would rot into "This group's stay has ended"
 // failures before these tests ever reach the capacity cap they pin.
-const checkIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const checkOut = addDaysDateOnly(getTodayDateOnly(), 32);
+const checkIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const checkOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 32);
 
 // The group's booking belongs to lodge-b, whose capacity (4) is smaller than
 // the default lodge's, so a 5-guest join must fail against 4 — not against the

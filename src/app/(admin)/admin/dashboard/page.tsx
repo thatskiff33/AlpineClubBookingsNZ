@@ -224,12 +224,16 @@ async function getStats() {
     prisma.bookingChangeRequest.count({
       where: { status: "REQUESTED" },
     }),
-    // `today` IS PASSED, and CT-4 (#2870) is why. `getUnassignedHutLeaderDates`
-    // falls back to `getTodayDateOnly()` — `APP_TIME_ZONE` — when it is not
-    // told, and the two officer cards either side of this one (roster, bed
-    // allocation) are windowed from the club's PERSISTED day above. Leaving the
-    // default in place put two "today"s on one dashboard, so on a boundary day
-    // the coverage card counted a night the cards beside it had already dropped
+    // `today` IS STILL PASSED, and the reason changed with #3123 —
+    // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
+    // and `APP_TIME_ZONE`, so this is no longer the difference between the
+    // container's day and the club's. What it is now is the difference between
+    // ONE reading of the club's day and TWO. The two officer cards either side
+    // of this one (roster, bed allocation) are windowed from `today` above; let
+    // the coverage card resolve its own and a request that crosses club midnight
+    // between the two reads paints one card a day ahead of its neighbours, which
+    // is the same defect CT-4 (#2870) found here wearing a different cause. It
+    // also saves the extra settings read the fallback would perform
     // (INV-CONFIG-002).
     getUnassignedHutLeaderDates({ scope: { kind: "all" }, today }),
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.

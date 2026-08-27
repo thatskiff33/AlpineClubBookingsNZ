@@ -7,8 +7,7 @@ import {
   describeBookingMemberNightConflictNights,
   type BookingMemberNightConflictCopyInput,
 } from "@/lib/booking-member-night-conflict-messages";
-import { formatNZDate } from "@/lib/nzst-date";
-import { parseDateOnly } from "@/lib/date-only";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 
 // #2250 — the already-booked copy must say WHO is already booked, WHICH nights,
 // and WHAT to do next, without telling a viewer about a booking they are not
@@ -254,16 +253,32 @@ describe("describeBookingMemberNightConflictNights", () => {
     ).toBe("Already on another booking for 25 Dec 2026.");
   });
 
-  it("formats nights with the shared app date helper rather than its own month table", () => {
-    // formatNZDate follows APP_LOCALE / APP_TIME_ZONE, which are env
-    // configurable; a hardcoded English month list would silently stop matching
-    // every other date on the page under a different locale.
+  it("formats nights with the shared kernel helper rather than its own month table", () => {
+    /*
+      `formatClubDate` follows `APP_LOCALE`, which is configurable, so a
+      hardcoded English month list would silently stop matching every other date
+      on the page under a different locale.
+
+      THE ORACLE IS THE CALENDAR-DAY FORMATTER, AND THE CHOICE IS THE POINT.
+      This case used to build its expectation with
+      `formatNZDate(parseDateOnly(night))` — the retired adapter, which pinned
+      the key at UTC midnight and then re-read that instant through
+      `APP_TIME_ZONE`. That pairing is a PROJECTION: the identity for a club east
+      of Greenwich, and the PREVIOUS night for any club west of it. It agreed
+      with the subject only because this deployment's zone is New Zealand, so
+      the case was passing for the right answer by the wrong route and would have
+      pinned the defect as expected behaviour on any other club's deployment.
+
+      `conflictingNights` are `YYYY-MM-DD` lodge nights, which are CALENDAR DAYS
+      and have no timezone, so the oracle takes none either — which is exactly
+      what `booking-member-night-conflict-messages.ts` itself now does.
+    */
     for (const night of ["2026-01-05", "2026-06-01", "2026-12-25"]) {
       expect(
         describeBookingMemberNightConflictNights(
           conflict({ conflictingNights: [night] }),
         ),
-      ).toBe(`Already on a booking for ${formatNZDate(parseDateOnly(night))}.`);
+      ).toBe(`Already on a booking for ${formatClubDate(requireCalendarDate(night))}.`);
     }
   });
 

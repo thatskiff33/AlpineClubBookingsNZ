@@ -383,7 +383,13 @@ export function PromoRedemptionsPanel({
         });
       }
 
-      const csvContent = buildPromoRedemptionsCsvContent(promo.code, json.rows);
+      // The "Redeemed" column is a real instant, so the club's persisted zone
+      // decides its day (#3123) — the same binding the filename below uses.
+      const csvContent = buildPromoRedemptionsCsvContent(
+        clubTime,
+        promo.code,
+        json.rows,
+      );
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);

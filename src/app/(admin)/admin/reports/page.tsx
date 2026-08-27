@@ -437,7 +437,9 @@ export default function ReportsPage() {
     setGeneratingPDF(true);
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
-      await generateReportPDF(reportRef.current, { from, to }, {
+      // The club's persisted zone decides the cover date and the filename day
+      // (#3123); this component already holds the binding.
+      await generateReportPDF(reportRef.current, { from, to }, clubTime, {
         title: `${club.name} — Reports`,
       });
     } catch (err) {

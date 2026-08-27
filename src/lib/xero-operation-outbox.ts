@@ -194,6 +194,15 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
      * lands on an immutable invoice (#2870, correctness review).
      */
     seasonYear?: number;
+    /**
+     * The day the joining fee's schedule window is evaluated on. REQUIRED
+     * alongside `store` for the identical reason as `seasonYear`, and enforced
+     * by `getEntranceFeeContext` (#3123): it selects the `JoiningFee` row whose
+     * `amountCents` lands on an immutable invoice, and resolving it below a
+     * caller's open transaction would read `ClubTimeSettings` on the global
+     * client while that transaction holds its advisory locks.
+     */
+    asOf?: Date;
   }
 ) {
   // Optional transaction client (#1886, F22) so membership approval can write
@@ -231,6 +240,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
     memberId,
     db,
     options?.seasonYear,
+    options?.asOf,
   );
 
   // Organisations/schools are exempt from joining fees (owner decision,

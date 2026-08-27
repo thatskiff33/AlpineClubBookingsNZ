@@ -65,11 +65,27 @@ import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 import {
   adminBookingsQuerySchema,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -171,7 +187,10 @@ describe("AdminBookingsPage", () => {
 
     const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
     expect(callArgs.where.updatedAt.gte).toEqual(new Date("2026-04-30T12:00:00.000Z"));
-    expect(callArgs.where.updatedAt.lte).toEqual(new Date("2026-05-31T11:59:59.999Z"));
+    // #3123: the `updatedAt` upper bound is now HALF-OPEN (`lt` against the
+    // next club midnight) rather than inclusive to the millisecond, which
+    // Postgres's microsecond resolution made lossy.
+    expect(callArgs.where.updatedAt.lt).toEqual(new Date("2026-05-31T12:00:00.000Z"));
     expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
     expect(callArgs.where.checkIn.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
     expect(callArgs.where.checkOut).toBeUndefined();
@@ -234,8 +253,8 @@ describe("AdminBookingsPage", () => {
   });
 
   it("applies a check-out date range via checkOutFrom/checkOutTo", async () => {
-    const from = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -14));
-    const to = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -7));
+    const from = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, -14));
+    const to = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, -7));
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -251,7 +270,7 @@ describe("AdminBookingsPage", () => {
   });
 
   it("expresses the unpaid-finished-stays deep link (#1709): status=PAYMENT_PENDING and checkOutTo=today", async () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const todayKey = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -266,7 +285,7 @@ describe("AdminBookingsPage", () => {
   });
 
   it("expresses the unsettled-additions deep link (#1723): additionalOwed=owed and checkOutTo=today", async () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const todayKey = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -319,8 +338,8 @@ describe("AdminBookingsPage", () => {
   });
 
   it("prefers explicit checkOutTo over the legacy to param", async () => {
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
-    const checkOutTo = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, 30));
+    const checkOutTo = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -350,8 +369,8 @@ describe("AdminBookingsPage", () => {
   it("treats BookingFilters' rewrite of a legacy from/to link as a no-op (#1720)", async () => {
     // BookingFilters rewrites ?from=A&to=B into ?checkInFrom=A&checkOutTo=B.
     // Both spellings must build the identical date where-clause.
-    const legacyFrom = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    const legacyFrom = formatDateOnly(TEST_CLUB_DAY.today);
+    const legacyTo = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, 14));
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({ from: legacyFrom, to: legacyTo }),
@@ -404,7 +423,9 @@ describe("AdminBookingsPage", () => {
       adminBookingsQuerySchema.parse({
         sortBy: "member",
         sortDir: "asc",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual([
@@ -460,7 +481,9 @@ describe("AdminBookingsPage", () => {
     ] as any);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" })
+      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-missing"]);
@@ -486,7 +509,9 @@ describe("AdminBookingsPage", () => {
     ]);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ paymentSource: "NONE" })
+      adminBookingsQuerySchema.parse({ paymentSource: "NONE" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-none"]);
@@ -561,7 +586,9 @@ describe("AdminBookingsPage", () => {
       adminBookingsQuerySchema.parse({
         bedState: "unallocated",
         changeState: "pendingRequest",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-unallocated"]);
@@ -595,7 +622,8 @@ describe("AdminBookingsPage", () => {
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ bedState: "unallocated" }),
-      { bedAllocationEnabled: false }
+      { bedAllocationEnabled: false },
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-clean"]);

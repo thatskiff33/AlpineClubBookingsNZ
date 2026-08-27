@@ -150,12 +150,15 @@ export function FinanceDashboardClient({
     setGeneratingPdf(true);
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
+      // The club's persisted zone decides the cover date and the filename day
+      // (#3123); this component already holds the binding.
       await generateReportPDF(
         reportRef.current,
         {
           from: model.selection.primary.from,
           to: model.selection.primary.to,
         },
+        clubTime,
         {
           title: `Finance - ${model.selectionLabels.view}`,
         },

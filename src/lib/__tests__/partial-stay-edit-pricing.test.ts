@@ -180,6 +180,14 @@ vi.mock("@/lib/booking-events", () => ({
 
 import { auth } from "@/lib/auth";
 import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
@@ -520,6 +528,7 @@ describe("guest removal prices remaining guests over their stored nights (#1093)
     const { removeBookingGuestInTransaction } = await import("@/lib/booking-guest-removal-service");
 
     await removeBookingGuestInTransaction({
+      today: CLUB_TODAY_DATE_ONLY,
       tx: tx as any,
       bookingId: "bk1",
       guestId: "g1",

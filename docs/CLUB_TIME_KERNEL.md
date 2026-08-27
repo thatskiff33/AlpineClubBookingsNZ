@@ -185,7 +185,7 @@ one of these, there is a function.
 | `dateOnlyInstantOf((await clubTime()).today())` | `clubTodayDateOnlyInstant()` from `club-time/server` |
 | `dateOnlyInstantOf(date).getUTCDay()` | `calendarDayOfWeek(date)` — no `Date` is constructed, so the `getDay()` typo has nowhere to happen |
 | `new Date(y, m, 1)`, or a hand-rolled next-month rollover | `startOfCalendarMonth(date)` for the anchor and `addCalendarMonths` for the step. Both take a `CalendarDate`, so a bare `YYYY-MM` month KEY is not one: gluing `-01` on is how you make it a day, and the three sites #2870 attributed to this row turned out to be doing exactly that and nothing else |
-| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; five shapes were added in #2870 for exactly this |
+| a local `Intl.DateTimeFormat` for a shape the kernel lacks | check `HOUSE_SHAPES` first; five shapes were added in #2870 for exactly this, and #3123 added `formatClubInstantDayMonth` / `formatClubInstantWeekdayDayMonth` because two shapes existed for a `CalendarDate` and not for an `Instant` — which is enough of a gap to justify a hand-rolled per-zone formatter, and did, twice |
 | a bare month name — the months a season or period runs between | `formatClubShortMonth(date)`. Declared as its own shape rather than the year sliced off `formatClubShortMonthYear`, per the rule below |
 | the day before or after a `yyyy-MM-dd` key, via an instant and a zone reader | `addCalendarDays(requireCalendarDate(key), n)`. Two defects in one line, of which #3100 shipped one and armed the other: see "The stay window" below |
 | `Date -> Date` normalisation of a stored day, for a comparison written in `Date`s | `storedDateOnly` from `@/lib/stored-calendar-day` — a bridge, not the recommended shape |
@@ -248,17 +248,63 @@ stay grew a fourth night, and a proposal's beds were counted on the wrong nights
 inside the capacity lock. A key is DECODED from the day its column holds, never
 read out of a zone.
 
-## The legacy adapters
+## The legacy adapter
 
-`src/lib/nzst-date.ts` and `src/lib/date-only.ts` keep every signature and
-delegate to the kernel. **No call site has changed and none is wrong** — they are
-adapters, not deprecated code, and CT-6 (#2991) retires them once CT-3 to CT-5
-have moved their callers.
+There is **one** left. `src/lib/date-only.ts` keeps every signature and delegates
+to the kernel. **No call site has changed and none is wrong** — it is an adapter,
+not deprecated code, and CT-6 (#2991) retires it once CT-3 to CT-5 have moved its
+callers.
 
-Two honest limits while both exist:
+### The rendering adapter is gone (#3123)
 
-- **The adapters still pass `APP_TIME_ZONE`, and a call site that has not moved
-  yet is still on the environment.** CT-2 made the persisted zone *reachable*.
+`src/lib/nzst-date.ts` sat beside it and held the club's *rendering* seam — the
+six `formatNZ*` helpers. It is **deleted**, and the sequence that got it there is
+the pattern the remaining adapter should follow rather than a one-off:
+
+1. **CT-2 (#2990)** made every helper a one-line delegation, so the formatting
+   logic single-sourced onto the kernel while no caller's behaviour changed.
+2. **CT-3 to CT-5, then #3113/#3118 and #3107/#3121**, moved the call sites — 40
+   of them across 13 files at the last count — each onto the right *question*
+   rather than merely the right module: a `@db.Date` lodge night became a
+   `CalendarDate` and lost its zone argument entirely, while a real `createdAt`
+   or `expiresAt` kept one and took it from the club's persisted setting.
+3. **#3123** deleted the file, once `nzstDateImporters` in
+   `src/lib/__tests__/club-time-escape-hatch-census.test.ts` measured zero.
+
+**It was not replaced by a thinner adapter, a re-export shim or a
+"compatibility" module, and it must not be.** Two rendering seams is one too
+many; that was the whole point.
+`src/lib/club-time/__tests__/club-time-kernel-census.test.ts` asserts the file
+has not come back — the case is "has really deleted the rendering adapter,
+rather than thinning it", and it checks that the FILE is gone rather than that it
+is small, because a stub is a second rule system whatever its size. The
+`toLocale*` arms in `eslint.config.mjs` refuse a hand-rolled formatter anywhere
+under `src/**`. The six frozen
+`Intl.DateTimeFormat` constants it used to hold survive **transcribed by hand**
+in `src/lib/club-time/__tests__/house-shapes.test.ts`, swept against the kernel
+over 400 consecutive instants — that transcription is now the only record of
+what the club has always been shown, which is exactly why it is not an import.
+
+Tests assert against the kernel directly. Where a suite needs to name what the
+*environment* would have said — the wrong answer, to prove an email does not
+carry it — it spells out
+`formatClubInstantDateTime(instant, unvalidatedLegacyClubTimeZone(APP_TIME_ZONE))`
+rather than reaching for a module kept alive for that purpose.
+
+### Two honest limits while the date-only adapter exists
+
+- **The adapter no longer passes `APP_TIME_ZONE` (#3123), though a few modules
+  still read the environment directly.** `src/lib/date-only.ts` used to default
+  six helpers' `timeZone` parameter to the environment's zone, so a call site
+  that had not moved sat silently on the container's `TZ` and read identically to
+  one that had. Those defaults and the import are gone: every `timeZone`
+  parameter is required, every caller names an authority, and the adapter now
+  answers with whatever it was handed. Which modules still read the environment
+  is deliberately not restated here — a list copied into prose is a list that
+  drifts — it is `ENVIRONMENT_ZONE_ADAPTERS` in `eslint.config.mjs`, each entry
+  carrying the reason it has not moved, held as a shrink-only ratchet by
+  `src/lib/__tests__/club-time-boundary-guard.test.ts`. CT-2 made the persisted
+  zone *reachable*.
   CT-5 (#2869) moved the provider, scheduled-job, export and email surfaces onto
   it; CT-3 (#2872) moved the temporal schema; CT-4 (#2870) has moved the admin
   API, the member-facing API, the client components, the admin and member pages,

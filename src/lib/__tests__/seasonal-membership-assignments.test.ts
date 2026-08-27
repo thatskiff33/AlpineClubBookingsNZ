@@ -342,6 +342,9 @@ describe("seasonal membership assignment preview and save", () => {
       membershipTypeId: "type-associate",
       applyFrom: "2026-07-15",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
 
@@ -387,6 +390,7 @@ describe("seasonal membership assignment preview and save", () => {
           seasonYear: 2026,
           membershipTypeId: "type-associate",
           now: new Date("2026-07-01T00:00:00.000Z"),
+          clubCurrentSeasonYear: 2026,
           db: db as never,
         }),
       ).rejects.toThrow(
@@ -453,6 +457,9 @@ describe("seasonal membership assignment preview and save", () => {
       membershipTypeId: "type-associate",
       applyFrom: "2026-07-15",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
     const preview = (previewResult.body as { preview: { previewToken: string } })
@@ -521,6 +528,9 @@ describe("seasonal membership assignment preview and save", () => {
       seasonYear: 2026,
       membershipTypeId: "type-exempt",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
     const preview = (
@@ -554,6 +564,8 @@ describe("seasonal membership assignment preview and save", () => {
     expect(mockAcquireFuturePartnerSharedAllocationLocks).toHaveBeenCalledWith(
       db,
       ["member-1"],
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
     );
     const acquireOrder =
       mockAcquireFuturePartnerSharedAllocationLocks.mock.invocationCallOrder[0];
@@ -596,6 +608,9 @@ describe("seasonal membership assignment preview and save", () => {
       membershipTypeId: "type-full",
       applyFrom: "2026-05-15",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
     const preview = (
@@ -644,6 +659,9 @@ describe("seasonal membership assignment preview and save", () => {
       seasonYear: 2026,
       membershipTypeId: "type-exempt",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
     const preview = (
@@ -675,6 +693,9 @@ describe("seasonal membership assignment preview and save", () => {
       seasonYear: 2026,
       membershipTypeId: "type-associate",
       now: new Date("2026-07-01T00:00:00.000Z"),
+      // #3123 - required now, so the preview makes NO ClubTimeSettings read of
+      // its own. The frozen clock is 1 July 2026 = season 2026.
+      clubCurrentSeasonYear: 2026,
       db: db as never,
     });
     const preview = (previewResult.body as { preview: { previewToken: string } }).preview;
@@ -715,6 +736,8 @@ describe("seasonal membership assignment preview and save", () => {
         memberId: "member-1",
         seasonYear,
         membershipTypeId: "type-associate",
+        now: new Date("2026-07-01T00:00:00.000Z"),
+        clubCurrentSeasonYear: 2026,
         db: db as never,
       });
       const preview = (

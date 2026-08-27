@@ -1,5 +1,5 @@
 import { FinanceMonthlyStatementKind } from "@prisma/client";
-import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
 import { DEFAULT_FINANCE_MONTHLY_FACT_SCOPE } from "@/lib/finance-monthly-fact-store";
 import {
   getFinanceSyncDiagnosticsStatus,

@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * CT-6 (#2991) — the final escape-hatch census, as a RATCHET.
  *
@@ -40,91 +42,8 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(__dirname, "../../..");
 
-/**
- * Source with every comment blanked out, newlines preserved.
- *
- * THE FIRST DRAFT OF THIS CENSUS DID NOT DO THIS, and it is worth recording
- * what that cost rather than quietly fixing it. Counting raw text reported 14
- * files reading a host clock face and 96 naming `APP_TIME_ZONE`; the real
- * numbers are 0 and 9. The difference is entirely PROSE — this repository
- * documents each defect it removes at the site where it removed it, so the
- * strings a census greps for are densest in exactly the files that no longer
- * commit the defect. A census that counts its own postmortems reports the
- * epic's success as its failure, and would have made this ratchet unusable.
- *
- * Newlines are preserved rather than deleted so a reported line number still
- * points at the real line. String literals are tracked because `"https://x"`
- * contains a `//` that is not a comment, and template literals because they can
- * contain both.
- */
-export function stripComments(source: string): string {
-  let out = "";
-  let index = 0;
-  type Mode = "code" | "line" | "block" | "single" | "double" | "template";
-  let mode: Mode = "code";
-
-  while (index < source.length) {
-    const character = source[index];
-    const next = source[index + 1];
-
-    if (mode === "code") {
-      if (character === "/" && next === "/") {
-        mode = "line";
-        index += 2;
-        continue;
-      }
-      if (character === "/" && next === "*") {
-        mode = "block";
-        index += 2;
-        continue;
-      }
-      if (character === "'") mode = "single";
-      else if (character === '"') mode = "double";
-      else if (character === "`") mode = "template";
-      out += character;
-      index++;
-      continue;
-    }
-
-    if (mode === "line") {
-      if (character === "\n") {
-        mode = "code";
-        out += character;
-      }
-      index++;
-      continue;
-    }
-
-    if (mode === "block") {
-      if (character === "*" && next === "/") {
-        mode = "code";
-        index += 2;
-        continue;
-      }
-      if (character === "\n") out += character;
-      index++;
-      continue;
-    }
-
-    // Inside a string or template literal: copy through, honouring escapes.
-    out += character;
-    if (character === "\\") {
-      if (index + 1 < source.length) out += source[index + 1];
-      index += 2;
-      continue;
-    }
-    if (
-      (mode === "single" && character === "'") ||
-      (mode === "double" && character === '"') ||
-      (mode === "template" && character === "`")
-    ) {
-      mode = "code";
-    }
-    index++;
-  }
-
-  return out;
-}
+/** Re-exported from its single home so existing importers keep resolving. */
+export { stripComments };
 
 /**
  * The six `@/lib/date-only` helpers whose `timeZone` parameter defaults to
@@ -307,8 +226,16 @@ const PRODUCTION_FILES = walk(path.join(ROOT, "src")).filter(
   (file) => !file.startsWith("src/lib/club-time/") && !KERNEL_SIBLINGS.has(file),
 );
 
-/** Files whose whole job is to be the retired adapter. */
-const ADAPTER_MODULES = new Set(["src/lib/date-only.ts", "src/lib/nzst-date.ts"]);
+/**
+ * Files whose whole job is to be the retired adapter.
+ *
+ * `src/lib/nzst-date.ts` USED TO BE HERE AND IS NOW DELETED (#3123). It was the
+ * club's second date-rendering seam; the kernel is the only one left. The
+ * assertion that it has not come back lives in `club-time-kernel-census.test.ts`,
+ * which checks the path does not exist — a set entry for a deleted file would
+ * read as though the module were still around.
+ */
+const ADAPTER_MODULES = new Set(["src/lib/date-only.ts"]);
 
 /** A file's CODE, with its prose removed. See {@link stripComments}. */
 const read = (file: string): string =>
@@ -398,10 +325,13 @@ describe("the scanner counts what it claims to count", () => {
     expect(importsAdapter('import { x } from "@/lib/nzst-date";', "nzst-date")).toBe(true);
     expect(importsAdapter('import { x } from "../nzst-date";', "nzst-date")).toBe(true);
     expect(importsAdapter('import { x } from "./nzst-date";', "nzst-date")).toBe(true);
-    // The spelling a `@/lib/…`-only check misses. Twelve of this repository's
-    // twenty-five `nzst-date` callers are in `src/lib/email/**` and reach it
-    // relatively, so an allowlist built on the absolute form alone would have
-    // reported half the real number.
+    // The spelling a `@/lib/…`-only check misses. When this was written, twelve
+    // of the repository's twenty-five `nzst-date` callers sat in
+    // `src/lib/email/**` and reached it relatively, so an allowlist built on the
+    // absolute form alone would have reported half the real number. Both the
+    // module and its callers are gone now (#3123), but the matcher still has to
+    // handle every spelling — `date-only` is reached both ways today, and the
+    // zero-assertion below would be worthless if it could only see one form.
     expect(importsAdapter('import { x } from "@/lib/date-only";', "nzst-date")).toBe(false);
   });
 
@@ -497,51 +427,52 @@ describe("the scanner counts what it claims to count", () => {
  */
 const CENSUS_CEILING = {
   /**
-   * Call sites that left a club-facing zone to `APP_TIME_ZONE`.
+   * Call sites that left a club-facing zone to `APP_TIME_ZONE`. **NOW ZERO, AND
+   * STRUCTURALLY SO — this counter is no longer the thing holding the line.**
    *
-   * Was 123 in 56 files when CT-6 first measured it. #3107/#3121 merged into
-   * this branch mid-lane and removed **42** of them while adding none, so both
-   * numbers came down in the same sitting — the second worked example of
-   * resolving this suite's failure in the pleasant direction, after
-   * `nzstDateImporters` below.
+   * History, because the shape of the fix is the lesson. CT-6 first measured
+   * 123 in 56 files; #3107/#3121 took 42; #3123 took the remaining 81 across
+   * 52 files, in eight lanes.
    *
-   * The call count fell by exactly 42 and the FILE count by only 4, and the
-   * gap is worth knowing rather than rediscovering: four of that issue's seven
-   * files came fully clean, and three — `admin-booking-copy.ts`,
-   * `booking-guest-stay-ranges.ts` and `booking-member-night-conflicts.ts` —
-   * each still hold exactly one defaulted call. A file leaves this census only
-   * when its LAST site goes.
+   * Then #3123 did the thing that made counting unnecessary: it **deleted the
+   * `= APP_TIME_ZONE` defaults from all six `date-only.ts` helpers**, so
+   * `timeZone` is a required argument. An unstated zone is now a COMPILE
+   * ERROR. That is why this number can be asserted at zero rather than
+   * ratcheted down towards it — the type system, not this scanner, is what a
+   * new escape hatch now runs into first.
    *
-   * What is left is lopsided in a way that should shape whoever takes it on:
-   * `getTodayDateOnly()` alone is 52 of the 81, one question — "what day is it
-   * at the club" — asked in 52 places.
+   * KEEP THIS COUNTER ANYWAY, and keep it at zero. Two instruments, for the
+   * reason stated throughout this file: a type signature can be widened back
+   * to optional by one small edit that reads as a convenience, and the person
+   * making it will not think of themselves as re-opening an epic. The endgame
+   * of #3123 found exactly that shape one layer up — a `timeZone?: string` on
+   * `computeMemberGuestConsentExpiry`, whose sole production caller passed
+   * nothing, so it had silently been on the environment. A defaulted CALL is
+   * what this scanner sees; a defaulted SIGNATURE is what the compiler sees.
+   * Neither instrument sees both.
    */
-  defaultedZoneCalls: 81,
-  /** Production files containing at least one of them. */
-  defaultedZoneFiles: 52,
-  /**
-   * Production files importing the retired rendering adapter.
-   *
-   * Was 25 when CT-6 first measured it; #3113/#3118 landed on this branch
-   * mid-lane and took twelve of them -- the whole of `src/lib/email/**` -- so
-   * the ceiling came down in the same sitting. That is the ratchet doing its
-   * job, and it is worth leaving the history here as the worked example of how
-   * to resolve a failure in the pleasant direction.
-   */
-  nzstDateImporters: 13,
+  defaultedZoneCalls: 0,
+  /** Production files containing at least one of them. Zero, and see above. */
+  defaultedZoneFiles: 0,
   /**
    * Production files importing the date-only adapter, zone-free uses included.
    *
-   * DELIBERATELY ONE HIGHER THAN THE EPIC'S LEDGER, and the reason says what
-   * this coarse number can and cannot express. CT-6 replaced a host-local
-   * `setDate(getDate() - n)` in `waitlist.ts` with `addDaysDateOnly`, which is
-   * zone-FREE UTC arithmetic — a strictly better state that nonetheless ADDS an
-   * importer. Measured on the merged tree, 177 of these files import only
-   * zone-free
-   * exports and never consult a timezone at all; the number that matters for
-   * environment authority is `defaultedZoneCalls` above, not this one.
+   * A COARSE NUMBER THAT DOES NOT MEASURE ENVIRONMENT AUTHORITY, and it is
+   * worth being explicit about that now the number above is zero. Most of
+   * these files import only zone-free exports — `parseDateOnly`,
+   * `addDaysDateOnly`, `formatDateOnly` — and never consult a timezone at all.
+   * A file can even JOIN this list by getting better: CT-6 replaced a
+   * host-local `setDate(getDate() - n)` in `waitlist.ts` with `addDaysDateOnly`,
+   * which is zone-free UTC arithmetic and a strictly better state that
+   * nonetheless adds an importer.
+   *
+   * So this one is a size-of-surface tracker, not a defect count, and it can
+   * legitimately move in either direction. It is `toBe` like the rest, which
+   * means a change here fails the suite and asks for a human decision about
+   * which direction it moved and why — that is the intended behaviour, not an
+   * oversight.
    */
-  dateOnlyImporters: 232,
+  dateOnlyImporters: 213,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
@@ -578,14 +509,22 @@ describe("the escape-hatch census is exact, and only ever revised downward", () 
   });
 
   it("has EXACTLY the legacy-adapter importers measured", () => {
-    const nzst = PRODUCTION_FILES.filter(
-      (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "nzst-date"),
-    );
     const dateOnly = PRODUCTION_FILES.filter(
       (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "date-only"),
     );
-    expect(nzst.length, nzst.join("\n")).toBe(CENSUS_CEILING.nzstDateImporters);
     expect(dateOnly.length).toBe(CENSUS_CEILING.dateOnlyImporters);
+  });
+
+  it("has no importer of the deleted rendering adapter, by any path spelling", () => {
+    // `nzstDateImporters` was a ratchet that went 25 -> 13 -> 0 and then stopped
+    // being a number at all, because #3123 deleted the module. This is the
+    // zero-assertion that replaces it: a class nobody counts is a class nobody
+    // notices coming back, and an import of a deleted file is a build error
+    // only until somebody helpfully recreates it.
+    const nzst = PRODUCTION_FILES.filter(
+      (file) => !ADAPTER_MODULES.has(file) && importsAdapter(read(file), "nzst-date"),
+    );
+    expect(nzst, nzst.join("\n")).toEqual([]);
   });
 });
 
@@ -625,7 +564,17 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
         read(file),
       ),
     );
-    expect(naming, naming.join("\n")).toHaveLength(9);
+    // NINE WHEN CT-6 MEASURED IT, FIVE NOW. #3123 took four: `date-only.ts`
+    // stopped naming it the moment its six `= APP_TIME_ZONE` defaults were
+    // deleted — the adapter had been the single largest reason the environment
+    // was reachable at all — and `member-guest-consent-labels.ts` came off when
+    // the deferral its own docblock had declared was finally closed.
+    //
+    // The five left are structural rather than deferred: the config module that
+    // defines the value, and four modules that legitimately describe the
+    // ENVIRONMENT rather than the club. Lowering this further needs a reason
+    // beyond tidiness — read each one before assuming it is a leftover.
+    expect(naming, naming.join("\n")).toHaveLength(5);
   });
 
   it("counts the local-midnight constructions no selector can reach", () => {

@@ -14,7 +14,6 @@ import {
   auditEnforcedGuardCoverage,
   auditResolvedGuardCoverage,
   PRODUCTION_GUARD_ROSTER,
-  resolveRestrictedSyntax,
 } from "./support/eslint-guard-coverage";
 
 /**
@@ -2114,37 +2113,24 @@ describe("the lint guard reaches every production path, and no block can drop it
     ).toEqual([]);
   });
 
-  it("keeps all three toLocale* arms on nzst-date.ts (CT-2, #2990)", async () => {
-    /*
-      `src/lib/nzst-date.ts` held the six frozen `Intl.DateTimeFormat` constants
-      the club's rendering seam was built from, and was listed in the narrowed
-      block that drops the `toLocale*` arms. CT-2 made every one of those
-      functions a one-line delegation to `@/lib/club-time`, so it formats nothing
-      and needs no exemption — and it was taken off that list.
+  /*
+    THE `nzst-date.ts` PIN LIVED HERE AND WAS DELETED WITH ITS SUBJECT (#3123).
 
-      NOTHING ASSERTED THAT REMOVAL. The roster audit above requires only the
-      encoding and zoned-formatter arms, so putting the file back on the exempt
-      list would restore a hand-rolled `toLocaleDateString` to the seam with the
-      whole suite green. This is the pin: the rendering arms must resolve HERE,
-      like any other library module, until CT-6 (#2991) deletes the file.
-    */
-    const resolved = await resolveRestrictedSyntax(
-      eslint,
-      ROOT,
-      "src/lib/nzst-date.ts",
-    );
-    expect(resolved.severity).toBe(2);
-    const missing = DATE_GUARD_ARMS.rendering.filter(
-      (selector) => !resolved.selectors.includes(selector),
-    );
-    expect(
-      missing,
-      "INV-DATE-015: `src/lib/nzst-date.ts` has been put back on a block that drops the " +
-        "toLocale* rendering arms. It delegates to @/lib/club-time and formats nothing, so " +
-        "it needs no exemption; an exemption here is how a hand-rolled toLocale* gets back " +
-        "into the club's rendering seam without lint noticing.",
-    ).toEqual([]);
-  });
+    `src/lib/nzst-date.ts` held the six frozen `Intl.DateTimeFormat` constants the
+    club's rendering seam was built from, and was listed in the narrowed block that
+    drops the `toLocale*` arms. CT-2 (#2990) made every one of those functions a
+    one-line delegation to `@/lib/club-time`, so it formatted nothing and needed no
+    exemption — and it came off that list. Nothing asserted that removal, so this
+    case existed to pin it: the rendering arms had to resolve there like any other
+    library module, "until CT-6 (#2991) deletes the file".
+
+    CT-6 deleted the file. A resolution check against a path that does not exist
+    proves nothing about anything — ESLint will happily compute a config for it —
+    so keeping the case would have left an assertion that reads as coverage and is
+    not. What replaces it is stronger and lives one directory across:
+    `club-time/__tests__/club-time-kernel-census.test.ts` asserts the file has not
+    come back at all, which is the only exemption that can matter now.
+  */
 
   /*
     THE BEHAVIOURAL AUDIT. The one above compares selector STRINGS; this lints a

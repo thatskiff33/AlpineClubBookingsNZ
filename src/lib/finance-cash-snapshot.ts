@@ -1,4 +1,10 @@
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseInstant,
+  requireStoredCalendarDay,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { parseProviderReportAmountToCents } from "@/lib/money-provider-amount";
 
@@ -7,6 +13,21 @@ import { parseProviderReportAmountToCents } from "@/lib/money-provider-amount";
  * "Latest bank balance" KPI reads the most recent snapshot through this;
  * month-granular cash history comes from the monthly fact table instead
  * (see finance-monthly-balance.ts).
+ *
+ * ## Two kinds of date live in one record, and they take opposite answers (#3123)
+ *
+ * `asOfDate`, `periodStart` and `periodEnd` are `@db.Date` CALENDAR DAYS: they
+ * round-trip as UTC midnight and name the same day in every zone on earth, so
+ * they take NO zone at all. `sourceUpdatedAt` is a real INSTANT — the moment the
+ * provider last refreshed the figures — which has no civil date until a zone is
+ * chosen, and the only right chooser is the club's persisted one
+ * (`INV-CONFIG-002`).
+ *
+ * Before #3123 all six went through `formatNZDate`/`formatNZDateTime` and so
+ * through `APP_TIME_ZONE`. For a club west of Greenwich that dated the bank
+ * balance a day early — on the KPI a finance manager reads a cash figure off.
+ * Sweeping all six onto the club's zone would have fixed the one and broken the
+ * five, which is why the split below is written out rather than assumed.
  */
 
 export interface FinanceCashSnapshotRecord {
@@ -59,6 +80,7 @@ export interface ParsedCashSnapshot {
 }
 
 export function parseCashSnapshot(
+  club: BoundClubTime,
   snapshot: FinanceCashSnapshotRecord
 ): ParsedCashSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
@@ -77,14 +99,12 @@ export function parseCashSnapshot(
 
   return {
     snapshotId: snapshot.id,
-    snapshotLabel: formatNZDate(snapshot.asOfDate),
+    snapshotLabel: storedSnapshotDay(snapshot.asOfDate),
     sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
     totalBalanceCents,
     totalBalance: formatCents(totalBalanceCents),
     accountCount: accounts.length,
-    sourceUpdatedAtLabel: snapshot.sourceUpdatedAt
-      ? formatDateTime(snapshot.sourceUpdatedAt.toISOString())
-      : "Snapshot update time unavailable",
+    sourceUpdatedAtLabel: formatSourceUpdatedAt(club, snapshot.sourceUpdatedAt),
     accounts,
   };
 }
@@ -266,18 +286,56 @@ function formatSnapshotWindow(periodStart: Date | null, periodEnd: Date | null) 
   }
 
   if (!periodStart) {
-    return `Through ${formatNZDate(periodEnd!)}`;
+    return `Through ${storedSnapshotDay(periodEnd!)}`;
   }
 
   if (!periodEnd) {
-    return `From ${formatNZDate(periodStart)}`;
+    return `From ${storedSnapshotDay(periodStart)}`;
   }
 
-  return `${formatNZDate(periodStart)} to ${formatNZDate(periodEnd)}`;
+  return `${storedSnapshotDay(periodStart)} to ${storedSnapshotDay(periodEnd)}`;
 }
 
-function formatDateTime(value: string) {
-  return formatNZDateTime(new Date(value));
+/**
+ * One of the record's three `@db.Date` columns, rendered with NO zone.
+ *
+ * Composed rather than wrapped in a shorter name, per `docs/CLUB_TIME_KERNEL.md`:
+ * `date-only-encoding-guard.test.ts` audits encodings by the encoder's own name
+ * at the call site. `requireStoredCalendarDay` proves the value really carries a
+ * date-only encoding first, so a `sourceUpdatedAt` mis-wired into a bare-day slot
+ * throws instead of quietly answering with its UTC day — which would be right
+ * for a club east of Greenwich and wrong for one west of it.
+ */
+function storedSnapshotDay(value: Date): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "A cash snapshot's as-of or period date",
+        instead:
+          "A real timestamp rendered as a bare day is a projection, and " +
+          "FinanceSnapshot.asOfDate, .periodStart and .periodEnd are all @db.Date columns.",
+      }),
+    ),
+  );
+}
+
+/**
+ * When the provider last refreshed these figures — a real INSTANT, read in the
+ * club's persisted zone.
+ *
+ * The one value in this record that genuinely needs a zone, and the one the
+ * binding is threaded here for. `FinanceSnapshot.sourceUpdatedAt` carries no
+ * `@db.Date`, so it holds a time of day and has no civil date of its own.
+ */
+function formatSourceUpdatedAt(
+  club: BoundClubTime,
+  sourceUpdatedAt: Date | null
+): string {
+  if (!sourceUpdatedAt) return "Snapshot update time unavailable";
+  const instant = parseInstant(sourceUpdatedAt);
+  return instant === null
+    ? "Snapshot update time unavailable"
+    : club.instantDateTime(instant);
 }
 
 function readOptionalString(value: unknown) {

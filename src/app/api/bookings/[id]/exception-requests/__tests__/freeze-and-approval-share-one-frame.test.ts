@@ -122,6 +122,7 @@ vi.mock("@/lib/booking-exception-request-service", async (importOriginal) => {
   };
 });
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import {
@@ -133,6 +134,13 @@ import type {
   ProposalParty,
 } from "@/lib/booking-exception-requests";
 import { POST } from "@/app/api/bookings/[id]/exception-requests/route";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
 
 /** The stored `@db.Date` days on the fixture booking. */
 const STORED_CHECK_IN = "2026-07-04";
@@ -206,6 +214,7 @@ function snapshotOf(base: ProposalParty, proposed: ProposalParty) {
 
 function approvalHooks() {
   return buildPolicyExceptionApprovalHooks({
+    todayAtClub: FIXTURE_CLUB_DAY,
     requestId: "bcr-1",
     actorMemberId: "officer-1",
     ipAddress: "0.0.0.0",
@@ -262,7 +271,9 @@ describe("exception freeze and approval replay share one date frame (CT-4, #2870
     // The LEGACY answer, measured rather than assumed. If `America/Denver` ever
     // stopped shifting a UTC-midnight day, every assertion below would hold for
     // the wrong reason.
-    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN))).toBe("2026-07-03");
+    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN), APP_TIME_ZONE)).toBe(
+      "2026-07-03",
+    );
   });
 
   it("freezes a base whose stay days are exactly the stored calendar days", async () => {

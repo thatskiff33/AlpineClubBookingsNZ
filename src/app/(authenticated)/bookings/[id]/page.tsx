@@ -230,6 +230,15 @@ export default async function BookingDetailPage({
     which are calendar days and take no zone at all (INV-DATE-010).
   */
   const club = await clubTime();
+  // #3123 — the club's today, as the UTC-midnight instant a `@db.Date` bound
+  // round-trips through, derived from the SAME binding this page already holds.
+  // THE ONLY RESOLUTION OF THE CLUB'S DAY ON THIS PAGE: it is threaded into
+  // every question below — the started-stay test, the edit policy, the
+  // admin-override policy, the self-removal card and the consent card — so none
+  // of them can answer on a different day. Two of those cards used to take a
+  // second `club.today()` of their own, which across club midnight would have
+  // offered a member a self-removal control the very next check refused.
+  const clubTodayDateOnly = dateOnlyInstantOf(club.today());
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -448,6 +457,12 @@ export default async function BookingDetailPage({
     bookingStatus: booking.status,
     bookingCheckIn: booking.checkIn,
     guests: booking.guests,
+    // The club's today, resolved ONCE for this page above and threaded here
+    // rather than defaulted inside the predicate (#3123). It is the same binding
+    // the started-stay test and both edit policies take, and the consent card
+    // below takes it too — so no two answers on this page can straddle midnight
+    // and disagree about whether the stay has started.
+    today: clubTodayDateOnly,
   };
   const selfRemovalCandidate = resolveBookingSelfRemovalCard(selfRemovalInput);
   // The removal service also refuses a quote-priced booking
@@ -475,10 +490,12 @@ export default async function BookingDetailPage({
     bookingCheckIn: booking.checkIn,
     guests: booking.guests,
     selfRemovalCardPresent: Boolean(selfRemovalCard),
-    // The clock is read HERE, by name, and passed down: the card resolver and
+    // The day is stated HERE, by name, and passed down: the card resolver and
     // its refusal prediction are pure, so "today" is this page's fact to state
-    // rather than something a helper quietly looks up for itself.
-    today: dateOnlyInstantOf(club.today()),
+    // rather than something a helper quietly looks up for itself. Stating it is
+    // not the same as RESOLVING it — this is the page's one resolved value from
+    // above, not a second reading of the clock.
+    today: clubTodayDateOnly,
   };
   const consentCandidate = resolveBookingConsentCard({
     ...consentCardInput,
@@ -598,6 +615,9 @@ export default async function BookingDetailPage({
     },
   });
   const bookingNarrative = resolveBookingNarrative({
+    // The event stamps in the narrative are real instants and read in the
+    // club's zone; its stay dates are @db.Date lodge nights and do not (#3123).
+    club,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
@@ -640,7 +660,7 @@ export default async function BookingDetailPage({
   // the button is honest and never 400s (same "no button that fails" pattern as
   // the view-only work). A Full Admin (isAdmin) keeps the button; they leave
   // early via edit/shrink otherwise.
-  const stayHasStarted = bookingStayHasStarted(booking.checkIn);
+  const stayHasStarted = bookingStayHasStarted(booking.checkIn, clubTodayDateOnly);
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) may cancel any
   // booking; the /api/bookings/[id]/cancel route authorizes bookings:edit and the
   // notes editor below is gated on this same predicate.
@@ -690,6 +710,7 @@ export default async function BookingDetailPage({
     role: viewerAuthorizationRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    today: clubTodayDateOnly,
   });
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
   // in viewerAuthorizationRole above, so editPolicy is the admin-on-behalf policy
@@ -706,6 +727,7 @@ export default async function BookingDetailPage({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride: true,
+    today: clubTodayDateOnly,
   });
   const canAdminOverride =
     viewerAuthorizationRole === "ADMIN" &&
@@ -945,6 +967,12 @@ export default async function BookingDetailPage({
           responderName: g.consentRespondedByMemberId
             ? (consentResponderNameById.get(g.consentRespondedByMemberId) ?? null)
             : null,
+          // #3123 — the badge stamps `consentExpiresAt` / `consentRespondedAt`,
+          // which are real instants, so the day they fall on is the club's
+          // persisted zone's to name. Taken from the SAME binding this page
+          // already resolved for its stay-boundary questions, so one page cannot
+          // answer in two zones.
+          timeZone: club.zone,
         });
         // MG4 (#2309) adds the SUB-STATE beside the badge, because the edit
         // panel needs to tell "still being asked" from "the club put them
@@ -1745,12 +1773,12 @@ export default async function BookingDetailPage({
             nightsCountLabel={describeConsentNightsCount(viewerConsentNights.length)}
             answerByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentFullDate(consentCard.consentExpiresAt)
+                ? formatConsentFullDate(consentCard.consentExpiresAt, club.zone)
                 : "—"
             }
             lapseByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentWeekdayDate(consentCard.consentExpiresAt)
+                ? formatConsentWeekdayDate(consentCard.consentExpiresAt, club.zone)
                 : "the deadline"
             }
             party={booking.guests.map((guest) => ({

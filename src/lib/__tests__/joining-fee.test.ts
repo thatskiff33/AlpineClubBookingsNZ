@@ -72,6 +72,13 @@ beforeEach(() => {
   membershipTypeFindMany.mockResolvedValue([]);
 });
 
+/**
+ * The club's day, supplied explicitly (#3123): the joining-fee preview's `asOf`
+ * is required now, because defaulting it read the environment's zone and quoted
+ * a fee schedule row a day before it took effect.
+ */
+const CLUB_TODAY = new Date("2026-07-01T00:00:00.000Z");
+
 describe("deriveJoiningFeeCategory", () => {
   it("is type-driven for Family and age-driven otherwise (INFANT folds to CHILD)", () => {
     expect(deriveJoiningFeeCategory("FAMILY", "ADULT")).toBe("FAMILY");
@@ -166,7 +173,7 @@ describe("getJoiningFeePreviewForMember", () => {
     membershipTypeFindMany.mockResolvedValue([builtInType("type-full", "FULL")]);
     stubJoiningFee({ ADULT: 10000 }, null);
 
-    const preview = await getJoiningFeePreviewForMember("m1");
+    const preview = await getJoiningFeePreviewForMember("m1", { asOf: CLUB_TODAY });
 
     expect(preview.exempt).toBe(false);
     expect(preview.defaultAmountCents).toBe(10000);
@@ -192,7 +199,7 @@ describe("getJoiningFeePreviewForMember", () => {
     ]);
     stubJoiningFee({}, 20000);
 
-    const preview = await getJoiningFeePreviewForMember("m1");
+    const preview = await getJoiningFeePreviewForMember("m1", { asOf: CLUB_TODAY });
     expect(preview.defaultAmountCents).toBe(20000);
     expect(preview.defaultNarration).toBe(buildJoiningFeeNarration("Family"));
   });
@@ -203,7 +210,7 @@ describe("getJoiningFeePreviewForMember", () => {
     membershipTypeFindMany.mockResolvedValue([builtInType("type-school", "SCHOOL")]);
     stubJoiningFee({}, null);
 
-    const preview = await getJoiningFeePreviewForMember("s1");
+    const preview = await getJoiningFeePreviewForMember("s1", { asOf: CLUB_TODAY });
     expect(preview.exempt).toBe(false);
     expect(preview.defaultAmountCents).toBeNull();
     expect(preview.source).toBe("NONE");
@@ -222,7 +229,7 @@ describe("getJoiningFeePreviewForInputs", () => {
 
     const preview = await getJoiningFeePreviewForInputs(
       { membershipTypeKey: "FULL", ageTier: "YOUTH" },
-      { store: tx },
+      { store: tx, asOf: CLUB_TODAY },
     );
 
     expect(preview.defaultAmountCents).toBe(7500);
@@ -233,7 +240,10 @@ describe("getJoiningFeePreviewForInputs", () => {
   });
 
   it("exempts a NOT_APPLICABLE age tier in raw-inputs mode", async () => {
-    const preview = await getJoiningFeePreviewForInputs({ membershipTypeKey: "SCHOOL", ageTier: "NOT_APPLICABLE" });
+    const preview = await getJoiningFeePreviewForInputs(
+      { membershipTypeKey: "SCHOOL", ageTier: "NOT_APPLICABLE" },
+      { asOf: CLUB_TODAY },
+    );
     expect(preview.exempt).toBe(true);
     expect(preview.exemptReason).toBe(JOINING_FEE_EXEMPT_MESSAGE);
     expect(preview.defaultAmountCents).toBeNull();

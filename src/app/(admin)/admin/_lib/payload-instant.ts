@@ -2,6 +2,15 @@
  * Reading a real INSTANT back out of an admin API payload (CT-4, #2870;
  * epic #2988).
  *
+ * ## This file is now a RE-EXPORT, and that is the whole change (#3123)
+ *
+ * The decoders themselves moved to `@/lib/payload-instant` when the
+ * environment-safety screens under `src/components/admin/**` needed the same
+ * contract: a shared component tree must not import an admin-route-scoped
+ * `_lib`, and this module's own docblock had already flagged the equivalent
+ * duplication next door as deliberate and temporary. The seven admin call sites
+ * that name this path keep naming it.
+ *
  * ## The sibling of `calendar-day.ts`, and the distinction is the whole point
  *
  * `calendar-day.ts` next door decodes a `@db.Date` column — a lodge night, a
@@ -17,37 +26,15 @@
  * module IS the classification, and a call site that picks the wrong one is
  * visible in its import line rather than buried in a formatter.
  *
- * ## Why it degrades instead of throwing
- *
- * The same reason `calendar-day.ts` returns `null`: every caller renders inside
- * a table row or an inline sentence in a `"use client"` tree, where a throw
- * reaches the nearest error boundary and blanks the whole screen. This also
- * preserves the behaviour of `formatMemberDateNz`, the member-detail helper
- * these call sites are moving off — #2264 gave it an em-dash fallback precisely
- * because it is fed straight from API payloads and from `joinedDate ||
- * createdAt` fallbacks.
- *
- * `requireInstant` remains the right choice where the value is a required
- * server field with no sensible fallback in scope; `member-table.tsx` uses it
- * for exactly that.
+ * Why both degrade instead of throwing, and when `requireInstant` is the right
+ * choice instead, are stated once at `@/lib/payload-instant`.
  */
 
-import type { BoundClubTime } from "@/lib/club-time";
-import { parseInstant } from "@/lib/club-time";
-
-/**
- * A payload instant in the house medium shape — "16 Apr 2026" — read in the
- * club's persisted zone.
- *
- * `fallback` is what the screen shows for a value it cannot read; the default
- * em-dash suits a table cell and matches the helper this replaces.
- */
-export function formatPayloadInstantDate(
-  clubTime: BoundClubTime,
-  value: string | Date | null | undefined,
-  fallback = "—",
-): string {
-  if (value === null || value === undefined || value === "") return fallback;
-  const instant = parseInstant(value);
-  return instant === null ? fallback : clubTime.instantDate(instant);
-}
+/*
+  ONLY THE `date` SHAPE IS RE-EXPORTED, because only it has callers here. The
+  raw-string-fallback `formatPayloadInstantDateTimeOrRaw` sibling is consumed
+  from `@/lib/payload-instant` directly by `src/components/admin/**`, and a
+  re-export nothing imports is dead code the `knip` gate would report. Add it
+  here the day an admin route under this tree wants it.
+*/
+export { formatPayloadInstantDate } from "@/lib/payload-instant";

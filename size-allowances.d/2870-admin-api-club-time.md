@@ -55,19 +55,34 @@ reason: seven lines. Two are the club-time imports, one is the hoisted
   thing this comment exists to stop.
 
 file: src/app/api/admin/deletion-requests/[id]/route.ts
-lines: 1277
+lines: 1284
 reason: three lines on a 1,275-line route, extending an existing comment to say
   that the future-stay cut-off now comes from the persisted club timezone and is
   re-encoded to UTC midnight because that is the only bound shape a `@db.Date`
   column accepts. Splitting this route is a real job; doing it around a
   three-line change to an irreversible anonymisation flow is not.
+  #3123 adds seven: one hoisted `clubTodayDateOnlyInstant()` above the
+  anonymisation transaction with its five-line comment, and the day threaded
+  into the three calls that now require it — the partner-share lock prefix,
+  the sweep, and the hosting fan-out. That transaction holds the global cohort
+  key, every affected lodge key and the member lifecycle keys, so the club's
+  timezone cannot be read inside it at all. The split this entry already calls
+  a real job is still a real job, and still not one to attempt around seven
+  lines on an irreversible flow.
 
 file: src/app/api/admin/members/bulk-update/route.ts
-lines: 720
+lines: 743
 reason: four lines — the second club-time import, and three saying that the
   "future linked-guest booking" cut-off is a calendar day rather than an instant.
   The bound guards whether a member may be flipped to an age tier that cannot be
   a guest, so a day either way changes who the batch refuses.
+  #3123 adds twenty-three, nine of them one comment. The same pre-transaction
+  hoist as the deletion route above, plus two
+  `enqueueHostingCoverageReevaluationForMember` calls re-wrapped across lines
+  for its new required third argument and two sweeps taking the day. The extra
+  reason this route states out loud: a bulk action touching dozens of members
+  must judge every one of them against the SAME day, which per-member reads
+  straddling club midnight would not.
 
 file: src/app/api/admin/promo-codes/[id]/redemptions/route.ts
 lines: 381

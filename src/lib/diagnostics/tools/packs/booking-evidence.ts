@@ -175,6 +175,7 @@ import {
   type AgeTierSettingData,
 } from "@/lib/age-tier";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { evaluatePersistedBookingNonHostingPolicyViolations } from "@/lib/booking-exception-request-service";
 import { findBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
@@ -1025,9 +1026,19 @@ async function readOwnerSubscriptionHardBlock(
 export async function readBookingBlockStateEvidence(args: {
   bookingId: string;
 }): Promise<readonly DiagnosticsToolRawRow[]> {
+  // #3123 review — the CLUB's day, resolved BEFORE the bounded read-only
+  // transaction opens. `withBoundedReadOnlyTransaction` runs at RepeatableRead
+  // under a statement timeout, and `clubTodayDateOnlyInstant()` reads through
+  // the MODULE client, not `tx` — so calling it from inside would take a second
+  // pooled connection for the length of that query while this transaction's is
+  // held, which is the shape `INV-LOCK-004` forbids and which the pack's own
+  // `requireStoredClubTimeZone` docblock already reasons about from the other
+  // direction. Resolved once and threaded, so the edit policy and the
+  // person-night scan below report the same day.
+  const todayAtClub = await clubTodayDateOnlyInstant();
   return withDeadline(
     withBoundedReadOnlyTransaction((tx) =>
-      readBookingBlockState(args.bookingId, tx),
+      readBookingBlockState(args.bookingId, tx, todayAtClub),
     ),
     "booking block state",
   );
@@ -1036,6 +1047,8 @@ export async function readBookingBlockStateEvidence(args: {
 async function readBookingBlockState(
   bookingId: string,
   tx: Prisma.TransactionClient,
+  /** The club's today, resolved outside this transaction (`INV-LOCK-004`). */
+  todayAtClub: Date,
 ): Promise<readonly DiagnosticsToolRawRow[]> {
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
@@ -1334,6 +1347,8 @@ async function readBookingBlockState(
           actorRole: "USER",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
+          // Resolved outside this transaction and threaded in (`INV-LOCK-004`).
+          today: todayAtClub,
           guests: guests.map((guest) => ({
             memberId: guest.memberId,
             stayStart: guest.stayStart,
@@ -1410,6 +1425,12 @@ async function readBookingBlockState(
     role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone. A diagnostic that reported
+    // a booking as locked on the environment's day would be describing a state
+    // the member never saw. Resolved by this entry point BEFORE it opened the
+    // bounded read-only transaction, and shared with the person-night scan above
+    // so the two halves of one snapshot cannot disagree (`INV-LOCK-004`).
+    today: todayAtClub,
   });
 
   const reviewCodes = bookingReviewReasonCodes({

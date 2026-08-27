@@ -26,12 +26,17 @@ import {
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
 import {
+  dateOnlyInstantOf,
+  endOfClubDayExclusive,
+  requireCalendarDate,
+  startOfClubDay,
+  type BoundClubTime,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import {
   addDaysDateOnly,
-  endOfDateOnlyForTimeZone,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
-  startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
 import {
   getGuestBedNightKeys,
@@ -237,16 +242,54 @@ export interface AdminBookingsOptions {
   bedAllocationEnabled?: boolean;
 }
 
+/**
+ * The club's temporal facts for ONE render of the bookings page (#3123).
+ *
+ * Two things, deliberately bundled, because this module answers two different
+ * temporal questions and both were reading `APP_TIME_ZONE` — the container's
+ * claim about where the club is — rather than the club's persisted setting
+ * (`INV-CONFIG-002`):
+ *
+ *  - `today` bounds `Booking.checkIn`, a `@db.Date` column
+ *    (`prisma/schema.prisma:1662`), so it is the UTC-midnight encoding of a
+ *    calendar day.
+ *  - `zone` bounds `Booking.updatedAt`, a bare `DateTime @updatedAt`
+ *    (`prisma/schema.prisma:1845`) — a real INSTANT column, where a
+ *    UTC-midnight encoding would be the wrong shape and a genuine instant
+ *    boundary is right.
+ *
+ * `today` is ONE resolved value rather than a clock each consumer reads for
+ * itself. `appliedBookingViewFilters` exists only to describe what
+ * `buildBookingWhere` did; if the two resolved the club's today independently
+ * they could disagree across club midnight, and the diagnostics panel would
+ * then report a filter the list is not using.
+ */
+export interface AdminBookingsClubDay {
+  readonly zone: ClubTimeZone;
+  readonly today: Date;
+}
+
+/** One clock read, shared by every consumer of this module in one render. */
+export function adminBookingsClubDay(club: BoundClubTime): AdminBookingsClubDay {
+  return { zone: club.zone, today: dateOnlyInstantOf(club.today()) };
+}
+
 function parseDateOnlyFilter(value: string) {
   return parseDateOnly(value);
 }
 
-function parseDateTimeStart(value: string) {
-  return startOfDateOnlyForTimeZone(value);
+/**
+ * The `updatedAt` bounds. That column is a real instant, so these are instant
+ * boundaries in the CLUB's zone — half-open at the top, because Postgres keeps
+ * microseconds and an inclusive millisecond bound can drop a row written in the
+ * final millisecond of the day.
+ */
+function parseDateTimeStart(value: string, zone: ClubTimeZone) {
+  return startOfClubDay(requireCalendarDate(value), zone);
 }
 
-function parseDateTimeEnd(value: string) {
-  return endOfDateOnlyForTimeZone(value);
+function parseDateTimeEnd(value: string, zone: ClubTimeZone) {
+  return endOfClubDayExclusive(requireCalendarDate(value), zone);
 }
 
 function monthEndDateOnly(year: number, month: number) {
@@ -390,7 +433,10 @@ function diagnosticsStatusToken(status: string): string {
  * `deleted`, `consentState`, and the legacy `from`/`to` aliases): the route drops
  * an unlisted key, and publishing to be dropped is not a contract.
  */
-export function appliedBookingViewFilters(query: AdminBookingsQuery): {
+export function appliedBookingViewFilters(
+  query: AdminBookingsQuery,
+  clubDay: AdminBookingsClubDay,
+): {
   status?: string;
   filters?: Record<string, string>;
 } {
@@ -453,7 +499,8 @@ export function appliedBookingViewFilters(query: AdminBookingsQuery): {
   let checkInFrom: string | undefined;
   let checkInTo: string | undefined;
   if (upcomingApplied) {
-    const today = getTodayDateOnly();
+    // The SAME `today` `buildBookingWhere` used — see `AdminBookingsClubDay`.
+    const today = clubDay.today;
     checkInFrom = formatDateOnly(today);
     checkInTo = formatDateOnly(addDaysDateOnly(today, upcomingDays));
   }
@@ -490,7 +537,10 @@ export function appliedBookingViewFilters(query: AdminBookingsQuery): {
   };
 }
 
-function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput {
+function buildBookingWhere(
+  query: AdminBookingsQuery,
+  clubDay: AdminBookingsClubDay,
+): Prisma.BookingWhereInput {
   const where: Prisma.BookingWhereInput = {
     status: bookingStatusWhere(query.status),
   };
@@ -507,7 +557,9 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   Object.assign(where, buildBookingDeletedWhere(parseBookingDeletedVisibility(query.deleted)));
 
   if (upcomingDays !== null && !isNaN(upcomingDays)) {
-    const today = getTodayDateOnly();
+    // The club's today, resolved once by the caller (#3123). `checkIn` is
+    // `@db.Date`, so this is the UTC-midnight encoding, not an instant.
+    const today = clubDay.today;
     const futureDate = addDaysDateOnly(today, upcomingDays);
     checkInFilter.gte = today;
     checkInFilter.lte = futureDate;
@@ -532,8 +584,10 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
   if (legacyToDate) checkOutFilter.lte = parseDateOnlyFilter(legacyToDate);
   if (query.checkOutFrom) checkOutFilter.gte = parseDateOnlyFilter(query.checkOutFrom);
   if (query.checkOutTo) checkOutFilter.lte = parseDateOnlyFilter(query.checkOutTo);
-  if (query.updatedFrom) updatedAtFilter.gte = parseDateTimeStart(query.updatedFrom);
-  if (query.updatedTo) updatedAtFilter.lte = parseDateTimeEnd(query.updatedTo);
+  if (query.updatedFrom)
+    updatedAtFilter.gte = parseDateTimeStart(query.updatedFrom, clubDay.zone);
+  if (query.updatedTo)
+    updatedAtFilter.lt = parseDateTimeEnd(query.updatedTo, clubDay.zone);
 
   if (query.search?.trim()) {
     const queryTerms = query.search.trim().split(/\s+/).filter(Boolean);
@@ -610,8 +664,9 @@ function buildBookingWhere(query: AdminBookingsQuery): Prisma.BookingWhereInput 
  */
 export function buildAdminBookingsWhere(
   query: AdminBookingsQuery,
+  clubDay: AdminBookingsClubDay,
 ): Prisma.BookingWhereInput {
-  return buildBookingWhere(query);
+  return buildBookingWhere(query, clubDay);
 }
 
 /**
@@ -1126,12 +1181,19 @@ async function hydrateBookingPage(
 
 export async function listAdminBookings(
   query: AdminBookingsQuery,
-  options: AdminBookingsOptions = {}
+  options: AdminBookingsOptions,
+  /**
+   * The club's day and zone for this render. REQUIRED (#3123): the page also
+   * calls `buildAdminBookingsWhere` and `appliedBookingViewFilters`, and all
+   * three must describe the same day or the diagnostics panel reports a filter
+   * the list is not using.
+   */
+  clubDay: AdminBookingsClubDay,
 ): Promise<AdminBookingsResult> {
   const sortBy = getAdminBookingSortBy(query);
   const sortDir = query.sortDir ?? getDefaultAdminBookingSortDir(sortBy);
   const bedAllocationEnabled = options.bedAllocationEnabled ?? true;
-  const where = buildBookingWhere(query);
+  const where = buildBookingWhere(query, clubDay);
 
   // The Xero/bed/change filters are derived from relations + Xero activity in
   // JS, so they force a candidate scan (bounded since #1884, below). When they

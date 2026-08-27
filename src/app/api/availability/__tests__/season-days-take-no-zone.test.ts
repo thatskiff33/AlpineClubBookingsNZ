@@ -75,8 +75,17 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { GET } from "@/app/api/availability/route";
+
+/**
+ * The zone the `@/config/operational` factory above pins, named rather than left
+ * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
+ * asserts the two are still the same zone, so this constant cannot drift out of
+ * step with the factory and leave the cases below measuring nothing.
+ */
+const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** A season stored exactly as a `@db.Date` pair round-trips. */
 const SEASON = {
@@ -110,8 +119,17 @@ describe("season windows on the availability grid take no zone (CT-4, #2870)", (
     // The legacy ANSWER, measured rather than assumed. If these ever equalled
     // the stored days the zone would have stopped discriminating and the case
     // below would pass against the defect.
-    expect(formatDateOnlyForTimeZone(SEASON.startDate)).toBe("2026-07-31");
-    expect(formatDateOnlyForTimeZone(SEASON.endDate)).toBe("2026-08-30");
+    //
+    // The zone the replaced helper would have read is `APP_TIME_ZONE`, so the
+    // constant below has to keep naming it for this premise to be about the
+    // right zone at all.
+    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    expect(formatDateOnlyForTimeZone(SEASON.startDate, CLUB_ZONE_BEHIND_UTC)).toBe(
+      "2026-07-31",
+    );
+    expect(formatDateOnlyForTimeZone(SEASON.endDate, CLUB_ZONE_BEHIND_UTC)).toBe(
+      "2026-08-30",
+    );
   });
 
   it("labels exactly the nights the season stores — first and last included", async () => {

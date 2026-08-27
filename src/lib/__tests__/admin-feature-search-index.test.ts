@@ -6,6 +6,17 @@ import {
   getAdminFeatureSearchIndex,
   getVisibleAdminNavSections,
 } from "@/components/admin-sidebar";
+import { requireCalendarDate } from "@/lib/club-time";
+
+/**
+ * #3123 — the club's day, first and REQUIRED on all three nav exports. One nav
+ * href is a dated deep link (the unpaid-finished-stays queue), so the sidebar and
+ * the command palette have to be handed the SAME day or their link and its badge
+ * describe different queues. Nothing in this file asserts on that href's date, so
+ * one fixed day serves every call.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
+
 
 const allOn: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),
@@ -49,6 +60,7 @@ function visibleHrefs(
 ): Set<string> {
   return new Set(
     getVisibleAdminNavSections(
+      CLUB_DAY,
       features,
       permissionMatrix,
       isFullAdmin,
@@ -59,7 +71,7 @@ function visibleHrefs(
 
 describe("getAdminFeatureSearchIndex — derivation", () => {
   it("indexes every visible nav page exactly once (no duplicates across sections)", () => {
-    const index = getAdminFeatureSearchIndex(allOn, fullMatrix, true);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     const hrefs = index.map((entry) => entry.href);
 
     // De-duplicated: "Needs Attention" re-lists pages from their home sections,
@@ -70,7 +82,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
   });
 
   it("labels a de-duplicated page by its natural section, not Needs Attention", () => {
-    const index = getAdminFeatureSearchIndex(allOn, fullMatrix, true);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     const bookingRequests = index.find(
       (entry) => entry.href === "/admin/booking-requests",
     );
@@ -80,6 +92,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
 
   it("indexes Lobby Display once under Lodge Operations", () => {
     const lobbyDisplayEntries = getAdminFeatureSearchIndex(
+      CLUB_DAY,
       allOn,
       fullMatrix,
       true,
@@ -95,6 +108,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
 
   it("carries the hut-leader relabel through from getVisibleAdminNavSections", () => {
     const index = getAdminFeatureSearchIndex(
+      CLUB_DAY,
       allOn,
       fullMatrix,
       true,
@@ -108,7 +122,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
   });
 
   it("carries optional keywords through to the index entry", () => {
-    const index = getAdminFeatureSearchIndex(allOn, fullMatrix, true);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     const xero = index.find((entry) => entry.href === "/admin/xero");
 
     expect(xero?.keywords).toContain("accounting");
@@ -130,7 +144,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
     analytics" and "ga4" with nothing.
   */
   it("finds Google Analytics through the Integrations hub it lives on", () => {
-    const index = getAdminFeatureSearchIndex(allOn, fullMatrix, true);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     const integrations = index.find(
       (entry) => entry.href === "/admin/integrations",
     );
@@ -148,7 +162,7 @@ describe("getAdminFeatureSearchIndex — derivation", () => {
 describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", () => {
   it("matches getVisibleAdminNavSections for a limited (bookings-only) matrix", () => {
     const limited = matrix({ bookings: "view" });
-    const index = getAdminFeatureSearchIndex(allOn, limited, false);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, limited, false);
     const hrefs = new Set(index.map((entry) => entry.href));
 
     expect(hrefs).toEqual(visibleHrefs(allOn, limited, false));
@@ -163,12 +177,12 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
     const supportEditor = matrix({ support: "edit" });
 
     const asNonFullAdmin = new Set(
-      getAdminFeatureSearchIndex(allOn, supportEditor, false).map(
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, false).map(
         (entry) => entry.href,
       ),
     );
     const asFullAdmin = new Set(
-      getAdminFeatureSearchIndex(allOn, supportEditor, true).map(
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, supportEditor, true).map(
         (entry) => entry.href,
       ),
     );
@@ -185,7 +199,7 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
 
   it("honours the orAccess predicate for /admin/fees (finance-only view reaches it)", () => {
     const financeOnly = matrix({ finance: "view" });
-    const index = getAdminFeatureSearchIndex(allOn, financeOnly, false);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, allOn, financeOnly, false);
     const hrefs = new Set(index.map((entry) => entry.href));
 
     // /admin/fees resolves to the bookings prefix, but its orAccess admits a
@@ -196,7 +210,7 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
     // Neither bookings nor finance → no Fees entry.
     const membershipOnly = matrix({ membership: "view" });
     const membershipHrefs = new Set(
-      getAdminFeatureSearchIndex(allOn, membershipOnly, false).map(
+      getAdminFeatureSearchIndex(CLUB_DAY, allOn, membershipOnly, false).map(
         (entry) => entry.href,
       ),
     );
@@ -207,17 +221,17 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
     // Defence in depth (#2092): getVisibleAdminNavSections fails OPEN on a
     // missing matrix (its pre-existing, shared contract), but the palette index
     // must NOT — a missing matrix returns nothing rather than every page.
-    expect(getAdminFeatureSearchIndex(allOn, undefined, true)).toEqual([]);
-    expect(getAdminFeatureSearchIndex(allOn, undefined, false)).toEqual([]);
+    expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, undefined, true)).toEqual([]);
+    expect(getAdminFeatureSearchIndex(CLUB_DAY, allOn, undefined, false)).toEqual([]);
     // The sidebar seam still fails open, so this is genuinely palette-scoped.
     expect(
-      getVisibleAdminNavSections(allOn, undefined, true).length,
+      getVisibleAdminNavSections(CLUB_DAY, allOn, undefined, true).length,
     ).toBeGreaterThan(0);
   });
 
   it("respects module-flag visibility (a disabled module drops its pages)", () => {
     const xeroOff = { ...allOn, xeroIntegration: false } as FeatureFlags;
-    const index = getAdminFeatureSearchIndex(xeroOff, fullMatrix, true);
+    const index = getAdminFeatureSearchIndex(CLUB_DAY, xeroOff, fullMatrix, true);
     const hrefs = new Set(index.map((entry) => entry.href));
 
     expect(hrefs.has("/admin/xero")).toBe(false);
@@ -231,13 +245,13 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
     // derivation actually reaches the palette, because the sidebar comment claims
     // it does and a claim about a mechanism two modules away is exactly the kind
     // that quietly stops being true.
-    const on = getAdminFeatureSearchIndex(allOn, fullMatrix, true);
+    const on = getAdminFeatureSearchIndex(CLUB_DAY, allOn, fullMatrix, true);
     expect(new Set(on.map((entry) => entry.href))).toContain(
       "/admin/ai-diagnostics",
     );
 
     const diagnosticsOff = { ...allOn, aiDiagnostics: false } as FeatureFlags;
-    const off = getAdminFeatureSearchIndex(diagnosticsOff, fullMatrix, true);
+    const off = getAdminFeatureSearchIndex(CLUB_DAY, diagnosticsOff, fullMatrix, true);
     const hrefs = new Set(off.map((entry) => entry.href));
 
     // Off means GONE from discovery, matching the 404 the route itself returns —
@@ -255,6 +269,7 @@ describe("getAdminFeatureSearchIndex — permission filtering (the invariant)", 
       lobbyDisplay: false,
     } as FeatureFlags;
     const index = getAdminFeatureSearchIndex(
+      CLUB_DAY,
       lobbyDisplayOff,
       fullMatrix,
       true,

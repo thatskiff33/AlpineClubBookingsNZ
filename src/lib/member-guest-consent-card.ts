@@ -1,7 +1,8 @@
 import {
   SELF_REMOVABLE_GUEST_BOOKING_STATUSES,
 } from "@/lib/booking-guest-self-removal";
-import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
+import type { ClubTimeZone } from "@/lib/club-time";
 import {
   classifyMemberGuestConsent,
   type MemberGuestConsentColumns,
@@ -88,7 +89,11 @@ export function predictConsentDeclineRefusal(params: {
   bookingCheckIn: Date;
   bookingGuestCount: number;
   isQuotePriced: boolean;
-  /** Today as an NZ lodge date. Callers meaning "now" pass `getTodayDateOnly()`. */
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding. A caller meaning
+   * "now" reads it from the club's PERSISTED timezone — `clubTodayDateOnlyInstant()`
+   * on a request — never from the container's (#3123, INV-CONFIG-002).
+   */
   today: Date;
 }): PredictableConsentDeclineBlocker | null {
   const {
@@ -102,7 +107,13 @@ export function predictConsentDeclineRefusal(params: {
   if (!SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(bookingStatus)) {
     return "BOOKING_STATUS";
   }
-  if (normalizeDateOnlyForTimeZone(bookingCheckIn) <= today) {
+  // `bookingCheckIn` is a stored `@db.Date` lodge night
+  // (`prisma/schema.prisma:1662`) and a calendar day takes no timezone, so it is
+  // DECODED rather than projected. This module is on the CLIENT graph — three
+  // components import `describeMemberGuestConsentBadge` from it — and that is
+  // exactly why the temporal kind had to be settled before the zone: the correct
+  // fix needs no zone plumbing into the browser at all (#3123, INV-DATE-026).
+  if (storedDateOnly(bookingCheckIn) <= today) {
     return "STAY_NOT_FUTURE";
   }
   if (bookingGuestCount <= 1) {
@@ -357,34 +368,65 @@ export type MemberGuestConsentBadgeAudience = "MEMBER" | "ADMIN" | "WIZARD";
  * audience only — see `describeMemberGuestConsentBadgeForWizard` below for the
  * full eight-state mapping and for why naming the target is safe where naming
  * the responder is not.
+ *
+ * THE PARAMETERS ARE A UNION ON THE AUDIENCE, AND THAT IS WHERE THE CLUB'S ZONE
+ * SITS (#3123). The MEMBER and ADMIN badges stamp a real instant —
+ * `consentExpiresAt` on a pending row, `consentRespondedAt` on a confirmed one —
+ * which has no civil day until a zone is chosen, and that zone is the club's
+ * PERSISTED setting (`INV-CONFIG-002`), never the container's and never the
+ * browser's. So those two audiences REQUIRE it. The WIZARD badge renders no date
+ * at all (its eight strings are names and verbs), so demanding a zone from it
+ * would be ceremony — and, more to the point, all three of its callers are
+ * `"use client"` components that would have had to reach for `useClubTime()` to
+ * satisfy a parameter they never read. Splitting on the audience is what made
+ * this a two-page change instead of a five-component one, and it stays honest:
+ * the day a wizard badge gains a date, the type demands the zone.
  */
-export function describeMemberGuestConsentBadge(params: {
-  guest: { memberId: string | null } & MemberGuestConsentColumns;
-  audience: MemberGuestConsentBadgeAudience;
-  responderName?: string | null;
-  targetFirstName?: string | null;
-}): MemberGuestConsentBadge | null {
-  const { guest, audience, responderName, targetFirstName } = params;
+export function describeMemberGuestConsentBadge(
+  params:
+    | {
+        guest: { memberId: string | null } & MemberGuestConsentColumns;
+        audience: Extract<MemberGuestConsentBadgeAudience, "WIZARD">;
+        targetFirstName?: string | null;
+      }
+    | {
+        // Written as an EXCLUSION rather than as `"MEMBER" | "ADMIN"` so a
+        // fourth audience lands on the arm that REQUIRES the club's zone until
+        // somebody deliberately moves it, rather than on the one that renders
+        // dates without asking for one.
+        guest: { memberId: string | null } & MemberGuestConsentColumns;
+        audience: Exclude<MemberGuestConsentBadgeAudience, "WIZARD">;
+        responderName?: string | null;
+        /** The club's persisted timezone — these two audiences stamp instants. */
+        timeZone: ClubTimeZone;
+      },
+): MemberGuestConsentBadge | null {
+  const { guest, audience } = params;
   const forClub = audience === "ADMIN";
 
   if (guest.consentStatus === null) return null;
 
   const subState = classifyMemberGuestConsent(guest, guest.memberId);
 
-  if (audience === "WIZARD") {
+  if (params.audience === "WIZARD") {
     return describeMemberGuestConsentBadgeForWizard(
       guest.consentStatus,
       subState,
-      targetFirstName ?? null,
+      params.targetFirstName ?? null,
     );
   }
+
+  // Past the WIZARD return, `params` is narrowed to the audiences that stamp an
+  // instant, so the club's zone and the responder name are both present by
+  // construction rather than by convention (#3123).
+  const { responderName, timeZone } = params;
 
   switch (guest.consentStatus) {
     case "PENDING":
       return {
         tone: "pending",
         label: guest.consentExpiresAt
-          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt)}`
+          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt, timeZone)}`
           : "Waiting for consent",
       };
     case "CONFIRMED":
@@ -404,14 +446,14 @@ export function describeMemberGuestConsentBadge(params: {
         return {
           tone: "ok",
           label: guest.consentRespondedAt
-            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt)}`
+            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`
             : `Consented by ${responderName}`,
         };
       }
       if (forClub && guest.consentRespondedAt) {
         return {
           tone: "ok",
-          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt)}`,
+          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`,
         };
       }
       return { tone: "ok", label: "Consented" };

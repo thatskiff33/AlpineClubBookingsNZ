@@ -31,11 +31,21 @@ import { NextRequest } from "next/server";
  * Independent of the host's own `TZ`: `APP_TIME_ZONE` is supplied by the mock.
  */
 
-// Inlined: `vi.mock` factories hoist above every const in this file.
+/*
+ * The zone behind UTC, declared ONCE (#3123). `vi.mock` factories hoist above
+ * every plain `const`, which is why the zone used to be inlined here; `vi.hoisted`
+ * gives the factory and the premise assertion below the same declaration, so the
+ * zone the mock pins and the zone the legacy projection is measured in cannot
+ * drift apart.
+ */
+const { LEGACY_PROJECTION_ZONE } = vi.hoisted(() => ({
+  LEGACY_PROJECTION_ZONE: "America/Denver",
+}));
+
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
+  APP_TIME_ZONE: LEGACY_PROJECTION_ZONE,
   APP_LOCALE: "en-NZ",
 }));
 
@@ -182,8 +192,10 @@ describe("stored stay days survive a club behind UTC (CT-4, #2870)", () => {
     // Not an identifier comparison — the LEGACY ANSWER, measured. If this ever
     // equals the stored day the zone has stopped discriminating and every
     // assertion below is worthless, so it is asserted rather than assumed.
-    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN))).toBe("2026-07-03");
-    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_OUT))).toBe("2026-07-05");
+    // The zone is named rather than defaulted (#3123): this line models the
+    // REPLACED helper, so it has to say which zone it models.
+    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_IN), LEGACY_PROJECTION_ZONE)).toBe("2026-07-03");
+    expect(formatDateOnlyForTimeZone(day(STORED_CHECK_OUT), LEGACY_PROJECTION_ZONE)).toBe("2026-07-05");
   });
 
   it("freezes the proposal on the days the columns actually store", async () => {

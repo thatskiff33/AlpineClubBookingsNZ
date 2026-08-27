@@ -62,7 +62,24 @@ import {
   adminBookingsQuerySchema,
   buildAdminBookingsWhere,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import { auth } from "@/lib/auth";
 import {
   listMemberGuestConsentExceptions,
@@ -173,7 +190,7 @@ describe("the Admin › Bookings consent chips (#2307, MG2-M-3)", () => {
       buildAdminBookingsWhere({
         ...adminBookingsQuerySchema.parse({ lodgeId: "lodge-1", status: "PAID" }),
         consentState: "all",
-      }),
+      }, TEST_CLUB_DAY),
     );
     // The scope carries the operator's filters...
     expect(JSON.stringify(options?.waitingScope)).toContain("lodge-1");

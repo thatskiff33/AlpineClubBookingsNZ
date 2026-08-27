@@ -2,7 +2,7 @@
  * Help for the "Setup & Configuration" admin section: the guided setup hubs and
  * every settings page they lead to.
  *
- * Section per the sidebar's `navSections`. The pages with no menu entry of
+ * Section per the sidebar's `buildAdminNavSections`. The pages with no menu entry of
  * their own are placed by the hub that links them — membership types, member
  * fields and the subscription lockout under Membership setup; rooms and beds
  * and the booking messages under Bookings setup.

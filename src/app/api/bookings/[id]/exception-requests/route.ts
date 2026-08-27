@@ -13,6 +13,7 @@ import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import logger from "@/lib/logger";
@@ -127,6 +128,8 @@ export async function POST(
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone.
+    today: await clubTodayDateOnlyInstant(),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(

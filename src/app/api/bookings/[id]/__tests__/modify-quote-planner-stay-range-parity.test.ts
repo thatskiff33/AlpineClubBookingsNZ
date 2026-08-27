@@ -206,8 +206,11 @@ import {
   parseDateOnly,
 } from "@/lib/date-only";
 
+
 const D = (s: string) => parseDateOnly(s);
 const NOW = new Date("2026-08-10T06:00:00.000Z");
+/** The calendar day {@link NOW} falls on at the club, as a date-only instant. */
+const CLUB_TODAY = new Date("2026-08-10T00:00:00.000Z");
 const params = Promise.resolve({ id: "b1" });
 
 /** The flat season rate the deterministic pricer charges for an unlocked night. */
@@ -478,8 +481,21 @@ async function runPlanner(
 ) {
   const booking = bookingWith(guests, bookingOverrides) as never;
   const input = delta as never;
-  const dates = resolveTargetDates({ booking, role: "USER", input });
+  const dates = resolveTargetDates({
+    booking,
+    role: "USER",
+    input,
+    // #3123 - the club's day is a required input now. Stated as the calendar
+    // day this suite's pinned `NOW` falls on, so the future matrix stays
+    // "future" and the in-progress fixture below (2026-08-08 -> 2026-08-12)
+    // stays mid-stay, which is the branch it was added to exercise.
+    today: CLUB_TODAY,
+  });
   const plan = await prepareGuestPlan({} as never, {
+    // #3123 - the SAME club day `resolveTargetDates` was handed above. The
+    // planner's person-night guard reads it too, and two days in one plan would
+    // be the straddle this issue exists to remove.
+    today: CLUB_TODAY,
     booking,
     role: "USER",
     actorId: "m1",

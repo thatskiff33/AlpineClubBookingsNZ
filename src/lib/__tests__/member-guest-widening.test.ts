@@ -778,10 +778,21 @@ describe("consent columns have exactly one writer", () => {
       // because correcting two of these labels took that file over its size
       // budget for the first time. It names `consentExpiresAt` and
       // `consentRespondedAt` in a docblock explaining which of its shapes render
-      // a real INSTANT and therefore still read the environment's zone rather
-      // than the club's persisted one. It reads no row and writes nothing.
+      // a real INSTANT and so take the club's persisted zone — which they now do
+      // as a required argument, group F having closed that deferral (#3123). It
+      // reads no row and writes nothing.
       "src/lib/member-guest-consent-labels.ts":
         "the consent surfaces' date, name and count label shapes",
+      // A DOCBLOCK MENTION AND NOTHING ELSE, and it is on this list for the
+      // reason the sweep above is deliberately blunt: it greps for the five
+      // column names anywhere in a file, and this repository explains each
+      // temporal fix AT the site of the fix. This module composes email copy from
+      // values handed to it; it never selects, reads or writes a consent column.
+      // Its #3123 docblock names `consentExpiresAt` in order to say which of the
+      // two date KINDS it renders is a real instant, which is exactly the
+      // distinction a reader has to get right here.
+      "src/lib/member-guest-email-notes.ts":
+        "names a consent column in a docblock explaining instants versus calendar days; reads and writes nothing",
       "src/lib/member-guest-delegate-page.ts":
         "the delegate page's authorization-first state resolver",
       "src/lib/member-guest-consent-exceptions.ts":

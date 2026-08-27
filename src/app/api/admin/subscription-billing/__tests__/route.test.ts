@@ -44,6 +44,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { GET, POST } from "@/app/api/admin/subscription-billing/route";
 
 const preview = {
@@ -368,7 +369,7 @@ describe("subscription billing — the default decision date is the club's day (
     // would then pass while the assertion went vacuous.
     const { getTodayDateOnly } = await import("@/lib/date-only");
     expect(
-      getTodayDateOnly().toISOString(),
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this default cannot tell which of the two " +
         "produced it. Pick a persisted zone the environment disagrees with.",

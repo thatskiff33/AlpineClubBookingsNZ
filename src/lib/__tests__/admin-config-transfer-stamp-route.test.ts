@@ -51,6 +51,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import { POST as exportBundle } from "@/app/api/admin/config-transfer/export/route";
 import { POST as resealBundleRoute } from "@/app/api/admin/config-transfer/reseal/route";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { todayDateOnlyForTimeZone } from "@/lib/date-only";
 
 const CLUB_ZONE_BEHIND_UTC = "America/Denver";
@@ -66,10 +67,17 @@ function filenameOf(response: Response): string {
  * different zone names can still name the same day — `America/Chicago` gives
  * Denver's answer here — so a name comparison would pass while the assertion
  * below went vacuous.
+ *
+ * `APP_TIME_ZONE` IS PASSED ON PURPOSE, and it is the one zone that belongs
+ * here (#3123). This function's whole subject is the ENVIRONMENT authority — the
+ * day the routes used to stamp, before CT-4 moved them onto the persisted
+ * `ClubTimeSettings.timeZone`. Naming any other zone would make the disagreement
+ * a coincidence between two literals rather than a measurement of the authority
+ * the routes must NOT be obeying.
  */
 function expectEnvironmentDisagrees() {
   expect(
-    todayDateOnlyForTimeZone(),
+    todayDateOnlyForTimeZone(APP_TIME_ZONE),
     "INV-CONFIG-002: the environment authority already names the club's day, so " +
       "this filename cannot tell which of the two the route read.",
   ).not.toBe(CLUB_TODAY);

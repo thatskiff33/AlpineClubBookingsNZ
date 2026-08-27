@@ -78,9 +78,10 @@ const emptyFacets: AuditFacets = {
   severities: [],
 };
 
-// #2264: not one of the shared `nzst-date` helpers on purpose — the audit trail
-// keeps seconds, so entries logged within the same minute stay orderable. Owner
-// decision: do not migrate this to `formatNZDateTime`, which drops seconds.
+// #2264: not one of the shared house shapes on purpose — the audit trail keeps
+// seconds, so entries logged within the same minute stay orderable. Owner
+// decision: do not migrate this to the shared date-time shape
+// (`formatClubInstantDateTime`, once `formatNZDateTime`), which drops seconds.
 // CT-4 (#2870): an audit stamp is a real INSTANT and is projected through the
 // club's PERSISTED zone (INV-CONFIG-002), which a `"use client"` file receives
 // as data — so the formatter is memoised per zone rather than frozen at module

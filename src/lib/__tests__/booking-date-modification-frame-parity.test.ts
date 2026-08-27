@@ -98,9 +98,28 @@ const tx = {
   choreAssignment: { findMany: vi.fn().mockResolvedValue([]) },
 };
 
+/*
+  #3123 - THE `clubTimeSettings` DELEGATE IS NOT OPTIONAL HERE. The apply path
+  now resolves the CLUB's day before it opens its transaction, and
+  `getClubTimeZone` is fail-soft three ways (no delegate, a throwing query, no
+  row), every one of which degrades to the environment. Without the delegate
+  this suite resolved Auckland's 1 July on the apply side against the oracle's
+  club day of 30 June, and the pair it exists to keep identical came apart. The
+  persisted zone matches the mocked `APP_TIME_ZONE` deliberately: this file is
+  about preview/apply PARITY, and which zone wins is
+  `payments/options`, `lodge/instructions/preview` and the joining-fee preview's
+  `club-time-authority` suites.
+*/
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (cb: (client: typeof tx) => unknown) => cb(tx),
+    clubTimeSettings: {
+      findUnique: async () => ({
+        timeZone: "America/Denver",
+        updatedByMemberId: null,
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    },
   },
 }));
 
@@ -213,6 +232,13 @@ import {
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 
 const D = (value: string) => new Date(`${value}T00:00:00.000Z`);
+/**
+ * The zone the `@/config/operational` factory above pins, named rather than left
+ * to the legacy helpers' `APP_TIME_ZONE` default, which #3123 deletes. The
+ * premise case still asserts the two are the same zone, so this constant cannot
+ * drift out of step with the factory.
+ */
+const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const SELF_SERVICE_REFUSAL =
   "NZ today and earlier are locked for self-service changes";
@@ -288,12 +314,11 @@ function primeTx(booking: Booking) {
 /**
  * `modify-quote/route.ts`'s self-service window gate, transcribed.
  *
- * `editPolicy.today` is the day in `APP_TIME_ZONE` — `TZ || NEXT_PUBLIC_TZ ||
- * "Pacific/Auckland"` — and NOT "the container's day", which is what three
- * shipped comments used to call it. Under this file's mocks it is Denver's day
- * while the host is UTC, which is the whole reason the PREMISE case below can
- * assert `2026-06-30` off a `2026-07-01T00:00Z` clock. Moving it onto the club's
- * persisted zone is CT-6's (#2991).
+ * `editPolicy.today` is the CLUB's day since #3123 — a required value the caller
+ * supplies from the persisted `ClubTimeSettings.timeZone`, not the environment's
+ * `APP_TIME_ZONE`. This oracle holds it at `2026-06-30`, the same day the mocked
+ * Denver zone produces at the frozen `2026-07-01T00:00Z` instant, so the fixtures
+ * and the PREMISE case below keep exactly the geometry they were written with.
  *
  * Both sides of the pair get it from the same `getBookingEditPolicy` call, so
  * they agree whatever it is. The only thing this pins is that the REQUESTED day
@@ -308,6 +333,7 @@ function previewRefusesSelfServiceWindow(
     role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    today: new Date("2026-06-30T00:00:00.000Z"),
   });
   return storedDateOnly(requestedCheckIn) <= editPolicy.today;
 }
@@ -514,11 +540,13 @@ beforeEach(() => {
 
 describe("the preview and the apply service read the same date window", () => {
   it("PREMISE: the mocked zone puts the club's today a day behind the stored day", () => {
-    expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnly(getTodayDateOnly())).toBe("2026-06-30");
+    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    expect(formatDateOnly(getTodayDateOnly(CLUB_ZONE_BEHIND_UTC))).toBe("2026-06-30");
     // The single day every case below turns on: a stored 1 July projected
     // through Denver is 30 June.
-    expect(formatDateOnlyForTimeZone(D("2026-07-01"))).toBe("2026-06-30");
+    expect(formatDateOnlyForTimeZone(D("2026-07-01"), CLUB_ZONE_BEHIND_UTC)).toBe(
+      "2026-06-30",
+    );
   });
 
   // `modifyBookingDates`, the self-service window gate. Both directions in one

@@ -1,5 +1,5 @@
 import { DEFAULT_INTERNET_BANKING_PAYMENT_SETTINGS } from "@/config/club-settings-defaults";
-import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 export const INTERNET_BANKING_PAYMENT_SETTINGS_ID = "default";
@@ -63,12 +63,30 @@ export function buildInternetBankingHoldPolicySummary(
   return `Internet Banking bookings hold beds for ${settings.holdDays} ${settings.holdDays === 1 ? "day" : "days"} while awaiting payment.`;
 }
 
+/**
+ * Is Internet Banking still on offer for this check-in, and what does the payer
+ * get told?
+ *
+ * `today` is REQUIRED (#3123). It used to default to the ENVIRONMENT's day, and
+ * this is a settlement-path decision — it picks Internet Banking versus Stripe,
+ * and the day it resolves is echoed straight back to the payer as
+ * `today: formatDateOnly(today)` in the result. A club configured behind its
+ * container's zone therefore refused Internet Banking a day early and told the
+ * payer the wrong date while doing it. The parameter is required rather than
+ * resolved in here because this function is SYNCHRONOUS and pure, and because
+ * two of its callers already hold the club's day for the same request; a
+ * default is what let those callers stop supplying it.
+ *
+ * It is a date-only instant in the club's zone — the UTC-midnight encoding a
+ * `@db.Date` round-trips through (`INV-DATE-026`) — so it is on the same frame
+ * as `checkIn`, which is a stored calendar day.
+ */
 export function checkInternetBankingLeadTime(args: {
   checkIn?: Date | null;
   settings: InternetBankingPaymentSettingsValues;
-  today?: Date;
+  today: Date;
 }): InternetBankingLeadTimeResult {
-  const today = args.today ?? getTodayDateOnly();
+  const today = args.today;
   const minimumDays = Math.max(0, args.settings.minimumDaysBeforeCheckIn);
   const checkIn = args.checkIn ?? null;
 
@@ -103,10 +121,13 @@ export function buildInternetBankingPaymentOptionState(args: {
   internetBankingPaymentsEnabled: boolean;
   settings: InternetBankingPaymentSettingsValues;
   checkIn?: Date | null;
+  /** The club's today, threaded on to the lead-time check — see it for why. */
+  today: Date;
 }) {
   const cutoff = checkInternetBankingLeadTime({
     checkIn: args.checkIn ?? null,
     settings: args.settings,
+    today: args.today,
   });
   const moduleReason = !args.xeroIntegrationEnabled
     ? "Xero integration is not enabled."

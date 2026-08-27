@@ -100,7 +100,7 @@ reason: four lines. Three "today" reads move onto the persisted zone, the fourth
   its inputs, and the import swap.
 
 file: src/lib/xero-membership-sync.ts
-lines: 1650
+lines: 1699
 reason: the largest, and the two changes in it are the two subscription defects
   this issue found. The season window compared a HOST-local midnight against a
   date whose meaning depended on which Xero wire shape arrived, so on a container
@@ -112,6 +112,18 @@ reason: the largest, and the two changes in it are the two subscription defects
   is what stops the next reader "simplifying" the calendar comparison back into a
   `Date` comparison. Splitting them out would separate the season rule from the
   season matcher it is the only caller of.
+  #3123 adds forty-nine lines, and none of them touches the two defects above.
+  `enqueueHostingCoverageReevaluationForMember` now takes a REQUIRED club day
+  and bounds `checkOut >= today` under a `Member` row lock, so the day has to
+  be resolved before each of the four transactions in this file opens
+  (`INV-LOCK-004`). Three of the four are the identical seven-line hoist and
+  comment; the fourth, in `checkMembershipStatus`, reuses the club day the
+  subscription status was ALREADY judged against, so the status and the
+  fan-out cannot land on different days. The runtime reader rather than
+  `club-time/server`, because this module is reachable from both a CLI entry
+  point and `instrumentation.node.ts`. Recorded here rather than in a file of
+  its own because the gate measures against `main`, where the whole
+  1650-to-1699 growth is one change, and one file may hold only one allowance.
 
 file: src/lib/xero-record-activity.ts
 lines: 747

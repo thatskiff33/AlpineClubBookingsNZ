@@ -824,9 +824,16 @@ describe("membership nomination workflow", () => {
     // member-lifecycle advisory locks, and that season picks the fee amount written
     // onto an immutable invoice. Asserted by value, not `objectContaining`, so a
     // future edit that drops the threading fails here.
+    // #3123 adds `asOf` on the same rule and for the same reason: it is the day
+    // `getEffectiveJoiningFee` evaluates the schedule window on, it used to be
+    // defaulted from the ENVIRONMENT's zone, and it selects the amount that
+    // lands on that immutable invoice. It comes from the SAME pre-transaction
+    // zone read the season does, so under the frozen clock both are that read's
+    // answer for one club day.
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("member-1", {
       createdByMemberId: "admin-1",
       seasonYear: 2026,
+      asOf: new Date("2026-07-01T00:00:00.000Z"),
       store: tx,
     });
     expect(sendMembershipApplicationApprovedEmail).toHaveBeenCalledWith(

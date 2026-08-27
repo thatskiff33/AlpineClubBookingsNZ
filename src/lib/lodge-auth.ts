@@ -5,7 +5,8 @@ import {
   getKioskAccessTier,
   type KioskTier,
 } from "./kiosk-access";
-import { addDaysDateOnly, getTodayDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
+import { addDaysDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
 import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { getDefaultLodgeId } from "./lodges";
@@ -84,7 +85,9 @@ export async function checkLodgeAuth(
     };
   }
 
-  const date = dateStr ? parseDateOnly(dateStr) : getTodayDateOnly();
+  const date = dateStr
+    ? parseDateOnly(dateStr)
+    : await clubTodayDateOnlyInstant();
 
   if (!session?.user) {
     return {
@@ -258,7 +261,7 @@ export async function resolveKioskLodgeId(
           "resolveKioskLodgeId: hut-leader tier requires a member or pinSession"
         );
       }
-      const today = getTodayDateOnly();
+      const today = await clubTodayDateOnlyInstant();
       const ownAssignment = await db.hutLeaderAssignment.findFirst({
         where: {
           memberId,
@@ -296,7 +299,7 @@ export async function resolveKioskLodgeId(
           "resolveKioskLodgeId: staying-guest tier requires a resolved member"
         );
       }
-      const today = getTodayDateOnly();
+      const today = await clubTodayDateOnlyInstant();
       const nextDay = addDaysDateOnly(today, 1);
       const booking = await db.booking.findFirst({
         where: {

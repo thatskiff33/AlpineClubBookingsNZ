@@ -35,6 +35,7 @@ vi.mock("@/lib/age-tier", () => ({
   getAgeTierSettings: vi.fn().mockResolvedValue([]),
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import {
@@ -46,6 +47,14 @@ import {
   inferMemberImportColumnMapping,
   parseMemberImportCsv,
 } from "@/lib/member-csv-import";
+
+/**
+ * The club's today, supplied rather than read (#3123): the import preview runs
+ * in the browser too, so it takes the day as data. This case asserts a
+ * round-tripped 2020 cancellation, well clear of the future-date boundary, so a
+ * fixed club day is enough.
+ */
+const CLUB_TODAY = "2026-07-01";
 
 const adminGuard = {
   ok: true,
@@ -169,7 +178,7 @@ describe("issue #1946 — members export cancelled date round-trip", () => {
     // The "Cancelled At" header auto-maps to the cancelledDate field.
     expect(mapping.cancelledDate).not.toBeNull();
 
-    const preview = buildMemberImportPreview(parsed.data, mapping);
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY);
     expect(preview.hasErrors).toBe(false);
     // Same NZ calendar date survives the round-trip.
     expect(preview.rows[0].normalizedDateValues.cancelledDate).toBe(
@@ -221,8 +230,13 @@ describe("members export — the persisted club timezone, not the environment (C
     // that: measured, `TZ=America/Chicago` gives Denver's answer for every
     // fixture in this file, so the identifier check passes while the assertion
     // goes vacuous.
+    //
+    // `APP_TIME_ZONE` IS PASSED ON PURPOSE (#3123): the environment authority
+    // is this premise's whole subject, and naming any other zone would make the
+    // disagreement a coincidence between two literals instead of a measurement
+    // of the authority the route must NOT be obeying.
     expect(
-      formatDateOnlyForTimeZone(CANCELLED_AT),
+      formatDateOnlyForTimeZone(CANCELLED_AT, APP_TIME_ZONE),
       "INV-CONFIG-002: the environment authority now agrees with the persisted " +
         "club zone about this instant, so this cell can no longer tell which of " +
         "the two the route obeyed. Pick a fixture where they disagree.",
@@ -252,9 +266,10 @@ describe("members export — the persisted club timezone, not the environment (C
 
   it("stamps the download filename with the club's calendar day, not the host's", async () => {
     // Same premise, same reason: the environment's "today" must not already be
-    // the club's, or the filename below proves nothing.
+    // the club's, or the filename below proves nothing. `APP_TIME_ZONE` is
+    // passed on purpose, for the reason given in the case above (#3123).
     expect(
-      todayDateOnlyForTimeZone(),
+      todayDateOnlyForTimeZone(APP_TIME_ZONE),
       "INV-CONFIG-002: the environment authority already names the club's day, " +
         "so this filename cannot tell the two apart.",
     ).not.toBe("2026-06-30");

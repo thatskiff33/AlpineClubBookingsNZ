@@ -16,10 +16,11 @@
  * ## The output is byte-identical to what shipped before
  *
  * `__tests__/house-shapes.test.ts` pins every shape against the frozen
- * `Intl.DateTimeFormat` constants `nzst-date` used to hold — written out by hand
- * there, because delegation means importing `nzst-date` would compare the kernel
- * with itself — and against the lodge-display constants these replace, over a
- * 400-day sweep. The calendar-date half reaches the same strings by a different route
+ * `Intl.DateTimeFormat` constants `nzst-date` held before CT-2 (#2990) — written
+ * out by hand there, first because delegation would have compared the kernel
+ * with itself and now because #3123 deleted that file, so the transcription is
+ * the only surviving record of what the club has always been shown — and against
+ * the lodge-display constants these replace, over a 400-day sweep. The calendar-date half reaches the same strings by a different route
  * — see `formatCalendarDateShape` in `./intl` for why a UTC-pinned formatter
  * over a UTC-midnight encoding is an identity rather than a projection.
  *
@@ -200,4 +201,40 @@ export function formatClubInstantWeekdayDate(
   zone: ClubTimeZone,
 ): string {
   return formatHouseShape("weekdayDate", instant, zone);
+}
+
+/**
+ * "16 Apr" — the club calendar day a moment falls on, without the year.
+ *
+ * The instant twin of {@link formatClubDayMonth}, added by #3123 for the same
+ * reason the five calendar shapes were added in #2870: two call sites were
+ * already building this exact `HOUSE_SHAPES.dayMonth` by hand, each with its own
+ * per-zone memo map, because the kernel offered the shape for a calendar day and
+ * not for an instant. The consent chip's response stamp and the consent badge's
+ * "expires 7 Aug" are both real `DateTime` columns, so a zone is genuinely
+ * required — and a shape available in one temporal kind and not the other is how
+ * a hand-rolled formatter gets justified.
+ */
+export function formatClubInstantDayMonth(
+  instant: Instant,
+  zone: ClubTimeZone,
+): string {
+  return formatHouseShape("dayMonth", instant, zone);
+}
+
+/**
+ * "Thu, 16 Apr" — the instant twin of {@link formatClubWeekdayDayMonth}.
+ *
+ * Added with {@link formatClubInstantDayMonth} (#3123) and for the same reason:
+ * the member-guest consent card's lapse sentence names the weekday and day of a
+ * real expiry instant, and had no kernel shape to ask for. The column it comes
+ * from is deliberately not named here — a member-guest census sweeps the tree
+ * for those five column names, and the temporal kernel has no business turning
+ * up on it for the sake of an example.
+ */
+export function formatClubInstantWeekdayDayMonth(
+  instant: Instant,
+  zone: ClubTimeZone,
+): string {
+  return formatHouseShape("weekdayDayMonth", instant, zone);
 }

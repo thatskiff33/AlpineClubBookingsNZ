@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolvePromoInTransaction } from "@/lib/booking-create-promo";
 import { BookingPromoError } from "@/lib/booking-create-types";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 // #2289 REGRESSION TEST — the raw-SQL shape that cost real money.
 //
@@ -139,6 +147,7 @@ const CHECK_IN = new Date(Date.UTC(2026, 6, 1));
 
 function resolve(tx: ReturnType<typeof makeTx>["tx"]) {
   return resolvePromoInTransaction(tx as unknown as ResolveTx, {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
     promoCodeStr: "winter",
     effectiveMemberId: "member-1",
     checkIn: CHECK_IN,

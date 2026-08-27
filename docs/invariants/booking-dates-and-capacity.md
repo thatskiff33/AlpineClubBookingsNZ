@@ -847,12 +847,14 @@ derivation).
 ### INV-DATE-015
 
 - **Rendering** a date or a time is a separate invariant from storing or
-  comparing one, and has its own single seam: `src/lib/nzst-date.ts`. Its six
-  helpers — `formatNZDate` ("16 Apr 2026"), `formatNZDateTime`
-  ("16 Apr 2026, 11:30 am"), `formatNZLongDate` ("16 April 2026"),
-  `formatNZTime` ("11:30 am"), `formatNZMonthYear` ("April 2026") and
-  `formatNZWeekdayDate` ("Thu, 16 Apr 2026") — each pin BOTH `APP_LOCALE` and
-  `APP_TIME_ZONE`. A bare `toLocaleDateString()` / `toLocaleTimeString()` /
+  comparing one, and has its own single seam: `@/lib/club-time`. The six house
+  shapes — "16 Apr 2026", "16 Apr 2026, 11:30 am", "16 April 2026", "11:30 am",
+  "April 2026" and "Thu, 16 Apr 2026" — each pin `APP_LOCALE`, and each comes in
+  a CALENDAR-DAY form that takes no zone and an INSTANT form that requires one.
+  Until #3123 the seam was `src/lib/nzst-date.ts` and those shapes were its six
+  `formatNZ*` helpers, which pinned `APP_LOCALE` and `APP_TIME_ZONE` together;
+  that file is deleted and the kernel is the only seam. A bare
+  `toLocaleDateString()` / `toLocaleTimeString()` /
   `toLocaleString()` renders in the VIEWER's zone and locale, so an
   administrator abroad read a different lodge night than the one stored, and a
   lobby-display television reported its own local time (#2256, #2264). An
@@ -869,26 +871,31 @@ derivation).
   `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant
   instead. That, not an `eslint-disable`, is the escape hatch, and there are no
   disables in the tree.
-- **Since CT-2 (#2990) the seam is `@/lib/club-time`, and `nzst-date.ts` is an
-  adapter over it.** New code formats through the kernel: a CALENDAR DATE takes
-  no zone argument at all (16 April 2026 is a Thursday everywhere, and the
-  kernel pins `timeZone: "UTC"` over the UTC-midnight encoding so the projection
-  is provably the identity), while an INSTANT takes the club zone explicitly.
-  The six legacy helpers keep their signatures and delegate, so no call site has
-  changed and none is wrong; CT-6 (#2991) retires them. The lint arms above are
-  unchanged in what they MATCH — deliberately, so none of the ~400 unmigrated
-  call sites newly fails — and changed only in where their message sends you.
-  `nzst-date.ts` has itself left the `toLocale*` exemption block, because it no
-  longer formats anything.
+- **Since CT-2 (#2990) the seam is `@/lib/club-time`, and since #3123 it is the
+  ONLY one.** Code formats through the kernel: a CALENDAR DATE takes no zone
+  argument at all (16 April 2026 is a Thursday everywhere, and the kernel pins
+  `timeZone: "UTC"` over the UTC-midnight encoding so the projection is provably
+  the identity), while an INSTANT takes the club zone explicitly. CT-2 made the
+  six legacy helpers one-line delegations so no call site changed; CT-3 to CT-5
+  and then #3113/#3118 and #3107/#3121 moved those call sites onto the right
+  temporal question; #3123 deleted `src/lib/nzst-date.ts` once no production file
+  imported it. It had already left the `toLocale*` exemption block in CT-2,
+  because it no longer formatted anything. **It was not replaced by a shim, a
+  re-export or a test-only stub, and must not be** — two rendering seams is one
+  too many, which is the whole reason the file went;
+  `club-time-kernel-census.test.ts` asserts it has not come back. The lint arms
+  above are unchanged in what they MATCH — deliberately, so none of the
+  unmigrated `date-only` call sites newly fails — and changed only in where
+  their message sends you.
 - **Where the zone those formatters pin comes from is now a different
   invariant.** Since CT-1 (#2989) the club's timezone is the persisted
   `ClubTimeSettings.timeZone`, read through `getClubTimeZone()` — `INV-CONFIG-002`
   in [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
-  the transitional constant these six helpers and the module-level formatters
-  still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2 to CT-5
-  migrate the call sites and CT-6 (#2991) retires it. Nothing about the rendering
-  seam changes here — this note exists so that the next reader of these helpers
-  knows the zone has an owner elsewhere, and does not conclude from
+  the transitional constant `src/lib/date-only.ts` and the module-level
+  formatters still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2
+  to CT-5 migrate the call sites and CT-6 (#2991) retires it. Nothing about the
+  rendering seam changes here — this note exists so that the next reader of those
+  helpers knows the zone has an owner elsewhere, and does not conclude from
   `APP_TIME_ZONE` that the environment is still the club's civil-time authority.
 - **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
   the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
@@ -896,24 +903,29 @@ derivation).
   nine-file ratchet, of which two are structural (the config module that defines
   it and CT-1's seed reader) and seven are measured callers each carrying the
   issue that blocks them. What a selector cannot express is counted instead:
-  `club-time-escape-hatch-census.test.ts` pins 81 call sites in 52 files that
-  still let a zone-defaulting `@/lib/date-only` helper take the environment's
-  answer, and 13 production files still importing `nzst-date` (40 call sites).
-  Every ceiling there is TIGHT — equal to the live count, with no deliberate
-  slack — so a measurement below one means the ceiling is stale, not that there
-  is room. They may only fall, and they already have twice: #3113/#3118 took
-  `nzst-date` from 25 importers to 13, and #3107/#3121 took the defaulted calls
-  from 123 in 56 files to 81 in 52.
+  `club-time-escape-hatch-census.test.ts` counts the call sites that still let a
+  zone-defaulting `@/lib/date-only` helper take the environment's answer. Every
+  ceiling there is TIGHT — equal to the live count, with no deliberate slack — so
+  a measurement below one means the ceiling is stale, not that there is room.
+  They may only fall, and they have: #3113/#3118 took `nzst-date` from 25
+  importers to 13, #3107/#3121 took the defaulted calls from 123 in 56 files to
+  81 in 52, and **#3123 took the `nzst-date` importer count to zero and then
+  deleted the module**, so that ceiling is retired along with its subject.
 
 ### INV-DATE-016
 
-- `formatNZLongDate` is reserved for the MEMBER-FACING surfaces the owner asked
-  to keep the long spelled-out month on (#2264): booking messages and the emails
-  built from them, the lodge and hut-leader instruction "last updated" stamps,
-  and the generated report cover. Admin and internal screens use the medium
-  `formatNZDate`. `src/lib/__tests__/member-facing-long-dates.test.ts` pins the
-  four call sites so a later "tidy every date onto formatNZDate" pass fails
-  loudly rather than silently shortening what a member reads.
+- The LONG spelled-out date — `formatClubLongDate` for a calendar day,
+  `formatClubInstantLongDate` (or a binding's `instantLongDate`) for a moment —
+  is reserved for the MEMBER-FACING surfaces the owner asked to keep it on
+  (#2264): booking messages and the emails built from them, the lodge and
+  hut-leader instruction "last updated" stamps, and the generated report cover.
+  Admin and internal screens use the medium shape (`formatClubDate` /
+  `formatClubInstantDate`). Until #3123 these were `formatNZLongDate` and
+  `formatNZDate` on the retired `nzst-date` adapter; the rule is about the SHAPE,
+  not the spelling, and the shape is byte-identical.
+  `src/lib/__tests__/member-facing-long-dates.test.ts` pins the four call sites
+  so a later "tidy every date onto the medium form" pass fails loudly rather than
+  silently shortening what a member reads.
 
 ### INV-DATE-017
 

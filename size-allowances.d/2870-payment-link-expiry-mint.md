@@ -20,7 +20,7 @@ code: import lines, one function parameter, one call argument, and one hoisted
 `await` per lock boundary.
 
 file: src/lib/payment-link.ts
-lines: 1252
+lines: 1261
 reason: the three mint paths here have to keep the zone read on the far side of
   the capacity lock, which is one hoisted await each and cannot be shortened
   without putting a settings query back under the lock. Eight of these lines are
@@ -34,6 +34,14 @@ reason: the three mint paths here have to keep the zone read on the far side of
   into its own file in the same diff would triple the review surface of the
   highest-risk lane in this epic for no correctness gain. The seam is real and
   should be its own pull request.
+  #3123 adds nine: one import, one `bindClubTime(await
+  readClubTimeZoneOutsideRequest())` with a five-line comment, and the binding
+  passed into `resolveBookingNarrative`. The narrative names the day a
+  payment, cancellation or settlement landed AT THE CLUB and was reading the
+  container's zone; the stay dates beside it are `@db.Date` lodge nights and
+  deliberately take none, which is the sentence the comment exists to leave
+  behind. The seam this entry calls the right eventual answer is now filed as
+  #2956 and is still not this change.
 
 file: src/lib/cron-confirm-pending.ts
 lines: 1703
@@ -46,7 +54,7 @@ reason: this file's two capacity-releasing PENDING -> CANCELLED decisions must
   the exit from, which is the one relationship a reader of this file needs.
 
 file: src/lib/booking-request.ts
-lines: 2853
+lines: 2867
 reason: two lines, at the existing pre-transaction settings-read block that the
   member-guest policy read four lines below already establishes. Anything else
   here would be a refactor of `approveBookingRequest`, which this change has no

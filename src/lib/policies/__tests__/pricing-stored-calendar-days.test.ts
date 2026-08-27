@@ -70,6 +70,7 @@ vi.mock("@/config/operational", () => ({
   APP_LOCALE: "en-NZ",
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { getMinimumStayViolations } from "@/lib/policies/minimum-stay";
 import {
@@ -88,6 +89,14 @@ function day(value: string): Date {
 }
 
 const MEMBER_TYPE = "type-member";
+
+/**
+ * The zone the `@/config/operational` factory above pins, named rather than left
+ * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
+ * asserts the two are still the same zone, so this constant cannot drift out of
+ * step with the factory and leave every case below passing for the wrong reason.
+ */
+const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** Stored days for the whole file. 4 July 2026 is a Saturday in UTC. */
 const CHECK_IN = "2026-07-04";
@@ -124,8 +133,12 @@ describe("the pricing engine reads booking dates as stored calendar days (CT-4, 
     // UTC-midnight day, every assertion below would hold for the wrong reason
     // and this file would silently stop guarding anything — the failure mode
     // this epic keeps diagnosing. The legacy helper below is exactly what
-    // `normalizeBookingDate` used to call.
-    expect(formatDateOnlyForTimeZone(day(CHECK_IN))).toBe("2026-07-03");
+    // `normalizeBookingDate` used to call, and the zone it read is
+    // `APP_TIME_ZONE` — so the constant has to keep naming it.
+    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    expect(formatDateOnlyForTimeZone(day(CHECK_IN), CLUB_ZONE_BEHIND_UTC)).toBe(
+      "2026-07-03",
+    );
   });
 
   it("expands a stay to the stored nights, not to a projection of them", () => {

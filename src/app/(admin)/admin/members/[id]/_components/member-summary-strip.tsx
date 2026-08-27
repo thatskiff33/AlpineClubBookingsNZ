@@ -5,6 +5,15 @@ import { Calendar, Clock, CreditCard, IdCard, User, Wallet } from "lucide-react"
 import { formatCents } from "@/lib/utils"
 import { seasonSelectLabel } from "@/lib/season-label"
 import { formatAgeYearsMonths } from "@/lib/member-age"
+// #3123: the member's age is rendered IN THE BROWSER, so "today" cannot come
+// from this bundle — `APP_TIME_ZONE` here is whatever `NEXT_PUBLIC_TZ` was at
+// build time, not the club's persisted zone (`INV-CONFIG-002`). It arrives as
+// data through the provider the `(admin)` layout mounts (`AppProviders` ->
+// `AppProvidersClient` -> `ClubTimeProvider`). The age year on this strip is
+// what an administrator reads while confirming WHICH member record an
+// identity-sensitive action applies to (#2568), so a day's drift here is not
+// cosmetic.
+import { useClubTime } from "@/components/club-time-provider"
 // Both values this strip dates are CALENDAR DAYS with no timezone: a date of
 // birth, and `lastStay`, which is the maximum `checkOut` of the member's
 // bookings — a `@db.Date` lodge night. Projecting either through a zone is
@@ -55,8 +64,9 @@ export function MemberSummaryStrip({
   creditBalance,
   creditLoading,
 }: MemberSummaryStripProps) {
+  const clubClock = useClubTime()
   const memberExactAge = member.dateOfBirth
-    ? formatAgeYearsMonths(member.dateOfBirth)
+    ? formatAgeYearsMonths(member.dateOfBirth, clubClock.today())
     : null
 
   return (

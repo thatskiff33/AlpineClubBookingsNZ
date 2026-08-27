@@ -107,7 +107,16 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/force-confirm/route";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+
+/**
+ * The zone this suite PERSISTS, named once (#3123). The relative fixtures
+ * below follow the club's own day, which is the authority the route reads;
+ * the one case that persists `America/Denver` writes its own absolute stay
+ * dates rather than deriving them.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 function forceConfirmRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/admin/bookings/booking-1/force-confirm", {
@@ -202,7 +211,7 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     mocks.checkCapacityForGuestRanges.mockResolvedValue(overbookedCapacity());
     mocks.requiresAdultSupervisionReview.mockReturnValue(false);
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
-    persistClubZone("Pacific/Auckland");
+    persistClubZone(CLUB_ZONE);
   });
 
   it("reports overbook dates without committing when override is not explicit", async () => {
@@ -367,8 +376,8 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     ) {
       return {
         ...waitlistBooking(),
-        checkIn: addDaysDateOnly(getTodayDateOnly(), days.checkIn),
-        checkOut: addDaysDateOnly(getTodayDateOnly(), days.checkOut),
+        checkIn: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), days.checkIn),
+        checkOut: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), days.checkOut),
         ...overrides,
       };
     }
@@ -462,9 +471,11 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     /*
       CT-4 (#2870), epic #2988 — WHICH "today" the flag is measured against.
 
-      The cases above derive their fixtures from `getTodayDateOnly()`, the
-      ENVIRONMENT's day, so they agree with the route whichever authority it
-      reads and cannot notice a regression to the container's `TZ`. This one
+      The cases above derive their fixtures from the club's own day
+      (`CLUB_ZONE`, persisted in `beforeEach`) rather than from a helper
+      default (#3123), so a boundary case like "checks out today" follows the
+      authority the route reads. While that zone and the environment agree they
+      still cannot tell the two apart, which is what this case is for. It
       pins an absolute check-out and persists a club zone the environment
       disagrees with, so the answer is attributable.
 
@@ -480,7 +491,7 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
       // The premise, as an answer rather than a zone identifier: two different
       // zone names can still name the same day, and then this proves nothing.
       expect(
-        getTodayDateOnly().toISOString(),
+        getTodayDateOnly(APP_TIME_ZONE).toISOString(),
         "INV-CONFIG-002: the environment authority now names the same day as " +
           "the persisted club zone, so this flag cannot tell the two apart.",
       ).not.toBe("2026-06-30T00:00:00.000Z");

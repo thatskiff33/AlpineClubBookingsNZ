@@ -18,21 +18,25 @@
  *
  * ## What makes these cases discriminating
  *
- * `getBookingEditPolicy` was ALREADY migrated: it reads `input.checkIn` through
- * `storedDateOnly` while its `today`/`tomorrow` stay on `getTodayDateOnly()`,
- * the container's day, which is explicitly CT-6's (#2991) to move. So the
- * comparisons below are stored-day-against-container-day, exactly as that
- * function's own `checkIn > today` is. The defect was a validator sitting
- * beside a corrected policy and reading the same column differently — the
- * "corrected producer feeding an uncorrected consumer" shape this epic keeps
- * finding.
+ * `getBookingEditPolicy` reads `input.checkIn` through `storedDateOnly`, and
+ * since #3123 its `today` is a REQUIRED VALUE the caller supplies from the
+ * club's persisted zone — it used to default to `APP_TIME_ZONE`, the
+ * container's claim. So the comparisons below are stored-day-against-club-day
+ * on both sides. The defect was a validator sitting beside a corrected policy
+ * and reading the same column differently — the "corrected producer feeding an
+ * uncorrected consumer" shape this epic keeps finding.
  *
- * The frozen clock is `2026-07-01T00:00:00.000Z`. Under the mocked
- * `America/Denver` that instant is still 30 June, so `editPolicy.today` is
- * `2026-06-30` and `tomorrow` is `2026-07-01`. Every fixture below is placed
- * against those two days deliberately: a stored `2026-07-01` read as itself is
- * AFTER today, and read through Denver is `2026-06-30`, which is not. One day
- * decides whether the member is refused.
+ * The `America/Denver` mock below is now here for ONE purpose only: the PREMISE
+ * case, which proves the environment's zone still projects a different day, so
+ * that every other case demonstrates the club's day winning over it rather than
+ * agreeing with it by luck.
+ *
+ * The frozen clock is `2026-07-01T00:00:00.000Z`. The club's day under test is
+ * held at `2026-06-30` — the same day the fixtures were always built against —
+ * so `editPolicy.today` is `2026-06-30` and `tomorrow` is `2026-07-01`. Every
+ * fixture below is placed against those two days deliberately: a stored
+ * `2026-07-01` read as itself is AFTER today, and read through Denver is
+ * `2026-06-30`, which is not. One day decides whether the member is refused.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -61,6 +65,15 @@ import { withTimeZone } from "@/lib/__tests__/helpers/timezone";
 function day(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
+
+/**
+ * The CLUB's day for this suite (#3123), supplied as a value rather than
+ * projected from the process clock. Deliberately the day the mocked
+ * `APP_TIME_ZONE` also produces at the frozen instant, so the fixtures keep the
+ * geometry the docblock describes — the PREMISE case is what proves the two are
+ * separate dials, and every other case now takes the club's.
+ */
+const CLUB_TODAY = new Date("2026-06-30T00:00:00.000Z");
 
 function makeBooking(
   status: string,
@@ -93,6 +106,7 @@ function previewRefusesSelfServiceWindow(
     role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    today: CLUB_TODAY,
   });
   return storedDateOnly(requestedCheckIn) <= editPolicy.today;
 }
@@ -106,6 +120,7 @@ function previewRefusesInProgressExtension(
     role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    today: CLUB_TODAY,
   });
   const editableFrom = editPolicy.editableFrom;
   return Boolean(editableFrom && storedDateOnly(requestedCheckOut) < editableFrom);
@@ -114,11 +129,23 @@ function previewRefusesInProgressExtension(
 describe("preview and apply validate the same date window", () => {
   it("PREMISE: the mocked zone puts the club's today a day behind the stored day", () => {
     expect(APP_TIME_ZONE).toBe("America/Denver");
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE, and this is the one place in this file
+     * where that is right (#3123). Everywhere else the club's day arrives as
+     * `CLUB_TODAY`, a value; here the SUBJECT of the assertion is the
+     * environment's own projection, because the premise's whole job is to show
+     * that the environment still answers differently from the club. Naming a
+     * zone literal instead would assert something about `America/Denver` rather
+     * than about the environment, and the case would stop discriminating the
+     * moment the mock above changed.
+     */
     // The frozen clock instant, read in Denver, is still 30 June.
-    expect(formatDateOnly(getTodayDateOnly())).toBe("2026-06-30");
+    expect(formatDateOnly(getTodayDateOnly(APP_TIME_ZONE))).toBe("2026-06-30");
     // And a stored 1 July projected through Denver becomes 30 June, which is
     // the single day that decides every case below.
-    expect(formatDateOnlyForTimeZone(day("2026-07-01"))).toBe("2026-06-30");
+    expect(formatDateOnlyForTimeZone(day("2026-07-01"), APP_TIME_ZONE)).toBe(
+      "2026-06-30",
+    );
   });
 
   it("a future self-service edit the preview allows is not refused on save", () => {
@@ -131,7 +158,7 @@ describe("preview and apply validate the same date window", () => {
 
     expect(previewRefusesSelfServiceWindow(booking, booking.checkIn)).toBe(false);
     expect(() =>
-      resolveTargetDates({ booking, role: "USER", input }),
+      resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY }),
     ).not.toThrow();
   });
 
@@ -149,7 +176,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesInProgressExtension(booking, day("2026-07-01"))).toBe(
       false,
     );
-    const result = resolveTargetDates({ booking, role: "USER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY });
     expect(result.isInProgressEdit).toBe(true);
     expect(formatDateOnly(result.newCheckOut)).toBe("2026-07-01");
   });
@@ -164,7 +191,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesInProgressExtension(booking, day("2026-06-30"))).toBe(
       true,
     );
-    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY })).toThrow(
       "NZ today and earlier are locked for self-service changes",
     );
   });
@@ -179,7 +206,7 @@ describe("preview and apply validate the same date window", () => {
       pricingMode: "recalculate",
     };
 
-    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY })).toThrow(
       "Check-in cannot be changed for an in-progress booking",
     );
   });
@@ -192,21 +219,21 @@ describe("preview and apply validate the same date window", () => {
       pricingMode: "recalculate",
     };
 
-    const result = resolveTargetDates({ booking, role: "USER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY });
     expect(result.isInProgressEdit).toBe(true);
     expect(result.checkInChanged).toBe(false);
   });
 
   it("HOST AXIS: the host cannot move the window either", () => {
-    // `editPolicy.today` is still the container's day by design (CT-6's to
-    // move), so this case pins the STORED side only: whatever the host is, a
-    // stored 1 July must read as 1 July and stay outside the closed window.
+    // `editPolicy.today` is now the CLUB's day, supplied as a value (#3123), so
+    // this case pins the STORED side: whatever the host is, a stored 1 July must
+    // read as 1 July and stay outside the closed window.
     const booking = makeBooking("CONFIRMED", "2026-07-01", "2026-07-04");
     const input: BatchModifyInput = { pricingMode: "recalculate" };
     for (const zone of ["Pacific/Pago_Pago", "Pacific/Kiritimati"]) {
       withTimeZone(zone, () => {
         expect(() =>
-          resolveTargetDates({ booking, role: "USER", input }),
+          resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY }),
         ).not.toThrow();
       });
     }
@@ -227,7 +254,7 @@ describe("preview and apply validate the same date window", () => {
     expect(previewRefusesSelfServiceWindow(booking, day("2026-07-01"))).toBe(
       false,
     );
-    const result = resolveTargetDates({ booking, role: "USER", input });
+    const result = resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY });
     expect(formatDateOnly(result.newCheckIn)).toBe("2026-07-01");
   });
 
@@ -240,7 +267,7 @@ describe("preview and apply validate the same date window", () => {
     };
 
     expect(previewRefusesSelfServiceWindow(booking, day("2026-06-30"))).toBe(true);
-    expect(() => resolveTargetDates({ booking, role: "USER", input })).toThrow(
+    expect(() => resolveTargetDates({ booking, role: "USER", input, today: CLUB_TODAY })).toThrow(
       "NZ today and earlier are locked for self-service changes",
     );
   });
@@ -253,7 +280,7 @@ describe("preview and apply validate the same date window", () => {
       pricingMode: "recalculate",
     };
     expect(() =>
-      resolveTargetDates({ booking, role: "ADMIN", input }),
+      resolveTargetDates({ booking, role: "ADMIN", input, today: CLUB_TODAY }),
     ).not.toThrow();
   });
 });

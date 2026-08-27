@@ -71,7 +71,9 @@ const booking = { checkIn: day(CHECK_IN), checkOut: day(CHECK_OUT) };
 describe("a range-less guest is defaulted from the STORED envelope", () => {
   it("PREMISE: the mocked environment zone really does move a stored day", () => {
     expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnlyForTimeZone(booking.checkIn)).toBe("2026-07-03");
+    expect(formatDateOnlyForTimeZone(booking.checkIn, APP_TIME_ZONE)).toBe(
+      "2026-07-03",
+    );
   });
 
   it("the create/quote path: no dates supplied means the booking's own days", () => {

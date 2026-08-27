@@ -11,7 +11,6 @@ import type {
 import { capacityHoldingBookingFilter } from "@/lib/booking-status";
 import {
   formatDateOnly,
-  getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
@@ -21,6 +20,7 @@ import {
 } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { clubSeasonYear } from "@/lib/financial-year";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
@@ -436,10 +436,27 @@ export async function getSeasonalMembershipChangePreview(params: {
   seasonYear: number;
   membershipTypeId: string;
   applyFrom?: string | null;
-  now?: Date;
+  /**
+   * The club's TODAY, as the UTC-midnight instant a `@db.Date` round-trips
+   * through. REQUIRED since #3123.
+   *
+   * It bounds every "still to come" read below — `checkOut > today` on three
+   * booking queries and `stayEnd > today` on the waitlist — so it decides which
+   * bookings a membership-type change is reported as affecting. It used to
+   * default to the ENVIRONMENT's day, which is the wrong day for any club whose
+   * configured zone differs from its container's.
+   *
+   * It is REQUIRED, not resolved in here, for the reason `clubCurrentSeasonYear`
+   * below already records: every caller of this function is in a LOOP. An
+   * in-place read would be one uncached `ClubTimeSettings` query per member, and
+   * a fifty-member preview straddling club midnight could judge two members
+   * against two different days. Required rather than optional so that a future
+   * caller cannot quietly reintroduce either.
+   */
+  now: Date;
   db?: SeasonalMembershipReadClient;
   /**
-   * The club's CURRENT season year, when the caller already holds it.
+   * The club's CURRENT season year. REQUIRED since #3123.
    *
    * The bulk membership-type preview route calls this once per selected member in
    * a loop, and resolving the club's zone here is an uncached `ClubTimeSettings`
@@ -447,11 +464,18 @@ export async function getSeasonalMembershipChangePreview(params: {
    * club midnight on a season boundary could judge two members' age tiers in two
    * different seasons (#2870, correctness review). Passing it makes the whole
    * batch one answer and one read.
+   *
+   * It was optional until #3123 and the Xero member import — the other loop —
+   * was not passing it, so that path still made the per-row read this parameter
+   * exists to prevent. With both this and `now` required, and both derived from
+   * the caller's single zone read, this function performs NO `ClubTimeSettings`
+   * query at all on any path, which is what makes "once per bulk operation"
+   * structural rather than a convention.
    */
-  clubCurrentSeasonYear?: number;
+  clubCurrentSeasonYear: number;
 }): Promise<JsonRouteResult> {
   const db = params.db ?? prisma;
-  const today = params.now ?? getTodayDateOnly();
+  const today = params.now;
   const normalizedApplyFrom = normalizeApplyFromInput(params.applyFrom);
   if (!normalizedApplyFrom.ok) {
     return jsonResult({ error: normalizedApplyFrom.error }, { status: 400 });
@@ -618,10 +642,7 @@ export async function getSeasonalMembershipChangePreview(params: {
       : member.dateOfBirth
         ? await computeAgeTier(
             member.dateOfBirth,
-            getSeasonStartDate(
-              params.clubCurrentSeasonYear ??
-                clubSeasonYear(await readClubTimeZoneOutsideRequest()),
-            ),
+            getSeasonStartDate(params.clubCurrentSeasonYear),
           )
         : "ADULT";
   const resolvedAgeTier = resolveEnforcedAgeTier({
@@ -730,11 +751,28 @@ export async function saveSeasonalMembershipAssignment(params: {
   }
 
   const db = params.db ?? prisma;
+  // #3123 / INV-LOCK-004 — ONE read of the club's persisted zone for this whole
+  // save, taken before the transaction opens. The lock prefix and the sweep
+  // inside it both need the club's day, and resolving the zone in there would
+  // be a `clubTimeSettings.findUnique` taking a second pooled connection under
+  // the global cohort key, the affected lodge keys and the member key. The
+  // post-commit Xero grouping check below reads its season year from this same
+  // value rather than taking a second read of its own.
+  //
+  // It is read HERE, above the preview re-derivation rather than beside the
+  // transaction, because the preview needs the same two answers and re-deriving
+  // it is what the preview TOKEN is verified against: one read, one club day and
+  // one season for the whole save, so the re-derived preview cannot differ from
+  // the one the admin was shown for a reason nobody can see.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const previewResult = await getSeasonalMembershipChangePreview({
     memberId: params.memberId,
     seasonYear: params.seasonYear,
     membershipTypeId: params.membershipTypeId,
     applyFrom: params.applyFrom,
+    now: clubTodayDateOnly,
+    clubCurrentSeasonYear: clubSeasonYear(clubZone),
     db,
   });
   if (previewResult.init?.status && previewResult.init.status >= 400) {
@@ -805,7 +843,11 @@ export async function saveSeasonalMembershipAssignment(params: {
 
   const assignment = await db.$transaction(async (tx) => {
     if (tierLeavesAdult) {
-      await acquireFuturePartnerSharedAllocationLocks(tx, [params.memberId]);
+      await acquireFuturePartnerSharedAllocationLocks(
+        tx,
+        [params.memberId],
+        clubTodayDateOnly,
+      );
       await acquireMemberLifecycleLocks(tx, [params.memberId]);
     }
     let saved: SeasonalAssignmentWithType;
@@ -869,6 +911,7 @@ export async function saveSeasonalMembershipAssignment(params: {
           memberId: params.memberId,
           reason: "member_age_tier_changed",
           db: tx,
+          today: clubTodayDateOnly,
         });
       }
     }
@@ -956,7 +999,7 @@ export async function saveSeasonalMembershipAssignment(params: {
   // the current season's assignment can alter a member's effective grouping —
   // future-season edits are left for their own trigger/bulk run. Non-fatal,
   // idempotent, and a no-op unless grouping is enabled.
-  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
   if (
     params.seasonYear === clubCurrentSeasonYear &&
     !params.skipXeroContactGroupSync
@@ -1343,7 +1386,14 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
   // club's PERSISTED zone (CT-4, #2870). A long run must not be able to answer
   // "is the target the current season?" differently at its start and its end,
   // and the age-tier reconcile below reads its reference day from the same value.
-  const clubCurrentSeasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  // #3123 — and from the SAME read, one club day for every chunk below. Each
+  // chunk opens its own transaction and takes the global cohort key plus every
+  // affected lodge key, so the day cannot be resolved in there
+  // (`INV-LOCK-004`); resolving it per chunk would also let a long run judge
+  // its first and last members against different days.
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const targetIsCurrentSeason = params.toSeasonYear === clubCurrentSeasonYear;
   const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
   const rollSweptByMember: Array<{
@@ -1432,7 +1482,11 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
         );
         try {
           const chunkResult = await db.$transaction(async (tx) => {
-            await acquireFuturePartnerSharedAllocationLocks(tx, chunkMemberIds);
+            await acquireFuturePartnerSharedAllocationLocks(
+              tx,
+              chunkMemberIds,
+              clubTodayDateOnly,
+            );
             await acquireMemberLifecycleLocks(tx, chunkMemberIds);
             // Fresh reads on the tx client — never trust the pre-copy snapshot.
             const [freshMembers, freshAssignments] = await Promise.all([
@@ -1545,6 +1599,7 @@ export async function rollForwardSeasonalMembershipAssignments(params: {
                   memberId: member.id,
                   reason: "member_age_tier_changed",
                   db: tx,
+                  today: clubTodayDateOnly,
                 });
                 if (swept.length > 0) {
                   chunkSwept.push({
