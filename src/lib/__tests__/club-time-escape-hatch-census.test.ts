@@ -466,6 +466,16 @@ const CENSUS_CEILING = {
    * which is zone-free UTC arithmetic and a strictly better state that
    * nonetheless adds an importer.
    *
+   * 213 -> 214 is a file SPLIT, and is the third way to join this list without
+   * changing anything (#3128). `bed-allocation-lifecycle.ts` was over its size
+   * budget; its three write-time re-filters moved verbatim into
+   * `bed-allocation-write-rechecks.ts`, taking with them the
+   * `addDaysDateOnly` / `eachDateOnlyInRange` / `formatDateOnly` import they
+   * already had. One importer became two importers of the same three zone-free
+   * helpers, with no call site added, removed or changed, and neither file
+   * resolves a timezone. That is the "human decision about which direction it
+   * moved and why" this docblock asks for.
+   *
    * So this one is a size-of-surface tracker, not a defect count, and it can
    * legitimately move in either direction. It is `toBe` like the rest, which
    * means a change here fails the suite and asks for a human decision about
