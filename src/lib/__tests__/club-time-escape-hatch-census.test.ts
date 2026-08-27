@@ -471,8 +471,14 @@ const CENSUS_CEILING = {
    * means a change here fails the suite and asks for a human decision about
    * which direction it moved and why — that is the intended behaviour, not an
    * oversight.
+   *
+   * 213 -> 215 (#3108): the booking add-to-calendar feature adds two
+   * importers — `calendar-links.ts` and the `.ics` download route — both of
+   * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
+   * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
+   * neither consults a timezone.
    */
-  dateOnlyImporters: 213,
+  dateOnlyImporters: 215,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
