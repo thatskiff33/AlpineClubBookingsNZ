@@ -20,7 +20,20 @@ export function hasAssignedMembers(assignedMemberIds: string[] | null | undefine
   return Boolean(assignedMemberIds && assignedMemberIds.length > 0);
 }
 
-function assignedMembersOnlyOwnNights(
+/**
+ * Whether an assigned code is scoped to the assigned members' own linked guest
+ * nights. The one definition of what that column means: it is
+ * `Boolean @default(true)` in `schema.prisma`, so an absent or `null` value
+ * reads as ON — own-night scoping is the default and must never be inferred as
+ * off from a missing value.
+ *
+ * Exported for `promo-stored-guest-targets.ts` (#3131), which asks a different
+ * question of the same field on an existing booking's stored redemption. Until
+ * then five copies of that module's predicate each spelled this read as
+ * `assignedMembersOnlyOwnNights === false` — equivalent over all four values,
+ * but a second definition of one fact, which is what `INV-SSOT-001` forbids.
+ */
+export function assignedMembersOnlyOwnNights(
   promoCode: { assignedMembersOnlyOwnNights?: boolean | null }
 ) {
   return promoCode.assignedMembersOnlyOwnNights ?? true;
