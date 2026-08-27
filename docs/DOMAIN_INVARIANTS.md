@@ -36,6 +36,7 @@ description, so you can find the right file without opening more than one.
 | [`integrations.md`](invariants/integrations.md) | `INV-INT` | webhooks, cron idempotency, provider callbacks, Xero member grouping |
 | [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
+| [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 
 Two supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md), and the imperfections found
@@ -752,3 +753,21 @@ headings the index keeps verbatim.
 | `INV-CONFIG-003` | One explicit `APP_ENVIRONMENT_ROLE` declaration decides production versus non-production; nothing is inferred, the database may only force the safer state, a missing declaration is UNKNOWN rather than either, and a production deploy cannot proceed without it |
 | `INV-CONFIG-004` | Every application-controlled send passes ONE environment-aware boundary: confirmed production delivers, a confirmed copy suppresses terminally unless it has declared a capture mailbox, an unconfirmed role fails closed retryably, a live site in capture mode is refused, and all four are distinguishable from business suppression and from provider failure |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role: production is byte-identical, a confirmed copy replaces the address with one deterministic, idempotent, non-deliverable form kept separate from the placeholder domains, an existing or restored link must be proved contained before any document is raised against it, and an unconfirmed role writes nothing to Xero at all |
+
+## Single Source Of Truth
+
+A fact is defined once and read from that one place — what this repository
+already requires of documentation, required of code. Prefer making the wrong
+thing unrepresentable over policing it.
+File:
+[`invariants/single-source-of-truth.md`](invariants/single-source-of-truth.md).
+Prefix `INV-SSOT`. Added by #3126, out of the Club Time epic (#2988) where the
+cost of the missing rule was measured rather than argued; it is not one of the
+ten pre-split domain headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-SSOT-001` | One canonical definition per concept: if you cannot change a fact in one place, that is the defect, and the structural remedy is preferred over the guard |
+| `INV-SSOT-002` | Both sides of a comparison are produced by the same helper — including a value and its own encoding, a writer and its reader, a key's mint and its parse |
+| `INV-SSOT-003` | An authority-bearing parameter carries no default; the lint arm guards the narrower club civil-time class, and every exclusion is judged, measured and stated rather than discovered |
+| `INV-SSOT-004` | Two instruments that claim independence must measure the same way, or they are one instrument and a rubber stamp; `stripComments` lives once |

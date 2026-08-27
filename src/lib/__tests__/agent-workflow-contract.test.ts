@@ -332,6 +332,48 @@ describe("repository agent workflow contract", () => {
 
       `CLAUDE.md` carries its own smaller ceiling above (#2903); this is the
       same discipline applied to the file that actually holds the rules.
+
+      RAISED 10,200 -> 10,400 BY #3126 (owner decision, 27 Aug 2026), and this
+      block is the pull request saying what was traded and why, because the
+      paragraph above requires that rather than a one-line edit made to get a
+      suite green.
+
+      What forced it: `main` stood at 10,189 words. ELEVEN words of headroom, so
+      the core was not "nearly full" — it was CLOSED. Any addition failed this
+      gate, including a single routing row, which is the smallest unit the
+      paragraph above offers as the intended way to grow. A budget that admits
+      no increment is not a budget, it is a freeze, and freezing the always-read
+      core is a decision nobody made deliberately.
+
+      What was tried first, and why it was abandoned: routing the lock checklist
+      out to `docs/CONCURRENCY_AND_LOCKING.md`, whose "Rules of thumb when
+      working here" already states all five of its bullets more fully, and which
+      `AGENTS.md` itself calls "a working aid and not their home". That is
+      exactly the remedy this test prescribes, and it is the right instinct —
+      but THREE of those phrases are pinned by assertions in this very file
+      (`global -> lodge -> member`, `credit-ledger-only invariants`, `takes both
+      applicable tiers`). Routing it out therefore means deleting three
+      assertions that pin advisory-lock ordering into the always-read core. That
+      is a lock-safety contract change wearing the costume of a word count, and
+      it is a far worse trade than 116 words.
+
+      What was bought: `INV-SSOT`, whose whole subject is that a fact belongs in
+      one place. The rule is 116 words across the Change Discipline bullet, one
+      routing row and the ID pointer — already cut twice, with the argument,
+      the worked examples and the guarded class left in
+      `docs/invariants/single-source-of-truth.md` rather than restated here.
+
+      What was removed to pay part of it: #3126 deletes the
+      `= APP_TIME_ZONE` default from `formatMergeFieldValue` and takes
+      `src/lib/member-merge-field-kinds.ts` off `ENVIRONMENT_ZONE_ADAPTERS`, so
+      that ratchet shrank in the same change.
+
+      The 200 words are headroom, not a new floor. The next lane to need room
+      should route something out, and the honest candidate list starts with the
+      required-checks table in "Completion and Merge", which restates
+      `ci.yml` and branch protection. Check what is contract-pinned BEFORE
+      promising a section can move — that is the mistake this note exists to
+      stop the next reader repeating.
     */
     const agents = readRepoFile("AGENTS.md");
     const words = agents.trim().split(/\s+/).length;
@@ -342,7 +384,7 @@ describe("repository agent workflow contract", () => {
         "agent, so its size is a cost paid thousands of times. Route a section " +
         "out to the document its routing row already names, rather than raising " +
         "this ceiling.",
-    ).toBeLessThanOrEqual(10_200);
+    ).toBeLessThanOrEqual(10_400);
   });
 
   it("requires every PR to declare concurrency and merge-gate evidence", () => {

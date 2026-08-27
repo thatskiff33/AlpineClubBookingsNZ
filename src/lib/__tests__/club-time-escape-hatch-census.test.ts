@@ -564,17 +564,25 @@ describe("the classes CT-6 closed are at zero, and stay there", () => {
         read(file),
       ),
     );
-    // NINE WHEN CT-6 MEASURED IT, FIVE NOW. #3123 took four: `date-only.ts`
+    // NINE WHEN CT-6 MEASURED IT, FOUR NOW. #3123 took four: `date-only.ts`
     // stopped naming it the moment its six `= APP_TIME_ZONE` defaults were
     // deleted — the adapter had been the single largest reason the environment
     // was reachable at all — and `member-guest-consent-labels.ts` came off when
     // the deferral its own docblock had declared was finally closed.
     //
-    // The five left are structural rather than deferred: the config module that
-    // defines the value, and four modules that legitimately describe the
+    // #3126 took the fifth, `member-merge-field-kinds.ts`, the same way and for
+    // the same reason one level up: the only thing still naming the environment
+    // there was a `= APP_TIME_ZONE` DEFAULT on the renderer, which every
+    // production caller already overrode. Deleting it (`INV-SSOT-003`) left the
+    // file naming the environment nowhere and took its lint-ratchet entry with
+    // it. A default is how the environment reaches callers that never asked for
+    // it, so it is the shape to look for first in whatever remains.
+    //
+    // The four left are structural rather than deferred: the config module that
+    // defines the value, and three modules that legitimately describe the
     // ENVIRONMENT rather than the club. Lowering this further needs a reason
     // beyond tidiness — read each one before assuming it is a leftover.
-    expect(naming, naming.join("\n")).toHaveLength(5);
+    expect(naming, naming.join("\n")).toHaveLength(4);
   });
 
   it("counts the local-midnight constructions no selector can reach", () => {

@@ -74,6 +74,7 @@ id and need the file it lives in.
 | Where code lives, module boundaries, the admin settings pattern | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | An admin settings section, a staged-edit form, or a view-only / permission-gated control — including adding a single toggle, field, row action or button to a settings page | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) → "Admin/member layer", which states the canonical settings pattern in full and is binding for new or modified sections |
 | Something a club could want switched off, or answered differently from ours — a new module, setting, seed default, or any value that varies by deployment | `INV-CONFIG` → [`product-configuration.md`](docs/invariants/product-configuration.md) | [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) — the four levers and which to reach for |
+| Adding a constant, helper, formatter, type or rule a second place will need — or writing a guard or census that cross-checks another | `INV-SSOT` → [`single-source-of-truth.md`](docs/invariants/single-source-of-truth.md) | [`TESTING.md`](docs/TESTING.md) for the mutation-verification a new guard owes |
 | Environment variables, secrets, setup, deployment configuration | — | [`CONFIGURATION.md`](CONFIGURATION.md) |
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
@@ -165,6 +166,13 @@ id and need the file it lives in.
   demanding one such value is the smell. `INV-CONFIG-001` is the rule;
   [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) is the
   canonical guide to the levers and is not restated here.
+- **Single source of truth, for code as well as docs.** Before adding a
+  constant, helper, formatter, type or rule, search for the existing one and
+  route to it; if two places need it, move it to one module and import it.
+  **Cannot change a fact in one place? That is the defect**, and the fix is the
+  move. **Prefer unrepresentable over policed**: a required argument beats a
+  lint rule. Rules and worked examples:
+  [`INV-SSOT`](docs/invariants/single-source-of-truth.md), the one home.
 - Money values must remain integer cents.
 - Booking dates must remain New Zealand date-only lodge nights unless a feature
   explicitly requires time-of-day semantics.
@@ -292,8 +300,10 @@ Before changing a transaction, booking lifecycle, capacity check, settlement,
 credit writer, webhook, or cron, read `docs/CONCURRENCY_AND_LOCKING.md` and
 classify every mutation it composes. The rules this list applies are
 `INV-LOCK-001` (which tier), `INV-LOCK-002` (the order, and the single mint of
-the per-lodge key) and `INV-LOCK-003` (register the site); cite those ids rather
-than this checklist, which is a working aid and not their home:
+the per-lodge key) and `INV-LOCK-003` (register the site).
+
+cite those ids rather than this checklist, which is a working aid and not their
+home:
 
 - global-cohort lifecycle and settlement-money transitions that must exclude
   cancel/capture/refund/hold-release counterparts use global
@@ -705,6 +715,11 @@ handed an epic-with-children or asked to run several related issues at once.
     concurrency & locking).
   - Standard issues (copy, admin UI over existing APIs, read-only surfaces):
     **2 reviewers** — (a) correctness + regression, (b) UX/docs/permission drift.
+  - **One lens is STANDING and sits on top of those counts**: single source of
+    truth (`INV-SSOT`), on every reviewed pull request, because a reviewer
+    checking a diff against its brief cannot see the copy that already exists
+    elsewhere in the tree. Brief in
+    [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md).
   - Reviewers are **adversarial**: they try to *refute* each finding against the
     real code before reporting, and report only confirmed/plausible findings with
     `file:line` + a concrete failure scenario. They never modify code.

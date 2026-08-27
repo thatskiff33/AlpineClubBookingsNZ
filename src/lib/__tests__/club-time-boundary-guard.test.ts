@@ -374,8 +374,8 @@ describe("the environment-zone allowlist is a ratchet", () => {
       to a number its own list contradicted, and #3123 deleted the restatement
       rather than re-measure it into a second place.
 
-      HOW IT REACHED SIX. The route matters more than the arithmetic, because only
-      one of the three departures was a deletion:
+      HOW IT REACHED FIVE. The route matters more than the arithmetic, because
+      only one of the four departures was a deletion:
 
       - NINE until #3123 took `src/lib/nzst-date.ts` off it by DELETING the
         rendering adapter, once its last production caller reached the kernel.
@@ -395,16 +395,32 @@ describe("the environment-zone allowlist is a ratchet", () => {
         documents each defect at the site where it removed it, so any guard
         reading raw text is densest in false positives exactly where the code is
         cleanest.
-      - SIX today. Two of the three that left MIGRATED. Deletion is not the only
-        way off this list and threading the club's zone through a caller is the
-        intended one.
+      - SIX until #3126 took `src/lib/member-merge-field-kinds.ts` off it, and
+        that departure named a hole rather than closing a caller. The entry
+        excused a client component for READING the environment's zone; what it
+        was actually covering was a `= APP_TIME_ZONE` DEFAULT on
+        `formatMergeFieldValue`, which handed the environment's answer to any
+        caller that passed none. Production passed one at all three call sites,
+        so deleting the default (`INV-SSOT-003`) cost nothing, left the file
+        naming the environment nowhere, and made the entry visibly stale. The
+        arm that replaces it, `AUTHORITY_DEFAULT_RESTRICTIONS`, is on the
+        mandatory set that no block lifts — so a future entry here can excuse a
+        read and can never again excuse a default.
+      - FIVE today. Of the four that have left, TWO migrated
+        (`member-guest-consent-labels.ts`, `member-guest-delegate-page.ts`), one
+        was DELETED outright (`nzst-date.ts`) and one left by having its DEFAULT
+        deleted (`member-merge-field-kinds.ts`, #3126) while still naming the
+        zone in prose. Three routes off, not one — and migration is the intended
+        one. An earlier version of this note said "three of the four MIGRATED",
+        which counted the default deletion as a migration two lines after saying
+        it was not.
 
       THIS NUMBER IS TIGHT AND DELIBERATELY SO. It equals the live count; there
       is no headroom, no rounding and no allowance for work in flight. A ratchet
       with slack in it is not a ratchet — the slack is simply room to regrow in
       without anything failing.
     */
-    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(6);
+    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(5);
   });
 
   it("excuses exactly the files it gives reasons for", () => {

@@ -46,8 +46,9 @@ in. Cite rules by id, never by line number.
   [public content](../invariants/public-content.md),
   [analytics and privacy](../invariants/analytics-and-privacy.md),
   [integrations](../invariants/integrations.md),
-  [operations](../invariants/operations.md), and
-  [product configuration](../invariants/product-configuration.md).
+  [operations](../invariants/operations.md),
+  [product configuration](../invariants/product-configuration.md), and
+  [single source of truth](../invariants/single-source-of-truth.md).
 - [`../invariants/SCHEME.md`](../invariants/SCHEME.md) — how invariant ids are
   allocated and what an entry must contain.
 - [`../invariants/_FOLLOW_UPS.md`](../invariants/_FOLLOW_UPS.md) — invariant work
