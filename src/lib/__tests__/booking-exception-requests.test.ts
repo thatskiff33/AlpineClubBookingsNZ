@@ -152,6 +152,19 @@ describe("computeProposalHash", () => {
     expect(computeProposalHash(snapshot)).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("PINS the digest for a fixed snapshot, because a stored proposalHash must still validate after any refactor (#3030)", () => {
+    // Every other test here recomputes the hash on both sides, so all of them
+    // would pass if the canonicalisation itself changed - and a changed
+    // canonicalisation silently invalidates every BookingExceptionRequest row
+    // already on file, whose stored proposalHash approval re-derives and
+    // compares. #3030 moved `stableStringify` out to `@/lib/stable-json` for a
+    // second hasher to share; the move was byte-identical, and this pin is what
+    // makes the NEXT such change fail loudly instead of quietly.
+    expect(computeProposalHash(snapshot)).toBe(
+      "b3f4e6183c223af0703c0e080edfcba14695455f0630d7beda613a393d478ff2",
+    );
+  });
+
   it("MUTATION: is order-independent (guest input order does not change the hash)", () => {
     const reordered: ExceptionProposalSnapshot = {
       kind: "NEW_BOOKING",
