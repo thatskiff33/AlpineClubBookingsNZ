@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "../../../scripts/ci/check-website-render-modes.mjs";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /**
  * EVERY PAGE HAS A CLUB-TIME PROVIDER ABOVE IT (CT-4 group C, #2870; epic #2988;
@@ -45,9 +45,9 @@ import { stripComments } from "../../../scripts/ci/check-website-render-modes.mj
  *
  * ## Reading the source rather than matching it raw
  *
- * Every presence check here runs over `stripComments(source)`, shared with
- * `scripts/ci/check-website-render-modes.mjs`, which had already met and
- * documented this hazard: a POSITIVE rule ("this layout must render
+ * Every presence check here runs over `stripComments(source)`, the one shared
+ * implementation in `src/lib/__tests__/support/strip-comments.mts`, whose first
+ * caller had already met and documented this hazard: a POSITIVE rule ("this layout must render
  * `<AppProviders>`") is satisfied by a comment mentioning it, so an un-stripped
  * substring match passes on a layout with no provider anywhere. Measured on this
  * census before the strip was added.

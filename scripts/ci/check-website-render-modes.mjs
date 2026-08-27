@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+// Node runs this file directly (ci.yml: `node scripts/ci/check-website-render-modes.mjs`),
+// with no transpiler. Node 24 — which package.json `engines` requires and every
+// setup-node in ci.yml pins — strips types from a `.mts` import natively, so the
+// extension is explicit and there is no loader in the path of a required check.
+import { stripComments } from "../../src/lib/__tests__/support/strip-comments.mts";
+
 /**
  * Guards the public website's STRUCTURE: its two route groups, their render modes,
  * their route censuses, and the shared chrome both of them compose (issue #2352,
@@ -153,113 +159,19 @@ const REQUEST_READ_PATTERNS = [
   { name: "auth()", pattern: /\bauth\s*\(\s*\)/ },
 ];
 
-/**
- * The source with its comments removed, which every check below runs against.
- *
- * Both directions need it. A NEGATIVE rule ("nothing in this group may mention
- * `generateStaticParams`") fires on the docblock that explains why the rule exists —
- * `join/[code]/page.tsx` says in prose that a dynamic segment without one would be
- * stored, and that sentence is the reason for the rule, not a breach of it. A
- * POSITIVE rule ("this layout must render `<WebsiteChrome>`") would in turn be
- * satisfied by a comment mentioning it, which is a check that can pass on a file
- * that does nothing.
- *
- * A SINGLE LEFT-TO-RIGHT PASS, not a pair of regular expressions, and the
- * difference is a measured defect rather than tidiness. This used to strip block
- * comments first and then line comments, with `//` left alone after a colon so a
- * `https://…` inside a string survived. That ordering means a `/*` written inside
- * a LINE comment opens a block comment which the regex then closes at the next
- * block-comment terminator anywhere below — and `src/app/(admin)/layout.tsx`
- * contains exactly that:
- * a `// … /admin/* … ` comment on line 32 and a JSX comment ending on line 123.
- * Stripping it removed 4,739 of its 6,290 characters, including the
- * `<AppProviders>` it exists to prove. The scan below never met that shape
- * because it reads only the two public route groups; the club-time census reads
- * the whole of `src/app`, which is how it surfaced.
- *
- * The pass tracks four states — code, line comment, block comment, and inside a
- * `'`, `"` or backtick string, honouring backslash escapes — so a comment
- * delimiter inside a string or inside the other kind of comment is left alone by
- * construction rather than by a lookbehind. It is still not a parser: a regular
- * expression LITERAL is treated as code, so `/…//…/` could confuse it. That shape
- * does not occur in this repository, and it cannot be written by accident,
- * because an unescaped `/` ends a regex.
- *
- * EXPORTED because the same hazard turned up again in a different census:
- * `src/components/__tests__/club-time-provider-mount-census.test.tsx` asserts
- * that a layout really renders `<AppProviders>` or `<WebsiteChrome>`, and a raw
- * substring match on the un-stripped file was measured passing on a layout that
- * only MENTIONS one in a comment. That is the positive-rule failure described
- * above, so both readers share the one implementation rather than each keeping a
- * copy of the heuristic and its caveats.
- */
-export function stripComments(source) {
-  let out = "";
-  let index = 0;
-  // "code" | "line" | "block" | a quote character we are inside.
-  let mode = "code";
-
-  while (index < source.length) {
-    const char = source[index];
-    const next = source[index + 1];
-
-    if (mode === "line") {
-      if (char === "\n") {
-        mode = "code";
-        out += char;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (mode === "block") {
-      if (char === "*" && next === "/") {
-        mode = "code";
-        index += 2;
-        continue;
-      }
-      // Newlines are kept so a stripped file still has its line structure.
-      if (char === "\n") out += char;
-      index += 1;
-      continue;
-    }
-
-    if (mode === "'" || mode === '"' || mode === "`") {
-      out += char;
-      if (char === "\\") {
-        out += source[index + 1] ?? "";
-        index += 2;
-        continue;
-      }
-      if (char === mode) mode = "code";
-      index += 1;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      mode = "line";
-      index += 2;
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      mode = "block";
-      index += 2;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      mode = char;
-      out += char;
-      index += 1;
-      continue;
-    }
-
-    out += char;
-    index += 1;
-  }
-
-  return out;
-}
-
+// Every check below runs over COMMENT-STRIPPED source, and both directions need
+// it. A NEGATIVE rule ("nothing in this group may mention `generateStaticParams`")
+// fires on the docblock that explains why the rule exists — `join/[code]/page.tsx`
+// says in prose that a dynamic segment without one would be stored, and that
+// sentence is the reason for the rule, not a breach of it. A POSITIVE rule ("this
+// layout must render `<WebsiteChrome>`") would in turn be satisfied by a comment
+// mentioning it, which is a check that can pass on a file that does nothing.
+//
+// The scanner is shared, not copied (#3132). It used to live here and be exported
+// from here, which made this CI script the de facto home of a test helper; two
+// censuses imported it across that boundary. It now lives with the other
+// source-scanning support code and this script reaches for it, which is the one
+// direction that leaves a single definition.
 /** Every file under `directory`, as paths relative to it, in posix form. */
 function collectFiles(directory, root, found = []) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

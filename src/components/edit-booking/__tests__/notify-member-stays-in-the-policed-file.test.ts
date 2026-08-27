@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
+
+// Comments are stripped before the sweep below: raw text cannot tell a call site
+// from prose about one, and the module comments in this subtree quote the very
+// expressions being matched.
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 /*
   #2690 — the "No emails" honesty rule has one structural blind spot, and this
@@ -50,44 +54,6 @@ const NOTIFY_MEMBER_KEY = /\bnotifyMember\b/;
  * a blind spot is what this fence exists to close.
  */
 const POLICED_EXTENSIONS = /\.(?:[cm]?[jt]sx?)$/;
-
-/**
- * `source` with every comment blanked out, using TypeScript's own parser rather
- * than a regex — the same technique, and for the same reason, as the shared
- * census: raw text cannot tell a call site from prose about one, and the module
- * comments in this subtree quote the very expressions being matched.
- */
-function stripComments(source: string): string {
-  const sourceFile = ts.createSourceFile(
-    "in-memory.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TSX,
-  );
-  const chars = source.split("");
-  const blank = (start: number, end: number) => {
-    for (let i = start; i < end; i += 1) {
-      if (chars[i] !== "\n") chars[i] = " ";
-    }
-  };
-  const visit = (node: ts.Node): void => {
-    const children = node.getChildren(sourceFile);
-    if (children.length > 0) {
-      for (const child of children) visit(child);
-      return;
-    }
-    for (const range of ts.getLeadingCommentRanges(source, node.getFullStart()) ??
-      []) {
-      blank(range.pos, range.end);
-    }
-    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ?? []) {
-      blank(range.pos, range.end);
-    }
-  };
-  visit(sourceFile);
-  return chars.join("");
-}
 
 /** Every non-test `.ts`/`.tsx` file in the subtree. */
 function subtreeFiles(dir = SUBTREE, out: string[] = []): string[] {
