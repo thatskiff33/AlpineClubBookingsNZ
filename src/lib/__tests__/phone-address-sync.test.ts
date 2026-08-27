@@ -58,9 +58,6 @@ vi.mock("@/lib/xero", () => ({
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
 }));
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
 vi.mock("@/lib/email", () => ({
   sendWelcomeEmail: vi.fn().mockResolvedValue(undefined),
   sendVerificationEmail: vi.fn().mockResolvedValue(undefined),

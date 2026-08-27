@@ -5,6 +5,7 @@ import {
   findLinkedGuestMemberNightConflicts,
 } from "@/lib/booking-request-quotes";
 import { BookingRequestError } from "@/lib/booking-request";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { requireAdmin } from "@/lib/session-guards";
 
 const linkConflictsInputSchema = z.object({
@@ -55,6 +56,11 @@ export async function POST(
       requestId: id,
       adminMemberId: session.user.id,
       links: parsed.data.links,
+      // #3123 — the CLUB's day (`INV-CONFIG-002`), encoded at UTC midnight for
+      // the `@db.Date` frame the guard compares against (`INV-DATE-026`). The
+      // person-night guard never resolves one for itself: its authoritative
+      // callers reach it mid-transaction (`INV-LOCK-004`).
+      today: await clubTodayDateOnlyInstant(),
     });
     return NextResponse.json({ conflicts });
   } catch (err) {

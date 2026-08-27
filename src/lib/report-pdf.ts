@@ -1,7 +1,6 @@
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
-import { formatNZLongDate } from "@/lib/nzst-date";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 
 /**
  * Force the light palette onto the off-screen document html2canvas renders from
@@ -28,11 +27,55 @@ export function forceLightPaletteInClone(clonedDocument: Document): void {
   }
 }
 
+/**
+ * Render the report area to an A4 PDF and hand it to the operator's browser.
+ *
+ * ## `club` IS REQUIRED, AND IT IS THE ONLY WAY THIS MODULE KNOWS THE DATE (#3123)
+ *
+ * THIS CODE RUNS IN THE BROWSER. It drives `jsPDF` and `html2canvas` over a
+ * cloned `Document`, and both callers reach it through
+ * `await import("@/lib/report-pdf")` inside a `"use client"` component — so
+ * neither the `server-only` zone reader nor the runtime reader exists here, and
+ * the viewer's own clock is never the answer: an operator exporting from London
+ * must get the same cover date as one in Ohakune.
+ *
+ * So the club's binding arrives as data, and it is a required parameter rather
+ * than an optional one on purpose. Both dates this function names — the cover
+ * stamp and the day in the saved filename — used to read `APP_TIME_ZONE` through
+ * `formatNZLongDate` and `todayDateOnlyForTimeZone`, and a default here would let
+ * a future caller silently reacquire that. Both callers already hold a binding
+ * from `useClubTime()`, so this costs them a word each.
+ *
+ * ONE PARAMETER FOR BOTH VALUES, AND ONE READING OF THE CLOCK. The cover needs an
+ * INSTANT projected into club time and the filename needs the club's calendar
+ * day; taking two arguments would let a caller supply a day and a moment that
+ * disagree. The same argument applies INSIDE the function, and it used to be
+ * broken here: the cover stamped `new Date()` and the filename separately asked
+ * `club.today()`, so an export straddling club midnight produced a file whose
+ * name said one day and whose first page said another — in a durable document
+ * somebody keeps and later files by date. The instant is now read ONCE, below,
+ * and the filename's day is derived from that same instant with
+ * `club.calendarDateOf`, which is the club-zone projection `club.today()` would
+ * have performed on a second, later reading.
+ *
+ * The cover keeps the long "16 April 2026" spelling (owner decision, #2264;
+ * `INV-DATE-016`) — `club.instantLongDate` IS `formatClubInstantLongDate` with
+ * the zone bound, so the shape that invariant protects is byte-identical and
+ * only the zone authority changed.
+ */
 export async function generateReportPDF(
   reportElement: HTMLElement,
   dateRange: { from: string; to: string },
+  club: BoundClubTime,
   options?: { title?: string }
 ): Promise<void> {
+  // THE ONLY READING OF THE CLOCK IN THIS FUNCTION (#3123). Both dates the file
+  // carries — the cover stamp and the day in its name — are derived from this
+  // one instant, so they cannot name different club days across midnight. Taken
+  // before the capture, which is the slow part: the stamp should say when the
+  // operator asked for the report, not when html2canvas finished with it.
+  const generatedAt = requireInstant(new Date());
+
   // Capture the report content area as a high-res canvas
   // Use foreignObjectRendering: false to avoid SVG/foreignObject issues with Recharts
   const canvas = await html2canvas(reportElement, {
@@ -62,10 +105,10 @@ export async function generateReportPDF(
   pdf.setTextColor(100, 100, 100);
   pdf.text(`Date range: ${dateRange.from} to ${dateRange.to}`, margin, margin + 12);
   // The report cover keeps the long "16 April 2026" form it has always used
-  // (owner decision, #2264) — now pinned to club time rather than the
-  // exporter's own zone.
+  // (owner decision, #2264) — now pinned to the club's PERSISTED zone rather
+  // than the container's or the exporter's own.
   pdf.text(
-    `Generated: ${formatNZLongDate(new Date())}`,
+    `Generated: ${club.instantLongDate(generatedAt)}`,
     margin,
     margin + 17
   );
@@ -124,7 +167,8 @@ export async function generateReportPDF(
     }
   }
 
-  // Save
-  const dateStr = todayDateOnlyForTimeZone();
-  pdf.save(`tac-report-${dateStr}.pdf`);
+  // Save. The day in the filename is the CLUB's, from the same binding AND the
+  // same instant as the cover above — so a file exported at 8am in London is not
+  // named yesterday, and its name can never disagree with its own first page.
+  pdf.save(`tac-report-${club.calendarDateOf(generatedAt)}.pdf`);
 }

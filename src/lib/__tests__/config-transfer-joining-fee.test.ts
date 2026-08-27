@@ -17,6 +17,16 @@ import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 // used the ENTRANCE_FEE category name for these rows; that import compat closed
 // in #2131, so only current JOINING_FEE rows reach the fan-out.)
 
+/**
+ * The club's zone, named rather than left to `getTodayDateOnly`'s `APP_TIME_ZONE`
+ * default, which #3123 deletes. The importer resolves its own "today" through
+ * `readClubTimeZoneOutsideRequest()`; prisma is mocked as `{}` here, so that read
+ * fails soft to the environment seed and then to `Pacific/Auckland`. Naming it
+ * keeps this file's `today` the same day the importer stamps into
+ * `effectiveFrom`.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const MEMBERSHIP_TYPES = [
   { id: "mt-full", key: "FULL", bookingBehavior: "MEMBER_RATE", ageGroupsApply: true },
   { id: "mt-associate", key: "ASSOCIATE", bookingBehavior: "NON_MEMBER_RATE", ageGroupsApply: true },
@@ -149,7 +159,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
     const captures = { joiningFeeCreates: [] as JoiningFeeRow[] };
     await xeroConfigImporter.apply(applyCtx(FULL_ITEM_CODE_BUNDLE, makeTx(captures)) as never);
 
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     // Per-tier fan-out to every liable type (FULL, ASSOCIATE) — never to
     // NON_MEMBER, SCHOOL, or the Family type — plus the flat family row:
     // ADULT x2 + YOUTH x2 + CHILD/INFANT x4 + FAMILY flat x1 = 9 open windows.
@@ -200,7 +210,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   });
 
   it("leaves a category alone when the target already has a covering window (deliberate config wins)", async () => {
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     const captures = {
       joiningFeeCreates: [] as JoiningFeeRow[],
       existingWindows: [
@@ -215,7 +225,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   });
 
   it("bounds a materialised window to the day before a cell's future window (no overlap)", async () => {
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     const futureStart = addDaysDateOnly(today, 10);
     const captures = {
       joiningFeeCreates: [] as JoiningFeeRow[],
@@ -240,7 +250,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   });
 
   it("fills an INTER-WINDOW gap between two future windows (#1931 F1: not billed $0 mid-gap)", async () => {
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     const gapStart = addDaysDateOnly(today, 10); // window A: [today+10, today+20]
     const gapEnd = addDaysDateOnly(today, 20);
     const tailStart = addDaysDateOnly(today, 40); // window B: [today+40, null]
@@ -283,7 +293,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
   });
 
   it("fills the open TAIL after a bounded last window (#1931 F1: not billed $0 after it lapses)", async () => {
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     const boundedStart = addDaysDateOnly(today, 10);
     const boundedEnd = addDaysDateOnly(today, 50); // window: [today+10, today+50]
     const captures = {
@@ -329,7 +339,7 @@ describe("config-transfer joining-fee materialisation (#1931, E5)", () => {
 
     const store = joiningFeeStore([], []);
     const fee = await getEffectiveJoiningFee(
-      { membershipTypeId: "mt-full", ageTier: "ADULT" }, getTodayDateOnly(), store as never,
+      { membershipTypeId: "mt-full", ageTier: "ADULT" }, getTodayDateOnly(CLUB_ZONE), store as never,
     );
     expect(fee).toMatchObject({ amountCents: null, source: "NONE" });
   });

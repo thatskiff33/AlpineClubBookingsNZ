@@ -20,7 +20,7 @@ import {
   paragraph,
   supportContactSentence,
 } from "./layout";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /**
  * A member's booking-policy exception request was approved and the booking now
@@ -47,8 +47,8 @@ export function bookingPolicyExceptionApprovedTemplate(args: {
     ${heading("Your Request Was Approved")}
     ${paragraph("Hi " + escapeHtml(args.firstName) + ", an administrator has approved your request and your booking is now in place.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(args.checkIn) },
-      { label: "Check-out", value: formatNZDate(args.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(args.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(args.checkOut) },
       { label: "Guests", value: String(args.guestCount) },
     ])}
     ${args.paymentNote ? alertBox(escapeHtml(args.paymentNote), "warning") : ""}
@@ -98,8 +98,8 @@ export function bookingPolicyExceptionRefusedTemplate(args: {
     ${heading("Your request was not approved")}
     ${paragraph("Hi " + escapeHtml(args.firstName) + ", a Booking Officer has looked at " + escapeHtml(args.askDescription) + " at " + escapeHtml(args.lodgeName) + " and decided not to allow it this time.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(args.checkIn) },
-      { label: "Check-out", value: formatNZDate(args.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(args.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(args.checkOut) },
     ])}
     ${args.reasonLine ? alertBox(escapeHtml(args.reasonLine), "info") : ""}
     ${paragraph("Nothing was booked and nothing was changed. Any beds this request was holding have gone back into the pool.")}
@@ -119,8 +119,8 @@ export function bookingReviewApprovedTemplate(
     ${heading("Booking Approved")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", an admin has approved your booking. You can now complete payment to confirm it.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
     ])}
     ${adminNotes ? alertBox("Note from admin: " + escapeHtml(adminNotes), "info") : ""}
     ${button("Complete Payment", BASE_URL + "/bookings/" + bookingId)}
@@ -137,8 +137,8 @@ export function bookingReviewRejectedTemplate(
     ${heading("Booking Declined")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", an admin has reviewed your booking and was not able to approve it. The booking has been cancelled — no payment was taken.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
     ])}
     ${adminNotes ? alertBox("Reason from admin: " + escapeHtml(adminNotes), "warning") : ""}
     ${paragraph("You are welcome to make a new booking that includes an adult guest, or contact the club to discuss.")}
@@ -179,8 +179,8 @@ export function hostingCoverageLostTemplate(data: {
       `Hi ${escapeHtml(data.firstName)}, a change elsewhere means your booking at ${escapeHtml(data.lodgeName)} no longer has a qualifying adult member staying on every night your non-member guests are there.`,
     )}
     ${infoTable([
-      { label: "Check-in", value: escapeHtml(formatNZDate(data.checkIn)) },
-      { label: "Check-out", value: escapeHtml(formatNZDate(data.checkOut)) },
+      { label: "Check-in", value: escapeHtml(emailCalendarDay(data.checkIn)) },
+      { label: "Check-out", value: escapeHtml(emailCalendarDay(data.checkOut)) },
       { label: "Nights needing cover", value: escapeHtml(data.uncoveredNights) },
     ])}
     ${paragraph("Your booking has not been cancelled, and your beds and payments are unchanged. A Booking Officer has been notified and will be in touch.")}
@@ -218,11 +218,11 @@ export function policyExceptionRequestExpiredTemplate(data: {
   return layout(`
     ${heading("Your exception request has lapsed")}
     ${paragraph(
-      `Hi ${escapeHtml(data.firstName)}, the exception request you raised for your stay at ${escapeHtml(data.lodgeName)} was not decided by ${escapeHtml(formatNZDateTime(data.expiresAt))}, so it has lapsed and the beds it was holding have been released.`,
+      `Hi ${escapeHtml(data.firstName)}, the exception request you raised for your stay at ${escapeHtml(data.lodgeName)} was not decided by ${escapeHtml(emailClubDateTime(data.expiresAt))}, so it has lapsed and the beds it was holding have been released.`,
     )}
     ${infoTable([
-      { label: "Check-in", value: escapeHtml(formatNZDate(data.checkIn)) },
-      { label: "Check-out", value: escapeHtml(formatNZDate(data.checkOut)) },
+      { label: "Check-in", value: escapeHtml(emailCalendarDay(data.checkIn)) },
+      { label: "Check-out", value: escapeHtml(emailCalendarDay(data.checkOut)) },
     ])}
     ${paragraph("Your booking itself has not changed. Only the change you asked the club to allow has lapsed.")}
     ${paragraph("If you still want that change, you can raise a fresh request from your booking.")}

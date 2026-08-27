@@ -1,27 +1,31 @@
 "use client";
 
 import { formatCents } from "@/lib/utils";
-import { APP_LOCALE } from "@/config/operational";
+import {
+  formatClubDayMonth,
+  formatClubWeekday,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
-// Not shared `nzst-date` shapes (#2264): a night column is two stacked lines —
-// weekday above, day-and-month below — so each half is formatted on its own and
-// neither carries the year, which a narrow column has no room for.
-//
-// Both stay pinned to `timeZone: "UTC"`, deliberately. The column key is an NZ
-// date-only string parsed to UTC midnight just below, so reading it back in UTC
-// is what makes the label independent of the browser's zone; re-zoning it to
-// Pacific/Auckland would be a no-op at best and is not what these constants are
-// for.
-const NIGHT_COLUMN_WEEKDAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  weekday: "short",
-  timeZone: "UTC",
-});
-
-const NIGHT_COLUMN_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-});
+/**
+ * A night column is two stacked lines — weekday above, day-and-month below — so
+ * each half is formatted on its own and neither carries the year, which a narrow
+ * column has no room for (#2264).
+ *
+ * THIS FILE WAS ALREADY RIGHT, and CT-4 (#2870) is recording WHY rather than
+ * changing what it renders. Both halves were pinned to `timeZone: "UTC"`
+ * deliberately, because the column key is a calendar day carried as a
+ * `yyyy-MM-dd` string: reading it back in UTC is the identity, which is exactly
+ * the mechanism `club-time/intl.ts` uses for every calendar-date shape. The
+ * weekday half is now the kernel's own `formatClubWeekday`, which takes no zone
+ * at all and makes the reasoning structural instead of a comment.
+ *
+ * BOTH HALVES ARE NOW THE KERNEL'S. The day-and-month half used to be a local
+ * `Intl.DateTimeFormat` for want of a "16 Apr" shape — `HOUSE_SHAPES.date` is
+ * "16 Apr 2026" and there was nothing between it and the bare weekday. CT-4's
+ * `src/lib` group added `dayMonth` with byte-identical options, so this file now
+ * builds no formatter and constructs no `Date` at all.
+ */
 
 /**
  * Per-guest night picker grid (issue #713 — multi date range stays).
@@ -48,11 +52,11 @@ export interface GuestNightGridProps {
 }
 
 function nightColumnLabel(nightKey: string): { weekday: string; day: string } {
-  // nightKey is a date-only string; render in a stable, browser-local-free way.
-  const date = new Date(`${nightKey}T00:00:00.000Z`);
+  // nightKey is a calendar day; both halves render with no zone in the picture.
+  const day = requireCalendarDate(nightKey);
   return {
-    weekday: NIGHT_COLUMN_WEEKDAY.format(date),
-    day: NIGHT_COLUMN_DAY.format(date),
+    weekday: formatClubWeekday(day),
+    day: formatClubDayMonth(day),
   };
 }
 

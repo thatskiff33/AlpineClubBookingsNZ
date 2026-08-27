@@ -56,7 +56,6 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
@@ -79,7 +78,7 @@ import {
   type SubscriptionLockoutDb,
 } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 /**
  * Booking-side integration for the adult-member hosting policy (#2364).
@@ -722,7 +721,7 @@ async function evaluateLoadedBookingAdultMemberHosting(
           : []),
       ],
       db,
-      seasonYear ?? getSeasonYear(booking.checkIn),
+      seasonYear ?? seasonYearOfStoredDate(booking.checkIn),
       subscriptionLockoutMode,
       readAgeTierSettings,
     );
@@ -769,8 +768,8 @@ export async function evaluateBookingAdultMemberHosting(
  *
  * `seasonYear` EXISTS BECAUSE THIS FORM HAS NO GATED REQUEST BEHIND IT. The
  * subscription bridge (#2543) judges settlement in a membership season, and the
- * season comes from `getSeasonYear`, which reads the process-level financial-year
- * cache in `financial-year.ts`. Writers reach this rule through routes that have
+ * season comes from `seasonYearOfStoredDate`, whose year-end month defaults to the
+ * process-level financial-year cache in `financial-year.ts`. Writers reach this rule through routes that have
  * already called `refreshFinancialYearConfig`; a read-only evidence caller has
  * not, so on a cold process the cache is still the March default and a club with
  * any other year-end month would have its hosts judged against a season row that
@@ -1671,7 +1670,7 @@ export async function evaluateProposedAdultMemberHosting(
     await withSubscriptionSettlement(
       participants,
       db,
-      getSeasonYear(input.checkIn),
+      seasonYearOfStoredDate(input.checkIn),
     ),
     resolved,
   );
@@ -2250,12 +2249,24 @@ export async function enqueueOwnHostingCoverageReevaluation(
  */
 export const HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT = 50;
 
-/** The deterministic bounded candidate set shared by ordinary fan-out and merge. */
+/**
+ * The deterministic bounded candidate set shared by ordinary fan-out and merge.
+ *
+ * `today` is the club's day as the UTC-midnight `@db.Date` encoding
+ * (`INV-DATE-026`), resolved by the caller BEFORE it opened the transaction
+ * this runs inside (#3123, `INV-LOCK-004`). Every caller hands it a
+ * transaction client, and `enqueueHostingCoverageReevaluationForMember` calls
+ * it twice under a `Member` row lock and compares the two results for
+ * equality — so resolving the club's timezone here would both take a second
+ * pooled connection under the lock AND let the plan and the re-verify land on
+ * different days across club midnight, which surfaces as a spurious
+ * `HostingCoverageParticipantRetryError`. One resolved day, threaded.
+ */
 export async function loadHostingCoverageMemberFanoutCandidates(
   memberId: string,
   db: AdultMemberHostingReviewDb,
+  today: Date,
 ): Promise<CoverageOwnerFacts[]> {
-  const today = getTodayDateOnly();
   return (await db.booking.findMany({
     where: {
       deletedAt: null,
@@ -2292,11 +2303,18 @@ export async function buildMemberMergeHostingCoveragePlan(
   params: {
     masterId: string;
     capturedLoserOwnedBookingIds: readonly string[];
+    /**
+     * The club's today (#3123), resolved by merge BEFORE it opened its
+     * transaction (`INV-LOCK-004`). Merge builds this plan and then REBUILDS
+     * it after acquiring participant locks, comparing the two; both passes
+     * must be judged against the same club day.
+     */
+    today: Date;
   },
   db: AdultMemberHostingReviewDb,
 ): Promise<MemberMergeHostingCoveragePlan> {
   const [attended, movedOwnerBookings] = await Promise.all([
-    loadHostingCoverageMemberFanoutCandidates(params.masterId, db),
+    loadHostingCoverageMemberFanoutCandidates(params.masterId, db, params.today),
     params.capturedLoserOwnedBookingIds.length > 0
       ? (db.booking.findMany({
           where: { id: { in: [...params.capturedLoserOwnedBookingIds] } },
@@ -2440,6 +2458,18 @@ export async function enqueueMemberMergeHostingCoveragePlan(
 export async function enqueueHostingCoverageReevaluationForMember(
   memberId: string,
   db: AdultMemberHostingReviewDb,
+  /**
+   * The club's today (#3123), resolved by the caller BEFORE it opened the
+   * transaction this runs inside. It sits third and REQUIRED, ahead of the
+   * defaulted `context`, on purpose: `INV-LOCK-004` says the club timezone is
+   * one of the two reads that cannot take a transaction client and must be
+   * hoisted out and passed as a value, and a required parameter is what makes
+   * the compiler enumerate every caller instead of a default quietly reading
+   * the container's timezone (`INV-CONFIG-002`). It bounds the fan-out's
+   * `checkOut >= today` candidate set, on both the planning pass and the
+   * post-lock re-verify, which must agree.
+   */
+  today: Date,
   context: HostingCoverageChangeContext = { cause: "SYSTEM_CHANGE" },
   suppliedParticipantProof?: HostingCoverageQueueParticipantProof,
 ): Promise<number> {
@@ -2467,7 +2497,7 @@ export async function enqueueHostingCoverageReevaluationForMember(
   // retry a non-enforcing club can still see on a standing write is the price of
   // that fence, and it is a price this repository has decided to pay.
   await lockHostingCoverageMemberLifecycleTarget(db, memberId);
-  const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db);
+  const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
   if (plannedAttended.length === 0) return 0;
   if (plannedAttended.length >= HOSTING_COVERAGE_MEMBER_FANOUT_LIMIT) {
     logger.warn(
@@ -2508,7 +2538,8 @@ export async function enqueueHostingCoverageReevaluationForMember(
   // Re-query after the Member locks. Every final owner must already belong to
   // the one planned set; a changed owner or new booking outside it is a safe
   // retry, never a late participant acquisition.
-  const attended = await loadHostingCoverageMemberFanoutCandidates(memberId, db);
+  // The SAME club day as the planning pass above — see `today`'s docblock.
+  const attended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);
   const plannedById = new Map(plannedAttended.map((booking) => [booking.id, booking]));
   if (attended.length !== plannedAttended.length) {
     throw new HostingCoverageParticipantRetryError();

@@ -38,7 +38,7 @@ const NON_MEMBER_MEMBERSHIP_TYPE_KEY = "NON_MEMBER";
 const BUILT_IN_MEMBERSHIP_TYPE_KEYS = BUILT_IN_MEMBERSHIP_TYPES.map(
   (type) => type.key,
 );
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 const MEMBERSHIP_TYPE_BLOCKS_BOOKING_CODE =
   "MEMBERSHIP_TYPE_BLOCKS_BOOKING";
@@ -1241,7 +1241,7 @@ export async function priceBookingGuestsWithMembershipTypePolicy(
     subscriptionLockoutMode?: SubscriptionLockoutMode;
   },
 ): Promise<PriceBreakdown> {
-  const seasonYear = input.seasonYear ?? getSeasonYear(input.checkIn);
+  const seasonYear = input.seasonYear ?? seasonYearOfStoredDate(input.checkIn);
   await assertMembershipTypeBookingAllowed(db, {
     ownerMemberId: input.ownerMemberId,
     guests: input.guests,

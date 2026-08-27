@@ -9,10 +9,10 @@ import { FieldHint, useFieldHint } from "@/components/ui/field-hint"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  formatAdminName,
-  formatMemberDateNz,
-} from "@/lib/admin-member-detail-helpers"
+import { formatAdminName } from "@/lib/admin-member-detail-helpers"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import type {
   CreditHistoryItem,
   PendingCreditAdjustmentItem,
@@ -58,6 +58,13 @@ export function MemberCreditCard({
   className,
 }: MemberCreditCardProps) {
   const { data: session } = useSession()
+  // Two kinds of date on this card and they are NOT interchangeable: the ledger
+  // stamps (`createdAt`, `reviewedAt`) are real instants and are read in the
+  // club's persisted zone, while a linked booking's `checkIn`/`checkOut` are
+  // `@db.Date` lodge nights that carry no zone at all. Projecting a lodge night
+  // through a zone is `INV-DATE-019` and names the night before for a club
+  // behind UTC — which on a credit row is the stay the member is looking at.
+  const clubTime = useClubTime()
   // #2257 — the example moved out of the placeholder and folded into the
   // sign-convention note that was already here, so ONE properly associated hint
   // describes the field instead of a grey pseudo-value plus an orphan <p>.
@@ -160,7 +167,7 @@ export function MemberCreditCard({
                       const isReviewing = reviewingAdjustmentId === item.id
                       return (
                         <TableRow key={item.id}>
-                          <TableCell className="text-sm">{formatMemberDateNz(item.createdAt)}</TableCell>
+                          <TableCell className="text-sm">{formatPayloadInstantDate(clubTime, item.createdAt)}</TableCell>
                           <TableCell
                             className={`font-medium ${
                               item.amountCents > 0 ? "text-success-11" : "text-danger-11"
@@ -218,7 +225,7 @@ export function MemberCreditCard({
                 <TableBody>
                   {creditHistory.map((item) => (
                     <TableRow key={item.id}>
-                      <TableCell className="text-sm">{formatMemberDateNz(item.createdAt)}</TableCell>
+                      <TableCell className="text-sm">{formatPayloadInstantDate(clubTime, item.createdAt)}</TableCell>
                       <TableCell>
                         <Badge
                           variant="secondary"
@@ -247,7 +254,7 @@ export function MemberCreditCard({
                               <p>
                                 Approved by {formatAdminName(item.approvedBy)}
                                 {item.approvalRequest?.reviewedAt
-                                  ? ` on ${formatMemberDateNz(item.approvalRequest.reviewedAt)}`
+                                  ? ` on ${formatPayloadInstantDate(clubTime, item.approvalRequest.reviewedAt)}`
                                   : ""}
                               </p>
                             )}
@@ -259,13 +266,13 @@ export function MemberCreditCard({
                       <TableCell className="text-sm">
                         {item.sourceBooking ? (
                           <span className="text-info-11">
-                            {formatMemberDateNz(item.sourceBooking.checkIn)} -{" "}
-                            {formatMemberDateNz(item.sourceBooking.checkOut)}
+                            {formatPayloadCalendarDay(item.sourceBooking.checkIn)} -{" "}
+                            {formatPayloadCalendarDay(item.sourceBooking.checkOut)}
                           </span>
                         ) : item.appliedToBooking ? (
                           <span className="text-cat1-11">
-                            {formatMemberDateNz(item.appliedToBooking.checkIn)} -{" "}
-                            {formatMemberDateNz(item.appliedToBooking.checkOut)}
+                            {formatPayloadCalendarDay(item.appliedToBooking.checkIn)} -{" "}
+                            {formatPayloadCalendarDay(item.appliedToBooking.checkOut)}
                           </span>
                         ) : (
                           "-"

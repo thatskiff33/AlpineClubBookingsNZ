@@ -48,6 +48,7 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -2399,6 +2400,18 @@ export async function executeMemberMerge(params: {
   let sweptShares: SweptPartnerSharedAllocation[] = [];
   let sweptShareMasterName = "";
 
+  // #3123 / INV-LOCK-004 — ONE club day for the whole merge, resolved before
+  // the transaction opens. Merge runs on a 120s budget holding every affected
+  // lodge capacity key and a `Member … FOR UPDATE`; resolving the club's
+  // persisted timezone from inside it would be a `clubTimeSettings.findUnique`
+  // taking a second pooled connection for that entire window. One value also
+  // keeps the four consumers coherent: the lodge derivation that decides what
+  // is LOCKED, the sweep that decides what is REMOVED, and the hosting plan
+  // that is built and then rebuilt under the participant locks and compared
+  // for equality — a plan and a re-plan on two different club days would 409 a
+  // merge that nothing was wrong with.
+  const clubTodayForMerge = await clubTodayDateOnlyInstant();
+
   const result = await client.$transaction(async (tx) => {
     // Policy reconciliation enumerates bookings and inserts required queue rows
     // under this key. Take it before lifecycle locks and hold it through every
@@ -2467,6 +2480,7 @@ export async function executeMemberMerge(params: {
     const partnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
       tx,
       [masterId, loserId],
+      clubTodayForMerge,
     );
 
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
@@ -2623,6 +2637,7 @@ export async function executeMemberMerge(params: {
       {
         masterId,
         capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+        today: clubTodayForMerge,
       },
       tx,
     );
@@ -2643,6 +2658,9 @@ export async function executeMemberMerge(params: {
         {
           masterId,
           capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+          // The SAME club day as the plan above; the two are compared by
+          // fingerprint and a differing day would 409 a sound merge (#3123).
+          today: clubTodayForMerge,
         },
         tx,
       );
@@ -2787,6 +2805,9 @@ export async function executeMemberMerge(params: {
         lockedLodgeIds: partnerShareLodgeIds,
         reason: "members_merged",
         db: tx,
+        // The same day the lodge prefix above was derived from, so the set
+        // that was LOCKED and the rows that are JUDGED cannot disagree.
+        today: clubTodayForMerge,
       });
     } catch (sweepError) {
       if (sweepError instanceof UnlockedPartnerShareLodgeError) {

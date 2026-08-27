@@ -24,7 +24,8 @@ import {
   useSectionEditState,
   ForbiddenSaveError,
 } from "@/hooks/use-section-edit-state";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { LocalBackupCard } from "@/app/(admin)/admin/backups/local-backup-card";
 
 interface BackupRunSummary {
@@ -101,9 +102,11 @@ export async function readError(res: Response, fallback: string): Promise<string
   }
 }
 
-function formatDateTime(iso: string | null): string {
+// Backup completion and run-start stamps are real INSTANTS, shown in the
+// club's persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
+function formatDateTime(clubTime: BoundClubTime, iso: string | null): string {
   if (!iso) return "—";
-  return formatNZDateTime(new Date(iso));
+  return clubTime.instantDateTime(requireInstant(iso));
 }
 
 function StatusPill({
@@ -261,6 +264,7 @@ function StatusCard({
   canEdit: boolean | undefined;
   onRan: () => Promise<BackupStatus | null>;
 }) {
+  const clubTime = useClubTime();
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState("");
 
@@ -382,7 +386,7 @@ function StatusCard({
               Last successful backup
             </dt>
             <dd className="text-sm text-foreground">
-              {formatDateTime(lastSuccess?.completedAt ?? null)}
+              {formatDateTime(clubTime, lastSuccess?.completedAt ?? null)}
             </dd>
           </div>
           <div>
@@ -807,6 +811,7 @@ function CredentialsSection({
 }
 
 function RecentRunsCard({ runs }: { runs: BackupRunSummary[] }) {
+  const clubTime = useClubTime();
   return (
     <Card>
       <CardHeader>
@@ -825,7 +830,7 @@ function RecentRunsCard({ runs }: { runs: BackupRunSummary[] }) {
                 <div className="flex items-center gap-2">
                   <StatusPill tone={runTone(run.status)}>{run.status}</StatusPill>
                   <span className="text-sm text-foreground">
-                    {formatDateTime(run.startedAt)}
+                    {formatDateTime(clubTime, run.startedAt)}
                   </span>
                   <span className="text-xs text-muted-foreground">
                     ({run.trigger})

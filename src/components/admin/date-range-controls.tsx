@@ -8,6 +8,8 @@ import {
   findMatchingDateRangePreset,
   getDateRangeForPreset,
 } from "@/lib/date-range-presets";
+import { useClubTime } from "@/components/club-time-provider";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 
 interface DateRangeControlsProps {
   presets: readonly DateRangePreset[];
@@ -32,8 +34,22 @@ export function DateRangeControls({
   toLabel = "To",
   idPrefix = "date-range",
 }: DateRangeControlsProps) {
+  /**
+   * The club's day, delivered to the browser as data (#3123). Every preset in
+   * this control is relative to "today", and until now that came from
+   * `NEXT_PUBLIC_TZ` as baked into the bundle — the VIEWER's build, not the
+   * club's persisted zone (`INV-CONFIG-002`). Encoded as the UTC-midnight
+   * `Date` the preset arithmetic works in.
+   *
+   * `useClubTime()` throws when no provider is above it; all five consumers of
+   * this control sit under `(admin)`, whose layout mounts `AppProviders`, and
+   * `club-time-provider-mount-census.test.tsx` is what keeps that true.
+   */
+  const clubToday = dateOnlyInstantOf(useClubTime().today());
+
   const selectedPreset =
-    findMatchingDateRangePreset(from, to, presets) ?? CUSTOM_DATE_RANGE_KEY;
+    findMatchingDateRangePreset(from, to, presets, clubToday) ??
+    CUSTOM_DATE_RANGE_KEY;
 
   function handlePresetChange(value: string) {
     if (value === CUSTOM_DATE_RANGE_KEY) {
@@ -45,7 +61,7 @@ export function DateRangeControls({
       return;
     }
 
-    const range = getDateRangeForPreset(preset);
+    const range = getDateRangeForPreset(preset, clubToday);
     onFromChange(range.from);
     onToChange(range.to);
   }

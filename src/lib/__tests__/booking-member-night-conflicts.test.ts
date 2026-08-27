@@ -11,6 +11,19 @@ import {
   MEMBER_NIGHT_CONFLICT_BOOKING_STATUSES,
   type BookingMemberNightConflict,
 } from "@/lib/booking-member-night-conflicts";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in, rather than read by the guard under the
+// locks its nine authoritative callers hold.
+//
+// Pinned to 20 May 2026 and NOT to the root frozen clock's 1 July, because this
+// suite pins its own instant with `vi.setSystemTime` in two hooks below and
+// every stay fixture in the file is written relative to THAT day. Threading the
+// root instant instead moved a stay from future to past and correctly flipped
+// `canSelfRemove`, which is the fixture agreeing with the code rather than a
+// behaviour change.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-05-20"));
 
 function existingGuest(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,6 +73,7 @@ describe("findBookingMemberNightConflicts", () => {
     const db = conflictDb([existingGuest()]);
 
     const conflicts = await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-1",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -109,6 +123,7 @@ describe("findBookingMemberNightConflicts", () => {
     ]);
 
     const conflicts = await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-2",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-11"),
@@ -133,6 +148,7 @@ describe("findBookingMemberNightConflicts", () => {
     const db = conflictDb([existingGuest()]);
 
     const conflicts = await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-9",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -182,6 +198,7 @@ describe("findBookingMemberNightConflicts", () => {
     async function conflictFor(actorMemberId: string, actorRole = "USER") {
       const db = conflictDb([strangersBooking()]);
       const conflicts = await findBookingMemberNightConflicts(db as any, {
+        today: FIXTURE_CLUB_TODAY,
         actorMemberId,
         actorRole,
         checkIn: parseDateOnly("2026-06-01"),
@@ -278,6 +295,7 @@ describe("findBookingMemberNightConflicts", () => {
         }),
       ]);
       const conflicts = await findBookingMemberNightConflicts(db as any, {
+        today: FIXTURE_CLUB_TODAY,
         actorMemberId: "member-1",
         actorRole: "USER",
         checkIn: parseDateOnly("2026-06-01"),
@@ -303,6 +321,7 @@ describe("findBookingMemberNightConflicts", () => {
     ]);
 
     const conflicts = await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-1",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -322,6 +341,7 @@ describe("findBookingMemberNightConflicts", () => {
     const db = conflictDb([]);
 
     await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-1",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -371,6 +391,7 @@ describe("findBookingMemberNightConflicts", () => {
     };
 
     await assertNoBookingMemberNightConflicts(db as never, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-2",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -589,6 +610,7 @@ describe("#2307 person-night conflicts still see a PENDING member guest (D-4/D-1
     ]);
 
     const conflicts = await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-1",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),
@@ -611,6 +633,7 @@ describe("#2307 person-night conflicts still see a PENDING member guest (D-4/D-1
       const db = conflictDb([existingGuest({ consentStatus })]);
 
       const conflicts = await findBookingMemberNightConflicts(db as any, {
+        today: FIXTURE_CLUB_TODAY,
         actorMemberId: "member-1",
         actorRole: "USER",
         checkIn: parseDateOnly("2026-06-01"),
@@ -626,6 +649,7 @@ describe("#2307 person-night conflicts still see a PENDING member guest (D-4/D-1
     const db = conflictDb([]);
 
     await findBookingMemberNightConflicts(db as any, {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "member-1",
       actorRole: "USER",
       checkIn: parseDateOnly("2026-06-01"),

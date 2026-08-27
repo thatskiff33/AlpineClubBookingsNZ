@@ -93,6 +93,8 @@ import { loadKnowledgeBundle } from "../../knowledge/load";
 import { isVerifiedCommitSha } from "../../knowledge/verify";
 import type { DiagnosticsToolRawRow } from "../define";
 import { withBoundedReadOnlyTransaction } from "../read-only-transaction";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { readCronRuntimeZone } from "@/lib/cron-runtime-zone";
 
 /** The stable "nothing to report" code, so an empty list is never an empty string. */
 export const NO_CODES = "none";
@@ -391,11 +393,28 @@ const JOB_HEALTH_READ_BUDGET_MS = 10_000;
 export async function readBackgroundJobHealthEvidence(
   now: Date = new Date(),
 ): Promise<readonly DiagnosticsToolRawRow[]> {
-  const definitions = getAdminCronJobDefinitions();
+  /*
+    Scheduled jobs are described in the CLUB's civil time (CT-5, #2869), and
+    the zone they RUN on is the one the scheduler pinned at boot — not the
+    persisted setting, which a running job only adopts on restart. Prefer the
+    running zone when this process registered the jobs, so the evidence never
+    states an hour no job will fire at; fall back to the configured one and
+    report the mismatch as its own field rather than silently.
+  */
+  const configuredClubTimeZone = await readClubTimeZoneOutsideRequest();
+  const runningClubTimeZone = readCronRuntimeZone();
+  const clubTimeZone = runningClubTimeZone ?? configuredClubTimeZone;
+  const definitions = getAdminCronJobDefinitions(clubTimeZone);
   const runs = await getCronRunsForAdminHealth(definitions, {
     deadlineAtMs: Date.now() + JOB_HEALTH_READ_BUDGET_MS,
   });
-  const report = buildCronHealthReport({ definitions, runs, now });
+  const report = buildCronHealthReport({
+    definitions,
+    runs,
+    now,
+    clubTimeZone: configuredClubTimeZone,
+    runningTimeZone: runningClubTimeZone,
+  });
 
   return [...report.jobs]
     .sort((left, right) => {

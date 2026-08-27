@@ -304,7 +304,7 @@ export function hasIndistinguishableMemberGuestCandidates(
 ): boolean {
   const seen = new Set<string>();
   for (const candidate of candidates) {
-    const key = `${candidate.firstName.toLowerCase()} ${candidate.lastName.toLowerCase()} ${candidate.ageTier}`;
+    const key = `${candidate.firstName.toLowerCase()}\u0000${candidate.lastName.toLowerCase()}\u0000${candidate.ageTier}`;
     if (seen.has(key)) return true;
     seen.add(key);
   }

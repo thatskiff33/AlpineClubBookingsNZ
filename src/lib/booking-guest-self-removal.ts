@@ -1,5 +1,5 @@
 import { BookingStatus } from "@prisma/client";
-import { getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 /**
  * Booking statuses a linked guest may take themselves off (#2250).
@@ -69,7 +69,7 @@ export function evaluateGuestSelfRemoval({
   bookingCheckIn,
   bookingGuestCount,
   isQuotePriced = false,
-  today = getTodayDateOnly(),
+  today,
 }: {
   actorMemberId: string;
   /** `memberId` on the guest row being removed (null for a non-member guest). */
@@ -84,7 +84,20 @@ export function evaluateGuestSelfRemoval({
    * priced" — for callers that cannot afford the lookup.
    */
   isQuotePriced?: boolean;
-  today?: Date;
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding
+   * (`clubTodayDateOnlyInstant()` on a request, or
+   * `dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))` in a
+   * module a CLI or the instrumentation graph can reach).
+   *
+   * REQUIRED, and that is the fix rather than an inconvenience (#3123). It used
+   * to default to `getTodayDateOnly()`, which answers from the container's
+   * timezone rather than the club's persisted one, so a club whose configured
+   * zone differed from its deployment's judged "has the stay started yet" on the
+   * wrong day — and no call site could see that it was doing so. Making it
+   * required lets the typechecker enumerate every caller instead.
+   */
+  today: Date;
 }): GuestSelfRemovalEligibility {
   // Self-removal is the path for someone ELSE's booking. An owner (and an
   // admin) edits the guest list through the full booking edit flow instead.
@@ -97,7 +110,14 @@ export function evaluateGuestSelfRemoval({
   if (!SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(bookingStatus)) {
     return { canSelfRemove: false, blocker: "BOOKING_STATUS" };
   }
-  if (normalizeDateOnlyForTimeZone(bookingCheckIn) <= today) {
+  // `bookingCheckIn` is a stored `@db.Date` lodge night
+  // (`prisma/schema.prisma:1662`), so it is DECODED rather than projected: a
+  // calendar day takes no timezone, and projecting the UTC-midnight encoding
+  // through one reads the previous day for any club behind Greenwich — which
+  // would refuse self-removal a day early. `today` arrives in the same
+  // UTC-midnight day encoding, so both sides of this comparison are in one
+  // frame (#3123, INV-DATE-026).
+  if (storedDateOnly(bookingCheckIn) <= today) {
     return { canSelfRemove: false, blocker: "STAY_NOT_FUTURE" };
   }
   if (bookingGuestCount <= 1) {
@@ -177,7 +197,8 @@ export function resolveBookingSelfRemovalCard({
   guests: readonly { id: string; memberId: string | null }[];
   /** See `evaluateGuestSelfRemoval` — the booking detail page supplies this. */
   isQuotePriced?: boolean;
-  today?: Date;
+  /** The club's today. See `evaluateGuestSelfRemoval`; required for its reasons. */
+  today: Date;
 }): BookingSelfRemovalCard | null {
   if (isBookingOwner || isAdminViewer) return null;
   if (bookingDeletedAt) return null;
@@ -197,7 +218,7 @@ export function resolveBookingSelfRemovalCard({
     bookingCheckIn,
     bookingGuestCount: guests.length,
     isQuotePriced: isQuotePriced ?? false,
-    ...(today ? { today } : {}),
+    today,
   });
 
   return {

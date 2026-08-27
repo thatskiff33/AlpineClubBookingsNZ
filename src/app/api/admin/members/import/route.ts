@@ -6,7 +6,8 @@ import { randomBytes } from "crypto";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { createAuditLog } from "@/lib/audit";
@@ -18,7 +19,6 @@ import {
 import { isLoginEmailUniqueConflict } from "@/lib/member-email";
 import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
-import { parseDateOnly } from "@/lib/date-only";
 import { ensureMemberAccessRolesFromCompatibilityFields } from "@/lib/member-access-role-writes";
 import {
   DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
@@ -35,7 +35,8 @@ import {
   type MemberImportDateFieldKey,
   type MemberImportDateFormatMapping,
 } from "@/lib/member-csv-import";
-import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubTime } from "@/lib/club-time/server";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { loadMemberFieldsFlags } from "@/lib/member-fields-settings";
 import {
   GENDER_OPTIONS,
@@ -263,7 +264,7 @@ export async function POST(req: NextRequest) {
 
   // Optional-field visibility settings. When a field is switched off club-wide
   // we ignore any value present in the CSV rather than importing it.
-  const flags = await loadMemberFieldsFlags();
+  const [flags, club] = await Promise.all([loadMemberFieldsFlags(), clubTime()]);
   const dateFormats: MemberImportDateFormatMapping = {
     dateOfBirth:
       parsed.data.dateFormats?.dateOfBirth ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
@@ -364,6 +365,13 @@ export async function POST(req: NextRequest) {
     rowNote: string | null;
   }
   const validatedRows: ValidatedRow[] = [];
+  // ONE read of the club's season for the whole import (#2870, correctness
+  // review). It was derived inside the per-row loop below, and an import that
+  // straddles club midnight on a season boundary would then classify its early
+  // and late rows against different seasons — an age tier decides a price band.
+  const clubCurrentSeasonStart = getSeasonStartDate(
+    clubSeasonYear(await clubTimeZone()),
+  );
 
   for (let i = 0; i < rows.length; i++) {
     const rowNum = getImportRowNumber(rows[i], i);
@@ -437,7 +445,7 @@ export async function POST(req: NextRequest) {
       cancelledDateForFutureCheck &&
       isMemberImportCancelledDateInFuture(
         formatDateOnly(cancelledDateForFutureCheck),
-        todayDateOnlyForTimeZone(),
+        club.today(),
       )
     ) {
       rowErrors.push(
@@ -483,10 +491,7 @@ export async function POST(req: NextRequest) {
     const isCancelled = cancelledAt !== null;
 
     if (dateOfBirth) {
-      ageTier = (await computeAgeTier(
-        dateOfBirth,
-        getSeasonStartDate(getSeasonYear()),
-      )) as AgeTier;
+      ageTier = (await computeAgeTier(dateOfBirth, clubCurrentSeasonStart)) as AgeTier;
     }
 
     // Occupation is adult-only and gated by the club-wide field setting.

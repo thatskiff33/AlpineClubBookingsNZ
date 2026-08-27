@@ -3,6 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
+    // when it is ABSENT, and the page then falls back to the environment — the
+    // very defect CT-4 removes, silently, with nothing able to tell. Every test
+    // here leaves it resolving `null`, which reproduces the no-row fallback and
+    // keeps their expectations unchanged; the zone-authority test supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     member: { count: vi.fn(), findUnique: vi.fn() },
     booking: { count: vi.fn(), findMany: vi.fn() },
     choreAssignment: { findMany: vi.fn() },
@@ -38,6 +44,16 @@ import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
+/*
+ * The club's day the fixtures below are built in (#3123). The dashboard takes
+ * its own from `clubTime()` and `getUnassignedHutLeaderDates` from
+ * `clubTodayDateOnlyInstant()`; this suite's `clubTimeSettings.findUnique`
+ * resolves `null`, so both fall back to `APP_TIME_ZONE` — `Pacific/Auckland`
+ * under test. The roster fixtures have to sit in the same zone as the window
+ * they are counted against. Zone authority is not this file's subject.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // getStats booking.count call order (roster + bed counts no longer use
 // booking.count — they now run through window-scoped helpers that findMany
 // bookings + choreAssignments / bedAllocations): totalBookings, activeBookings,
@@ -69,7 +85,7 @@ function mockStats() {
   // rows a real guest has. The envelope stays alongside them because it is what
   // the Prisma where-clauses select on, and because the two must agree for a
   // contiguous stay — which is the whole point of writing both out here.
-  const today = getTodayDateOnly();
+  const today = getTodayDateOnly(CLUB_ZONE);
   const plus1 = addDaysDateOnly(today, 1);
   const plus2 = addDaysDateOnly(today, 2);
   const plus3 = addDaysDateOnly(today, 3);
@@ -175,6 +191,7 @@ function mockActorMatrix(matrix: Partial<AdminPermissionMatrix>) {
 describe("admin dashboard officer key cards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     mockStats();
   });
 
@@ -269,6 +286,7 @@ describe("admin dashboard hut-leader coverage card", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     mockStats();
     mockActorMatrix({ overview: "view" });
   });

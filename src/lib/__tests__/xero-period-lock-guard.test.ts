@@ -35,8 +35,18 @@ import {
   getTodayDateOnly,
 } from "@/lib/date-only";
 
-// Relative dates only: the guard compares against the real NZ today.
-const daysAgo = (n: number) => addDaysDateOnly(getTodayDateOnly(), -n);
+/*
+ * Relative dates only: the guard compares against the CLUB's today, which it
+ * reads with `readClubTimeZoneOutsideRequest()` (xero-period-lock-guard.ts:215).
+ * This suite mocks no `ClubTimeSettings` row, so that reader falls back to the
+ * environment seed — `Pacific/Auckland` under test — and the fixtures below have
+ * to be built in the same zone or a "today" check-in lands on the wrong side of
+ * the guard. Zone AUTHORITY is not this file's subject, so it names the agreeing
+ * zone rather than a divergent one (#3123).
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
+const daysAgo = (n: number) => addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -n);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,10 +61,10 @@ beforeEach(() => {
 describe("assertCheckInClearsXeroLockDate", () => {
   it("passes a today-or-future check-in without touching flags, connection, or Xero", async () => {
     await expect(
-      assertCheckInClearsXeroLockDate(getTodayDateOnly()),
+      assertCheckInClearsXeroLockDate(getTodayDateOnly(CLUB_ZONE)),
     ).resolves.toBeUndefined();
     await expect(
-      assertCheckInClearsXeroLockDate(addDaysDateOnly(getTodayDateOnly(), 3)),
+      assertCheckInClearsXeroLockDate(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 3)),
     ).resolves.toBeUndefined();
 
     expect(h.loadEffectiveModuleFlags).not.toHaveBeenCalled();
@@ -356,7 +366,7 @@ describe("assertDateEditClearsXeroLockDate (issue #1729)", () => {
   it("passes a guarded edit whose new check-in is in the future (only past check-ins are guarded)", async () => {
     await expect(
       assertDateEditClearsXeroLockDate(guardedBooking(), {
-        checkIn: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 3)),
+        checkIn: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 3)),
       }),
     ).resolves.toBeUndefined();
   });

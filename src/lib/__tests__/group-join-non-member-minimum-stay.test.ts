@@ -123,11 +123,22 @@ const DETAILED_MINIMUM_STAY_SENTENCE =
 
 const LODGE_B = "lodge-b";
 
-// Relative to the real clock: the ended-stay gate (#1723 path 3) refuses joins
-// once the organiser's check-out reaches NZ today, so fixed calendar dates
-// would rot into the wrong refusal.
-const checkIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const checkOut = addDaysDateOnly(getTodayDateOnly(), 31);
+/*
+ * Relative to the clock: the ended-stay gate (#1723 path 3) refuses joins once
+ * the organiser's check-out reaches the CLUB's today, so fixed calendar dates
+ * would rot into the wrong refusal.
+ *
+ * `group-booking.ts` reads that day with
+ * `clubToday(await readClubTimeZoneOutsideRequest())`. This suite mocks no
+ * `ClubTimeSettings` row, so that reader falls back to the environment seed —
+ * `Pacific/Auckland` under test — and the fixtures have to be built in the same
+ * zone as the gate they are placed against. Zone AUTHORITY is not this file's
+ * subject, so it names the agreeing zone rather than a divergent one (#3123).
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
+const checkIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const checkOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 31);
 
 const violation = {
   reasonCode: "MINIMUM_STAY",

@@ -15,9 +15,20 @@
  * while `booking-confirmation-credit.ts` and `xero-credit-sync-checker.ts` use
  * the same arithmetic directly. Keeping the module at the `src/lib` business
  * boundary makes that ownership explicit without duplicating the calculation.
+ *
+ * THE ONE DATE IT RENDERS IS A LODGE NIGHT, AND IT TAKES NO TIMEZONE (#3123).
+ * Every date this module formats is a `Booking.checkIn`/`checkOut` value — a
+ * `DateTime @db.Date` calendar day, the same day everywhere on earth. It goes
+ * through `emailCalendarDay`, which consults no zone and refuses a value
+ * carrying a time of day, and which is the same function `email/booking.ts`
+ * renders these two columns with in nine other places. That shared seam is the
+ * "a second copy is how they would disagree" rule above, applied to a date
+ * instead of an amount. It is deliberately NOT the club-zone formatter: a
+ * blanket sweep of the retired `nzst-date` adapter onto the club's zone would
+ * have introduced two brand-new wrong-day defects here and fixed nothing.
  */
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 import { type BookingPaymentDueCredit } from "@/lib/email-message-notes";
-import { formatNZDate } from "@/lib/nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 
 /**
@@ -467,8 +478,16 @@ export function bookingModificationSummaryRows(params: {
   // whole reason this helper exists.
   promoCoverageNote?: string | null;
 }): Array<{ label: string; value: string }> {
+  // #3123: `oldCheckIn`/`newCheckIn`/`oldCheckOut`/`newCheckOut` are all
+  // `Booking.checkIn`/`checkOut` values — `DateTime @db.Date` lodge nights.
+  // A calendar day has no timezone, so `emailCalendarDay` consults none; it is
+  // also the exact function `email/booking.ts` renders these same two columns
+  // with everywhere else, so the modification rows and the rest of the email
+  // cannot spell one booking's nights two ways. `formatNZDate` projected the
+  // stored encoding through the container's zone and named the previous night
+  // for any club behind Greenwich.
   const dateRange = (from: Date, to: Date) =>
-    `${formatNZDate(from)} – ${formatNZDate(to)}`;
+    `${emailCalendarDay(from)} – ${emailCalendarDay(to)}`;
   const rows: Array<{ label: string; value: string }> = [];
 
   const datesChanged =

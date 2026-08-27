@@ -558,6 +558,43 @@ export function evaluateComputedRatchet(input: {
   const liveAllowances = (input.allowances ?? []).filter((allowance) =>
     resolved.sizes.has(allowance.source),
   );
+
+  // "One file, one allowance" — asked HERE, of the allowances live for this
+  // change, and not of the directory as a whole.
+  //
+  // The reader cannot ask it, because it does not know the diff, and asking it
+  // over every `.md` on disk made a merged, inert allowance permanently forbid
+  // any later change from declaring one for the same file. That contradicted
+  // the paragraph directly above, and it failed the author with a path that was
+  // not in their diff. Two LIVE declarations of one file's length is the real
+  // mistake — the gate cannot tell which number is meant — and it is still an
+  // `unusable`, not a regression: an ambiguous input is not something to guess
+  // at. The allowance itself is still applied (the last of the two, as before),
+  // so the run's other findings are unchanged and this failure adds to them
+  // rather than replacing them.
+  const declaredBy = new Map<string, string>();
+  for (const allowance of liveAllowances) {
+    const first = declaredBy.get(allowance.file);
+    if (first === undefined) {
+      declaredBy.set(allowance.file, allowance.source);
+      continue;
+    }
+    findings.push({
+      severity: "unusable",
+      kind: "allowance-malformed",
+      file: allowance.file,
+      budget: null,
+      previous: `declared in ${first}`,
+      current: `declared again in ${allowance.source}`,
+      problem: `${allowance.file} already has an allowance in ${first}; one file, one allowance`,
+      action:
+        "delete one of the two entries — this change declares the same file's " +
+        "length twice, and a gate cannot choose between two numbers. Only " +
+        "allowances in THIS change count: one that merged earlier is inert and " +
+        "is not what you are colliding with",
+    });
+  }
+
   const allowanceFor = new Map(liveAllowances.map((a) => [a.file, a]));
   const used = new Set<string>();
   const allowancesApplied: SizeAllowance[] = [];

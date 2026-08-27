@@ -62,6 +62,7 @@ import {
 import {
   parseBedAllocationDateRange,
 } from "@/lib/bed-allocation-date-range";
+import { requireCalendarDate } from "@/lib/club-time";
 import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 
 const LODGE = "lodge-1";
@@ -172,10 +173,17 @@ async function runAutoWithDb(
 
 // The board range is half-open: nights are [fromDate, toDate), so this window
 // is the single night of 2026-07-01.
+/**
+ * #3123 — the club's day is now a required argument of
+ * `parseBedAllocationDateRange`, resolved by the caller (`INV-LOCK-004`). Every
+ * call in this file names its own `from`, so nothing below depends on the value.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
+
 const range = parseBedAllocationDateRange({
   from: "2026-07-01",
   to: "2026-07-02",
-});
+}, CLUB_DAY);
 
 beforeEach(() => {
   vi.clearAllMocks();

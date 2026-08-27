@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/config/operational", () => ({ APP_CURRENCY: "NZD" }));
-vi.mock("@/lib/date-only", () => ({ getTodayDateOnly: () => new Date("2026-07-14T00:00:00.000Z") }));
+// The whole module, not just the export this file names. `dateRange` now reaches
+// the kernel's declared `HOUSE_SHAPES.date` formatter instead of a hand-rolled
+// `Intl.DateTimeFormat` (#3123), which reads `APP_LOCALE` at import — and a
+// partial factory throws there before a single test runs.
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_LOCALE: "en-NZ",
+}));
 
 const mocks = vi.hoisted(() => ({
   settings: vi.fn(),

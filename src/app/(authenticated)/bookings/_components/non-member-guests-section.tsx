@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
-import { formatNZDate } from "@/lib/nzst-date";
+import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
 
 // #1975: one genuine #738 split child, shaped for the parent's "Your non-member
 // guests" section. Any status (a cancelled or bumped child must still show).
@@ -15,6 +15,8 @@ export interface NonMemberGuestChild {
   finalPriceCents: number;
   // The child shares the parent's stay dates; only surfaced when they differ.
   datesDiffer: boolean;
+  // `@db.Date` LODGE NIGHTS, straight off Prisma — a calendar day encoded at UTC
+  // midnight, never a moment (INV-DATE-010).
   checkIn: Date;
   checkOut: Date;
 }
@@ -75,7 +77,16 @@ export function NonMemberGuestsSection({
                     </p>
                     {child.datesDiffer ? (
                       <p className="text-xs text-muted-foreground">
-                        {formatNZDate(child.checkIn)} - {formatNZDate(child.checkOut)}
+                        {/*
+                          A CALENDAR DATE takes no zone: the kernel decodes the
+                          UTC-midnight encoding back to the day it encodes and
+                          formats it pinned to `UTC`, so the projection is
+                          provably the identity for every club (CT-4, #2870).
+                          `formatNZDate` projected it through `APP_TIME_ZONE`,
+                          which is a day early for any club west of Greenwich.
+                        */}
+                        {formatClubDate(calendarDateOfDateOnlyInstant(child.checkIn))}{" "}
+                        - {formatClubDate(calendarDateOfDateOnlyInstant(child.checkOut))}
                       </p>
                     ) : null}
                     <p className="text-xs font-medium text-info-11 underline">

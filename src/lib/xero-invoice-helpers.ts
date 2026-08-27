@@ -8,7 +8,11 @@
  * other just for date / allocation helpers.
  */
 
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import type { ClubTimeZone } from "@/lib/club-time";
+import {
+  xeroDocumentDateFromDateOnlyColumn,
+  xeroDocumentDateFromInstant,
+} from "@/lib/xero-provider-dates";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 
 /**
@@ -29,13 +33,14 @@ import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 /**
  * The invoice's issue date is the booking's check-in, which is a `@db.Date`
  * lodge night — an abstract calendar day already pinned to UTC midnight, not an
- * instant. Reading it back as a date-only value yields the day it encodes
- * (INV-DATE-010).
+ * instant (INV-DATE-010). Reading it back as a date-only value yields the day it
+ * encodes: INV-DATE-019's first exact boundary, with INV-DATE-026, which are the
+ * citation for that decode and INV-DATE-010 is not (#3080).
  */
 export function getBookingInvoiceIssueDate(booking: {
   checkIn: Date | string;
 }): string {
-  return formatDateOnly(new Date(booking.checkIn));
+  return xeroDocumentDateFromDateOnlyColumn(new Date(booking.checkIn));
 }
 
 /**
@@ -49,10 +54,11 @@ export function getBookingInvoiceIssueDate(booking: {
  * canonical zone-aware helper rather than by truncating the instant
  * (INV-DATE-019).
  */
-export function getBookingInvoiceDueDate(booking: {
-  createdAt: Date | string;
-}): string {
-  return formatDateOnlyForTimeZone(new Date(booking.createdAt));
+export function getBookingInvoiceDueDate(
+  booking: { createdAt: Date | string },
+  zone: ClubTimeZone,
+): string {
+  return xeroDocumentDateFromInstant(new Date(booking.createdAt), zone);
 }
 
 /**

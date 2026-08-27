@@ -63,7 +63,9 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
   sendAdminBookingRequestPendingEmail,
   sendBookingRequestApprovedEmail,
@@ -76,7 +78,7 @@ import {
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   getDefaultLodgeId,
   lodgeNullTolerantScope,
@@ -573,7 +575,7 @@ export async function calculateIndicativeNonMemberPriceCents(input: {
   // (all NON_MEMBER_DEFAULT here) so pricing keys on the NON_MEMBER type
   // (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: getSeasonYear(input.checkIn),
+    seasonYear: seasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,
@@ -2013,12 +2015,21 @@ export async function approveBookingRequest(input: {
     reviewedAt
   );
   // The payment link stays valid while the booking remains payable; the hard
-  // ceiling is the end of the check-in day in NZT (not midnight UTC, which
-  // would cut the day short in New Zealand — issue #740). Booking status checks
-  // gate actual payment.
-  const paymentLinkExpiresAt = endOfDateOnlyForTimeZone(
-    formatDateOnly(request.checkIn)
+  // ceiling is the end of the check-in day in the CLUB's persisted zone (issue
+  // #740, `payment-link-expiry.ts`). Booking status checks gate actual payment.
+  // Read HERE for the same reason the member-guest policy below is.
+  //
+  // #3123 — and the SAME zone answers the club's day, which the person-night
+  // guard inside the approval transaction below needs as a value: that
+  // transaction holds `pg_advisory_xact_lock(1)`, the per-lodge capacity key and
+  // a per-member night lock per linked guest, and `INV-LOCK-004` forbids a
+  // `clubTimeSettings` read under them. One read, both answers.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
+    request.checkIn,
+    clubZone
   );
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const { token: paymentToken, tokenHash: paymentTokenHash } = issueActionToken();
 
   // MG4-D-b (#2309). Read BEFORE the transaction, per the ordering rule in
@@ -2180,6 +2191,11 @@ export async function approveBookingRequest(input: {
         checkOut: request.checkOut,
         adminMemberId: input.adminMemberId,
         heldBookingId: request.heldBookingId ?? null,
+        // #3123 — the club day resolved before this transaction opened; the
+        // person-night guard inside `buildApprovalGuestCreates` takes it as a
+        // value rather than reading the club's zone under these locks
+        // (`INV-LOCK-004`).
+        today: clubTodayDateOnly,
       });
 
       let booking: { id: string };

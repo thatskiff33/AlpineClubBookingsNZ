@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { formatMemberIdentityAge } from "@/lib/member-age";
+import { clubTime } from "@/lib/club-time/server";
 
 const updateFamilyGroupSchema = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -87,6 +88,14 @@ export async function GET(
     return NextResponse.json({ error: "Family group not found" }, { status: 404 });
   }
 
+  // #3123: one club "today" for the whole payload, resolved once. Asking per
+  // member would let two rows of the SAME group be aged against different days
+  // across club midnight, on the screen whose purpose is telling two similar
+  // member records apart (#2568). `clubTime()` is request-scoped and memoised,
+  // and this route is reachable from no CLI entry point, so the `server-only`
+  // reader is the right one here.
+  const clubToday = (await clubTime()).today();
+
   return NextResponse.json({
     id: group.id,
     name: group.name,
@@ -105,7 +114,7 @@ export async function GET(
       inheritEmailFromId: member.inheritEmailFromId,
       inheritEmailFrom: member.inheritEmailFrom,
       // #2568: the calculated age, never the stored date of birth.
-      ageLabel: formatMemberIdentityAge(member.dateOfBirth),
+      ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubToday),
       // The only thing the UI needs from the credential columns: whether this
       // member has finished account setup. The hash itself stays server-side.
       hasPassword:

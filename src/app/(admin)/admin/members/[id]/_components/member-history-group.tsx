@@ -14,7 +14,11 @@ import { AuditTimeline } from "@/components/audit-timeline"
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors"
 import { formatCents } from "@/lib/utils"
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+// `checkIn` and `checkOut` are `@db.Date` LODGE NIGHTS — calendar days with no
+// timezone. The formatter they used to go through projected them into the
+// environment's zone, which for a club behind UTC names the night before the
+// member actually arrived. `INV-DATE-019`.
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import type { MemberDetail } from "../_types"
 
 function BookingHistoryTable({
@@ -39,8 +43,8 @@ function BookingHistoryTable({
       <TableBody>
         {bookings.map((booking) => (
           <TableRow key={booking.id}>
-            <TableCell>{formatMemberDateNz(booking.checkIn)}</TableCell>
-            <TableCell>{formatMemberDateNz(booking.checkOut)}</TableCell>
+            <TableCell>{formatPayloadCalendarDay(booking.checkIn)}</TableCell>
+            <TableCell>{formatPayloadCalendarDay(booking.checkOut)}</TableCell>
             <TableCell>
               <Badge
                 variant="secondary"

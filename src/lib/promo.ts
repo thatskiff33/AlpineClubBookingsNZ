@@ -8,7 +8,13 @@ import {
   type PromoDiscountGuest,
   type PromoDiscountResult,
 } from "@/lib/pricing";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import {
+  clubCalendarDateOf,
+  type CalendarDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   getWorkPartyNightWindowForPromo,
   restrictPerNightRatesToWindow,
@@ -242,12 +248,51 @@ function assignmentRequiresAssignedBooker(
   );
 }
 
-function storedPromoDateKey(value: Date | null | undefined) {
+/**
+ * THE ONLY WAY A STORED CALENDAR DAY BECOMES A COMPARISON KEY HERE (#3123).
+ *
+ * Every promo date this file compares is a `@db.Date` column — `validFrom`,
+ * `validUntil`, `bookingStartFrom`, `bookingStartUntil`
+ * (`prisma/schema.prisma:2955-2958`) and the booking's own `checkIn` (`:1662`).
+ * All of them are calendar days encoded as UTC midnight, and a calendar day
+ * takes no zone at all (`INV-DATE-019`'s first exact boundary, with
+ * `INV-DATE-026`).
+ *
+ * WHY THIS FUNCTION IS THE RULE RATHER THAN A CONVENIENCE. Until #3123 the
+ * booking-date window read one side of its own comparison through this
+ * zone-free helper and the OTHER side — the check-in — through a helper that
+ * projected it into `APP_TIME_ZONE`. Two frames in one comparison, so for any
+ * club behind Greenwich the check-in key was a day early: a booking starting on
+ * the promotion's first valid day was refused, and one starting on the excluded
+ * upper bound was allowed. Both sides now come from here, which is what makes
+ * that class of drift unrepresentable rather than merely fixed.
+ */
+function storedPromoDateKey(value: Date): string;
+function storedPromoDateKey(value: Date | null | undefined): string | null;
+function storedPromoDateKey(value: Date | null | undefined): string | null {
   return value ? formatDateOnly(value) : null;
 }
 
-function nzDateKey(value: Date) {
-  return formatDateOnlyForTimeZone(value);
+/**
+ * The club's calendar day right now, as the same `yyyy-MM-dd` key
+ * {@link storedPromoDateKey} produces — for the ONE comparison here whose left
+ * side is a real instant rather than a stored day.
+ *
+ * A validity window (`validFrom` / `validUntil`) asks "is the promotion live
+ * today", and "today" has no answer until a zone is chosen. `INV-CONFIG-002`
+ * says which one: the club's PERSISTED `ClubTimeSettings.timeZone`, never the
+ * container's. `nzDateKey` used to answer it from `APP_TIME_ZONE`, which is the
+ * container's claim and is what #3123 exists to retire.
+ *
+ * The zone arrives as a parameter rather than being read here because this
+ * module is reached by a `tsx` CLI (`booking-create.ts` from the second-lodge
+ * seed) and by `src/instrumentation.node.ts` (`draft-booking-cleanup.ts`), so
+ * `@/lib/club-time/server` cannot be imported into it; and because the caller
+ * must resolve the zone OUTSIDE any transaction it holds. See
+ * `getAssignedPromoCodeSummariesForMember`.
+ */
+function clubDateKey(value: Date, zone: ClubTimeZone) {
+  return clubCalendarDateOf(value, zone);
 }
 
 function scopeGuestsForAssignedMembers(
@@ -848,6 +893,19 @@ export async function getAssignedPromoCodeSummariesForMember(
   memberId: string,
   now: Date = new Date()
 ): Promise<AssignedPromoCodeSummary[]> {
+  /**
+   * Resolved ONCE, here, and threaded into every row below (#3123). This is the
+   * boundary: the reader is asynchronous, this function is, and the status
+   * helper it feeds is not. Doing it per row would ask the same question of the
+   * database once per assignment and could answer differently across club
+   * midnight, so one member's list would report two different todays.
+   *
+   * `readClubTimeZoneOutsideRequest` rather than `clubTime()` because this
+   * module is reached by a `tsx` CLI and by `src/instrumentation.node.ts`, and
+   * `@/lib/club-time/server` is a bare throw outside the `react-server`
+   * condition. This call is outside every transaction — nothing here opens one.
+   */
+  const clubZone = await readClubTimeZoneOutsideRequest();
   const assignments = await prisma.promoCodeAssignment.findMany({
     where: { memberId, promoCode: { internal: false } },
     include: {
@@ -874,7 +932,12 @@ export async function getAssignedPromoCodeSummariesForMember(
       (sum, allocation) => sum + allocation.freeNightsUsed,
       0
     );
-    const statusReason = getAssignedPromoCodeStatusReason(promoCode, freeNightsUsed, now);
+    const statusReason = getAssignedPromoCodeStatusReason(
+      promoCode,
+      freeNightsUsed,
+      now,
+      clubZone
+    );
 
     return {
       id: promoCode.id,
@@ -922,11 +985,19 @@ function getAssignedPromoCodeStatusReason(
     allocations: Array<{ id: string; freeNightsUsed: number }>;
   },
   freeNightsUsed: number,
-  now: Date
+  now: Date,
+  /**
+   * The club's persisted timezone, resolved ONCE by the async caller and
+   * threaded in (#3123). Required rather than defaulted: this function is
+   * synchronous and cannot read the setting, and a default would put the
+   * container's zone back in the one place this parameter exists to remove it
+   * from.
+   */
+  clubZone: ClubTimeZone
 ) {
   if (!promoCode.active) return "Inactive";
   if (promoCode.archivedAt) return "Archived";
-  const currentDateKey = nzDateKey(now);
+  const currentDateKey = clubDateKey(now, clubZone);
   const validFromKey = storedPromoDateKey(promoCode.validFrom);
   const validUntilKey = storedPromoDateKey(promoCode.validUntil);
   if (validFromKey && currentDateKey < validFromKey) return "Not valid yet";
@@ -1036,11 +1107,41 @@ export interface PromoRuleCounts {
 /**
  * Validate promo code rules (pure logic, separated for testing).
  * Returns error message string if invalid, null if valid.
+ *
+ * ## `todayAtClub` is REQUIRED, and that is what closed the last
+ * environment-zone read in this file (#3123)
+ *
+ * This function is SYNCHRONOUS, PURE and TRANSACTION-BOUND, which is the whole
+ * problem: it cannot resolve the club's timezone itself, and its async boundary
+ * `validateAndCalculatePromoDiscount` is called from inside an open interactive
+ * transaction by four of its callers — `booking-create-promo.ts`,
+ * `booking-date-modification-service.ts`, `booking-guest-removal-service.ts`
+ * and `api/bookings/[id]/guests/route.ts`. `INV-LOCK-004` names the club
+ * timezone as one of only two reads that cannot take a transaction client, so a
+ * read down here would have taken a second pooled connection under
+ * `pg_advisory_xact_lock(1)` and the per-lodge capacity key AND escaped the
+ * transaction's own client — the four-way mistake
+ * `diagnostics/tools/packs/booking-evidence.ts` records, and the reason
+ * `booking-create.ts` says in as many words "Read outside every transaction."
+ *
+ * So the day is resolved by whichever caller owns the transaction, before it
+ * opens it, and threaded in. It used to be `now: Date = new Date()`, projected
+ * through `APP_TIME_ZONE`, so a promotion's start and end were judged in the
+ * CONTAINER's day rather than the club's (`INV-CONFIG-002`) — wrong by up to one
+ * day at each edge of the validity window for any deployment whose configured
+ * zone differs from its container's, on a comparison that decides whether a
+ * member gets a discount.
+ *
+ * It is a `CalendarDate` rather than an instant because a validity window asks
+ * "is the promotion live today" and an instant has no calendar day until a zone
+ * is chosen. Taking a `Date` is what forced the choice down here in the first
+ * place; the type now makes that unrepresentable, and puts BOTH sides of every
+ * comparison below on a zone-free calendar day.
  */
 export function validatePromoCodeRules(
   promoCode: PromoRuleSubject | null,
   bookingDetails: { memberId: string; bookingCheckIn?: Date },
-  now: Date = new Date(),
+  todayAtClub: CalendarDate,
   counts: PromoRuleCounts = {},
   assignedMemberIds: string[] | null = null,
   lodgeId: string | null = null
@@ -1061,7 +1162,14 @@ export function validatePromoCodeRules(
     return PROMO_LODGE_RESTRICTION_MESSAGE;
   }
 
-  const currentDateKey = nzDateKey(now);
+  // BOTH SIDES OF THIS COMPARISON ARE ZONE-FREE CALENDAR DAYS (#3123).
+  // `validFrom` / `validUntil` are `@db.Date` columns
+  // (`prisma/schema.prisma:2955-2956`) read through `storedPromoDateKey`, and
+  // `todayAtClub` is the club's own day, already resolved by the caller. Until
+  // #3123 this side was `formatDateOnlyForTimeZone(now)` — the container's
+  // projection of an instant — which is a second frame in a one-frame
+  // comparison.
+  const currentDateKey: string = todayAtClub;
   const validFromKey = storedPromoDateKey(promoCode.validFrom);
   const validUntilKey = storedPromoDateKey(promoCode.validUntil);
   if (validFromKey && currentDateKey < validFromKey) {
@@ -1073,7 +1181,14 @@ export function validatePromoCodeRules(
   }
 
   if (bookingDetails.bookingCheckIn) {
-    const checkInKey = nzDateKey(bookingDetails.bookingCheckIn);
+    // BOTH SIDES OF THIS COMPARISON COME FROM ONE HELPER, and until #3123 they
+    // did not. `Booking.checkIn` is `@db.Date` (`prisma/schema.prisma:1662`), as
+    // are the two window columns, so all three are calendar days and none of
+    // them takes a zone. Projecting the check-in through `APP_TIME_ZONE` made
+    // the key a day early for every club behind Greenwich, which refused a
+    // booking on the promotion's first valid day and admitted one on the
+    // excluded upper bound.
+    const checkInKey = storedPromoDateKey(bookingDetails.bookingCheckIn);
     const bookingStartFromKey = storedPromoDateKey(promoCode.bookingStartFrom);
     const bookingStartUntilKey = storedPromoDateKey(promoCode.bookingStartUntil);
     if (bookingStartFromKey && checkInKey < bookingStartFromKey) {
@@ -1177,6 +1292,16 @@ export function validatePromoCodeRules(
   return null;
 }
 
+/**
+ * `options` is REQUIRED because `options.todayAtClub` is (#3123).
+ *
+ * Four of this function's callers invoke it with `{ db: tx }` from inside an
+ * open interactive transaction, so the club's day cannot be resolved here or
+ * below — `INV-LOCK-004`, and the full reasoning is on
+ * {@link validatePromoCodeRules}. Making the whole options object required is
+ * what makes the typechecker enumerate every call site rather than letting one
+ * silently keep the container's answer.
+ */
 export async function validateAndCalculatePromoDiscount(
   promoCode: PromoApplicationSubject | null,
   bookingDetails: BookingDetailsForPromo,
@@ -1184,7 +1309,12 @@ export async function validateAndCalculatePromoDiscount(
   options: {
     excludeBookingId?: string;
     db?: PromoUsageClient;
-    now?: Date;
+    /**
+     * The club's own calendar day (`INV-CONFIG-002`), resolved by this caller
+     * BEFORE it opened any transaction. Feeds the promotion's validity window
+     * in {@link validatePromoCodeRules}.
+     */
+    todayAtClub: CalendarDate;
     selectedGuestIndexes?: number[];
     // The booking's/quote's lodge. Required to enforce an optional per-lodge
     // promo restriction (PromoCodeLodge junction, ADR-001 resolved question
@@ -1207,7 +1337,7 @@ export async function validateAndCalculatePromoDiscount(
      *   not, at the moment of the edit.
      */
     capOverflow?: "reject" | "coverExisting";
-  } = {}
+  }
 ): Promise<PromoApplicationResult> {
   if (!promoCode) {
     return {
@@ -1526,7 +1656,7 @@ export async function validateAndCalculatePromoDiscount(
   const validationError = validatePromoCodeRules(
     promoCode,
     bookingDetails,
-    options.now ?? new Date(),
+    options.todayAtClub,
     {
       memberRedemptionCount: assignedScoped ? undefined : bookerUsage.redemptionCount,
       memberFreeNightsUsed: assignedScoped ? undefined : bookerUsage.freeNightsUsed,
@@ -1641,6 +1771,16 @@ export async function validateAndCalculatePromoDiscount(
 export async function validatePromoCodeFull(
   code: string,
   bookingDetails: BookingDetailsForPromo,
+  /**
+   * The club's own calendar day (#3123), resolved by the caller.
+   *
+   * THIRD AND REQUIRED, ahead of the two optional positionals it now precedes,
+   * so the typechecker enumerates every call site instead of letting one keep
+   * the container's day. That is the shape #2870 used for
+   * `enqueueHostingCoverageReevaluationForMember`'s `today`, and the reasoning
+   * is on {@link validatePromoCodeRules}.
+   */
+  todayAtClub: CalendarDate,
   excludeBookingId?: string,
   lodgeId?: string | null,
   // #2266: guest-targeted codes (assigned + not-own-nights-only) need the
@@ -1677,6 +1817,7 @@ export async function validatePromoCodeFull(
       excludeBookingId,
       lodgeId,
       selectedGuestIndexes: options?.selectedGuestIndexes,
+      todayAtClub,
     }
   );
 

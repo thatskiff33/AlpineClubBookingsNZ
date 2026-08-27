@@ -1,4 +1,6 @@
 import { logAudit } from "@/lib/audit";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { eachDateOnlyInRange } from "@/lib/date-only";
 import {
   sendMemberGuestAddedEmail,
@@ -114,6 +116,16 @@ export async function sendMemberGuestAddNotifications(params: {
     // rather than "a query that finds nothing".
     return result;
   }
+
+  // The club's today, resolved ONCE for the whole dispatch and threaded into
+  // every self-removal fact set below (#3123). `evaluateGuestSelfRemoval` used
+  // to default it from the container's timezone; reading it here — from the
+  // club's PERSISTED zone (INV-CONFIG-002) — also means every notice in one
+  // dispatch judges "has the stay started" against the same day. The runtime
+  // reader rather than `club-time/server`: this module is reached from
+  // `booking-create.ts`, which a CLI seed imports, where `server-only` throws
+  // at import.
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
   // ONE read for the whole dispatch, and it reads what was actually COMMITTED
   // rather than trusting the caller's plan: the consent expiry that goes in the
@@ -305,6 +317,7 @@ export async function sendMemberGuestAddNotifications(params: {
               // account" to the one population that provably cannot, which is
               // exactly the promise the D-14 sweep exists to delete.
               isQuotePriced: context.isQuotePriced,
+              today,
             },
           });
         }

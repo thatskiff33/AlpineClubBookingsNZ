@@ -12,6 +12,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // The club-time delegate. `loadPersistedClubTimeSettings` returns `null`
+    // when it is ABSENT, and the page then falls back to the environment — the
+    // very defect CT-4 removes, silently, with nothing able to tell. Every test
+    // here leaves it resolving `null`, which reproduces the no-row fallback and
+    // keeps their expectations unchanged; the zone-authority test supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     booking: { findMany: vi.fn(), count: vi.fn() },
     bookingGuest: { count: vi.fn(), findMany: vi.fn() },
     hostingCoverageIncident: { count: vi.fn(), findMany: vi.fn() },
@@ -56,7 +62,24 @@ import {
   adminBookingsQuerySchema,
   buildAdminBookingsWhere,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import { auth } from "@/lib/auth";
 import {
   listMemberGuestConsentExceptions,
@@ -126,6 +149,7 @@ async function renderPage(searchParams: Record<string, string> = {}) {
 describe("the Admin › Bookings consent chips (#2307, MG2-M-3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     vi.mocked(loadEffectiveModuleFlags).mockResolvedValue(MODULES_ON);
     vi.mocked(prisma.lodge.findMany).mockResolvedValue([
       { id: "lodge-1", name: "Silverpeak" },
@@ -167,7 +191,7 @@ describe("the Admin › Bookings consent chips (#2307, MG2-M-3)", () => {
       buildAdminBookingsWhere({
         ...adminBookingsQuerySchema.parse({ lodgeId: "lodge-1", status: "PAID" }),
         consentState: "all",
-      }),
+      }, TEST_CLUB_DAY),
     );
     // The scope carries the operator's filters...
     expect(JSON.stringify(options?.waitingScope)).toContain("lodge-1");

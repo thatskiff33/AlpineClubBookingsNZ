@@ -10,7 +10,7 @@ import type {
   MyWholeLodgeRequestItem,
   MyWholeLodgeRequestStatus,
 } from "@/lib/member-whole-lodge-requests";
-import { formatNZDate } from "@/lib/nzst-date";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 
 /*
   #2263 — "My requests" on My bookings.
@@ -44,9 +44,14 @@ const DECLINED_COPY =
   "The booking officer was not able to offer the whole lodge for those dates. Give them a call if you would like to talk through other options.";
 
 function formatRange(checkIn: string, checkOut: string) {
-  // Date-only lodge nights: parse at UTC midnight so a viewer at UTC+13/+14
-  // does not see the previous day.
-  const format = (value: string) => formatNZDate(new Date(`${value}T00:00:00Z`));
+  // Date-only lodge nights, which are CALENDAR DATES and take no zone at all
+  // (CT-4, #2870): the kernel reads the day out of the serialised value's first
+  // ten characters and formats it pinned to `UTC`, so no viewer's clock and no
+  // club's setting can move it. `formatNZDate` projected it through
+  // `APP_TIME_ZONE`, which cancelled only because New Zealand is east of
+  // Greenwich.
+  const format = (value: string) =>
+    formatClubDate(calendarDateOfSerialisedDbDate(value));
   return `${format(checkIn)} – ${format(checkOut)}`;
 }
 

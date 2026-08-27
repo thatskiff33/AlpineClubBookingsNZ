@@ -1,9 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
-  endOfDateOnlyForTimeZone,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  endOfClubDayExclusive,
+  requireCalendarDate,
+  startOfClubDay,
+  type ClubTimeZone,
+} from "@/lib/club-time";
 import {
   buildAuditCategoryWhere,
   buildAuditMemberScopeWhere,
@@ -73,9 +75,29 @@ function optionalAuditFilter(value?: string): string | undefined {
   return value;
 }
 
+/**
+ * The `createdAt` window for an operator-supplied `from` / `to` day pair.
+ *
+ * `AuditLog.createdAt` is a bare `DateTime @default(now())` — a real INSTANT
+ * column, NOT `@db.Date` (`prisma/schema.prisma`, model `AuditLog`). So the
+ * bounds are genuine instant boundaries derived from a calendar day, which is
+ * the one shape that legitimately requires a timezone, and a UTC-midnight
+ * `@db.Date` encoding would be exactly wrong here.
+ *
+ * The zone is the CLUB's persisted one, threaded in (#3123, INV-CONFIG-002).
+ * It used to come from `APP_TIME_ZONE` via the `date-only` adapters, so an
+ * operator asking for "everything on 3 August" got the container's 3 August.
+ *
+ * The upper bound is HALF-OPEN (`lt` against the exclusive end) rather than
+ * `lte` against the inclusive end. The two differ only below the millisecond,
+ * and Postgres keeps microseconds — so the old inclusive bound could drop a row
+ * written in the last millisecond of the day. It also removes the
+ * `9999-12-31` rollover the inclusive form has to guard.
+ */
 function buildAuditDateWhere(params: {
   from?: string;
   to?: string;
+  zone: ClubTimeZone;
 }): Prisma.AuditLogWhereInput | null {
   if (!params.from && !params.to) {
     return null;
@@ -83,10 +105,13 @@ function buildAuditDateWhere(params: {
 
   const createdAt: Prisma.DateTimeFilter = {};
   if (params.from) {
-    createdAt.gte = startOfDateOnlyForTimeZone(params.from);
+    createdAt.gte = startOfClubDay(requireCalendarDate(params.from), params.zone);
   }
   if (params.to) {
-    createdAt.lte = endOfDateOnlyForTimeZone(params.to);
+    createdAt.lt = endOfClubDayExclusive(
+      requireCalendarDate(params.to),
+      params.zone,
+    );
   }
   return { createdAt };
 }
@@ -122,6 +147,8 @@ function buildGlobalAuditWhere(params: {
   severity?: string;
   entityType?: string;
   q?: string;
+  /** The club's persisted timezone, resolved once by the caller (#3123). */
+  zone: ClubTimeZone;
 }): Prisma.AuditLogWhereInput {
   const clauses: Prisma.AuditLogWhereInput[] = [];
 
@@ -163,6 +190,12 @@ function buildGlobalAuditWhere(params: {
 
 export function parseAdminAuditLogQuery(
   searchParams: URLSearchParams,
+  /**
+   * The club's persisted timezone. REQUIRED, and passed in rather than read
+   * here (#3123): this function is pure and sync, and its one route caller
+   * already sits in an async request where `await clubTimeZone()` is memoised.
+   */
+  zone: ClubTimeZone,
 ): AdminAuditLogQueryParseResult {
   const parsed = adminAuditLogQuerySchema.safeParse({
     eventType: getSearchParam(searchParams, "eventType"),
@@ -206,6 +239,7 @@ export function parseAdminAuditLogQuery(
     severity,
     entityType,
     q: parsed.data.q,
+    zone,
   });
 
   return {

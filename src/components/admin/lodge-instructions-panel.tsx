@@ -26,7 +26,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 // Mirrors LODGE_INSTRUCTION_KEYS / LODGE_INSTRUCTION_LABELS in
 // src/lib/lodge-instructions.ts (that module is server-only).
@@ -69,16 +69,24 @@ function partitionUrl(lodgeId: string | null): string {
     : "/api/admin/lodge-instructions";
 }
 
-function formatUpdatedAt(value: string | null): string {
-  if (!value) {
-    return "Never updated";
-  }
-  // Club time, not the admin's own (#2264): the stamp says when the club's
-  // document changed, so an officer abroad must not read it in their zone.
-  return formatNZDateTime(new Date(value));
+/**
+ * "Last saved", in the club's time rather than the admin's own.
+ *
+ * The stamp says when the CLUB's document changed, so an officer abroad must not
+ * read it in their zone (#2264). The stamp is a real INSTANT, so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before - only the zone's AUTHORITY moved, from the environment to
+ * the club's recorded setting. A hook because that setting reaches the browser
+ * as data through `ClubTimeProvider`, so it is not a module constant any more.
+ */
+function useUpdatedAtFormatter() {
+  const clubTime = useClubTime();
+  return (value: string | null): string =>
+    value ? clubTime.instantDateTime(new Date(value)) : "Never updated";
 }
 
 export function LodgeInstructionsPanel() {
+  const formatUpdatedAt = useUpdatedAtFormatter();
   // Scope (lodge-scoping contract): null edits the club-wide (null lodgeId)
   // documents; a lodge edits that lodge's override rows, each of which
   // replaces the club-wide document of that key at that lodge. The scope

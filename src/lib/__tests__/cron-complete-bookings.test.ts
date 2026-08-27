@@ -107,6 +107,15 @@ import {
   parseDateOnly,
 } from "../date-only";
 
+/**
+ * The club's zone, named rather than left to `getTodayDateOnly`'s `APP_TIME_ZONE`
+ * default, which #3123 deletes. `completeBookings` resolves its own "today"
+ * through `readClubTimeZoneOutsideRequest()`; prisma is mocked here with no
+ * `clubTimeSettings` delegate, so that read fails soft to the environment seed
+ * and then to `Pacific/Auckland` — the NZ day every assertion below names.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const PAID = "PAID";
 const CONFIRMED = "CONFIRMED";
 
@@ -133,7 +142,7 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-18T02:00:00.000Z")); // 14:00 NZ, 2026-07-18
 
-    const today = getTodayDateOnly(); // 2026-07-18 (NZ)
+    const today = getTodayDateOnly(CLUB_ZONE); // 2026-07-18 (NZ)
     const yesterday = addDaysDateOnly(today, -1);
     const tomorrow = addDaysDateOnly(today, 1);
 
@@ -183,7 +192,7 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     expect(where.status).toBe("PAID");
     // Strictly-less-than (lt), never lte — an lte would complete on the
     // check-out day itself and re-introduce the #2029 regression.
-    expect(where.checkOut).toEqual({ lt: getTodayDateOnly() });
+    expect(where.checkOut).toEqual({ lt: getTodayDateOnly(CLUB_ZONE) });
     expect(where.checkIn).toBeUndefined();
   });
 
@@ -193,7 +202,7 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     vi.setSystemTime(new Date("2026-07-17T12:30:00.000Z"));
 
     // Prove getTodayDateOnly picked the NZ date, not the UTC date.
-    expect(getTodayDateOnly()).toEqual(parseDateOnly("2026-07-18"));
+    expect(getTodayDateOnly(CLUB_ZONE)).toEqual(parseDateOnly("2026-07-18"));
 
     fixtures = [
       // Its NZ check-out day (07-18) is the current NZ day — must stay PAID.
@@ -215,7 +224,7 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-18T02:00:00.000Z"));
 
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     fixtures = [
       { id: "still-staying", lodgeId: "lodge-1", status: PAID, checkIn: addDaysDateOnly(today, -1), checkOut: today },
     ];
@@ -230,7 +239,7 @@ describe("completeBookings — #2029 check-out-day boundary", () => {
   it("does not reconcile or report a candidate that loses the PAID claim", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-18T02:00:00.000Z"));
-    const today = getTodayDateOnly();
+    const today = getTodayDateOnly(CLUB_ZONE);
     fixtures = [
       {
         id: "lost-claim",

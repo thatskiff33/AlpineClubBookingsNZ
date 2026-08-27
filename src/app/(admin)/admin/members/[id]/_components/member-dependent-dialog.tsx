@@ -29,9 +29,9 @@ import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import { useMemberFieldsSettings } from "@/lib/use-member-fields-settings";
 import {
   dedupeParentOptions,
-  formatMemberDateNz,
   parentLinkTypeLabel,
 } from "@/lib/admin-member-detail-helpers";
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import {
   DEPENDENT_PARENT_CREATE_ERRORS,
   DEPENDENT_PARENT_LINK_ERRORS,
@@ -490,7 +490,7 @@ export function MemberDependentDialog({
                       <p className="mt-1 text-xs text-muted-foreground">
                         {linkSelected.canLogin ? "Can login" : "Non-login"}
                         {linkSelected.dateOfBirth
-                          ? ` · DOB ${formatMemberDateNz(linkSelected.dateOfBirth)}`
+                          ? ` · DOB ${formatPayloadCalendarDay(linkSelected.dateOfBirth)}`
                           : ""}
                       </p>
                     </div>

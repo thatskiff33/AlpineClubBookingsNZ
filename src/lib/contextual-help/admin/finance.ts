@@ -2,7 +2,7 @@
  * Help for the "Finance" admin section: payments, internet banking, reports and
  * the Xero integration.
  *
- * Section per the sidebar's `navSections`. The separate `/finance` workspace
+ * Section per the sidebar's `buildAdminNavSections`. The separate `/finance` workspace
  * (the finance-scope help) lives in `../finance.ts`.
  */
 import { entry, help, type HelpEntry } from "../types";

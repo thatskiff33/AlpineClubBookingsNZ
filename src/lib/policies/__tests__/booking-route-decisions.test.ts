@@ -12,6 +12,7 @@ import {
   toSeasonRateData,
   type CancellationRule,
 } from "@/lib/policies";
+import { requireCalendarDate } from "@/lib/club-time";
 
 describe("booking route policy decisions", () => {
   it("normalizes enabled group discount settings and ignores disabled settings", () => {
@@ -392,7 +393,10 @@ describe("booking route policy decisions", () => {
         finalPriceCents: 8000,
         checkIn: new Date("2026-07-15T00:00:00.000Z"),
         policyRules,
-        now: new Date("2026-07-05T00:00:00.000Z"),
+        // #3123 — the CLUB's calendar day, required. Same ten-day count the old
+        // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
+        // container's zone had projected it, so the money below is unchanged.
+        todayAtClub: requireCalendarDate("2026-07-05"),
       })
     ).toMatchObject({
       refundAmountCents: 3000,
@@ -429,7 +433,10 @@ describe("booking route policy decisions", () => {
         finalPriceCents: 20000,
         checkIn: new Date("2026-07-15T00:00:00.000Z"),
         policyRules,
-        now: new Date("2026-07-05T00:00:00.000Z"),
+        // #3123 — the CLUB's calendar day, required. Same ten-day count the old
+        // `now: new Date("2026-07-05T00:00:00.000Z")` produced once the
+        // container's zone had projected it, so the money below is unchanged.
+        todayAtClub: requireCalendarDate("2026-07-05"),
       })
     ).toMatchObject({
       refundAmountCents: 20000,

@@ -263,6 +263,13 @@ import {
   EMAIL_SENT,
   emailWithheldForEnvironment,
 } from "@/lib/__tests__/helpers/email-outcomes";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-07-01"));
 
 const mockedModuleEnabled = vi.mocked(isEffectiveModuleEnabled);
 const mockedAssertNoConflicts = vi.mocked(assertNoBookingMemberNightConflicts);
@@ -2025,6 +2032,7 @@ describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () =>
     // advisory RESOLVES with the overlap rather than throwing — proving it does
     // not block linking the way the approve/hold guard's 409 does.
     const conflicts = await findLinkedGuestMemberNightConflicts({
+      today: FIXTURE_CLUB_TODAY,
       requestId: "req-1",
       adminMemberId: "admin-1",
       links: [{ guestIndex: 0, memberId: "member-42" }],
@@ -2047,6 +2055,7 @@ describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () =>
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
 
     const conflicts = await findLinkedGuestMemberNightConflicts({
+      today: FIXTURE_CLUB_TODAY,
       requestId: "req-1",
       adminMemberId: "admin-1",
       links: [{ guestIndex: 0, memberId: "member-42" }],
@@ -2062,6 +2071,7 @@ describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () =>
     vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
 
     await findLinkedGuestMemberNightConflicts({
+      today: FIXTURE_CLUB_TODAY,
       requestId: "req-1",
       adminMemberId: "admin-1",
       links: [{ guestIndex: 0, memberId: "member-42" }],
@@ -2082,6 +2092,7 @@ describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () =>
     );
 
     const conflicts = await findLinkedGuestMemberNightConflicts({
+      today: FIXTURE_CLUB_TODAY,
       requestId: "req-1",
       adminMemberId: "admin-1",
       links: [],
@@ -2096,6 +2107,7 @@ describe("findLinkedGuestMemberNightConflicts (advisory pre-check #1226)", () =>
 
     await expect(
       findLinkedGuestMemberNightConflicts({
+        today: FIXTURE_CLUB_TODAY,
         requestId: "missing",
         adminMemberId: "admin-1",
         links: [{ guestIndex: 0, memberId: "member-42" }],

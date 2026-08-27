@@ -1,10 +1,12 @@
 import {
-  addDaysDateOnly,
-  formatDateOnlyForTimeZone,
-  getTodayDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
-} from "@/lib/date-only";
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  calendarDateOfSerialisedDbDate,
+  requireCalendarDate,
+  requireStoredCalendarDay,
+  type CalendarDate,
+} from "@/lib/club-time";
+import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 
 /**
  * A single included night for a guest. Accepts a Date, a `yyyy-mm-dd`
@@ -29,17 +31,87 @@ export type BookingStayRange = {
   checkOut: Date;
 };
 
-function dateOnlyKey(value: Date): string {
-  return formatDateOnlyForTimeZone(value);
+/**
+ * The lodge-night key a stored calendar day carries.
+ *
+ * IT DECODES, AND IT DOES NOT PROJECT (#3107). Every value reaching it is a
+ * `@db.Date` column - `booking.checkIn` / `checkOut`, `BookingGuest.stayStart` /
+ * `stayEnd`, `BookingGuestNight.stayDate` - or a date-only `Date` a caller built
+ * from one. Those are ENCODINGS of a calendar day rather than moments, so the day
+ * is read straight back out in UTC: `INV-DATE-019`'s first exact boundary,
+ * together with `INV-DATE-026`, which is what says the column really is
+ * date-only. Do not cite `INV-DATE-010` for this direction - that rule names
+ * these two ids rather than itself, and what it forbids is deriving a rule from
+ * one of these values read as a MOMENT.
+ *
+ * IT USED TO PROJECT THROUGH THE ENVIRONMENT ZONE (`formatDateOnlyForTimeZone`),
+ * which is the identity for a club at or ahead of Greenwich and the PREVIOUS day
+ * for one behind it - so every key this module produced was a day early there.
+ * Worse than uniformly early: {@link nightEntryKey} takes a `yyyy-mm-dd` string
+ * VERBATIM, so the same logical night landed in two different frames depending on
+ * the shape it arrived in. The measured consequence was a capacity UNDER-COUNT.
+ * `ProposalGuest.nights` is declared `string[]` and
+ * `createModificationExceptionRequest` passes it straight into
+ * `checkCapacityForGuestRanges`; for a two-guest three-night proposal on
+ * `America/Denver` the admission check saw 0 proposed beds on two of the three
+ * nights instead of 2, inside `acquireGlobalBookingLock` and
+ * `acquireLodgeCapacityLock`, on the branch that reserves beds. A proposal that
+ * should have been refused for want of beds could be admitted.
+ *
+ * THE PRECONDITION IS ASSERTED RATHER THAN ASSUMED, and that is the whole
+ * difference between this and quietly swapping the reader for a UTC one. A bare
+ * `Date` cannot say whether it encodes a stored day or holds a real timestamp,
+ * and a timestamp decoded here would yield its UTC day - the same
+ * `INV-DATE-019` defect from the other direction, which is precisely why #3100
+ * refused to fold this fix into itself. So a value carrying a UTC time of day is
+ * refused by name. That refusal is unreachable from today's callers: every one
+ * derives its argument from `parseDateOnly`, `eachDateOnlyInRange`,
+ * the club's own today, `storedDateOnly` or a `@db.Date` read, each of which is UTC
+ * midnight by construction.
+ */
+function dateOnlyKey(value: Date): CalendarDate {
+  return calendarDateOfDateOnlyInstant(
+    requireStoredCalendarDay(value, {
+      subject: "A lodge-night key",
+      instead:
+        "Pass the stored calendar day the night is, or resolve a real timestamp's club " +
+        "day with clubCalendarDateOf first and pass that.",
+    })
+  );
 }
 
 /**
- * Derive the date-only key for one explicit night entry, matching the key
- * scheme used everywhere else (NZ time zone via formatDateOnlyForTimeZone).
+ * Derive the date-only key for one explicit night entry.
+ *
+ * ONE KEY FRAME - and the comment here previously claimed that when it was false,
+ * which is the shape of mistake #3107 exists to remove. Both input shapes now
+ * decode the calendar day they carry and neither consults a zone: a `yyyy-mm-dd`
+ * string is its own day, a serialised `@db.Date` (`"2026-07-04T00:00:00.000Z"`)
+ * carries the day in its first ten characters, and a `Date` goes through
+ * {@link dateOnlyKey}.
+ *
+ * BOTH SHAPES OCCUR IN PRODUCTION, which is why the split mattered rather than
+ * being a tidiness point. `BookingGuestNight` rows and booking envelopes arrive
+ * as `Date`s; `ProposalGuest.nights` is declared `string[]` and reaches
+ * {@link countActiveGuestsForNight} verbatim through
+ * `checkCapacityForGuestRanges`. While the `Date` side was projected and the
+ * string side was not, one logical night was simultaneously occupied and
+ * unoccupied depending on the shape it arrived in, and the capacity admission
+ * check under-counted proposed beds inside the lodge capacity lock.
+ * `operational-day-shift-club-zone.test.ts` holds that measurement and now
+ * asserts the two frames AGREE.
+ *
+ * THE STRING BRANCH READS THE PREFIX INSTEAD OF REPARSING, which is
+ * {@link calendarDateOfSerialisedDbDate}'s own reason for existing: reparsing
+ * would project an offset-bearing string into UTC, so
+ * `"2026-07-04T12:00:00+13:00"` would decode a day early. It replaces
+ * `dateOnlyKey(new Date(entry))`, which projected through the environment zone. A
+ * string naming no real day is now refused rather than turned into a plausible
+ * wrong key.
  */
-function nightEntryKey(entry: GuestNightInput): string {
+function nightEntryKey(entry: GuestNightInput): CalendarDate {
   if (typeof entry === "string") {
-    return isDateOnlyString(entry) ? entry : dateOnlyKey(new Date(entry));
+    return calendarDateOfSerialisedDbDate(entry);
   }
   if (entry instanceof Date) {
     return dateOnlyKey(entry);
@@ -155,19 +227,34 @@ export function isGuestActiveOnNight(
 // that capacity, pricing and the whole-lodge rules are built on — is untouched
 // and deliberately separate; do not conflate the two.
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
 /**
- * Shift a `yyyy-mm-dd` NZ date-only key by whole days.
+ * Shift a `yyyy-mm-dd` lodge-night key by whole days.
  *
- * The key is re-anchored at UTC midnight, which is midday NZ (UTC+12/+13), so
- * adding or subtracting whole days can never land on an NZ daylight-saving
- * transition and roll the calendar day the wrong way.
+ * A lodge-night key IS a calendar day, so this is integer civil-calendar
+ * arithmetic on that day and nothing else. `addCalendarDays` constructs no
+ * `Date` and reads no zone, so the answer cannot be moved by where the club or
+ * the host sits — and a fractional step or one leaving the four-digit year
+ * range throws there rather than returning a key that is not one.
+ *
+ * IT USED TO ROUND-TRIP THROUGH AN INSTANT, and the comment that justified
+ * doing so was the disproved premise this epic exists to remove (#3100). It said
+ * the key was re-anchored at "UTC midnight, which is midday NZ (UTC+12/+13)" and
+ * so could never roll the calendar day the wrong way. That holds only for a club
+ * at or ahead of Greenwich; `INV-DATE-010` no longer asserts it. The body it
+ * justified added `days * 24h` to that instant and read the result back through
+ * `APP_TIME_ZONE`, which for a club behind Greenwich ATE THE SHIFT: `+1` came
+ * back as the same day and `-1` skipped one, on every call rather than at a
+ * boundary, and {@link expandStayEnvelopeToNightKeys} — which steps with this
+ * function — did not terminate at all.
+ *
+ * `operational-day-shift-club-zone.test.ts` holds the measurements, and the two
+ * near-miss spellings that are also wrong: adding 24 hours to an instant, which
+ * breaks on a 25-hour day even with the zone read correctly, and keeping the
+ * round trip with a UTC reader, which is correct only until somebody changes the
+ * encoder.
  */
-function shiftDateOnlyKey(key: string, days: number): string {
-  return formatDateOnlyForTimeZone(
-    new Date(new Date(`${key}T00:00:00.000Z`).getTime() + days * MS_PER_DAY)
-  );
+function shiftDateOnlyKey(key: string, days: number): CalendarDate {
+  return addCalendarDays(requireCalendarDate(key), days);
 }
 
 /**
@@ -320,6 +407,12 @@ export function countActiveGuestsForNight(
  *
  * An empty or reversed envelope yields no nights, which is what makes a
  * zero-night booking present on no day (INV-DATE-008).
+ *
+ * IT TERMINATES BECAUSE THE STEP BELOW IS A LITERAL FORWARD DAY, not because of
+ * anything {@link shiftDateOnlyKey} guarantees: `addCalendarDays(key, 0)` is a
+ * fixpoint by design, so parameterising the step reinstates a loop that runs
+ * until V8 aborts on the heap limit. #3100 was that loop, and
+ * `guest-stay-expansion-census.test.ts` pins the literal for this reason.
  */
 export function expandStayEnvelopeToNightKeys(
   stayStart: Date,
@@ -483,10 +576,20 @@ export function isGuestReturningOnDay(
  * Deliberately NOT for the partner-share sweeps, which DELETE rows: night D-1 is
  * occupancy that has already happened, and past lodge nights are history and
  * stay untouched (INV-CAP-010).
+ *
+ * `today` is REQUIRED and carries no default (#3123). The default it used to
+ * carry resolved to the CONTAINER's timezone rather than the club's persisted
+ * one (`INV-CONFIG-002`) — and this module cannot read the club's zone to fix
+ * that in place: it reaches the browser bundle (`admin/reports/page.tsx` is
+ * `"use client"` and imports it through `admin-reports.ts`), where
+ * `@/lib/club-time/server` is a bare throw and `club-time-zone-runtime` would
+ * drag Prisma in. Its one production caller is the bed-deactivation guard in
+ * `bed-allocation-beds.ts`, which runs under the global cohort key and the
+ * per-lodge capacity key, so the day has to be resolved outside that
+ * transaction in any case (`INV-LOCK-004`). Deleting the default is what makes
+ * the compiler ask every caller for the value.
  */
-export function getEarliestCurrentBedNightDate(
-  today: Date = getTodayDateOnly()
-): Date {
+export function getEarliestCurrentBedNightDate(today: Date): Date {
   return addDaysDateOnly(today, -1);
 }
 

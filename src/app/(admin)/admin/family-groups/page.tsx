@@ -20,11 +20,12 @@ import {
   useAdminAreaEditAccess,
 } from "@/hooks/use-admin-area-edit-access";
 import {
-  formatFamilyGroupDate,
   type FamilyGroupRequest,
   type FamilyGroupSummary,
   type MemberIdentityOption,
 } from "@/lib/admin-family-group-ui-helpers";
+import { useClubTime } from "@/components/club-time-provider";
+import { formatPayloadInstantDate } from "../_lib/payload-instant";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
 
 type PartnerInvite = {
@@ -38,6 +39,13 @@ type PartnerInvite = {
 };
 
 export default function FamilyGroupsPage() {
+  // A partner invite's `expiresAt` and a group's `createdAt` are real INSTANTS,
+  // read in the club's PERSISTED zone (`INV-CONFIG-002`). The shared helper they
+  // used to go through pinned `APP_TIME_ZONE`, so an expiry an admin abroad was
+  // shown could name the wrong day — and an expiry read a day early is exactly
+  // the operational hazard the comment beside the invite table already warns
+  // about, only from the other direction.
+  const clubTime = useClubTime();
   const searchParams = useSearchParams();
   const router = useRouter();
   // Approve/reject writes the membership-area family-groups requests route; a
@@ -561,7 +569,7 @@ export default function FamilyGroupsPage() {
                             real operational hazard here. The shared helper also
                             guards a malformed value, which Intl would otherwise
                             throw a RangeError on. */}
-                        {formatFamilyGroupDate(invite.expiresAt)}
+                        {formatPayloadInstantDate(clubTime, invite.expiresAt, "Not provided")}
                       </td>
                       <td className="px-4 py-2 text-right">
                         <Button
@@ -814,7 +822,7 @@ export default function FamilyGroupsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
-                        {formatFamilyGroupDate(g.createdAt)}
+                        {formatPayloadInstantDate(clubTime, g.createdAt, "Not provided")}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-1">

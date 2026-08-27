@@ -38,6 +38,8 @@ import {
 import { z } from "zod";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { issueActionToken } from "@/lib/action-tokens";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
 import { createAuditLog, logAudit } from "@/lib/audit";
@@ -104,7 +106,7 @@ import {
   resolveGroupDiscountRateType,
   resolveGuestRateMembershipTypes,
 } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import {
@@ -271,7 +273,7 @@ async function priceSchoolGuests(input: {
   // School requests are non-member (NON_MEMBER_DEFAULT); resolve the rate
   // membership type so pricing keys on the NON_MEMBER type (#1930, E4).
   const ratedGuests = await resolveGuestRateMembershipTypes(prisma, {
-    seasonYear: getSeasonYear(input.checkIn),
+    seasonYear: seasonYearOfStoredDate(input.checkIn),
     guests: input.guests.map((guest) => ({
       ageTier: guest.ageTier,
       isMember: false,
@@ -770,6 +772,26 @@ export async function approveSchoolBookingRequest(input: {
     alreadyConverted: boolean;
   };
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved BEFORE the transaction below takes the global
+  // booking lock (`INV-LOCK-001`), the per-lodge capacity key and a per-member
+  // night lock for every linked guest. The person-night guard inside
+  // `buildApprovalGuestCreates` takes it as a value: a `clubTimeSettings` read
+  // under those locks would need a second pooled connection while they are held
+  // (`INV-LOCK-004`).
+  //
+  // The global lock is named in prose rather than spelled as its raw call,
+  // because `advisory-lock-guard.test.ts` counts that literal inside this
+  // approval block and reads a second occurrence as a second acquisition.
+  //
+  // The runtime reader rather than `club-time/server`, matching its sibling
+  // `booking-request.ts`: `src/instrumentation.node.ts` reaches this family
+  // through the booking-request cron chain, and `server-only` is a bare throw
+  // at import outside the `react-server` condition.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+
   try {
     conversion = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -923,6 +945,11 @@ export async function approveSchoolBookingRequest(input: {
         checkIn: request.checkIn,
         checkOut: request.checkOut,
         adminMemberId: input.adminMemberId,
+        // #3123 — the club day resolved before this transaction opened; the
+        // person-night guard inside `buildApprovalGuestCreates` takes it as a
+        // value rather than reading the club's zone under these locks
+        // (`INV-LOCK-004`).
+        today: clubTodayDateOnly,
         heldBookingId: request.heldBookingId ?? null,
       });
 
@@ -1937,6 +1964,26 @@ export async function approveMemberWholeLodgeRequest(input: {
     alreadyConverted: boolean;
   };
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved BEFORE the transaction below takes the global
+  // booking lock (`INV-LOCK-001`), the per-lodge capacity key and a per-member
+  // night lock for every linked guest. The person-night guard inside
+  // `buildApprovalGuestCreates` takes it as a value: a `clubTimeSettings` read
+  // under those locks would need a second pooled connection while they are held
+  // (`INV-LOCK-004`).
+  //
+  // The global lock is named in prose rather than spelled as its raw call,
+  // because `advisory-lock-guard.test.ts` counts that literal inside this
+  // approval block and reads a second occurrence as a second acquisition.
+  //
+  // The runtime reader rather than `club-time/server`, matching its sibling
+  // `booking-request.ts`: `src/instrumentation.node.ts` reaches this family
+  // through the booking-request cron chain, and `server-only` is a bare throw
+  // at import outside the `react-server` condition.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+
   try {
     conversion = await prisma.$transaction(async (tx) => {
       // Whole-lodge conversion composes a booking lifecycle transition with
@@ -2081,6 +2128,11 @@ export async function approveMemberWholeLodgeRequest(input: {
         checkIn: request.checkIn,
         checkOut: request.checkOut,
         adminMemberId: input.adminMemberId,
+        // #3123 — the club day resolved before this transaction opened; the
+        // person-night guard inside `buildApprovalGuestCreates` takes it as a
+        // value rather than reading the club's zone under these locks
+        // (`INV-LOCK-004`).
+        today: clubTodayDateOnly,
         heldBookingId: null,
       });
 

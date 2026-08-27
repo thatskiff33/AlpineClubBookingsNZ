@@ -26,8 +26,9 @@ import { buildJoiningFeeNarration } from "@/lib/joining-fee-narration";
 import { getEffectiveJoiningFee, type JoiningFeeScheduleSource } from "@/lib/authoritative-fees";
 import { resolveMembershipTypePolicyForMember } from "@/lib/membership-type-policy";
 import { computeAgeTier } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { getSeasonStartDate } from "@/lib/policies/age-tier";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 type JoiningFeeStore = Prisma.TransactionClient | typeof prisma;
 
@@ -105,7 +106,35 @@ async function resolveMembershipTypeId(
 export async function resolveMemberJoiningFeeClassification(
   memberId: string,
   store: JoiningFeeStore = prisma,
+  /**
+   * The membership season to resolve the member's type policy in.
+   *
+   * REQUIRED WHENEVER `store` IS NOT THE GLOBAL CLIENT, and that is a concurrency
+   * rule (#2870, correctness review). A caller passing a transaction client is
+   * inside a transaction — on the approval path, one holding the application and
+   * member-lifecycle advisory locks — and resolving the club's zone here is an
+   * uncached read on the GLOBAL client, so a second pool connection under those
+   * locks. The season it produces selects the membership-type policy, which
+   * selects the `JoiningFee` schedule row, whose `amountCents` is written onto an
+   * immutable entrance-fee Xero invoice; and `readPersistedClubTimeZoneRow`
+   * swallows every throw, so a pool timeout would resolve the season from the
+   * environment seed and charge the wrong joining fee with one warn line as the
+   * only evidence.
+   *
+   * Omitted with the global client — a read-only preview route — it resolves the
+   * club's zone itself, which is correct and costs nothing under contention.
+   */
+  seasonYear?: number,
 ): Promise<MemberJoiningFeeClassification> {
+  if (store !== prisma && seasonYear === undefined) {
+    throw new Error(
+      "resolveMemberJoiningFeeClassification needs an explicit seasonYear when it is " +
+        "given a transaction client: resolving the club's timezone here would read " +
+        "ClubTimeSettings on the global client while that transaction holds the " +
+        "application and member-lifecycle advisory locks, and the season it produces " +
+        "selects the joining fee written onto an immutable invoice.",
+    );
+  }
   const member = await store.member.findUnique({
     where: { id: memberId },
     select: { ageTier: true },
@@ -135,7 +164,8 @@ export async function resolveMemberJoiningFeeClassification(
 
   const policy = await resolveMembershipTypePolicyForMember(store, {
     memberId,
-    seasonYear: getSeasonYear(),
+    seasonYear:
+      seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
   });
 
   if (!policy) {
@@ -230,10 +260,28 @@ async function buildPreview(
  */
 export async function getJoiningFeePreviewForMember(
   memberId: string,
-  options?: { asOf?: Date; store?: JoiningFeeStore },
+  options: {
+    /**
+     * The day the JoiningFee schedule's effective window is evaluated on
+     * (`effectiveFrom <= asOf <= effectiveTo`), REQUIRED since #3123.
+     *
+     * It is not a lodge night, but it IS "what day is it at the club": when a
+     * caller does not name a day it means today, and today has to be the club's
+     * own. It used to default to the ENVIRONMENT's day, so a club configured
+     * behind its container's zone started quoting a schedule row a day before
+     * it took effect — the wrong PRICE, on the fee an applicant is asked to
+     * pay. `INV-MONEY`, `docs/AUTHORITATIVE_FEES.md`. The default is deleted
+     * rather than replaced by a read in here because both `effectiveFrom` and
+     * `effectiveTo` are `@db.Date` calendar days, so their counterpart has to
+     * arrive on the same UTC-midnight frame the caller is already working in
+     * (`INV-DATE-026`).
+     */
+    asOf: Date;
+    store?: JoiningFeeStore;
+  },
 ): Promise<JoiningFeePreview> {
-  const store = options?.store ?? prisma;
-  const asOf = options?.asOf ?? getTodayDateOnly();
+  const store = options.store ?? prisma;
+  const asOf = options.asOf;
   const classification = await resolveMemberJoiningFeeClassification(memberId, store);
   return buildPreview(classification, { asOf, store });
 }
@@ -253,13 +301,31 @@ export interface JoiningFeeInputs {
  */
 export async function getJoiningFeePreviewForInputs(
   inputs: JoiningFeeInputs,
-  options?: { asOf?: Date; store?: JoiningFeeStore },
+  options: {
+    /** See {@link getJoiningFeePreviewForMember} — required for the same reason. */
+    asOf: Date;
+    store?: JoiningFeeStore;
+    seasonYear?: number;
+  },
 ): Promise<JoiningFeePreview> {
-  const store = options?.store ?? prisma;
-  const asOf = options?.asOf ?? getTodayDateOnly();
+  const store = options.store ?? prisma;
+  const asOf = options.asOf;
 
+  // `computeAgeTier` requires its reference date since #2870, so the season is
+  // resolved here — once, on the global client, outside any transaction, which is
+  // what this read-only preview route is. It was the LAST call site in the tree
+  // omitting it, and closing it is what let `age-tier.ts` drop the uncached
+  // zone-reading default that three other paths were reaching through a lock.
   const ageTier: AgeTier | null = inputs.ageTier
-    ?? (inputs.dateOfBirth ? await computeAgeTier(inputs.dateOfBirth) : null);
+    ?? (inputs.dateOfBirth
+      ? await computeAgeTier(
+          inputs.dateOfBirth,
+          getSeasonStartDate(
+            options.seasonYear
+              ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
+          ),
+        )
+      : null);
 
   // Resolve the membership type's key and id from whichever was supplied.
   let membershipTypeKey = inputs.membershipTypeKey ?? null;

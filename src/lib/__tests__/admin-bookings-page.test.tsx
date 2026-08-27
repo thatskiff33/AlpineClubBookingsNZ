@@ -12,6 +12,15 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroSyncOperation: { findMany: vi.fn() },
     xeroObjectLink: { findMany: vi.fn() },
+    // CT-4 (#2870): the page renders `updatedAt` through the club's PERSISTED
+    // timezone. `loadPersistedClubTimeSettings` is fail-soft in three places
+    // and a MISSING DELEGATE is one of them — so without this entry the reader
+    // silently answers "nothing persisted" and the page falls back to
+    // `APP_TIME_ZONE`, which is the very defect CT-4 removes. Every test in
+    // this file bar one leaves it resolving `null`, which reproduces exactly
+    // that fallback and keeps their expectations unchanged; the zone-authority
+    // test at the bottom is the one that supplies a row.
+    clubTimeSettings: { findUnique: vi.fn() },
     // Multi-lodge phase 8: the page loads active lodges for the lodge
     // filter/column (hidden while only one comes back).
     lodge: {
@@ -51,14 +60,32 @@ vi.mock("@/lib/module-settings", async (importOriginal) => {
 import AdminBookingsPage, {
   formatAdminBookingGuestCount,
 } from "@/app/(admin)/admin/bookings/page";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 import {
   adminBookingsQuerySchema,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -111,6 +138,7 @@ describe("AdminBookingsPage", () => {
     vi.mocked(prisma.hostingCoverageIncident.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroSyncOperation.findMany).mockResolvedValue([]);
     vi.mocked(prisma.xeroObjectLink.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue(null);
     vi.mocked(auth).mockResolvedValue({
       user: {
         id: "admin-1",
@@ -160,7 +188,10 @@ describe("AdminBookingsPage", () => {
 
     const callArgs = vi.mocked(prisma.booking.findMany).mock.calls[0][0] as any;
     expect(callArgs.where.updatedAt.gte).toEqual(new Date("2026-04-30T12:00:00.000Z"));
-    expect(callArgs.where.updatedAt.lte).toEqual(new Date("2026-05-31T11:59:59.999Z"));
+    // #3123: the `updatedAt` upper bound is now HALF-OPEN (`lt` against the
+    // next club midnight) rather than inclusive to the millisecond, which
+    // Postgres's microsecond resolution made lossy.
+    expect(callArgs.where.updatedAt.lt).toEqual(new Date("2026-05-31T12:00:00.000Z"));
     expect(callArgs.where.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
     expect(callArgs.where.checkIn.lte).toEqual(new Date("2026-07-31T00:00:00.000Z"));
     expect(callArgs.where.checkOut).toBeUndefined();
@@ -223,8 +254,8 @@ describe("AdminBookingsPage", () => {
   });
 
   it("applies a check-out date range via checkOutFrom/checkOutTo", async () => {
-    const from = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -14));
-    const to = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), -7));
+    const from = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, -14));
+    const to = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, -7));
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -240,7 +271,7 @@ describe("AdminBookingsPage", () => {
   });
 
   it("expresses the unpaid-finished-stays deep link (#1709): status=PAYMENT_PENDING and checkOutTo=today", async () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const todayKey = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -255,7 +286,7 @@ describe("AdminBookingsPage", () => {
   });
 
   it("expresses the unsettled-additions deep link (#1723): additionalOwed=owed and checkOutTo=today", async () => {
-    const todayKey = formatDateOnly(getTodayDateOnly());
+    const todayKey = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -308,8 +339,8 @@ describe("AdminBookingsPage", () => {
   });
 
   it("prefers explicit checkOutTo over the legacy to param", async () => {
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
-    const checkOutTo = formatDateOnly(getTodayDateOnly());
+    const legacyTo = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, 30));
+    const checkOutTo = formatDateOnly(TEST_CLUB_DAY.today);
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({
@@ -339,8 +370,8 @@ describe("AdminBookingsPage", () => {
   it("treats BookingFilters' rewrite of a legacy from/to link as a no-op (#1720)", async () => {
     // BookingFilters rewrites ?from=A&to=B into ?checkInFrom=A&checkOutTo=B.
     // Both spellings must build the identical date where-clause.
-    const legacyFrom = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    const legacyFrom = formatDateOnly(TEST_CLUB_DAY.today);
+    const legacyTo = formatDateOnly(addDaysDateOnly(TEST_CLUB_DAY.today, 14));
 
     await AdminBookingsPage({
       searchParams: Promise.resolve({ from: legacyFrom, to: legacyTo }),
@@ -393,7 +424,9 @@ describe("AdminBookingsPage", () => {
       adminBookingsQuerySchema.parse({
         sortBy: "member",
         sortDir: "asc",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual([
@@ -449,7 +482,9 @@ describe("AdminBookingsPage", () => {
     ] as any);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" })
+      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-missing"]);
@@ -475,7 +510,9 @@ describe("AdminBookingsPage", () => {
     ]);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ paymentSource: "NONE" })
+      adminBookingsQuerySchema.parse({ paymentSource: "NONE" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-none"]);
@@ -550,7 +587,9 @@ describe("AdminBookingsPage", () => {
       adminBookingsQuerySchema.parse({
         bedState: "unallocated",
         changeState: "pendingRequest",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-unallocated"]);
@@ -584,7 +623,8 @@ describe("AdminBookingsPage", () => {
 
     const result = await listAdminBookings(
       adminBookingsQuerySchema.parse({ bedState: "unallocated" }),
-      { bedAllocationEnabled: false }
+      { bedAllocationEnabled: false },
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((booking) => booking.id)).toEqual(["booking-clean"]);
@@ -815,5 +855,67 @@ describe("AdminBookingsPage", () => {
   it("formats total guests with non-member guests in brackets", () => {
     expect(formatAdminBookingGuestCount(6, 2)).toBe("6 (2 non-members)");
     expect(formatAdminBookingGuestCount(1, 1)).toBe("1 (1 non-member)");
+  });
+
+  /**
+   * CT-4 (#2870): "Last updated" is a real INSTANT, so it has no civil date
+   * until a zone is chosen, and `INV-CONFIG-002` says which — the PERSISTED
+   * `ClubTimeSettings.timeZone`, read on the server, never `APP_TIME_ZONE`.
+   *
+   * ## Why this test had to exist before the claim could be believed
+   *
+   * `loadPersistedClubTimeSettings` is fail-soft three ways: no row, an
+   * unreachable database, and a MISSING PRISMA DELEGATE all resolve to "nothing
+   * persisted", and every one of them then falls back to the environment. Unit
+   * tests run with a deliberately unreachable `DATABASE_URL`, so before the
+   * delegate was added to this file's mock EVERY date on this page rendered
+   * through `APP_TIME_ZONE` here — and nothing could tell, because that is also
+   * what the code being replaced did. A whole page's worth of assertions was
+   * agreeing with the defect.
+   *
+   * ## What makes the assertion discriminating
+   *
+   * The persisted zone is picked so it disagrees with the environment about
+   * THIS instant, on whatever host the suite runs on. The stay dates beside it
+   * are `@db.Date` calendar days and must NOT move with it — they are the
+   * control, and a formatter that projected them would fail here too.
+   */
+  it("renders Last updated in the PERSISTED club zone, not APP_TIME_ZONE", async () => {
+    const UPDATED_AT = new Date("2026-06-01T00:00:00.000Z");
+    const dayIn = (zone: string) =>
+      new Intl.DateTimeFormat(APP_LOCALE, {
+        timeZone: zone,
+        dateStyle: "medium",
+      }).format(UPDATED_AT);
+    const chosen = chooseDivergentClubZone({
+      subject: "the civil day of a booking's updatedAt",
+      answerKey: "day",
+      cases: [
+        { zone: "America/Denver", day: "31 May 2026" }, // −6: still 31 May
+        { zone: "Pacific/Kiritimati", day: "1 Jun 2026" }, // +14: already 1 June
+      ],
+      answerFor: dayIn,
+    });
+    const environmentDay = dayIn(APP_TIME_ZONE);
+    expect(chosen.day).not.toBe(environmentDay);
+
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+      timeZone: chosen.zone,
+    } as never);
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      makeBooking({ updatedAt: UPDATED_AT }),
+    ] as never);
+    vi.mocked(prisma.booking.count).mockResolvedValue(1);
+
+    const html = renderToStaticMarkup(
+      await AdminBookingsPage({ searchParams: Promise.resolve({}) }),
+    );
+
+    expect(html).toContain(chosen.day);
+    expect(html).not.toContain(environmentDay);
+    // The control: the stay's `@db.Date` columns are calendar days and carry no
+    // zone, so they read the same here as they would for any club on earth.
+    expect(html).toContain("1 Jul 2026");
+    expect(html).toContain("3 Jul 2026");
   });
 });

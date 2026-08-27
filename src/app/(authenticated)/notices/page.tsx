@@ -4,7 +4,7 @@ import { Newspaper, Pin } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { listNoticesForMember } from "@/lib/notices";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import {
   Card,
   CardContent,
@@ -28,6 +28,10 @@ export default async function NoticesPage() {
   }
 
   const notices = await listNoticesForMember(session.user.id, { limit: 50 });
+  // `publishedAt` is a real INSTANT (a nullable `DateTime`, serialised to ISO by
+  // `listNoticesForMember`), so the civil day it reads as comes from the club's
+  // PERSISTED timezone rather than the container's (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -87,7 +91,7 @@ export default async function NoticesPage() {
                       </span>
                       {notice.publishedAt ? (
                         <span className="block text-xs text-muted-foreground">
-                          {formatNZDate(new Date(notice.publishedAt))}
+                          {club.instantDate(new Date(notice.publishedAt))}
                         </span>
                       ) : null}
                     </span>

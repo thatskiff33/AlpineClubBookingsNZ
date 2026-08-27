@@ -8,9 +8,12 @@ import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
 import { canReplayXeroInboundEvent } from "@/lib/xero-stale-operations";
 import {
-  endOfDateOnlyForTimeZone,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  endOfClubDayInclusive,
+  requireCalendarDate,
+  startOfClubDay,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -27,12 +30,24 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
 });
 
-function startOfInputDate(date: string) {
-  return startOfDateOnlyForTimeZone(date);
+/**
+ * An admin filter's `YYYY-MM-DD` bound as the instants that bracket that CLUB
+ * day (CT-5, #2869).
+ *
+ * `XeroSyncOperation.createdAt` / `XeroInboundEvent.createdAt` are INSTANTS, and
+ * the operator typing a date means the club's calendar day — so the window is
+ * derived from the PERSISTED club timezone (`INV-CONFIG-002`), not from the
+ * container's `TZ`. The zod schema has already pinned the shape to
+ * `^\d{4}-\d{2}-\d{2}$`, so `requireCalendarDate` cannot throw on a bound that
+ * reached here.
+ */
+function startOfInputDate(date: string, zone: ClubTimeZone) {
+  return startOfClubDay(requireCalendarDate(date), zone);
 }
 
-function endOfInputDate(date: string) {
-  return endOfDateOnlyForTimeZone(date);
+/** The last instant of that club day, INCLUSIVE — the filter uses `lte`. */
+function endOfInputDate(date: string, zone: ClubTimeZone) {
+  return endOfClubDayInclusive(requireCalendarDate(date), zone);
 }
 
 function eventCategoryForXeroObjectType(xeroObjectType: string) {
@@ -90,9 +105,10 @@ export async function GET(request: NextRequest) {
   const pageSize = parsed.data.pageSize ?? limit;
 
   try {
+    const zone = await clubTimeZone();
     const createdAt: Prisma.DateTimeFilter = {};
-    if (createdFrom) createdAt.gte = startOfInputDate(createdFrom);
-    if (createdTo) createdAt.lte = endOfInputDate(createdTo);
+    if (createdFrom) createdAt.gte = startOfInputDate(createdFrom, zone);
+    if (createdTo) createdAt.lte = endOfInputDate(createdTo, zone);
 
     const andFilters: Prisma.XeroInboundEventWhereInput[] = [{
       ...(status !== "all" ? { status } : {}),

@@ -6,38 +6,56 @@
 // EXCLUSIVE (the morning they leave — not a night). Dates are NZ date-only
 // "YYYY-MM-DD" strings, so a plain string compare is a calendar compare.
 
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
-import { formatDateOnly } from "@/lib/date-only";
+import {
+  addCalendarDays,
+  formatClubWeekday,
+  formatClubWeekdayDay,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 /**
- * Not one of the shared `nzst-date` helpers (#2264). A lobby-display column head
- * is as terse as the wall allows — short weekday plus a bare day-of-month, no
- * month and no year — because the window is only ever a few days wide and the
- * screen is read from across the room. The zone is pinned to club time so a TV
- * whose browser sits in the wrong zone can no longer name the wrong weekday.
+ * The lobby wall's two terse calendar-day labels — "Fri" and "Fri 10".
  *
- * This is the CANONICAL copy of the pattern: the boards in this folder
- * (welcome-panel, chores-board, arrivals-board, occupancy-grid, singles-board)
- * all repeat it and must stay byte-identical to it.
+ * As terse as the wall allows (no month, no year) because the window is only
+ * ever a few days wide and the screen is read from across the room. Every board
+ * in this folder uses these two, so the shapes cannot drift apart.
+ *
+ * ## What CT-2 (#2990) fixed here
+ *
+ * These labels used to be built by handing a `YYYY-MM-DD` to
+ * `new Date(`${date}T00:00:00Z`)` and formatting it with a club-zone-pinned
+ * `Intl.DateTimeFormat`, on the recorded assumption that "UTC midnight is midday
+ * the SAME calendar day (NZ is UTC+12/+13)". That is true only for a club EAST
+ * of Greenwich. For a club in `America/Denver`, `2026-04-05T00:00:00Z` renders
+ * as 4 April — so the weekday came from the previous day while the
+ * `getUTCDate()` half came from the right one, and the label named two different
+ * days at once. `INV-DATE-010` already forbids deriving a rule from a date-only
+ * value read as a MOMENT, which is what pinning the day to UTC midnight in order
+ * to format it does. (The rule is about the value's nature, not about which zone
+ * decodes it: the decode authority is `INV-DATE-019`'s first exact boundary with
+ * `INV-DATE-026`; #3080.)
+ *
+ * The fix is structural rather than a correction: a lodge night is a CALENDAR
+ * DAY, so it is formatted as one, with no zone anywhere in the call. See
+ * `src/lib/club-time/intl.ts` for why that is an identity and not a projection.
  */
-export const DISPLAY_SHORT_WEEKDAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "short",
-});
+export function displayWeekday(date: string): string {
+  return formatClubWeekday(requireCalendarDate(date));
+}
 
 export type StayStatus = "arriving" | "staying" | "departing";
 
 /**
- * Shift an NZ date-only key by whole days.
+ * Shift a club date-only key by whole days.
  *
- * Re-anchored at UTC midnight, which is midday NZ (UTC+12/+13), so the shift
- * can never land on a daylight-saving transition and roll the calendar day the
- * wrong way — the same reason `shortDay` hands its dates over at UTC midnight.
+ * Integer calendar arithmetic in the kernel, with no `Date` and no zone in it at
+ * all, so the shift cannot land on a daylight-saving transition and roll the
+ * calendar day the wrong way — and, unlike the UTC-midnight re-anchoring this
+ * replaces, that is true for a club in any zone rather than only east of
+ * Greenwich.
  */
 export function shiftDateOnly(date: string, days: number): string {
-  const day = new Date(`${date}T00:00:00Z`);
-  day.setUTCDate(day.getUTCDate() + days);
-  return formatDateOnly(day);
+  return addCalendarDays(requireCalendarDate(date), days);
 }
 
 /** A status plus the run of nights it was read from. */
@@ -130,15 +148,7 @@ export const STAY_STATUS_ORDER: Record<StayStatus, number> = {
   departing: 2,
 };
 
-/** "Fri 10" — short weekday + day-of-month, NZ locale. Shared with the bar
- * boards' own private formatter; kept here so these modules never import from
- * arrivals-board (which a sibling change owns). */
+/** "Fri 10" — the column head every board in this folder uses. */
 export function shortDay(date: string): string {
-  // Handed over at UTC midnight rather than parsed in the browser's own zone
-  // (#2264): a bare `T00:00:00` parse slides the whole label back a day for a
-  // viewer at UTC+13/+14. Read back in club time, UTC midnight is midday the
-  // SAME calendar day (NZ is UTC+12/+13), so the formatted weekday and
-  // `getUTCDate()` always name the same day.
-  const day = new Date(`${date}T00:00:00Z`);
-  return `${DISPLAY_SHORT_WEEKDAY.format(day)} ${day.getUTCDate()}`;
+  return formatClubWeekdayDay(requireCalendarDate(date));
 }

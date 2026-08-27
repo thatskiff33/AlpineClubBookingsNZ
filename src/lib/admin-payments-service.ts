@@ -17,6 +17,7 @@ import {
 import logger from "@/lib/logger";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
 import { prisma } from "@/lib/prisma";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   endOfDateOnlyForTimeZone,
   parseDateOnly,
@@ -172,12 +173,66 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
   return { body, init };
 }
 
-function startOfInputDateTime(date: string) {
-  return startOfDateOnlyForTimeZone(date);
-}
-
-function endOfInputDateTime(date: string) {
-  return endOfDateOnlyForTimeZone(date);
+/**
+ * The activity window's bounds, in the CLUB's civil day (CT-4, #2870;
+ * `INV-CONFIG-002`).
+ *
+ * NARROW, DECLARED `src/lib` EXCEPTION, and the reason is that this is one half
+ * of a value whose other half moved. `admin/payments/page.tsx` seeds the default
+ * "last updated to" from `clubTime.today()` — the club's PERSISTED zone — and
+ * these two functions closed the same window at midnight/23:59:59.999 in
+ * `APP_TIME_ZONE`, which is the build's `TZ` and not the club's setting. For a
+ * club six hours behind an Auckland-defaulted build, every payment updated after
+ * about 06:00 club time fell out of the officer's DEFAULT view while the date
+ * box still read the correct date — an invisible truncation of roughly eighteen
+ * hours. Both bounds are affected, not only the upper one.
+ *
+ * The zone is resolved ONCE per request, in {@link listAdminPayments}, and so
+ * are the two bounds: reading the zone per row would issue a database query
+ * inside a filter callback, and re-projecting the bound per row would rebuild an
+ * `Intl` formatter for every payment in the page.
+ *
+ * WHICH READER, AND THE HONEST REASON. It is `club-time-zone-runtime`, not
+ * `club-time/server`. The latter carries `import "server-only"`, which throws at
+ * import time under anything but the `react-server` condition — including a
+ * `tsx` operator script, which cannot be told apart from a client component.
+ * `listAdminPayments` has two consumers: the admin payments route, and
+ * `diagnostics/tools/packs/finance-evidence.ts`. The diagnostics tree IS already
+ * reached from a CLI (`scripts/diagnostics/generate-knowledge-bundle.ts` imports
+ * `src/lib/diagnostics/knowledge/**` under `tsx`), but that pack file is not on
+ * that script's graph today.
+ *
+ * MEASURED rather than asserted, because an earlier revision of this comment
+ * claimed the reachability as a current fact and it is not one: swapping this
+ * import for `club-time/server` leaves `cli-server-only-reach-census.test.ts`
+ * green on all four of its tests. So this is a cheap hedge against an import
+ * edge that does not exist yet, not a live constraint — and the cost of the
+ * hedge is one un-memoised settings read per request, against the one read a
+ * request already makes here.
+ *
+ * The INCLUSIVE upper-bound shape is unchanged (`endOfDateOnlyForTimeZone` is
+ * the millisecond before the next day): the comparison below is `>`, so
+ * narrowing it to the kernel's half-open boundary here would silently drop the
+ * final millisecond of the window.
+ *
+ * `null` FOR "NO BOUND", and never for "a bound we could not resolve a zone
+ * for". The two are one decision here — the zone is read exactly when a bound is
+ * present — which is why the window is built in one place rather than as a pair
+ * of conditions in the filter that a later edit could drift apart. A
+ * `Date(NaN)`, which an unparseable day still produces, compares false against
+ * everything and so keeps the row: the long-standing behaviour of these bounds,
+ * unchanged.
+ */
+function activityWindowBounds(
+  activityFrom: string | undefined,
+  activityTo: string | undefined,
+  timeZone: string | null,
+): { readonly from: Date | null; readonly to: Date | null } {
+  if (timeZone === null) return { from: null, to: null };
+  return {
+    from: activityFrom ? startOfDateOnlyForTimeZone(activityFrom, timeZone) : null,
+    to: activityTo ? endOfDateOnlyForTimeZone(activityTo, timeZone) : null,
+  };
 }
 
 function inputDateOnly(date: string) {
@@ -278,6 +333,11 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
   } = query;
   const activityFrom = lastUpdatedFrom ?? from;
   const activityTo = lastUpdatedTo ?? to;
+  // Read once, outside the row loop, and only when a bound is actually in play —
+  // see the note on `activityWindowBounds`.
+  const activityZone =
+    activityFrom || activityTo ? await readClubTimeZoneOutsideRequest() : null;
+  const activityWindow = activityWindowBounds(activityFrom, activityTo, activityZone);
 
   try {
     const where: Prisma.PaymentWhereInput = {};
@@ -459,10 +519,16 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         };
       })
       .filter((payment) => {
-        if (activityFrom && payment.latestActivityAt < startOfInputDateTime(activityFrom)) {
+        if (
+          activityWindow.from !== null &&
+          payment.latestActivityAt < activityWindow.from
+        ) {
           return false;
         }
-        if (activityTo && payment.latestActivityAt > endOfInputDateTime(activityTo)) {
+        if (
+          activityWindow.to !== null &&
+          payment.latestActivityAt > activityWindow.to
+        ) {
           return false;
         }
         if (!matchesXeroStateFilter(payment.xeroState, xeroState)) {

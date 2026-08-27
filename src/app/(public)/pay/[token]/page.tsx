@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Clock, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import StripeProvider from "@/components/stripe/StripeProvider";
@@ -13,7 +13,7 @@ import {
   renderClientBookingMessage,
   type BookingMessageClubTokens,
 } from "@/lib/booking-message-definitions";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import {
@@ -23,89 +23,29 @@ import {
   isPaymentReceivedStatusUnconfirmed,
   PAYMENT_RECEIVED_STATUS_UNCONFIRMED_MESSAGE,
 } from "@/lib/payment-recovery-contract";
-
-interface Narrative {
-  state: string;
-  headline: string;
-  message: string;
-  nextStep: string;
-}
-
-interface PaymentLinkContext {
-  state: string;
-  narrative: Narrative;
-  firstName: string;
-  payable: {
-    checkIn: string;
-    checkOut: string;
-    guestCount: number;
-    status: string;
-    amountCents: number;
-    internetBankingReference?: string;
-    expiresAt: string;
-  } | null;
-  canRequestFreshLink: boolean;
-  /**
-   * The lodge THIS booking is at (#2919). Optional on the wire so a page served
-   * from a cached/older response still renders — the club default stands in.
-   */
-  lodgeName?: string;
-}
-
-type Tone = "success" | "warning" | "info";
-
-type PaymentRecovery = {
-  heading: string;
-  message: string;
-};
-
-const TONE_STYLES: Record<Tone, { wrap: string; icon: typeof Info }> = {
-  success: { wrap: "text-success-11", icon: CheckCircle2 },
-  warning: { wrap: "text-warning-11", icon: AlertTriangle },
-  info: { wrap: "text-info-11", icon: Info },
-};
-
-function toneForState(state: string): Tone {
-  if (state === "paid") return "success";
-  if (
-    state === "cancelled_post_payment" ||
-    state === "cancelled_pre_payment" ||
-    state === "declined"
-  ) {
-    return "warning";
-  }
-  return "info";
-}
-
-function NarrativeCard({
-  narrative,
-  tone,
-  children,
-}: {
-  narrative: Narrative;
-  tone: Tone;
-  children?: React.ReactNode;
-}) {
-  const { wrap, icon: Icon } = TONE_STYLES[tone];
-  return (
-    <Card className="w-full max-w-lg">
-      <CardHeader>
-        <CardTitle>{narrative.headline}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className={`flex items-start gap-2 ${wrap}`}>
-          <Icon className="h-6 w-6 shrink-0" />
-          <p className="font-medium">{narrative.message}</p>
-        </div>
-        <p className="text-sm text-muted-foreground">{narrative.nextStep}</p>
-        {children}
-      </CardContent>
-    </Card>
-  );
-}
+// The presentation layer this page renders through, split out when the club-time
+// migration carried this file past its 500-line route-page budget. See that
+// file's header for why an allowance was not the answer.
+import {
+  formatLinkExpiry,
+  formatStayDay,
+  NarrativeCard,
+  toneForState,
+  type Narrative,
+  type PaymentLinkContext,
+  type PaymentRecovery,
+} from "./pay-link-presentation";
 
 export default function PayByLinkPage() {
   const club = useClubIdentity();
+  /*
+    `expiresAt` is a real INSTANT — the moment the link stops working — so it has
+    no civil date until a zone is chosen, and the one to choose is the club's
+    PERSISTED setting (CT-4, #2870; INV-CONFIG-002). Deliberately NOT the same
+    route as the stay dates rendered beside it: those are calendar days and take
+    no zone at all. Merging the two is the defect this epic exists to end.
+  */
+  const clubTime = useClubTime();
   const { token } = useParams<{ token: string }>();
   const [context, setContext] = useState<PaymentLinkContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -369,8 +309,8 @@ export default function PayByLinkPage() {
       <CardContent className="space-y-4">
         <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
           <p>
-            Dates: {formatNZDate(new Date(payable.checkIn))} to{" "}
-            {formatNZDate(new Date(payable.checkOut))}
+            Dates: {formatStayDay(payable.checkIn)} to{" "}
+            {formatStayDay(payable.checkOut)}
           </p>
           <p className="mt-1">Guests: {payable.guestCount}</p>
           <p className="mt-1 font-semibold text-foreground">
@@ -378,7 +318,8 @@ export default function PayByLinkPage() {
           </p>
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
-            This payment link expires on {formatNZDate(new Date(payable.expiresAt))}.
+            This payment link expires on{" "}
+            {formatLinkExpiry(payable.expiresAt, clubTime)}.
           </p>
         </div>
 

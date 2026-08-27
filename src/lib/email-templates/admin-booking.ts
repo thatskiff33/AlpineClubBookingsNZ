@@ -24,7 +24,7 @@ import {
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- N-02: Admin Alert — New Booking ----
 
@@ -40,8 +40,8 @@ export function adminNewBookingTemplate(data: {
 }): string {
   const rows = [
     { label: "Member", value: escapeHtml(data.memberName) },
-    { label: "Check-in", value: formatNZDate(data.checkIn) },
-    { label: "Check-out", value: formatNZDate(data.checkOut) },
+    { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+    { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     { label: "Guests", value: String(data.guestCount) },
     { label: "Total", value: formatCents(data.totalCents) },
     { label: "Status", value: escapeHtml(data.status) },
@@ -75,8 +75,8 @@ export function adminMinorsReviewRequiredTemplate(data: {
     ${alertBox(escapeHtml(data.reviewReason), "warning")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
     ])}
     ${button("Review Bookings", BASE_URL + "/admin/bookings")}
@@ -106,7 +106,7 @@ export function adminPartnerShareSweptTemplate(data: {
       { label: "Reason", value: escapeHtml(data.reason) },
       {
         label: `Removed night${data.nights.length === 1 ? "" : "s"}`,
-        value: data.nights.map((night) => formatNZDate(night)).join(", "),
+        value: data.nights.map((night) => emailCalendarDay(night)).join(", "),
       },
     ])}
     ${button("Review Bed Allocation", BASE_URL + "/admin/bed-allocation")}
@@ -166,8 +166,8 @@ export function adminOwnerSubstitutionTemplate(data: {
         label: "Requester",
         value: `${escapeHtml(data.requesterName)} (${escapeHtml(data.requesterEmail)})`,
       },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}
     ${button("Review Bookings", BASE_URL + "/admin/bookings")}
   `);
@@ -189,9 +189,9 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
       (b) => `
     <tr>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${escapeHtml(b.memberName)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDate(b.checkIn)} – ${formatNZDate(b.checkOut)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${emailCalendarDay(b.checkIn)} – ${emailCalendarDay(b.checkOut)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${b.guestCount}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDateTime(b.deadline)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${emailClubDateTime(b.deadline)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${b.hoursRemaining <= 24 ? "#dc2626" : p.deep}; font-weight: ${b.hoursRemaining <= 24 ? "700" : "400"};">${Math.round(b.hoursRemaining)}h</td>
     </tr>`
     )
@@ -228,8 +228,8 @@ export function adminBookingBumpedTemplate(data: {
     ${alertBox("A pending booking has been bumped due to a member booking.", "warning")}
     ${infoTable([
       { label: "Bumped Member", value: escapeHtml(data.bumpedMemberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Triggered By", value: escapeHtml(data.triggeringMemberName) },
     ])}
@@ -254,7 +254,7 @@ export function adminCapacityWarningTemplate(days: Array<{
       const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : p.deep;
       return `
     <tr>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${formatNZDate(d.date)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${emailCalendarDay(d.date)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${p.deep};">${d.occupiedBeds}/${lodgeCapacity}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${p.mist}; color: ${color}; font-weight: 700;">${pct}%</td>
@@ -290,8 +290,8 @@ export function adminWaitlistOfferTemplate(data: {
     ${paragraph("A waitlist offer has been sent to " + escapeHtml(data.memberName) + ".")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Queue Position", value: "#" + String(data.position) },
     ])}
@@ -317,8 +317,8 @@ export function adminBookingChangeRequestTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Email", value: escapeHtml(data.memberEmail) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
-      { label: "Current check-in", value: formatNZDate(data.checkIn) },
-      { label: "Current check-out", value: formatNZDate(data.checkOut) },
+      { label: "Current check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Current check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Requested change", value: escapeHtml(data.requestedSummary) },
     ])}
     ${data.reason ? alertBox(escapeHtml(data.reason), "info") : ""}
@@ -338,8 +338,8 @@ export function adminBookingRequestPendingTemplate(data: {
     ${paragraph("A public booking request has verified their email address and is ready for pricing and review.")}
     ${infoTable([
       { label: "Requester", value: escapeHtml(data.requesterName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
     ])}
     ${button("Review Booking Requests", data.reviewUrl, { sameOrigin: true })}
@@ -361,8 +361,8 @@ export function adminSchoolManualInvoiceTemplate(data: {
     ${infoTable([
       { label: "School", value: escapeHtml(data.schoolName) },
       { label: "Contact email", value: escapeHtml(data.contactEmail) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Amount", value: formatCents(data.totalCents) },
     ])}
@@ -422,8 +422,8 @@ export function adminWholeLodgeManualInvoiceTemplate(data: {
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Contact email", value: escapeHtml(data.contactEmail) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       {
         label: "Amount",
@@ -455,11 +455,11 @@ export function adminBookingRequestHoldExpiredTemplate(data: {
     ${paragraph("A booking created from a public booking request reached its hold deadline without payment. There is no saved card to charge, so the hold has been extended and the booking still holds member-priority status.")}
     ${infoTable([
       { label: "Requester", value: escapeHtml(data.requesterName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Total", value: formatCents(data.totalCents) },
-      { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
+      { label: "Hold extended to", value: emailClubDateTime(data.holdUntil) },
     ])}
     ${paragraph("Consider following up with the requester or cancelling the booking if payment is not expected.")}
     ${muted("This alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the request booking stays unpaid; a terminal cancellation past the check-in day ends the series with a separate final notice.")}
@@ -491,8 +491,8 @@ export function adminBookingRequestHoldCancelledTemplate(data: {
     ${paragraph("A booking created from a public booking request was still unpaid at the end of its check-in day, with no saved card to charge. The provisional booking has now been automatically cancelled and the beds it was holding have been released back to availability. No payment was taken. The requester has been notified.")}
     ${infoTable([
       { label: "Requester", value: escapeHtml(data.requesterName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
     ])}
@@ -531,11 +531,11 @@ export function adminSplitSettlementUnpaidTemplate(data: {
     ${paragraph(adminSplitSettlementUnpaidLeadParagraph(data.parentUnpaid))}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Amount due", value: formatCents(data.totalCents) },
-      { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
+      { label: "Hold extended to", value: emailClubDateTime(data.holdUntil) },
     ])}
     ${paragraph("No beds are held for these guests until payment is received. Follow up with the member or cancel the guest portion if payment is not expected.")}
     ${muted("This alert repeats on a capped cadence (the first three hold extensions, then every seventh) while the guest portion stays unpaid; a terminal cancellation past the check-in day ends the series with a separate final notice.")}
@@ -569,8 +569,8 @@ export function adminSplitSettlementCancelledTemplate(data: {
     ${paragraph(adminSplitSettlementCancelledLeadParagraph(data.parentUnpaid))}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Amount (unpaid)", value: formatCents(data.totalCents) },
     ])}

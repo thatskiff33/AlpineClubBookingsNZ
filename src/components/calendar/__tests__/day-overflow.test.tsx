@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
+import { requireCalendarDate } from "@/lib/club-time";
 import { MonthCalendar } from "../month-calendar";
 import { DayEventsDialog } from "../day-events-dialog";
 
-const DAY = "2026-08-15"; // a Saturday in the rendered grid (August 2026)
+const AUGUST = requireCalendarDate("2026-08-01");
+const DAY = requireCalendarDate("2026-08-15"); // a Saturday in the August grid
 
 function makeEvent(n: number): CalendarEventDTO {
   return {
@@ -35,8 +37,7 @@ describe("MonthCalendar '+N more' overflow", () => {
     const onSelectDay = vi.fn();
     render(
       <MonthCalendar
-        year={2026}
-        month={7} // August (0-indexed)
+        monthStart={AUGUST}
         eventsByDay={new Map([[DAY, fiveEvents]])}
         canCreate={canCreate}
         onSelectEvent={vi.fn()}

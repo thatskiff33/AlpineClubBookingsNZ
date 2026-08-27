@@ -4,8 +4,11 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
-import { getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { logAudit } from "@/lib/audit";
 import {
   isXeroConnected,
@@ -229,9 +232,12 @@ export async function PUT(
       { status: 422 },
     );
   }
-  // A later NZ calendar day, not a later instant (#2682) — the same comparison
-  // `request-child/route.ts` already makes.
-  if (dob > getTodayDateOnly()) {
+  // CT-4 (#2870): "in the future" means a later CLUB calendar day, taken from
+  // the persisted ClubTimeSettings zone and not the container's TZ
+  // (INV-CONFIG-002, INV-DATE-019). The date of birth takes no zone at all
+  // (INV-DATE-010), and both sides stay UTC-midnight date-only values.
+  const today = dateOnlyInstantOf((await clubTime()).today());
+  if (dob > today) {
     return NextResponse.json(
       { error: "Date of birth cannot be in the future" },
       { status: 422 },
@@ -242,14 +248,19 @@ export async function PUT(
   // #2106: recompute the tier from the DOB, then apply enforcement so a FORCED
   // membership type (or an org account) keeps N/A and an ALLOWED-type manual N/A
   // is preserved. The delegate never submits a tier directly.
+  // ONE season for both halves of this decision, from the club's PERSISTED zone
+  // (CT-4, #2870): the tier the date of birth implies and the exemption that may
+  // override it must be judged in the same season, and that tier decides a price
+  // band.
+  const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
   const dobDerivedTier = await computeAgeTier(
     dob,
-    getSeasonStartDate(getSeasonYear()),
+    getSeasonStartDate(clubCurrentSeasonYear),
   );
   const typeExemption = await loadMemberCurrentSeasonTypeExemption(
     prisma,
     target.id,
-    getSeasonYear(),
+    clubCurrentSeasonYear,
   );
   const enforced = resolveEnforcedAgeTier({
     isOrganisation: isOrganisationMember({

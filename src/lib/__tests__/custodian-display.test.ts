@@ -46,11 +46,29 @@ vi.mock("@/lib/lodge-instructions", () => ({
   getSanitizedLodgeInstructions: (...args: unknown[]) =>
     mockInstructions(...args),
 }));
-vi.mock("@/lib/date-only", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/date-only")>();
+/*
+  `buildDisplayState` opens its window on the CLUB's today since CT-4 (#2870),
+  not on `getTodayDateOnly()`, so the seam this file pins moved from `date-only`
+  to `clubTime()`. The pinned day is unchanged, and so is every expectation
+  below; `lodge-display-state.test.ts` is where the zone itself is proved to be
+  the authority.
+*/
+vi.mock("@/lib/club-time/server", async () => {
+  const {
+    bindClubTime,
+    dateOnlyInstantOf,
+    requireCalendarDate,
+    requireClubTimeZone,
+  } = await import("@/lib/club-time");
+  const zone = requireClubTimeZone("Pacific/Auckland");
+  const bound = bindClubTime(zone);
+  const today = () => requireCalendarDate("2026-07-02");
   return {
-    ...actual,
-    getTodayDateOnly: () => actual.parseDateOnly("2026-07-02"),
+    clubTimeZone: async () => zone,
+    clubTime: async () => ({ ...bound, today }),
+    // `clubTodayDateOnlyInstant` IS `dateOnlyInstantOf(clubTime().today())` in the
+    // real module (F4a, #2870), so the double composes it from the same pinned day.
+    clubTodayDateOnlyInstant: async () => dateOnlyInstantOf(today()),
   };
 });
 

@@ -30,7 +30,9 @@ import {
   resolveMembershipTypePolicyForMember,
   resolveMembershipTypePoliciesForMembers,
 } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { fixedClubClock } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 // ---------------------------------------------------------------------------
 // Pure types
@@ -323,7 +325,8 @@ export async function loadXeroGroupingContext(): Promise<XeroGroupingContext> {
 
 /**
  * A member's effective membership type id for grouping — resolved via the ONE
- * shared policy helper (E4 #1930) at the CURRENT season year (`getSeasonYear(now)`),
+ * shared policy helper (E4 #1930) at the CURRENT season year (`clubSeasonYear` at
+ * `now`),
  * the same no-assignment fallback as pricing. Grouping resolves at "now";
  * pricing resolves per stay-night season — this is the deliberate difference,
  * so the two consumers must not be merged.
@@ -337,7 +340,7 @@ export async function resolveEffectiveMembershipTypeId(
 ): Promise<string | null> {
   const policy = await resolveMembershipTypePolicyForMember(prisma, {
     memberId,
-    seasonYear: getSeasonYear(now),
+    seasonYear: clubSeasonYear(await readClubTimeZoneOutsideRequest(), fixedClubClock(now)),
   });
   return policy?.membershipType.id ?? null;
 }
@@ -402,7 +405,10 @@ export async function resolveMemberGroupingsForMembers(params: {
     return result;
   }
 
-  const seasonYear = getSeasonYear(params.now ?? new Date());
+  const seasonYear = clubSeasonYear(
+    await readClubTimeZoneOutsideRequest(),
+    params.now ? fixedClubClock(params.now) : undefined,
+  );
   const policies = await resolveMembershipTypePoliciesForMembers(prisma, {
     memberIds: members.map((member) => member.id),
     seasonYear,

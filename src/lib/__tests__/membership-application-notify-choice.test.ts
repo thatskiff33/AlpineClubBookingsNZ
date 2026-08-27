@@ -69,10 +69,6 @@ vi.mock("@/lib/age-tier", () => ({
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01T00:00:00.000Z")),
 }));
 
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
-
 vi.mock("@/lib/email", () => emailMock);
 vi.mock("@/lib/xero", () => xeroMock);
 vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);

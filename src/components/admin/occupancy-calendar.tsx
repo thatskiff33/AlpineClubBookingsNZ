@@ -4,13 +4,19 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useClubTime } from "@/components/club-time-provider";
 import {
-  formatDateOnly,
-  formatMonthOnly,
-  getTodayDateOnly,
-  parseDateOnly,
-} from "@/lib/date-only";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+  calendarDateOfDateOnlyInstant,
+  formatClubMonthYear,
+  formatClubWeekdayDayMonth,
+  requireCalendarDate,
+} from "@/lib/club-time";
+import { formatMonthOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  getMonthGrid,
+  getMonthStart,
+  monthKeysForDateRange,
+} from "./occupancy-calendar-month-grid";
 import { CalendarDays, ChevronLeft, ChevronRight, Users } from "lucide-react";
 
 type OccupancyCalendarMode = "range" | "single";
@@ -84,71 +90,32 @@ type OccupancyCalendarProps = {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// Every receiver here is a `getMonthStart` result — `parseDateOnly` of a
-// `yyyy-MM-01` string, so UTC midnight and a date-only value by construction —
-// which is why the canonical month encoder reads back the month it encodes
-// (INV-DATE-010) and why this must NOT become the club-timezone helper: see the
-// "Deliberately UTC, NOT club time" note on `visibleMonth` below. It assembled
-// the key from UTC parts until #2684, which is the truncation in a fourth
-// spelling and invisible to a census that looks for the ISO ones.
-function monthKey(date: Date) {
-  return formatMonthOnly(date);
+
+// The cell label deliberately carries the weekday and drops the year — the year
+// is already stated by the month heading above the grid, and a day cell has no
+// room for it (#2264).
+// CT-4 (#2870): the cell label is a CALENDAR DAY, so it now takes no zone at
+// all. `formatClubWeekdayDayMonth` is the kernel's declared "Thu, 16 Apr" shape -
+// byte-identical options to the constant this replaces - pinned to UTC over the
+// UTC-midnight encoding, which makes the projection the identity. The constant
+// pinned `APP_TIME_ZONE` instead, which is the identity only east of Greenwich.
+
+/**
+ * The month heading over the grid.
+ *
+ * The constant this replaces was pinned to UTC deliberately, because
+ * `visibleMonth` is a UTC-midnight month start and the grid around it is built
+ * from `getUTCFullYear`/`getUTCMonth`, so the heading had to be read in the same
+ * zone as the grid it names. `formatClubMonthYear` IS that formatter: the
+ * kernel's calendar-date shapes are UTC-pinned by construction, so the reasoning
+ * survives intact and the string is unchanged (CT-4, #2870).
+ */
+function formatVisibleMonth(monthStart: Date) {
+  return formatClubMonthYear(calendarDateOfDateOnlyInstant(monthStart));
 }
-
-function getMonthStart(date: Date) {
-  return parseDateOnly(`${monthKey(date)}-01`);
-}
-
-function monthKeysForDateRange(startDate: string, endDate: string) {
-  const start = getMonthStart(parseDateOnly(startDate));
-  const end = getMonthStart(parseDateOnly(endDate));
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
-    return [];
-  }
-
-  const keys: string[] = [];
-  let cursor = start;
-  while (cursor <= end) {
-    keys.push(monthKey(cursor));
-    cursor = new Date(
-      Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1),
-    );
-  }
-  return keys;
-}
-
-function getMonthGrid(year: number, monthIndex: number) {
-  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
-  const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  const day = firstDay.getUTCDay();
-  const startOffset = day === 0 ? 6 : day - 1;
-  return { daysInMonth, startOffset };
-}
-
-// Not one of the shared `nzst-date` helpers (#2264): the cell label deliberately
-// carries the weekday and drops the year — the year is already stated by the
-// month heading above the grid, and a day cell has no room for it. The zone is
-// pinned to club time so a `parseDateOnly` UTC-midnight value cannot slide back
-// a day for an admin whose browser sits west of UTC.
-const CELL_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
-
-// Deliberately UTC, NOT club time. `visibleMonth` is a UTC-midnight month start
-// and the grid around it is built from `getUTCFullYear`/`getUTCMonth`, so the
-// heading has to be read in the same zone as the grid it names — re-zoning it to
-// Pacific/Auckland would print the wrong month on the first/last day boundary.
-const VISIBLE_MONTH_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: "UTC",
-  month: "long",
-  year: "numeric",
-});
 
 function formatDisplayDate(dateString: string) {
-  return CELL_WEEKDAY_DATE.format(parseDateOnly(dateString));
+  return formatClubWeekdayDayMonth(requireCalendarDate(dateString));
 }
 
 export function OccupancyCalendar({
@@ -162,8 +129,18 @@ export function OccupancyCalendar({
   overlayCountsOperationalDay = false,
   onVisibleMonthChange,
 }: OccupancyCalendarProps) {
-  const today = formatDateOnly(getTodayDateOnly());
-  const initialMonth = selectedStartDate ? parseDateOnly(selectedStartDate) : getTodayDateOnly();
+  /**
+   * "Today" is the CLUB's calendar day (CT-4, #2870; INV-CONFIG-002). It decides
+   * which cell is highlighted and which month opens, so deriving it from the
+   * admin's browser — or, as before, from the container's `TZ` — puts the
+   * highlight on the wrong night for anyone whose clock does not match the
+   * club's.
+   */
+  const clubTime = useClubTime();
+  const today = clubTime.today();
+  const initialMonth = selectedStartDate
+    ? parseDateOnly(selectedStartDate)
+    : parseDateOnly(today);
   const [visibleMonth, setVisibleMonth] = useState(() => getMonthStart(initialMonth));
   const [occupancyByMonth, setOccupancyByMonth] = useState<
     Record<string, OccupancyCalendarResponse>
@@ -173,7 +150,7 @@ export function OccupancyCalendar({
   const [loadError, setLoadError] = useState("");
   const [rangeAnchor, setRangeAnchor] = useState<string | null>(null);
   const requestedMonthKeys = useRef(new Set<string>());
-  const visibleMonthKey = monthKey(visibleMonth);
+  const visibleMonthKey = formatMonthOnly(visibleMonth);
 
   /*
     #2887: the month caches below are keyed by month alone, so they belong to
@@ -420,7 +397,7 @@ export function OccupancyCalendar({
   const year = visibleMonth.getUTCFullYear();
   const monthIndex = visibleMonth.getUTCMonth();
   const { daysInMonth, startOffset } = getMonthGrid(year, monthIndex);
-  const visibleMonthLabel = VISIBLE_MONTH_LABEL.format(visibleMonth);
+  const visibleMonthLabel = formatVisibleMonth(visibleMonth);
 
   return (
     <div className="rounded-lg border border-border bg-card">

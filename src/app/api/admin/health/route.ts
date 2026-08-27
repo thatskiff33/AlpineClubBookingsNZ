@@ -16,10 +16,18 @@ import {
 // surfaces classify job health from the same rows.
 import { getCronRunsForAdminHealth } from "@/lib/admin-cron-runs";
 import logger from "@/lib/logger";
+import { getClubTimeZone } from "@/lib/club-time-zone-settings";
+import { readCronRuntimeZone } from "@/lib/cron-runtime-zone";
 
 interface RuntimeStatusPayload {
   cronEnabled: boolean;
   role: string;
+  /**
+   * The zone the cron leader registered its jobs against, when it is running a
+   * release that reports one. Optional so an older leader mid-deploy is read as
+   * "unknown" rather than rejected as a malformed payload (CT-5, #2869).
+   */
+  clubTimeZone?: string | null;
 }
 
 function getTrimmedEnv(name: string): string | null {
@@ -63,12 +71,19 @@ function getCronLeaderRuntimeStatusUrl() {
 }
 
 function isRuntimeStatusPayload(value: unknown): value is RuntimeStatusPayload {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as RuntimeStatusPayload).cronEnabled === "boolean" &&
-    typeof (value as RuntimeStatusPayload).role === "string"
-  );
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as RuntimeStatusPayload).cronEnabled !== "boolean" ||
+    typeof (value as RuntimeStatusPayload).role !== "string"
+  ) {
+    return false;
+  }
+  // Optional on purpose: mid-deploy the leader may be running the previous
+  // release, which reports no zone at all. Absent is "unknown"; present must
+  // still be a string or null, so a malformed value cannot reach the report.
+  const zone = (value as RuntimeStatusPayload).clubTimeZone;
+  return zone === undefined || zone === null || typeof zone === "string";
 }
 
 async function getCronLeaderRuntimeStatus(): Promise<RuntimeStatusPayload | null> {
@@ -106,17 +121,15 @@ async function getCronLeaderRuntimeStatus(): Promise<RuntimeStatusPayload | null
   }
 }
 
-async function getCronJobDefinitionsForHealthReport() {
-  if (!isWebRuntimeRole(process.env.APP_RUNTIME_ROLE)) {
-    return getAdminCronJobDefinitions();
-  }
-
-  const cronLeaderRuntimeStatus = await getCronLeaderRuntimeStatus();
+function getCronJobDefinitionsForHealthReport(
+  clubTimeZone: string,
+  cronLeaderRuntimeStatus: RuntimeStatusPayload | null,
+) {
   if (!cronLeaderRuntimeStatus) {
-    return getAdminCronJobDefinitions();
+    return getAdminCronJobDefinitions(clubTimeZone);
   }
 
-  return getAdminCronJobDefinitions({
+  return getAdminCronJobDefinitions(clubTimeZone, {
     ...process.env,
     APP_RUNTIME_ROLE: cronLeaderRuntimeStatus.role,
     CRON_ENABLED: cronLeaderRuntimeStatus.cronEnabled ? "true" : "false",
@@ -136,7 +149,32 @@ export async function GET() {
   if (!guard.ok) return guard.response;
   try {
     const { report: healthResponse } = await getDetailedHealthReport();
-    const cronDefinitions = await getCronJobDefinitionsForHealthReport();
+    /*
+      TWO ZONES, AND REPORTING THE WRONG ONE IS THE DEFECT (CT-5, #2869 review).
+      `getClubTimeZone()` is the club's persisted SETTING, which is what a job
+      will run on after the next restart. `node-cron` pinned its zone when the
+      jobs were registered, so between an admin changing the setting and that
+      restart the two disagree — and this page was stating the new one across
+      about forty "expected local time" sentences for jobs still firing on the
+      old one.
+
+      So the running zone is preferred where it can be established: from the
+      cron leader's runtime status on a blue/green web slot, and from this
+      process when it is the one that registered the jobs. `null` means neither
+      could answer, and the report then says plainly that what it shows is the
+      configured value.
+    */
+    const configuredClubTimeZone = await getClubTimeZone();
+    const cronLeaderRuntimeStatus = isWebRuntimeRole(process.env.APP_RUNTIME_ROLE)
+      ? await getCronLeaderRuntimeStatus()
+      : null;
+    const runningClubTimeZone =
+      cronLeaderRuntimeStatus?.clubTimeZone ?? readCronRuntimeZone();
+    const clubTimeZone = runningClubTimeZone ?? configuredClubTimeZone;
+    const cronDefinitions = getCronJobDefinitionsForHealthReport(
+      clubTimeZone,
+      cronLeaderRuntimeStatus,
+    );
 
     // Keep the global recent window for the UI, then add bounded per-job
     // history so high-frequency jobs cannot hide daily expected jobs.
@@ -147,6 +185,8 @@ export async function GET() {
     const cronHealth = buildCronHealthReport({
       definitions: cronDefinitions,
       runs: cronRuns,
+      clubTimeZone: configuredClubTimeZone,
+      runningTimeZone: runningClubTimeZone,
     });
 
     // Webhook stats and SES suppression telemetry

@@ -2,7 +2,13 @@ import {
   shouldDefaultPostalSameAsPhysical,
   type MemberAddressValues,
 } from "@/lib/member-address"
-import { formatNZDate } from "@/lib/nzst-date"
+import { seasonSelectLabel } from "@/lib/season-label"
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseCalendarDate,
+  parseInstant,
+} from "@/lib/club-time"
 
 export interface AdminActor {
   id: string
@@ -225,18 +231,39 @@ export function memberUsesSamePostalAddress(member: NullableMemberAddress) {
 }
 
 /**
- * A member-facing date, in club time.
+ * A CALENDAR DAY from an admin payload, rendered with no timezone at all
+ * (CT-4, #2870; `INV-DATE-019`).
  *
- * #2264: the `toLocaleDateString` call this replaced quietly rendered the
- * string "Invalid Date" for a value it could not parse; `Intl.format` THROWS a
- * RangeError instead. This helper is fed straight from API payloads and from
- * fallbacks like `joinedDate || createdAt`, so an absent or malformed value has
- * to degrade to something readable rather than take a whole member page down
- * with it.
+ * NARROW, DECLARED `src/lib` EXCEPTION, and it exists because half of this
+ * value moved and half did not. `member-summary-strip.tsx` now decodes
+ * `stats.lastStay` — the `_max` of the member's booking `checkOut`, a `@db.Date`
+ * lodge night — as the stored day, while {@link formatMemberHistoryPreview}
+ * three lines away still projected the SAME value through the file's old
+ * `formatMemberDateNz` and `APP_TIME_ZONE`. For any club behind UTC that put the
+ * member's last stay on two different days on one screen. #3123 deleted that
+ * helper: its last production caller had already moved to
+ * `formatPayloadInstantDate`, so migrating it would have shipped a zone-correct
+ * function nothing called.
+ *
+ * It accepts both spellings a `@db.Date` reaches the browser in — Prisma's
+ * UTC-midnight ISO instant and a bare `yyyy-MM-dd` — for the reason
+ * `admin/_lib/calendar-day.ts` states: a caller should not have to know which
+ * one the route happened to build. It degrades rather than throws for the same
+ * reason that helper does: these values are fed straight from API payloads into
+ * a rendered row.
+ *
+ * The duplication with `admin/_lib/calendar-day.ts` is deliberate and
+ * temporary. That module is admin-scoped and `src/lib` cannot import from
+ * `src/app`; group F's `calendarDateOfSerialisedDbDate` (reported on #2870) is
+ * the one call site both should collapse onto.
  */
-export function formatMemberDateNz(value: string) {
-  const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? "—" : formatNZDate(parsed)
+export function formatMemberCalendarDay(value: string, fallback = "—") {
+  const bare = parseCalendarDate(value)
+  if (bare !== null) return formatClubDate(bare)
+  const instant = parseInstant(value)
+  return instant === null
+    ? fallback
+    : formatClubDate(calendarDateOfDateOnlyInstant(instant))
 }
 
 export function formatMemberPhone(parts: {
@@ -311,7 +338,7 @@ export function formatMemberMembershipPreview(input: {
   currentSeasonTypeName: string | null
   currentSeasonSubscriptionLabel: string | null
 }) {
-  const season = `${input.currentSeasonYear}/${input.currentSeasonYear + 1}`
+  const season = seasonSelectLabel(input.currentSeasonYear)
   return [
     `${season}: ${input.currentSeasonTypeName ?? "No seasonal type set"}`,
     input.currentSeasonSubscriptionLabel,
@@ -352,7 +379,10 @@ export function formatMemberHistoryPreview(input: {
 }) {
   return [
     pluralize(input.totalBookings, "booking"),
-    input.lastStay ? `last stay ${formatMemberDateNz(input.lastStay)}` : null,
+    // `lastStay` is a `@db.Date` CALENDAR DAY, not an instant — see
+    // `formatMemberCalendarDay`. The summary strip on the same page renders it
+    // the same way, so the two can no longer name different days.
+    input.lastStay ? `last stay ${formatMemberCalendarDay(input.lastStay)}` : null,
   ]
     .filter(Boolean)
     .join(PREVIEW_SEPARATOR)

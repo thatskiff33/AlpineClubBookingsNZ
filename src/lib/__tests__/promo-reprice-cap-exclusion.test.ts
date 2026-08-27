@@ -40,6 +40,14 @@ import {
   validatePromoCodeRules,
   type PromoApplicationSubject,
 } from "../promo";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 // --- The pure arithmetic -----------------------------------------------------
 
@@ -60,7 +68,7 @@ describe("total-redemptions cap discounts the excluded booking's own rows (#2299
 
   it("refuses a NEW booking when the code's only slot is taken", () => {
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 1,
       })
     ).toBe("This promo code has reached its maximum number of uses");
@@ -69,7 +77,7 @@ describe("total-redemptions cap discounts the excluded booking's own rows (#2299
   it("allows the booking that HOLDS that slot to keep it through a reprice", () => {
     // The one counted row is this booking's own; it is about to be replaced.
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 1,
         excludedBookingRedemptionCount: 1,
       })
@@ -80,7 +88,7 @@ describe("total-redemptions cap discounts the excluded booking's own rows (#2299
     // Adding a second beneficiary to a booking that holds one slot on a
     // one-slot code: 1 - 1 + 2 = 2 > 1.
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 2,
         excludedBookingRedemptionCount: 1,
       })
@@ -89,7 +97,7 @@ describe("total-redemptions cap discounts the excluded booking's own rows (#2299
 
   it("still refuses when another booking holds the last slot", () => {
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 1,
         excludedBookingRedemptionCount: 0,
       })
@@ -103,7 +111,7 @@ describe("total-redemptions cap discounts the excluded booking's own rows (#2299
       validatePromoCodeRules(
         { ...SUBJECT, currentRedemptions: 0 },
         booking,
-        new Date(),
+        CLUB_TODAY_FOR_TEST,
         { requestedRedemptionCount: 2, excludedBookingRedemptionCount: 2 }
       )
     ).toBe("This promo code has reached its maximum number of uses");
@@ -180,7 +188,8 @@ describe("validateAndCalculatePromoDiscount measures the excluded booking's rows
       promoSubject(),
       BOOKING_DETAILS,
       null,
-      { excludeBookingId: "booking-1", db: db as never }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, excludeBookingId: "booking-1", db: db as never }
     );
 
     expect(application.error).toBeUndefined();
@@ -200,7 +209,8 @@ describe("validateAndCalculatePromoDiscount measures the excluded booking's rows
       promoSubject(),
       BOOKING_DETAILS,
       null,
-      { excludeBookingId: "booking-1", db: db as never }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, excludeBookingId: "booking-1", db: db as never }
     );
 
     expect(application.error).toBe(
@@ -215,7 +225,8 @@ describe("validateAndCalculatePromoDiscount measures the excluded booking's rows
       promoSubject({ maxRedemptionsTotal: null, currentRedemptions: 7 }),
       BOOKING_DETAILS,
       null,
-      { excludeBookingId: "booking-1", db: db as never }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, excludeBookingId: "booking-1", db: db as never }
     );
 
     expect(
@@ -230,7 +241,8 @@ describe("validateAndCalculatePromoDiscount measures the excluded booking's rows
       promoSubject({ currentRedemptions: 0 }),
       BOOKING_DETAILS,
       null,
-      { db: db as never }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, db: db as never }
     );
 
     expect(
@@ -387,6 +399,7 @@ describe("path 1 — batch modification reprice (booking-modify-plan)", () => {
     promoRedemption: typeof STORED_REDEMPTION = STORED_REDEMPTION
   ) {
     return applyPromoCodeChanges(tx as unknown as ApplyArgs[0], {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
       booking: {
         memberId: "member-1",
         lodgeId: "lodge-1",
@@ -461,6 +474,7 @@ describe("path 4 — guest removal reprice (booking-guest-removal-service)", () 
     promoRedemption: typeof STORED_REDEMPTION = STORED_REDEMPTION
   ) {
     return recalculateBookingPromo({
+      todayAtClub: CLUB_TODAY_FOR_TEST,
       tx: tx as unknown as RemovalArgs["tx"],
       bookingId: "booking-1",
       booking: {

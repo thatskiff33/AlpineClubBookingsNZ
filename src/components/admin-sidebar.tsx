@@ -74,7 +74,8 @@ import {
   canViewAdminHrefWithMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { useClubTime } from "@/components/club-time-provider";
 import {
   buildUnpaidFinishedStaysHref,
   buildUnsettledAdditionalStaysHref,
@@ -120,14 +121,19 @@ const NEEDS_ATTENTION_LABEL = "Needs Attention";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "admin-sidebar:expanded-sections";
 
 /**
- * Deep link for the unpaid-finished-stays queue (#1731), shared with the
- * dashboard attention card via src/lib/unpaid-finished-stays.ts. Evaluated at
- * page load — the same moment the badge counts are fetched — so the link's
- * check-out cutoff and the fetched count describe the same NZ day.
+ * A day, any day, for {@link ADMIN_NAV_SECTION_ORDER} below.
+ *
+ * `buildAdminNavSections` takes the club's today because exactly ONE item's
+ * href is a dated deep link — never because a section LABEL depends on it, and
+ * the labels are all that list reads. The order is therefore day-independent by
+ * construction, and naming a fixed probe day says so out loud rather than
+ * reaching for a clock in a module that must not read one.
+ *
+ * NOT A SOURCE OF "TODAY". Nothing but the section ORDER may read it, and
+ * `admin-sidebar-club-time.test.tsx` pins the independence so the claim above
+ * cannot rot into a lie.
  */
-const UNPAID_FINISHED_STAYS_HREF = buildUnpaidFinishedStaysHref(
-  formatDateOnly(getTodayDateOnly()),
-);
+const NAV_SECTION_ORDER_PROBE_DAY = requireCalendarDate("1970-01-01");
 
 /**
  * Deep link for the unsettled-additions queue (#1723 path 2, widened by #2350):
@@ -139,7 +145,25 @@ const UNPAID_FINISHED_STAYS_HREF = buildUnpaidFinishedStaysHref(
  */
 const UNSETTLED_ADDITIONS_HREF = buildUnsettledAdditionalStaysHref();
 
-const navSections: NavSection[] = [
+/**
+ * Every admin nav section, for a given club day.
+ *
+ * A FUNCTION, not a constant, and both halves of that matter (#3123).
+ *
+ * The unpaid-finished-stays entry is a deep link whose `checkOutTo` bound is the
+ * club's own day, and it is simultaneously a nav href, the key of the badge map
+ * in `SidebarLinks`, and what the command palette navigates to. It used to be a
+ * module-level `const` built from the environment timezone — which was wrong
+ * twice over. It answered from the CONTAINER's day rather than the club's
+ * persisted one (`INV-CONFIG-002`), and a module body is evaluated ONCE per
+ * bundle load, so the cutoff was frozen for the life of the browser tab: an
+ * administrator who left the tab open overnight got yesterday's filter beside
+ * today's badge count, in every timezone on earth. Threading the day in means
+ * both surfaces recompute it per render, from the one authority
+ * `ClubTimeProvider` carries, and the href and the count are built in the same
+ * render pass from the same value.
+ */
+const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
   {
     items: [
       {
@@ -162,7 +186,7 @@ const navSections: NavSection[] = [
         icon: ClipboardList,
       },
       {
-        href: UNPAID_FINISHED_STAYS_HREF,
+        href: buildUnpaidFinishedStaysHref(clubToday),
         label: "Unpaid Finished Stays",
         icon: DollarSign,
       },
@@ -593,7 +617,7 @@ const navSections: NavSection[] = [
 ];
 
 /**
- * Distinct sidebar section labels in canonical `navSections` order (#2092). The
+ * Distinct sidebar section labels in canonical `buildAdminNavSections` order (#2092). The
  * command palette orders its groups by this list so that a page first
  * encountered under "Needs Attention" during href de-duplication doesn't drag
  * its natural group to the wrong position. `undefined` marks the label-less
@@ -601,17 +625,30 @@ const navSections: NavSection[] = [
  * heading.
  */
 export const ADMIN_NAV_SECTION_ORDER: ReadonlyArray<string | undefined> = [
-  ...new Set(navSections.map((section) => section.label)),
+  ...new Set(
+    buildAdminNavSections(NAV_SECTION_ORDER_PROBE_DAY).map(
+      (section) => section.label,
+    ),
+  ),
 ];
 
+/**
+ * `clubToday` is FIRST and REQUIRED on all three of these exports, and it is
+ * required rather than defaulted deliberately (#3123). One nav href is a dated
+ * deep link, so a default here would be a second, quieter way to get the club's
+ * day — and a wrong one, since neither reader can run in a browser. Leading with
+ * it also makes the compiler enumerate every call site, which is how the sidebar
+ * and the command palette were kept on one value instead of two.
+ */
 // test seam
 export function getVisibleAdminNavSections(
+  clubToday: CalendarDate,
   features: FeatureFlags,
   permissionMatrix?: AdminPermissionMatrix,
   isFullAdmin?: boolean,
   hutLeaderLabel = "Hut Leader",
 ): NavSection[] {
-  return navSections
+  return buildAdminNavSections(clubToday)
     .map((section) => ({
       ...section,
       items: section.items
@@ -648,7 +685,7 @@ export interface AdminFeatureSearchEntry {
 /**
  * Flat, de-duplicated search index for the admin feature palette (#2092),
  * derived at runtime from {@link getVisibleAdminNavSections}. Reusing that
- * function — rather than re-reading `navSections` or re-implementing the
+ * function — rather than re-reading `buildAdminNavSections` or re-implementing the
  * predicate — is deliberate and load-bearing: it guarantees the palette
  * applies EXACTLY the same four visibility conditions the sidebar does
  * (module-flag visibility, `fullAdminOnly`, `orAccess`, and the permission
@@ -669,13 +706,14 @@ export interface AdminFeatureSearchEntry {
  * missing `permissionMatrix` yields an EMPTY index here, so the search surface
  * denies by default rather than exposing every page — defence in depth (#2092).
  *
- * De-duplication: a handful of hrefs appear twice in `navSections` — once in
+ * De-duplication: a handful of hrefs appear twice in `buildAdminNavSections` — once in
  * the queue-driven "Needs Attention" section and once in their natural home
  * section. We key by href and let later (natural) sections overwrite the
  * earlier "Needs Attention" copy, so every page appears exactly once, labelled
  * by its natural section where it has one.
  */
 export function getAdminFeatureSearchIndex(
+  clubToday: CalendarDate,
   features: FeatureFlags,
   permissionMatrix?: AdminPermissionMatrix,
   isFullAdmin?: boolean,
@@ -688,6 +726,7 @@ export function getAdminFeatureSearchIndex(
   }
   const byHref = new Map<string, AdminFeatureSearchEntry>();
   for (const section of getVisibleAdminNavSections(
+    clubToday,
     features,
     permissionMatrix,
     isFullAdmin,
@@ -709,6 +748,7 @@ type AdminNavBadgeMap = Record<string, number>;
 
 // test seam
 export function getRenderedAdminNavSections(
+  clubToday: CalendarDate,
   features: FeatureFlags,
   badges: AdminNavBadgeMap,
   permissionMatrix?: AdminPermissionMatrix,
@@ -716,6 +756,7 @@ export function getRenderedAdminNavSections(
   hutLeaderLabel = "Hut Leader",
 ): NavSection[] {
   return getVisibleAdminNavSections(
+    clubToday,
     features,
     permissionMatrix,
     isFullAdmin,
@@ -794,6 +835,24 @@ function SidebarLinks({
 }) {
   const pathname = usePathname();
   const counts = usePendingCounts();
+  /*
+    ONE club day for this render, and everything dated below is built from it
+    (#3123, `INV-CONFIG-002`). The nav href and the badge-map key are produced by
+    the SAME shared builder (`buildUnpaidFinishedStaysHref`) from the SAME value,
+    so the deep link's check-out cutoff and the count beside it cannot describe
+    different days — which is what the old module-level constant made possible,
+    because it was evaluated once per bundle load while the counts are fetched
+    per mount.
+
+    `useClubTime()` and not a server prop: a prop resolved in `(admin)/layout.tsx`
+    would be re-resolved only on a hard page load, since the App Router keeps a
+    layout's server render across client navigations — which is the same
+    staleness in a different place. A browser cannot read the persisted zone
+    itself, so the provider is the only legitimate source
+    (`club-time-provider.tsx`); the admin tree is wrapped by `AppProviders`,
+    which `club-time-provider-mount-census.test.tsx` enforces.
+  */
+  const clubToday = useClubTime().today();
 
   // Per-section expand state, keyed by label. Starts as an empty map (every
   // section open) so server and first client render match; the stored
@@ -852,7 +911,7 @@ function SidebarLinks({
     badges["/admin/booking-requests"] = bookingRequestCount;
   }
   if (counts.unpaidFinishedStays > 0) {
-    badges[UNPAID_FINISHED_STAYS_HREF] = counts.unpaidFinishedStays;
+    badges[buildUnpaidFinishedStaysHref(clubToday)] = counts.unpaidFinishedStays;
   }
   // #2350: both halves of the unsettled-additions queue behind one badge. The
   // predicates are disjoint by construction (check-out before/after today), so
@@ -892,6 +951,7 @@ function SidebarLinks({
   }
 
   const renderedNavSections = getRenderedAdminNavSections(
+    clubToday,
     features,
     badges,
     permissionMatrix,
@@ -899,6 +959,7 @@ function SidebarLinks({
     hutLeaderLabel,
   );
   const visibleNavSections = getVisibleAdminNavSections(
+    clubToday,
     features,
     permissionMatrix,
     isFullAdmin,

@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildGuestCreateData } from "@/lib/booking-create-guests";
+import { requireClubTimeZone } from "@/lib/club-time";
 import {
   BookingGuestValidationError,
   resolveLinkedBookingMembersWithBoundary,
@@ -39,6 +40,7 @@ import {
 const h = vi.hoisted(() => ({
   isEffectiveModuleEnabled: vi.fn(),
   loadMemberGuestSettings: vi.fn(),
+  readClubTimeZoneOutsideRequest: vi.fn(),
 }));
 
 vi.mock("@/lib/admin-modules", () => ({
@@ -46,6 +48,20 @@ vi.mock("@/lib/admin-modules", () => ({
 }));
 vi.mock("@/lib/member-guest-settings", () => ({
   loadMemberGuestSettings: h.loadMemberGuestSettings,
+}));
+/*
+  #3123 — the policy now carries the club's PERSISTED timezone, read here so the
+  eight `planMemberGuestConsentWrites` call sites do not each have to. The reader
+  is stubbed rather than left to reach Prisma, because the real one is fail-soft
+  three ways — missing delegate, throwing query, absent row — and every one of
+  them degrades quietly to the environment's zone. A suite that let it fall
+  through would pass whether or not the club's setting was ever consulted, which
+  is the false green this issue keeps finding. Which zone reaches the clamp for
+  real is proved in `member-guest-consent-club-time-authority.test.ts`, against a
+  Prisma mock that does carry a `clubTimeSettings` row.
+*/
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: h.readClubTimeZoneOutsideRequest,
 }));
 
 const BOOKER = "m-booker";
@@ -69,15 +85,24 @@ function boundary(): MemberGuestBoundaryState {
   };
 }
 
+/**
+ * A club BEHIND Greenwich, and deliberately NOT `Pacific/Auckland` (#3123): that
+ * is what the environment falls back to, so a fixture using it cannot tell the
+ * club's persisted zone from the container's.
+ */
+const CLUB_ZONE = requireClubTimeZone("America/Denver");
+
 const ASK_FIRST: MemberGuestAddPolicy = {
   wideningEnabled: true,
   approvalRequired: true,
   pendingHoldExpiryDays: 5,
+  timeZone: CLUB_ZONE,
 };
 const NOTIFY_ONLY: MemberGuestAddPolicy = {
   wideningEnabled: true,
   approvalRequired: false,
   pendingHoldExpiryDays: 5,
+  timeZone: CLUB_ZONE,
 };
 
 function guest(memberId: string, firstName = "Test") {
@@ -113,6 +138,7 @@ beforeEach(() => {
     openMemberSearchEnabled: false,
     openMemberSearchIncludesMinors: false,
   });
+  h.readClubTimeZoneOutsideRequest.mockResolvedValue(CLUB_ZONE);
 });
 
 describe("loadMemberGuestAddPolicy", () => {
@@ -129,6 +155,7 @@ describe("loadMemberGuestAddPolicy", () => {
       wideningEnabled: true,
       approvalRequired: false,
       pendingHoldExpiryDays: 9,
+      timeZone: CLUB_ZONE,
     });
     expect(h.isEffectiveModuleEnabled).toHaveBeenCalledWith("memberGuests");
   });
@@ -143,6 +170,11 @@ describe("loadMemberGuestAddPolicy", () => {
       pendingHoldExpiryDays: 0,
     });
     expect(h.loadMemberGuestSettings).not.toHaveBeenCalled();
+    // And no CLUB TIMEZONE query either (#3123). The zone lives only on the
+    // widening-enabled member of the policy union, so the module-off branch
+    // spends nothing — which is the whole reason the type is a union rather than
+    // one flat interface carrying an inert placeholder zone.
+    expect(h.readClubTimeZoneOutsideRequest).not.toHaveBeenCalled();
   });
 });
 

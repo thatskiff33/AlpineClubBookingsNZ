@@ -1,11 +1,18 @@
-import { APP_TIME_ZONE } from "@/config/operational";
+/**
+ * Admin cron health (CT-5, #2869 for the timezone half).
+ *
+ * A cron schedule here is a CLUB-LOCAL SCHEDULED TIME, so every definition and
+ * every "expected local time" sentence names the club's PERSISTED timezone. It
+ * used to name `APP_TIME_ZONE` — the container's `TZ` — and to spell the club's
+ * own zone into forty literal strings ("02:20 NZT/NZDT daily"), which was both
+ * the wrong authority (`INV-CONFIG-002`) and a club hard-coded into the generic
+ * product (`INV-CONFIG-001`). The caller resolves the zone and passes it in;
+ * this module states no zone of its own.
+ */
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron-config";
-
-const ADMIN_CRON_DEFAULT_TIMEZONE = APP_TIME_ZONE;
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;
@@ -63,7 +70,26 @@ interface CronHealthJob extends AdminCronJobDefinition {
 export interface CronHealthReport {
   generatedAt: string;
   cronEnabled: boolean;
+  /**
+   * The zone every "expected local time" below is stated in — the zone the jobs
+   * are ACTUALLY running on when that is knowable, and the configured one when
+   * it is not (CT-5, #2869).
+   */
   defaultTimezone: string;
+  /** The club's persisted setting, which a running job only adopts on restart. */
+  configuredTimezone: string;
+  /**
+   * The zone the scheduler pinned at boot, or `null` when neither this process
+   * nor the cron leader could report one. See `@/lib/cron-runtime-zone`.
+   */
+  runningTimezone: string | null;
+  /**
+   * True when the running zone is KNOWN and differs from the configured one:
+   * somebody changed the club's timezone and nothing has restarted since, so
+   * every time below is the time jobs fire today, not the time they will fire
+   * after the next deploy.
+   */
+  timezoneRestartRequired: boolean;
   jobs: CronHealthJob[];
 }
 
@@ -141,6 +167,7 @@ function defineCronJob(
 }
 
 export function getAdminCronJobDefinitions(
+  clubTimeZone: string,
   env: NodeJS.ProcessEnv = process.env
 ): AdminCronJobDefinition[] {
   const cronEnabled = isAdminCronSchedulingEnabled(env);
@@ -151,8 +178,6 @@ export function getAdminCronJobDefinitions(
   const xeroMembershipRefreshEnabled = isExplicitlyEnabled(
     env.XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH
   );
-  const nzTimezone = ADMIN_CRON_DEFAULT_TIMEZONE;
-
   return [
     defineCronJob(
       {
@@ -204,8 +229,8 @@ export function getAdminCronJobDefinitions(
         jobName: "confirm-pending",
         label: "Pending booking confirmation",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -215,8 +240,8 @@ export function getAdminCronJobDefinitions(
         jobName: "group-settlement-reaper",
         label: "Stale group settlement reaper",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -230,8 +255,8 @@ export function getAdminCronJobDefinitions(
         jobName: "policy-exception-hold-reaper",
         label: "Policy-exception hold reaper",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -241,8 +266,8 @@ export function getAdminCronJobDefinitions(
         jobName: "additional-payment-reminders",
         label: "Outstanding additional payment reminders",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -252,8 +277,8 @@ export function getAdminCronJobDefinitions(
         jobName: "pre-arrival-reminders",
         label: "Pre-arrival reminders",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -265,8 +290,8 @@ export function getAdminCronJobDefinitions(
         jobName: "placeholder-guest-name-reminders",
         label: "Placeholder guest-name reminders",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -283,8 +308,8 @@ export function getAdminCronJobDefinitions(
         jobName: "hosting-coverage-reevaluation",
         label: "Hosting coverage re-evaluation",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -294,8 +319,8 @@ export function getAdminCronJobDefinitions(
         jobName: "school-attendee-confirmations",
         label: "School attendee confirmations",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -305,8 +330,8 @@ export function getAdminCronJobDefinitions(
         jobName: "quote-expiry-reminders",
         label: "Quote expiry reminders",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -316,8 +341,8 @@ export function getAdminCronJobDefinitions(
         jobName: "purge-booking-requests",
         label: "Booking request retention purge",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -327,8 +352,8 @@ export function getAdminCronJobDefinitions(
         jobName: "payment-recovery",
         label: "Stripe payment recovery",
         schedule: "*/15 * * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
         staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -338,8 +363,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-membership-refresh",
         label: "Xero membership refresh",
         schedule: "0 2 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "02:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
         enabled: xeroMembershipRefreshEnabled,
         disabledReason:
@@ -352,8 +377,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-link-backfill",
         label: "Xero link backfill",
         schedule: "20 2 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "02:20 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:20 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -363,8 +388,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-link-cleanup",
         label: "Xero stale link cleanup",
         schedule: "25 2 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "02:25 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:25 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -374,8 +399,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-reconciliation-report",
         label: "Xero reconciliation report",
         schedule: "35 2 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "02:35 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:35 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -385,8 +410,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-credit-sync-check",
         label: "Xero credit-sync check",
         schedule: "45 2 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "02:45 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `02:45 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -396,8 +421,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-outbox",
         label: "Xero outbox processing",
         schedule: "*/15 * * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
         staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -407,8 +432,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-operation-replay",
         label: "Xero operation replay",
         schedule: "*/15 * * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
         staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -418,8 +443,8 @@ export function getAdminCronJobDefinitions(
         jobName: "xero-inbound-reconcile",
         label: "Xero inbound reconcile",
         schedule: "*/15 * * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 15 minutes in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 15 minutes in ${clubTimeZone}`,
         staleAfterMinutes: FIFTEEN_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -429,11 +454,10 @@ export function getAdminCronJobDefinitions(
         jobName: FINANCE_SYNC_CRON_JOB_NAME,
         label: "Finance daily sync",
         schedule: FINANCE_SYNC_CRON_SCHEDULE,
-        timezone: FINANCE_SYNC_CRON_TIMEZONE,
-        expectedLocalTime: "10:15 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `10:15 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
-        note:
-          "Runs at 10:15 local New Zealand time in Pacific/Auckland; UTC dashboards show this as 22:15 on the previous day during NZST or 21:15 during NZDT.",
+        note: `Runs at 10:15 in the club's own time (${clubTimeZone}). A UTC dashboard shows it at a different hour, and at a different hour again either side of a daylight-saving change.`,
       },
       globalDisabledReason
     ),
@@ -442,11 +466,11 @@ export function getAdminCronJobDefinitions(
         jobName: "backup",
         label: "Database backup",
         schedule: backupSchedule,
-        timezone: nzTimezone,
+        timezone: clubTimeZone,
         expectedLocalTime:
           backupSchedule === "0 3 * * *"
-            ? "03:00 NZT/NZDT daily"
-            : "Custom BACKUP_CRON_SCHEDULE in Pacific/Auckland",
+            ? `03:00 daily in ${clubTimeZone}`
+            : `Custom BACKUP_CRON_SCHEDULE in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -461,8 +485,8 @@ export function getAdminCronJobDefinitions(
         jobName: "alpine-server-other-lodges-sync",
         label: "Alpine Central Server Other Clubs sync",
         schedule: "0 3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "03:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `03:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -472,8 +496,8 @@ export function getAdminCronJobDefinitions(
         jobName: "data-pruning",
         label: "Data pruning",
         schedule: "30 3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "03:30 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `03:30 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -483,8 +507,8 @@ export function getAdminCronJobDefinitions(
         jobName: "draft-cleanup",
         label: "Draft cleanup",
         schedule: "0 4 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "04:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `04:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -498,8 +522,8 @@ export function getAdminCronJobDefinitions(
         jobName: "member-guest-consent-expiry",
         label: "Member-guest consent expiry",
         schedule: "30 4 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "04:30 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `04:30 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -509,8 +533,8 @@ export function getAdminCronJobDefinitions(
         jobName: "pending-deadline-alerts",
         label: "Pending deadline alerts",
         schedule: "0 8 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "08:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `08:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -520,8 +544,8 @@ export function getAdminCronJobDefinitions(
         jobName: "nomination-reminders",
         label: "Membership nomination reminders",
         schedule: "15 8 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "08:15 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `08:15 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -531,8 +555,8 @@ export function getAdminCronJobDefinitions(
         jobName: "checkin-reminders",
         label: "Check-in reminders",
         schedule: "0 9 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "09:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `09:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -542,8 +566,8 @@ export function getAdminCronJobDefinitions(
         jobName: "capacity-warnings",
         label: "Capacity warnings",
         schedule: "0 7 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "07:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `07:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -553,8 +577,8 @@ export function getAdminCronJobDefinitions(
         jobName: "admin-digest",
         label: "Admin digest",
         schedule: "30 7 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "07:30 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `07:30 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -575,8 +599,8 @@ export function getAdminCronJobDefinitions(
         jobName: "complete-bookings",
         label: "Complete bookings",
         schedule: "0 1 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "01:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `01:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -586,8 +610,8 @@ export function getAdminCronJobDefinitions(
         jobName: "hut-leader-auto-assign",
         label: "Hut leader auto-assign",
         schedule: "0 6 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "06:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `06:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -597,8 +621,8 @@ export function getAdminCronJobDefinitions(
         jobName: "age-up",
         label: "Age-up member access",
         schedule: "30 6 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "06:30 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `06:30 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -608,8 +632,8 @@ export function getAdminCronJobDefinitions(
         jobName: "email-inheritance-reconcile",
         label: "Email inheritance reconciliation",
         schedule: "45 6 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "06:45 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `06:45 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -619,8 +643,8 @@ export function getAdminCronJobDefinitions(
         jobName: "credit-reconciliation",
         label: "Credit reconciliation",
         schedule: "0 5 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "05:00 NZT/NZDT daily",
+        timezone: clubTimeZone,
+        expectedLocalTime: `05:00 daily in ${clubTimeZone}`,
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -630,8 +654,8 @@ export function getAdminCronJobDefinitions(
         jobName: "waitlist-processor",
         label: "Waitlist processor",
         schedule: "*/30 * * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 30 minutes in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 30 minutes in ${clubTimeZone}`,
         staleAfterMinutes: THIRTY_MINUTE_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -807,12 +831,26 @@ function classifyCronJob(
 
 export function buildCronHealthReport({
   runs,
+  clubTimeZone,
+  runningTimeZone = null,
   now = new Date(),
-  definitions = getAdminCronJobDefinitions(),
+  definitions,
 }: {
   runs: AdminCronRun[];
+  /**
+   * The club's PERSISTED civil-time zone — see the module doc (CT-5, #2869).
+   * This is the setting, which a job already registered with `node-cron` only
+   * adopts when the process restarts.
+   */
+  clubTimeZone: string;
+  /**
+   * The zone the scheduler is actually running on, when it can be established.
+   * `null` means unknown, not "the same": the report then states the configured
+   * zone and says so, rather than asserting an hour no job will fire at.
+   */
+  runningTimeZone?: string | null;
   now?: Date;
-  definitions?: AdminCronJobDefinition[];
+  definitions: AdminCronJobDefinition[];
 }): CronHealthReport {
   const runsByJob = groupAllCronRunsByJob(runs);
   const knownJobNames = new Set(definitions.map((definition) => definition.jobName));
@@ -824,7 +862,11 @@ export function buildCronHealthReport({
   return {
     generatedAt: now.toISOString(),
     cronEnabled: definitions.some((definition) => definition.enabled),
-    defaultTimezone: ADMIN_CRON_DEFAULT_TIMEZONE,
+    defaultTimezone: runningTimeZone ?? clubTimeZone,
+    configuredTimezone: clubTimeZone,
+    runningTimezone: runningTimeZone,
+    timezoneRestartRequired:
+      runningTimeZone !== null && runningTimeZone !== clubTimeZone,
     jobs: [...definitions, ...unknownDefinitions].map((definition) =>
       classifyCronJob(definition, runsByJob[definition.jobName] ?? [], now)
     ),

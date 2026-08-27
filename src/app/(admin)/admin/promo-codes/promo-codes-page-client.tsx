@@ -21,9 +21,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { APP_CURRENCY, APP_TIME_ZONE } from "@/config/operational";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { APP_CURRENCY } from "@/config/operational";
+import {
+  calendarDayFromPayload,
+  formatPayloadCalendarDay,
+} from "../_lib/calendar-day";
 import { formatCents } from "@/lib/pricing";
 import { useLodgeOptions } from "@/components/lodge-select";
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status";
@@ -128,12 +130,25 @@ const TYPE_LABELS: Record<string, string> = {
   FIXED_NIGHTLY_PRICE: "Fixed Price per Night",
 };
 
+/*
+  TRUNCATION, NOT A ZONE PROJECTION (#2872; INV-DATE-019's first boundary with
+  INV-DATE-026, not INV-DATE-010 — #3080). All four `PromoCode` window columns
+  are `@db.Date` — a CALENDAR DAY encoded as UTC midnight — so the day is read
+  off the front of the serialised value, and `formatClubDate` needs no zone.
+
+  Both used to project through the club zone, and on the input that was a live
+  data defect rather than a cosmetic one, because THIS FORM WRITES THE VALUE
+  BACK: west of UTC the projection reads the PREVIOUS day, so an admin editing
+  only the description saved the window a day short, and every later edit walked
+  it back again. These columns gate a discount against `Booking.checkIn`, so the
+  day is money. It agrees in New Zealand, which is why nothing caught it.
+*/
 function formatPromoDateInput(value: string | null) {
-  return value ? formatDateOnlyForTimeZone(new Date(value), APP_TIME_ZONE) : "";
+  return calendarDayFromPayload(value) ?? "";
 }
 
 function formatPromoDateDisplay(value: string | null) {
-  return value ? formatNZDate(new Date(value)) : "";
+  return formatPayloadCalendarDay(value, "");
 }
 
 export function PromoCodesPageClient({

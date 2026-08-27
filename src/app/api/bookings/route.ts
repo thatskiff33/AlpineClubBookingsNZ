@@ -19,7 +19,7 @@ import { ApiError } from "@/lib/api-error";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   assertMembershipTypeBookingAllowed,
   getMembershipTypeBookingPolicyErrorBody,
@@ -93,10 +93,11 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   addDaysDateOnly,
-  getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { aggregatePolicyExceptionViolations } from "@/lib/booking-policy-exceptions";
 import {
@@ -549,6 +550,19 @@ export async function POST(request: NextRequest) {
     }
   };
 
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the parsed dates and addDaysDateOnly.
+  //
+  // #3123 review — resolved HERE, above the person-night pre-flight, and used by
+  // everything on this route that needs a day: the retroactive gate below, the
+  // conflict scan's self-removal window, and `createConfirmedBooking`, which is
+  // transaction-aware and so cannot resolve one for itself (`INV-LOCK-004`).
+  // `clubTime()` is request-memoised, but ONE binding is what makes "one club
+  // day per request" a property of the code rather than of the cache.
+  const todayAtClub = (await clubTime()).today();
+  const today = dateOnlyInstantOf(todayAtClub);
+
   // D-8: with a cross-family guest in the party this refuses NEUTRALLY rather
   // than returning the conflict body, because that body would name the nights a
   // member the caller may never have met is already booked for.
@@ -560,6 +574,7 @@ export async function POST(request: NextRequest) {
       checkIn,
       checkOut,
       guests: guestInputs,
+      today,
     });
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
@@ -591,7 +606,6 @@ export async function POST(request: NextRequest) {
   // rolling lookback. Everything else keeps the original today-or-future rule.
   const retroactiveCreate =
     parsed.data.allowPastDates === true && isAuthorizedOnBehalf;
-  const today = getTodayDateOnly();
   // The flag is strictly retroactive: a today-or-future check-in carrying it is
   // rejected rather than silently widening normal-create behaviour (lead-time
   // skip, capacity warn-and-confirm belong to past stays only).
@@ -698,7 +712,7 @@ export async function POST(request: NextRequest) {
     await assertMembershipTypeBookingAllowed(prisma, {
       ownerMemberId: effectiveMemberId,
       guests: guestInputs,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       // Finding 2 (privacy re-review of MG3 #2308).
       skipAuthorization: isAuthorizedOnBehalf,
     });
@@ -742,11 +756,11 @@ export async function POST(request: NextRequest) {
     !isAuthorizedOnBehalf &&
     await requiresPaidSubscriptionForMemberForBooking(prisma, {
       memberId: effectiveMemberId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       ageTier: effectiveMemberAgeTier,
     })
   ) {
-    const seasonYear = getSeasonYear(checkIn);
+    const seasonYear = seasonYearOfStoredDate(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
       where: { memberId: effectiveMemberId, seasonYear, status: "PAID" },
     });
@@ -838,7 +852,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial
@@ -1118,6 +1132,9 @@ export async function POST(request: NextRequest) {
       const leadTime = checkInternetBankingLeadTime({
         checkIn,
         settings: internetBankingSettings,
+        // #3123 — the SAME club day this route already resolved above for the
+        // retroactive-create gate, not a second answer from the environment.
+        today,
       });
       if (!leadTime.allowed) {
         return NextResponse.json(
@@ -1153,6 +1170,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const outcome = await createConfirmedBooking({
+      // #3123 review — the SAME club day this route already gated the
+      // retroactive envelope on, so the service's defence-in-depth re-check
+      // cannot land on a different day (`INV-LOCK-004`).
+      todayAtClub,
       effectiveMemberId,
       isOnBehalf: isAuthorizedOnBehalf,
       sessionUserId: session.user.id,

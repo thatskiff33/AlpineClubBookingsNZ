@@ -22,7 +22,6 @@
  */
 
 import { FinanceSnapshotType, SubscriptionStatus } from "@prisma/client";
-import { formatNZMonthYear } from "@/lib/nzst-date";
 import { prisma } from "@/lib/prisma";
 import { FINANCE_REALIZED_BOOKING_STATUSES } from "@/lib/finance-booking-metrics";
 import { getAccountMapping } from "@/lib/xero-mappings";
@@ -38,6 +37,11 @@ import {
   readPnlReportPayload,
   type PnlLineItem,
 } from "@/lib/finance-pnl-snapshot";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubMonthYear,
+  requireStoredCalendarDay,
+} from "@/lib/club-time";
 import { formatDateOnly, formatMonthOnly } from "@/lib/date-only";
 
 const INCOME_SECTION_KEYWORDS = ["income", "revenue"];
@@ -122,6 +126,32 @@ function resolvePeriodBounds(snapshot: FinanceSnapshotRecord): {
   const end = snapshot.periodEnd ?? snapshot.asOfDate;
   const start = snapshot.periodStart ?? startOfMonthUtc(end);
   return { start, end };
+}
+
+/**
+ * The fallback period heading, when the stored payload carries none of its own.
+ *
+ * A CALENDAR MONTH, SO IT TAKES NO ZONE (#3123; `INV-DATE-019`). The value is
+ * {@link resolvePeriodBounds}'s `end`, which is `FinanceSnapshot.periodEnd` or
+ * `FinanceSnapshot.asOfDate` — both `@db.Date` columns, round-tripping as UTC
+ * midnight. `formatNZMonthYear` projected them through `APP_TIME_ZONE`, so for a
+ * club west of Greenwich the first of a month rolled back and the revenue
+ * reconciliation table named the PREVIOUS month against that month's figures.
+ * The club's persisted zone would be just as wrong here: the question has no
+ * zone to answer it with. Composed rather than wrapped, per
+ * `docs/CLUB_TIME_KERNEL.md`.
+ */
+function formatSnapshotPeriodMonth(value: Date): string {
+  return formatClubMonthYear(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "A revenue-reconciliation period heading",
+        instead:
+          "A real timestamp rendered as a bare month is a projection, and both " +
+          "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
+      }),
+    ),
+  );
 }
 
 /** Key a snapshot by its calendar month so we keep one row per month. */
@@ -332,7 +362,8 @@ async function buildPeriod(
   const { start, end } = resolvePeriodBounds(snapshot);
   const payload = readPnlReportPayload(snapshot.payload);
   const periodLabel =
-    (payload ? readPnlPeriodLabel(payload) : null) ?? formatNZMonthYear(end);
+    (payload ? readPnlPeriodLabel(payload) : null) ??
+    formatSnapshotPeriodMonth(end);
 
   const xero = parseXeroIncome(snapshot, chart);
   const bookingHutFees = await loadBookingHutFees(start, end);

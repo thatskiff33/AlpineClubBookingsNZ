@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/lib/__tests__/support/club-time-render";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SkifieldWhakapapaWidget } from "@/components/website/skifield-whakapapa-widget";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import {
   emptyWhakapapaCurlData,
   type WhakapapaCurlData,
@@ -240,5 +249,89 @@ describe("SkifieldWhakapapaWidget trail sub-area layout", () => {
     // and it stays a stacked block.
     const loneSmall = await screen.findByText("Happy Valley Area");
     expect(loneSmall.parentElement?.className ?? "").not.toContain("flex-wrap");
+  });
+});
+
+
+/**
+ * THE PUBLIC SIDE OF THE SAME RULE (CT-4, #2870; epic #2988; INV-CONFIG-002).
+ *
+ * This is the only surface in this group reached through the OTHER mount point:
+ * `website/website-chrome.tsx` wraps the two public route groups, and
+ * `skifield-whakapapa-embed.tsx` wraps this widget on the one page outside them.
+ * It is also the surface with the most obviously global audience — a visitor
+ * reading the conditions from Sydney and one reading them at the lodge must be
+ * told the report was updated at the same moment, in the club's words.
+ *
+ * Same fixture, two provider zones, two answers. Everything above renders through
+ * the harness default and asserts trails and layout, which no zone can move; they
+ * are correctly left as they are.
+ */
+describe("SkifieldWhakapapaWidget updated stamp (CT-4, #2870)", () => {
+  /** Behind UTC, so it disagrees with the harness zone and with a UTC host. */
+  const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+
+  /** The report's `updated` field, which the two zones read as different DAYS. */
+  const UPDATED = "2026-07-30T00:00:00.000Z";
+
+  function providerFor(zone: string) {
+    return function PinnedClubTime({ children }: { children: ReactNode }) {
+      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    };
+  }
+
+  function spelledIn(zone: string): string {
+    return bindClubTime(requireClubTimeZone(zone)).instantDateTime(
+      new Date(UPDATED),
+    );
+  }
+
+  beforeEach(() => {
+    const data = emptyWhakapapaCurlData();
+    data.updated = UPDATED;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => data }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("spells Updated in a Denver club's evening, not New Zealand's midday", async () => {
+    // PREMISE, as an ANSWER rather than an identifier: the two zones really do
+    // disagree about this instant, and by a whole day.
+    expect(spelledIn(CLUB_ZONE_BEHIND_UTC)).toBe("29 Jul 2026, 6:00 pm");
+    expect(spelledIn(CLUB_TIME_TEST_ZONE)).toBe("30 Jul 2026, 12:00 pm");
+
+    const { container } = render(<SkifieldWhakapapaWidget />, {
+      wrapper: providerFor(CLUB_ZONE_BEHIND_UTC),
+    });
+
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        spelledIn(CLUB_ZONE_BEHIND_UTC),
+      ),
+    );
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_TIME_TEST_ZONE),
+    );
+  });
+
+  it("follows a DIFFERENT club zone for the same report", async () => {
+    // The mirror image, and it is what makes the case above about the PROVIDER
+    // rather than about a hard-coded 29 July.
+    const { container } = render(<SkifieldWhakapapaWidget />, {
+      wrapper: providerFor(CLUB_TIME_TEST_ZONE),
+    });
+
+    await waitFor(() =>
+      expect(container.textContent).toContain(spelledIn(CLUB_TIME_TEST_ZONE)),
+    );
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_ZONE_BEHIND_UTC),
+    );
   });
 });

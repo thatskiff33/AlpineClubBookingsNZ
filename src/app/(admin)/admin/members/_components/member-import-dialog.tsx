@@ -37,6 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useClubTime } from "@/components/club-time-provider";
 import {
   buildMemberImportPreview,
   createDefaultMemberImportDateFormatMapping,
@@ -358,12 +359,23 @@ export function MemberImportDialog({
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
+  // The CLUB's today, not the viewer's and not the container's (#3123,
+  // INV-CONFIG-002). The provider resolves it on the server and delivers it as
+  // data; `useClubTime()` throws outside a provider mount rather than falling
+  // back to a plausible wrong day.
+  const club = useClubTime();
+  const todayAtClub = club.today();
   const preview = useMemo(
     () =>
       csvData
-        ? buildMemberImportPreview(csvData, columnMapping, dateFormats)
+        ? buildMemberImportPreview(
+            csvData,
+            columnMapping,
+            todayAtClub,
+            dateFormats,
+          )
         : null,
-    [columnMapping, csvData, dateFormats],
+    [columnMapping, csvData, dateFormats, todayAtClub],
   );
 
   useEffect(() => {

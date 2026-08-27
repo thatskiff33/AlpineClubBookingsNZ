@@ -4,8 +4,9 @@ import type { PaymentStatus } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { format } from "date-fns";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
+import { formatPayloadCalendarDay } from "../_lib/calendar-day";
 import { readAdminQueryErrorMessage } from "@/lib/admin-query-error";
 import {
   getPaymentsDatasetDefaults,
@@ -371,7 +372,8 @@ export default function PaymentsPage() {
   // the browser's local date (otherwise post-NZ-midnight activity is hidden for
   // operators whose clock trails NZ). Derive the "3 months ago" bound from the
   // same club-day so both ends stay consistent.
-  const clubToday = todayDateOnlyForTimeZone();
+  const clubTime = useClubTime();
+  const clubToday = clubTime.today();
   const paymentDefaults = getPaymentsDatasetDefaults(clubToday);
   const defaultLastUpdatedFrom = paymentDefaults.lastUpdatedFrom;
   const [lastUpdatedFrom, setLastUpdatedFrom] = useState(
@@ -1097,8 +1099,15 @@ export default function PaymentsPage() {
 
               return (
                 <TableRow key={p.id}>
-                  <TableCell className="text-sm">{format(new Date(p.lastUpdatedAt), "d MMM yyyy")}</TableCell>
-                  <TableCell className="text-sm">{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
+                  {/* Two different concepts in adjacent columns, and CT-4
+                      (#2870) is the change that stopped treating them alike.
+                      `lastUpdatedAt` is a real INSTANT: date-fns `format` read
+                      it with HOST-LOCAL getters, so an operator abroad saw
+                      their own day. `checkIn` is a CALENDAR DATE from a
+                      `@db.Date` column, which takes no zone at all. Both render
+                      the same "16 Apr 2026" shape as before. */}
+                  <TableCell className="text-sm">{clubTime.instantDate(requireInstant(p.lastUpdatedAt))}</TableCell>
+                  <TableCell className="text-sm">{formatPayloadCalendarDay(p.booking.checkIn)}</TableCell>
                   <TableCell className="font-medium">
                     <Link
                       href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}

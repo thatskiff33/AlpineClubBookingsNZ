@@ -245,18 +245,49 @@ export function readSizeAllowances(root: string): AllowanceRead {
 
   // Two entries for one file is ambiguous, and ambiguity in a gate's input is
   // the thing that let the old ledger ship a ceiling the tree already violated.
-  const seen = new Map<string, string>();
-  for (const allowance of allowances) {
-    const first = seen.get(allowance.file);
-    if (first !== undefined) {
-      problems.push({
-        source: allowance.source,
-        problem: `${allowance.file} already has an allowance in ${first}; one file, one allowance`,
-      });
-      continue;
+  //
+  // WITHIN ONE ALLOWANCE FILE, and that boundary is the fix rather than an
+  // oversight. This reader sees the whole directory, including declarations
+  // that merged months ago — and a merged allowance is INERT, which is the
+  // contract the effect path in `file-size-base.ts` honours by applying only
+  // allowances whose own file is in the change's diff. Detecting duplicates
+  // across the whole directory contradicted that: the SECOND pull request to
+  // grow a file was refused, and refused by being shown a path it did not have
+  // in its diff and could do nothing about. Measured on the club-time epic
+  // branch, 15 of the 22 files holding an allowance came from three
+  // already-merged declarations, several of them on files the next groups were
+  // about to touch.
+  //
+  // So the cross-file half of the rule moves to where liveness is known:
+  // `evaluateComputedRatchet` applies it to the allowances live for THIS change,
+  // which is the case the rule is actually about. Two entries in one file need
+  // no liveness to judge — nobody writes them by accident in different changes —
+  // so they stay here, where the parse already is.
+  for (const [source, entries] of groupBySource(allowances)) {
+    const seen = new Set<string>();
+    for (const allowance of entries) {
+      if (seen.has(allowance.file)) {
+        problems.push({
+          source,
+          problem: `${allowance.file} already has an allowance in ${source}; one file, one allowance`,
+        });
+        continue;
+      }
+      seen.add(allowance.file);
     }
-    seen.set(allowance.file, allowance.source);
   }
 
   return { allowances, problems };
+}
+
+function groupBySource(
+  allowances: readonly SizeAllowance[],
+): Map<string, SizeAllowance[]> {
+  const bySource = new Map<string, SizeAllowance[]>();
+  for (const allowance of allowances) {
+    const existing = bySource.get(allowance.source);
+    if (existing) existing.push(allowance);
+    else bySource.set(allowance.source, [allowance]);
+  }
+  return bySource;
 }

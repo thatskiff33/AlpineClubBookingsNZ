@@ -45,13 +45,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
+import { useClubTime } from "@/components/club-time-provider";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-  isDateOnlyString,
-  parseDateOnly,
-} from "@/lib/date-only";
+  addCalendarDays,
+  isCalendarDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 import {
   BedRangeAssignDialog,
   type BedRangeAssignResult,
@@ -133,8 +132,14 @@ function describeBulkConflicts(
   return `${guestName}: ${clauses.join("; ")} — refreshing the board`;
 }
 
-function todayDateOnly() {
-  return formatDateOnly(getTodayDateOnly());
+/**
+ * The night after a lodge night — a CALENDAR DATE, so no timezone is involved
+ * (CT-4, #2870). `addCalendarDays` is proleptic-Gregorian civil arithmetic
+ * rather than the `parseDateOnly`/`addDaysDateOnly`/`formatDateOnly` round trip
+ * it replaces, and it refuses a value that is not a `yyyy-MM-dd` day.
+ */
+function nightAfter(stayDate: string): string {
+  return addCalendarDays(requireCalendarDate(stayDate), 1);
 }
 
 async function readApiError(response: Response, fallback: string) {
@@ -365,20 +370,27 @@ export default function AdminBedAllocationPage() {
   // M8); only the lobby TV is pinned to the fixed word "Custodian".
   const { hutLeaderLabel } = useClubIdentity();
 
-  const initialFrom = isDateOnlyString(requestedFrom ?? "")
+  // The board opens on the CLUB's today when the deep link carries no date —
+  // the API windows these nights in club time, so seeding it from the build's
+  // `NEXT_PUBLIC_TZ` showed the wrong first night. That constant is fixed at
+  // build time rather than read from the club's persisted setting, and falls
+  // back to `Pacific/Auckland` for every viewer on a deployment that sets only
+  // `TZ` (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
+  const initialFrom: string = isCalendarDate(requestedFrom ?? "")
     ? (requestedFrom as string)
-    : todayDateOnly();
+    : clubTime.today();
 
   // A deep link may carry a booking's whole stay, which can be far longer than
   // the board's 31-night window (admin-booking-tools-card sends checkIn →
   // checkOut). The window is fitted rather than refused — an admin who followed
   // a link did not type this — and `windowNarrowed` puts a visible note on
   // screen so the narrowing is never silent (#2251).
-  const initialWindow = isDateOnlyString(requestedTo ?? "")
+  const initialWindow = isCalendarDate(requestedTo ?? "")
     ? fitBoardWindow(initialFrom, requestedTo as string)
     : fitBoardWindow(
         initialFrom,
-        formatDateOnly(addDaysDateOnly(parseDateOnly(initialFrom), 7)),
+        addCalendarDays(requireCalendarDate(initialFrom), 7),
       );
 
   const [fromDate, setFromDate] = useState(initialFrom);
@@ -1095,12 +1107,7 @@ export default function AdminBedAllocationPage() {
       fromDate: stay?.fromDate ?? group.stayDates[0] ?? fromDate,
       toDate:
         stay?.toDate ??
-        formatDateOnly(
-          addDaysDateOnly(
-            parseDateOnly(group.stayDates[group.stayDates.length - 1]),
-            1,
-          ),
-        ),
+        nightAfter(group.stayDates[group.stayDates.length - 1]),
     });
     setRangeDialogOpen(true);
   }
@@ -1125,7 +1132,7 @@ export default function AdminBedAllocationPage() {
       fromDate: stay?.fromDate ?? allocation.stayDate,
       toDate:
         stay?.toDate ??
-        formatDateOnly(addDaysDateOnly(parseDateOnly(allocation.stayDate), 1)),
+        nightAfter(allocation.stayDate),
     });
     setRangeDialogOpen(true);
   }
@@ -1421,7 +1428,7 @@ export default function AdminBedAllocationPage() {
               value={fromDate}
               onChange={(event) => {
                 const value = event.target.value;
-                if (!isDateOnlyString(value)) return;
+                if (!isCalendarDate(value)) return;
                 setFromDate(value);
                 setWindowNarrowed(false);
               }}
@@ -1435,7 +1442,7 @@ export default function AdminBedAllocationPage() {
               value={toDate}
               onChange={(event) => {
                 const value = event.target.value;
-                if (!isDateOnlyString(value)) return;
+                if (!isCalendarDate(value)) return;
                 setToDate(value);
                 setWindowNarrowed(false);
               }}

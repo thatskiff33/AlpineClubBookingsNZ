@@ -39,7 +39,25 @@ import {
 } from "@/lib/email-templates/waitlist";
 import { checkoutDayChoreNote } from "../email-message-notes";
 import { getAppBaseUrl } from "../app-url";
-import { formatNZDateTime } from "../nzst-date";
+/*
+  THE EMAIL SURFACE'S OWN ACCESSOR, imported rather than reimplemented.
+
+  These four cases used to build their expected string with `formatNZDateTime`
+  from the retired `nzst-date` adapter, whose zone was `APP_TIME_ZONE` — the
+  CONTAINER's `TZ`, unvalidated. Every one of the templates below renders through
+  `emailClubDateTime`, whose zone is the club's PERSISTED `ClubTimeSettings.timeZone`
+  with an environment SEED as the cold fallback, resolved through
+  `resolveClubTimeZone` (INV-CONFIG-002; CT-5, #2869). Those two answers diverge on
+  any deployment whose `TZ` names no place — `TZ=UTC` makes the seed resolver say
+  `Pacific/Auckland` and the adapter say `UTC` — so the old oracle asserted the
+  wrong authority and agreed only by accident of this machine's environment.
+
+  Asserting through the accessor keeps exactly the relationship these cases always
+  had (template and expectation calling the same helper) while moving both onto the
+  authority the product uses. The SHAPE is pinned separately and byte-for-byte by
+  `club-time/__tests__/house-shapes.test.ts`.
+*/
+import { emailClubDateTime } from "../email-templates-club-time";
 import {
   AA_TEXT_CONTRAST_RATIO,
   DEFAULT_CLUB_THEME_VALUES,
@@ -309,7 +327,7 @@ describe("email-templates", () => {
       expect(html).toContain("held provisionally");
       expect(html).toContain("no bed is reserved for them yet");
       expect(html).toContain("covers only your member places");
-      expect(html).toContain(formatNZDateTime(holdUntil));
+      expect(html).toContain(emailClubDateTime(holdUntil));
     });
 
     it("uses singular wording for a single provisional guest (#1942)", () => {
@@ -381,9 +399,9 @@ describe("email-templates", () => {
       expect(html).toContain("only be charged when the booking is confirmed");
     });
 
-    it("shows the exact NZ-local hold deadline", () => {
+    it("shows the exact hold deadline in the club's zone", () => {
       const html = bookingPendingTemplate("Test", checkIn, checkOut, 1, holdUntil);
-      expect(html).toContain(formatNZDateTime(holdUntil));
+      expect(html).toContain(emailClubDateTime(holdUntil));
     });
 
     it("does not include lodge directions or door codes", () => {
@@ -634,15 +652,31 @@ describe("email-templates", () => {
       ).toContain("16 Apr 2026 – 18 Apr 2026");
     });
 
-    it("renders a mid-day instant on the NZ side of the date line", () => {
-      // 2026-04-15T23:30Z is already 16 April in New Zealand.
-      const html = setupIntentFailedTemplate({
-        firstName: "Ada",
-        checkIn: new Date("2026-04-15T23:30:00.000Z"),
-        checkOut: new Date("2026-04-17T23:30:00.000Z"),
-      });
-
-      expect(html).toContain("16 Apr 2026 – 18 Apr 2026");
+    it("REFUSES a stay carrying a time of day, rather than projecting it (#3113)", () => {
+      // This case used to assert the opposite: it fed `checkIn`
+      // 2026-04-15T23:30Z and expected "16 Apr 2026", because 23:30Z is already
+      // 16 April in New Zealand. That pinned a PROJECTION of a value the
+      // template documents as a stored calendar day, and it was green only
+      // because New Zealand is east of Greenwich — the identical input renders
+      // 15 April for a club in Denver or Honolulu.
+      //
+      // The fixture was also impossible. `Booking.checkIn`/`checkOut` are
+      // `@db.Date`, PostgreSQL will not keep a time in a `date` column, and the
+      // template's only production caller reads both straight off a `booking`
+      // row (`stripe-webhook-service.ts` -> `handleSetupIntentFailed`). So the
+      // old assertion described no reachable state while pinning the behaviour
+      // this epic exists to remove.
+      //
+      // What replaces it is the same intent stated positively: a value carrying
+      // a time of day is a REAL INSTANT that reached a calendar-day token, and
+      // the guard says so loudly instead of mailing a plausible wrong day.
+      expect(() =>
+        setupIntentFailedTemplate({
+          firstName: "Ada",
+          checkIn: new Date("2026-04-15T23:30:00.000Z"),
+          checkOut: new Date("2026-04-17T23:30:00.000Z"),
+        }),
+      ).toThrow(/takes a stored calendar day, not a moment/);
     });
   });
 
@@ -678,7 +712,7 @@ describe("email-templates", () => {
   });
 
   describe("time-sensitive templates", () => {
-    it("uses NZ-local date-time formatting for admin pending deadlines", () => {
+    it("uses club date-time formatting for admin pending deadlines", () => {
       const deadline = new Date("2026-04-14T09:15:00Z");
       const html = adminPendingDeadlineTemplate([
         {
@@ -691,10 +725,10 @@ describe("email-templates", () => {
         },
       ]);
 
-      expect(html).toContain(formatNZDateTime(deadline));
+      expect(html).toContain(emailClubDateTime(deadline));
     });
 
-    it("uses NZ-local date-time formatting for waitlist offer expiry", () => {
+    it("uses club date-time formatting for waitlist offer expiry", () => {
       const expiresAt = new Date("2026-07-10T05:45:00Z");
       const html = waitlistOfferTemplate(
         "Jane",
@@ -706,7 +740,7 @@ describe("email-templates", () => {
         10000
       );
 
-      expect(html).toContain(formatNZDateTime(expiresAt));
+      expect(html).toContain(emailClubDateTime(expiresAt));
     });
   });
 

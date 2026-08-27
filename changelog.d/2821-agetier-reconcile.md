@@ -1,5 +1,3 @@
-### Fixed
-
 - Changing a member's age tier now re-resolves who receives their family's email, everywhere
   it can happen. A member who stops being an adult can no longer be anybody's contact of
   record, and six paths that could move them across that line — self-service profile,

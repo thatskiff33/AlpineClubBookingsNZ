@@ -12,10 +12,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Plus, Trash2 } from "lucide-react"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
-import {
-  formatMemberDateNz,
-  parentLinkTypeLabel,
-} from "@/lib/admin-member-detail-helpers"
+import { parentLinkTypeLabel } from "@/lib/admin-member-detail-helpers"
+// A dependant's date of birth is a `@db.Date` CALENDAR DAY. It carries no
+// timezone, so it is rendered with none: reading it through one is
+// `INV-DATE-019`, and for a club behind UTC it dates a child a day early —
+// which on this screen decides which age tier they appear to be in.
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
 import { formatAgeTierName } from "@/lib/use-age-tier-options"
 import {
   DEPENDENT_PARENT_BLOCK_EXPLANATIONS,
@@ -157,7 +159,7 @@ export function MemberDependentsCard({
                       {dependent.active ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
-                  <TableCell>{dependent.dateOfBirth ? formatMemberDateNz(dependent.dateOfBirth) : "-"}</TableCell>
+                  <TableCell>{dependent.dateOfBirth ? formatPayloadCalendarDay(dependent.dateOfBirth) : "-"}</TableCell>
                   <TableCell>
                     {dependent.canLogin ? (
                       <Badge variant="secondary" className="border-border bg-muted text-foreground">
