@@ -340,7 +340,10 @@ export function calculatePromoDiscountForGuestRates(
 /**
  * Whether to write a `PromoRedemption` row for this application.
  *
- * Deliberately WIDER than the benefit test above: a promo that had eligible
+ * Deliberately WIDER than the benefit test — `isBeneficialPromoAllocation` in
+ * `@/lib/promo-usage-counts`, which said "above" until #3128 moved it there,
+ * and whose own docblock carries the narrower rule this one is contrasted
+ * with: a promo that had eligible
  * guests but delivered nothing still records its redemption, because that row
  * is the audit and reporting trail an operator needs to see that a code is
  * misconfigured (#2299, owner decision 3). What changed is that such a

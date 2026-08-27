@@ -5,18 +5,16 @@ import {
   type PromoDiscountGuest,
 } from "@/lib/pricing";
 
-/**
- * Who a promotion reaches on a booking, before any question of price or cap.
- *
- * Split out of `promo.ts` unchanged (#3128). Three related questions, answered
- * purely: which ASSIGNMENT mode a code is in and what that mode demands of the
- * booker; which of the booking's guests are in scope, including the ones the
- * booker picked; and which members would therefore benefit.
- *
- * Every function here is synchronous and side-effect free — no database, no
- * clock, no zone — which is why it could leave `promo.ts`. What it produces is
- * the candidate list the cap arithmetic then trims and pricing then charges.
- */
+// Who a promotion reaches on a booking, before any question of price or cap.
+//
+// Split out of `promo.ts` unchanged (#3128). Three related questions, answered
+// purely: which ASSIGNMENT mode a code is in and what that mode demands of the
+// booker; which of the booking's guests are in scope, including the ones the
+// booker picked; and which members would therefore benefit.
+//
+// Every function here is synchronous and side-effect free — no database, no
+// clock, no zone — which is why it could leave `promo.ts`. What it produces is
+// the candidate list the cap arithmetic then trims and pricing then charges.
 
 export function hasAssignedMembers(assignedMemberIds: string[] | null | undefined) {
   return Boolean(assignedMemberIds && assignedMemberIds.length > 0);
