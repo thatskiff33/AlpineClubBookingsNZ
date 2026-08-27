@@ -92,6 +92,25 @@ export function sanitiseEmailBodyHtml(input: string): string {
  * structure that matches how the body reads.
  */
 export function emailBodyHtmlToText(html: string): string {
+  return htmlToLineText(html, "- ");
+}
+
+/**
+ * The VALIDATION-facing form of a rich body: identical to
+ * `emailBodyHtmlToText` except list items carry NO `- ` marker.
+ *
+ * The marker is synthetic — injected by the extraction, not typed by the
+ * admin — and `SIGN_CARRYING_TOKEN_PATTERN`'s `[-+]\s*` cannot tell it from
+ * an authored minus, so `<li>{{promoSummary}}</li>` derived WITH the marker
+ * is refused as a sign the author never wrote (ultrareview nit). Validation
+ * therefore reads this form; the stored/delivered `bodyText` keeps the
+ * marker so the text/plain part still renders lists as lists.
+ */
+export function emailBodyHtmlToValidationText(html: string): string {
+  return htmlToLineText(html, "");
+}
+
+function htmlToLineText(html: string, listMarker: string): string {
   if (typeof html !== "string" || html.trim() === "") return "";
   // A closing paragraph is a BLOCK boundary (blank line), so the plain-path
   // conventions the derived text feeds — blank-line blocks, the diff, token
@@ -102,8 +121,9 @@ export function emailBodyHtmlToText(html: string): string {
     .replace(/<\/(div|li)>/gi, "\n")
     // The same "- " marker the sent text/plain part gives list items
     // (htmlToPlainText), so the derived text and the delivered plain part
-    // read the same way (drift lens one-liner).
-    .replace(/<li[^>]*>/gi, "- ")
+    // read the same way (drift lens one-liner). The validation form passes
+    // "" here — see emailBodyHtmlToValidationText.
+    .replace(/<li[^>]*>/gi, listMarker)
     .replace(/<br\s*\/?>/gi, "\n");
   const text = sanitizeHtml(withBreaks, {
     allowedTags: [],

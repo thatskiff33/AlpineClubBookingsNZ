@@ -6,6 +6,7 @@ import {
 } from "@/lib/email-message-registry";
 import {
   emailBodyHtmlToText,
+  emailBodyHtmlToValidationText,
   sanitiseEmailBodyHtml,
 } from "@/lib/email-body-html";
 import {
@@ -69,11 +70,14 @@ export async function POST(request: NextRequest) {
     sanitizedCandidate && emailBodyHtmlToText(sanitizedCandidate)
       ? sanitizedCandidate
       : undefined;
+  // Marker-free derivation for validation, exactly as the save route: the
+  // "- " list prefix is synthetic and must not read as an authored sign
+  // (ultrareview nit).
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject,
     bodyText: sanitizedBodyHtml
-      ? emailBodyHtmlToText(sanitizedBodyHtml)
+      ? emailBodyHtmlToValidationText(sanitizedBodyHtml)
       : (parsed.data.bodyText ?? ""),
   });
   if (!validation.valid) {

@@ -17,6 +17,7 @@ import {
 } from "@/lib/email-message-token-contract";
 import {
   emailBodyHtmlToText,
+  emailBodyHtmlToValidationText,
   plainTextToEmailBodyHtml,
   sanitiseEmailBodyHtml,
 } from "@/lib/email-body-html";
@@ -583,10 +584,20 @@ export async function PUT(request: NextRequest) {
     );
   }
 
+  // The rich path validates on the MARKER-FREE derivation: the "- " list
+  // prefix in the stored bodyText is injected by the extraction, and the
+  // sign-prefix rule cannot tell it from an authored minus (ultrareview nit —
+  // a sign-carrying token inside a bullet was refused for a sign the admin
+  // never typed). Every other rule reads the same words either way.
   const validation = validateEmailTemplateContent({
     templateName: parsed.data.templateName,
     subject: parsed.data.subject ?? "",
-    bodyText: derivedBodyText ?? parsed.data.bodyText ?? "",
+    bodyText:
+      (sanitizedBodyHtml
+        ? emailBodyHtmlToValidationText(sanitizedBodyHtml)
+        : null) ??
+      parsed.data.bodyText ??
+      "",
   });
   if (!validation.valid) {
     return NextResponse.json(

@@ -1118,6 +1118,45 @@ describe("admin email message APIs", () => {
     expect(upsert.update.bodyText).not.toContain("<b>");
   });
 
+  it("saves a sign-carrying token inside a LIST item — the marker is the extraction's, not the author's (ultrareview nit)", async () => {
+    // <li>{{promoSummary}}</li> derives to "- {{promoSummary}}", and the
+    // sign-prefix rule's [-+]\s* cannot tell that synthetic marker from a
+    // typed minus. Validation therefore reads the MARKER-FREE derivation;
+    // the stored bodyText keeps the marker for the delivered text/plain part.
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        bodyHtml:
+          "<p>Hi {{firstName}}!</p><ul><li>{{promoSummary}}</li><li>{{paymentOutcome}}</li></ul><p>{{CLUB_LODGE_TRAVEL_NOTE}}</p><p>{{doorCodeNote}}</p>",
+      }),
+    );
+    expect(response.status).toBe(200);
+    const upsert = mocks.emailTemplateOverrideUpsert.mock.calls.at(-1)?.[0];
+    expect(upsert.update.bodyText).toContain("- {{promoSummary}}");
+  });
+
+  it("still refuses a typed minus in front of a sign-carrying token through the rich path", async () => {
+    // The exemption above covers ONLY the synthetic list marker: an authored
+    // "-{{promoSummary}}" inside a paragraph must keep failing exactly as it
+    // does on the plain path.
+    const response = await putEmailTemplate(
+      request("/api/admin/email-templates", {
+        templateName: "booking-confirmed",
+        subject: "Booking Confirmed - {{CLUB_LODGE_NAME}}",
+        bodyHtml:
+          "<p>Hi {{firstName}}!</p><p>-{{promoSummary}}{{paymentOutcome}}</p><p>{{CLUB_LODGE_TRAVEL_NOTE}}</p><p>{{doorCodeNote}}</p>",
+      }),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(
+      body.issues.some(
+        (issue: { code: string }) => issue.code === "sign_prefixed_token",
+      ),
+    ).toBe(true);
+  });
+
   it("treats an EMPTIED rich body as no body at all — the default renders, not a blank email (review H1)", async () => {
     const response = await putEmailTemplate(
       request("/api/admin/email-templates", {

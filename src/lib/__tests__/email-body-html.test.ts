@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   emailBodyHtmlToText,
+  emailBodyHtmlToValidationText,
   plainTextToEmailBodyHtml,
   renderEmailBodyHtml,
   renderHtmlTemplateString,
@@ -140,5 +141,16 @@ describe("emailBodyHtmlToText", () => {
         "<p>Hi <b>{{firstName}}</b></p><ul><li>one</li><li>two</li></ul><p>Bye</p>",
       ),
     ).toBe("Hi {{firstName}}\n\n- one\n- two\nBye");
+  });
+
+  it("the VALIDATION form is identical minus the synthetic list marker", () => {
+    // The marker is injected by the extraction, so validation must not read
+    // it as an authored sign in front of a sign-carrying token (ultrareview
+    // nit) — while every word both rules judge stays present.
+    expect(
+      emailBodyHtmlToValidationText(
+        "<p>Hi <b>{{firstName}}</b></p><ul><li>{{promoSummary}}</li><li>two</li></ul><p>Bye</p>",
+      ),
+    ).toBe("Hi {{firstName}}\n\n{{promoSummary}}\ntwo\nBye");
   });
 });
