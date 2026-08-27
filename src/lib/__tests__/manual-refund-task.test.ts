@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ManualRefundTaskStatus, PaymentSource } from "@prisma/client";
+import {
+  ManualRefundTaskKind,
+  ManualRefundTaskStatus,
+  PaymentSource,
+} from "@prisma/client";
 
 /**
  * B5 (#2262) guard 4 — the cash hand-back task.
@@ -69,6 +73,8 @@ beforeEach(() => {
     bookingId: "booking-1",
     paymentId: "payment-1",
     amountCents: 9000,
+    raisedAmountCents: 9000,
+    kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
     status: ManualRefundTaskStatus.OPEN,
     booking: { memberId: "member-1" },
   });
@@ -82,6 +88,7 @@ describe("resolveManualRefundTask", () => {
       resolution: "completed",
       note: "cash handed back",
       actingMemberId: "admin-1",
+      confirmedAmountCents: null,
     });
 
     expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
@@ -145,6 +152,7 @@ describe("resolveManualRefundTask", () => {
         resolution: "completed",
         note: null,
         actingMemberId: "admin-1",
+        confirmedAmountCents: null,
       })
     ).rejects.toMatchObject({ status: 409 });
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
@@ -161,6 +169,8 @@ describe("resolveManualRefundTask", () => {
       bookingId: "booking-1",
       paymentId: "payment-1",
       amountCents: 9000,
+      raisedAmountCents: 9000,
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
       status: ManualRefundTaskStatus.COMPLETED,
       booking: { memberId: "member-1" },
     });
@@ -171,6 +181,7 @@ describe("resolveManualRefundTask", () => {
         resolution: "completed",
         note: null,
         actingMemberId: "admin-1",
+        confirmedAmountCents: null,
       })
     ).rejects.toMatchObject({ status: 409 });
   });
@@ -184,8 +195,279 @@ describe("resolveManualRefundTask", () => {
         resolution: "completed",
         note: null,
         actingMemberId: "admin-1",
+        confirmedAmountCents: null,
       })
     ).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+/**
+ * #3030 (epic #2797, owner decision D2): pricing and amending the amount AT
+ * COMPLETION, and proving that a confirmation cannot apply twice.
+ *
+ * The state under test is the one the epic exists to create: an OPEN task whose
+ * amount is genuinely unknown. What these tests must not let through is any path
+ * that turns "not yet known" into a number nobody confirmed - whether that
+ * number is a magic zero, a stale figure from a previous screen, or the same
+ * confirmed figure applied a second time.
+ */
+function editReviewTask(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "task-1",
+    bookingId: "booking-1",
+    paymentId: "payment-1",
+    amountCents: null,
+    raisedAmountCents: null,
+    kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+    status: ManualRefundTaskStatus.OPEN,
+    booking: { memberId: "member-1" },
+    ...overrides,
+  };
+}
+
+describe("#3030 - pricing an unknown amount at completion", () => {
+  it("prices an OPEN task that had no amount, writing the confirmed figure inside the same status-guarded claim as the status", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    const result = await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June invoice: two nights at $45.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9000,
+    });
+
+    // The amount and the terminal status are ONE write. That is what makes a
+    // duplicate confirmation impossible: there is no window in which the task is
+    // priced but not yet closed.
+    expect(mocks.manualRefundTaskUpdateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: ManualRefundTaskStatus.OPEN },
+      data: expect.objectContaining({
+        status: ManualRefundTaskStatus.COMPLETED,
+        amountCents: 9000,
+        completedByMemberId: "admin-1",
+      }),
+    });
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "payment-1",
+      amountCents: 9000,
+      store: tx,
+    });
+    expect(result.amountCents).toBe(9000);
+    expect(result.amountAmended).toBe(false);
+  });
+
+  it("refuses to complete an unpriced task when the caller claims it already has its final amount - the unknown is NOT zero", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "closing it",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("dismissing an unpriced task writes NO amount at all, rather than a zero another reader would take for a decision", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Reviewed against the 2024 ledger: nothing is owed.",
+      actingMemberId: "admin-1",
+    });
+
+    const data = mocks.manualRefundTaskUpdateMany.mock.calls[0][0].data;
+    expect(data.status).toBe(ManualRefundTaskStatus.DISMISSED);
+    expect("amountCents" in data).toBe(false);
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("requires a note when completing a financial review, because the admin is pricing real money from evidence", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "  ",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4200,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a confirmed amount that is not non-negative whole cents", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    for (const bad of [-1, 12.5, Number.NaN]) {
+      await expect(
+        resolveManualRefundTask({
+          taskId: "task-1",
+          resolution: "completed",
+          note: "priced",
+          actingMemberId: "admin-1",
+          confirmedAmountCents: bad,
+        })
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("completes a credit-only task with no payment behind it, and writes no refund allocation to allocate against", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ paymentId: null })
+    );
+
+    const result = await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Credited to the member account.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 4500,
+    });
+
+    // There is nothing to allocate a refund against, and inventing a payment
+    // link to satisfy the model is exactly what owner decision D2 removed.
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(result.amountCents).toBe(4500);
+    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REFUNDED", amountCents: 4500 })
+    );
+  });
+});
+
+describe("#3030 - amending at completion, audited (owner decision D2)", () => {
+  it("amends a financial-review amount and records what it was before, what it was raised with, and that it moved", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ amountCents: 5000, raisedAmountCents: 5000 })
+    );
+
+    const result = await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "The second night was comped, so $42 not $50.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 4200,
+    });
+
+    expect(result.amountAmended).toBe(true);
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 4200 })
+    );
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.manual-refund-task.complete",
+        metadata: expect.objectContaining({
+          amountCents: 4200,
+          previousAmountCents: 5000,
+          raisedAmountCents: 5000,
+          amountAmended: true,
+        }),
+      }),
+      tx
+    );
+  });
+
+  it("refuses to rewrite a LEGACY hand-back amount at close - policy computed it, and a differing figure means a stale screen", async () => {
+    // The default fixture is a CANCELLED_BOOKING_HAND_BACK at 9000.
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "paid back 80",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 8000,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("lets a legacy hand-back close when the amount the admin saw still matches, so the field doubles as a stale-price guard", async () => {
+    const result = await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: null,
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 9000,
+    });
+
+    expect(result.amountAmended).toBe(false);
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 9000 })
+    );
+  });
+});
+
+describe("#3030 - a confirmation cannot apply twice", () => {
+  it("loses the claim rather than paying twice when a second confirmation arrives, and runs no side effect at all", async () => {
+    // Two admins price the same OPEN task and both submit. The first claim wins;
+    // the second finds no OPEN row. What must NOT happen is the second one
+    // writing its amount, its allocation, or its booking event.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "priced at 90",
+        actingMemberId: "admin-2",
+        confirmedAmountCents: 9000,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses a second confirmation of an already COMPLETED review, so a terminal occurrence stays terminal", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        amountCents: 9000,
+        raisedAmountCents: null,
+        status: ManualRefundTaskStatus.COMPLETED,
+      })
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "priced again",
+        actingMemberId: "admin-2",
+        confirmedAmountCents: 7000,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reopen a DISMISSED review, which is a real decision and not an absence of one", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ status: ManualRefundTaskStatus.DISMISSED })
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "actually we do owe them",
+        actingMemberId: "admin-2",
+        confirmedAmountCents: 3000,
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
 });
 
