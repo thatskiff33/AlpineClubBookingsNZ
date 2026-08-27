@@ -3348,7 +3348,10 @@ permissions is worth one API call before it becomes a documented blocker.
 ### Disposition, and why alert numbers cannot anchor this record
 
 **All eleven open alerts were dismissed on 28 August 2026**, each carrying a
-short reason that points back here. The Security tab is now empty, and that is
+short reason that points back here. The API records them at
+`2026-08-27T22:50Z`-`22:52Z` — the same moment, in UTC rather than the New
+Zealand date this page uses elsewhere; expect that one-day offset when comparing
+this record against `dismissed_at`. The Security tab is now empty, and that is
 the point of the exercise: an empty tab means the next alert to appear is
 visibly new, and someone reads it.
 
