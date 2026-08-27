@@ -86,26 +86,52 @@ are permanent: never renumbered, never reused.
   resolves a global, environment or configuration authority must be supplied by
   its caller. Deleting the default is what makes the compiler enumerate the call
   sites instead of leaving them to a census.
-- **The mechanically-guarded class is a default that reads the environment**: a
-  parameter, options-object property or destructuring default whose value is
-  `process.env.*`, or one of the `@/config/operational` exports that names an
-  authority with a competing persisted source — today `APP_TIME_ZONE` and
-  `APP_LOCALE`, whose real authority is the `ClubTimeSettings` row
-  (`INV-CONFIG-002`). The arm lives in `eslint.config.mjs` on
-  `ALWAYS_RESTRICTED_IN_SRC`, so every block picks it up, and its failure message
-  names this ID.
-- **What is out of scope is part of the rule, and is stated rather than
-  discovered.** `APP_CURRENCY` and `APP_STRIPE_CURRENCY` are not banned: this
-  product has no persisted club-currency setting, so `@/config/operational` is
-  the single source and a boundary module reading it is obeying this rule rather
-  than breaking it. Pushing that read out to five money call sites would spread
-  the import and make single source of truth worse. **The day a persisted
-  club-currency setting exists, those two names join the banned list.** Also out
-  of scope, with population zero: a default that calls a club authority resolver
-  (`= await clubTimeZone()`), which returns the club's own answer and is not this
-  defect. A `??` fallback in a function body is the same hazard written
-  differently and is a known limit of the syntactic arm, not a permitted shape —
-  the census beside it is the second instrument.
+- **The mechanically-guarded class is narrower than the rule, deliberately, and
+  the gap is stated rather than left to be discovered.** The arm bans a
+  parameter, options-object property or destructuring default whose value reads
+  the **club's civil-time authority**: `APP_TIME_ZONE`, `APP_LOCALE`, or
+  `process.env.TZ` / `NEXT_PUBLIC_TZ` in any spelling — including a
+  namespace-import or computed member access, and including the
+  `= process.env.TZ ?? "…"` and ternary forms, which are what somebody reaches
+  for the moment a bare read looks unsafe. It lives in `eslint.config.mjs` on
+  `ALWAYS_RESTRICTED_IN_SRC`, so every block picks it up including `scripts/`
+  and `prisma/`, and its failure message names this ID.
+- **Only `APP_TIME_ZONE` and the `TZ` reads have a competing persisted source**
+  — the `ClubTimeSettings` row (`INV-CONFIG-002`) — and that is the measured
+  defect: 81 call sites across 52 files could silently take a club-facing answer
+  from the container. `APP_LOCALE` is banned on a **forward-looking** argument
+  instead, and it should be read as such: there is no persisted club locale
+  today, so `APP_LOCALE` is listed *ahead of* its second source, on the grounds
+  that it is a club-facing presentation authority of the same kind and its live
+  population is zero, so listing it costs nothing now and saves the migration
+  later.
+- **The exclusions are judged, and the two kinds of reason are not
+  interchangeable.**
+  - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` are excluded on **cost**, not on
+    kind. `src/lib/stripe.ts` has two live `currency = APP_STRIPE_CURRENCY`
+    defaults; there is no persisted club-currency setting, and pushing the read
+    out to five money call sites would spread the `@/config/operational` import
+    into five more modules — worse for single source of truth, not better. Say
+    "cost" and not "this is a different kind of value", because `APP_LOCALE` has
+    no second source either and is banned. **The day a persisted club-currency
+    setting exists, both names join the list.**
+  - The rest of `process.env.*` is excluded on **measurement**. Three live
+    parameter defaults read it — `src/lib/cron-auth.ts` (`CRON_SECRET`) and
+    `src/lib/admin-cron-health.ts` twice (`env: NodeJS.ProcessEnv = process.env`,
+    a test-injection seam). None has a competing source, so a broad ban would
+    have been three false positives out of three matches, and #3126's own risk
+    note names an over-broad arm as this work's one live hazard. Widen the arm
+    only with a fresh measurement, and record it here.
+- **What no syntactic arm here reaches**, stated plainly rather than left as a
+  discovered gap: a default that calls a club authority resolver
+  (`= await clubTimeZone()`), which returns the club's own answer and is not
+  this defect, population zero; and a `??` fallback in a function **body**
+  (`const tz = opts.tz ?? APP_TIME_ZONE`), which is the same hazard written
+  differently and is a known limit, not a permitted shape. The census beside the
+  arm is the second instrument, and per `INV-SSOT-004` it is deliberately
+  **broader** than the arm — it cannot tell a parameter default from a
+  module-level binding, so it names `src/config/operational.ts` as its one
+  expected hit. Broader is the safe direction of error for a second instrument.
 - Why the guard exists at all when `INV-SSOT-001` prefers the structural remedy:
   the structural remedy IS the fix, and this arm's job is to stop the default
   being written back in once it has been deleted.
