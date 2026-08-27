@@ -406,9 +406,14 @@ describe("the environment-zone allowlist is a ratchet", () => {
         arm that replaces it, `AUTHORITY_DEFAULT_RESTRICTIONS`, is on the
         mandatory set that no block lifts — so a future entry here can excuse a
         read and can never again excuse a default.
-      - FIVE today. Three of the four that left MIGRATED. Deletion is not the
-        only way off this list and threading the club's zone through a caller is
-        the intended one.
+      - FIVE today. Of the four that have left, TWO migrated
+        (`member-guest-consent-labels.ts`, `member-guest-delegate-page.ts`), one
+        was DELETED outright (`nzst-date.ts`) and one left by having its DEFAULT
+        deleted (`member-merge-field-kinds.ts`, #3126) while still naming the
+        zone in prose. Three routes off, not one — and migration is the intended
+        one. An earlier version of this note said "three of the four MIGRATED",
+        which counted the default deletion as a migration two lines after saying
+        it was not.
 
       THIS NUMBER IS TIGHT AND DELIBERATELY SO. It equals the live count; there
       is no headroom, no rounding and no allowance for work in flight. A ratchet

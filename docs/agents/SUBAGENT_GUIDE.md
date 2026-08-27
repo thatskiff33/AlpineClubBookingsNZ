@@ -15,12 +15,14 @@ do not clash.
 - UI/UX adversarial review
 - Test coverage and drift adversarial review
 - **Single source of truth adversarial review — a STANDING lens, on every
-  reviewed pull request rather than chosen per issue** (#3126). The other lenses
-  above are picked to fit the issue; this one is not, because the defect it
-  looks for is invisible to all of them: a reviewer checking a diff against its
-  brief cannot see the copy that already exists elsewhere in the tree, and in a
-  repository this size increasingly nobody happens to know it is there. The
-  rules are `INV-SSOT` in
+  reviewed pull request rather than chosen per issue** (#3126). `AGENTS.md`
+  is the authority for review counts and carries this carve-out in its own
+  words; this entry is the brief, not the mandate. The other lenses above are
+  picked to fit the issue; this one is not, because the defect it looks for is
+  invisible to all of them: a reviewer checking a diff against its brief cannot
+  see the copy that already exists elsewhere in the tree, and in a repository
+  this size increasingly nobody happens to know it is there. The rules are
+  `INV-SSOT` in
   [`../invariants/single-source-of-truth.md`](../invariants/single-source-of-truth.md);
   brief the lens to ask:
   - **Where is each new fact DEFINED, and is that the only place?** Grep for the

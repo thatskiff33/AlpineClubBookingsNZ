@@ -52,9 +52,11 @@ are permanent: never renumbered, never reused.
   parameter beats a counted ratchet. Reach for a guard when the structural
   option is genuinely unavailable, and say which one you rejected and why.
 - Worked example, in this codebase: #3123 deleted the six `= APP_TIME_ZONE`
-  defaults from `src/lib/date-only.ts`. A defect that had needed an 81-entry
-  counted census, lowered by hand in the same commit as every migration, became
-  a compile error. Every part of that census existed because the default did.
+  defaults from `src/lib/date-only.ts`. A defect that had needed a counted
+  census, lowered by hand in the same commit as every migration, became a
+  compile error. Every part of that census existed because the default did. The
+  figures live once, in `club-time-escape-hatch-census.test.ts`, and are not
+  restated here — a number repeated in prose is a number that drifts.
 - A duplicated age rule that still carried a bug its canonical copy had been
   fixed for is the shape this rule exists to prevent; #3123 measured it.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
@@ -98,34 +100,64 @@ are permanent: never renumbered, never reused.
   and `prisma/`, and its failure message names this ID.
 - **Only `APP_TIME_ZONE` and the `TZ` reads have a competing persisted source**
   — the `ClubTimeSettings` row (`INV-CONFIG-002`) — and that is the measured
-  defect: 81 call sites across 52 files could silently take a club-facing answer
-  from the container. `APP_LOCALE` is banned on a **forward-looking** argument
-  instead, and it should be read as such: there is no persisted club locale
-  today, so `APP_LOCALE` is listed *ahead of* its second source, on the grounds
-  that it is a club-facing presentation authority of the same kind and its live
-  population is zero, so listing it costs nothing now and saves the migration
-  later.
+  defect: dozens of call sites could silently take a club-facing answer from the
+  container, and the counts are in the census test rather than here.
+  `APP_LOCALE` is banned on a **forward-looking** argument instead, and it
+  should be read as such: no persisted club locale exists, so `APP_LOCALE` is
+  listed *ahead of* its second source, on the grounds that it is a club-facing
+  presentation authority of the same kind whose live default population is zero
+  — listing it costs nothing now and saves the migration later. Note that
+  "nothing competes with it" would be too strong even so: fifteen non-test files
+  hardcode `"en-NZ"` outright, which is a separate pre-existing defect this arm
+  does not address.
 - **The exclusions are judged, and the two kinds of reason are not
   interchangeable.**
   - `APP_CURRENCY` and `APP_STRIPE_CURRENCY` are excluded on **cost**, not on
     kind. `src/lib/stripe.ts` has two live `currency = APP_STRIPE_CURRENCY`
-    defaults; there is no persisted club-currency setting, and pushing the read
-    out to five money call sites would spread the `@/config/operational` import
-    into five more modules — worse for single source of truth, not better. Say
-    "cost" and not "this is a different kind of value", because `APP_LOCALE` has
-    no second source either and is banned. **The day a persisted club-currency
-    setting exists, both names join the list.**
-  - The rest of `process.env.*` is excluded on **measurement**. Three live
-    parameter defaults read it — `src/lib/cron-auth.ts` (`CRON_SECRET`) and
-    `src/lib/admin-cron-health.ts` twice (`env: NodeJS.ProcessEnv = process.env`,
-    a test-injection seam). None has a competing source, so a broad ban would
-    have been three false positives out of three matches, and #3126's own risk
-    note names an over-broad arm as this work's one live hazard. Widen the arm
-    only with a fresh measurement, and record it here.
+    defaults, and all **eight** production call sites in eight modules rely on
+    them. No persisted club-currency SETTING competes with them, and pushing the
+    read out would spread the `@/config/operational` import into eight more
+    modules — worse for single source of truth, not better. Two caveats, because
+    the weaker claim is the true one: `finance-fees-sections.tsx` and
+    `joining-fee-preview.tsx` hardcode `"NZD"` outright and `schema.prisma`
+    defaults a `currency` column to `"nzd"`, so currency is **not** in fact
+    single-sourced today — those are a separate pre-existing defect this arm
+    does not address. And say "cost", not "a different kind of value", because
+    `APP_LOCALE` has no competing setting either and is banned. **The day a
+    persisted club-currency setting exists, both names join the list.**
+  - The rest of `process.env.*` is excluded on **measurement**. **Seven** live
+    parameter defaults read it: `cron-auth.ts` (`CRON_SECRET`), plus six
+    whole-environment injection seams (`admin-cron-health.ts` twice,
+    `email-delivery.ts`, `environment-role-declaration.ts`,
+    `ignored-email-env.ts`, `xero-config.ts`). All seven are test seams or
+    secrets, so a broad ban would have been seven false positives out of seven
+    matches — and #3126's own risk note names an over-broad arm as this work's
+    one live hazard. One is not perfectly clean: `environment-role-declaration.ts`
+    is governed by `INV-CONFIG-003`, under which the database may force the safer
+    role — a second source by this file's own definition. Widen the arm only on a
+    fresh measurement, recorded here.
+- **The environment list is a FLOOR, not the boundary of the rule.** The first
+  bullet bans a default resolving "a global, environment or configuration
+  authority"; the arm mechanises only the environment part. The measured
+  instance sitting outside it is #3116:
+  `seasonYearsLabel(seasonYear, yearEndMonth = getFinancialYearEndMonth())`,
+  where the default reads a **module-level cache** that no background worker
+  seeds — so the subscription-invoice mint renders the wrong season for a
+  club whose financial year does not end in March, while every call site reads
+  as though it stated the fact. Same defect, same remedy (delete the default,
+  require the argument), and an env-name regex cannot see it. Four live
+  instances: `financial-year.ts` and `season-label.ts` ×3. **A default supplying
+  ambient process-global state breaks this rule whether or not the arm reports
+  it.** Widening the arm to a named list of ambient-state resolvers is tracked
+  in #3133 and deliberately not done here, because #3116 is deleting those
+  defaults in flight and the two changes would collide.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
-  discovered gap: a default that calls a club authority resolver
+  discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not
-  this defect, population zero; and a `??` fallback in a function **body**
+  this defect, population zero — note this is a narrower statement than
+  "resolver calls are fine", which the bullet above refutes; an import alias
+  (`import { APP_TIME_ZONE as ZONE }`) or a named local, which a selector cannot
+  resolve and which the census closes instead; and a `??` fallback in a function **body**
   (`const tz = opts.tz ?? APP_TIME_ZONE`), which is the same hazard written
   differently and is a known limit, not a permitted shape. The census beside the
   arm is the second instrument, and per `INV-SSOT-004` it is deliberately
@@ -145,15 +177,24 @@ are permanent: never renumbered, never reused.
   different methods agrees where both are blind.
 - **In this repository the specific hazard is comments**, because the house style
   documents each defect at the site where it was removed. A scanner reading RAW
-  source therefore misfires worst on the files that were cleaned most. #3123
-  measured four cases: two false greens — an exemption kept alive by a docblock,
-  and an entire exemption block invisible to a staleness leg — and two false
-  reds, from comments containing `prisma.$transaction` and
-  `pg_advisory_xact_lock(1)`.
-- **`stripComments` lives once**, at
-  `src/lib/__tests__/support/strip-comments.ts`. A source-scanning test uses it;
-  it does not carry its own copy, which would be a violation of `INV-SSOT-001`
-  in the very test that enforces it.
+  source therefore misfires worst on the files that were cleaned most. The
+  corroborated instance is the `member-guest-delegate-page.ts` false green,
+  recorded where it was found — `club-time-boundary-guard.test.ts` and the
+  docblock of `support/strip-comments.ts`. An earlier draft of this entry
+  claimed "four measured cases" with a two-green/two-red breakdown; only one is
+  evidenced in the tree, so the count is not restated here. Cite the record, not
+  the tally.
+- **`src/lib/__tests__/support/strip-comments.ts` is the canonical
+  `stripComments`, and it is not yet the only one.** Eighteen definitions exist
+  in the tree and three files import the canonical one. **Use it; do not write a
+  nineteenth.** The copies are not equivalent — `analytics-settings.test.ts` is
+  a two-regex strip that drops newlines, where the canonical one is a
+  mode-tracking scanner that preserves them — which is this very rule's failure
+  mode, at scale, inside the tests meant to enforce it. Converging them is
+  #3132; until it lands, treat a source-scanning test you did not write as
+  measuring differently from yours until you have checked.
 - When you add the second instrument to a guard, check what the first one
   normalises before writing the second, and say in the test which method both
-  share.
+  share. **Prefer the broader instrument for the second one**: over-reporting is
+  visible and gets fixed, while a second instrument blind in the same place as
+  the first is a rubber stamp that reads as corroboration.
