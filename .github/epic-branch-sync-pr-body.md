@@ -15,7 +15,7 @@
        __BRANCH__   the epic branch being synced, e.g. epic/2943-group-trip-hosting
        __RUN_URL__  the workflow run that opened or refreshed this pull request -->
 
-Automated daily sync of `main` into this epic's integration branch (#3002).
+Automated sync of `main` into this epic's integration branch (#3002), opened or refreshed every six hours.
 
 It exists so the eventual `__BRANCH__` → `main` merge is a series of small reconciles rather than one large one. This repository has twice shipped a **wrong value** out of a hand-resolved long-lived conflict — #2979's file-size ceiling, and the `CHANGELOG.md` churn #2452 ended — so the cost of letting this sit is not merely inconvenience.
 
