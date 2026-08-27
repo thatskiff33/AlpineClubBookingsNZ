@@ -1,4 +1,3 @@
-import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 
 /**
@@ -223,20 +222,32 @@ function toInstant(value: unknown): Date | null {
  * `Date`s; both are accepted, and both take the same branch, so the two cannot
  * drift apart.
  *
- * `timeZone` IS PASSED IN PRODUCTION, and the default is a fallback rather than
- * the convention. The merge comparison screen
- * (`src/app/(admin)/admin/members/[id]/merge/page.tsx`) hands all three of its
- * columns the club's persisted zone. The `= APP_TIME_ZONE` default behind them is
- * the ENVIRONMENT's zone, which is not the club's, and it survives only because
- * this is a client component and the zone has to arrive as data — which is
- * exactly the reason this module sits on `ENVIRONMENT_ZONE_ADAPTERS` in
- * `eslint.config.mjs` with an entry saying so.
+ * `timeZone` IS REQUIRED, and #3126 (`INV-SSOT-003`) is why. It used to carry
+ * `= APP_TIME_ZONE` — the ENVIRONMENT's zone, which is not the club's — so any
+ * caller that did not pass one would have been answered from whichever container
+ * the process happened to be in, silently, on the screen immediately before an
+ * IRREVERSIBLE merge. The merge comparison screen
+ * (`src/app/(admin)/admin/members/[id]/merge/page.tsx`) already handed all three
+ * of its columns the club's persisted zone, so deleting the default cost the
+ * production callers nothing and turned the remaining hazard into a compile
+ * error. A required argument beats a lint rule — the same remedy #3123 applied
+ * to the six `= APP_TIME_ZONE` defaults in `date-only.ts`.
+ *
+ * THE DEFAULT SURVIVED AS LONG AS IT DID because of an exemption, and that is the
+ * part worth remembering. This module sat on `ENVIRONMENT_ZONE_ADAPTERS` in
+ * `eslint.config.mjs`: a client component cannot call `clubTimeZone()`, so it was
+ * excused from the arm banning the environment's zone — and the exemption excused
+ * the DEFAULT along with the read. It is off that list now, because the zone
+ * arrives as data at every call site and this file names the environment nowhere.
+ * The new `AUTHORITY_DEFAULT_RESTRICTIONS` arm is on the mandatory set that NO
+ * block lifts, so the default could not come back even in a file that still had a
+ * reason to read the environment.
  *
  * THIS PARAGRAPH USED TO CLAIM the parameter "follows the same convention as
  * every helper in `date-only.ts`: it defaults to the club's zone and production
  * never passes it". Every part of that was wrong, and worth recording rather
  * than quietly overwriting: those helpers have no zone defaults left at all
- * (#3123 deleted the last six), `APP_TIME_ZONE` is the environment's answer and
+ * (#3123 deleted the last six), `APP_TIME_ZONE` was the environment's answer and
  * not the club's, and production passes this argument at every call site. A
  * convention cited from ANOTHER module is the shape nothing checks — the other
  * module changes, and the citation reads exactly as it always did.
@@ -260,7 +271,7 @@ function toInstant(value: unknown): Date | null {
 export function formatMergeFieldValue(
   value: unknown,
   kind: MergeFieldValueKind,
-  timeZone: string = APP_TIME_ZONE,
+  timeZone: string,
 ): string {
   if (value === null || value === undefined || value === "") {
     return EMPTY_DISPLAY;

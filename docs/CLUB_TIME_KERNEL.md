@@ -411,9 +411,12 @@ rather than reaching for a module kept alive for that purpose.
   guarantee.** It compares the apply path against a *transcription* of the
   preview rather than against fixed dates, so the apply path cannot drift away
   from the preview **as transcribed there**. It cannot see preview-side drift at
-  all: the oracles deliberately do not import `modify-quote/route.ts`, and a
-  measured mutation moving that route's shift delta base from `oldCheckIn` to
-  `oldCheckOut` left the parity suite at 10 passed / 0 failed. Preview-side drift
+  all: the oracles deliberately do not import the preview they transcribe, and
+  a measured mutation moving the shift delta base from `oldCheckIn` to
+  `oldCheckOut` left the parity suite at 10 passed / 0 failed. That delta base
+  sat in `modify-quote/route.ts` when the measurement was taken and now lives in
+  `src/lib/booking-shift-preview.ts` (#3128); the measurement stands, and it is
+  the preview module rather than the route that a re-run should mutate. Preview-side drift
   is caught by `modify-quote-shift.test.ts` (which did fail on that mutation) and
   by `api-club-time-convergence.test.ts`'s import ban, not by the parity file.
   The design is right — importing the route drags its whole module graph in and
