@@ -24,6 +24,10 @@ import {
 } from "@/lib/booking-money-lines";
 import { escapeHtml } from "./escape";
 import {
+  type BookingCalendarLinks,
+  bookingAddToCalendarHtmlRow,
+} from "@/lib/calendar-links";
+import {
   alertBox,
   BASE_URL,
   button,
@@ -76,6 +80,13 @@ export function arrivalInstructionsSection({
     ${doorCodeTable}
     ${safeDoorCode ? muted("Please keep the door code private and use the current code when you arrive.") : ""}
   `;
+}
+
+// The built-in template's {{ical}} row (fork #35/#41/#43): one shared
+// composer in calendar-links.ts renders the icons here AND in admin override
+// bodies via the renderer's sentinel swap, so the two paths cannot drift.
+function addToCalendarLine(links: BookingCalendarLinks): string {
+  return paragraph(bookingAddToCalendarHtmlRow(links));
 }
 
 export function bookingConfirmedTemplate(
@@ -135,6 +146,10 @@ export function bookingConfirmedTemplate(
        */
       payableOnline: boolean;
     };
+    // Fork issue #35: the add-to-calendar links, built by the sender from the
+    // same stay the flat {{ical}} token describes. Absent when link building
+    // failed (the sender fails open on this decoration) — no line renders.
+    calendarLinks?: BookingCalendarLinks;
   }
 ): string {
   const promoAdjustmentCents = resolvePromoAdjustmentCents(options);
@@ -271,7 +286,12 @@ export function bookingConfirmedTemplate(
       travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
       doorCode: options?.doorCode ?? null,
     })}
-    ${paragraph("You can view your booking details and manage your stay from your account.")}
+    ${paragraph("You can view your booking details and manage your stay from your account.")}${
+      // Concatenated (no dedicated template line) so a confirmation WITHOUT
+      // links renders byte-identical to the pre-#35 output — the #2689
+      // equivalence pins hold for every fixture that does not pass links.
+      options?.calendarLinks ? addToCalendarLine(options.calendarLinks) : ""
+    }
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }

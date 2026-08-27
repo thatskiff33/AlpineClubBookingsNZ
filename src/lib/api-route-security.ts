@@ -111,6 +111,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Token-bearing booking request email verification endpoint; returns only non-PII summary fields and is rate limited.",
   },
+  "src/app/api/booking-calendar/[id]/route.ts": {
+    boundary: "public",
+    reason:
+      "Token-bearing .ics download for one booking's stay, linked from the booking-confirmed email's {{ical}} block (fork #35). At /api/booking-calendar rather than /api/calendar because that prefix is module-gated behind eventsCalendar and this download belongs to bookings. Only an HMAC over the signed expiry and the booking id under the app auth secret resolves anything, verified in constant time before any read, and the expiry (checkout + 60 days) is inside the signed message so it cannot be extended; the sender only mints the link for recipients whose booking-link authority (resolveBookingEmailLink) allows the booking id in outbound mail; the payload is the stay dates and lodge name only (no guest names, money or member ids); cancelled/bumped/soft-deleted bookings, expired links and invalid tokens are one indistinguishable 404; GET-only and rate limited.",
+  },
   "src/app/api/school-bookings/confirm-attendees/route.ts": {
     boundary: "public",
     reason:

@@ -445,6 +445,8 @@ export const rateLimiters = {
   twoFactorVerify: { id: "two-factor-verify", limit: 10, windowSeconds: 10 * 60, authSensitive: true } as RateLimitConfig,
   /** Guest chore token routes: 20 hits per 15 minutes */
   guestChoreToken: { id: "guest-chore-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Booking .ics calendar download (fork #35): 30 hits per 15 minutes — a one-shot email download; the headroom absorbs mail-client link prefetchers and household re-clicks, and starves token guessing */
+  bookingCalendarDownload: { id: "booking-calendar-download", limit: 30, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Family group join request: 3 per hour */
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */

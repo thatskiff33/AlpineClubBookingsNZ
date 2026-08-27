@@ -478,8 +478,14 @@ const CENSUS_CEILING = {
    * three zone-free calls (`addDaysDateOnly`, `eachDateOnlyInRange`,
    * `parseDateOnly`) into a file of their own, so one importer became two. No
    * call changed and no zone is consulted on either side of the seam.
+   *
+   * 214 -> 216 (#3108): the booking add-to-calendar feature adds two
+   * importers — `calendar-links.ts` and the `.ics` download route — both of
+   * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
+   * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
+   * neither consults a timezone.
    */
-  dateOnlyImporters: 214,
+  dateOnlyImporters: 216,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

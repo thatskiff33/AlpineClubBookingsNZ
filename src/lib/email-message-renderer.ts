@@ -1,4 +1,8 @@
-import { plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import { layout, plainTextEmailTemplate } from "@/lib/email-templates/layout";
+import {
+  renderEmailBodyHtml,
+  renderHtmlTemplateString,
+} from "@/lib/email-body-html";
 import {
   applyEmailMessageSettingsToHtml,
   applyEmailMessageSettingsToSubject,
@@ -13,8 +17,20 @@ import {
   getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
 import { findBracketAnnotations } from "@/lib/email-message-token-contract";
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { renderEmailHtml } from "@/lib/email-theme";
+import { emailPalette, renderEmailHtml } from "@/lib/email-theme";
+
+// The container a RICH override body (fork #38) renders inside: the same
+// text colour and size `multilineBlock` gives the plain path, inherited by
+// the sanitised children — the shell's own cell sets neither (review M5).
+// Local to this module DELIBERATELY: `src/lib/email-templates/` is the #2689
+// render-census directory, and a new exported render function there demands
+// a byte pin this environment cannot generate (drift lens finding 1).
+function richBodyContainer(html: string): string {
+  const p = emailPalette();
+  return `<div style="color: ${p.deep}; font-size: 15px;">${html}</div>`;
+}
 
 type EmailTemplateValue = string | number | boolean | null | undefined;
 export type EmailTemplateData = Record<string, EmailTemplateValue>;
@@ -23,8 +39,45 @@ interface EmailTemplateOverrideRecord {
   templateName: string;
   subject: string | null;
   bodyText: string | null;
+  // Fork #38: the rich-editor body, sanitised before storage. Optional so a
+  // mocked or pre-migration row reads as absent — a legacy body renders
+  // through the plain path unchanged.
+  bodyHtml?: string | null;
   updatedAt?: Date | string | null;
   updatedByMemberId?: string | null;
+}
+
+/**
+ * Fork #43 — how `{{ical}}` renders as ICONS inside admin override bodies
+ * without weakening token-value escaping. Every override path escapes token
+ * VALUES by design (a mutation-verified security property), so the icon-row
+ * HTML cannot travel through the token itself. Instead `{{ical}}`
+ * substitutes a per-render RANDOM sentinel (an invisible-separator wrapper
+ * with a UUID — nothing escapeHtml or the body sanitiser touches, and
+ * nothing a crafted token value or admin body can predict), the shell
+ * renders as normal, and the sentinel is swapped for the system-composed
+ * icon row afterwards. Only fixed system HTML rides the swap — no user or
+ * admin data. When the sender supplied no icon row (link building failed, or
+ * an unauthorized recipient), the flat text block renders exactly as before.
+ */
+function withIcalSentinel(data: EmailTemplateData): {
+  data: EmailTemplateData;
+  finalize: (html: string) => string;
+} {
+  const icalHtml = typeof data.icalHtml === "string" ? data.icalHtml : "";
+  // Never expose icalHtml to token substitution: {{icalHtml}} is not an
+  // approved token, and even a legacy body could only ever render it as
+  // escaped text — but keeping it out of token-space entirely is simpler to
+  // reason about.
+  const { icalHtml: _omitted, ...tokenData } = data;
+  if (!icalHtml || typeof tokenData.ical !== "string" || !tokenData.ical) {
+    return { data: tokenData, finalize: (html) => html };
+  }
+  const sentinel = `⁣ical-${randomUUID()}⁣`;
+  return {
+    data: { ...tokenData, ical: sentinel },
+    finalize: (html) => html.split(sentinel).join(icalHtml),
+  };
 }
 
 export interface PreparedEmailMessage {
@@ -785,12 +838,37 @@ export async function prepareEmailMessage({
     overrideApplied = true;
   }
 
+  const icalSwap = withIcalSentinel(data);
+  const overrideBodyHtml = override?.bodyHtml?.trim();
   const overrideBodyText = override?.bodyText?.trim();
-  if (overrideBodyText) {
+  if (overrideBodyHtml) {
+    // Fork #38: a rich-editor body. Tokens substitute with every VALUE
+    // HTML-escaped, then the final sanitise-and-style pass runs (defence in
+    // depth over the save-time sanitise), inside the same themed shell and
+    // render gate (#2900) as every other body.
+    nextHtml = icalSwap.finalize(
+      await renderEmailHtml(() =>
+        layout(
+          richBodyContainer(
+            renderEmailBodyHtml(
+              renderHtmlTemplateString(overrideBodyHtml, icalSwap.data),
+            ),
+          ),
+        ),
+      ),
+    );
+    overrideApplied = true;
+    bodyOverrideApplied = true;
+  } else if (overrideBodyText) {
     // A stored body override re-renders the whole themed shell, so it goes
-    // through the render gate too (#2900).
-    nextHtml = await renderEmailHtml(() =>
-      plainTextEmailTemplate(renderTemplateString(overrideBodyText, data)),
+    // through the render gate too (#2900). Every row saved before fork #38
+    // lands here and renders byte-for-byte as it always has.
+    nextHtml = icalSwap.finalize(
+      await renderEmailHtml(() =>
+        plainTextEmailTemplate(
+          renderTemplateString(overrideBodyText, icalSwap.data),
+        ),
+      ),
     );
     overrideApplied = true;
     bodyOverrideApplied = true;
@@ -812,11 +890,16 @@ export async function renderEmailTemplatePreview({
   templateName,
   subject,
   bodyText,
+  bodyHtml,
   templateData,
 }: {
   templateName: string;
   subject: string;
   bodyText: string;
+  // Fork #38: when the editor is previewing a rich body, it sends the HTML
+  // and the render uses the same path a save-then-send would, so the admin
+  // sees formatting exactly as members will receive it.
+  bodyHtml?: string;
   templateData?: EmailTemplateData;
 }) {
   const settings = await loadEmailMessageSettings();
@@ -834,9 +917,23 @@ export async function renderEmailTemplatePreview({
     ),
     settings,
   );
+  const trimmedBodyHtml = bodyHtml?.trim();
+  const icalSwap = withIcalSentinel(data);
   const html = applyEmailMessageSettingsToHtml(
-    await renderEmailHtml(() =>
-      plainTextEmailTemplate(renderTemplateString(bodyText, data)),
+    icalSwap.finalize(
+      await renderEmailHtml(() =>
+        trimmedBodyHtml
+          ? layout(
+              richBodyContainer(
+                renderEmailBodyHtml(
+                  renderHtmlTemplateString(trimmedBodyHtml, icalSwap.data),
+                ),
+              ),
+            )
+          : plainTextEmailTemplate(
+              renderTemplateString(bodyText, icalSwap.data),
+            ),
+      ),
     ),
     settings,
   );
