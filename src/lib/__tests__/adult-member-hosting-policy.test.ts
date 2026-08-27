@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgeTier } from "@prisma/client";
 import { describe, expect, it } from "vitest";
+import { mergeFamilySource } from "@/lib/__tests__/support/member-merge-family";
 
 import {
   ADULT_MEMBER_HOSTING_POLICY_NAME,
@@ -630,7 +631,11 @@ describe("hosting policy set locking and migration shape (#2364)", () => {
       /adultMemberHostingReviewedBy\s+Member\?\s+@relation\("BookingsAdultMemberHostingReviewed", fields: \[adultMemberHostingReviewedById\], references: \[id\], onDelete: SetNull\)/,
     );
 
-    const merge = repoFile("src/lib/member-merge.ts");
+    // READ THE MERGE FAMILY, NOT ONE FILE. The relation specs used to live in
+    // `member-merge.ts`; #3128 moved them to `member-merge-relations.ts`, and a
+    // hardcoded path turned this pin into a false red. A path is a guess about
+    // where code lives — this one has now been wrong once.
+    const merge = mergeFamilySource();
     expect(merge).toContain('"adultMemberHostingReviewedBy"');
     expect(merge).toContain('"adultMemberHostingReviewedById"');
   });

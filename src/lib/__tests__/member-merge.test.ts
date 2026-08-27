@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  MEMBER_MERGE_RELATION_SPECS,
-  MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS,
   MEMBER_SELF_RELATION_COLUMNS,
   describeFamilyLinkDrift,
-  diffFieldMergePatches,
   diffSelfRelationLinkState,
   memberMergeConfirmationPhrase,
-  mergeMemberFields,
   normalizeConfirmationText,
   partitionKeyedCollisions,
   planPartnerLinkMerge,
   type PartnerLinkRow,
 } from "@/lib/member-merge";
+import { diffFieldMergePatches, mergeMemberFields } from "@/lib/member-merge-field-rules";
+import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
+import { MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS } from "@/lib/member-merge-snapshot-columns";
 
 function baseMember(overrides: Record<string, unknown> = {}) {
   return {

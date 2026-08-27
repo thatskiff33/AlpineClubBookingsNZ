@@ -713,6 +713,240 @@ describe("E.22 replaced: the widening option fails closed", () => {
 });
 
 describe("consent columns have exactly one writer", () => {
+  // Hoisted to the describe scope by #3128 so BOTH directions can read it:
+  // the unlisted sweep below, and the stale-row check that was missing.
+  const census: Record<string, string> = {
+    // The model: the eight-shape table, the classifier, the presence predicate,
+    // and the single `buildMemberGuestConsentWrite` every add path goes through.
+    "src/lib/member-guest-consent.ts": "the model",
+    // The state machine: the status-guarded claim and nothing else.
+    "src/lib/member-guest-consent-service.ts": "the state machine",
+    // The sweep's candidate query.
+    "src/lib/cron-member-guest-consent-expiry.ts": "the expiry sweep's candidate scan",
+    // Reads the target id before a decline deletes the row.
+    "src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts":
+      "the consent response endpoint",
+    // The structural-rule comment on the boundary computation.
+    "src/lib/booking-guests.ts": "a comment about where the boundary is computed",
+    // The FK-less-member-id-scalar audit list. #3128 moved it out of
+    // `member-merge.ts` into a module of its own; the row moved with it.
+    "src/lib/member-merge-snapshot-columns.ts":
+      "the merge classification of consentRespondedByMemberId",
+    // D-12 exclusion sites and the one deliberate non-exclusion.
+    "src/lib/double-bed-sharing.ts": "D-12: pending guests do not anchor an offer",
+    "src/app/api/member/data-export/route.ts":
+      "deliberately NOT excluded — a data-subject export includes their own pending rows",
+    "src/lib/email-templates/member-guest.ts": "the consent email renderers",
+    "src/lib/email/member-guest.ts": "the consent email senders",
+    // The per-request policy read and the pure write plan every add path uses.
+    "src/lib/member-guest-add-policy.ts": "the add paths' shared consent-write plan",
+    // The one post-commit notifier the four persisting paths share.
+    "src/lib/member-guest-consent-notifications.ts":
+      "the post-commit add notifier",
+    "src/lib/email-message-audit-defaults.ts": "the consent templates' default bodies",
+    "src/lib/email-message-registry.ts": "the consent templates' registry entries",
+    // The narrow consent authority that lets a delegate decline and the sweep
+    // expire — see its own doc comment for why it exists and what it refuses.
+    "src/lib/booking-guest-removal-service.ts": "the consent removal authority",
+    // --- MG2's visible half (#2307). All READERS: not one of these writes a
+    // consent column. The endpoint above is still the only member-facing
+    // writer, and the sweep the only automatic one.
+    "src/lib/member-guest-consent-card.ts":
+      "the member surfaces' shared brain: which card to show, the predictable-refusal prediction, the badge wording",
+    // Split out of the module above in the CT-4 group E fix round (#2870),
+    // because correcting two of these labels took that file over its size
+    // budget for the first time. It names `consentExpiresAt` and
+    // `consentRespondedAt` in a docblock explaining which of its shapes render
+    // a real INSTANT and so take the club's persisted zone — which they now do
+    // as a required argument, group F having closed that deferral (#3123). It
+    // reads no row and writes nothing.
+    "src/lib/member-guest-consent-labels.ts":
+      "the consent surfaces' date, name and count label shapes",
+    // A DOCBLOCK MENTION AND NOTHING ELSE, and it is on this list for the
+    // reason the sweep above is deliberately blunt: it greps for the five
+    // column names anywhere in a file, and this repository explains each
+    // temporal fix AT the site of the fix. This module composes email copy from
+    // values handed to it; it never selects, reads or writes a consent column.
+    // Its #3123 docblock names `consentExpiresAt` in order to say which of the
+    // two date KINDS it renders is a real instant, which is exactly the
+    // distinction a reader has to get right here.
+    "src/lib/member-guest-email-notes.ts":
+      "names a consent column in a docblock explaining instants versus calendar days; reads and writes nothing",
+    "src/lib/member-guest-delegate-page.ts":
+      "the delegate page's authorization-first state resolver",
+    "src/lib/member-guest-consent-exceptions.ts":
+      "the admin exception list and the two consent chip counts",
+    "src/app/(authenticated)/bookings/[id]/page.tsx":
+      "the booking page reads the viewer's own consent row for the card, and every row for the badges",
+    "src/app/(authenticated)/bookings/consent/[guestId]/page.tsx":
+      "the delegate consent page",
+    "src/lib/admin-bookings-service.ts":
+      "the two consent filter chips' SQL narrowing on the bookings list",
+    // The tenth D-12 site, and the one an officer can reach by hand: the
+    // manual bed-write chokepoint refuses a guest who has not consented, so a
+    // hand-typed guest id cannot write bed rows the next reconcile sweeps away.
+    "src/lib/bed-allocation-placement.ts":
+      "D-12: the manual bed-allocation chokepoint refuses an unconsented guest",
+    // --- MG3's wizard surface (#2308). A READER, and barely that: it builds
+    // the two consent-column shapes the wizard's badge PREDICTS before
+    // anything is persisted, so the booker is told what confirming will do.
+    // It touches no database and no row — the booking does not exist yet —
+    // and every shape it builds is one of the eight legal sub-states, which
+    // its own test asserts through `classifyMemberGuestConsent`.
+    "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
+      "the wizard's pre-persistence consent prediction",
+    // --- MG4's pipeline half (#2309, MG4-D-b). The booking-request approval
+    // is the one guest write that REUSES a row rather than creating it, so it
+    // reads the old `consentStatus` to tell a preserved guest from a
+    // substituted one, and clears the column explicitly when the person on the
+    // row changes. A stale ADMIN_ASSIGNED left behind by the previous occupant
+    // would claim consent for somebody who was never asked. The columns it
+    // WRITES still come from `buildMemberGuestConsentWrite` by way of
+    // `planBookingRequestGuestConsent`; nothing here composes a shape of its
+    // own.
+    "src/lib/booking-request.ts":
+      "the held-booking guest swap reads the old consent state and clears it on substitution",
+    // A READER, and the narrowest one in the census: a single `where` clause
+    // asking which of a hold's guests carry a consent record, i.e. which
+    // members were told they were on it. That is the population owed a
+    // withdrawal notice when the hold is released, and the population to
+    // suppress when a stale hold is replaced by a fresh one over the same
+    // request. It writes nothing.
+    "src/lib/booking-request-shared.ts":
+      "the hold-release notice reads which guests carry a consent record, so it can tell exactly the members who were told",
+    // --- MG4's edit surface (#2309). Nothing here WRITES a column.
+    //
+    // #2690 split the edit panel and this entry moved with the text that put
+    // it on the census. The match was only ever a sentence in the
+    // `NewGuest.memberGuestConsentPreview` docblock, explaining why the badge
+    // is PREDICTED rather than read: nothing is persisted yet, so there is no
+    // `consentRequestedAt` and no real expiry to show, and inventing one is
+    // how a fake deadline reaches the screen. This census matches raw text
+    // rather than stripping comments, deliberately — a file that discusses a
+    // consent column is a file whose author was reasoning about one — so a
+    // types module earns a row on the strength of its documentation alone.
+    //
+    // The reason names the code files on purpose. THIS census has no reverse
+    // check: it reports UNDECLARED matches only, so an entry whose reason has
+    // drifted away from the code it describes stays green for ever. That is
+    // exactly what happened here — rewording the docblock would silently
+    // strand the row — so the row points at where the behaviour actually is.
+    "src/components/edit-booking/types.ts":
+      "declares the pre-save consent-preview field and documents why it is predicted, not read; the prediction itself runs in components/edit-booking-panel.tsx (handleAddMemberGuest) and the two legal column shapes are built in components/edit-booking/guest-consent-notes.tsx",
+    // Reads the status of a guest the edit REMOVED, to decide whether the
+    // member was ever told about this booking and which sentence they are
+    // owed. A null status means no message was ever sent about that row.
+    "src/lib/booking-batch-modification-service.ts":
+      "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
+    // The same read on the single-guest removal route. It is the ONE of the
+    // three callers of removeBookingGuestInTransaction that owes a withdrawal
+    // notice — the decline endpoint and the expiry sweep each have their own
+    // message for the same event.
+    "src/app/api/bookings/[id]/guests/[guestId]/route.ts":
+      "the guest-removal route reads the removed row's consent state to decide who is owed a withdrawal notice",
+    // --- #2543's paid-up-adult requirement on the guests route. A READER
+    // through the shared D-12 predicate: a newly added adult member guest
+    // only satisfies the requirement once their invite is accepted, so the
+    // route reads `consentStatus` for the adds it is about to persist. It
+    // composes no consent shape and writes no consent column — the write
+    // plan still comes from `buildMemberGuestConsentWrite` via the shared
+    // add policy, exactly as before this lane.
+    "src/app/api/bookings/[id]/guests/route.ts":
+      "the guest-add route reads consent presence so a pending invite cannot stand in as the paid-up adult member",
+    // --- #2550's naming-reminder sweep. A READER through the shared D-12
+    // predicate only: the emailed headcount filters the party on
+    // `OPERATIONALLY_PRESENT_GUEST_WHERE` so a pending or lapsed member-guest
+    // invite is not announced as attending, and its one comment names
+    // `consentStatus` to record that placeholders always carry null and so
+    // survive the filter. It composes no consent shape and writes no consent
+    // column; its only write is the cadence stamp on BookingRequest.
+    "src/lib/placeholder-guest-name-reminders.ts":
+      "the naming-reminder sweep reads presence through the shared D-12 filter so the emailed headcount tells the truth",
+    // --- #2364's adult-member hosting evaluator. A READER, and a pure one:
+    // it selects `consentStatus` and passes it through the shared
+    // `isOperationallyPresentConsent` predicate to decide whether an adult
+    // member guest counts as a host. Same D-12 rule the kiosk, the roster,
+    // bed allocation and the arrival emails apply — an unaccepted invite is
+    // not a responsible adult at the lodge — so the hosting review is not
+    // suppressed by somebody who never agreed to come. It composes no consent
+    // shape and writes no consent column; its only writes are the five
+    // `adultMemberHosting*` columns on Booking.
+    "src/lib/adult-member-hosting-review.ts":
+      "the hosting evaluator reads consent to decide whether a member guest is present enough to host",
+    // --- #2543's paid-up-adult requirement, the other four sites the D-12 half
+    // of it reaches. All four apply the SAME rule for the same reason: a member
+    // guest whose invite is still PENDING holds a bed and nothing else, so they
+    // cannot stand in as the party's paid-up adult member — otherwise the
+    // requirement is trivially satisfiable, since the invite need never be
+    // accepted.
+    //
+    // The shared mapper. A READER that never touches a database: it takes
+    // whatever guest shape a caller holds and normalises the one fact, reading a
+    // persisted row's `consentStatus` and a pre-persist row's planned
+    // `memberGuestConsent.consentStatus` through `isOperationallyPresentConsent`.
+    // Centralised here precisely because reading the wrong field name silently
+    // made every persisted row look present. It composes no consent shape and
+    // writes no consent column.
+    "src/lib/subscription-lockout-enforcement.ts":
+      "the shared participant mapper reads consent presence so a pending invite cannot stand in as the paid-up adult member",
+    // The edit PREVIEW. A READER: it maps the rows already on the booking to
+    // their stored `consentStatus` so the preview refuses exactly what the save
+    // refuses. It persists nothing at all — it is a quote.
+    "src/app/api/bookings/[id]/modify-quote/route.ts":
+      "the edit preview reads each existing row's stored consent state so the preview and the save judge one party the same way",
+    // The edit APPLY. The one of the four that does WRITE consent columns, and it
+    // is not a new write: `...(g.memberGuestConsent ?? {})` on an added guest
+    // predates this lane and still spreads a shape composed by
+    // `buildMemberGuestConsentWrite` via `planMemberGuestConsentWrites`. What
+    // #2543 added is a READ of the same two facts — a stored row's
+    // `consentStatus`, and the status the planner has just decided for a row
+    // being added — so the apply path judges presence exactly as the preview
+    // does. It composes no consent shape of its own.
+    "src/lib/booking-modify-plan.ts":
+      "the edit apply path reads stored and just-planned consent state for the paid-up-adult test, and writes only the shape the shared planner composed",
+    // The override door. A READER, and the narrowest kind: one `where`/`select`
+    // pair asking which of a live booking's member rows are operationally
+    // present, so a party refused by a booking path reproduces the SAME violation
+    // when it is re-submitted as an exception request. Without it the 409 would
+    // name a workflow the member cannot enter. It writes no consent column.
+    "src/lib/booking-exception-request-service.ts":
+      "the exception-request re-evaluation reads a live booking's consent state so a refusal can actually be reviewed",
+    // #2595's reviewed bed-move service. A READER, twice over, and it writes no
+    // consent column: it folds each guest's stored consent fields into the
+    // preview digest so an apply refuses the moment any of them changes under
+    // the operator, and it asks `isOperationallyPresentConsent` whether the
+    // guest is present enough to hold a bed at all (`GUEST_NOT_PRESENT`) —
+    // the same rule the placement paths already apply. It composes no consent
+    // shape; every write it makes is to `BedAllocation`.
+    "src/lib/bed-allocation-move.ts":
+      "the reviewed move digest reads each guest's stored consent state, and the conflict pass refuses a guest who is not operationally present",
+    // #2376's AI-diagnostics booking pack. Three files, all READERS, none of
+    // which composes a consent shape or writes a consent column.
+    //
+    // `booking-records.ts` is the only one that reads the columns as data: its
+    // `booking_party_state` statement folds four of the five into ONE derived
+    // `consent_sub_state` label from a closed server-owned vocabulary, so a
+    // model is told "awaiting_target" rather than being handed a raw status it
+    // would have to interpret. `consentRespondedByMemberId` is deliberately NOT
+    // among them and is not granted — it names the person who answered, which is
+    // the one consent fact this pack has no business reporting.
+    //
+    // `booking-evidence.ts` names the columns only inside a Prisma `select` on
+    // the application's own connection, for the same operational-presence rule
+    // the placement paths apply. `provision-role.ts` names them because the
+    // SELECT-only role's grant is BY COLUMN and a column the statement reads has
+    // to appear in the grant — naming it there is what makes the boundary
+    // enforceable by PostgreSQL rather than by convention.
+    "src/lib/diagnostics/tools/packs/booking-records.ts":
+      "AID-6B: derives one closed consent sub-state label for booking_party_state; writes nothing",
+    "src/lib/diagnostics/tools/packs/booking-evidence.ts":
+      "AID-6B: reads stored consent state to decide whether a guest is operationally present; writes nothing",
+    "src/lib/diagnostics/tools/packs/membership-records.ts":
+      "AID-6B: member_booking_summary computes memberOperationallyPresent in SQL from the platform's own consent predicate (consentStatus IS NULL OR = 'CONFIRMED'); writes nothing",
+    "src/lib/diagnostics/tools/provision-role.ts":
+      "AID-6B: the SELECT-only role's column grant, which must name every column the statements read",
+  };
+
   it("declares the consent-free shape unchanged", () => {
     // MG1's A.3 survives verbatim: a family-scope add is consent-FREE, not
     // consent-GIVEN. NULL must never be written as CONFIRMED, or the model loses
@@ -738,235 +972,6 @@ describe("consent columns have exactly one writer", () => {
     // regex cannot tell a Prisma `data:` payload from a `select:` or a `where:` —
     // it flagged every reader too — and a census that silently mislabels readers
     // as writers is worse than one that just lists everybody.
-    const census: Record<string, string> = {
-      // The model: the eight-shape table, the classifier, the presence predicate,
-      // and the single `buildMemberGuestConsentWrite` every add path goes through.
-      "src/lib/member-guest-consent.ts": "the model",
-      // The state machine: the status-guarded claim and nothing else.
-      "src/lib/member-guest-consent-service.ts": "the state machine",
-      // The sweep's candidate query.
-      "src/lib/cron-member-guest-consent-expiry.ts": "the expiry sweep's candidate scan",
-      // Reads the target id before a decline deletes the row.
-      "src/app/api/bookings/[id]/guests/[guestId]/consent/route.ts":
-        "the consent response endpoint",
-      // The structural-rule comment on the boundary computation.
-      "src/lib/booking-guests.ts": "a comment about where the boundary is computed",
-      // The FK-less-member-id-scalar audit list.
-      "src/lib/member-merge.ts": "the merge classification of consentRespondedByMemberId",
-      // D-12 exclusion sites and the one deliberate non-exclusion.
-      "src/lib/double-bed-sharing.ts": "D-12: pending guests do not anchor an offer",
-      "src/app/api/member/data-export/route.ts":
-        "deliberately NOT excluded — a data-subject export includes their own pending rows",
-      "src/lib/email-templates/member-guest.ts": "the consent email renderers",
-      "src/lib/email/member-guest.ts": "the consent email senders",
-      // The per-request policy read and the pure write plan every add path uses.
-      "src/lib/member-guest-add-policy.ts": "the add paths' shared consent-write plan",
-      // The one post-commit notifier the four persisting paths share.
-      "src/lib/member-guest-consent-notifications.ts":
-        "the post-commit add notifier",
-      "src/lib/email-message-audit-defaults.ts": "the consent templates' default bodies",
-      "src/lib/email-message-registry.ts": "the consent templates' registry entries",
-      // The narrow consent authority that lets a delegate decline and the sweep
-      // expire — see its own doc comment for why it exists and what it refuses.
-      "src/lib/booking-guest-removal-service.ts": "the consent removal authority",
-      // --- MG2's visible half (#2307). All READERS: not one of these writes a
-      // consent column. The endpoint above is still the only member-facing
-      // writer, and the sweep the only automatic one.
-      "src/lib/member-guest-consent-card.ts":
-        "the member surfaces' shared brain: which card to show, the predictable-refusal prediction, the badge wording",
-      // Split out of the module above in the CT-4 group E fix round (#2870),
-      // because correcting two of these labels took that file over its size
-      // budget for the first time. It names `consentExpiresAt` and
-      // `consentRespondedAt` in a docblock explaining which of its shapes render
-      // a real INSTANT and so take the club's persisted zone — which they now do
-      // as a required argument, group F having closed that deferral (#3123). It
-      // reads no row and writes nothing.
-      "src/lib/member-guest-consent-labels.ts":
-        "the consent surfaces' date, name and count label shapes",
-      // A DOCBLOCK MENTION AND NOTHING ELSE, and it is on this list for the
-      // reason the sweep above is deliberately blunt: it greps for the five
-      // column names anywhere in a file, and this repository explains each
-      // temporal fix AT the site of the fix. This module composes email copy from
-      // values handed to it; it never selects, reads or writes a consent column.
-      // Its #3123 docblock names `consentExpiresAt` in order to say which of the
-      // two date KINDS it renders is a real instant, which is exactly the
-      // distinction a reader has to get right here.
-      "src/lib/member-guest-email-notes.ts":
-        "names a consent column in a docblock explaining instants versus calendar days; reads and writes nothing",
-      "src/lib/member-guest-delegate-page.ts":
-        "the delegate page's authorization-first state resolver",
-      "src/lib/member-guest-consent-exceptions.ts":
-        "the admin exception list and the two consent chip counts",
-      "src/app/(authenticated)/bookings/[id]/page.tsx":
-        "the booking page reads the viewer's own consent row for the card, and every row for the badges",
-      "src/app/(authenticated)/bookings/consent/[guestId]/page.tsx":
-        "the delegate consent page",
-      "src/lib/admin-bookings-service.ts":
-        "the two consent filter chips' SQL narrowing on the bookings list",
-      // The tenth D-12 site, and the one an officer can reach by hand: the
-      // manual bed-write chokepoint refuses a guest who has not consented, so a
-      // hand-typed guest id cannot write bed rows the next reconcile sweeps away.
-      "src/lib/bed-allocation-placement.ts":
-        "D-12: the manual bed-allocation chokepoint refuses an unconsented guest",
-      // --- MG3's wizard surface (#2308). A READER, and barely that: it builds
-      // the two consent-column shapes the wizard's badge PREDICTS before
-      // anything is persisted, so the booker is told what confirming will do.
-      // It touches no database and no row — the booking does not exist yet —
-      // and every shape it builds is one of the eight legal sub-states, which
-      // its own test asserts through `classifyMemberGuestConsent`.
-      "src/app/(authenticated)/book/_components/member-guest-preview.tsx":
-        "the wizard's pre-persistence consent prediction",
-      // --- MG4's pipeline half (#2309, MG4-D-b). The booking-request approval
-      // is the one guest write that REUSES a row rather than creating it, so it
-      // reads the old `consentStatus` to tell a preserved guest from a
-      // substituted one, and clears the column explicitly when the person on the
-      // row changes. A stale ADMIN_ASSIGNED left behind by the previous occupant
-      // would claim consent for somebody who was never asked. The columns it
-      // WRITES still come from `buildMemberGuestConsentWrite` by way of
-      // `planBookingRequestGuestConsent`; nothing here composes a shape of its
-      // own.
-      "src/lib/booking-request.ts":
-        "the held-booking guest swap reads the old consent state and clears it on substitution",
-      // A READER, and the narrowest one in the census: a single `where` clause
-      // asking which of a hold's guests carry a consent record, i.e. which
-      // members were told they were on it. That is the population owed a
-      // withdrawal notice when the hold is released, and the population to
-      // suppress when a stale hold is replaced by a fresh one over the same
-      // request. It writes nothing.
-      "src/lib/booking-request-shared.ts":
-        "the hold-release notice reads which guests carry a consent record, so it can tell exactly the members who were told",
-      // --- MG4's edit surface (#2309). Nothing here WRITES a column.
-      //
-      // #2690 split the edit panel and this entry moved with the text that put
-      // it on the census. The match was only ever a sentence in the
-      // `NewGuest.memberGuestConsentPreview` docblock, explaining why the badge
-      // is PREDICTED rather than read: nothing is persisted yet, so there is no
-      // `consentRequestedAt` and no real expiry to show, and inventing one is
-      // how a fake deadline reaches the screen. This census matches raw text
-      // rather than stripping comments, deliberately — a file that discusses a
-      // consent column is a file whose author was reasoning about one — so a
-      // types module earns a row on the strength of its documentation alone.
-      //
-      // The reason names the code files on purpose. THIS census has no reverse
-      // check: it reports UNDECLARED matches only, so an entry whose reason has
-      // drifted away from the code it describes stays green for ever. That is
-      // exactly what happened here — rewording the docblock would silently
-      // strand the row — so the row points at where the behaviour actually is.
-      "src/components/edit-booking/types.ts":
-        "declares the pre-save consent-preview field and documents why it is predicted, not read; the prediction itself runs in components/edit-booking-panel.tsx (handleAddMemberGuest) and the two legal column shapes are built in components/edit-booking/guest-consent-notes.tsx",
-      // Reads the status of a guest the edit REMOVED, to decide whether the
-      // member was ever told about this booking and which sentence they are
-      // owed. A null status means no message was ever sent about that row.
-      "src/lib/booking-batch-modification-service.ts":
-        "the batch edit reads a removed guest's consent state to decide who is owed a withdrawal notice",
-      // The same read on the single-guest removal route. It is the ONE of the
-      // three callers of removeBookingGuestInTransaction that owes a withdrawal
-      // notice — the decline endpoint and the expiry sweep each have their own
-      // message for the same event.
-      "src/app/api/bookings/[id]/guests/[guestId]/route.ts":
-        "the guest-removal route reads the removed row's consent state to decide who is owed a withdrawal notice",
-      // --- #2543's paid-up-adult requirement on the guests route. A READER
-      // through the shared D-12 predicate: a newly added adult member guest
-      // only satisfies the requirement once their invite is accepted, so the
-      // route reads `consentStatus` for the adds it is about to persist. It
-      // composes no consent shape and writes no consent column — the write
-      // plan still comes from `buildMemberGuestConsentWrite` via the shared
-      // add policy, exactly as before this lane.
-      "src/app/api/bookings/[id]/guests/route.ts":
-        "the guest-add route reads consent presence so a pending invite cannot stand in as the paid-up adult member",
-      // --- #2550's naming-reminder sweep. A READER through the shared D-12
-      // predicate only: the emailed headcount filters the party on
-      // `OPERATIONALLY_PRESENT_GUEST_WHERE` so a pending or lapsed member-guest
-      // invite is not announced as attending, and its one comment names
-      // `consentStatus` to record that placeholders always carry null and so
-      // survive the filter. It composes no consent shape and writes no consent
-      // column; its only write is the cadence stamp on BookingRequest.
-      "src/lib/placeholder-guest-name-reminders.ts":
-        "the naming-reminder sweep reads presence through the shared D-12 filter so the emailed headcount tells the truth",
-      // --- #2364's adult-member hosting evaluator. A READER, and a pure one:
-      // it selects `consentStatus` and passes it through the shared
-      // `isOperationallyPresentConsent` predicate to decide whether an adult
-      // member guest counts as a host. Same D-12 rule the kiosk, the roster,
-      // bed allocation and the arrival emails apply — an unaccepted invite is
-      // not a responsible adult at the lodge — so the hosting review is not
-      // suppressed by somebody who never agreed to come. It composes no consent
-      // shape and writes no consent column; its only writes are the five
-      // `adultMemberHosting*` columns on Booking.
-      "src/lib/adult-member-hosting-review.ts":
-        "the hosting evaluator reads consent to decide whether a member guest is present enough to host",
-      // --- #2543's paid-up-adult requirement, the other four sites the D-12 half
-      // of it reaches. All four apply the SAME rule for the same reason: a member
-      // guest whose invite is still PENDING holds a bed and nothing else, so they
-      // cannot stand in as the party's paid-up adult member — otherwise the
-      // requirement is trivially satisfiable, since the invite need never be
-      // accepted.
-      //
-      // The shared mapper. A READER that never touches a database: it takes
-      // whatever guest shape a caller holds and normalises the one fact, reading a
-      // persisted row's `consentStatus` and a pre-persist row's planned
-      // `memberGuestConsent.consentStatus` through `isOperationallyPresentConsent`.
-      // Centralised here precisely because reading the wrong field name silently
-      // made every persisted row look present. It composes no consent shape and
-      // writes no consent column.
-      "src/lib/subscription-lockout-enforcement.ts":
-        "the shared participant mapper reads consent presence so a pending invite cannot stand in as the paid-up adult member",
-      // The edit PREVIEW. A READER: it maps the rows already on the booking to
-      // their stored `consentStatus` so the preview refuses exactly what the save
-      // refuses. It persists nothing at all — it is a quote.
-      "src/app/api/bookings/[id]/modify-quote/route.ts":
-        "the edit preview reads each existing row's stored consent state so the preview and the save judge one party the same way",
-      // The edit APPLY. The one of the four that does WRITE consent columns, and it
-      // is not a new write: `...(g.memberGuestConsent ?? {})` on an added guest
-      // predates this lane and still spreads a shape composed by
-      // `buildMemberGuestConsentWrite` via `planMemberGuestConsentWrites`. What
-      // #2543 added is a READ of the same two facts — a stored row's
-      // `consentStatus`, and the status the planner has just decided for a row
-      // being added — so the apply path judges presence exactly as the preview
-      // does. It composes no consent shape of its own.
-      "src/lib/booking-modify-plan.ts":
-        "the edit apply path reads stored and just-planned consent state for the paid-up-adult test, and writes only the shape the shared planner composed",
-      // The override door. A READER, and the narrowest kind: one `where`/`select`
-      // pair asking which of a live booking's member rows are operationally
-      // present, so a party refused by a booking path reproduces the SAME violation
-      // when it is re-submitted as an exception request. Without it the 409 would
-      // name a workflow the member cannot enter. It writes no consent column.
-      "src/lib/booking-exception-request-service.ts":
-        "the exception-request re-evaluation reads a live booking's consent state so a refusal can actually be reviewed",
-      // #2595's reviewed bed-move service. A READER, twice over, and it writes no
-      // consent column: it folds each guest's stored consent fields into the
-      // preview digest so an apply refuses the moment any of them changes under
-      // the operator, and it asks `isOperationallyPresentConsent` whether the
-      // guest is present enough to hold a bed at all (`GUEST_NOT_PRESENT`) —
-      // the same rule the placement paths already apply. It composes no consent
-      // shape; every write it makes is to `BedAllocation`.
-      "src/lib/bed-allocation-move.ts":
-        "the reviewed move digest reads each guest's stored consent state, and the conflict pass refuses a guest who is not operationally present",
-      // #2376's AI-diagnostics booking pack. Three files, all READERS, none of
-      // which composes a consent shape or writes a consent column.
-      //
-      // `booking-records.ts` is the only one that reads the columns as data: its
-      // `booking_party_state` statement folds four of the five into ONE derived
-      // `consent_sub_state` label from a closed server-owned vocabulary, so a
-      // model is told "awaiting_target" rather than being handed a raw status it
-      // would have to interpret. `consentRespondedByMemberId` is deliberately NOT
-      // among them and is not granted — it names the person who answered, which is
-      // the one consent fact this pack has no business reporting.
-      //
-      // `booking-evidence.ts` names the columns only inside a Prisma `select` on
-      // the application's own connection, for the same operational-presence rule
-      // the placement paths apply. `provision-role.ts` names them because the
-      // SELECT-only role's grant is BY COLUMN and a column the statement reads has
-      // to appear in the grant — naming it there is what makes the boundary
-      // enforceable by PostgreSQL rather than by convention.
-      "src/lib/diagnostics/tools/packs/booking-records.ts":
-        "AID-6B: derives one closed consent sub-state label for booking_party_state; writes nothing",
-      "src/lib/diagnostics/tools/packs/booking-evidence.ts":
-        "AID-6B: reads stored consent state to decide whether a guest is operationally present; writes nothing",
-      "src/lib/diagnostics/tools/packs/membership-records.ts":
-        "AID-6B: member_booking_summary computes memberOperationallyPresent in SQL from the platform's own consent predicate (consentStatus IS NULL OR = 'CONFIRMED'); writes nothing",
-      "src/lib/diagnostics/tools/provision-role.ts":
-        "AID-6B: the SELECT-only role's column grant, which must name every column the statements read",
-    };
 
     const mentions = productionFilesUnder("src")
       .map((file) => file.split("\\").join("/"))
@@ -974,6 +979,31 @@ describe("consent columns have exactly one writer", () => {
       .filter((file) => !(file in census));
 
     expect(mentions).toEqual([]);
+  });
+
+  it("has no census row that no longer names a consent column", () => {
+    // THE OTHER HALF, and it was missing. The sweep above only catches a file
+    // that mentions a consent column and is UNLISTED. A row whose file has
+    // stopped mentioning one — renamed, split, or had the mention deleted —
+    // fails nothing, so the census keeps asserting something that is no longer
+    // true and reads as coverage it does not have.
+    //
+    // #3128 is why this exists. Splitting `member-merge.ts` moved the FK-less
+    // scalar list into `member-merge-snapshot-columns.ts`. The unlisted sweep
+    // went red on the NEW file, which is loud and fine — but had that row been
+    // repointed and nothing else, `"src/lib/member-merge.ts"` would have stayed
+    // in the census describing a classification that file no longer contains,
+    // silently, forever.
+    const stale = Object.keys(census)
+      .filter((file) => !CONSENT_COLUMN_MENTION.test(readRepoFile(file)))
+      .sort();
+
+    expect(
+      stale,
+      "A census row names a file that no longer mentions a consent column. " +
+        "Repoint it at the file that does, or drop the row — do not leave it " +
+        "asserting coverage that moved.",
+    ).toEqual([]);
   });
 });
 
