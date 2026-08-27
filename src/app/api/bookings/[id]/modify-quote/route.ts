@@ -58,6 +58,9 @@ import {
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import {
+  selectedIndexesForStoredGuestTargets,
+} from "@/lib/promo-stored-guest-targets";
+import {
   modifyQuoteSchema,
   OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
   type NormalizedAddGuest,
@@ -129,40 +132,6 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
-
-type PromoRedemptionWithTargets = {
-  promoCode: {
-    assignedMembersOnlyOwnNights?: boolean | null;
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
-  return (
-    redemption.promoCode.assignments.length > 0 &&
-    redemption.promoCode.assignedMembersOnlyOwnNights === false
-  );
-}
-
-function selectedIndexesForStoredGuestTargets(
-  redemption: PromoRedemptionWithTargets,
-  guestNightRates: Array<{ bookingGuestId?: string | null }>
-) {
-  if (!promoRequiresStoredGuestTargets(redemption)) {
-    return undefined;
-  }
-
-  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
-  if (targetIds.size === 0) {
-    return guestNightRates.map((_, index) => index);
-  }
-
-  return guestNightRates
-    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
-    .filter((index) => index >= 0);
-}
 
 /*
   #2563: this preview holds NO stay-range arithmetic of its own.
