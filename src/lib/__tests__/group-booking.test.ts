@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   AgeTier,
   BookingStatus,
@@ -397,5 +399,64 @@ describe("resolveGroupJoinVerificationLodgeName", () => {
       resolveGroupJoinVerificationLodgeName("not-a-token")
     ).resolves.toBeNull();
     expect(groupBookingJoinFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("joinGroupBookingAsMember resolves the club's day ONCE (#3123)", () => {
+  /*
+    A source contract, because the alternative is a whole booking, member,
+    lodge, promotion and Xero fixture to observe one variable.
+
+    `joinGroupBookingAsMember` used to read the club's zone TWICE — once at the
+    top for the stay-has-ended refusal and the Internet Banking lead time, and
+    again a few hundred lines later for `createConfirmedBooking`'s retroactive
+    envelope and promotion window. Both reads were outside every transaction, so
+    this was never an `INV-LOCK-004` breach; it was worse in a quieter way. A
+    join running across club midnight gated the first pair on day D and handed
+    D+1 to the second, and the in-tree comment claimed "one read, one answer,
+    for the whole join" the whole time it was untrue. This is the instrument
+    that makes the comment a contract (`INV-CONFIG-002`, owner's
+    single-source-of-truth rule: resolve an authority once at the boundary and
+    thread it).
+
+    Note that ONE read now feeds TWO values of different KINDS — the
+    `CalendarDate` `createConfirmedBooking` takes, and the UTC-midnight
+    `@db.Date` instant the stored `checkOut` column is compared against. That
+    split is the point, not a smell: conflating those two encodings is the
+    defect class this issue exists to remove.
+  */
+  const READER = "readClubTimeZoneOutsideRequest(";
+
+  /** The body of `joinGroupBookingAsMember`, comments and strings blanked. */
+  function joinBody(): string {
+    const source = readFileSync(
+      path.join(__dirname, "..", "group-booking.ts"),
+      "utf8",
+    );
+    // Comments blanked so the prose above the read — which names the reader —
+    // cannot be counted, and strings blanked so neither can a message.
+    const masked = source
+      .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
+      .replace(/\/\/[^\n]*/g, (match) => match.replace(/[^\n]/g, " "));
+    const start = masked.indexOf("export async function joinGroupBookingAsMember");
+    expect(start, "the function has been renamed or removed").toBeGreaterThan(-1);
+    const rest = masked.slice(start + 1);
+    const nextDeclaration = rest.search(/^(?:export\s+)?(?:async\s+)?function\s/m);
+    return nextDeclaration === -1 ? rest : rest.slice(0, nextDeclaration);
+  }
+
+  it("reads the club's timezone exactly once for the whole join", () => {
+    const body = joinBody();
+    expect(body.split(READER).length - 1).toBe(1);
+  });
+
+  it("NOT VACUOUS: the slice really is the join, and really contains the read", () => {
+    const body = joinBody();
+    // Landmarks from three widely separated parts of the function, so a slice
+    // that has silently collapsed to nothing cannot pass the count above.
+    expect(body).toContain("hasGroupStayFullyEnded");
+    expect(body).toContain("checkInternetBankingLeadTime");
+    expect(body).toContain("createConfirmedBooking");
+    expect(body).toContain(READER);
   });
 });

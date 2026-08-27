@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -52,7 +52,7 @@ import path from "node:path";
  * `FOR UPDATE` lock on the promo row. Splitting them into a second, identical
  * source contract would have been two scanners to keep working instead of one.
  *
- * ## Three properties, because two of them are separately losable
+ * ## Four properties, because each of them is separately losable
  *
  * 1. **No club-zone reader inside a `$transaction` callback.** The lock rule.
  * 2. **Every caller file still reads the club's zone somewhere.** Without this,
@@ -62,6 +62,12 @@ import path from "node:path";
  *    the day must come from the persisted setting, and `getTodayDateOnly()` /
  *    `APP_TIME_ZONE` are how it came from the container instead. ESLint's
  *    `NO_ENVIRONMENT_ZONE_IMPORT` arm covers the import; this covers the call.
+ * 4. **Both of the populations above are DERIVED from the tree, not
+ *    remembered.** Which spellings open a transaction, and which files call the
+ *    caller-transaction wrapper, were both hand-maintained lists — so a new
+ *    member of either was simply not covered and nothing said so. Twice now, a
+ *    real `INV-LOCK-004` violation reached a green suite through exactly that
+ *    gap. A scan finds them and the hand-written lists have to agree with it.
  *
  * The scanner is a bracket matcher, not a parser, for the reason
  * `payment-link-expiry-club-zone.test.ts` gives: a hand-rolled TypeScript
@@ -299,6 +305,41 @@ function read(file: string): string {
 }
 
 /**
+ * Every tracked production source file under `src/`, read once.
+ *
+ * Same walk shape as `club-time-escape-hatch-census.test.ts`, and here for the
+ * reason Finding 3 of the #3123 delta review gave: the two populations this file
+ * polices — which wrappers open a transaction, and which files call the
+ * caller-transaction one — were both REMEMBERED, so a new member of either was
+ * simply not covered and nothing said so. They are derived from the tree below,
+ * and the hand-written lists above are then a second instrument that can only
+ * agree with the scan by both being right.
+ */
+function walkProductionSources(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name).replaceAll("\\", "/");
+    if (entry.isDirectory()) {
+      if (entry.name !== "__tests__" && entry.name !== "node_modules") {
+        walkProductionSources(full, out);
+      }
+    } else if (
+      /\.(ts|tsx)$/.test(entry.name) &&
+      !/\.(test|spec)\.(ts|tsx)$/.test(entry.name)
+    ) {
+      out.push(path.relative(REPO_ROOT, full).replaceAll("\\", "/"));
+    }
+  }
+  return out;
+}
+
+const PRODUCTION_SOURCES: ReadonlyMap<string, string> = new Map(
+  walkProductionSources(path.join(REPO_ROOT, "src")).map((file) => [
+    file,
+    read(file),
+  ]),
+);
+
+/**
  * Every call that OPENS a transaction whose callback body then runs inside it.
  *
  * `$transaction(` is the obvious one. `withOptionalTransaction(` is the one the
@@ -309,12 +350,30 @@ function read(file: string): string {
  * literal `$transaction(` on NEITHER. A detector keyed on one spelling reported
  * green over exactly the wrapper it existed to police.
  *
- * Grep for new members whenever a transaction helper is added; two files in the
- * tree use `withOptionalTransaction` today and both are named in the lists above.
+ * `withBoundedReadOnlyTransaction(` is the one the DELTA review caught this
+ * guard still missing, and it matters for the same reason twice over. It opens a
+ * real `prisma.$transaction` at `RepeatableRead` under a statement timeout
+ * (`src/lib/diagnostics/tools/read-only-transaction.ts`), so its callback body is
+ * inside a transaction while containing the literal `$transaction(` nowhere — and
+ * it is the exact wrapper `booking-evidence.ts` had been hiding behind before the
+ * fix. With it absent, moving that file's `clubTodayDateOnlyInstant()` back inside
+ * the callback — the precise pre-fix `INV-LOCK-004` violation — produced ZERO
+ * offenders: rule 2 keys only on `withOptionalTransaction`, rules 3 and 6 do not
+ * cover resolvers, and rule 4 still saw a read somewhere in the file. Adding it
+ * makes the mutation fail loudly and names the site.
+ *
+ * WHY THE OPENER SET IS THE WHOLE POPULATION AND NOT A SAMPLE. Both members were
+ * found only after each had already let a real defect through, so the set is
+ * derived rather than remembered: a scan of every tracked non-test source file
+ * for a function-like declaration whose body contains `$transaction(` and whose
+ * parameters include a function-typed one returns exactly these two. Re-run that
+ * scan whenever a transaction helper is added — a wrapper this list has not heard
+ * of is a span this file cannot see into.
  */
 const TRANSACTION_OPENERS = [
   "$transaction(",
   "withOptionalTransaction(",
+  "withBoundedReadOnlyTransaction(",
 ] as const;
 
 /**
@@ -515,6 +574,118 @@ function callerTransactionSpans(
   return spans;
 }
 
+/**
+ * A function-like declaration head, in either spelling this codebase uses:
+ * `function name(` and `const name = (`, with or without `export`, `async` and a
+ * type parameter list. Deliberately not a parser, for the reason this file gives
+ * above — and it only has to be good enough to FIND a wrapper, because a wrapper
+ * it finds and cannot classify fails the census loudly rather than quietly.
+ */
+const FUNCTION_DECLARATION =
+  /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*(?:<[^>]*>)?\s*\(|(?:^|\n)\s*(?:export\s+)?const\s+(\w+)\s*(?::[^=\n]*)?=\s*(?:async\s+)?(?:<[^>]*>)?\s*\(/g;
+
+/** The index of the bracket closing the one at `from`, or -1. */
+function closingBracket(
+  source: string,
+  from: number,
+  open: string,
+  close: string,
+): number {
+  let depth = 0;
+  for (let i = from; i < source.length; i++) {
+    if (source[i] === open) depth += 1;
+    else if (source[i] === close) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * The name of every function in this source that OPENS a transaction behind its
+ * own name: it takes a callback parameter and its body calls `$transaction(`.
+ *
+ * This is the instrument that stops `TRANSACTION_OPENERS` being a memory.
+ * `withOptionalTransaction` and `withBoundedReadOnlyTransaction` were each found
+ * only AFTER it had let a real `INV-LOCK-004` violation through a green suite —
+ * the first in the #3123 review, the second in the delta review of that fix — so
+ * waiting for the third to announce itself the same way is not a plan.
+ *
+ * Brackets are matched on the comment-and-string-masked source so a brace in a
+ * docblock or a template literal cannot move a boundary.
+ */
+function transactionWrapperNames(source: string): string[] {
+  const masked = blankCommentsAndStrings(source);
+  if (!masked.includes("$transaction(")) return [];
+  const names: string[] = [];
+
+  for (const match of masked.matchAll(FUNCTION_DECLARATION)) {
+    const name = match[1] ?? match[2];
+    const paramsOpen = (match.index ?? 0) + match[0].length - 1;
+    const paramsEnd = closingBracket(masked, paramsOpen, "(", ")");
+    if (paramsEnd === -1) continue;
+
+    // A callback parameter — the thing that makes this a wrapper rather than a
+    // function that merely happens to use a transaction internally.
+    if (!masked.slice(paramsOpen + 1, paramsEnd).includes("=>")) continue;
+
+    const bodyOpen = masked.indexOf("{", paramsEnd);
+    if (bodyOpen === -1) continue;
+    const bodyEnd = closingBracket(masked, bodyOpen, "{", "}");
+    const body = masked.slice(bodyOpen, bodyEnd === -1 ? masked.length : bodyEnd);
+    if (body.includes("$transaction(")) names.push(name);
+  }
+
+  return names;
+}
+
+/** `withOptionalTransaction` -> `withOptionalTransaction`. */
+const CALLER_TRANSACTION_WRAPPER_NAMES = CALLER_TRANSACTION_WRAPPERS.map(
+  (wrapper) => wrapper.slice(0, -1),
+);
+
+/**
+ * Every production file that CALLS a caller-transaction wrapper — the population
+ * rule 2 has to run over, derived rather than remembered.
+ *
+ * The file that DEFINES the wrapper is not a caller of it. It is excluded by its
+ * declaration rather than by path, so moving `db-transaction.ts` does not
+ * silently turn its own definition into an offender.
+ */
+function callerTransactionWrapperCallers(): string[] {
+  const callers: string[] = [];
+
+  for (const [file, source] of PRODUCTION_SOURCES) {
+    const masked = blankCommentsAndStrings(source);
+    if (!CALLER_TRANSACTION_WRAPPERS.some((call) => masked.includes(call))) {
+      continue;
+    }
+    const defines = CALLER_TRANSACTION_WRAPPER_NAMES.some((name) =>
+      new RegExp(`function\\s+${name}\\b`).test(masked),
+    );
+    if (!defines) callers.push(file);
+  }
+
+  return callers;
+}
+
+/**
+ * The files rule 2 runs over: the hand-classified set, UNION every caller the
+ * scan above found. The union is what makes a new call site covered from the
+ * moment it is written; the assertion in "the guard's populations are derived
+ * from the tree" is what makes somebody classify it into the right list, so the
+ * grouping rules 3 to 6 depend on stay true.
+ */
+const CALLER_TRANSACTION_POPULATION = [
+  ...new Set([
+    ...ALL_RESOLVERS,
+    ...PURE_CALLEES,
+    ...DUAL_ROLE_CALLEES,
+    ...VALUE_ONLY_CALLEES,
+    ...callerTransactionWrapperCallers(),
+  ]),
+];
 
 describe("the club's day is resolved outside the locks and threaded in (#3123)", () => {
   it("reads the club's zone outside every transaction, in every resolver", () => {
@@ -549,12 +720,7 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     // `callerTransactionSpans` for the full reasoning.
     const offenders: string[] = [];
 
-    for (const file of [
-      ...ALL_RESOLVERS,
-      ...PURE_CALLEES,
-      ...DUAL_ROLE_CALLEES,
-      ...VALUE_ONLY_CALLEES,
-    ]) {
+    for (const file of CALLER_TRANSACTION_POPULATION) {
       const source = read(file);
       for (const span of callerTransactionSpans(source)) {
         for (const reader of CLUB_ZONE_READERS) {
@@ -578,6 +744,65 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
         "symptom is the WRONG club day rather than an error. There is no " +
         'position in such a function that is outside the transaction on every ' +
         "path: take the day as a required parameter instead (`INV-LOCK-004`).",
+    ).toEqual([]);
+  });
+
+  it("the guard's populations are derived from the tree, not remembered", () => {
+    // Finding 3 of the #3123 DELTA review. Both lists this file scans with were
+    // hand-maintained, and nothing compared either against the tree — so a new
+    // transaction wrapper, or a new caller of the caller-transaction one, was
+    // simply not covered and the suite stayed green about it. Two instruments
+    // that can only agree by both being right.
+    const unlistedWrappers: string[] = [];
+    let wrappersFound = 0;
+
+    for (const [file, source] of PRODUCTION_SOURCES) {
+      for (const name of transactionWrapperNames(source)) {
+        wrappersFound += 1;
+        if (!(TRANSACTION_OPENERS as readonly string[]).includes(`${name}(`)) {
+          unlistedWrappers.push(`${file} (${name})`);
+        }
+      }
+    }
+
+    expect(
+      unlistedWrappers,
+      "This function opens a `$transaction` behind its own name and takes a " +
+        "callback, so its callback body is inside a transaction while " +
+        "containing the literal `$transaction(` nowhere — and " +
+        "`TRANSACTION_OPENERS` has not heard of it, which means the " +
+        "outside-the-transaction rule cannot see into a single one of its " +
+        "spans. Add it there. This is how `withOptionalTransaction` and " +
+        "`withBoundedReadOnlyTransaction` each hid a real `INV-LOCK-004` " +
+        "violation behind a green suite, and the point of this check is that " +
+        "the third one is caught the day it is written instead.",
+    ).toEqual([]);
+
+    // Vacuity: a scanner that stopped matching would report no unlisted
+    // wrappers just as loudly as a clean tree.
+    expect(wrappersFound).toBeGreaterThanOrEqual(2);
+
+    const unclassifiedCallers = callerTransactionWrapperCallers().filter(
+      (file) =>
+        !(
+          [
+            ...ALL_RESOLVERS,
+            ...PURE_CALLEES,
+            ...DUAL_ROLE_CALLEES,
+            ...VALUE_ONLY_CALLEES,
+          ] as readonly string[]
+        ).includes(file),
+    );
+
+    expect(
+      unclassifiedCallers,
+      `This file calls ${CALLER_TRANSACTION_WRAPPER_NAMES.join(", ")} and is ` +
+        "named in none of the lists at the top of this suite. The rule above " +
+        "already covers it — the population is the union — but the lists are " +
+        "what the OTHER rules run over, and which list a file belongs in is a " +
+        "real decision: a resolver reads the club's zone and is checked for " +
+        "the right reader, a callee resolves nothing at all. Put it in one " +
+        "(`INV-LOCK-004`).",
     ).toEqual([]);
   });
 
@@ -687,13 +912,11 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     // wrapper or a reformat that moves a declaration off column 0 would leave
     // its rule passing over nothing. Two files in the tree hand a caller
     // transaction to `withOptionalTransaction` — `booking-create.ts` and
-    // `booking-batch-modification-service.ts` — and both are named above.
-    const callerSpans = [
-      ...ALL_RESOLVERS,
-      ...PURE_CALLEES,
-      ...DUAL_ROLE_CALLEES,
-      ...VALUE_ONLY_CALLEES,
-    ].flatMap((file) => callerTransactionSpans(read(file)));
+    // `booking-batch-modification-service.ts` — and the derived population is
+    // what finds them, with the lists above agreeing that both are classified.
+    const callerSpans = CALLER_TRANSACTION_POPULATION.flatMap((file) =>
+      callerTransactionSpans(read(file)),
+    );
     expect(callerSpans.length).toBeGreaterThanOrEqual(2);
     for (const span of callerSpans) {
       expect(span.body).toContain("withOptionalTransaction(");
@@ -715,6 +938,21 @@ describe("the club's day is resolved outside the locks and threaded in (#3123)",
     );
     expect(wrapped).toHaveLength(1);
     expect(wrapped[0].body).toContain("clubTimeZone()");
+
+    // And the same for the read-only wrapper, which is the one the DELTA review
+    // proved invisible: with it absent from the opener set, restoring
+    // `booking-evidence.ts`'s pre-fix shape produced ZERO offenders.
+    const bounded = transactionCallbackSpans(
+      [
+        "async function evidence(bookingId) {",
+        "  return withBoundedReadOnlyTransaction(async (tx) =>",
+        "    read(bookingId, tx, await clubTodayDateOnlyInstant()),",
+        "  );",
+        "}",
+      ].join("\n"),
+    );
+    expect(bounded).toHaveLength(1);
+    expect(bounded[0].body).toContain("clubTodayDateOnlyInstant()");
 
     // And the masker it is built on really blanks a comment while preserving
     // every offset — the property that lets a docblock naming a reader sit in a

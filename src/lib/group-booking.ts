@@ -678,10 +678,23 @@ export async function joinGroupBookingAsMember(
   // club's today) accepts no further joins — a join now could only create a
   // retroactive card obligation on a finished stay. The zone is read here,
   // OUTSIDE the capacity-lock transaction below (#3123).
-  const clubTodayForJoin = dateOnlyInstantOf(
-    clubToday(await readClubTimeZoneOutsideRequest()),
-  );
-  if (hasGroupStayFullyEnded(group.organiserBooking, clubTodayForJoin)) {
+  //
+  // THE ONE READ FOR THE WHOLE JOIN, in both of the kinds this function's
+  // callees take (#3123 delta review). Until this was a single read, the join
+  // read the club's zone TWICE — here and again at `createConfirmedBooking`
+  // below — and a join running across club midnight gated the stay-ended
+  // refusal and the Internet Banking lead time on day D while handing D+1 to
+  // the retroactive-booking envelope and the promotion's validity window. Both
+  // values below are derived from this ONE `CalendarDate`, so they cannot
+  // disagree; they are deliberately two names because they are two KINDS —
+  // `clubDayForJoin` is the calendar day, `clubDayInstantForJoin` is that same
+  // day in the UTC-midnight `@db.Date` encoding the stored `checkIn`/`checkOut`
+  // columns are compared against. Passing one where the other is wanted is the
+  // conflation this whole issue exists to remove, which is why neither is
+  // named just "today".
+  const clubDayForJoin = clubToday(await readClubTimeZoneOutsideRequest());
+  const clubDayInstantForJoin = dateOnlyInstantOf(clubDayForJoin);
+  if (hasGroupStayFullyEnded(group.organiserBooking, clubDayInstantForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
   }
   const organiserSettled =
@@ -960,8 +973,9 @@ export async function joinGroupBookingAsMember(
       checkIn,
       settings: internetBankingSettings,
       // #3123 — the SAME club day this join already resolved above for the
-      // stay-has-ended gate. One read, one answer, for the whole join.
-      today: clubTodayForJoin,
+      // stay-has-ended gate, in the `@db.Date` encoding this comparison wants.
+      // One read, one answer, for the whole join.
+      today: clubDayInstantForJoin,
     });
     if (!leadTime.allowed) {
       throw new GroupBookingError(
@@ -982,13 +996,18 @@ export async function joinGroupBookingAsMember(
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
     outcome = await createConfirmedBooking({
-      // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved here, outside every
-      // transaction. `createConfirmedBooking` is transaction-aware and so
-      // cannot read the club's zone for itself (`INV-LOCK-004`). The runtime
-      // reader rather than `club-time/server`: this module sits on the shared
-      // `src/lib` graph a CLI entry point reaches, where `server-only` is a bare
-      // throw at import.
-      todayAtClub: clubToday(await readClubTimeZoneOutsideRequest()),
+      // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved at the top of this
+      // function, outside every transaction. `createConfirmedBooking` is
+      // transaction-aware and so cannot read the club's zone for itself
+      // (`INV-LOCK-004`). The runtime reader rather than `club-time/server`:
+      // this module sits on the shared `src/lib` graph a CLI entry point
+      // reaches, where `server-only` is a bare throw at import.
+      //
+      // The CALENDAR day, not the `@db.Date` instant — this parameter is a
+      // `CalendarDate` and `createConfirmedBooking` derives its own instant from
+      // it. Same day as the gates above, by construction rather than by a second
+      // read that could land on the other side of club midnight.
+      todayAtClub: clubDayForJoin,
     effectiveMemberId: sessionUserId,
     isOnBehalf: false,
     sessionUserId,

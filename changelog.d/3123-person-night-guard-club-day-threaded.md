@@ -31,3 +31,24 @@
   too, and additionally treats any service that can be handed somebody else's
   transaction as being inside one from its first line — because on that path it
   is.
+
+  A follow-up review then found the same blind spot a second time: there is a
+  *third* way of opening a transaction here — the helper the support and
+  diagnostics evidence reads use — and the guard could not see into that one
+  either. Putting the original fault back into the booking diagnostics pack was
+  measured, and the guard stayed green over it. It now recognises that helper as
+  well, and, more usefully, it no longer relies on somebody remembering to add
+  the next one: it scans the codebase for anything that opens a transaction
+  behind its own name and fails if it finds one it has not been told about. The
+  same treatment was given to the list of files it checks, which was also
+  maintained by hand.
+
+- **A group join now works out the club's day once, not twice (#3123).** Joining
+  somebody else's group booking asked "what is today at the club?" twice — once
+  when refusing a join onto a stay that has already finished and when checking
+  the Internet Banking cut-off, and again when creating the joiner's own
+  booking. A join that happened to run across midnight at the club could get two
+  different answers, so the two halves of the same join could disagree about
+  which day it was — with the second answer deciding whether a promotion was
+  still valid and whether the booking counted as a retroactive one. The day is
+  now worked out once, at the top of the join, and used for all of it.

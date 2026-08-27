@@ -248,7 +248,7 @@ reason: thirty-six lines, thirty of them one docblock, and the correction is to
   shorten them.
 
 file: src/lib/group-booking.ts
-lines: 1808
+lines: 1827
 reason: thirty-eight lines, and this file's own allowance history is why the
   number is worth stating exactly: the #2870 payment-link allowance recorded it
   at 1,763 — EXACTLY its base length — and said plainly that pointer-only
@@ -260,7 +260,19 @@ reason: thirty-eight lines, and this file's own allowance history is why the
   resolves the club's day once, with `verifyAndCreateNonMemberJoin` reusing the
   single zone read the payment-link expiry beside it already makes. Fifteen
   lines are the docblock on that required parameter, which is what stops the
-  default coming back.
+  default coming back. **Plus nineteen from the delta review of that fix**, and
+  they are almost entirely prose. `joinGroupBookingAsMember` was the one function
+  in this change that read the club's zone TWICE — once for the stay-ended
+  refusal and the Internet Banking lead time, once again for
+  `createConfirmedBooking` — with a comment between them already claiming "one
+  read, one answer, for the whole join". Both reads were outside every
+  transaction, so this was never a lock breach; it was a join running across club
+  midnight gating one half of itself on day D and the other on D+1. The read is
+  now one, and it yields two named values because the callees want two KINDS: a
+  `CalendarDate` and that same day in the UTC-midnight `@db.Date` encoding the
+  stored `checkOut` column is compared against. The comment saying so is the
+  growth, and it is load-bearing — passing one of those where the other belongs
+  is the exact conflation this issue exists to remove.
 
 file: src/lib/group-cancel.ts
 lines: 890
