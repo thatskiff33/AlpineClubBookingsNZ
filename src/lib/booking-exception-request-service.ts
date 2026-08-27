@@ -6,7 +6,7 @@ import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
 import { getStayNights } from "@/lib/policies/pricing";
 import { validateMinimumStay } from "@/lib/booking-policies";
-import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-review";
+import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
 import { evaluateProposedPaidUpAdultPresence } from "@/lib/subscription-lockout-enforcement";
 import type { AgeTierSettingsReader } from "@/lib/subscription-lockout-facts";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";

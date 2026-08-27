@@ -37,10 +37,7 @@ import {
   type AdultMemberHostingPolicyLike,
   type HostingParticipant,
 } from "@/lib/policies/adult-member-hosting";
-import {
-  AdultMemberHostingRequiredError,
-  buildAdultMemberHostingRefusalBody,
-} from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 
 /** A row as it exists BEFORE this issue: both scope columns are NULL. */
 function legacyRow(

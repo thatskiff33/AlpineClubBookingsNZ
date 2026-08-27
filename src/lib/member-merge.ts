@@ -25,11 +25,7 @@ import { findMemberContactChangeMergeBlocker } from "@/lib/xero-contact-create-r
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
 import { lockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-lock";
-import {
-  buildMemberMergeHostingCoveragePlan,
-  enqueueMemberMergeHostingCoveragePlan,
-  memberMergeHostingCoveragePlanFingerprint,
-} from "@/lib/adult-member-hosting-review";
+import { buildMemberMergeHostingCoveragePlan, enqueueMemberMergeHostingCoveragePlan, memberMergeHostingCoveragePlanFingerprint } from "@/lib/adult-member-hosting-merge-coverage-plan";
 import {
   HostingCoverageParticipantRetryError,
   lockMemberMergeHostingCoverageParticipants,

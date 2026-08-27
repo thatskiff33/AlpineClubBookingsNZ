@@ -36,11 +36,10 @@ import { reconcileBedAllocationsForBookingWithGlobalLockHeld } from "@/lib/bed-a
 import { hasAdminAccess } from "@/lib/access-roles";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import {
-  AdultMemberHostingRequiredError,
-  buildAdultMemberHostingRefusalBody,
   hostingCoverageActorOptions,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import {
   SameOwnerCoverageOverrideRequiredError,
   SameOwnerCoverageWouldBreakError,

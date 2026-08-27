@@ -511,8 +511,20 @@ const CENSUS_CEILING = {
    * running this suite found either. If you bump this number on a branch,
    * re-run this file after every rebase or merge onto a moved `main`: a clean
    * merge is not evidence the count is still right, and neither is arithmetic.
+   *
+   * 217 -> 219 (#3128's fourth split): `adult-member-hosting-review.ts` was
+   * 3,051 lines, and two of the four blocks that came out of it took their
+   * existing `date-only` import with them -- the create-path evaluation into
+   * `adult-member-hosting-proposed.ts` and the merge fan-out plan into
+   * `adult-member-hosting-merge-coverage-plan.ts`. Both use only the zone-free
+   * exports (`eachDateOnlyInRange`, `formatDateOnly`), no call was added,
+   * removed or changed, and neither file resolves a timezone. Two importers
+   * where there was one, twice over -- and this branch is the third lane in a
+   * row to move this number, which is why the warning above is written the way
+   * it is. It sat at 218 against a base of 216 until `main` moved to 217
+   * underneath it; the value below was then re-measured, not re-added.
    */
-  dateOnlyImporters: 217,
+  dateOnlyImporters: 219,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

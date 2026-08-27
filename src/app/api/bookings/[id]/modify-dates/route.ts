@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 
-import {
-  AdultMemberHostingRequiredError,
-  buildAdultMemberHostingRefusalBody,
-} from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import {
   SameOwnerCoverageOverrideRequiredError,
   SameOwnerCoverageWouldBreakError,

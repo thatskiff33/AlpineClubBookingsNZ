@@ -156,9 +156,37 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
     // §7: extend the shared evaluator, never write a second definition of a
     // qualifying adult member. Every caller reaches it through the review service,
     // which is also the only place that loads the participants.
+    //
+    // THE REVIEW SERVICE IS TWO MODULES SINCE #3128, and this list was widened
+    // deliberately rather than to make a red test green. The engine answers for a
+    // PERSISTED booking; `adult-member-hosting-proposed.ts` answers for a party
+    // that does not exist yet, on the create path. It was always a separate
+    // entry point with its own participant assembly — it simply used to sit in
+    // the same file, and splitting a 3,051-line module moved it without changing
+    // a line of it. §7's actual rule is unweakened by the widening: both callers
+    // reach the ONE evaluator in `policies/adult-member-hosting.ts`, neither
+    // decides for itself who qualifies, and a fourth namer still fails here and
+    // still has to argue its case.
     expect(sourceFilesNaming("evaluateAdultMemberHostingWithPolicy(")).toEqual([
+      "src/lib/adult-member-hosting-proposed.ts",
       "src/lib/adult-member-hosting-review.ts",
       "src/lib/policies/adult-member-hosting.ts",
+    ]);
+  });
+
+  it("keeps the engine's newly-exported loaders inside the engine", () => {
+    // #3128 had to widen four private helpers to `export` so the split modules
+    // could reach them. Two of them read hosting rows and are only correct under
+    // the caller's lock discipline, so a new caller elsewhere is a hazard the
+    // move created and nothing else would catch. Pin them the way §7 pins the
+    // evaluator: the list is short on purpose, and adding to it is a decision.
+    expect(sourceFilesNaming("loadSameBookingOwnerHosts(")).toEqual([
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/adult-member-hosting-review.ts",
+    ]);
+    expect(sourceFilesNaming("withSubscriptionSettlement(")).toEqual([
+      "src/lib/adult-member-hosting-proposed.ts",
+      "src/lib/adult-member-hosting-review.ts",
     ]);
   });
 
@@ -570,6 +598,12 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
    */
   const TX_SCOPED_HELPERS = [
     "src/lib/adult-member-hosting-review.ts",
+    // #3128 moved `enqueueMemberMergeHostingCoveragePlan`'s DECLARATION out of
+    // the engine and into its own module. The engine was exempt here, the new
+    // module was not, so the sweep began demanding that a pure planner drain a
+    // queue it never commits — a false red produced by a move, on the one half
+    // of this test #2623 F3 hardened for callers and not for declarations.
+    "src/lib/adult-member-hosting-merge-coverage-plan.ts",
     "src/lib/booking-credit-election.ts",
     "src/lib/booking-guest-removal-service.ts",
     "src/lib/booking-exception-approval.ts",
@@ -655,6 +689,7 @@ describe("the same-owner refusal and the escalation seam (#2576 §6, §8, §9)",
       "src/lib/booking-exception-approval.ts": [],
       // The seam definitions themselves; their callers are the sweep above.
       "src/lib/adult-member-hosting-review.ts": [],
+      "src/lib/adult-member-hosting-merge-coverage-plan.ts": [],
     };
     for (const helper of TX_SCOPED_HELPERS) {
       const entrypoints = EXPORTED_TX_ENTRYPOINTS[helper];

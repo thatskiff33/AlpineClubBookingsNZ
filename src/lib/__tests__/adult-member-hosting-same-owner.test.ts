@@ -26,7 +26,6 @@ vi.mock("@/lib/member-subscription-eligibility", () => ({
 }));
 
 import {
-  HostingSameOwnerSourceCeilingExceededError,
   evaluateBookingAdultMemberHosting,
   evaluatePersistedBookingAdultMemberHostingReadOnly,
   enqueueHostingCoverageReevaluationForMember,
@@ -36,6 +35,7 @@ import {
   isHostingCoverageSourceBookingTerminal,
   loadSameOwnerCoverageDependentIds,
 } from "@/lib/adult-member-hosting-review";
+import { HostingSameOwnerSourceCeilingExceededError } from "@/lib/adult-member-hosting-coverage-ceilings";
 import { hostingCoverageStateKey } from "@/lib/adult-member-hosting-coverage-incidents";
 import { HostingCoverageParticipantRetryError } from "@/lib/adult-member-hosting-queue-participants";
 
