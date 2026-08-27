@@ -16,11 +16,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import {
-  BENEFICIAL_PROMO_ALLOCATION_FILTER,
   calculatePromoDiscountForGuestRates,
   deletePromoRedemptionAndAdjustCount,
   getAssignedPromoCodeSummariesForMember,
-  isBeneficialPromoAllocation,
   lockPromoCodeRowsForUpdate,
   redeemPromoCode,
   replacePromoRedemptionAllocations,
@@ -29,6 +27,10 @@ import {
   type PromoApplicationSubject,
   type PromoBeneficiaryAllocation,
 } from "../promo";
+import {
+  BENEFICIAL_PROMO_ALLOCATION_FILTER,
+  isBeneficialPromoAllocation,
+} from "../promo-usage-counts";
 import type { PromoCodeInput } from "../pricing";
 import { requireCalendarDate } from "@/lib/club-time";
 
