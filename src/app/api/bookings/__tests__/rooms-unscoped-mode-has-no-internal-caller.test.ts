@@ -1,4 +1,12 @@
 import { describe, expect, it } from "vitest";
+
+// The call-site sweep reads comment-stripped source. This file used to drop
+// whole comment LINES only, which left a trailing comment on a line of code in
+// place; the shared scanner tracks string and template literals, so it can strip
+// those too without eating a `//` inside a URL. `commentBlocks` below
+// deliberately still reads the RAW source — it is the sweep that reads exactly
+// the part the other one throws away.
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -34,14 +42,6 @@ import path from "node:path";
  */
 
 const ROUTE = "/api/bookings/rooms";
-
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
-}
 
 function sourceFiles({ includeTests = false } = {}): string[] {
   const files: string[] = [];
