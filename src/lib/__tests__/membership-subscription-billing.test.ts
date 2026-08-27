@@ -356,6 +356,37 @@ describe("membership subscription billing", () => {
       ).rejects.toThrow(/must be given its decision date/);
     });
 
+    it("refuses to resolve the year-end inside a transaction, where it could call Xero under the season lock (#3116)", async () => {
+      // Resolving the financial year-end reads MembershipLockoutSettings and,
+      // with no admin override, CALLS XERO for the organisation's accounting
+      // year. Under a held `pg_advisory_xact_lock` that is a provider call
+      // inside a transaction, which this repository forbids outright. A
+      // transactional caller has a preview in hand and passes its frozen value.
+      //
+      // The decision date is supplied here so this asserts the year-end guard
+      // specifically, rather than passing for the decision-date reason above.
+      await expect(
+        buildSubscriptionBillingPreview({
+          seasonYear: 2026,
+          decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+          store: billingTransactionClient() as never,
+        }),
+      ).rejects.toThrow(/must be given its financial year-end month/);
+    });
+
+    it("accepts an explicit year-end inside a transaction and names the season from it (#3116)", async () => {
+      // The other side of the guard: given the value, a transactional preview
+      // builds - and the description follows the year-end it was handed, not the
+      // process cache.
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+        yearEndMonth: 12,
+        store: billingTransactionClient() as never,
+      });
+      expect(preview.yearEndMonth).toBe(12);
+    });
+
     it("still honours an explicit decision date", async () => {
       mocks.clubTimeSettings.findUnique.mockResolvedValue({
         timeZone: "America/Denver",

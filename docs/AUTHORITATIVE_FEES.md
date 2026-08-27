@@ -219,9 +219,26 @@ choice of whether it is prorated for a mid-year joiner.
   extends to these rows). The invoice builder emits one line per component in
   stable order; the adoption guard compares the full line array (count + per-line
   amount/account/item/OUTPUT2 tax) plus total, reference, contact, due interval,
-  type, line-amount type and status — line description is not compared. A legacy
-  charge minted before the backfill reproduces the identical historical single
-  line via the same derivation the backfill uses.
+  type, line-amount type and status — **line description is not compared**, and
+  neither does invoice lookup use it (that matches on the charge's immutable
+  `Reference`). A legacy charge minted before the backfill still reproduces its
+  single line via the same derivation the backfill uses.
+- **How the season is named on a line (#3116).** The description names the season
+  through the shared derivation in `src/lib/season-label.ts`, from the club's
+  **configured financial year-end** — `2026 - 2027` for a March year-end, and
+  plain `2026` for a December one, whose season starts in January and ends in the
+  same calendar year. It previously assumed two calendar years unconditionally,
+  which printed a season name contradicting the season year beside it for any
+  club whose year does not end in March.
+  **The year-end is resolved and passed explicitly at every one of these sites,
+  never defaulted.** `seasonYearsLabel` defaults it to a process cache that only
+  request paths seed, so a background worker — the Xero outbox, which is what
+  mints these invoices — would silently answer March.
+  `buildComponentLineDescription` therefore **requires** the year-end, making an
+  unstated one a compile error. An existing charge is unaffected either way: its
+  line text is a persisted column (`MembershipSubscriptionChargeComponent.description`),
+  written at plan time and read back at mint, so changing the derivation changes
+  only newly-planned charges.
 - **Day-one backfill** (owner-approved additive derivation): one default
   component per existing invoiceable fee, and one verbatim snapshot component per
   existing invoiceable charge whose description is rebuilt from the exact
