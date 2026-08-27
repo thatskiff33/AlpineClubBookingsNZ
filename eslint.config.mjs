@@ -1004,12 +1004,27 @@ export const DATE_GUARD_ARMS = {
 // BLOCK LIFTS IT. Reading the environment's zone is a reviewed exception;
 // handing it to callers as a default is not, in any file.
 //
-// WHICH NAMES ARE ON THE LIST, and the ONE criterion that puts them there: the
-// value has a SECOND, persisted, club-owned source, so a default routes to the
-// wrong one of two. Today that is the timezone and nothing else — the club's
-// civil time is the `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1
-// #2989), and `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` are the ENVIRONMENT's
-// claim, which seeds that row at setup and has no say afterwards.
+// WHICH NAMES ARE ON THE LIST. `INV-SSOT-003` names them, and this array is that
+// rule's implementation rather than a second opinion about it: the
+// `@/config/operational` exports naming a club-facing authority —
+// `APP_TIME_ZONE` and `APP_LOCALE` — plus the environment variables behind the
+// zone, `TZ` and `NEXT_PUBLIC_TZ`.
+//
+// The zone is the measured case. The club's civil time is the
+// `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989), and
+// `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` are the ENVIRONMENT's claim, which
+// seeds that row at setup and has no say afterwards — two sources, and the
+// default silently picked the wrong one.
+//
+// THE LOCALE IS ON THE LIST AHEAD OF ITS SECOND SOURCE, and that is worth saying
+// out loud rather than leaving a reader to infer a criterion the list does not
+// satisfy. There is no persisted club locale in `schema.prisma` today, so
+// nothing yet competes with `APP_LOCALE`, and its live default population is
+// zero. It is banned anyway because it is the same KIND of value — how this club
+// answers a display question — and listing it while the population is zero costs
+// nothing, where adding it after a club-locale setting ships would cost a
+// migration and a census of whatever had been written in the meantime. That is
+// the cheap direction to be wrong in.
 //
 // WHAT IS DELIBERATELY NOT BANNED, because stating the boundary is half of this
 // arm's value:
@@ -1026,21 +1041,24 @@ export const DATE_GUARD_ARMS = {
 //     it in the one boundary that owns the Stripe wire format. THE DAY A
 //     PERSISTED CLUB-CURRENCY SETTING EXISTS, both names join the list above and
 //     `stripe.ts` becomes a real violation. That sentence is the ratchet;
-//     without it the exclusion rots into a permanent hole.
-//   * `APP_LOCALE`, for the same reason and with the same ratchet. It is the
-//     environment's `LOCALE` / `NEXT_PUBLIC_LOCALE`, and there is no persisted
-//     club locale in `schema.prisma` to compete with it. Its live default
-//     population is zero, so banning it today would cost nothing — and it is
-//     still left off, because a list whose entries do not all satisfy the same
-//     stated criterion is a list nobody can extend correctly.
-//   * `process.env.<anything else>` as a default. Measured on this tree, the
-//     three live instances are `isValidCronSecret(expected =
-//     process.env.CRON_SECRET)` and two `env: NodeJS.ProcessEnv = process.env`
-//     injection seams in `admin-cron-health.ts`. None of them has a second
-//     source, so a broad ban would be three false positives out of three
-//     matches — a guard that is wrong every time it fires trains its reader to
-//     switch it off. `INV-SSOT-003` is about the wrong one of TWO sources, not
-//     about reading the environment.
+//     without it the exclusion rots into a permanent hole. Note this is a COST
+//     argument rather than a kind argument — the currency is as club-facing as
+//     the locale — so it is the one exclusion on this list that a reader should
+//     expect to be revisited.
+//   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
+//     describes more broadly than this arm implements. MEASURED, rather than
+//     assumed: the three live instances in this tree are
+//     `isValidCronSecret(expected = process.env.CRON_SECRET)` in
+//     `src/lib/cron-auth.ts` and two `env: NodeJS.ProcessEnv = process.env`
+//     injection seams in `src/lib/admin-cron-health.ts`. None of the three has a
+//     second source — there is no persisted cron secret and no persisted
+//     `CRON_ENABLED` — so none is the defect this rule names, and a broad ban
+//     would be three false positives out of three matches. A guard that is wrong
+//     every time it fires trains its reader to switch it off, and #3126's own
+//     risk note says the one live hazard here is an arm too broad to live with.
+//     So the environment half of the arm is scoped to the variables behind the
+//     zone. Widening it later is a decision with three named call sites attached,
+//     which is the shape a decision should have.
 //   * A default that CALLS a club authority resolver — `= await clubTimeZone()`,
 //     `= readClubTimeZoneOutsideRequest()`. Those return the CLUB's answer, so
 //     they are not this defect at all. Population zero; recorded so a later
@@ -1051,11 +1069,11 @@ export const DATE_GUARD_ARMS = {
 //     a large legitimate population at genuine boundaries. The second instrument
 //     is `ssot-authority-default-guard.test.ts`, which censuses the source
 //     directly.
-const CLUB_AUTHORITY_DEFAULT_NAMES = "^(APP_TIME_ZONE)$";
+const CLUB_AUTHORITY_DEFAULT_NAMES = "^(APP_TIME_ZONE|APP_LOCALE)$";
 const CLUB_AUTHORITY_DEFAULT_ENV = "^(TZ|NEXT_PUBLIC_TZ)$";
 
 const AUTHORITY_DEFAULT_MESSAGE =
-  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `TZ` and `NEXT_PUBLIC_TZ` are the ENVIRONMENT's claim, which seeds that row at setup and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost an 81-site, 52-file counted census until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
+  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `APP_LOCALE`, `TZ` and `NEXT_PUBLIC_TZ` are the ENVIRONMENT's claim, which seeds that row at setup and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost an 81-site, 52-file counted census until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
 
 // `AssignmentPattern` is the default in EVERY position it can be written, which
 // is why the arm anchors on it rather than on a function's parameter list: a
