@@ -977,6 +977,133 @@ export const DATE_GUARD_ARMS = {
 };
 
 // ---------------------------------------------------------------------------
+// INV-SSOT-003 (#3126) — no default on a parameter that resolves a CLUB
+// authority.
+// ---------------------------------------------------------------------------
+//
+// A parameter default answers for every caller that did not pass one, and it
+// answers SILENTLY. When the value is a club authority with a second source,
+// the default decides which source wins for the whole tree — and it is never
+// the club's. `getTodayDateOnly(timeZone = APP_TIME_ZONE)` was one line; it took
+// 81 call sites across 52 files with it, and policing them needed a hand-built
+// census that counts call sites by walking parentheses and pins five exact
+// numbers. EVERY BIT OF THAT MACHINERY EXISTED BECAUSE THE DEFAULT EXISTED.
+//
+// WHY THIS IS A SEPARATE ARM FROM `NO_ENVIRONMENT_ZONE_*` ABOVE, which already
+// bans naming the environment's zone at all. That group is LIFTED for the files
+// on `ENVIRONMENT_ZONE_ADAPTER_FILES`, because an adapter has a reason to read
+// the environment — and a lifted group lifts the default with it. That is not a
+// theory either: `src/lib/date-only.ts` held its six `= APP_TIME_ZONE` defaults
+// legally for months inside a block of its own, and
+// `src/lib/member-merge-field-kinds.ts` held a seventh on the shared adapter
+// block until #3126 deleted it. THIS ARM IS ON `ALWAYS_RESTRICTED_IN_SRC` AND NO
+// BLOCK LIFTS IT. Reading the environment's zone is a reviewed exception;
+// handing it to callers as a default is not, in any file.
+//
+// WHICH NAMES ARE ON THE LIST, and the ONE criterion that puts them there: the
+// value has a SECOND, persisted, club-owned source, so a default routes to the
+// wrong one of two. Today that is the timezone and nothing else — the club's
+// civil time is the `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1
+// #2989), and `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` are the ENVIRONMENT's
+// claim, which seeds that row at setup and has no say afterwards.
+//
+// WHAT IS DELIBERATELY NOT BANNED, because stating the boundary is half of this
+// arm's value:
+//
+//   * `APP_CURRENCY` and `APP_STRIPE_CURRENCY`. `src/lib/stripe.ts` carries two
+//     live `currency = APP_STRIPE_CURRENCY` parameter defaults and they are
+//     CORRECT, not tolerated. There is exactly ONE source for the currency in
+//     this product — `@/config/operational` reads `CURRENCY` /
+//     `NEXT_PUBLIC_CURRENCY`, and no persisted club-currency setting exists — so
+//     a boundary module reading the single source is single source of truth
+//     working, not failing. Forcing the five money call sites to write
+//     `currency: APP_STRIPE_CURRENCY` would spread the `@/config/operational`
+//     import to five more modules, which is strictly WORSE for SSOT than leaving
+//     it in the one boundary that owns the Stripe wire format. THE DAY A
+//     PERSISTED CLUB-CURRENCY SETTING EXISTS, both names join the list above and
+//     `stripe.ts` becomes a real violation. That sentence is the ratchet;
+//     without it the exclusion rots into a permanent hole.
+//   * `APP_LOCALE`, for the same reason and with the same ratchet. It is the
+//     environment's `LOCALE` / `NEXT_PUBLIC_LOCALE`, and there is no persisted
+//     club locale in `schema.prisma` to compete with it. Its live default
+//     population is zero, so banning it today would cost nothing — and it is
+//     still left off, because a list whose entries do not all satisfy the same
+//     stated criterion is a list nobody can extend correctly.
+//   * `process.env.<anything else>` as a default. Measured on this tree, the
+//     three live instances are `isValidCronSecret(expected =
+//     process.env.CRON_SECRET)` and two `env: NodeJS.ProcessEnv = process.env`
+//     injection seams in `admin-cron-health.ts`. None of them has a second
+//     source, so a broad ban would be three false positives out of three
+//     matches — a guard that is wrong every time it fires trains its reader to
+//     switch it off. `INV-SSOT-003` is about the wrong one of TWO sources, not
+//     about reading the environment.
+//   * A default that CALLS a club authority resolver — `= await clubTimeZone()`,
+//     `= readClubTimeZoneOutsideRequest()`. Those return the CLUB's answer, so
+//     they are not this defect at all. Population zero; recorded so a later
+//     reader knows it was considered rather than missed.
+//   * A `??` or `||` fallback in a function BODY — `const tz = opts.tz ??
+//     APP_TIME_ZONE`. Said plainly as a known limit: it is the same hazard
+//     written differently, and it is out of scope because banning it would reach
+//     a large legitimate population at genuine boundaries. The second instrument
+//     is `ssot-authority-default-guard.test.ts`, which censuses the source
+//     directly.
+const CLUB_AUTHORITY_DEFAULT_NAMES = "^(APP_TIME_ZONE)$";
+const CLUB_AUTHORITY_DEFAULT_ENV = "^(TZ|NEXT_PUBLIC_TZ)$";
+
+const AUTHORITY_DEFAULT_MESSAGE =
+  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `TZ` and `NEXT_PUBLIC_TZ` are the ENVIRONMENT's claim, which seeds that row at setup and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost an 81-site, 52-file counted census until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
+
+// `AssignmentPattern` is the default in EVERY position it can be written, which
+// is why the arm anchors on it rather than on a function's parameter list: a
+// plain parameter default (`f(tz = APP_TIME_ZONE)`), an options-object property
+// default (`f({ tz = APP_TIME_ZONE })` — the shape this codebase actually
+// writes), an array-destructuring default and a destructured default inside a
+// body are one node type and one defect.
+//
+// The `.right` FIELD anchor is deliberate. Matching the authority as a mere
+// DESCENDANT of the `AssignmentPattern` would report the identical node twice
+// for `f({ tz = APP_TIME_ZONE } = {})`, whose inner pattern sits inside the
+// outer one; #2685 already paid for that mistake with a money arm reporting the
+// same node at the same line:column three times.
+//
+// The wrapped forms are named separately for the same reason. A fallback or a
+// ternary makes the default an EXPRESSION rather than the authority itself, so
+// the field anchor stops matching — and `tz = process.env.TZ ?? "Pacific/Auckland"`
+// is exactly what somebody reaches for the moment a bare read looks unsafe.
+const NO_CLUB_AUTHORITY_DEFAULT = [
+  // `f(tz = APP_TIME_ZONE)`
+  `AssignmentPattern > Identifier.right[name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // `f(tz = operational.APP_TIME_ZONE)` and its computed twin, which is the
+  // documented escape from every syntactic rule in this file and is closed on
+  // the way in rather than recorded as a known limitation.
+  `AssignmentPattern > MemberExpression.right[property.name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  `AssignmentPattern > MemberExpression.right[property.value=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // `f(tz = process.env.TZ)` and `f(tz = process.env["TZ"])`
+  `AssignmentPattern > MemberExpression.right[object.object.name="process"][object.property.name="env"][property.name=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  `AssignmentPattern > MemberExpression.right[object.object.name="process"][object.property.name="env"][property.value=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  // `f(tz = APP_TIME_ZONE ?? x)` and `f(tz = cond ? APP_TIME_ZONE : x)`
+  `AssignmentPattern > LogicalExpression.right Identifier[name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  `AssignmentPattern > ConditionalExpression.right Identifier[name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // `f(tz = process.env.TZ ?? "Pacific/Auckland")` and the ternary spelling
+  `AssignmentPattern > LogicalExpression.right MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  `AssignmentPattern > ConditionalExpression.right MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+].map((selector) => ({ selector, message: AUTHORITY_DEFAULT_MESSAGE }));
+
+const AUTHORITY_DEFAULT_RESTRICTIONS = [...NO_CLUB_AUTHORITY_DEFAULT];
+
+/**
+ * The `INV-SSOT-003` arm family as bare selector strings, for
+ * `ssot-authority-default-guard.test.ts` — the same mirror `DATE_GUARD_ARMS` and
+ * `CLUB_TIME_GUARD_ARMS` provide for their own families.
+ *
+ * Read from HERE rather than from a copy in the suite: a copy passes happily
+ * while the config that ships has dropped the arm.
+ */
+export const SSOT_GUARD_ARMS = {
+  authorityDefault: AUTHORITY_DEFAULT_RESTRICTIONS.map((entry) => entry.selector),
+};
+
+// ---------------------------------------------------------------------------
 // Composition: every restriction that must survive in EVERY `src/**` block,
 // whatever else that block is there to lift.
 // ---------------------------------------------------------------------------
@@ -1003,7 +1130,7 @@ export const DATE_GUARD_ARMS = {
 // ONE mandatory array, THREE named groups inside it, and no block that spells
 // out a list of its own.
 //
-// ADDING A GUARD: put its restrictions in a named array beside the four below
+// ADDING A GUARD: put its restrictions in a named array beside the others below
 // and add that array here. That is the only edit needed — every block picks it
 // up, INCLUDING the `scripts/` and `prisma/` blocks, and BOTH
 // `date-only-encoding-guard.test.ts` and `money-cents-guard.test.ts` read this
@@ -1026,6 +1153,7 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...ENVIRONMENT_ZONE_RESTRICTIONS,
   ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
+  ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 
 /**
