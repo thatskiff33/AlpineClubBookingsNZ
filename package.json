@@ -39,6 +39,7 @@
     "ci:workflowcheck": "node scripts/ci/check-workflow-suite-checkout-depth.mjs",
     "test": "vitest run",
     "test:related": "vitest related --run",
+    "test:named": "node scripts/run-named-tests.mjs",
     "test:policy": "vitest run src/lib/policies/__tests__",
     "test:watch": "vitest",
     "test:e2e": "bash scripts/e2e-stack.sh test",
