@@ -15,10 +15,7 @@ import {
   MERGE_FIELD_VALUE_KINDS,
   type MergeFieldValueKind,
 } from "@/lib/member-merge-field-kinds";
-import {
-  mergeMemberFields,
-  UNCONDITIONALLY_MERGED_FIELDS,
-} from "@/lib/member-merge";
+import { mergeMemberFields, UNCONDITIONALLY_MERGED_FIELDS } from "@/lib/member-merge-fields";
 
 /**
  * The member-merge comparison screen dates each value by what the field MEANS,
@@ -238,10 +235,21 @@ describe("#2860 every merged field is classified, and only merged fields are", (
     // Reading them out of the source is what makes this exhaustive for rows no
     // fixture is guaranteed to trigger — the same "read the tree, not a
     // remembered list" method as #2684's encoding guard.
-    const source = fs.readFileSync(
-      path.join(process.cwd(), "src/lib/member-merge.ts"),
-      "utf8",
-    );
+    //
+    // READ THE WHOLE MERGE FAMILY, NOT ONE FILE. This used to name
+    // `src/lib/member-merge.ts` and nothing else. #3128 split the field-merge
+    // rules out into `member-merge-fields.ts`, taking every `fieldMergeRow`
+    // call with them, and the hardcoded path then found ZERO calls — the
+    // non-emptiness guard below is the only reason that surfaced as a failure
+    // rather than as an exhaustive-looking test asserting nothing. A path is a
+    // guess about where code lives; a glob over the family is not, and this
+    // file has now been split twice.
+    const dir = path.join(process.cwd(), "src", "lib");
+    const source = fs
+      .readdirSync(dir)
+      .filter((name) => /^member-merge.*\.ts$/.test(name))
+      .map((name) => fs.readFileSync(path.join(dir, name), "utf8"))
+      .join("\n");
     const derived = [
       ...source.matchAll(/fieldMergeRow\(\s*"([A-Za-z0-9_]+)"/g),
     ].map((match) => match[1]!);

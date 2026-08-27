@@ -3,14 +3,16 @@ import { join } from "path";
 import { Prisma } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 import {
-  MEMBER_MERGE_RELATION_SPECS,
   MEMBER_MERGE_FK_LESS_MOVE_COLUMNS,
-  MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS,
+} from "@/lib/member-merge";
+import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
+import {
   diffRelationSpecCoverage,
   memberRelationNamesFromDmmf,
   parseFkLessMemberIdColumns,
   parseMemberRelationOwnerKeys,
-} from "@/lib/member-merge";
+} from "@/lib/member-merge-schema-coverage";
+import { MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS } from "@/lib/member-merge-snapshot-columns";
 
 const schemaText = readFileSync(
   join(process.cwd(), "prisma", "schema.prisma"),
