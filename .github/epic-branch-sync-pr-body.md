@@ -5,7 +5,7 @@
      has to satisfy the `## Concurrency And Lock Impact` gate, whose field
      labels are matched EXACTLY, and a template nobody can run through that gate
      offline is a template whose next typo surfaces as a red pull request from a
-     06:20 UTC scheduled job that nobody is awake to read.
+     scheduled job that may well run with nobody awake to read it.
      `scripts/ci/render-epic-sync-pr-body.test.mjs` runs this file
      through the real gates, and through the real field list in
      `.github/pull_request_template.md`, so a mistyped label fails `npm test`

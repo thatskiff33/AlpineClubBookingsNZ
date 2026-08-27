@@ -151,8 +151,8 @@ jobs:
               # exact opposite of why it opens a pull request at all.
               #
               # The gate matches its five field labels EXACTLY, so the failure
-              # mode of a typo is a red pull request opened by a 06:20 UTC
-              # scheduled job that nobody is awake to read. Keeping the text in a
+              # mode of a typo is a red pull request opened by a scheduled job
+              # that may well run with nobody awake to read it. Keeping the text in a
               # file that `scripts/ci/render-epic-sync-pr-body.test.mjs` runs
               # through the real gate is what moves that failure into `npm test`.
               if ! body="$(BRANCH="${branch}" RUN_URL="${RUN_URL}" \
