@@ -75,12 +75,14 @@ export default function MemberMergePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  // The `instant` branch of `formatMergeFieldValue` defaults its zone to
-  // `APP_TIME_ZONE`; production never passed one, so this screen read the
-  // environment. It is handed the club's PERSISTED zone here
-  // (`INV-CONFIG-002`) — a day-early stamp on the screen immediately before an
-  // IRREVERSIBLE merge is the worst place in the admin tree to have one. The
-  // `calendarDay` branch ignores the argument by design.
+  // The `instant` branch of `formatMergeFieldValue` REQUIRES a zone (#3126,
+  // `INV-SSOT-003`). It used to default to `APP_TIME_ZONE` — the ENVIRONMENT's
+  // zone — which is how this screen came to read the container instead of the
+  // club; the default is deleted, so the compiler now demands the argument here
+  // rather than answering for a caller that forgot it. It is handed the club's
+  // PERSISTED zone (`INV-CONFIG-002`): a day-early stamp on the screen
+  // immediately before an IRREVERSIBLE merge is the worst place in the admin
+  // tree to have one. The `calendarDay` branch ignores the argument by design.
   const clubTime = useClubTime();
   const { id: masterId } = use(params);
   const router = useRouter();

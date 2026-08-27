@@ -868,7 +868,17 @@ export const DATE_FNS_ADAPTERS = [
  * blocking it. Adding a file here re-opens the class the guard exists to close,
  * so the census test asserts the list has not grown.
  *
- * IT HAS ALREADY SHRUNK ONCE, and how is worth recording: `src/lib/nzst-date.ts`
+ * IT SHRANK AGAIN IN #3126, and by the route this list prefers. The last entry
+ * to leave, `src/lib/member-merge-field-kinds.ts`, was excused so a client
+ * component could keep a `= APP_TIME_ZONE` DEFAULT on its renderer — and the
+ * exemption written for a READ was quietly covering a default, which is a
+ * different and worse thing. Deleting the default (`INV-SSOT-003`) left the file
+ * naming the environment nowhere, so the entry had outlived its cause and went
+ * with it. The new `AUTHORITY_DEFAULT_RESTRICTIONS` arm is deliberately NOT
+ * droppable by any block, so no future entry here can cover a default again.
+ *
+ * IT HAD ALREADY SHRUNK ONCE BEFORE THAT, and how is worth recording:
+ * `src/lib/nzst-date.ts`
  * was the rendering adapter and the last module that BOUND the environment zone
  * at module load. #3123 did not migrate it — it DELETED it, once every
  * production caller had moved to the kernel. An entry leaving this list by way
@@ -890,7 +900,6 @@ const ENVIRONMENT_ZONE_ADAPTER_FILES = [
   "src/lib/ai-assistant-usage.ts",
   "src/lib/ai-diagnostics-usage.ts",
   "src/lib/induction-display.ts",
-  "src/lib/member-merge-field-kinds.ts",
 ];
 
 export const ENVIRONMENT_ZONE_ADAPTERS = [
@@ -918,11 +927,6 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
     file: "src/lib/induction-display.ts",
     reason:
       "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
-  },
-  {
-    file: "src/lib/member-merge-field-kinds.ts",
-    reason:
-      "The member-merge comparison renderer, which is a client component (#2860). Same blocker as `induction-display.ts`: the zone must arrive as data.",
   },
 ];
 
@@ -1181,7 +1185,7 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
     omits: ENVIRONMENT_ZONE_RESTRICTIONS,
     reason:
-      "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
+      "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. #3126 then took `src/lib/member-merge-field-kinds.ts` off by deleting the `= APP_TIME_ZONE` DEFAULT the exemption had been covering (`INV-SSOT-003`) — an exemption written for a READ should never have excused a default, and `AUTHORITY_DEFAULT_RESTRICTIONS` is on the mandatory set precisely so no entry here can excuse one again. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
