@@ -146,9 +146,10 @@ are permanent: never renumbered, never reused.
   whose financial year does not end in March. **A default supplying ambient
   process-global state breaks this rule whether or not the arm reports it.**
   - The four qualifying clauses, the banned names, and why a named list rather
-    than a pattern — measured: sixteen of the twenty call-valued defaults in this
-    tree are correct — live once, in `eslint.config.mjs` above
-    `NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT`. Not restated here.
+    than a pattern — most call-valued defaults in this tree are legitimate, and
+    the measurement saying so is recorded with the list — live once, in
+    `eslint.config.mjs` above `NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT`. No figure
+    is restated here; a number repeated in prose is a number that drifts.
   - A resolver returning the **club's own** answer on every call
     (`await clubTimeZone()`, `await readClubTimeZoneOutsideRequest()`) is not
     this defect and is not on the list.
@@ -162,14 +163,18 @@ are permanent: never renumbered, never reused.
     in that suite — so the deferral cannot grow, and the moment the last default
     goes the pin fails and hands the reader the promotion step. That is a ratchet
     with a mechanical trigger rather than a list that rots.
-  - Its two remaining defaults are held by cost, not by doubt, and #3133 records
-    the measurement: `seasonSelectLabel` has thirteen display callers, ten in
-    browser bundles the `server-only` seeder can never reach, and
-    `seasonYearOfCalendarDate` cascades through two optional pass-throughs to
-    roughly ninety call sites where the change actually written would be
-    `getFinancialYearEndMonth()` **at** the call site — compliant with this rule's
-    letter while reading the same cold cache, and one ambient read spread into
-    ninety modules. That is the `APP_STRIPE_CURRENCY` argument above, again.
+  - Its remaining defaults are held by **cost, not doubt**, and each needs a
+    decision rather than more threading. `seasonSelectLabel`'s callers are
+    display sites, most of them in browser bundles that the `server-only` seeder
+    can never reach, so the year-end has to arrive as data the way the club's
+    zone already does. `seasonYearOfCalendarDate` cascades through two optional
+    pass-throughs into most of the booking, waitlist, membership and Xero tree,
+    where the change actually written at each site would be
+    `getFinancialYearEndMonth()` **at** the call site — compliant with this
+    rule's letter while reading the same cold cache, and one ambient read spread
+    across every one of those modules. That is the `APP_STRIPE_CURRENCY` argument
+    above, again. The figures live with the pending entry in `eslint.config.mjs`,
+    beside the pin that keeps them true.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not
