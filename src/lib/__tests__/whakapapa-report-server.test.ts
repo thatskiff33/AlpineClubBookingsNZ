@@ -212,7 +212,7 @@ describe("fetchWhakapapaCurlData", () => {
   });
 
   it("parses road status, groups, and conditions from the report DOM", async () => {
-    mockFetchHtml(buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"]));
+    mockFetchHtml(buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"], TRAILS_PRESENT));
 
     const data = await fetchWhakapapaCurlData();
 
@@ -237,7 +237,7 @@ describe("fetchWhakapapaCurlData", () => {
   });
 
   it("routes the three groups by heading id", async () => {
-    mockFetchHtml(buildHtml(CANONICAL_SECTIONS, []));
+    mockFetchHtml(buildHtml(CANONICAL_SECTIONS, [], TRAILS_PRESENT));
 
     const data = await fetchWhakapapaCurlData();
 
@@ -261,7 +261,7 @@ describe("fetchWhakapapaCurlData", () => {
       },
       { id: "", label: "Lifts", items: [["Sky Waka", "Open"]] },
     ];
-    mockFetchHtml(buildHtml(renamed, []));
+    mockFetchHtml(buildHtml(renamed, [], TRAILS_PRESENT));
 
     const data = await fetchWhakapapaCurlData();
 
@@ -277,7 +277,7 @@ describe("fetchWhakapapaCurlData", () => {
       { id: "weather", label: "Weather", items: [["Cloud", "High"]] },
       { id: "lifts", label: "Lifts", items: [["Sky Waka", "Open"]] },
     ];
-    mockFetchHtml(buildHtml(unknown, []));
+    mockFetchHtml(buildHtml(unknown, [], TRAILS_PRESENT));
 
     const data = await fetchWhakapapaCurlData();
 
@@ -296,6 +296,7 @@ describe("fetchWhakapapaCurlData", () => {
         <div class="locationTitle_1pp0Bo"></div>
         ${metric("Wind", "40 km/h")}
       </div>
+      ${TRAILS_PRESENT}
     </body></html>`;
     mockFetchHtml(html);
 
@@ -318,7 +319,7 @@ describe("fetchWhakapapaCurlData", () => {
     // that rotates on each deploy (e.g. `areaTitle_3oPk4X` -> `areaTitle_4xD33B`),
     // which is what repeatedly broke the scraper. The hash-agnostic selectors
     // must match on the stable prefix regardless of the suffix.
-    const rotated = buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"])
+    const rotated = buildHtml(CANONICAL_SECTIONS, ["Top of Waterfall"], TRAILS_PRESENT)
       .replace(/_3CiH98/g, "_9aa11Z")
       .replace(/_3oPk4X/g, "_4xD33B")
       .replace(/_2hnOFJ/g, "_kk22QQ")
@@ -655,6 +656,51 @@ describe("fetchWhakapapaCurlData trails JSON fallback (#45)", () => {
     ]);
   });
 
+  it("maps an UNRECOGNISED difficulty word to \"\", matching the DOM path", () => {
+    // parseTrailDifficulty returns "" for anything outside its vocabulary; the
+    // widget renders a bare separator for any truthy difficulty, so the JSON
+    // path must degrade identically (review item 3).
+    const areas = mapWhakapapaReportApiTrailAreas({
+      whakapapa: {
+        facilities: {
+          areas: {
+            area: {
+              name: "New Area",
+              trails: { trail: { name: "New Trail", status: "Open", difficulty: "gnarly" } },
+            },
+          },
+        },
+      },
+    });
+    expect(areas[0]?.trails[0]?.difficulty).toBe("");
+  });
+
+  it("finds the resort node by its facilities key, not by position", () => {
+    // A sibling object key ordered before the resort key must not empty the
+    // trails (review item 5).
+    const areas = mapWhakapapaReportApiTrailAreas({
+      meta: { generated: "2026-08-27" },
+      whakapapa: {
+        facilities: {
+          areas: {
+            area: {
+              name: "Delta Area",
+              trails: { trail: { name: "Delta", status: "Open", difficulty: "expert" } },
+            },
+          },
+        },
+      },
+    });
+    expect(areas).toEqual([
+      {
+        name: "Delta Area",
+        trails: [
+          { name: "Delta", status: "Open", groomed: false, difficulty: "Expert", size: "" },
+        ],
+      },
+    ]);
+  });
+
   it("returns [] for junk payloads rather than throwing", () => {
     expect(mapWhakapapaReportApiTrailAreas(null)).toEqual([]);
     expect(mapWhakapapaReportApiTrailAreas("nope")).toEqual([]);
@@ -676,6 +722,12 @@ describe("fetchWhakapapaCurlData trails JSON fallback (#45)", () => {
     // The fallback rides the SAME allowlisted fetcher: manual redirects, or
     // an upstream 30x could point this cached, publicly-served read anywhere.
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: "manual" });
+    // The API hop asks for JSON: the page-fetch Accept ranks XML above the
+    // wildcard, and a backend honouring it would break .json() (review item 1).
+    expect(
+      (fetchMock.mock.calls[1]?.[1] as { headers: Record<string, string> })
+        .headers.Accept,
+    ).toBe("application/json");
     expect(data.trails.map((area) => area.name)).toEqual([
       "Happy Valley Area",
       "Sky Waka Area",

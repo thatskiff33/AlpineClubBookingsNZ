@@ -300,7 +300,12 @@ function normalizeJsonDifficulty(value: unknown): string {
   if (raw === "intermediate") return "Intermediate";
   if (raw === "advanced") return "Advanced";
   if (raw === "expert") return "Expert";
-  return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "";
+  // Unknown words map to "" exactly as the DOM path's parseTrailDifficulty
+  // does: the widget's DifficultyMarker renders nothing for an unrecognised
+  // word but TrailCard still prints the separator for any truthy difficulty,
+  // so passing one through would render a bare "· Groomed" row. Keeping the
+  // two sources byte-identical in behaviour is the contract (review item 3).
+  return "";
 }
 
 /** test seam — maps the /api/report payload's areas into trail areas. */
@@ -311,9 +316,11 @@ export function mapWhakapapaReportApiTrailAreas(
     return [];
   }
   // Everything nests under one resort key ({ "whakapapa": {...} }); take the
-  // first object value rather than hard-coding the resort name.
+  // first object value that actually carries a facilities node rather than
+  // hard-coding the resort name — so a sibling object key added ahead of the
+  // resort key cannot silently empty the trails (review item 5).
   const resort = Object.values(payload as Record<string, unknown>).find(
-    (value) => value && typeof value === "object",
+    (value) => Boolean(objectField(value, "facilities")),
   );
   const areaNodes = coerceOneOrMany(
     objectField(objectField(objectField(resort, "facilities"), "areas"), "area"),
@@ -351,8 +358,14 @@ async function fetchTrailAreasFromReportApi(
   sourceUrl: string,
 ): Promise<WhakapapaTrailArea[]> {
   const apiUrl = new URL(WHAKAPAPA_REPORT_API_PATH, sourceUrl).toString();
-  const response = await fetchAllowlistedReport(apiUrl);
+  // Ask for JSON on this hop: the default Accept ranks XML above the
+  // wildcard, and a backend that honoured it for this XML-shaped-JSON feed
+  // would hand back XML that .json() cannot parse (review item 1).
+  const response = await fetchAllowlistedReport(apiUrl, "application/json");
   if (!response.ok) {
+    // The error body is never read; release the socket rather than leaving
+    // it pinned until GC — the same guard the redirect path carries.
+    response.body?.cancel().catch(() => {});
     throw new Error(
       `Whakapapa report API fetch failed (status ${response.status}).`,
     );
@@ -380,15 +393,17 @@ function isRedirectStatus(status: number): boolean {
  * recorded once in docs/SECURITY-ATTACK-SURFACE.md -> "CodeQL And Semgrep Alert
  * Backlog Triage".
  */
-async function fetchAllowlistedReport(startUrl: string): Promise<Response> {
+async function fetchAllowlistedReport(
+  startUrl: string,
+  accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+): Promise<Response> {
   let target = startUrl;
 
   for (let hop = 0; hop <= WHAKAPAPA_MAX_REDIRECTS; hop += 1) {
     const response = await fetch(target, {
       method: "GET",
       headers: {
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept: accept,
         "User-Agent": "AlpineClubBookingsNZ/1.0 (+whakapapa-report)",
       },
       cache: "no-store",
