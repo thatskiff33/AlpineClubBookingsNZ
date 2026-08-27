@@ -6,11 +6,7 @@ import {
   requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
-import {
-  addDaysDateOnly,
-  getTodayDateOnly,
-  parseDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 
 /**
  * A single included night for a guest. Accepts a Date, a `yyyy-mm-dd`
@@ -70,7 +66,7 @@ export type BookingStayRange = {
  * refused to fold this fix into itself. So a value carrying a UTC time of day is
  * refused by name. That refusal is unreachable from today's callers: every one
  * derives its argument from `parseDateOnly`, `eachDateOnlyInRange`,
- * `getTodayDateOnly`, `storedDateOnly` or a `@db.Date` read, each of which is UTC
+ * the club's own today, `storedDateOnly` or a `@db.Date` read, each of which is UTC
  * midnight by construction.
  */
 function dateOnlyKey(value: Date): CalendarDate {
@@ -580,10 +576,20 @@ export function isGuestReturningOnDay(
  * Deliberately NOT for the partner-share sweeps, which DELETE rows: night D-1 is
  * occupancy that has already happened, and past lodge nights are history and
  * stay untouched (INV-CAP-010).
+ *
+ * `today` is REQUIRED and carries no default (#3123). The default it used to
+ * carry resolved to the CONTAINER's timezone rather than the club's persisted
+ * one (`INV-CONFIG-002`) — and this module cannot read the club's zone to fix
+ * that in place: it reaches the browser bundle (`admin/reports/page.tsx` is
+ * `"use client"` and imports it through `admin-reports.ts`), where
+ * `@/lib/club-time/server` is a bare throw and `club-time-zone-runtime` would
+ * drag Prisma in. Its one production caller is the bed-deactivation guard in
+ * `bed-allocation-beds.ts`, which runs under the global cohort key and the
+ * per-lodge capacity key, so the day has to be resolved outside that
+ * transaction in any case (`INV-LOCK-004`). Deleting the default is what makes
+ * the compiler ask every caller for the value.
  */
-export function getEarliestCurrentBedNightDate(
-  today: Date = getTodayDateOnly()
-): Date {
+export function getEarliestCurrentBedNightDate(today: Date): Date {
   return addDaysDateOnly(today, -1);
 }
 

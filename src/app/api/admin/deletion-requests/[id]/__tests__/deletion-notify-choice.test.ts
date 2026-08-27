@@ -124,6 +124,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { POST } from "@/app/api/admin/deletion-requests/[id]/route";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { getTodayDateOnly } from "@/lib/date-only";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
@@ -500,6 +501,15 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     expect(h.acquireFuturePartnerSharedAllocationLocks).toHaveBeenCalledWith(
       h.prisma,
       [member.id],
+      // #3123: the club's day, resolved before the transaction opened, and the
+      // SAME value the sweep below receives (`INV-LOCK-004`).
+      expect.any(Date),
+    );
+    expect(
+      h.acquireFuturePartnerSharedAllocationLocks.mock.calls[0]?.[2],
+    ).toEqual(
+      h.sweepFuturePartnerSharedAllocationsWithLocksHeld.mock.calls[0]?.[0]
+        .today,
     );
     const acquireOrder =
       h.acquireFuturePartnerSharedAllocationLocks.mock.invocationCallOrder[0];
@@ -516,6 +526,8 @@ describe("POST /api/admin/deletion-requests/[id] approve carve-out (#1788)", () 
     expect(h.enqueueHostingCoverageReevaluationForMember).toHaveBeenCalledWith(
       member.id,
       h.prisma,
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: "admin-1" },
     );
     const receiptOrder = h.sendAccountDeletionApprovedEmail.mock.invocationCallOrder[0];
@@ -1466,8 +1478,16 @@ describe("POST /api/admin/deletion-requests/[id] -- the future-stay cut-off is t
     // The premise, measured as an ANSWER rather than a zone identifier: two
     // different zone names can still name the same day (`America/Chicago` gives
     // Denver's answer at this instant), and then the bound below proves nothing.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * zone exists to get OFF the environment; here the environment IS the
+     * subject of the assertion — the line measures what the environment
+     * authority answers so it can prove the persisted zone answers differently.
+     * A literal zone name here would assert something about that name instead,
+     * and the premise would stop tracking the environment it is guarding.
+     */
     expect(
-      getTodayDateOnly().toISOString(),
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell the two apart.",
     ).not.toBe("2026-06-30T00:00:00.000Z");

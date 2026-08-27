@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
 
 const mockTransaction = vi.fn();
 const mockPaymentUpdate = vi.fn();
@@ -680,6 +687,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "m1", role: "USER" },
       input: {
@@ -733,6 +741,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
       "@/lib/booking-batch-modification-service"
     );
     const result = await modifyBookingBatch({
+      todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "bk1",
       actor: { id: "officer-1", role: "ADMIN" },
       input: {

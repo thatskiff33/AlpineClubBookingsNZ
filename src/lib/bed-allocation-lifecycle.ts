@@ -13,7 +13,6 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
@@ -1947,14 +1946,20 @@ async function recordPartnerShareSweepAudits(
  * an unshared future placement. It cannot MISS the lodge of a shared bed-night
  * whose counterpart belongs to another booking, because both occupants sit on
  * the same bed, hence in the same room and the same lodge.
+ *
+ * `today` is the club's day as the UTC-midnight `@db.Date` encoding
+ * (`INV-DATE-026`), handed down from the caller that resolved it OUTSIDE its
+ * transaction (#3123, `INV-LOCK-004`). This runs on a transaction client with
+ * the global cohort key already held, so it resolves nothing itself.
  */
 async function futurePartnerShareAllocationLodgeIds(
   tx: Prisma.TransactionClient,
   uniqueMemberIds: string[],
+  today: Date,
 ): Promise<string[]> {
   const allocationLodges = await tx.bedAllocation.findMany({
     where: {
-      stayDate: { gte: getTodayDateOnly() },
+      stayDate: { gte: today },
       bookingGuest: { memberId: { in: uniqueMemberIds } },
     },
     select: { room: { select: { lodgeId: true } } },
@@ -2160,17 +2165,29 @@ async function assertPartnerShareLodgeCoverageWithLocksHeld(
  * for why, and `docs/CONCURRENCY_AND_LOCKING.md` for the composed orders.
  * Neither may take the lodge tier after a member-lifecycle key: these helpers
  * are what keep every caller on the documented global -> lodge -> member order.
+ *
+ * `today` bounds the "future allocations" read that derives the lodge set. It
+ * is the club's day, resolved by the caller BEFORE it opened this transaction
+ * and passed in as a value (#3123, `INV-LOCK-004`): the global cohort key is
+ * taken on the first line below, so resolving the club's persisted timezone
+ * from here would take a second pooled connection under
+ * `pg_advisory_xact_lock(1)`. Pass the SAME value to the sweep that follows,
+ * or the lock prefix and the sweep can be derived from two different days
+ * across club midnight.
  */
 export async function acquireFuturePartnerSharedAllocationLocks(
   tx: Prisma.TransactionClient,
   memberIds: readonly string[],
+  today: Date,
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
   const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
   if (uniqueMemberIds.length === 0) return;
 
   const lodgeIds = [
-    ...new Set(await futurePartnerShareAllocationLodgeIds(tx, uniqueMemberIds)),
+    ...new Set(
+      await futurePartnerShareAllocationLodgeIds(tx, uniqueMemberIds, today),
+    ),
   ].sort();
   for (const lodgeId of lodgeIds) {
     await acquireLodgeCapacityLock(tx, lodgeId);
@@ -2202,8 +2219,12 @@ export async function acquireFuturePartnerSharedAllocationLocks(
  * to covering the cohort for the rows this sweep judges — without serialising
  * the club.
  *
- * Immutable pre-lock keys: `memberIds` come from the request. Everything the
- * set is derived FROM is re-read under the locks by the sweep itself.
+ * Immutable pre-lock keys: `memberIds` come from the request, and `today` is
+ * the club's day resolved by the caller BEFORE this transaction opened (#3123,
+ * `INV-LOCK-004`) — merge runs on a 120s budget holding every affected lodge
+ * key, so resolving the club's persisted timezone from in here is exactly the
+ * second-connection hazard the locking guide forbids. Everything else the set
+ * is derived FROM is re-read under the locks by the sweep itself.
  *
  * Call it BEFORE any member-lifecycle key, exactly like its sibling; the
  * documented order is lodge -> member and merge's own hosting policy-set key
@@ -2221,6 +2242,7 @@ export async function acquireFuturePartnerSharedAllocationLocks(
 export async function acquireMemberMergePartnerSharedLodgeLocks(
   tx: Prisma.TransactionClient,
   memberIds: readonly string[],
+  today: Date,
 ): Promise<string[]> {
   const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
   if (uniqueMemberIds.length === 0) return [];
@@ -2229,6 +2251,7 @@ export async function acquireMemberMergePartnerSharedLodgeLocks(
   const allocationLodgeIds = await futurePartnerShareAllocationLodgeIds(
     tx,
     uniqueMemberIds,
+    today,
   );
   const guestNightLodgeIds = await partnerShareGuestRowLodgeIds(
     tx,
@@ -2256,16 +2279,25 @@ export async function acquireMemberMergePartnerSharedLodgeLocks(
  * the second occupant is removed while the primary keeps the bed.
  *
  * Returns the removed rows so the caller can alert admins after the enclosing
- * transaction commits; external calls remain outside the transaction.
+ * transaction commits; external calls remain outside the transaction — and
+ * `today` is how that promise survives #3123. It is the club's day as the
+ * UTC-midnight `@db.Date` encoding (`INV-DATE-026`), resolved by the caller
+ * BEFORE it opened this transaction and passed in as a value, because reading
+ * the club's persisted timezone is itself a `clubTimeSettings.findUnique` and
+ * this function runs under the global cohort key and every affected lodge key
+ * (`INV-LOCK-004`). Required, never defaulted: the default is what let this
+ * take the container's timezone rather than the club's (`INV-CONFIG-002`).
+ * Give it the same value the lock prefix above was derived from.
  */
 export async function sweepFuturePartnerSharedAllocationsWithLocksHeld(params: {
   memberId: string;
   partnerMemberId?: string;
   reason: PartnerSharedSweepReason;
   db: BedAllocationLifecycleDb;
+  today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
   const db = params.db;
-  const today = getTodayDateOnly();
+  const today = params.today;
   const scopeIds = params.partnerMemberId
     ? [params.memberId, params.partnerMemberId]
     : [params.memberId];
@@ -2495,18 +2527,27 @@ type MergeSweepAllocationRow = Prisma.BedAllocationGetPayload<{
  *    guest-row derivation cannot see.
  *
  * Either one throws {@link UnlockedPartnerShareLodgeError} and writes nothing.
+ *
+ * `today` is the club's day as the UTC-midnight `@db.Date` encoding
+ * (`INV-DATE-026`), resolved by the caller BEFORE this transaction opened and
+ * passed in (#3123, `INV-LOCK-004`). Merge reaches here after a
+ * `Member ... FOR UPDATE` and while holding every affected lodge capacity key,
+ * and the very next call is a coverage PROOF — an extra pooled connection
+ * taken here is precisely what that fence exists to stop. Hand it the same
+ * value `acquireMemberMergePartnerSharedLodgeLocks` was given.
  */
 export async function sweepUnbackedFutureSharedDoublesWithLocksHeld(params: {
   memberIds: readonly string[];
   lockedLodgeIds: readonly string[];
   reason: PartnerSharedSweepReason;
   db: BedAllocationLifecycleDb;
+  today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
   const db = params.db;
   const scopeIds = [...new Set(params.memberIds.filter(Boolean))];
   if (scopeIds.length === 0) return [];
   const lockedLodgeIds = new Set(params.lockedLodgeIds);
-  const today = getTodayDateOnly();
+  const today = params.today;
 
   // #2672 — the coverage proof, before anything else and before the early
   // return on "no candidates". The hazard this closes is a lodge that holds no

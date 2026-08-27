@@ -63,6 +63,7 @@ import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/cap
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadSchoolGroupSoftCap } from "@/lib/lodge-settings";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
@@ -2017,10 +2018,18 @@ export async function approveBookingRequest(input: {
   // ceiling is the end of the check-in day in the CLUB's persisted zone (issue
   // #740, `payment-link-expiry.ts`). Booking status checks gate actual payment.
   // Read HERE for the same reason the member-guest policy below is.
+  //
+  // #3123 — and the SAME zone answers the club's day, which the person-night
+  // guard inside the approval transaction below needs as a value: that
+  // transaction holds `pg_advisory_xact_lock(1)`, the per-lodge capacity key and
+  // a per-member night lock per linked guest, and `INV-LOCK-004` forbids a
+  // `clubTimeSettings` read under them. One read, both answers.
+  const clubZone = await readClubTimeZoneOutsideRequest();
   const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(
     request.checkIn,
-    await readClubTimeZoneOutsideRequest()
+    clubZone
   );
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const { token: paymentToken, tokenHash: paymentTokenHash } = issueActionToken();
 
   // MG4-D-b (#2309). Read BEFORE the transaction, per the ordering rule in
@@ -2182,6 +2191,11 @@ export async function approveBookingRequest(input: {
         checkOut: request.checkOut,
         adminMemberId: input.adminMemberId,
         heldBookingId: request.heldBookingId ?? null,
+        // #3123 — the club day resolved before this transaction opened; the
+        // person-night guard inside `buildApprovalGuestCreates` takes it as a
+        // value rather than reading the club's zone under these locks
+        // (`INV-LOCK-004`).
+        today: clubTodayDateOnly,
       });
 
       let booking: { id: string };

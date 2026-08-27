@@ -73,6 +73,8 @@ describe("checkMembershipStatus BASED_ON_AGE_TIER dominance (#2041)", () => {
     expect(mocks.enqueueHostingCoverage).toHaveBeenCalledWith(
       "m1",
       expect.anything(),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE" },
     );
     expect(mocks.settleHostingCoverage).toHaveBeenCalledTimes(1);

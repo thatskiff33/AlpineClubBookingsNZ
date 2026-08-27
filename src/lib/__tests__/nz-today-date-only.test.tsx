@@ -137,7 +137,10 @@ describe("#2682 the fixture really is inside the UTC/NZ divergence window", () =
 
   it("is a different calendar day in UTC than in New Zealand", () => {
     expect(new Date().toISOString().slice(0, 10)).toBe(UTC_DAY);
-    expect(todayDateOnlyForTimeZone()).toBe(NZ_DAY);
+    // `CLUB_ZONE`, named, for the reason the block above gives: on this suite
+    // the zone IS the subject, so the reader has to be able to see which one
+    // produced the day (#3123).
+    expect(todayDateOnlyForTimeZone(CLUB_ZONE)).toBe(NZ_DAY);
     expect(UTC_DAY).not.toBe(NZ_DAY);
   });
 });

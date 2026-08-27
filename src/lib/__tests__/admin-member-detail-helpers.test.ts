@@ -8,7 +8,6 @@ import {
   formatMemberCommitteePreview,
   formatMemberContactPreview,
   formatMemberCalendarDay,
-  formatMemberDateNz,
   formatMemberFamilyPreview,
   formatMemberFinancePreview,
   formatMemberHistoryPreview,
@@ -443,20 +442,16 @@ describe("admin-member-detail-helpers", () => {
     })
   })
 
-  describe("formatMemberDateNz", () => {
-    it("formats a date as a short NZ date", () => {
-      expect(formatMemberDateNz("2026-05-01T12:00:00.000Z")).toMatch(/May 2026/)
-    })
-  })
-
   /*
-    `formatMemberCalendarDay` is the CALENDAR-DAY sibling of `formatMemberDateNz`
-    above, and the difference between them is the whole point (CT-4, #2870;
-    `INV-DATE-019`). `formatMemberDateNz` projects an instant through the
-    configured zone, which is right for a `createdAt` and wrong for a stored
-    lodge night or a date of birth: a calendar day has no timezone, and reading
-    the UTC-midnight encoding of one through a zone behind Greenwich names the
-    day before.
+    `formatMemberCalendarDay` is the CALENDAR-DAY half of a pair, and the
+    difference between the two halves is the whole point (CT-4, #2870;
+    `INV-DATE-019`). Its INSTANT sibling is `formatPayloadInstantDate` in
+    `@/lib/payload-instant`, which projects a moment through the club's persisted
+    zone — right for a `createdAt`, and wrong for a stored lodge night or a date
+    of birth: a calendar day has no timezone, and reading the UTC-midnight
+    encoding of one through a zone behind Greenwich names the day before. (The
+    sibling used to be this file's own `formatMemberDateNz`, which read
+    `APP_TIME_ZONE`; #3123 deleted it once its last caller had moved.)
 
     THESE CASES CHECK THE SHAPE AND THE CONTRACT, not the zone authority, and
     saying so matters: `APP_TIME_ZONE` resolves to `Pacific/Auckland` under test,

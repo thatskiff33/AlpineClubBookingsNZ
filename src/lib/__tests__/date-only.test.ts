@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { APP_TIME_ZONE } from "@/config/operational";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -37,7 +38,10 @@ describe("date-only helpers", () => {
 
   it("formats instants as New Zealand date-only values", () => {
     expect(
-      formatDateOnlyForTimeZone(new Date("2026-04-29T12:00:00.000Z"))
+      formatDateOnlyForTimeZone(
+        new Date("2026-04-29T12:00:00.000Z"),
+        "Pacific/Auckland"
+      )
     ).toBe("2026-04-30");
   });
 
@@ -199,13 +203,20 @@ describe("todayDateOnlyForTimeZone", () => {
     expect(todayDateOnlyForTimeZone("Pacific/Auckland")).toBe("2026-07-07");
   });
 
-  it("derives a valid date-only string using the configured app time zone by default", () => {
-    // APP_TIME_ZONE resolves from the ambient TZ env, so assert the shape rather
-    // than a specific zone to stay robust across CI clock configurations.
+  it("derives a valid date-only string for the environment's configured zone", () => {
+    // This case used to exercise the helper's DEFAULT argument. #3123 deletes
+    // that default so an unnamed zone becomes a compile error, and
+    // `APP_TIME_ZONE` is what the default resolved to — so it is named here.
+    // It still resolves from the ambient TZ env, so the assertion is on the
+    // SHAPE rather than on a specific zone, to stay robust across CI clock
+    // configurations. The club-zone answers are pinned by the three cases
+    // above; this one is only about the environment fallback.
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-07T13:00:00.000Z"));
 
-    expect(todayDateOnlyForTimeZone()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(todayDateOnlyForTimeZone(APP_TIME_ZONE)).toMatch(
+      /^\d{4}-\d{2}-\d{2}$/
+    );
   });
 });
 

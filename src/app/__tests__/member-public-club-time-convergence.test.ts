@@ -88,7 +88,7 @@
  * relative path reaches the same verdict as the `@/lib/...` alias. A namespace
  * import and a dynamic `import()` hide WHICH helpers a file reads, so both are
  * banned outright rather than documented — for `@/config/operational` as well as
- * for the two legacy adapters, which is a gap this census carried until the
+ * for the legacy adapter, which is a gap this census carried until the
  * #2870 fix round: the headline said "WITH NO EXCEPTIONS", and
  * `import * as ops from "@/config/operational"` walked straight past it.
  *
@@ -207,24 +207,36 @@ const ENVIRONMENT_ZONE_HELPERS: Record<string, string> = {
   startOfDateOnlyForTimeZone: "use `(await clubTime()).startOfDay(date)`",
   endOfDateOnlyForTimeZone:
     "use `(await clubTime()).endOfDayExclusive(date)`, minus a millisecond if the filter is inclusive",
-  formatNZDate:
-    "use `formatClubDate(calendarDateOfDateOnlyInstant(v))` for a lodge night, `instantDate(v)` for a moment",
-  formatNZDateTime: "use `(await clubTime()).instantDateTime(instant)`",
-  formatNZLongDate: "use `formatClubLongDate` / `instantLongDate`",
-  formatNZTime: "use `(await clubTime()).instantTime(instant)`",
-  formatNZMonthYear: "use `(await clubTime()).instantMonthYear(instant)`",
-  formatNZWeekdayDate: "use `formatClubWeekdayDate` / `instantWeekdayDate`",
 };
 
-/** The legacy adapter modules, identified by basename. */
-const LEGACY_MODULE_BASENAMES = new Set(["date-only", "nzst-date"]);
+/*
+  THE SIX `formatNZ*` ROWS ARE GONE, and their absence is the point. They named
+  the exports of `src/lib/nzst-date.ts`, the club's second rendering seam, which
+  #3123 DELETED once its last production caller moved (CT-6, #2991). A helper on
+  this map is a named import this census refuses; an export of a module that does
+  not exist cannot be imported at all, so a row for one would be a rule that can
+  never fire, reading as coverage. The rendering seam is now `@/lib/club-time`
+  alone, and the guards that keep it that way are the `toLocale*` arms in
+  `eslint.config.mjs` and the `Intl.DateTimeFormat` census in
+  `src/lib/club-time/__tests__/club-time-kernel-census.test.ts`, which also
+  asserts the deleted file has not come back.
+*/
+
+/**
+ * The legacy adapter modules, identified by basename.
+ *
+ * ONE LEFT. `nzst-date` was the other until #3123 deleted `src/lib/nzst-date.ts`;
+ * a basename matching no file is a rule that can never fire, so it is removed
+ * rather than kept as decoration.
+ */
+const LEGACY_MODULE_BASENAMES = new Set(["date-only"]);
 
 /**
  * Modules whose zone-bearing exports must be reached by NAME or not at all.
  *
- * `operational` joins the two adapters because `APP_TIME_ZONE` lives there: a
+ * `operational` joins the adapter because `APP_TIME_ZONE` lives there: a
  * namespace import of it hides an environment read exactly as effectively as a
- * namespace import of `nzst-date` hides `formatNZDate`.
+ * namespace import of `date-only` hides `getTodayDateOnly`.
  */
 const OPAQUE_READ_BASENAMES = new Set([
   ...LEGACY_MODULE_BASENAMES,
@@ -316,9 +328,9 @@ function legacyImportedNames(source: string): string[] {
  * Reads of a zone-bearing module that hide WHICH exports are being read.
  *
  * Keyed on `OPAQUE_READ_BASENAMES`, so `@/config/operational` is covered
- * alongside the two adapters: `import * as ops` hides `ops.APP_TIME_ZONE`
- * exactly as effectively as `import * as dates` hides `dates.formatNZDate`,
- * and `importsEnvironmentZone` below can only see a named clause.
+ * alongside the adapter: `import * as ops` hides `ops.APP_TIME_ZONE` exactly as
+ * effectively as `import * as dates` hides `dates.getTodayDateOnly`, and
+ * `importsEnvironmentZone` below can only see a named clause.
  */
 function opaqueZoneModuleReads(source: string): string[] {
   const found: string[] = [];
@@ -496,8 +508,10 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
 
     it("sees an `export … from` re-export", () => {
       expect(
-        legacyImportedNames('export { formatNZTime } from "@/lib/nzst-date";'),
-      ).toEqual(["formatNZTime"]);
+        legacyImportedNames(
+          'export { todayDateOnlyForTimeZone } from "@/lib/date-only";',
+        ),
+      ).toEqual(["todayDateOnlyForTimeZone"]);
     });
 
     it("catches a namespace import and a dynamic import", () => {
@@ -505,7 +519,7 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
         opaqueZoneModuleReads('import * as dates from "@/lib/date-only";'),
       ).toHaveLength(1);
       expect(
-        opaqueZoneModuleReads('const m = await import("@/lib/nzst-date");'),
+        opaqueZoneModuleReads('const m = await import("@/lib/date-only");'),
       ).toHaveLength(1);
     });
 
@@ -631,7 +645,7 @@ describe("member/lodge/finance/public page temporal convergence (CT-4 group E, #
       // would not have caught that; only driving the real entry point does.
       const cases: ReadonlyArray<readonly [string, string]> = [
         ["a zone-bearing legacy helper", 'import { getTodayDateOnly } from "@/lib/date-only";'],
-        ["a namespace import of an adapter", 'import * as d from "@/lib/nzst-date";'],
+        ["a namespace import of an adapter", 'import * as d from "@/lib/date-only";'],
         ["a namespace import of the config module", 'import * as ops from "@/config/operational";'],
         ["a dynamic import of the config module", 'const m = await import("@/config/operational");'],
         ["an APP_TIME_ZONE import", 'import { APP_TIME_ZONE } from "@/config/operational";'],

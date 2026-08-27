@@ -7,8 +7,11 @@
  * A payment-link email carries its deadline twice over. The shipped HTML body
  * renders `expiresAt` through `emailClubDateTime` — the club's PERSISTED zone
  * (CT-5, #2869). The sending function ALSO puts the same value into
- * `templateData`, and that copy went through `formatNZDateTime`, whose zone is
- * `unvalidatedLegacyClubTimeZone(APP_TIME_ZONE)` — the CONTAINER's.
+ * `templateData`, and that copy went through `formatNZDateTime` — the retired
+ * `@/lib/nzst-date` adapter, whose zone was
+ * `unvalidatedLegacyClubTimeZone(APP_TIME_ZONE)`, the CONTAINER's. #3123 deleted
+ * that adapter; `ENVIRONMENT_SAYS` below spells its rendering out so this suite
+ * can still name the wrong answer it refuses.
  *
  * Two renderings of one instant in two zones is only a latent defect while
  * nothing reads the second one. Something does: when a club has saved a body
@@ -119,7 +122,11 @@ vi.mock("@/lib/logger", () => ({
 import { APP_TIME_ZONE } from "@/config/operational";
 import { type ClubTimeZone } from "@/lib/club-time";
 import { formatLinkExpiry } from "@/app/(public)/pay/[token]/pay-link-presentation";
-import { bindClubTime } from "@/lib/club-time";
+import {
+  bindClubTime,
+  formatClubInstantDateTime,
+  unvalidatedLegacyClubTimeZone,
+} from "@/lib/club-time";
 import { EMAIL_AUDIT_DEFAULTS } from "@/lib/email-message-audit-defaults";
 import {
   __resetEmailClubTimeZoneForTests,
@@ -130,7 +137,6 @@ import {
   type EmailTemplateData,
 } from "@/lib/email-message-renderer";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
-import { formatNZDateTime } from "@/lib/nzst-date";
 import {
   sendBookingRequestApprovedEmail,
   sendSplitGuestPaymentLinkEmail,
@@ -172,8 +178,22 @@ const PAGE_SAYS = formatLinkExpiry(
   bindClubTime(CLUB_ZONE),
 );
 
-/** What the retired `templateData` route would have said. */
-const ENVIRONMENT_SAYS = formatNZDateTime(EXPIRES_AT);
+/**
+ * What the retired `templateData` route would have said — the WRONG answer, kept
+ * because every case below asserts the email does not contain it.
+ *
+ * SPELLED OUT RATHER THAN IMPORTED, since #3123 deleted `@/lib/nzst-date`. This
+ * was `formatNZDateTime(EXPIRES_AT)`, and that function was exactly the two lines
+ * below: the house date-time shape over `unvalidatedLegacyClubTimeZone(APP_TIME_ZONE)`.
+ * The zone is UNVALIDATED on purpose — `APP_TIME_ZONE` is a raw `process.env.TZ`
+ * passthrough, so it may legitimately be `UTC` or a legacy spelling that CT-1's
+ * validator refuses, and this is the answer a wrong implementation gives rather
+ * than a zone any club may choose.
+ */
+const ENVIRONMENT_SAYS = formatClubInstantDateTime(
+  EXPIRES_AT,
+  unvalidatedLegacyClubTimeZone(APP_TIME_ZONE),
+);
 
 const APPROVED = "booking-request-approved";
 const SPLIT_GUEST = "split-guest-payment-link";

@@ -92,6 +92,14 @@ const CALENDAR_DAY_STRING = "1985-06-15";
 // the two operations stop agreeing, and the only place the calendar-day
 // assertions become decidable.
 const ZONE_BEHIND_UTC = "America/New_York";
+/**
+ * The club's own zone, named rather than left to `formatDateOnlyForTimeZone`'s
+ * `APP_TIME_ZONE` default, which #3123 deletes. It is New Zealand because that
+ * is this file's premise, and `expectClubTimeZonePremise()` below asserts the
+ * environment still agrees — so this constant cannot drift out of step and leave
+ * the divergence cases measuring nothing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 describe("#2860 the premise: the club zone is New Zealand and each instant really is divergent", () => {
   it("runs with the club time zone actually set to New Zealand", () => {
@@ -106,7 +114,7 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
       // than asserted against each other as literals, so a fixture that drifted
       // out of the divergence window fails here instead of quietly passing.
       expect(instant.toISOString().slice(0, 10)).toBe(utcDay);
-      expect(formatDateOnlyForTimeZone(instant)).toBe(clubDay);
+      expect(formatDateOnlyForTimeZone(instant, CLUB_ZONE)).toBe(clubDay);
     },
   );
 
@@ -120,7 +128,9 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
   it.each(CLUB_DAY_CASES)(
     "$label: one millisecond earlier is still the previous club day, and a DEEPER zone gets that wrong",
     ({ justBefore, justBeforeClubDay, clubDay, deeperZone }) => {
-      expect(formatDateOnlyForTimeZone(justBefore)).toBe(justBeforeClubDay);
+      expect(formatDateOnlyForTimeZone(justBefore, CLUB_ZONE)).toBe(
+        justBeforeClubDay,
+      );
       // UTC+14 has already rolled over, so the pair brackets the club offset
       // from both sides rather than only proving "deep enough".
       expect(formatDateOnlyForTimeZone(justBefore, deeperZone)).toBe(clubDay);
@@ -131,7 +141,9 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
 describe("#2860 the other half of the premise: a calendar day is read by TRUNCATION, which is a DIFFERENT operation", () => {
   it("agrees with the club-zone formatter in New Zealand, which is exactly why an NZ-only assertion cannot decide it", () => {
     expect(formatDateOnly(CALENDAR_DAY)).toBe(CALENDAR_DAY_STRING);
-    expect(formatDateOnlyForTimeZone(CALENDAR_DAY)).toBe(CALENDAR_DAY_STRING);
+    expect(formatDateOnlyForTimeZone(CALENDAR_DAY, CLUB_ZONE)).toBe(
+      CALENDAR_DAY_STRING,
+    );
   });
 
   it("disagrees in a zone BEHIND UTC — the club-zone formatter would move a stored calendar day a day early", () => {

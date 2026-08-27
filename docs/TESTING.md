@@ -215,10 +215,13 @@ Two details there are load-bearing rather than stylistic:
 
 - **A module body, not a `beforeAll`.** A `beforeAll` runs only after every
   module in the file's import graph has already been evaluated. Module-level date
-  constants are real code — `src/components/admin-sidebar.tsx:123` builds its
+  constants are real code — `src/components/admin-sidebar.tsx` used to build its
   unpaid-finished-stays deep link from today's date at import time — and a
   hook-based freeze left those on the real clock while the tests checking them
-  saw the frozen one.
+  saw the frozen one. That particular constant no longer exists: #3123 moved it
+  into the render, because a value evaluated once per bundle load was also stale
+  for the life of the browser tab. The hazard is unchanged, because it belongs to
+  module evaluation order rather than to that one file.
 - **Its own setup file, listed first.** A module's imports evaluate before its
   body, so an install inside `vitest.setup.ts` would still be too late for
   everything `vitest.setup.ts` imports. Vitest evaluates `setupFiles` in order,

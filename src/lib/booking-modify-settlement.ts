@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
+import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -71,15 +72,30 @@ export type PaymentAdjustmentResult = {
  * transaction-scoped and imports no module-level client, so a default would hide
  * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
  * `CancellationPolicyDb` in `cancellation.ts`.
+ *
+ * `todayAtClub` is REQUIRED for the SAME reason and is the other half of the
+ * same rule (#3123). `INV-LOCK-004` names the club timezone as one of only two
+ * reads that cannot take a transaction client, so the club's day is resolved by
+ * whichever caller opened the transaction, BEFORE it opened it, and arrives here
+ * as a value. All four production callers hold the global cohort key and the
+ * per-lodge capacity key when they reach this line.
  */
 export async function calculateModificationSettlementOptions({
   booking,
   netChargeCents,
   db,
+  todayAtClub,
 }: {
   booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment" | "lodgeId">;
   netChargeCents: number;
   db: CancellationPolicyDb;
+  /**
+   * The club's own calendar day (`INV-CONFIG-002`), resolved outside this
+   * transaction. It feeds `daysUntilDate` below, which is the refund-tier
+   * boundary: a day early tiers a member's reduction refund one step down from
+   * the club's published policy.
+   */
+  todayAtClub: CalendarDate;
 }): Promise<BookingModificationSettlementOptions | null> {
   const reductionAmountCents = Math.max(0, -netChargeCents);
   const remainingRefundableCents = getRemainingRefundableCents(booking.payment);
@@ -95,7 +111,7 @@ export async function calculateModificationSettlementOptions({
   }
 
   const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
-  const daysUntilCheckIn = daysUntilDate(booking.checkIn);
+  const daysUntilCheckIn = daysUntilDate(booking.checkIn, todayAtClub);
   const {
     cardRefundAmountCents,
     cardRefundPercentage,

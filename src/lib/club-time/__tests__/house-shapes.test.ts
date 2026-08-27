@@ -40,16 +40,22 @@ const DENVER = requireClubTimeZone("America/Denver");
 const INSTANT = new Date("2026-04-16T02:30:00.000Z");
 
 describe("the six shapes are byte-identical to the helpers they replace", () => {
-  it("matches the frozen formatters nzst-date used to hold, on 400 instants", () => {
+  it("matches the frozen formatters the retired adapter held, on 400 instants", () => {
     /*
-      THE OLD SPELLING IS WRITTEN OUT BY HAND, and that is the whole point of the
-      case. `nzst-date.ts` now DELEGATES to these functions, so
-      `formatNZDate(x) === formatClubInstantDate(x, zone)` compares the kernel
-      with itself and asserts nothing at all — it was the strongest-looking
-      evidence in this file and it was a tautology. These are the six frozen
-      `Intl.DateTimeFormat` constants that module held before CT-2 (#2990),
-      transcribed from `git show` of the pre-delegation file, so the comparison
-      is against what actually shipped.
+      THE OLD SPELLING IS WRITTEN OUT BY HAND, and since #3123 that is the ONLY
+      surviving record of it. These are the six frozen `Intl.DateTimeFormat`
+      constants `src/lib/nzst-date.ts` held before CT-2 (#2990) made it delegate,
+      transcribed from `git show` of the pre-delegation file, so the comparison is
+      against what actually shipped to the club for years.
+
+      IT WAS WRITTEN OUT BY HAND BEFORE THE DELETION TOO, for a reason that still
+      explains the shape of this case. While the adapter existed and delegated,
+      `formatNZDate(x) === formatClubInstantDate(x, zone)` compared the kernel
+      with itself and asserted nothing at all — the strongest-looking evidence in
+      this file, and a tautology. #3123 then deleted the adapter outright, which
+      is why this case cannot be re-expressed through it and why these constants
+      must stay: they are the club's rendering history, and the only thing that
+      would catch the kernel drifting away from it.
 
       Six shapes over 400 consecutive days, both sides of both New Zealand
       transitions, at a time of day that differs between the club's zone and UTC.

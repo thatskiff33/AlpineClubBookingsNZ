@@ -4,6 +4,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -418,10 +419,20 @@ export async function POST(req: NextRequest) {
             })
             .map(({ member }) => member.id);
 
+    // #3123 / INV-LOCK-004 — ONE club day for the whole bulk transaction,
+    // resolved before it opens. Two reasons, and both matter here: reading the
+    // club's persisted timezone is a `clubTimeSettings.findUnique`, which
+    // inside this transaction would take a second pooled connection while the
+    // global cohort key, every affected lodge key and the member lifecycle
+    // keys are held; and a bulk action touching dozens of members must judge
+    // every one of them against the same day, which per-member reads
+    // straddling club midnight would not.
+    const clubTodayForBulk = await clubTodayDateOnlyInstant();
+
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
       if (sweepLockMemberIds.length > 0) {
-        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds);
+        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds, clubTodayForBulk);
         await acquireMemberLifecycleLocks(tx, sweepLockMemberIds);
       }
       // Last-admin end-state guard (issue #1604): evaluate the whole set, not
@@ -453,10 +464,15 @@ export async function POST(req: NextRequest) {
       // the obligation commit together; never refuses the deactivation.
       if (action === "deactivate" || action === "reactivate") {
         for (const memberId of idsToUpdate) {
-          await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-            cause: "SYSTEM_CHANGE",
-            actorMemberId: currentUserId,
-          });
+          await enqueueHostingCoverageReevaluationForMember(
+            memberId,
+            tx,
+            clubTodayForBulk,
+            {
+              cause: "SYSTEM_CHANGE",
+              actorMemberId: currentUserId,
+            },
+          );
         }
       }
       if (action === "set-role") {
@@ -490,10 +506,15 @@ export async function POST(req: NextRequest) {
             },
           });
           if (reconciledAgeTier !== undefined) {
-            await enqueueHostingCoverageReevaluationForMember(member.id, tx, {
-              cause: "SYSTEM_CHANGE",
-              actorMemberId: currentUserId,
-            });
+            await enqueueHostingCoverageReevaluationForMember(
+              member.id,
+              tx,
+              clubTodayForBulk,
+              {
+                cause: "SYSTEM_CHANGE",
+                actorMemberId: currentUserId,
+              },
+            );
             // #2821: an age tier decides whether this member may be anybody's
             // contact of record (`isUsableEmailSource` requires ADULT), so an
             // ORG grant that forces N/A — or a revoke that restores a person
@@ -519,6 +540,7 @@ export async function POST(req: NextRequest) {
               memberId: member.id,
               reason: "member_age_tier_changed",
               db: tx,
+              today: clubTodayForBulk,
             });
             if (swept.length > 0) {
               sweptSharesByMember.push({
@@ -569,6 +591,7 @@ export async function POST(req: NextRequest) {
             memberId,
             reason: "member_deactivated",
             db: tx,
+            today: clubTodayForBulk,
           });
           if (swept.length > 0) {
             sweptSharesByMember.push({

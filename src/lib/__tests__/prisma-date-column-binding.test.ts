@@ -30,6 +30,16 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { getTodayDateOnly, startOfDateOnlyForTimeZone } from "@/lib/date-only";
 
+/**
+ * The club's zone, named rather than left to the two helpers' `APP_TIME_ZONE`
+ * default, which #3123 deletes. New Zealand is what this file's one zone-bearing
+ * assertion is written against: club midnight on 2 July 2026 is
+ * `2026-07-01T12:00:00.000Z` only at UTC+12. The `getTodayDateOnly` assertion
+ * takes it too, and is indifferent to it — the date-only encoding is UTC midnight
+ * for every club.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 type CapturedQuery = { text: string; values: unknown[] };
 
 const captured: CapturedQuery[] = [];
@@ -102,7 +112,7 @@ describe("a @db.Date column is bound as a calendar DAY (#2838, INV-DATE-013)", (
     const dateOnly = new Date(`${clubDay}T00:00:00.000Z`);
     // Both name midnight at the start of the same NZ day; only the encoding
     // differs. (`getTodayDateOnly()` produces the second shape — UTC midnight.)
-    expect(getTodayDateOnly().toISOString()).toMatch(/T00:00:00\.000Z$/);
+    expect(getTodayDateOnly(CLUB_ZONE).toISOString()).toMatch(/T00:00:00\.000Z$/);
 
     await prisma.booking.findMany({ where: { checkIn: { gte: localMidnightUnderNzPin } } });
     const old = whereValues(1, '"checkIn" >= $1');
@@ -142,7 +152,7 @@ describe("a plain DateTime column keeps the whole instant (#2838, INV-DATE-013)"
     // the other half of the rule the dashboard states: handing this column a
     // date-only value would bind UTC midnight, which is club MIDDAY, and hide a
     // draft expiring that morning.
-    const startOfClubDay = startOfDateOnlyForTimeZone("2026-07-02");
+    const startOfClubDay = startOfDateOnlyForTimeZone("2026-07-02", CLUB_ZONE);
     expect(startOfClubDay.toISOString()).toBe("2026-07-01T12:00:00.000Z");
 
     await prisma.booking.findMany({

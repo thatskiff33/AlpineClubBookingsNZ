@@ -2141,8 +2141,25 @@ empty, whereas the sidebar reveals them only while their queue is non-empty. As
 defence in depth, `getAdminFeatureSearchIndex` fails **closed** — a missing
 permission matrix yields an empty index — even though `getVisibleAdminNavSections`
 keeps its pre-existing fail-open contract. There is no second registry to drift:
-`navSections` remains the single source of truth, optionally enriched with a
-per-entry `keywords` field that only widens palette matching.
+`buildAdminNavSections` remains the single source of truth, optionally enriched
+with a per-entry `keywords` field that only widens palette matching.
+
+**One nav href carries a date, and both surfaces take it from the same place
+(#3123).** The Unpaid Finished Stays entry is a deep link whose `checkOutTo`
+cut-off is the club's own day, so `buildAdminNavSections`, and therefore all three
+of `getVisibleAdminNavSections`, `getAdminFeatureSearchIndex` and
+`getRenderedAdminNavSections`, take that day as a **required first argument**. Both
+the sidebar and the palette obtain it from `useClubTime()` — the same bound kernel
+from the same `ClubTimeProvider` (`INV-CONFIG-002`) — and recompute it per render.
+It was previously a module-level constant read from the container's environment
+timezone, which was wrong twice: it answered from the wrong zone, and a module body
+is evaluated once per bundle load, so the cut-off went stale while the badge count
+beside it was refetched per mount. Inside the sidebar the link href and the badge
+map key are now the same call of the shared helper on the same value in the same
+render, so they cannot describe different days.
+`src/components/__tests__/admin-sidebar-club-time.test.tsx` renders both surfaces
+under one provider and asserts the palette navigates to the exact href the sidebar
+link carries.
 
 `src/lib/token-catalogue.ts` is the client-safe single source of truth for the
 `{{token}}` placeholders supported in admin HTML content (page bodies and lodge
@@ -2166,7 +2183,7 @@ help), while member and public use the hand-distilled corpora in that folder.
 That registry is `index.ts` — the path matching, longest-prefix resolution,
 fallbacks and question attachment — over one entry module per **admin sidebar
 section** (`src/lib/contextual-help/admin/*.ts`, the same sections
-`navSections` shows operators, plus one `appearance-and-website` module split
+`buildAdminNavSections` shows operators, plus one `appearance-and-website` module split
 off Setup & Configuration for size — `/admin/appearance` is an item in that
 section, not a section of its own), plus `types.ts` and
 `booking-status-glossary.ts` as leaves so a client component can take the shape

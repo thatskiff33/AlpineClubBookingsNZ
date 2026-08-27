@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AgeTier } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { isCalendarDate } from "@/lib/club-time";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   getJoiningFeePreviewForInputs,
   getJoiningFeePreviewForMember,
@@ -74,14 +75,23 @@ export async function POST(
     ageTier !== undefined ||
     dateOfBirth != null;
 
+  // #3123 — ONE read of the club's persisted zone for this preview, and the day
+  // the fee schedule's effective window is judged on. It used to be defaulted
+  // inside the preview from the ENVIRONMENT's zone, which is a wrong PRICE for a
+  // club whose configured zone is behind its container's. React-cached, so
+  // whichever branch runs pays for it at most once.
+  const asOf = await clubTodayDateOnlyInstant();
   const preview = hasRawInputs
-    ? await getJoiningFeePreviewForInputs({
-        membershipTypeId: membershipTypeId ?? null,
-        membershipTypeKey: membershipTypeKey ?? null,
-        ageTier: ageTier ?? null,
-        dateOfBirth: dateOfBirth ? new Date(`${dateOfBirth}T00:00:00.000Z`) : null,
-      })
-    : await getJoiningFeePreviewForMember(parsedParams.data.id);
+    ? await getJoiningFeePreviewForInputs(
+        {
+          membershipTypeId: membershipTypeId ?? null,
+          membershipTypeKey: membershipTypeKey ?? null,
+          ageTier: ageTier ?? null,
+          dateOfBirth: dateOfBirth ? new Date(`${dateOfBirth}T00:00:00.000Z`) : null,
+        },
+        { asOf },
+      )
+    : await getJoiningFeePreviewForMember(parsedParams.data.id, { asOf });
 
   return NextResponse.json(preview);
 }

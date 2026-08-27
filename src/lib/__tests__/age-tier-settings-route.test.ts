@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { getTodayDateOnly } from "@/lib/date-only";
 
 // Route-level tests for PUT /api/admin/age-tier-settings (issue #2009 — the
@@ -296,8 +297,16 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     // different names can still produce the same day (`America/Chicago` gives
     // Denver's answer for every fixture in this file), and a name check would
     // pass while this assertion went vacuous.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * zone exists to get OFF the environment; here the environment IS the
+     * subject of the assertion — the line measures what the environment
+     * authority answers so it can prove the persisted zone answers differently.
+     * A literal zone name here would assert something about that name instead,
+     * and the premise would stop tracking the environment it is guarding.
+     */
     expect(
-      getTodayDateOnly().toISOString(),
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now names the same day as the " +
         "persisted club zone, so this bound cannot tell which of the two the " +
         "route read. Pick a persisted zone the environment disagrees with.",

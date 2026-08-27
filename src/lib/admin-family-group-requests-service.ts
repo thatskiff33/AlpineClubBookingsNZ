@@ -14,6 +14,7 @@ import {
 } from "@/lib/age-tier";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
 import {
   buildParentLinks,
   matchParentLinkIdForNotification,
@@ -152,17 +153,26 @@ function getChildRequestTierMetadata(
   };
 }
 
-async function findPotentialMemberMatches(request: {
-  type: string;
-  familyGroupId: string;
-  childFirstName?: string | null;
-  childLastName?: string | null;
-  childDateOfBirth?: Date | null;
-  requestedFirstName?: string | null;
-  requestedLastName?: string | null;
-  requestedDateOfBirth?: Date | null;
-  requestedEmail?: string | null;
-}) {
+async function findPotentialMemberMatches(
+  request: {
+    type: string;
+    familyGroupId: string;
+    childFirstName?: string | null;
+    childLastName?: string | null;
+    childDateOfBirth?: Date | null;
+    requestedFirstName?: string | null;
+    requestedLastName?: string | null;
+    requestedDateOfBirth?: Date | null;
+    requestedEmail?: string | null;
+  },
+  /**
+   * The club's calendar day, resolved once by the caller (#3123). Required
+   * rather than defaulted, and threaded rather than re-read: the same zone read
+   * already answers this list's season start, and two reads on one path can
+   * disagree across club midnight.
+   */
+  clubDay: CalendarDate,
+) {
   if (request.type !== "CHILD_REQUEST" && request.type !== "ADULT_REQUEST") {
     return [];
   }
@@ -266,7 +276,7 @@ async function findPotentialMemberMatches(request: {
     // deciding WHICH of several similarly-named records to link, and the age is
     // all that decision needs — so `dateOfBirth` is read here (it is also the
     // match filter above) and never leaves the server.
-    ageLabel: formatMemberIdentityAge(member.dateOfBirth),
+    ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubDay),
     parentLinks: buildParentLinks(member),
     alreadyInGroup: member.familyGroupMemberships.length > 0,
   }));
@@ -279,10 +289,11 @@ async function findPotentialMemberMatches(request: {
  * accidentally forward it: the compiler stops it, not a code review.
  */
 function replaceDateOfBirthWithAge<T extends { dateOfBirth: Date | null }>(
-  person: T
+  person: T,
+  clubDay: CalendarDate
 ): Omit<T, "dateOfBirth"> & { ageLabel: string } {
   const { dateOfBirth, ...rest } = person;
-  return { ...rest, ageLabel: formatMemberIdentityAge(dateOfBirth) };
+  return { ...rest, ageLabel: formatMemberIdentityAge(dateOfBirth, clubDay) };
 }
 
 export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
@@ -346,12 +357,14 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
     orderBy: { createdAt: "asc" },
   });
 
-  // ONE season start for the whole list, from the club's PERSISTED zone (CT-4,
-  // #2870). An age tier decides a price band, so every row on one screen must be
-  // judged against the same season.
-  const clubSeasonStart = getSeasonStartDate(
-    clubSeasonYear(await readClubTimeZoneOutsideRequest()),
-  );
+  // ONE read of the club's PERSISTED zone for the whole list (CT-4, #2870;
+  // #3123), answering both temporal questions this screen asks. An age tier
+  // decides a price band and an age label decides WHICH person a reviewer is
+  // looking at, so every row must be judged against the same season AND the
+  // same day; two reads on one path can straddle club midnight and disagree.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubSeasonStart = getSeasonStartDate(clubSeasonYear(clubZone));
+  const clubDay = clubToday(clubZone);
 
   const mapped = await Promise.all(
     requests.map(async (request) => ({
@@ -360,12 +373,12 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
       // #2568: swap each person's stored date of birth for the calculated age
       // before the payload leaves the server. The spread above would otherwise
       // carry `dateOfBirth` straight through on all three relations.
-      requester: replaceDateOfBirthWithAge(request.requester),
+      requester: replaceDateOfBirthWithAge(request.requester, clubDay),
       subjectMember: request.subjectMember
-        ? replaceDateOfBirthWithAge(request.subjectMember)
+        ? replaceDateOfBirthWithAge(request.subjectMember, clubDay)
         : null,
       invitedMember: request.invitedMember
-        ? replaceDateOfBirthWithAge(request.invitedMember)
+        ? replaceDateOfBirthWithAge(request.invitedMember, clubDay)
         : null,
       // The age implied by the date of birth the requester DECLARED for the
       // person being added. That declared value stays on the payload (the card
@@ -374,11 +387,11 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
       // have to be reconciled by hand.
       childAgeLabel:
         request.type === "CHILD_REQUEST"
-          ? formatMemberIdentityAge(request.childDateOfBirth)
+          ? formatMemberIdentityAge(request.childDateOfBirth, clubDay)
           : null,
       requestedAgeLabel:
         request.type === "ADULT_REQUEST"
-          ? formatMemberIdentityAge(request.requestedDateOfBirth)
+          ? formatMemberIdentityAge(request.requestedDateOfBirth, clubDay)
           : null,
       familyGroup: {
         ...request.familyGroup,
@@ -388,7 +401,7 @@ export async function listAdminFamilyGroupRequests(): Promise<JsonRouteResult> {
         members: request.familyGroup.memberships.map((membership) => membership.member),
         memberships: undefined,
       },
-      matchingMembers: await findPotentialMemberMatches(request),
+      matchingMembers: await findPotentialMemberMatches(request, clubDay),
     }))
   );
 

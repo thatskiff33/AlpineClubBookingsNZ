@@ -102,8 +102,9 @@
     // #2990 (epic #2988) foundation surface, the same shape as the #2079
     // credential-store carve-out above. `src/lib/club-time/**` is the canonical
     // temporal kernel every later child of the club-time epic imports. CT-2
-    // builds it and points the legacy adapters (`nzst-date.ts`, `date-only.ts`)
-    // and the lobby-display boards at the parts they need; the rest — the
+    // builds it and points the legacy adapters (`nzst-date.ts`, since deleted by
+    // #3123, and `date-only.ts`) and the lobby-display boards at the parts they
+    // need; the rest — the
     // calendar-date formatters, the wall-time policy, the clock seam and the
     // request-scoped server binding — is what CT-3 (#2872), CT-4 (#2870) and
     // CT-5 (#2869) migrate the remaining ~400 call sites onto. The alternative

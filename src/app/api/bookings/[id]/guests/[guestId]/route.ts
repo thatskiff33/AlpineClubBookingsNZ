@@ -33,6 +33,7 @@ import {
   MembershipTypeBookingPolicyError,
 } from "@/lib/membership-type-policy";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   buildPaidUpAdultRefusalBody,
   buildPaidUpAdultRefusalBodyForOtherPartyMember,
@@ -125,6 +126,15 @@ export async function DELETE(
   // and let the financial-year refresh reach Xero from there.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
 
+  // #3123 — read BEFORE the transaction opens, for the same reason and in the
+  // same place as the line above. Resolving the club's persisted timezone is a
+  // `clubTimeSettings.findUnique`, and the removal's self-removal window is
+  // judged under the per-lodge capacity key (`INV-LOCK-004`). It decides
+  // whether a member may take themselves off a stay that has not started, so
+  // for a club behind Greenwich the container's timezone would refuse a
+  // self-removal a whole day early.
+  const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+
   try {
     const result = await prisma.$transaction((tx) =>
       removeBookingGuestInTransaction({
@@ -139,6 +149,7 @@ export async function DELETE(
         settlementMethod,
         subscriptionLockoutMode,
         hostingCoverageOverride,
+        today: clubTodayDateOnly,
       })
     );
 

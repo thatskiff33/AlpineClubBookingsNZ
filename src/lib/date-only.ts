@@ -50,7 +50,6 @@
  * instead of trusting it.
  */
 
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
   clubCalendarDateOf,
   clubToday,
@@ -81,7 +80,7 @@ export function parseDateOnly(dateStr: string): Date {
  */
 export function startOfDateOnlyForTimeZone(
   dateStr: string,
-  timeZone = APP_TIME_ZONE
+  timeZone: string
 ): Date {
   const date = parseCalendarDate(dateStr);
   if (date === null) return new Date(NaN);
@@ -106,7 +105,7 @@ export function startOfDateOnlyForTimeZone(
  */
 export function endOfDateOnlyForTimeZone(
   dateStr: string,
-  timeZone = APP_TIME_ZONE
+  timeZone: string
 ): Date {
   const date = parseCalendarDate(dateStr);
   if (date === null) return new Date(NaN);
@@ -215,23 +214,62 @@ export function formatCalendarDayOnly(
  */
 export function formatDateOnlyForTimeZone(
   date: Date,
-  timeZone = APP_TIME_ZONE
+  timeZone: string
 ): string {
   return clubCalendarDateOf(date, legacyZone(timeZone));
 }
 
-// Returns "now" as a yyyy-MM-dd string in the given time zone. Admin default
-// activity windows are interpreted server-side via start/endOfDateOnlyForTimeZone
-// (club time), so seeding those defaults from the browser's local date hides
-// post-midnight activity for operators (or CI) whose clock trails NZ. Deriving
-// the default in the club time zone keeps the seed and the interpretation aligned.
-export function todayDateOnlyForTimeZone(timeZone = APP_TIME_ZONE): string {
+/**
+ * "Now" as a `yyyy-MM-dd` string in the given zone.
+ *
+ * THIS AND TWO OTHERS BELOW HAVE NO PRODUCTION CALLER LEFT, and the decision to
+ * keep them is written here rather than left for the next reader to re-derive.
+ * `normalizeDateOnlyForTimeZone` and `getTodayDateOnly` are the other two;
+ * #3123 moved the last production site of each onto the kernel. Measured with
+ * the same predicate this module's header uses — calls in `src/`, excluding
+ * this file, excluding `__tests__`, excluding comment lines — all three are at
+ * zero, and what remains outside tests is docblocks explaining what moved.
+ *
+ * THE TEST SUITE IS THE CALLER, and `npm run knip` — this repository's arbiter
+ * for a dead export — does not flag any of the three, because a test import is
+ * a real import. Each is the compact spelling of a fixture the suites build
+ * constantly: the club's today as a day string, or as the UTC-midnight
+ * `Date` a `@db.Date` column round-trips. Deleting them rewrites every one of
+ * those fixtures into `dateOnlyInstantOf(clubToday(requireClubTimeZone(zone)))`,
+ * which is the same value spelled longer, in dozens of files, for no change in
+ * what ships.
+ *
+ * PRODUCTION IS HELD OFF THEM BY A GUARD RATHER THAN BY ABSENCE, which is the
+ * part that makes keeping them safe. All three are named — with the replacement
+ * to use — in the `ENVIRONMENT_ZONE_HELPERS` import bans of
+ * `member-public-club-time-convergence.test.ts` and
+ * `api-club-time-convergence.test.ts`, so a member page, a public page or an
+ * API route that reaches for one again fails a suite instead of quietly taking
+ * a civil-time answer from whatever string it was holding. Those bans cover
+ * those route groups and not all of `src/lib`; a shared library module wanting
+ * the club's today composes it from the kernel, per
+ * `docs/CLUB_TIME_KERNEL.md`.
+ *
+ * WHAT WOULD MAKE THEM DELETABLE: those fixtures moving to a shared test helper
+ * over the kernel. That is a change to the test suite rather than to this
+ * module, so it is recorded here instead of started.
+ */
+export function todayDateOnlyForTimeZone(timeZone: string): string {
   return clubToday(legacyZone(timeZone));
 }
 
+/**
+ * The club calendar day of an instant, re-encoded as a date-only `Date`.
+ *
+ * NO PRODUCTION CALLER — see `todayDateOnlyForTimeZone` above for why the three
+ * such exports stay. A `@db.Date` value is ALREADY the normalised calendar day,
+ * so round-tripping one through a zone here is the defect the convergence
+ * suites' ban entry for this name warns about; what this is for is a real
+ * instant a test wants pinned to its club day.
+ */
 export function normalizeDateOnlyForTimeZone(
   date: Date,
-  timeZone = APP_TIME_ZONE
+  timeZone: string
 ): Date {
   const normalized = parseDateOnly(formatDateOnlyForTimeZone(date, timeZone));
 
@@ -325,7 +363,12 @@ export function eachDateOnlyInRange(startInclusive: Date, endExclusive: Date): D
   return dates;
 }
 
-/** Today's club calendar day as a date-only `Date`. INV-DATE-019. */
-export function getTodayDateOnly(timeZone = APP_TIME_ZONE): Date {
+/**
+ * Today's club calendar day as a date-only `Date`. INV-DATE-019.
+ *
+ * NO PRODUCTION CALLER — see `todayDateOnlyForTimeZone` above for why the three
+ * such exports stay. This is the most-used of them in tests by a wide margin.
+ */
+export function getTodayDateOnly(timeZone: string): Date {
   return dateOnlyInstantOf(clubToday(legacyZone(timeZone)));
 }

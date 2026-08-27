@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
@@ -20,7 +25,15 @@ import {
   AdminSidebar,
   getVisibleAdminNavSections,
 } from "@/components/admin-sidebar";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { requireCalendarDate } from "@/lib/club-time";
+
+/**
+ * #3123 — the club's day, first and REQUIRED on the nav exports. The rendered
+ * component reads its own from `ClubTimeProvider` (mounted by the `render` above,
+ * at `CLUB_TIME_TEST_ZONE`); this constant is for the direct calls to the pure
+ * seams, none of which assert on the one dated href.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
 
 const ZERO_COUNTS: AdminPendingCounts = {
   familyRequests: 0,
@@ -111,7 +124,7 @@ describe("AdminSidebar", () => {
   });
 
   it("groups setup and configuration around the setup hubs", () => {
-    const section = getVisibleAdminNavSections(allOn, undefined, true).find(
+    const section = getVisibleAdminNavSections(CLUB_DAY, allOn, undefined, true).find(
       (item) => item.label === "Setup & Configuration",
     );
 
@@ -157,12 +170,12 @@ describe("AdminSidebar", () => {
       support: "edit" as const,
     };
     expect(
-      getVisibleAdminNavSections(allOn, scoped, false).flatMap((section) =>
+      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, false).flatMap((section) =>
         section.items.map((item) => item.href),
       ),
     ).not.toContain("/admin/environment");
     expect(
-      getVisibleAdminNavSections(allOn, scoped, true).flatMap((section) =>
+      getVisibleAdminNavSections(CLUB_DAY, allOn, scoped, true).flatMap((section) =>
         section.items.map((item) => item.href),
       ),
     ).toContain("/admin/environment");
@@ -174,6 +187,7 @@ describe("AdminSidebar", () => {
     // flag is the only thing keeping the entry out — and the route refuses them
     // anyway, so showing it would be an offer the app cannot honour.
     const asSupportEditor = getVisibleAdminNavSections(
+      CLUB_DAY,
       allOn,
       {
         overview: "view",
@@ -193,6 +207,7 @@ describe("AdminSidebar", () => {
     // …and the same matrix WITH Full Admin does see it.
     expect(
       getVisibleAdminNavSections(
+      CLUB_DAY,
         allOn,
         {
           overview: "view",
@@ -209,7 +224,7 @@ describe("AdminSidebar", () => {
   });
 
   it("owns Lobby Display once under Lodge Operations and keeps General intact", () => {
-    const sections = getVisibleAdminNavSections(allOn, undefined, true);
+    const sections = getVisibleAdminNavSections(CLUB_DAY, allOn, undefined, true);
     const lodgeOperations = sections.find(
       (section) => section.label === "Lodge Operations",
     );
@@ -267,6 +282,7 @@ describe("AdminSidebar", () => {
   it("keeps Lobby Display hidden when its module is off", () => {
     const lobbyDisplayOff = { ...allOn, lobbyDisplay: false } as FeatureFlags;
     const sections = getVisibleAdminNavSections(
+      CLUB_DAY,
       lobbyDisplayOff,
       undefined,
       true,
@@ -283,7 +299,7 @@ describe("AdminSidebar", () => {
   });
 
   it("retires lodge-scoped Chores/Lockers/Seasons from the sidebar — reached via the lodge hub (#130)", () => {
-    const sections = getVisibleAdminNavSections(allOn);
+    const sections = getVisibleAdminNavSections(CLUB_DAY, allOn);
     const allLabels = sections.flatMap((section) =>
       section.items.map((item) => item.label),
     );
@@ -302,9 +318,9 @@ describe("AdminSidebar", () => {
     const matrix = (over: Partial<Record<string, "none" | "view" | "edit">>) => ({
       overview: "none", bookings: "none", membership: "none", finance: "none",
       lodge: "none", content: "none", support: "none", ...over,
-    }) as Parameters<typeof getVisibleAdminNavSections>[1];
-    const feesVisible = (m: Parameters<typeof getVisibleAdminNavSections>[1]) =>
-      getVisibleAdminNavSections(allOn, m)
+    }) as Parameters<typeof getVisibleAdminNavSections>[2];
+    const feesVisible = (m: Parameters<typeof getVisibleAdminNavSections>[2]) =>
+      getVisibleAdminNavSections(CLUB_DAY, allOn, m)
         .flatMap((section) => section.items.map((item) => item.href))
         .includes("/admin/fees");
 
@@ -315,7 +331,7 @@ describe("AdminSidebar", () => {
     // Neither bookings nor finance → no Fees link, and the old fee-configuration
     // link is gone entirely.
     expect(feesVisible(matrix({ membership: "edit" }))).toBe(false);
-    const membershipOnly = getVisibleAdminNavSections(allOn, matrix({ membership: "edit" }))
+    const membershipOnly = getVisibleAdminNavSections(CLUB_DAY, allOn, matrix({ membership: "edit" }))
       .flatMap((section) => section.items.map((item) => item.href));
     expect(membershipOnly).not.toContain("/admin/fee-configuration");
   });
@@ -397,10 +413,18 @@ describe("AdminSidebar", () => {
     const link = screen.getByRole("link", { name: /Unpaid Finished Stays/ });
     // Same deep link as the dashboard attention card (#1709/#1731): the
     // bookings list pre-filtered by the shared unpaid-finished-stays helper.
+    /*
+      The frozen test instant is noon on 1 July in the provider's zone, so the
+      cutoff is that day. Written as a literal rather than derived from a helper
+      on purpose: the previous form computed it with the very environment-zone
+      helper this link stopped using (#3123), so it agreed with both the old
+      behaviour and the new one and could not tell them apart. What the club's
+      zone — not the container's — decides this cutoff is asserted under a zone
+      the environment does NOT hold, in
+      `admin-sidebar-club-time.test.tsx`.
+    */
     expect(link.getAttribute("href")).toBe(
-      `/admin/bookings?status=PAYMENT_PENDING&checkOutTo=${formatDateOnly(
-        getTodayDateOnly(),
-      )}`,
+      "/admin/bookings?status=PAYMENT_PENDING&checkOutTo=2026-07-01",
     );
     expect(screen.getByText("5")).not.toBeNull();
   });
@@ -530,7 +554,7 @@ describe("AdminSidebar", () => {
   });
 
   it("labels the membership cancellation queue as Cancellation Requests", () => {
-    const section = getVisibleAdminNavSections(allOn).find(
+    const section = getVisibleAdminNavSections(CLUB_DAY, allOn).find(
       (item) => item.label === "Members",
     );
 

@@ -13,6 +13,7 @@ import {
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { clubTime } from "@/lib/club-time/server";
 
 // requireAdmin() is enforced by requireBedAllocationWrite().
 /*
@@ -69,12 +70,20 @@ export async function POST(request: Request) {
       );
     }
 
+    // ONE club day, resolved BEFORE `approveBedAllocations` opens its
+    // transaction — which takes `pg_advisory_xact_lock(1)` and the lodge
+    // capacity key. `INV-LOCK-004`: the club's timezone cannot be read on a
+    // transaction client, so it is resolved out here and threaded in (#3123).
+    const clubToday = (await clubTime()).today();
     const range =
       body.data.from || body.data.to
-        ? parseBedAllocationDateRange({
-            from: body.data.from,
-            to: body.data.to,
-          })
+        ? parseBedAllocationDateRange(
+            {
+              from: body.data.from,
+              to: body.data.to,
+            },
+            clubToday,
+          )
         : undefined;
     // The service owns the approval and its audit in the same transaction.
     const result = await approveBedAllocations({

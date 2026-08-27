@@ -10,6 +10,8 @@ import { EntranceFeeCategory, type AgeTier, type Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 import { getEffectiveJoiningFee } from "@/lib/authoritative-fees";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   JOINING_FEE_EXEMPT_MESSAGE,
   resolveMemberJoiningFeeClassification,
@@ -391,8 +393,31 @@ export async function getEntranceFeeContext(
    * why (#2870): a zone read there sits on the global client under the approval
    * path's advisory locks, and the season selects an immutable invoice's amount.
    */
-  seasonYear?: number
+  seasonYear?: number,
+  /**
+   * The day the JoiningFee schedule's effective window is evaluated on.
+   *
+   * REQUIRED WHENEVER `store` IS NOT THE GLOBAL CLIENT, on exactly the same
+   * concurrency rule as `seasonYear` above and enforced the same way (#3123).
+   * Omitted with the global client — a read-only or post-commit path — the
+   * club's persisted zone is read here, which is correct and costs nothing
+   * under no contention. Before #3123 this was not a parameter at all and
+   * `getEffectiveJoiningFee` defaulted it from the ENVIRONMENT's zone, so a
+   * club configured behind its container's zone billed a joining fee from a
+   * schedule row that had not taken effect yet.
+   */
+  asOf?: Date
 ): Promise<EntranceFeeContext> {
+  if (store !== prisma && asOf === undefined) {
+    throw new Error(
+      "getEntranceFeeContext needs an explicit asOf when it is given a " +
+        "transaction client: resolving the club's timezone here would read " +
+        "ClubTimeSettings on the global client while that transaction holds the " +
+        "application and member-lifecycle advisory locks, and the day it produces " +
+        "selects the JoiningFee schedule row whose amount lands on an immutable " +
+        "invoice.",
+    );
+  }
   const classification = await resolveMemberJoiningFeeClassification(
     memberId,
     store,
@@ -414,7 +439,8 @@ export async function getEntranceFeeContext(
     ? (
         await getEffectiveJoiningFee(
           { membershipTypeId: classification.membershipTypeId, ageTier: classification.ageTier },
-          undefined,
+          asOf ??
+            dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest())),
           store,
         )
       ).amountCents

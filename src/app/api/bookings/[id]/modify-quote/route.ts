@@ -100,6 +100,8 @@ import {
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
+import { clubTime } from "@/lib/club-time/server";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
@@ -557,12 +559,21 @@ export async function POST(
     );
   }
 
+  // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
+  // resolved ONCE for this whole quote. Five decisions below read it: the edit
+  // policy here, the late-notice change fee's two `daysUntilDate` operands, the
+  // promotion's validity window, and the reduction refund's settlement tier.
+  // They are the same question, so they must not be able to answer it
+  // differently — a quote whose fee said one day and whose refund tier said
+  // another would be internally inconsistent across club midnight.
+  const todayAtClub = (await clubTime()).today();
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride,
+    today: dateOnlyInstantOf(todayAtClub),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(
@@ -586,6 +597,9 @@ export async function POST(
       );
     }
     return buildShiftPreviewResponse({
+      // The quote's one club day, so the shift preview's person-night guard
+      // answers on the same day as everything above it.
+      todayAtClub,
       booking,
       bookingId,
       actorMemberId: session.user.id,
@@ -1244,6 +1258,9 @@ export async function POST(
       checkOut: newCheckOut,
       guests: guestsForPricing,
       excludeBookingId: booking.id,
+      // The one club day this quote resolved above — the same value the edit
+      // policy, the change fee and the settlement tier read (`INV-LOCK-004`).
+      today: dateOnlyInstantOf(todayAtClub),
     });
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
@@ -1842,11 +1859,12 @@ export async function POST(
     !isInProgressEdit &&
     booking.status !== "DRAFT"
   ) {
-    const now = new Date();
     const policy = await loadCancellationPolicy(booking.checkIn, bookingLodgeId);
     const feeResult = calculateChangeFee({
-      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
-      daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
+      // #3123 — one club day for both operands, so the two day-counts cannot
+      // straddle club midnight and quote a fee neither tier justifies.
+      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+      daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
       originalFinalPriceCents: booking.finalPriceCents,
       policyRules: policy,
     });
@@ -1994,7 +2012,7 @@ export async function POST(
       totalPriceCents: newTotalPriceCents,
       memberId: booking.memberId,
       guests: quoteGuestNightRates,
-    }, bookingId, bookingLodgeId, {
+    }, todayAtClub, bookingId, bookingLodgeId, {
       selectedGuestIndexes: quoteSelectedGuestIndexes,
     });
 
@@ -2046,6 +2064,7 @@ export async function POST(
         // Same rule as `applyPromoCodeChanges`' reprice branch, so the preview
         // and the save cannot tell different stories (#2390).
         capOverflow: "coverExisting",
+        todayAtClub,
       },
     );
 
@@ -2094,6 +2113,7 @@ export async function POST(
     booking,
     netChargeCents,
     db: prisma, // advisory quote: no transaction, no lock held
+    todayAtClub,
   });
 
   return NextResponse.json({
@@ -2165,6 +2185,7 @@ async function buildShiftPreviewResponse({
   actorRole,
   newCheckInStr,
   newCheckOutStr,
+  todayAtClub,
 }: {
   booking: {
     memberId: string;
@@ -2188,6 +2209,13 @@ async function buildShiftPreviewResponse({
   actorRole: "ADMIN" | "USER";
   newCheckInStr?: string;
   newCheckOutStr?: string;
+  /**
+   * The CLUB's calendar day, resolved once by `POST` and threaded in
+   * (`INV-CONFIG-002`). Required and undefaulted: the person-night guard below
+   * never resolves a day for itself, because its authoritative callers reach it
+   * from inside locked booking-write transactions (`INV-LOCK-004`).
+   */
+  todayAtClub: CalendarDate;
 }): Promise<NextResponse> {
   const oldCheckIn = storedDateOnly(booking.checkIn);
   const oldCheckOut = storedDateOnly(booking.checkOut);
@@ -2277,6 +2305,7 @@ async function buildShiftPreviewResponse({
     checkOut: newCheckOut,
     guests: translatedRangesForGuard,
     excludeBookingId: bookingId,
+    today: dateOnlyInstantOf(todayAtClub),
   });
   if (memberNightConflicts.length > 0) {
     return NextResponse.json(

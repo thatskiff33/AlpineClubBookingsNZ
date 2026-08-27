@@ -35,6 +35,7 @@ import {
 import {
   clubToday,
   compareCalendarDates,
+  dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -236,6 +237,16 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
   deletedCount: number;
   deactivatedLinkCount: number;
 }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const outcome = await prisma.$transaction(async (tx) => {
     const subscriptions = await tx.memberSubscription.findMany({
       where: { memberId },
@@ -291,9 +302,12 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
     }) : { count: 0 };
 
     if (deletedSubscriptions.count > 0) {
-      await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-        cause: "SYSTEM_CHANGE",
-      });
+      await enqueueHostingCoverageReevaluationForMember(
+        memberId,
+        tx,
+        clubTodayForFanout,
+        { cause: "SYSTEM_CHANGE" },
+      );
     }
 
     return {
@@ -416,6 +430,16 @@ async function writeXeroDerivedSubscriptionState(input: {
   survivingPaidAt: Date | null;
   survivingOnlineInvoiceUrl: string | null;
 }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const outcome = await prisma.$transaction(async (tx) => {
     const data = {
       status: input.status,
@@ -464,9 +488,12 @@ async function writeXeroDerivedSubscriptionState(input: {
         }
       }
     }
-    await enqueueHostingCoverageReevaluationForMember(input.memberId, tx, {
-      cause: "SYSTEM_CHANGE",
-    });
+    await enqueueHostingCoverageReevaluationForMember(
+      input.memberId,
+      tx,
+      clubTodayForFanout,
+      { cause: "SYSTEM_CHANGE" },
+    );
     return {
       written: true,
       survivingStatus: input.status,
@@ -766,9 +793,12 @@ export async function checkMembershipStatus(
 
     // The club's calendar day, from the PERSISTED club timezone (INV-CONFIG-002)
     // — never the container's. Read once here, outside the pure judgement below.
+    const clubTodayCalendarDate = clubToday(
+      await readClubTimeZoneOutsideRequest(),
+    );
     const status = determineSubscriptionStatus(
       subscriptionInvoice,
-      clubToday(await readClubTimeZoneOutsideRequest()),
+      clubTodayCalendarDate,
     );
     const matchedInvoiceChanged = Boolean(
       matchedInvoiceId && options?.changedInvoiceIds?.has(matchedInvoiceId)
@@ -820,6 +850,7 @@ export async function checkMembershipStatus(
     // for the other non-linking writes.
     let subscriptionRecordId: string | null = null;
     if (matchedInvoiceId) {
+      const clubTodayForFanout = dateOnlyInstantOf(clubTodayCalendarDate);
       const subscriptionRecord = await prisma.$transaction(async (tx) => {
         const row = await tx.memberSubscription.upsert({
           where: {
@@ -845,9 +876,14 @@ export async function checkMembershipStatus(
             paidAt: status.paidAt,
           },
         });
-        await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-          cause: "SYSTEM_CHANGE",
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          memberId,
+          tx,
+          // #3123 — the SAME club day the subscription status above was judged
+          // against, resolved outside this transaction (`INV-LOCK-004`).
+          clubTodayForFanout,
+          { cause: "SYSTEM_CHANGE" },
+        );
         return row;
       });
       subscriptionRecordId = subscriptionRecord.id;
@@ -950,6 +986,16 @@ async function releaseVoidedSubscriptionInvoice(input: {
   seasonYear: number;
   voidedInvoiceId: string | null;
 }): Promise<{ coverageReleased: boolean; chargeVoidedId: string | null }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const now = new Date();
   const outcome = await prisma.$transaction(async (tx) => {
     let coverageReleased = false;
@@ -1002,9 +1048,12 @@ async function releaseVoidedSubscriptionInvoice(input: {
       });
       qualificationChanged = subscriptionUpdate.count > 0;
       if (qualificationChanged) {
-        await enqueueHostingCoverageReevaluationForMember(input.memberId, tx, {
-          cause: "SYSTEM_CHANGE",
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          input.memberId,
+          tx,
+          clubTodayForFanout,
+          { cause: "SYSTEM_CHANGE" },
+        );
       }
       await tx.xeroObjectLink.updateMany({
         where: {

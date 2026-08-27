@@ -147,7 +147,9 @@ describe("#3107 premise: the environment zone really is behind Greenwich", () =>
     expect(APP_TIME_ZONE).toBe("America/Denver");
     // The projection the fix removed. While `dateOnlyKey` used this, every key
     // it produced was this day rather than the day the column holds.
-    expect(formatDateOnlyForTimeZone(day("2026-07-04"))).toBe("2026-07-03");
+    expect(formatDateOnlyForTimeZone(day("2026-07-04"), APP_TIME_ZONE)).toBe(
+      "2026-07-03",
+    );
   });
 });
 

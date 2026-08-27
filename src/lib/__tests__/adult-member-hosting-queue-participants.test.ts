@@ -6,6 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-coverage-queue";
 import { tryLockHostingCoverageOwners } from "@/lib/adult-member-hosting-coverage-lock";
 import { buildMemberMergeHostingCoveragePlan } from "@/lib/adult-member-hosting-review";
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
   acquireHostingCoverageQueueParticipantProof,
   HOSTING_COVERAGE_RETRY_CODE,
@@ -535,6 +543,7 @@ describe("hosting coverage queue participant fence (#2597)", () => {
     };
     const plan = await buildMemberMergeHostingCoveragePlan(
       {
+        today: CLUB_TODAY_DATE_ONLY,
         masterId: "master-1",
         capturedLoserOwnedBookingIds: ["booking-1"],
       },

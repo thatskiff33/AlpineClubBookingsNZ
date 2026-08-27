@@ -51,7 +51,9 @@ import { APP_LOCALE } from "@/config/operational";
 /**
  * Every display shape the house uses, declared once.
  *
- * The six named after `nzst-date`'s exports reproduce those helpers exactly.
+ * The six named after the exports of the retired `nzst-date` adapter (deleted by
+ * #3123) reproduce those helpers exactly, which `house-shapes.test.ts` pins
+ * against their transcribed `Intl.DateTimeFormat` options over 400 instants.
  * `weekday`, `weekdayDayMonth` and `longWeekdayDayMonth` are the lobby-display
  * forms, which drop the year because a wall screen only ever names days inside
  * the current stay window.

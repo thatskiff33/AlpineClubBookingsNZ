@@ -24,7 +24,24 @@ vi.mock("@/lib/prisma", () => ({
 import {
   adminBookingsQuerySchema,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import { prisma } from "@/lib/prisma";
 import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
@@ -95,7 +112,7 @@ function bookingWith(
 
 async function bedStateFor(booking: Record<string, unknown>) {
   installAdminBookingsDbMock([booking]);
-  const result = await listAdminBookings(adminBookingsQuerySchema.parse({}));
+  const result = await listAdminBookings(adminBookingsQuerySchema.parse({}), {}, TEST_CLUB_DAY);
   return result.bookings[0].operational;
 }
 

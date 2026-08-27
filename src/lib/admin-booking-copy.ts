@@ -23,9 +23,9 @@ import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
 
@@ -55,7 +55,7 @@ export async function copyBookingToDraft({
   if (Number.isNaN(newCheckIn.getTime())) {
     throw new ApiError("Invalid target check-in date", 400);
   }
-  if (newCheckIn < getTodayDateOnly()) {
+  if (newCheckIn < (await clubTodayDateOnlyInstant())) {
     throw new ApiError("Target check-in date cannot be in the past", 400);
   }
 

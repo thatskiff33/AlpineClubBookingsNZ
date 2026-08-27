@@ -15,13 +15,18 @@ none of them would be made shorter by it — the hunks are spread through the
 render rather than concentrated in an extractable section.
 
 file: src/app/(admin)/admin/audit-log/page.tsx
-lines: 1100
+lines: 1101
 reason: the audit stamp keeps its seconds-bearing shape (owner decision, #2264),
   which is not one of the kernel's house shapes — so the formatter stays here,
   and because the club's zone now reaches the browser as data rather than as a
   build-time constant it is memoised per zone instead of frozen at module
   scope. That is the whole increase. Splitting the audit console is a refactor
   of its own and would not shrink this hunk.
+  #3123 adds ONE line, and it is a comment correction rather than code. The
+  owner decision recorded above names `formatNZDateTime` as the shape not to
+  migrate to, and this branch retires that helper — so the note now names its
+  successor and keeps the old name in parentheses, because a decision recorded
+  against a symbol that no longer exists is a decision nobody can look up.
 
 file: src/app/(admin)/admin/backups/backups-client.tsx
 lines: 851
@@ -46,7 +51,7 @@ reason: the retroactive-stay rule was reading the BROWSER's calendar day, which 
   a separate job with its own review.
 
 file: src/app/(admin)/admin/bookings/page.tsx
-lines: 760
+lines: 756
 reason: this page renders a calendar date and an instant in adjacent columns and
   used to treat them alike; the docblock on `stayDay` is what stops the next
   edit merging them again. The night count also moved off a millisecond
@@ -64,7 +69,7 @@ reason: four lines: the club's day for the export filename, and why it is not th
   operator's.
 
 file: src/app/(admin)/admin/dashboard/page.tsx
-lines: 902
+lines: 906
 reason: `getStats` now derives its month bounds with calendar arithmetic instead of
   string slicing plus `Date.UTC(y, m + 1, 0)`, and says which of the values it
   hands Prisma are date-only bounds and which are instants. The dashboard's
@@ -139,7 +144,7 @@ reason: two adjacent columns, one an instant read host-locally by date-fns and o
   which. The comment between them is the point of the change.
 
 file: src/app/(admin)/admin/promo-codes/promo-redemptions-panel.tsx
-lines: 801
+lines: 807
 reason: the hand-rolled parts-to-UTC-midnight dance is gone and the export
   filename now carries the club's day; the note explains why a lodge night
   needs no zone at all.
@@ -148,6 +153,12 @@ reason: the hand-rolled parts-to-UTC-midnight dance is gone and the export
   the export FILENAME onto the club's day. It reads the club's zone now, and the
   note records the one half that cannot be fixed from here — the CSV cell
   formats internally and would need a `src/lib` signature change.
+  #3123 adds six, and they close the half the CT-4 review note above says
+  cannot be fixed from here. `buildPromoRedemptionsCsvContent` takes the
+  club-time binding now, so the CSV's own "Redeemed" cell is on the club's
+  persisted zone like the filename and the on-screen stamp already are. The
+  growth is the two-line comment and the call going multi-line; the `src/lib`
+  signature change that note said would be needed is what this issue made.
 
 file: src/app/(admin)/admin/refund-requests/page.tsx
 lines: 885
@@ -155,7 +166,7 @@ reason: a booking's check-in and the request's review stamp are different concep
   and now have different helpers, each with a sentence saying so.
 
 file: src/app/(admin)/admin/reports/page.tsx
-lines: 738
+lines: 740
 reason: the range bounds come from the URL and used to reach date-fns through a
   local-midnight parse that threw a RangeError on a malformed one, blanking the
   report; the replacement is guarded and says why the encoding it builds is
@@ -167,6 +178,10 @@ reason: the range bounds come from the URL and used to reach date-fns through a
   contradiction this change had otherwise shipped: two other pages in it had
   already moved that exact shape. The growth is the docblock stating the rule
   and naming which patterns stay on date-fns and why.
+  #3123 adds two: `generateReportPDF` takes the club binding, so the exported
+  report's cover date and filename day come from the club's persisted zone
+  rather than the container's. This component already held the binding, so the
+  cost is one argument and the two-line note saying what it decides.
 
 file: src/app/(admin)/admin/roster/page.tsx
 lines: 586

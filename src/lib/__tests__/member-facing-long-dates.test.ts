@@ -4,12 +4,12 @@ import { describe, expect, it } from "vitest";
 import {
   bindClubTime,
   calendarDateOfDateOnlyInstant,
+  formatClubInstantDate,
+  formatClubInstantLongDate,
   formatClubLongDate,
   requireCalendarDate,
   requireClubTimeZone,
 } from "../club-time";
-import { formatNZDate, formatNZLongDate } from "../nzst-date";
-import { expectClubTimeZonePremise } from "./helpers/club-time-zone";
 
 /*
   #2264 — owner decision, 2 August 2026.
@@ -28,8 +28,8 @@ import { expectClubTimeZonePremise } from "./helpers/club-time-zone";
   noticing. Asserting on the source is a blunt instrument, but it is the only
   one that fails loudly on that specific regression.
 
-  WHAT CT-4 (#2870) CHANGED, AND WHAT IT DID NOT. Three of the four sites have
-  moved off `formatNZLongDate`, and the owner decision above is untouched by it:
+  WHAT CT-4 (#2870) CHANGED, AND WHAT IT DID NOT. All four sites have moved off
+  the retired `nzst-date` adapter, and the owner decision above is untouched by it:
   the long spelled-out form still holds on all four, and the snippet each row
   names is simply the current spelling of it. What moved is which temporal
   QUESTION each site asks. The booking messages hold `@db.Date` lodge nights,
@@ -88,25 +88,59 @@ const MEMBER_FACING_LONG_DATE_SITES: ReadonlyArray<{
   {
     what: "the generated report PDF cover",
     file: "src/lib/report-pdf.ts",
-    mustContain: ["Generated: ${formatNZLongDate(new Date())}"],
+    /*
+      MIGRATED TO THE CLUB'S PERSISTED ZONE BY #3123, AND STILL THE LONG FORM.
+
+      The last of the four to move, and it moved differently from the other
+      three because `report-pdf.ts` runs in the BROWSER — jsPDF and html2canvas
+      over a cloned Document, reached by `await import(...)` from two
+      `"use client"` components. It can read no zone at all, so the binding
+      arrives as a required parameter from callers that already hold one.
+      `club.instantLongDate` IS `formatClubInstantLongDate` with that zone bound,
+      so the shape INV-DATE-016 protects is byte-identical to what
+      `formatNZLongDate` produced; only the zone authority changed, from the
+      container's `TZ` to the club's configured setting.
+
+      THE INSTANT IS NAMED, not read inline. `generateReportPDF` also puts a day
+      in the saved filename, and it used to take a second, independent reading of
+      the clock for it — so an export straddling club midnight produced a file
+      whose name and whose cover disagreed. Both now derive from one
+      `generatedAt`, which is what this fixture pins: an inline `new Date()` back
+      in this position would be a second reading again.
+    */
+    mustContain: [
+      "Generated: ${club.instantLongDate(generatedAt)}",
+      // The other half of the same pair, pinned in the same row because the two
+      // are only correct together: the day in the saved filename must come from
+      // that one instant, not from a second `club.today()`.
+      "pdf.save(`tac-report-${club.calendarDateOf(generatedAt)}.pdf`)",
+    ],
   },
 ];
 
 describe("member-facing dates keep the long spelled-out month (#2264)", () => {
   it("renders the long form, which is NOT the medium house form", () => {
-    // 23:30 UTC on 15 April is 16 April in Auckland, so this also proves the
-    // long formatter is club-zone pinned rather than UTC.
-    //
-    // THE PREMISE, because this case reads the ENVIRONMENT's zone and the case
-    // below deliberately does not. `formatNZ*` still resolves `APP_TIME_ZONE`,
-    // so on a machine whose `TZ` is set to anything else this asserts 15 April
-    // and reads exactly like the dating bug it exists to disprove
-    // (docs/TESTING.md rule 6). One failure that says "environment" is worth
-    // more than a bare date mismatch.
-    expectClubTimeZonePremise();
+    /*
+      23:30 UTC on 15 April is 16 April in Auckland, so this also proves the long
+      formatter is club-zone pinned rather than UTC.
+
+      THE ZONE IS NAMED, and it used to be read from the environment. This case
+      called `formatNZLongDate` / `formatNZDate` from the retired `nzst-date`
+      adapter, which supplied `APP_TIME_ZONE` — so on any machine whose `TZ` said
+      something else the case asserted 15 April and read exactly like the dating
+      bug it exists to disprove (docs/TESTING.md rule 6), and it needed
+      `expectClubTimeZonePremise()` beside it to say so. Naming the zone removes
+      the failure mode rather than explaining it: the subject here is the SHAPE
+      INV-DATE-016 reserves, not whose zone is in force, and a case that supplies
+      its own zone cannot have an environment premise to break.
+    */
     const instant = new Date("2026-04-15T23:30:00.000Z");
-    expect(formatNZLongDate(instant)).toBe("16 April 2026");
-    expect(formatNZDate(instant)).toBe("16 Apr 2026");
+    const auckland = requireClubTimeZone("Pacific/Auckland");
+    expect(formatClubInstantLongDate(instant, auckland)).toBe("16 April 2026");
+    expect(formatClubInstantDate(instant, auckland)).toBe("16 Apr 2026");
+    expect(formatClubInstantLongDate(instant, auckland)).not.toBe(
+      formatClubInstantDate(instant, auckland),
+    );
   });
 
   it("the kernel's CALENDAR-DAY long form is the same shape, and takes no zone", () => {
@@ -114,12 +148,13 @@ describe("member-facing dates keep the long spelled-out month (#2264)", () => {
       What CT-4 (#2870) replaced the first site's call with, pinned here so the
       migration cannot quietly change the shape INV-DATE-016 is about.
 
-      The two are not interchangeable and that is the point: `formatNZLongDate`
-      asks "what long date is this MOMENT, in the environment's zone?", while
+      The two were never interchangeable and that is the point: `formatNZLongDate`
+      asked "what long date is this MOMENT, in the environment's zone?", while
       `formatClubLongDate` asks "what long date is this CALENDAR DAY?" and takes
-      no zone because the question has none. For a `@db.Date` value they agree in
-      New Zealand and disagree by a day for a club west of Greenwich, which is
-      why the call site moved.
+      no zone because the question has none. For a `@db.Date` value they agreed in
+      New Zealand and disagreed by a day for a club west of Greenwich, which is
+      why the call site moved — and why #3123 deleted the adapter rather than
+      leaving a second way to ask.
     */
     const lodgeNight = requireCalendarDate("2026-04-16");
     expect(formatClubLongDate(lodgeNight)).toBe("16 April 2026");

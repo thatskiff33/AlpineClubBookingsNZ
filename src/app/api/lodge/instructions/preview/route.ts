@@ -9,6 +9,7 @@ import {
 import { applyRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 /**
  * Remote, PIN-gated lodge-instructions preview (#1642).
@@ -79,9 +80,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // #3123 — a current-or-upcoming assignment is judged against the CLUB's day,
+  // from its persisted zone, not the container's.
   const assignment = await verifyHutLeaderPinForAssignment(
     parsed.data.assignmentId,
-    parsed.data.pin
+    parsed.data.pin,
+    await clubTodayDateOnlyInstant()
   );
 
   if (!assignment) {

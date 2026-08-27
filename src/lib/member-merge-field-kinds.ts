@@ -223,14 +223,30 @@ function toInstant(value: unknown): Date | null {
  * `Date`s; both are accepted, and both take the same branch, so the two cannot
  * drift apart.
  *
- * `timeZone` follows the same convention as every helper in `date-only.ts`: it
- * defaults to the club's zone and production never passes it. It exists so the
- * two branches are DECIDABLE. New Zealand sits ahead of UTC, where truncation
- * and the club-zone formatter agree on a calendar day, so a test run only in the
- * club's own zone cannot fail the mutation that routes calendar days through the
- * club-zone formatter. Passing a zone behind UTC is what separates them — and it
- * is passed here rather than set via `TZ`, which would move `APP_TIME_ZONE`
- * itself (docs/TESTING.md rule 6).
+ * `timeZone` IS PASSED IN PRODUCTION, and the default is a fallback rather than
+ * the convention. The merge comparison screen
+ * (`src/app/(admin)/admin/members/[id]/merge/page.tsx`) hands all three of its
+ * columns the club's persisted zone. The `= APP_TIME_ZONE` default behind them is
+ * the ENVIRONMENT's zone, which is not the club's, and it survives only because
+ * this is a client component and the zone has to arrive as data — which is
+ * exactly the reason this module sits on `ENVIRONMENT_ZONE_ADAPTERS` in
+ * `eslint.config.mjs` with an entry saying so.
+ *
+ * THIS PARAGRAPH USED TO CLAIM the parameter "follows the same convention as
+ * every helper in `date-only.ts`: it defaults to the club's zone and production
+ * never passes it". Every part of that was wrong, and worth recording rather
+ * than quietly overwriting: those helpers have no zone defaults left at all
+ * (#3123 deleted the last six), `APP_TIME_ZONE` is the environment's answer and
+ * not the club's, and production passes this argument at every call site. A
+ * convention cited from ANOTHER module is the shape nothing checks — the other
+ * module changes, and the citation reads exactly as it always did.
+ *
+ * The parameter exists so the two branches are DECIDABLE. New Zealand sits ahead
+ * of UTC, where truncation and the club-zone formatter agree on a calendar day,
+ * so a test run only in the club's own zone cannot fail the mutation that routes
+ * calendar days through the club-zone formatter. Passing a zone behind UTC is
+ * what separates them — and it is passed rather than set via `TZ`, which would
+ * move `APP_TIME_ZONE` itself (docs/TESTING.md rule 6).
  *
  * EVERY BRANCH IS NAMED, INCLUDING THE IMPOSSIBLE ONE. `kind` is a closed union
  * to TypeScript and an arbitrary string at runtime: this is a client component,

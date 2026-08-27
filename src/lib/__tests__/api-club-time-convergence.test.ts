@@ -25,11 +25,17 @@
  * transitive import closure over the admin half: **186 of those 297** files
  * still reach a module that imports `APP_TIME_ZONE` from `@/config/operational`,
  * overwhelmingly through `src/lib/date-only.ts` (144 of them) and
- * `src/lib/nzst-date.ts` (22). The non-admin half has not been measured that way
- * and no claim is made about it here; the wrappers are shared, so expect a
- * similar picture. Those wrappers — the capacity, pricing, guest-stay, consent
- * and email-template layers among them — are group F's work and CT-6 (#2991)
- * retires the modules themselves. Saying so is not a caveat for form's sake:
+ * `src/lib/nzst-date.ts` (22).
+ *
+ * THAT MEASUREMENT PREDATES #3123, which deleted `src/lib/nzst-date.ts` outright
+ * once its last production caller moved — so the 22 is now ZERO and the 186 can
+ * only have fallen. It has NOT been re-measured, and the figure is left standing
+ * as the prior measurement rather than adjusted by arithmetic nobody checked; the
+ * `date-only.ts` leg is what a later lane still has to close. The non-admin half
+ * has not been measured that way at all and no claim is made about it here; the
+ * wrappers are shared, so expect a similar picture. Those wrappers — the
+ * capacity, pricing, guest-stay, consent and email-template layers among them —
+ * are group F's work and CT-6 (#2991) retires the module that remains. Saying so is not a caveat for form's sake:
  * `docs/CLUB_TIME_KERNEL.md` warns specifically against a guard whose headline
  * is "false and green", and a layer-wide claim backed by a file-level scan would
  * be exactly that.
@@ -40,8 +46,9 @@
  *
  * ## What is forbidden here, and what deliberately is not
  *
- * The legacy modules `@/lib/date-only` and `@/lib/nzst-date` are compatibility
- * adapters over `@/lib/club-time` (CT-2, #2990), and they split cleanly in two:
+ * The legacy module `@/lib/date-only` is a compatibility adapter over
+ * `@/lib/club-time` (CT-2, #2990) — the last one, since #3123 deleted the
+ * rendering adapter beside it — and its helpers split cleanly in two:
  *
  * - **Zone-bearing.** Every helper in {@link ENVIRONMENT_ZONE_HELPERS} defaults
  *   its zone to `APP_TIME_ZONE`, which is `process.env.TZ` / `NEXT_PUBLIC_TZ`.
@@ -127,21 +134,29 @@ const ENVIRONMENT_ZONE_HELPERS: Record<string, string> = {
   formatDateOnlyForTimeZone: "use `(await clubTime()).calendarDateOf(instant)`",
   normalizeDateOnlyForTimeZone:
     "a `@db.Date` value is ALREADY the normalised calendar day — read it as one, do not round-trip it through a zone",
-  formatNZDate: "use `formatClubDate` for a calendar day, `instantDate` for a moment",
-  formatNZDateTime: "use `(await clubTime()).instantDateTime(instant)`",
-  formatNZLongDate: "use `formatClubLongDate` / `instantLongDate`",
-  formatNZTime: "use `(await clubTime()).instantTime(instant)`",
-  formatNZMonthYear: "use `(await clubTime()).instantMonthYear(instant)`",
-  formatNZWeekdayDate: "use `(await clubTime()).instantWeekdayDate(instant)`",
 };
 
+/*
+  THE SIX `formatNZ*` ROWS ARE GONE, and their absence is the point. They named
+  the exports of `src/lib/nzst-date.ts`, the club's second rendering seam, which
+  #3123 DELETED once its last production caller moved (CT-6, #2991). A row here
+  refuses a NAMED IMPORT; an export of a module that no longer exists cannot be
+  imported at all, so keeping one would be a rule that can never fire, reading as
+  coverage it does not provide. Rendering now has one seam, `@/lib/club-time`,
+  and what keeps it that way is the `toLocale*` arms in `eslint.config.mjs` plus
+  the census in `src/lib/club-time/__tests__/club-time-kernel-census.test.ts`,
+  which also asserts the deleted file has not come back.
+*/
+
 /**
- * The legacy adapter modules, by file basename rather than by import specifier,
+ * The legacy adapter module, by file basename rather than by import specifier,
  * so a relative path reaches the same verdict as the `@/lib/...` alias. Checked
- * against the tree: `src/lib/date-only.ts` and `src/lib/nzst-date.ts` are the
- * only files with these names, so the basename identifies the module.
+ * against the tree: `src/lib/date-only.ts` is the only file with that name, so
+ * the basename identifies the module.
+ *
+ * ONE LEFT. `nzst-date` sat beside it until #3123 deleted `src/lib/nzst-date.ts`.
  */
-const LEGACY_MODULE_BASENAMES = new Set(["date-only", "nzst-date"]);
+const LEGACY_MODULE_BASENAMES = new Set(["date-only"]);
 
 /** The CT-5 exemption. See the docblock — this is an allowlist, not a scope. */
 const SKIPPED_PATH_PREFIX = "src/app/api/admin/xero/";
@@ -310,8 +325,8 @@ describe("API temporal convergence (CT-4, #2870)", () => {
 
     it("reads a single-line named import", () => {
       expect(
-        legacyImportedNames('import { formatNZDate } from "@/lib/nzst-date";'),
-      ).toEqual(["formatNZDate"]);
+        legacyImportedNames('import { formatDateOnlyForTimeZone } from "@/lib/date-only";'),
+      ).toEqual(["formatDateOnlyForTimeZone"]);
     });
 
     it("sees through a rename", () => {
@@ -348,9 +363,9 @@ describe("API temporal convergence (CT-4, #2870)", () => {
     it("reads a relative specifier", () => {
       expect(
         legacyImportedNames(
-          'import { formatNZDate } from "../../../../lib/nzst-date";',
+          'import { formatDateOnlyForTimeZone } from "../../../../lib/date-only";',
         ),
-      ).toEqual(["formatNZDate"]);
+      ).toEqual(["formatDateOnlyForTimeZone"]);
       expect(
         legacyImportedNames(
           'import { getTodayDateOnly } from "../../../../lib/date-only.ts";',
@@ -381,7 +396,7 @@ describe("API temporal convergence (CT-4, #2870)", () => {
     it("refuses a dynamic import of a legacy adapter", () => {
       expect(
         opaqueLegacyModuleReads(
-          'const { getTodayDateOnly } = await import("@/lib/nzst-date");',
+          'const { getTodayDateOnly } = await import("@/lib/date-only");',
         ),
       ).toHaveLength(1);
       expect(

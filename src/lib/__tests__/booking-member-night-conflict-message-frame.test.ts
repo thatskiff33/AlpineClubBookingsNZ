@@ -27,10 +27,21 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+/*
+ * The zone the replaced projection would have rendered through, declared ONCE
+ * (#3123). `vi.mock` factories hoist above every plain `const`, so this zone
+ * used to be written as the mock's literal and then read back implicitly as the
+ * projection helper's default — two writings, one of them unpinned. `vi.hoisted`
+ * gives the factory and the premise below the same declaration.
+ */
+const { LEGACY_PROJECTION_ZONE } = vi.hoisted(() => ({
+  LEGACY_PROJECTION_ZONE: "America/Denver",
+}));
+
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
+  APP_TIME_ZONE: LEGACY_PROJECTION_ZONE,
   APP_LOCALE: "en-NZ",
 }));
 
@@ -60,9 +71,12 @@ describe("member-night conflict copy renders the night KEY, not a projection", (
     // UTC-midnight day back, every assertion below would hold for the wrong
     // reason and this file would be worthless while staying green.
     expect(APP_TIME_ZONE).toBe("America/Denver");
-    expect(formatDateOnlyForTimeZone(parseDateOnly(NIGHTS[0]))).toBe(
-      "2026-06-10",
-    );
+    // The zone is named rather than defaulted (#3123): this line models the
+    // REPLACED rendering, so it has to say which zone it models. The line above
+    // is what still ties that zone to the environment the leak would have used.
+    expect(
+      formatDateOnlyForTimeZone(parseDateOnly(NIGHTS[0]), LEGACY_PROJECTION_ZONE),
+    ).toBe("2026-06-10");
   });
 
   it("names the nights the member chose, not the day before", () => {

@@ -14,6 +14,7 @@ import {
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
+import type { CalendarDate } from "@/lib/club-time";
 import {
   calculateAppliedCreditRestore,
   calculateDualRefundAmounts,
@@ -434,7 +435,20 @@ export function calculateCancellationPreview(input: {
   finalPriceCents: number;
   checkIn: Date;
   policyRules: CancellationRule[];
-  now?: Date;
+  /**
+   * The club's own calendar day, resolved by the caller (#3123).
+   *
+   * REQUIRED, and a `CalendarDate` rather than an instant. This preview is what
+   * a member is shown before they confirm a cancellation, so the tier it names
+   * has to be the tier the executed cancel will apply — and `daysUntilDate`
+   * below is the refund-tier boundary. The old `now?: Date` defaulted through
+   * `new Date()` into a projection through `APP_TIME_ZONE`, so a club whose
+   * configured zone differs from its container's previewed a different tier from
+   * the one it charged. `INV-CONFIG-002` says which zone answers "today";
+   * `docs/CLUB_TIME_KERNEL.md` says an instant has no calendar day until one is
+   * supplied, which is why this parameter cannot be an instant.
+   */
+  todayAtClub: CalendarDate;
 }): {
   refundAmountCents: number;
   keptAmountCents: number;
@@ -453,7 +467,7 @@ export function calculateCancellationPreview(input: {
   const refundableBaseCents =
     Math.min(paidAmountCents, input.finalPriceCents + changeFeeCents) -
     changeFeeCents;
-  const days = daysUntilDate(input.checkIn, input.now);
+  const days = daysUntilDate(input.checkIn, input.todayAtClub);
   const {
     cardRefundAmountCents,
     cardRefundPercentage,

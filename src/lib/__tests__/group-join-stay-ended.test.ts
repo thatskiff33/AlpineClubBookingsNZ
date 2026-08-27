@@ -80,16 +80,19 @@ import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 /** A correctly-formatted (64 hex char) action token for the verify path. */
 const VALID_TOKEN = "a".repeat(64);
 
-// The gate compares against NZ today at call time, so fixture stays are
-// derived from the real clock (fixed calendar dates would change meaning as
-// time passes): an ended stay checked out yesterday; a live one ends tomorrow.
+/** The club's zone, named rather than taken from a helper default (#3123). */
+const CLUB_ZONE = "Pacific/Auckland";
+
+// The gate compares against the club's today at call time, so fixture stays
+// are derived from it (fixed calendar dates would change meaning as time
+// passes): an ended stay checked out yesterday; a live one ends tomorrow.
 const endedStay = {
-  checkIn: addDaysDateOnly(getTodayDateOnly(), -3),
-  checkOut: addDaysDateOnly(getTodayDateOnly(), -1),
+  checkIn: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -3),
+  checkOut: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -1),
 };
 const liveStay = {
-  checkIn: addDaysDateOnly(getTodayDateOnly(), -1),
-  checkOut: addDaysDateOnly(getTodayDateOnly(), 1),
+  checkIn: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -1),
+  checkOut: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 1),
 };
 
 function openGroup(stay: { checkIn: Date; checkOut: Date }) {

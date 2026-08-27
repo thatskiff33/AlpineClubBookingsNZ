@@ -86,8 +86,17 @@ vi.mock("@/config/operational", () => ({
   APP_LOCALE: "en-NZ",
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { buildProposalPartyFromGuests } from "@/lib/booking-exception-request-service";
+
+/**
+ * The zone the `@/config/operational` factory above pins, named rather than left
+ * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
+ * asserts the two are still the same zone, so this constant cannot drift out of
+ * step with the factory and leave the cases below passing for the wrong reason.
+ */
+const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** A `@db.Date` value: the calendar day encoded at UTC midnight. */
 function day(value: string): Date {
@@ -119,7 +128,12 @@ describe("the new-booking proposal's guest frame (CT-4, #2870, groups F2 + F4b)"
   it("PREMISE: the mocked club zone really does move a stored day", () => {
     // Measured, not assumed. If `America/Denver` ever stopped shifting a
     // UTC-midnight day, every assertion below would hold for the wrong reason.
-    expect(formatDateOnlyForTimeZone(day(CHECK_IN))).toBe("2026-07-03");
+    // The zone the removed call read is `APP_TIME_ZONE`, so the constant has to
+    // keep naming it.
+    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    expect(formatDateOnlyForTimeZone(day(CHECK_IN), CLUB_ZONE_BEHIND_UTC)).toBe(
+      "2026-07-03",
+    );
   });
 
   it("a guest who supplied no dates is defaulted from the STORED envelope (this WAS the F2 pin)", () => {

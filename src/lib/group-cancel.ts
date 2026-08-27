@@ -97,6 +97,8 @@ import {
 } from "@/lib/payment-recovery";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 import logger from "@/lib/logger";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
 /** Child booking statuses that an organiser cancel must clean up. */
 const ACTIVE_CHILD_STATUSES = [
@@ -187,6 +189,22 @@ export async function settleGroupBookingOnOrganiserCancel(
     await markGroupCancelled(group.id);
     return;
   }
+
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), read HERE: before the cancellation fence below, before
+  // the per-child refund transactions, and once for the whole organiser cancel.
+  //
+  // It is the REFUND TIER for every paid child (`daysUntilDate` against the
+  // cancellation policy's thresholds), and this module's own header already
+  // states that the tier must be frozen once because it can drift across a
+  // >24h re-drive. Resolving it once, out here, is what makes that true for the
+  // day as well as for the plan. `INV-LOCK-004`: the club timezone is one of
+  // only two reads that cannot take a transaction client, and the fence below
+  // holds `pg_advisory_xact_lock(1)`.
+  //
+  // The runtime reader, not `club-time/server`: this module is reachable from
+  // `src/instrumentation.node.ts` through `payment-recovery.ts`.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
   // Durable cancellation fence: settle/reaper/cancel all serialize on lock(1).
   // Once CANCELLED commits, a later settlement apply must refuse to promote
@@ -329,7 +347,7 @@ export async function settleGroupBookingOnOrganiserCancel(
     }
   } else if (settled && children.length > 0) {
     const checkIn = children[0].checkIn;
-    const days = daysUntilDate(checkIn);
+    const days = daysUntilDate(checkIn, todayAtClub);
     // All children of a group booking share the organiser's lodge (one
     // booking = one lodge, ADR-001), so the first child's lodge is the group's.
     const policy = await loadCancellationPolicy(checkIn, children[0].lodgeId);

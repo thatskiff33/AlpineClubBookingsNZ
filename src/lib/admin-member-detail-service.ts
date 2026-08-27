@@ -9,7 +9,7 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
+import { clubToday, dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
 import {
@@ -80,7 +80,7 @@ import {
   resolveEnforcedAgeTier,
   summarizeFutureLinkedGuestBookings,
 } from "@/lib/age-tier-enforcement";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 import {
   accessRoleChangeRequiresFullAdmin,
   accessRolesFromCompatibilityFields,
@@ -811,11 +811,24 @@ export async function updateAdminMember(params: {
     request: req,
     data,
   } = params;
-  // The club's current season, from its PERSISTED zone (CT-4, #2870), read once
-  // before the parallel loads that consume it.
-  const clubCurrentSeasonYear = clubSeasonYear(
-    await readClubTimeZoneOutsideRequest(),
-  );
+  // The club's PERSISTED zone (CT-4, #2870), read ONCE for this whole request
+  // and threaded from here. The restore season below and the linked-guest date
+  // bound further down both derive from this binding rather than re-reading it,
+  // so nothing on this path can judge one member against two different days
+  // (#3123). The runtime reader is the right one here because the file already
+  // uses it, and two readers in one function would be worse than one extra
+  // settings query.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  // The club's today, derived from that one zone and computed ONCE, as the
+  // UTC-midnight `@db.Date` encoding (`INV-DATE-026`). Every consumer below
+  // takes this value: the linked-guest bound, the partner-share lock prefix,
+  // the sweep and the hosting fan-out. Three of those run inside the
+  // transaction further down, holding the global cohort key, the affected
+  // lodge keys and the member lifecycle keys, where `INV-LOCK-004` forbids
+  // resolving the club timezone at all — and computing the day twice on one
+  // path could straddle club midnight even when the zone is already in hand.
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
   const [existing, roleDefinitions, currentSeasonTypeExemption] =
     await Promise.all([
       prisma.member.findUnique({
@@ -1244,9 +1257,7 @@ export async function updateAdminMember(params: {
     // One reference point for both branches, from the CLUB's current season
     // (CT-4, #2870): an age tier decides a price band, so the two branches must
     // never be able to judge the same member against two different seasons.
-    const restoreSeasonStart = getSeasonStartDate(
-      clubSeasonYear(await readClubTimeZoneOutsideRequest()),
-    );
+    const restoreSeasonStart = getSeasonStartDate(clubSeasonYear(clubZone));
     let restorePersonTier: AgeTier;
     if (dobProvided) {
       restorePersonTier = await computeAgeTier(
@@ -1294,7 +1305,7 @@ export async function updateAdminMember(params: {
       const linkedGuestBookings = await loadFutureLinkedGuestBookingsForMember(
         prisma,
         id,
-        getTodayDateOnly(),
+        clubTodayDateOnly,
       );
       if (linkedGuestBookings.length > 0) {
         return jsonResult(
@@ -1347,7 +1358,7 @@ export async function updateAdminMember(params: {
     );
     const updated = await prisma.$transaction(async (tx) => {
       if (deactivatesTarget || tierLeavesAdult) {
-        await acquireFuturePartnerSharedAllocationLocks(tx, [id]);
+        await acquireFuturePartnerSharedAllocationLocks(tx, [id], clubTodayDateOnly);
         await acquireMemberLifecycleLocks(tx, [id]);
       }
       // Last-admin guard (issue #1604): counted inside the mutation
@@ -1412,10 +1423,15 @@ export async function updateAdminMember(params: {
         existing.active !== updatedMember.active ||
         existing.ageTier !== updatedMember.ageTier
       ) {
-        await enqueueHostingCoverageReevaluationForMember(id, tx, {
-          cause: "SYSTEM_CHANGE",
-          actorMemberId: currentAdminMemberId,
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          id,
+          tx,
+          clubTodayDateOnly,
+          {
+            cause: "SYSTEM_CHANGE",
+            actorMemberId: currentAdminMemberId,
+          },
+        );
       }
 
       // #2716: an admin edit is the single richest way to move a member across
@@ -1443,6 +1459,7 @@ export async function updateAdminMember(params: {
             ? "member_deactivated"
             : "member_age_tier_changed",
           db: tx,
+          today: clubTodayDateOnly,
         });
       }
 

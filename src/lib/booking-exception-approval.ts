@@ -1,4 +1,5 @@
 import type { AgeTier, BookingStatus } from "@prisma/client";
+import type { CalendarDate } from "@/lib/club-time";
 
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { storedDateOnly } from "@/lib/stored-calendar-day";
@@ -362,6 +363,26 @@ export function proposalGuestToCreateInput(guest: ProposalGuest) {
 export interface PolicyExceptionApprovalContext {
   /** The request being decided — the hooks read their own row from it. */
   requestId: string;
+  /**
+   * The CLUB's calendar day (`INV-CONFIG-002`), resolved by the route BEFORE
+   * `approveAndExecutePolicyExceptionRequest` opened its transaction.
+   *
+   * #3123 review, `INV-LOCK-004`. The two canonical services this approval
+   * executes — `modifyBookingBatch` and `createConfirmedBooking` — are both
+   * transaction-AWARE, and this is the ONE path that supplies them a caller
+   * transaction. By the time either runs, `pg_advisory_xact_lock(1)` and the
+   * per-lodge capacity key are held, so neither may read the club's persisted
+   * zone for itself: a `clubTimeSettings` query on the module client would need
+   * a second pooled connection under both locks, and under concurrency every
+   * transaction ends up holding one connection and waiting for another that
+   * only a commit can free.
+   *
+   * The whole approval therefore acts on ONE club day, which is also the right
+   * answer on its own terms: an approval that priced a change fee on one day
+   * and a refund tier on another would be internally inconsistent across club
+   * midnight.
+   */
+  todayAtClub: CalendarDate;
   /** The officer approving; re-read from the DB inside the transaction. */
   actorMemberId: string;
   /** Recorded on the canonical services' audit rows. */
@@ -713,6 +734,7 @@ async function executeApprovedModification(args: {
     ...(context.hostingCoverageOverride
       ? { hostingCoverageOverride: context.hostingCoverageOverride }
       : {}),
+    todayAtClub: context.todayAtClub,
     tx,
   });
 
@@ -867,6 +889,9 @@ async function executeApprovedNewBooking(args: {
   const memberGuestEntries = consentPlan.entriesByMemberId;
 
   const created = await createConfirmedBooking({
+    // #3123 review — the club day the route resolved before this transaction
+    // opened, shared with the modification executor above (`INV-LOCK-004`).
+    todayAtClub: context.todayAtClub,
     effectiveMemberId: request.requestedByMemberId,
     // An officer executing a member's reviewed proposal IS an on-behalf create.
     isOnBehalf: true,

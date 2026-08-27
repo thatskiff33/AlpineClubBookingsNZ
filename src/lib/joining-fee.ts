@@ -29,7 +29,6 @@ import { computeAgeTier } from "@/lib/age-tier";
 import { getSeasonStartDate } from "@/lib/policies/age-tier";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { clubSeasonYear } from "@/lib/financial-year";
-import { getTodayDateOnly } from "@/lib/date-only";
 
 type JoiningFeeStore = Prisma.TransactionClient | typeof prisma;
 
@@ -261,10 +260,28 @@ async function buildPreview(
  */
 export async function getJoiningFeePreviewForMember(
   memberId: string,
-  options?: { asOf?: Date; store?: JoiningFeeStore },
+  options: {
+    /**
+     * The day the JoiningFee schedule's effective window is evaluated on
+     * (`effectiveFrom <= asOf <= effectiveTo`), REQUIRED since #3123.
+     *
+     * It is not a lodge night, but it IS "what day is it at the club": when a
+     * caller does not name a day it means today, and today has to be the club's
+     * own. It used to default to the ENVIRONMENT's day, so a club configured
+     * behind its container's zone started quoting a schedule row a day before
+     * it took effect — the wrong PRICE, on the fee an applicant is asked to
+     * pay. `INV-MONEY`, `docs/AUTHORITATIVE_FEES.md`. The default is deleted
+     * rather than replaced by a read in here because both `effectiveFrom` and
+     * `effectiveTo` are `@db.Date` calendar days, so their counterpart has to
+     * arrive on the same UTC-midnight frame the caller is already working in
+     * (`INV-DATE-026`).
+     */
+    asOf: Date;
+    store?: JoiningFeeStore;
+  },
 ): Promise<JoiningFeePreview> {
-  const store = options?.store ?? prisma;
-  const asOf = options?.asOf ?? getTodayDateOnly();
+  const store = options.store ?? prisma;
+  const asOf = options.asOf;
   const classification = await resolveMemberJoiningFeeClassification(memberId, store);
   return buildPreview(classification, { asOf, store });
 }
@@ -284,10 +301,15 @@ export interface JoiningFeeInputs {
  */
 export async function getJoiningFeePreviewForInputs(
   inputs: JoiningFeeInputs,
-  options?: { asOf?: Date; store?: JoiningFeeStore; seasonYear?: number },
+  options: {
+    /** See {@link getJoiningFeePreviewForMember} — required for the same reason. */
+    asOf: Date;
+    store?: JoiningFeeStore;
+    seasonYear?: number;
+  },
 ): Promise<JoiningFeePreview> {
-  const store = options?.store ?? prisma;
-  const asOf = options?.asOf ?? getTodayDateOnly();
+  const store = options.store ?? prisma;
+  const asOf = options.asOf;
 
   // `computeAgeTier` requires its reference date since #2870, so the season is
   // resolved here — once, on the global client, outside any transaction, which is
@@ -299,7 +321,7 @@ export async function getJoiningFeePreviewForInputs(
       ? await computeAgeTier(
           inputs.dateOfBirth,
           getSeasonStartDate(
-            options?.seasonYear
+            options.seasonYear
               ?? clubSeasonYear(await readClubTimeZoneOutsideRequest()),
           ),
         )

@@ -234,6 +234,11 @@ async function tokenFor(
     memberId,
     seasonYear,
     membershipTypeId,
+    // #3123 - both are REQUIRED now, so the preview performs no
+    // `ClubTimeSettings` read of its own on any path. The frozen clock is
+    // 1 July 2026, which is season 2026 on the default 31-March year-end.
+    now: new Date("2026-07-01T00:00:00.000Z"),
+    clubCurrentSeasonYear: 2026,
     db,
   });
   return (result.body as { preview: { previewToken: string } }).preview.previewToken;
@@ -440,12 +445,15 @@ describe("bulkSaveSeasonalMembershipAssignments", () => {
     expect(mockAcquireFuturePartnerSharedAllocationLocks).toHaveBeenCalledWith(
       db,
       ["m-flip"],
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
     );
     expect(mockSweep).toHaveBeenCalledWith(
       expect.objectContaining({
         memberId: "m-flip",
         reason: "member_age_tier_changed",
         db,
+        today: expect.any(Date),
       }),
     );
     const acquireOrder =

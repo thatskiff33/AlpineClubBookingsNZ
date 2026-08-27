@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   findUnique: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
   resolveTerminal: vi.fn(),
   createAuditLog: vi.fn(),
   sendExpiredEmail: vi.fn(),
@@ -19,6 +20,14 @@ vi.mock("@/lib/prisma", () => ({
     bookingChangeRequest: {
       findMany: (...a: unknown[]) => mocks.findMany(...a),
       findUnique: (...a: unknown[]) => mocks.findUnique(...a),
+    },
+    // #3123 - NOT OPTIONAL. `readClubTimeZoneOutsideRequest` is fail-soft three
+    // ways (no delegate, a throwing query, no row) and every one of them
+    // degrades silently to the environment's zone, so a prisma mock without
+    // this delegate makes the reaper pass for exactly the reason these cases
+    // exist to rule out.
+    clubTimeSettings: {
+      findUnique: (...a: unknown[]) => mocks.clubTimeSettingsFindUnique(...a),
     },
   },
 }));
@@ -50,12 +59,28 @@ import {
   POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS,
   POLICY_EXCEPTION_HOLD_TTL_DAYS,
 } from "@/lib/booking-exception-requests";
+import { requireClubTimeZone } from "@/lib/club-time";
 
 // The suite runs under the repo's frozen clock (2026-07-01T00:00:00.000Z), so
 // every fixture below is written relative to that instant.
 const NOW = new Date("2026-07-01T00:00:00.000Z");
+/**
+ * The club's PERSISTED zone under test (#3123). Deliberately NOT
+ * `Pacific/Auckland`: that is what `APP_TIME_ZONE` falls back to, so a club on
+ * it could not be told apart from the environment's claim. Denver is behind
+ * Greenwich, which is the side these defects are visible on.
+ */
+const CLUB_ZONE = requireClubTimeZone("America/Denver");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+
+function primeClubZone() {
+  mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone: CLUB_ZONE,
+    updatedByMemberId: null,
+    updatedAt: NOW,
+  });
+}
 
 function candidate(
   over: Partial<{
@@ -112,6 +137,7 @@ function notificationContext(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  primeClubZone();
   mocks.resolveTerminal.mockResolvedValue({ claimed: true, released: 2 });
   mocks.createAuditLog.mockResolvedValue(undefined);
   mocks.findUnique.mockResolvedValue(notificationContext());
@@ -263,8 +289,12 @@ describe("reapExpiredPolicyExceptionHolds", () => {
       candidate({
         holdExpiresAt: null,
         createdAt,
-        // 2026-06-30 00:00 in Pacific/Auckland is 2026-06-29T12:00Z — before NOW.
-        reservationNights: [{ night: new Date("2026-06-30T00:00:00.000Z") }],
+        // 2026-06-29 00:00 in the CLUB's zone (America/Denver, UTC-6) is
+        // 2026-06-29T06:00Z — before NOW, and before the 24-hour floor, so the
+        // floor is what this case pins (#3123: the night was 30 June while the
+        // zone was Auckland's; the club's zone starts the day six hours the
+        // other side of Greenwich).
+        reservationNights: [{ night: new Date("2026-06-29T00:00:00.000Z") }],
       }),
     ]);
 
@@ -276,12 +306,13 @@ describe("reapExpiredPolicyExceptionHolds", () => {
     expect(
       computePolicyExceptionHoldExpiry({
         createdAt,
-        firstHeldNight: "2026-06-30",
+        firstHeldNight: "2026-06-29",
+        zone: CLUB_ZONE,
       }).getTime(),
       // The 24-hour floor still wins over the already-started night.
     ).toBe(createdAt.getTime() + POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS * HOUR_MS);
     expect(
-      computePolicyExceptionHoldExpiry({ createdAt }).getTime(),
+      computePolicyExceptionHoldExpiry({ createdAt, zone: CLUB_ZONE }).getTime(),
     ).toBeGreaterThan(NOW.getTime());
   });
 
@@ -417,6 +448,7 @@ describe("reapExpiredPolicyExceptionHolds", () => {
       computePolicyExceptionHoldExpiry({
         createdAt,
         firstHeldNight: "2026-08-01",
+        zone: CLUB_ZONE,
       }),
     );
   });
@@ -584,7 +616,7 @@ describe("computePolicyExceptionHoldExpiry", () => {
   it("defaults to the TTL window from creation", async () => {
     const createdAt = new Date("2026-07-01T09:00:00.000Z");
     expect(
-      computePolicyExceptionHoldExpiry({ createdAt }).getTime(),
+      computePolicyExceptionHoldExpiry({ createdAt, zone: CLUB_ZONE }).getTime(),
     ).toBe(createdAt.getTime() + POLICY_EXCEPTION_HOLD_TTL_DAYS * DAY_MS);
   });
 
@@ -594,12 +626,36 @@ describe("computePolicyExceptionHoldExpiry", () => {
       createdAt,
       // Two days out — well inside the 7-day TTL, so the night caps it.
       firstHeldNight: "2026-07-03",
+      zone: CLUB_ZONE,
     });
     expect(expiry.getTime()).toBeLessThan(
       createdAt.getTime() + POLICY_EXCEPTION_HOLD_TTL_DAYS * DAY_MS,
     );
-    // 2026-07-03 00:00 in Pacific/Auckland (NZST, UTC+12) is 2026-07-02T12:00Z.
-    expect(expiry.toISOString()).toBe("2026-07-02T12:00:00.000Z");
+    // 2026-07-03 00:00 in the CLUB's zone (America/Denver, MDT, UTC-6) is
+    // 2026-07-03T06:00Z.
+    expect(expiry.toISOString()).toBe("2026-07-03T06:00:00.000Z");
+  });
+
+  it("starts the night in the CLUB's zone and in nothing else (#3123)", async () => {
+    // The discriminating case: the SAME night, capped through two different
+    // club zones, must produce two different instants — eighteen hours apart
+    // between Auckland (UTC+12) and Denver (UTC-6). Before #3123 the zone came
+    // from `APP_TIME_ZONE`, so a club could not move this at all, and a club
+    // configured behind its container released its held beds on the wrong day.
+    const createdAt = new Date("2026-07-01T09:00:00.000Z");
+    const denver = computePolicyExceptionHoldExpiry({
+      createdAt,
+      firstHeldNight: "2026-07-03",
+      zone: CLUB_ZONE,
+    });
+    const auckland = computePolicyExceptionHoldExpiry({
+      createdAt,
+      firstHeldNight: "2026-07-03",
+      zone: requireClubTimeZone("Pacific/Auckland"),
+    });
+    expect(denver.toISOString()).toBe("2026-07-03T06:00:00.000Z");
+    expect(auckland.toISOString()).toBe("2026-07-02T12:00:00.000Z");
+    expect(denver.getTime() - auckland.getTime()).toBe(18 * HOUR_MS);
   });
 
   it("still gives a last-minute request its minimum review window", async () => {
@@ -610,6 +666,7 @@ describe("computePolicyExceptionHoldExpiry", () => {
     const expiry = computePolicyExceptionHoldExpiry({
       createdAt,
       firstHeldNight: "2026-06-30",
+      zone: CLUB_ZONE,
     });
     expect(expiry.getTime()).toBe(createdAt.getTime() + DAY_MS);
   });
@@ -619,6 +676,7 @@ describe("computePolicyExceptionHoldExpiry", () => {
     const expiry = computePolicyExceptionHoldExpiry({
       createdAt,
       firstHeldNight: "not-a-date",
+      zone: CLUB_ZONE,
     });
     expect(Number.isNaN(expiry.getTime())).toBe(false);
     expect(expiry.getTime()).toBe(

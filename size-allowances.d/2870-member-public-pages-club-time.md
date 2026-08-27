@@ -17,7 +17,7 @@ carving a page shell in half to buy back thirty lines would leave the reader
 chasing a boundary invented for a line count.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
-lines: 2603
+lines: 2631
 reason: the stay dates are calendar days and the audit, expiry and hold stamps
   are instants, so the two now take different routes through the kernel and the
   page says which is which at each site. That distinction is the entire defect

@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => {
   bookingUpdateMany: vi.fn(),
   bookingRequestUpdateMany: vi.fn(),
   promoRedemptionFindUnique: vi.fn(),
+  // #3123: the club's day is resolved once, before the claim transaction opens.
+  // The delegate is NOT optional on this mock: `getClubTimeZone` is fail-soft on
+  // a missing one and degrades silently to the environment, so leaving it off
+  // would mean this suite could never see a wrong day at all (A4's trap).
+  clubTimeSettingsFindUnique: vi.fn(),
   prismaTransaction: vi.fn(),
   calculateRefundAmount: vi.fn(),
   calculateAppliedCreditRestore: vi.fn(),
@@ -100,6 +105,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     promoCode: {
       update: vi.fn(),
+    },
+    clubTimeSettings: {
+      findUnique: mocks.clubTimeSettingsFindUnique,
     },
     $transaction: mocks.prismaTransaction,
   },
@@ -215,9 +223,17 @@ import {
 import { cancelBooking } from "@/lib/booking-cancel";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 
+/** The club's zone, named rather than taken from a helper default (#3123). */
+const CLUB_ZONE = "Pacific/Auckland";
+
 describe("cancelBooking credit refunds", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // #3123: a persisted club zone the environment does not hold, so a wrong
+    // day would be visible rather than accidentally right.
+    mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+      timeZone: "America/Denver",
+    });
     const defaultPaidBooking = {
       id: "booking_1",
       memberId: "member_1",
@@ -434,6 +450,41 @@ describe("cancelBooking credit refunds", () => {
     ).toBeLessThan(
       mocks.enqueueXeroAccountCreditNoteOperation.mock.invocationCallOrder[0]
     );
+  });
+
+  it("#3123: the refund tier is the CLUB's day, and it is read BEFORE the claim transaction", async () => {
+    /*
+      Two facts, and `INV-LOCK-004` is why they have to be asserted together.
+
+      The refund tier is `daysUntilDate(checkIn, todayAtClub)`, so WHICH day is
+      supplied decides how much money a member gets back. It used to be
+      `new Date()` projected through `APP_TIME_ZONE` — the container's zone. Here
+      the persisted zone is `America/Denver` and the frozen instant is
+      `2026-07-01T00:00:00.000Z`, so the club's own day is 30 JUNE while the
+      container's is 1 July: the two cannot agree by coincidence.
+
+      And the read has to happen where it is safe. The paid-path claim below
+      opens `prisma.$transaction` and immediately takes
+      `pg_advisory_xact_lock(1)`; a `clubTimeSettings.findUnique` inside that span
+      would hold a second pooled connection behind the global cohort key. The
+      ordering assertion is what makes "resolved before the transaction opens"
+      a measured property of this path rather than a comment.
+    */
+    await cancelBooking("booking_1", "member_1", "MEMBER", "127.0.0.1", "credit");
+
+    expect(mocks.daysUntilDate).toHaveBeenCalledWith(
+      expect.anything(),
+      "2026-06-30",
+    );
+    expect(mocks.daysUntilDate).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "2026-07-01",
+    );
+
+    expect(mocks.clubTimeSettingsFindUnique).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.clubTimeSettingsFindUnique.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.prismaTransaction.mock.invocationCallOrder[0]);
   });
 
   it("marks unpaid cancelled bookings as failed and clears the Xero invoice with a credit note", async () => {
@@ -1130,9 +1181,17 @@ describe("cancelBooking credit refunds", () => {
       "card"
     );
 
-    // Flush enough microtasks to reach the Stripe cancel (the branch now
-    // awaits the #1473 captured-ledger lookup first) without resolving it.
-    for (let i = 0; i < 5; i += 1) {
+    // Wait until the cancel path has REACHED the Stripe intent cancel, without
+    // resolving it — that is the state this test exists to observe.
+    //
+    // #3123: this used to flush a FIXED count of microtasks, which is a count of
+    // the awaits between the entry point and this line, and every await added
+    // anywhere upstream silently invalidates it. Adding the club-day read broke
+    // it, and — worse — the failure CASCADED: an unresolved `resultPromise` left
+    // behind by this test went on consuming the `mockResolvedValueOnce` queues
+    // of the next three. Waiting on the CONDITION instead is the same assertion
+    // with nothing to keep in step.
+    for (let i = 0; i < 50 && releaseCancellation === null; i += 1) {
       await Promise.resolve();
     }
     expect(mocks.paymentUpdate).not.toHaveBeenCalled();
@@ -2070,7 +2129,7 @@ describe("cancelBooking credit refunds", () => {
     });
 
     it("suppresses the email on a PENDING (no-payment) admin cancel", async () => {
-      const today = getTodayDateOnly();
+      const today = getTodayDateOnly(CLUB_ZONE);
       const pendingBooking = {
         id: "booking_pending",
         memberId: "member_1",

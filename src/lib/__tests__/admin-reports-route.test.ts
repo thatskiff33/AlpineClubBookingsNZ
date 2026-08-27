@@ -504,9 +504,16 @@ describe("admin reports route — the report window comes from the persisted clu
     // `APP_TIME_ZONE` is also frozen at module load, so the `process.env.TZ` pin
     // above cannot move it once anything has imported it — one more reason to
     // assert the answer instead of the label.
+    //
+    // `APP_TIME_ZONE` IS PASSED ON PURPOSE (#3123). The helper's default is
+    // going away, and this premise's subject IS the environment authority: it
+    // has to read the frozen module value rather than a literal, because a
+    // literal would only ever restate the `process.env.TZ` pin above and could
+    // not notice the two coming apart.
     const { startOfDateOnlyForTimeZone } = await import("@/lib/date-only");
+    const { APP_TIME_ZONE } = await import("@/config/operational");
     expect(
-      startOfDateOnlyForTimeZone("2026-04-08").toISOString(),
+      startOfDateOnlyForTimeZone("2026-04-08", APP_TIME_ZONE).toISOString(),
       "INV-CONFIG-002: the environment authority now opens the club day at the " +
         "same instant the persisted zone does, so the bounds below can no longer " +
         "tell which of the two the route obeyed, and would pass over a reverted " +

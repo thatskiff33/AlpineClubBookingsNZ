@@ -15,6 +15,13 @@ import {
   getRefundTier,
   type CancellationRule,
 } from "../cancellation";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the CLUB's calendar day, which `validatePromoCodeRules` now requires
+// instead of defaulting an instant through `APP_TIME_ZONE`. These cases are
+// about the BOOKING-DATE window rather than the validity window, so any day
+// inside the promotion's own validity does; the frozen clock's is used.
+const CLUB_TODAY = requireCalendarDate("2026-07-01");
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -246,7 +253,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("allows booking check-in within gated date range", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-07-15") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-07-15") },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -254,7 +262,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("rejects booking check-in before bookingStartFrom", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-06-30") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-06-30") },
+      CLUB_TODAY
     );
     expect(result).toBe("This promo code is not valid for your booking dates");
   });
@@ -262,7 +271,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("rejects booking check-in on or after bookingStartUntil", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-08-01") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-08-01") },
+      CLUB_TODAY
     );
     expect(result).toBe("This promo code is not valid for your booking dates");
   });
@@ -275,7 +285,8 @@ describe("P5.3: Promo code booking date gating", () => {
     };
     const result = validatePromoCodeRules(
       promoNoGating,
-      { memberId: "m1", bookingCheckIn: new Date("2025-01-01") }
+      { memberId: "m1", bookingCheckIn: new Date("2025-01-01") },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -283,7 +294,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("allows any check-in when bookingCheckIn not provided", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1" }
+      { memberId: "m1" },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -294,16 +306,18 @@ describe("P5.3: Promo code booking date gating", () => {
       bookingStartUntil: null,
     };
     expect(
-      validatePromoCodeRules(promoFromOnly, {
-        memberId: "m1",
-        bookingCheckIn: new Date("2026-07-15"),
-      })
+      validatePromoCodeRules(
+        promoFromOnly,
+        { memberId: "m1", bookingCheckIn: new Date("2026-07-15") },
+        CLUB_TODAY
+      )
     ).toBeNull();
     expect(
-      validatePromoCodeRules(promoFromOnly, {
-        memberId: "m1",
-        bookingCheckIn: new Date("2026-06-15"),
-      })
+      validatePromoCodeRules(
+        promoFromOnly,
+        { memberId: "m1", bookingCheckIn: new Date("2026-06-15") },
+        CLUB_TODAY
+      )
     ).toBe("This promo code is not valid for your booking dates");
   });
 });

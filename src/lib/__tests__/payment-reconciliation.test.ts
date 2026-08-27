@@ -2,6 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus } from "@prisma/client";
 import { normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 
+/**
+ * The zone the LEGACY oracle below reads, named rather than left to
+ * `normalizeDateOnlyForTimeZone`'s `APP_TIME_ZONE` default, which #3123 deletes.
+ * It is New Zealand because that is what `APP_TIME_ZONE` resolves to here — CI
+ * sets no `TZ`. On the exact UTC midnights `parseDateOnly` returns, that read is
+ * the identity, so the bound this expects is the same value the capacity query's
+ * own `storedDateOnly` produces.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   // #2576 §9: the single settle door is a confirming path, so it records the bounded
@@ -577,10 +587,10 @@ describe("markBookingPaymentSucceeded", () => {
     // the January dates that only the pre-lock read carried.
     const occ = mocks.bookingFindMany.mock.calls[0][0];
     expect(occ.where.checkIn.lt).toEqual(
-      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-22"))
+      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-22"), CLUB_ZONE)
     );
     expect(occ.where.checkOut.gt).toEqual(
-      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-20"))
+      normalizeDateOnlyForTimeZone(parseDateOnly("2026-05-20"), CLUB_ZONE)
     );
   });
 

@@ -48,21 +48,23 @@ export function requireClubTimeZone(
 
 /**
  * THE COMPATIBILITY SEAM, AND THE ONLY PLACE THAT BRANDS WITHOUT VALIDATING.
- * Retired with the legacy adapters by CT-6 (#2991).
+ * Retired with the last legacy adapter by CT-6 (#2991).
  *
- * `src/lib/nzst-date.ts` and `src/lib/date-only.ts` pass `APP_TIME_ZONE`
- * straight to `Intl.DateTimeFormat` today, and `APP_TIME_ZONE` is
+ * `src/lib/date-only.ts` passes `APP_TIME_ZONE` straight to
+ * `Intl.DateTimeFormat` today, and `APP_TIME_ZONE` is
  * `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` — an unvalidated
  * string. `Intl` accepts far more than CT-1's validator does: a deployment
  * running `TZ=NZ`, `TZ=UTC` or `TZ=EST` formats perfectly well today, and CT-2's
- * whole promise is that pointing those adapters at this kernel changes NO
+ * whole promise is that pointing that adapter at this kernel changes NO
  * caller's behaviour. Validating here would break exactly those deployments, so
  * the seam brands the raw value and lets `Intl` reject it if it is genuinely
  * unusable — which is what happens today.
  *
- * One difference, stated because it is real: today an unusable `TZ` throws while
- * `nzst-date.ts` is being imported; after this it throws on the first format
- * call. Both are fatal and neither is silent.
+ * One difference, stated because it was real: an unusable `TZ` used to throw
+ * while `src/lib/nzst-date.ts` was being imported, because that module branded
+ * the zone once at module load; after CT-2 it throws on the first format call
+ * instead. Both are fatal and neither is silent, and #3123 has since deleted the
+ * module that bound it at load time, so only the later throw remains.
  *
  * NEW CODE MUST NOT CALL THIS. A server module reads the club's zone with
  * `clubTimeZone()` from `./server`; a client module receives it as data.

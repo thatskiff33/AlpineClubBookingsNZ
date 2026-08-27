@@ -80,7 +80,7 @@ import {
   getNominationTokenExpiryDate,
 } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
-import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
+import { clubToday, dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import {
   applicationDateOfBirthDay,
   dependentSubject,
@@ -1429,7 +1429,14 @@ export async function approveMemberApplication(
     );
   }
 
-  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  // ONE read of the club's persisted zone for this whole approval, taken BEFORE
+  // the transaction opens. The season year and, since #3123, the joining fee's
+  // schedule day both come from it — two answers from one read, and necessarily
+  // the same day, rather than two independent reads that an approval straddling
+  // club midnight could answer differently.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const seasonYear = clubSeasonYear(clubZone);
+  const joiningFeeAsOf = dateOnlyInstantOf(clubToday(clubZone));
   const preFamilyMembers = parseApplicationFamilyMembers(application.familyMembers);
   const resolution = resolvePersonDecisions(preFamilyMembers.length, personDecisions);
   if (!resolution.ok) {
@@ -2135,6 +2142,7 @@ export async function approveMemberApplication(
           amountCents?: number;
           description?: string;
           seasonYear: number;
+          asOf: Date;
         } = {
           createdByMemberId: adminMemberId,
           // The season resolved BEFORE this transaction opened. Required by the
@@ -2146,6 +2154,11 @@ export async function approveMemberApplication(
           // `JoiningFee` schedule row whose `amountCents` lands on an IMMUTABLE
           // entrance-fee invoice (#2870, correctness review).
           seasonYear,
+          // #3123 — and the joining fee's schedule day, from the SAME
+          // pre-transaction read for the same reason: `getEffectiveJoiningFee`
+          // used to default it from the environment's zone, which picks the
+          // wrong schedule row for a club behind its container.
+          asOf: joiningFeeAsOf,
         };
         if (entranceFeeDecision.amountCents) {
           entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;

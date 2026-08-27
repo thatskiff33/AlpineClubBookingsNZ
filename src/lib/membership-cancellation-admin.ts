@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { memberHoldsPrivilegedRole, type UserType } from "@/lib/access-roles";
 import {
@@ -806,6 +807,14 @@ export async function reviewMembershipCancellationParticipant({
   // transaction commits — this is the only record of what the sweep detached.
   let orphanedByCancellation: OrphanedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;
 
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. `enqueueHostingCoverageReevaluationForMember` takes a `Member` row
+  // lock and then bounds its fan-out on `checkOut >= today`, so it cannot
+  // resolve the club's persisted timezone itself: that read is a
+  // `clubTimeSettings.findUnique` and would take a second pooled connection
+  // under the lock.
+  const clubTodayForFanout = await clubTodayDateOnlyInstant();
+
   const now = new Date();
   await prisma.$transaction(async (tx) => {
     if (action === "approve") {
@@ -951,10 +960,15 @@ export async function reviewMembershipCancellationParticipant({
       // Recorded inside this transaction so the cancellation and the obligation to
       // check what it broke commit together. Bounded to the bookings this person
       // actually attends, and it never refuses the cancellation.
-      await enqueueHostingCoverageReevaluationForMember(participant.memberId, tx, {
-        cause: "SYSTEM_CHANGE",
-        actorMemberId: adminMemberId,
-      });
+      await enqueueHostingCoverageReevaluationForMember(
+        participant.memberId,
+        tx,
+        clubTodayForFanout,
+        {
+          cause: "SYSTEM_CHANGE",
+          actorMemberId: adminMemberId,
+        },
+      );
 
       await createAuditLog(
         {

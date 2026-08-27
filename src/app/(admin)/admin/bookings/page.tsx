@@ -23,6 +23,7 @@ import { type ChipTone } from "@/lib/chip-tones";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   adminBookingsQuerySchema,
+  adminBookingsClubDay,
   appliedBookingViewFilters,
   buildAdminBookingsWhere,
   getDefaultAdminBookingSortDir,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/admin-bookings-service";
 import { formatMemberPhone } from "@/lib/admin-member-detail-helpers";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
+import { formatConsentShortDate } from "@/lib/member-guest-consent-card";
 import {
   listMemberGuestConsentExceptions,
   loadMemberGuestConsentQueueCounts,
@@ -42,12 +44,10 @@ import { lodgeOrderBy } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
-import { APP_LOCALE } from "@/config/operational";
 import {
   calendarDateOfDateOnlyInstant,
   countClubNights,
   formatClubDate,
-  type ClubTimeZone,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { formatBookingReference } from "@/lib/booking-reference";
@@ -87,30 +87,17 @@ function stayDay(value: Date) {
  *
  * `statusAt` is a real INSTANT: the moment a guest declined, or the moment the
  * request lapsed. It has no civil date until a zone is chosen, and that zone is
- * the club's PERSISTED one (`INV-CONFIG-002`), never `APP_TIME_ZONE`. The
- * shared consent short-date helper this replaces
- * (`@/lib/member-guest-consent-card`) pins the environment's zone at module
- * scope, so until now the stamp beside a correctly-decoded stay date was still
- * the environment's answer.
+ * the club's PERSISTED one (`INV-CONFIG-002`), never `APP_TIME_ZONE`.
  *
- * The year-less shape is NOT one of the kernel's house shapes — it is locked to
- * the signed-off #2307 mockup pack — so it is built here, memoised per zone the
- * way the audit console builds its seconds-bearing stamp, rather than bent onto
- * a house shape that would change what the chip renders.
+ * THIS USED TO BE A LOCAL PER-ZONE MEMO MAP, forked here because the shared
+ * consent short-date helper pinned the environment's zone at module scope and
+ * because the year-less shape had no INSTANT entry point in the kernel — only a
+ * calendar-date one. #3123 fixed both ends: `formatClubInstantDayMonth` is now a
+ * kernel export over the same `HOUSE_SHAPES.dayMonth` the fork was rebuilding,
+ * and `formatConsentShortDate` takes the club's zone. Two identical per-zone
+ * formatters three files apart is the drift this collapses; the rendered string
+ * is unchanged, and `house-shapes.test.ts` is what now pins it.
  */
-const CONSENT_SHORT_DATE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
-
-function consentShortDate(zone: ClubTimeZone, value: Date) {
-  const cached = CONSENT_SHORT_DATE_FORMATTERS.get(zone);
-  if (cached) return cached.format(value);
-  const created = new Intl.DateTimeFormat(APP_LOCALE, {
-    day: "numeric",
-    month: "short",
-    timeZone: zone,
-  });
-  CONSENT_SHORT_DATE_FORMATTERS.set(zone, created);
-  return created.format(value);
-}
 
 // Whole lodge nights between two date-only check-in/out values. This used to
 // divide the raw millisecond span by 86,400,000 — safe for UTC-midnight values
@@ -216,10 +203,16 @@ export default async function AdminBookingsPage({
     select: { id: true, name: true },
   });
   const showLodge = activeLodges.length > 1;
+  // ONE club day for this whole render (#3123): the list, the consent-queue
+  // scope and the published diagnostics filters all describe the same query, so
+  // they must all describe the same day. `club` was resolved once above.
+  const clubDay = adminBookingsClubDay(club);
   const { bookings, total, page, totalPages, sortBy, sortDir } =
-    await listAdminBookings(query, {
-      bedAllocationEnabled: showBedAllocation,
-    });
+    await listAdminBookings(
+      query,
+      { bedAllocationEnabled: showBedAllocation },
+      clubDay,
+    );
 
   // #2307 (owner decision MG2-M-3 as ticked): the member-guest consent queues
   // are a FILTER on this list, not a new page. Each chip's number is the
@@ -235,7 +228,10 @@ export default async function AdminBookingsPage({
   // count taken while the attention chip was open would only count bookings
   // that were both waiting AND stuck.
   const consentQueues = await loadMemberGuestConsentQueueCounts(prisma, {
-    waitingScope: buildAdminBookingsWhere({ ...query, consentState: "all" }),
+    waitingScope: buildAdminBookingsWhere(
+      { ...query, consentState: "all" },
+      clubDay,
+    ),
   });
   const showConsentChips =
     effectiveModules.memberGuests ||
@@ -280,7 +276,7 @@ export default async function AdminBookingsPage({
   // either, so the swap itself cannot be described here — it would need a registry
   // decision.)
   if (consentState !== "attention") {
-    const applied = appliedBookingViewFilters(query);
+    const applied = appliedBookingViewFilters(query, clubDay);
     if (applied.status) appliedView.status = applied.status;
     if (applied.filters) appliedView.filters = applied.filters;
   }
@@ -593,8 +589,8 @@ export default async function AdminBookingsPage({
                     </span>
                     <span className="block text-xs text-muted-foreground">
                       {row.status === "DECLINED"
-                        ? `Said no${row.statusAt ? `, ${consentShortDate(club.zone, row.statusAt)}` : ""}`
-                        : `Lapsed${row.statusAt ? ` ${consentShortDate(club.zone, row.statusAt)}` : ""}, never answered`}
+                        ? `Said no${row.statusAt ? `, ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}`
+                        : `Lapsed${row.statusAt ? ` ${formatConsentShortDate(row.statusAt, club.zone)}` : ""}, never answered`}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm">{row.why}</TableCell>

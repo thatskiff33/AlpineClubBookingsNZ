@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
  *
  * Both labels describe a CALENDAR value. `finance-dashboard-page.ts`'s day label
  * ("14 Jun") is handed a `yyyy-MM-dd` metric key minted by `buildIsoDateRange`;
- * `finance-dashboard-ranges.ts`'s month label ("Jun 2026") is handed a `YYYY-MM`
+ * `finance-dashboard-labels.ts`'s month label ("Jun 2026") is handed a `YYYY-MM`
  * month key. A calendar date has no timezone — 16 April 2026 is a Thursday
  * everywhere on earth — so neither may be projected through one.
  *
@@ -121,9 +121,18 @@ vi.mock("@/lib/xero-link-short-code", () => ({
   getXeroOrgShortCode: (...a: unknown[]) => mocks.getXeroOrgShortCode(...a),
 }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
-import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
+
+/**
+ * The zone the `@/config/operational` factory above pins, named rather than left
+ * to the helper's `APP_TIME_ZONE` default, which #3123 deletes. The premise case
+ * asserts the two are still the same zone, so this constant cannot drift out of
+ * step with the factory and leave the cases below measuring nothing.
+ */
+const CLUB_ZONE_BEHIND_UTC = "America/Denver";
 
 /** The occupancy trend's three stored days, and their labels. */
 const REALIZED_DAYS = ["2026-05-01", "2026-05-02", "2026-05-03"] as const;
@@ -234,9 +243,16 @@ describe("the finance dashboard's trend labels take no timezone (CT-4, #2870)", 
     // is exactly the projection the two replaced formatters performed.
     //
     // DELIBERATELY NOT DISCRIMINATING: it asserts the legacy behaviour on purpose.
-    expect(formatDateOnlyForTimeZone(new Date("2026-05-01T00:00:00.000Z"))).toBe(
-      "2026-04-30",
-    );
+    //
+    // The zone the replaced formatters read is `APP_TIME_ZONE`, so the constant
+    // below has to keep naming it for this premise to be about the right zone.
+    expect(APP_TIME_ZONE).toBe(CLUB_ZONE_BEHIND_UTC);
+    expect(
+      formatDateOnlyForTimeZone(
+        new Date("2026-05-01T00:00:00.000Z"),
+        CLUB_ZONE_BEHIND_UTC,
+      ),
+    ).toBe("2026-04-30");
   });
 
   it("names the month a month key holds, not the month behind it", () => {

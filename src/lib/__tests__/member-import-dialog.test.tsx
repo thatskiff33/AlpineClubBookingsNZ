@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemberImportDialog } from "@/app/(admin)/admin/members/_components/member-import-dialog";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import type { ImportResult } from "@/app/(admin)/admin/members/_types";
 
 const fetchMock = vi.fn();
@@ -82,13 +83,21 @@ function jsonResponse(body: ImportResult) {
 function renderImportDialog() {
   const onImported = vi.fn();
   const onError = vi.fn();
+  // #3123: the dialog's preview decides "cancelled date cannot be in the
+  // future" against the CLUB's day, which it takes from `useClubTime()`. The
+  // hook THROWS outside a provider rather than falling back to a plausible
+  // wrong day, so a bare render is a hard failure by design — the zone is
+  // supplied here, and `America/Denver` is chosen because it is not
+  // `APP_TIME_ZONE`'s own fallback.
   render(
-    <MemberImportDialog
-      open
-      onOpenChange={vi.fn()}
-      onImported={onImported}
-      onError={onError}
-    />,
+    <ClubTimeProvider zone="America/Denver">
+      <MemberImportDialog
+        open
+        onOpenChange={vi.fn()}
+        onImported={onImported}
+        onError={onError}
+      />
+    </ClubTimeProvider>,
   );
   return { onImported, onError };
 }

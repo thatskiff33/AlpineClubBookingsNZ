@@ -44,6 +44,16 @@ import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { getUnassignedHutLeaderDates } from "@/lib/hut-leader-coverage";
 import { prisma } from "@/lib/prisma";
 
+/*
+ * The club's day the fixtures below are built in (#3123). The dashboard takes
+ * its own from `clubTime()` and `getUnassignedHutLeaderDates` from
+ * `clubTodayDateOnlyInstant()`; this suite's `clubTimeSettings.findUnique`
+ * resolves `null`, so both fall back to `APP_TIME_ZONE` — `Pacific/Auckland`
+ * under test. The roster fixtures have to sit in the same zone as the window
+ * they are counted against. Zone authority is not this file's subject.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // getStats booking.count call order (roster + bed counts no longer use
 // booking.count — they now run through window-scoped helpers that findMany
 // bookings + choreAssignments / bedAllocations): totalBookings, activeBookings,
@@ -75,7 +85,7 @@ function mockStats() {
   // rows a real guest has. The envelope stays alongside them because it is what
   // the Prisma where-clauses select on, and because the two must agree for a
   // contiguous stay — which is the whole point of writing both out here.
-  const today = getTodayDateOnly();
+  const today = getTodayDateOnly(CLUB_ZONE);
   const plus1 = addDaysDateOnly(today, 1);
   const plus2 = addDaysDateOnly(today, 2);
   const plus3 = addDaysDateOnly(today, 3);

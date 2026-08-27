@@ -37,11 +37,21 @@ import { NextRequest } from "next/server";
  * read as the same route under two lenses.
  */
 
+/*
+ * The zone behind UTC, declared ONCE (#3123). `vi.mock` factories hoist above
+ * every plain `const`, which is why the literals below are inlined; `vi.hoisted`
+ * lets the factory and the premise assertion share one declaration, so the zone
+ * the mock pins and the zone the legacy projection is measured in cannot drift.
+ */
+const { LEGACY_PROJECTION_ZONE } = vi.hoisted(() => ({
+  LEGACY_PROJECTION_ZONE: "America/Denver",
+}));
+
 // Inlined literals: `vi.mock` factories hoist above every const in this file.
 vi.mock("@/config/operational", () => ({
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
-  APP_TIME_ZONE: "America/Denver",
+  APP_TIME_ZONE: LEGACY_PROJECTION_ZONE,
   APP_LOCALE: "en-NZ",
 }));
 
@@ -342,8 +352,10 @@ const NO_OP_DELTA = { checkIn: STORED_CHECK_IN, checkOut: STORED_CHECK_OUT };
 describe("modify-quote prices the stored window, not a projected one (CT-4, #2870)", () => {
   it("PREMISE: this zone really does move a stored day", () => {
     // The LEGACY answer, measured. If it ever equals the stored day the fixture
-    // has stopped discriminating and every assertion below is worthless.
-    expect(formatDateOnlyForTimeZone(D(STORED_CHECK_IN))).toBe("2026-08-31");
+    // has stopped discriminating and every assertion below is worthless. The
+    // zone is named rather than defaulted (#3123): this line models the REPLACED
+    // helper, so it has to say which zone it models.
+    expect(formatDateOnlyForTimeZone(D(STORED_CHECK_IN), LEGACY_PROJECTION_ZONE)).toBe("2026-08-31");
   });
 
   it("never prices a stay window the booking does not hold", async () => {

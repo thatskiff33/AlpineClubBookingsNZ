@@ -14,21 +14,21 @@ const NO_BARE_TO_LOCALE_DATE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleDateString']",
   message:
-    "INV-DATE-015: Render through @/lib/club-time (CT-2, #2990). Holding a lodge night, a birthday or any other CALENDAR DAY? formatClubDate / formatClubLongDate / formatClubWeekdayDate / formatClubMonthYear, which take no timezone because a calendar day has none. Holding a real INSTANT such as createdAt? formatClubInstantDate / formatClubInstantDateTime and their siblings, with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264). @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
+    "INV-DATE-015: Render through @/lib/club-time (CT-2, #2990). Holding a lodge night, a birthday or any other CALENDAR DAY? formatClubDate / formatClubLongDate / formatClubWeekdayDate / formatClubMonthYear, which take no timezone because a calendar day has none. Holding a real INSTANT such as createdAt? formatClubInstantDate / formatClubInstantDateTime and their siblings, with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264). There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 const NO_BARE_TO_LOCALE_TIME_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleTimeString']",
   message:
-    "INV-DATE-015: Use formatClubInstantTime / formatClubInstantDateTime from @/lib/club-time (CT-2, #2990), with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264). @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
+    "INV-DATE-015: Use formatClubInstantTime / formatClubInstantDateTime from @/lib/club-time (CT-2, #2990), with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264). There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 const NO_BARE_TO_LOCALE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleString']",
   message:
-    "INV-DATE-015: Use formatClubInstantDateTime / formatClubInstantDate from @/lib/club-time (CT-2, #2990) for an instant, or formatClubDate for a calendar day, which takes no timezone at all. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason. @/lib/nzst-date is a compatibility adapter retired by CT-6 — do not add a caller.",
+    "INV-DATE-015: Use formatClubInstantDateTime / formatClubInstantDate from @/lib/club-time (CT-2, #2990) for an instant, or formatClubDate for a calendar day, which takes no timezone at all. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason. There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 // #2289 — the two shapes of raw SQL that can lie about their own result.
@@ -689,7 +689,7 @@ const NO_HOST_CLOCK_FACE = [
 ].map((selector) => ({ selector, message: HOST_CLOCK_FACE_MESSAGE }));
 
 const ENVIRONMENT_ZONE_MESSAGE =
-  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only's zone-defaulting helpers and @/lib/nzst-date are the compatibility adapters this issue retires; do not add a caller.";
+  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter this issue retires, and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
 
 // `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
 // modules whose job is to read them once.
@@ -868,19 +868,28 @@ export const DATE_FNS_ADAPTERS = [
  * blocking it. Adding a file here re-opens the class the guard exists to close,
  * so the census test asserts the list has not grown.
  *
- * `src/lib/date-only.ts` is deliberately NOT here: it already has a block of
- * its own further down, and that block drops this group as well. Listing it
- * twice would give it two matching blocks, the later of which silently wins.
+ * IT HAS ALREADY SHRUNK ONCE, and how is worth recording: `src/lib/nzst-date.ts`
+ * was the rendering adapter and the last module that BOUND the environment zone
+ * at module load. #3123 did not migrate it — it DELETED it, once every
+ * production caller had moved to the kernel. An entry leaving this list by way
+ * of the file being deleted is the intended end state, not a special case, and
+ * `club-time-boundary-guard.test.ts` fails on an entry naming a file that no
+ * longer exists precisely so the two cannot drift apart.
+ *
+ * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It has
+ * a block of its own further down, which used to drop this group as well because
+ * six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`. #3123 removed
+ * those defaults and the import, so that block drops only the ENCODING group now
+ * and these arms reach the file like any other. Were it ever to need this group
+ * again it would still belong in its own block rather than on this list: listing
+ * it twice would give it two matching blocks, the later of which silently wins.
  */
 const ENVIRONMENT_ZONE_ADAPTER_FILES = [
   "src/config/operational.ts",
   "src/lib/club-time-zone-env.ts",
-  "src/lib/nzst-date.ts",
   "src/lib/ai-assistant-usage.ts",
   "src/lib/ai-diagnostics-usage.ts",
   "src/lib/induction-display.ts",
-  "src/lib/member-guest-consent-labels.ts",
-  "src/lib/member-guest-delegate-page.ts",
   "src/lib/member-merge-field-kinds.ts",
 ];
 
@@ -894,11 +903,6 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
     file: "src/lib/club-time-zone-env.ts",
     reason:
       "STRUCTURAL. CT-1's seed reader (#2989): exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
-  },
-  {
-    file: "src/lib/nzst-date.ts",
-    reason:
-      "The rendering compatibility adapter this issue retires, and the last module that BINDS the environment zone at module load. Its remaining production callers are counted by the census; the count may only fall.",
   },
   {
     file: "src/lib/ai-assistant-usage.ts",
@@ -916,16 +920,6 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
       "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
   },
   {
-    file: "src/lib/member-guest-consent-labels.ts",
-    reason:
-      "Three module-level formatters whose own comment already defers them to CT-4 group F. Left as the group scoped them rather than re-scoped here.",
-  },
-  {
-    file: "src/lib/member-guest-delegate-page.ts",
-    reason:
-      "An `en-CA` extractor whose locale is deliberately NOT APP_LOCALE, because changing it would change the field order and break the parse the page depends on. It needs the club zone threaded from the route, not a formatter swap.",
-  },
-  {
     file: "src/lib/member-merge-field-kinds.ts",
     reason:
       "The member-merge comparison renderer, which is a client component (#2860). Same blocker as `induction-display.ts`: the zone must arrive as data.",
@@ -940,8 +934,10 @@ export const ENVIRONMENT_ZONE_ADAPTERS = [
  * "this block does not need the rendering arms" from "somebody dropped them".
  * Named here, `DATE_GUARD_ARMS.rendering` lets `date-only-encoding-guard.test.ts`
  * assert that a given path still resolves to all three — which is what pins
- * `src/lib/nzst-date.ts` losing its exemption in CT-2 (#2990), a removal no test
- * could see before.
+ * `src/lib/date-only.ts` still carrying the DATE-rule exemption its own block
+ * grants it, and nothing else. It also pinned `src/lib/nzst-date.ts` losing its
+ * exemption in CT-2 (#2990) — a removal no test could see before — until #3123
+ * deleted that file and the pin with it.
  */
 const DATE_RENDERING_RESTRICTIONS = [
   NO_BARE_TO_LOCALE_DATE_STRING,
@@ -1043,9 +1039,9 @@ const ALWAYS_RESTRICTED_IN_SRC = [
 export const SRC_RESTRICTION_EXEMPTIONS = [
   {
     files: ["src/lib/date-only.ts"],
-    omits: [...DATE_ONLY_ENCODING_RESTRICTIONS, ...ENVIRONMENT_ZONE_RESTRICTIONS],
+    omits: [...DATE_ONLY_ENCODING_RESTRICTIONS],
     reason:
-      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere. It is also the adapter CT-6 (#2991) retires, so it still defaults six helpers to APP_TIME_ZONE for the callers CT-4 has not reached; `ENVIRONMENT_ZONE_ADAPTERS` carries that reason and the census counts what is left.",
+      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere. It carried the ENVIRONMENT-ZONE group too until #3123, because six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`; those defaults and the import are gone, every caller passes a zone, and the exemption went with them. An exemption is deleted when its cause is, not when somebody next happens to read the block.",
   },
   {
     files: DATE_FNS_ADAPTER_FILES,
@@ -1057,7 +1053,7 @@ export const SRC_RESTRICTION_EXEMPTIONS = [
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
     omits: ENVIRONMENT_ZONE_RESTRICTIONS,
     reason:
-      "The two structural readers of the environment's zone plus the seven measured callers CT-6 (#2991) could not migrate without threading a club zone through another issue's surface. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
+      "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
@@ -1228,10 +1224,12 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #2264 — every rendered date and time must go through the NZ-pinned
-    // helpers in `src/lib/nzst-date.ts` (`formatNZDate`, `formatNZDateTime`,
+    // #2264 — every rendered date and time must go through the club's ONE
+    // rendering seam, `@/lib/club-time` (CT-2, #2990). The six NZ-pinned helpers
+    // in `src/lib/nzst-date.ts` (`formatNZDate`, `formatNZDateTime`,
     // `formatNZLongDate`, `formatNZTime`, `formatNZMonthYear`,
-    // `formatNZWeekdayDate`). A bare `toLocaleDateString()` /
+    // `formatNZWeekdayDate`) were that seam until CT-2 made them delegate to the
+    // kernel and #3123 deleted the file. A bare `toLocaleDateString()` /
     // `toLocaleTimeString()` / `toLocaleString()` renders in the VIEWER's time
     // zone and locale, so an admin abroad saw a different lodge night than the
     // one stored, and the lobby clock showed the wrong time on a TV whose
@@ -1261,8 +1259,9 @@ const eslintConfig = defineConfig([
     // a new one should be read as a site that was never classified.
     //
     // Documented exclusions (each has its own block below):
-    //   * `src/lib/nzst-date.ts`, `src/lib/date-only.ts` — the helpers
-    //     themselves, the sanctioned home for raw date formatting.
+    //   * `src/lib/date-only.ts` — the helper module itself, the sanctioned home
+    //     for the date-only encoding. `src/lib/nzst-date.ts` sat beside it until
+    //     CT-2 (#2990) took its exemption away and #3123 deleted the file.
     //   * `src/lib/email-templates/chores.ts` — `formatChoreRosterDate`
     //     (#2256): the chore-roster long-weekday subject line and body must stay
     //     byte-identical, and the helper is shared with `src/lib/email/chores.ts`.
@@ -1307,10 +1306,12 @@ const eslintConfig = defineConfig([
     //
     // The DATE_RENDERING arms are re-stated rather than inherited, because flat
     // config REPLACES a rule's options: a block that merely dropped one group
-    // would take the three rendering arms down with it, silently, for
-    // `nzst-date.ts` among others -- and CT-2 (#2990) removed that file's
-    // rendering exemption on purpose. This is the failure the fold above exists
-    // to prevent, arriving through a new block rather than through a merge.
+    // would take the three rendering arms down with it, silently, for every file
+    // named here. That is not hypothetical — it is what CT-2 (#2990) deliberately
+    // undid for `nzst-date.ts` by taking its rendering exemption away, on the
+    // file that WAS the club's rendering seam (#3123 has since deleted it). This
+    // is the failure the fold above exists to prevent, arriving through a new
+    // block rather than through a merge.
     files: ENVIRONMENT_ZONE_ADAPTER_FILES,
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
@@ -1380,14 +1381,16 @@ const eslintConfig = defineConfig([
     // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
     // Number-formatting block below.
     //
-    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE and no longer is (CT-2,
-    // #2990). It held the six frozen `Intl.DateTimeFormat` constants the club's
-    // rendering seam was built from; it now delegates every one of them to
-    // `@/lib/club-time`, so it neither formats nor needs an exemption, and
-    // taking it off this list is what stops a future edit quietly putting a
-    // hand-rolled `toLocale*` back into the seam. The census in
-    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the
-    // other half: it refuses an `Intl.DateTimeFormat` in either adapter.
+    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE, was taken off in CT-2
+    // (#2990), and no longer exists at all: #3123 deleted it. It held the six
+    // frozen `Intl.DateTimeFormat` constants the club's rendering seam was built
+    // from, then delegated every one of them to `@/lib/club-time` and so needed
+    // no exemption. Recorded because the sequence is the rule: an adapter loses
+    // its exemption when it stops formatting, and is deleted when its last
+    // caller moves — it is never left exempt "for now". The census in
+    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the other
+    // half: it refuses an `Intl.DateTimeFormat` in the remaining adapter, and
+    // refuses the deleted file coming back.
     files: ["src/lib/email-templates/chores.ts"],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(),
@@ -1398,22 +1401,30 @@ const eslintConfig = defineConfig([
     // restrictions, because it is the sanctioned home for the truncation: the
     // rule exists to make every other file call `formatDateOnly` instead of
     // writing `toISOString().slice(0, 10)`, and that helper has to write it
-    // somewhere. It is exempt from the toLocale* rules for the same reason
-    // (it formats with a pinned `Intl.DateTimeFormat`), and still carries the
-    // raw-SQL restrictions, which have nothing to do with either.
+    // somewhere. It still carries the raw-SQL and money restrictions, which have
+    // nothing to do with that.
+    //
+    // IT USED TO DROP THE ENVIRONMENT-ZONE GROUP TOO, and #3123 took that back.
+    // Six helpers here defaulted their `timeZone` parameter to `APP_TIME_ZONE`;
+    // once every caller passed a zone the defaults and the import went, and the
+    // exemption had nothing left to excuse. A lifted guard outlives its cause in
+    // SILENCE — no assertion fails on the day the last violation leaves the file
+    // — which is why `club-time-boundary-guard.test.ts` now re-reads every file
+    // this config excuses from that group, not only the ones named on
+    // `ENVIRONMENT_ZONE_ADAPTERS`, and fails on one whose code no longer names
+    // the environment zone.
     //
     // This is the only entry `date-only-encoding-guard.test.ts` accepts on its
     // exemption list. A second file added here is a site that was never
     // classified, not a file that needs an exemption.
     files: ["src/lib/date-only.ts"],
     rules: {
-      // Drops ONE named group. Every other guard — the raw-SQL restrictions and
-      // the money restrictions today, anything added later — stays on this file
-      // automatically.
-      "no-restricted-syntax": srcRestrictedSyntaxWithout([
-        ...DATE_ONLY_ENCODING_RESTRICTIONS,
-        ...ENVIRONMENT_ZONE_RESTRICTIONS,
-      ]),
+      // Drops ONE named group. Every other guard — the raw-SQL restrictions, the
+      // money restrictions and the environment-zone arms today, anything added
+      // later — stays on this file automatically.
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        DATE_ONLY_ENCODING_RESTRICTIONS,
+      ),
     },
   },
   {

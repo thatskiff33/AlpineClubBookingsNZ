@@ -41,12 +41,13 @@ import {
   MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MAX,
   MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MIN,
 } from "@/config/club-settings-defaults";
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
-  formatDateOnlyForTimeZone,
-  parseDateOnly,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  clubCalendarDateOf,
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+  startOfClubDay,
+} from "@/lib/club-time";
 
 // Test helper: reads a fixed repo file under process.cwd(); the path is
 // test-controlled, not user input.
@@ -675,8 +676,22 @@ describe("operational-presence predicate (D-12)", () => {
 // exists to prevent. The "would fail if somebody simplified the clamp back to
 // check-in" case below is named as such so a later reader cannot mistake the
 // extra day for an off-by-one.
-const NZ = "Pacific/Auckland";
+const NZ = requireClubTimeZone("Pacific/Auckland");
+/**
+ * A club BEHIND Greenwich, which is the only kind of deployment that can tell a
+ * decoded stored day from one projected through the club's zone. Deliberately
+ * not `Pacific/Auckland`: that is `APP_TIME_ZONE`'s own fallback, so a test
+ * using it cannot distinguish the persisted zone from the environment's.
+ */
+const DENVER = requireClubTimeZone("America/Denver");
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+/** A stored `@db.Date` lodge night, exactly as Prisma hands one back. */
+const storedDay = (day: string) => dateOnlyInstantOf(requireCalendarDate(day));
+
+/** The first instant of a club calendar day, for an expected value. */
+const clubDayStart = (day: string, zone: typeof NZ) =>
+  startOfClubDay(requireCalendarDate(day), zone);
 
 describe("computeMemberGuestConsentExpiry", () => {
   it("gives the club's configured window when check-in is far away", () => {
@@ -688,7 +703,7 @@ describe("computeMemberGuestConsentExpiry", () => {
       computeMemberGuestConsentExpiry({
         now,
         pendingHoldExpiryDays: 7,
-        bookingCheckIn: parseDateOnly("2026-08-31"),
+        bookingCheckIn: storedDay("2026-08-31"),
         timeZone: NZ,
       }),
     ).toEqual(new Date("2026-08-08T02:00:00.000Z"));
@@ -703,14 +718,14 @@ describe("computeMemberGuestConsentExpiry", () => {
     const expiry = computeMemberGuestConsentExpiry({
       now,
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-08-04"),
+      bookingCheckIn: storedDay("2026-08-04"),
       timeZone: NZ,
     });
 
     // Midnight NZST on 3 August, the day before the 4 August check-in.
     expect(expiry).toEqual(new Date("2026-08-02T12:00:00.000Z"));
 
-    const startOfCheckInDay = startOfDateOnlyForTimeZone("2026-08-04", NZ);
+    const startOfCheckInDay = clubDayStart("2026-08-04", NZ);
     expect(expiry.getTime()).toBeLessThan(startOfCheckInDay.getTime());
     // And a full club day earlier, so the nightly 04:30 sweep gets a run on a
     // morning when the removal path still sees a future check-in.
@@ -727,13 +742,13 @@ describe("computeMemberGuestConsentExpiry", () => {
     const expiry = computeMemberGuestConsentExpiry({
       now: new Date("2026-04-01T00:00:00.000Z"),
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-04-06"),
+      bookingCheckIn: storedDay("2026-04-06"),
       timeZone: NZ,
     });
 
     expect(expiry).toEqual(new Date("2026-04-04T11:00:00.000Z"));
     expect(expiry).not.toEqual(new Date("2026-04-05T00:00:00.000Z"));
-    const startOfCheckInDay = startOfDateOnlyForTimeZone("2026-04-06", NZ);
+    const startOfCheckInDay = clubDayStart("2026-04-06", NZ);
     expect(startOfCheckInDay.getTime() - expiry.getTime()).toBe(25 * 60 * 60 * 1000);
   });
 
@@ -747,12 +762,12 @@ describe("computeMemberGuestConsentExpiry", () => {
     const expiry = computeMemberGuestConsentExpiry({
       now: new Date("2026-09-20T00:00:00.000Z"),
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-09-28"),
+      bookingCheckIn: storedDay("2026-09-28"),
       timeZone: NZ,
     });
 
     expect(expiry).toEqual(new Date("2026-09-26T12:00:00.000Z"));
-    const startOfCheckInDay = startOfDateOnlyForTimeZone("2026-09-28", NZ);
+    const startOfCheckInDay = clubDayStart("2026-09-28", NZ);
     expect(startOfCheckInDay.getTime() - expiry.getTime()).toBe(23 * 60 * 60 * 1000);
   });
 
@@ -768,7 +783,7 @@ describe("computeMemberGuestConsentExpiry", () => {
     const expiry = computeMemberGuestConsentExpiry({
       now,
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-08-02"),
+      bookingCheckIn: storedDay("2026-08-02"),
       timeZone: NZ,
     });
 
@@ -776,7 +791,7 @@ describe("computeMemberGuestConsentExpiry", () => {
     expect(expiry.getTime()).toBeGreaterThanOrEqual(now.getTime() + TWO_HOURS_MS);
     // Stated plainly so nobody "fixes" it by silently expiring the request on
     // creation: this deadline really is on the check-in date in club time.
-    expect(formatDateOnlyForTimeZone(expiry, NZ)).toBe("2026-08-02");
+    expect(clubCalendarDateOf(expiry, NZ)).toBe("2026-08-02");
   });
 
   it("lets the two-hour floor overshoot a clamp that is nearer than two hours", () => {
@@ -784,18 +799,18 @@ describe("computeMemberGuestConsentExpiry", () => {
     // floor wins and overshoots it — but by little enough that the deadline is
     // still on the day before check-in and the sweep can still release the bed.
     const now = new Date("2026-08-01T11:00:00.000Z"); // 23:00 NZST on 1 August
-    const clamp = startOfDateOnlyForTimeZone("2026-08-02", NZ); // now + 1 hour
+    const clamp = clubDayStart("2026-08-02", NZ); // now + 1 hour
     const expiry = computeMemberGuestConsentExpiry({
       now,
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-08-03"),
+      bookingCheckIn: storedDay("2026-08-03"),
       timeZone: NZ,
     });
 
     expect(expiry).toEqual(new Date(now.getTime() + TWO_HOURS_MS));
     expect(expiry.getTime()).toBeGreaterThan(clamp.getTime());
     expect(expiry.getTime()).toBeLessThan(
-      startOfDateOnlyForTimeZone("2026-08-03", NZ).getTime(),
+      clubDayStart("2026-08-03", NZ).getTime(),
     );
   });
 
@@ -805,18 +820,97 @@ describe("computeMemberGuestConsentExpiry", () => {
     expect(MEMBER_GUEST_CONSENT_MIN_HOLD_MS).toBe(TWO_HOURS_MS);
   });
 
-  it("defaults to club time rather than to the server's zone", () => {
-    // Every lodge night in this system is an NZ date-only value, and the clamp is
-    // a club-midnight instant; a CI box or a container on UTC must not get a
-    // different deadline from the club's own server.
+  /*
+    THE TEST THAT USED TO BE HERE PINNED THE DEFAULT, and #3123 deleted it rather
+    than adapting it.
+
+    It read "defaults to club time rather than to the server's zone" and asserted
+    that a call with NO `timeZone` equalled the same call with
+    `timeZone: APP_TIME_ZONE`. That is a tautology dressed as a guarantee: the
+    default WAS `APP_TIME_ZONE`, so the assertion could not fail, and what it
+    actually pinned was the defect — the environment deciding a member's
+    deadline. There is no version of it worth keeping once the parameter is
+    required, because the property it claimed to protect is now enforced by the
+    compiler at every call site instead. The two tests below are what replace it,
+    and neither can pass by accident on a container that happens to run in the
+    club's zone.
+  */
+
+  it("names the deadline in the CLUB's zone, not the container's", () => {
+    /*
+      A club in `America/Denver` — six or seven hours behind Greenwich, and
+      deliberately NOT `Pacific/Auckland`, which is what the environment falls
+      back to and so cannot be told apart from it.
+
+      The clamp binds (three days out under a seven-day policy), so the answer is
+      the first instant of 3 August AT THE CLUB. In Denver that is 06:00Z on the
+      3rd; in Auckland it would have been 12:00Z on the 2nd — eighteen hours
+      earlier and on the wrong calendar day. A deadline the club's own setting
+      does not decide is the whole defect this epic exists to end.
+    */
+    const expiry = computeMemberGuestConsentExpiry({
+      now: new Date("2026-08-01T02:00:00.000Z"),
+      pendingHoldExpiryDays: 7,
+      bookingCheckIn: storedDay("2026-08-04"),
+      timeZone: DENVER,
+    });
+
+    expect(expiry).toEqual(new Date("2026-08-03T06:00:00.000Z"));
+    expect(expiry).not.toEqual(clubDayStart("2026-08-03", NZ));
+    expect(clubCalendarDateOf(expiry, DENVER)).toBe("2026-08-03");
+  });
+
+  it("gives a Denver member the SAME last day to answer as an Auckland one", () => {
+    /*
+      MEASURED, AND THIS IS THE ONE A MEMBER NOTICES (#3123).
+
+      `bookingCheckIn` is a `@db.Date` column — a calendar day, encoded as UTC
+      midnight — and the old code read it back THROUGH the club's zone before
+      subtracting a day. For a club behind Greenwich that projection names the
+      previous day, so "the day before check-in" came out a day early and the
+      whole deadline moved 24 hours earlier: measured at exactly 86,400,000 ms on
+      `America/Denver`.
+
+      What that costs a person: the request email says "answer by", the consent
+      card says "expires", and the nightly sweep releases their bed. A Denver
+      member asked to approve a 4 August stay was given until 2 August and told
+      so, where the club's policy — and every Auckland member — gets the 3rd.
+
+      The assertion is written as the DAY each member is given rather than as an
+      instant equality, because the instants legitimately differ (a club day
+      starts at a different moment in each zone) while the day must not.
+
+      MUTATION PROBE: put the projection back — decode `bookingCheckIn` with
+      `clubCalendarDateOf(bookingCheckIn, timeZone)` instead of
+      `calendarDateOfDateOnlyInstant` — and the Denver leg reads "2026-08-02"
+      while the Auckland leg stays "2026-08-03".
+    */
     const args = {
       now: new Date("2026-08-01T02:00:00.000Z"),
       pendingHoldExpiryDays: 7,
-      bookingCheckIn: parseDateOnly("2026-08-04"),
+      bookingCheckIn: storedDay("2026-08-04"),
     };
-    expect(computeMemberGuestConsentExpiry(args)).toEqual(
-      computeMemberGuestConsentExpiry({ ...args, timeZone: APP_TIME_ZONE }),
-    );
+
+    const denver = computeMemberGuestConsentExpiry({ ...args, timeZone: DENVER });
+    const auckland = computeMemberGuestConsentExpiry({ ...args, timeZone: NZ });
+
+    expect(clubCalendarDateOf(denver, DENVER)).toBe("2026-08-03");
+    expect(clubCalendarDateOf(auckland, NZ)).toBe("2026-08-03");
+  });
+
+  it("refuses a real timestamp where a stored lodge night belongs", () => {
+    // The precondition is asserted, not assumed. A bare `Date` cannot say
+    // whether it encodes a calendar day or holds a moment, and a moment decoded
+    // in UTC would be the INV-DATE-019 defect from the other direction — silently
+    // right for a club east of Greenwich and wrong everywhere else.
+    expect(() =>
+      computeMemberGuestConsentExpiry({
+        now: new Date("2026-08-01T02:00:00.000Z"),
+        pendingHoldExpiryDays: 7,
+        bookingCheckIn: new Date("2026-08-04T09:30:00.000Z"),
+        timeZone: DENVER,
+      }),
+    ).toThrow(/takes a stored calendar day, not a moment/);
   });
 });
 

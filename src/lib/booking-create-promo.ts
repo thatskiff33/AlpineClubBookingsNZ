@@ -7,6 +7,7 @@
  */
 import { PromoCodeType, type FixedNightlyMode, type BookingGuest } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { CalendarDate } from "@/lib/club-time";
 import {
   shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
@@ -74,6 +75,17 @@ export async function resolvePromoInTransaction(
     promoGuestIndexes?: number[];
     allowInternal?: boolean;
     lodgeId: string;
+    /**
+     * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
+     * caller BEFORE it opened the transaction whose client arrives as `tx`.
+     *
+     * REQUIRED. `INV-LOCK-004` names the club timezone as one of only two reads
+     * that cannot take a transaction client; by this point the caller holds
+     * `pg_advisory_xact_lock(1)`, the per-lodge capacity key and a `FOR UPDATE`
+     * row lock on the promo code itself. It decides the promotion's validity
+     * window, which is whether the member gets the discount at all.
+     */
+    todayAtClub: CalendarDate;
   },
 ): Promise<ResolvedPromo> {
   const {
@@ -87,6 +99,7 @@ export async function resolvePromoInTransaction(
     promoGuestIndexes,
     allowInternal,
     lodgeId,
+    todayAtClub,
   } = options;
   const normalizedCode = promoCodeStr.toUpperCase().trim();
 
@@ -182,7 +195,7 @@ export async function resolvePromoInTransaction(
       guests: guestNightRates,
     },
     assignedMemberIds,
-    { db: tx, selectedGuestIndexes: promoGuestIndexes, lodgeId }
+    { db: tx, selectedGuestIndexes: promoGuestIndexes, lodgeId, todayAtClub }
   );
   if (application.error || !application.discount) {
     throw new BookingPromoError(application.error ?? "Promo code could not be applied");

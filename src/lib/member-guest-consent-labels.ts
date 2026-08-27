@@ -17,24 +17,26 @@
  * and must not drift from it casually.
  */
 
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   calendarDateOfDateOnlyInstant,
+  formatClubInstantDayMonth,
+  formatClubInstantWeekdayDate,
+  formatClubInstantWeekdayDayMonth,
   formatClubWeekdayDate,
   formatClubWeekdayDayMonth,
+  type ClubTimeZone,
 } from "@/lib/club-time";
 
 /*
-  THE THREE FORMATTERS BELOW NOW SERVE ONE TEMPORAL KIND ONLY: A REAL INSTANT
-  (CT-4 group E fix round, #2870).
+  THE THREE FORMATTERS BELOW SERVE ONE TEMPORAL KIND ONLY: A REAL INSTANT
+  (CT-4 group E fix round, #2870; finished by group F, #3123).
 
   #2264 hand-pinned three shapes here rather than moving to the shared
   `nzst-date` helpers, because they are locked to the signed-off #2307 mockup
   pack (a year-less badge date, and two comma-stripped weekday forms) and their
-  rendered strings must not drift. That is still true, and the shapes are
-  unchanged.
+  rendered strings must not drift. The shapes are still exactly those.
 
-  What changed is that this module was rendering TWO KINDS through them. A
+  What #2870 changed is that this module was rendering TWO KINDS through them. A
   guest's consent nights and a booking's check-in/check-out are `@db.Date`
   CALENDAR DAYS — UTC-midnight encodings — and projecting one of those through
   any zone west of Greenwich reads back the previous day. `consentExpiresAt`,
@@ -44,40 +46,26 @@ import {
 
   So the calendar-day callers — `formatConsentNightsLabel` and
   `formatConsentStayLabel` — go through the kernel's zone-free calendar-date
-  formatters instead (see their own docblocks), and only the instant callers
-  reach these.
+  formatters (see their own docblocks), and only the instant callers reach these.
 
-  WHY THESE THREE ARE STILL PINNED TO `APP_TIME_ZONE`, DECLARED RATHER THAN
-  FIXED. An instant's civil day is the club's PERSISTED zone's to name
-  (`INV-CONFIG-002`), not the container's — but `consentExpiresAt` is minted from
-  an env-zone civil boundary too (`computeMemberGuestConsentExpiry`'s
-  `startOfDateOnlyForTimeZone` clamp), these are synchronous module constants in
-  a file six pages import, and moving them means threading the persisted zone
-  through `describeMemberGuestConsentBadge` and every caller. That is group F's
-  by the epic's published partition and it is a coherent job rather than a line
-  change. Leaving it does not create a same-screen contradiction: the value is
-  rendered under one authority everywhere it appears.
+  WHAT #3123 CHANGED: THE ZONE. Until then these were module-level
+  `Intl.DateTimeFormat` constants pinned to `APP_TIME_ZONE`, so an instant's
+  civil day was named by whatever zone the container happened to run in rather
+  than by the club's PERSISTED setting (`INV-CONFIG-002`). The deferral note that
+  used to stand here said moving them meant threading the zone through
+  `describeMemberGuestConsentBadge` and every caller — which is exactly what was
+  done, and it was smaller than it read: the WIZARD audience renders no date at
+  all, so all three `"use client"` callers were untouched and only the two server
+  pages that render an instant had to supply a zone.
+
+  THEY ARE NO LONGER LOCAL FORMATTERS EITHER. All three shapes were already in
+  the kernel's `HOUSE_SHAPES` table for a calendar date; #3123 added the two
+  missing INSTANT entry points beside `formatClubInstantWeekdayDate`, so these
+  are now three thin wrappers that name the mockup's comma-stripping and nothing
+  else. `club-time/__tests__/house-shapes.test.ts` pins the underlying shapes
+  byte-for-byte, which is what keeps the signed-off #2307 strings from drifting
+  now that the club rather than the container decides the day.
 */
-const CONSENT_SHORT_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  day: "numeric",
-  month: "short",
-  timeZone: APP_TIME_ZONE,
-});
-
-const CONSENT_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: APP_TIME_ZONE,
-});
-
-const CONSENT_FULL_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: APP_TIME_ZONE,
-});
 // ---------------------------------------------------------------------------
 // Date labels — NZ lodge dates, in the shapes the mockups draw
 // ---------------------------------------------------------------------------
@@ -109,23 +97,27 @@ export function formatConsentGuestName(guest: {
     : fullName;
 }
 
-/** "7 Aug" — the badge / inline-sentence shape. An INSTANT: see the note above
- * the formatters for why this one still reads the environment's zone. */
-export function formatConsentShortDate(date: Date): string {
-  return CONSENT_SHORT_DATE.format(date);
+/** "7 Aug" — the badge / inline-sentence shape. A real INSTANT
+ * (`consentExpiresAt`, `consentRespondedAt`), so the club's persisted zone is
+ * required: see the note above the formatters. */
+export function formatConsentShortDate(date: Date, zone: ClubTimeZone): string {
+  return formatClubInstantDayMonth(date, zone);
 }
 
 /** "Sat 8 Aug" — the lapse sentence's deadline. An INSTANT, as above.
  * en-NZ renders "Sat, 8 Aug"; the comma is stripped because the signed-off
  * mockups write the bare "Sat 8 Aug" shape throughout. */
-export function formatConsentWeekdayDate(date: Date): string {
-  return CONSENT_WEEKDAY_DATE.format(date).replace(/,/g, "");
+export function formatConsentWeekdayDate(
+  date: Date,
+  zone: ClubTimeZone,
+): string {
+  return formatClubInstantWeekdayDayMonth(date, zone).replace(/,/g, "");
 }
 
 /** "Fri 7 Aug 2026" — the facts-table shape (comma stripped, as above). Also an
  * INSTANT at every call site: `consentExpiresAt` and `consentRespondedAt`. */
-export function formatConsentFullDate(date: Date): string {
-  return CONSENT_FULL_DATE.format(date).replace(/,/g, "");
+export function formatConsentFullDate(date: Date, zone: ClubTimeZone): string {
+  return formatClubInstantWeekdayDate(date, zone).replace(/,/g, "");
 }
 
 /*
@@ -145,12 +137,14 @@ export function formatConsentFullDate(date: Date): string {
   beside it listed the guest's nights as "Fri 7 Aug, Sat 8 Aug" — one page, two
   answers, a few lines apart. A straddle is worse than either consistent state.
 
-  GROUP F STILL OWNS THE CONVERGENCE (#2870 comment 6): these two should TAKE
+  ONE SIGNATURE CONVERGENCE IS STILL OPEN, and group F is closing the ZONE
+  deferral above rather than this one (#2870 comment 6). These two should TAKE
   `CalendarDate[]` rather than `Date[]`, which is the only reason
-  `bookings/[id]/page.tsx` still imports `eachDateOnlyInRange`. Changing the
-  signature moves four call sites in two route groups, so it belongs with the
-  rest of that sweep; decoding at the boundary here closes the defect now
-  without pre-empting it.
+  `bookings/[id]/page.tsx` still imports `eachDateOnlyInRange`. It is not a
+  defect and never was: decoding at the boundary here already answers the right
+  day for every club, so what is left is a type-shape tidy that moves four call
+  sites in two route groups. Stated as outstanding rather than claimed done, and
+  deliberately not bundled into the zone fix, which had its own blast radius.
 */
 
 /** One `@db.Date` night as "Sat 8 Aug" — comma stripped, as above. */

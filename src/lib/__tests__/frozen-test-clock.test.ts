@@ -226,7 +226,8 @@ describe("a suite that hands the clock back to real time", () => {
 describe("the setup-file ordering the whole design rests on", () => {
   // `vitest.clock-setup.ts` must be evaluated FIRST and SEQUENTIALLY, or the
   // freeze is not in place before `vitest.setup.ts` (and everything it imports)
-  // evaluates — the import-time-constant hole that bit `admin-sidebar.tsx:123`.
+  // evaluates — the import-time-constant hole that once bit `admin-sidebar.tsx`,
+  // whose own module-level date constant #3123 has since removed.
   //
   // Vitest's own config type documents `sequence.setupFiles` as defaulting to
   // "parallel" (Promise.all). It resolves to the sequential branch today only

@@ -3,6 +3,8 @@ import path from "node:path";
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 import {
   CLUB_TIME_GUARD_ARMS,
   DATE_FNS_ADAPTERS,
@@ -362,12 +364,47 @@ describe("the environment-zone guard is present at every production path", () =>
  * that line a deliberate, visible act.
  */
 describe("the environment-zone allowlist is a ratchet", () => {
-  it("holds exactly the nine files CT-6 measured, and no more", () => {
-    // A COUNT, not a shape check. The list may shrink as callers migrate; it may
-    // not grow. If this fails because an entry was REMOVED, lower the number in
-    // the same commit and say which caller moved — that is the whole point of
-    // the ratchet.
-    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(9);
+  it("only ever shrinks, and holds no more entries than it holds today", () => {
+    /*
+      A COUNT, not a shape check, and THE ONLY PLACE THE NUMBER IS WRITTEN DOWN.
+      The list may shrink as callers migrate; it may not grow. If this fails
+      because an entry was REMOVED, lower the number in the same commit and say
+      which caller moved — that is the whole point of the ratchet. Nothing else
+      states the figure: the config's exemption reason used to restate it, drifted
+      to a number its own list contradicted, and #3123 deleted the restatement
+      rather than re-measure it into a second place.
+
+      HOW IT REACHED SIX. The route matters more than the arithmetic, because only
+      one of the three departures was a deletion:
+
+      - NINE until #3123 took `src/lib/nzst-date.ts` off it by DELETING the
+        rendering adapter, once its last production caller reached the kernel.
+        That is the ratchet's terminus for a module with nothing left to do, not
+        an exception to it.
+      - EIGHT until the same issue's group F took
+        `src/lib/member-guest-consent-labels.ts` off it the other way, by
+        MIGRATING. Its three module-level formatters now take the club's persisted
+        zone, so the entry excusing them would have been stale — which the "still
+        reads the environment" assertion below refuses.
+      - SEVEN until `src/lib/member-guest-delegate-page.ts` went the same way,
+        once that assertion's method was fixed. It read RAW source, so a DOCBLOCK
+        naming `APP_TIME_ZONE` was enough to keep an exemption alive, and that
+        file had exactly one: a postmortem explaining the defect it no longer
+        commits. Stripping comments first, the way the escape-hatch census always
+        has, made the entry visibly stale and it was deleted. This repository
+        documents each defect at the site where it removed it, so any guard
+        reading raw text is densest in false positives exactly where the code is
+        cleanest.
+      - SIX today. Two of the three that left MIGRATED. Deletion is not the only
+        way off this list and threading the club's zone through a caller is the
+        intended one.
+
+      THIS NUMBER IS TIGHT AND DELIBERATELY SO. It equals the live count; there
+      is no headroom, no rounding and no allowance for work in flight. A ratchet
+      with slack in it is not a ratchet — the slack is simply room to regrow in
+      without anything failing.
+    */
+    expect(ENVIRONMENT_ZONE_ADAPTERS.length).toBeLessThanOrEqual(6);
   });
 
   it("excuses exactly the files it gives reasons for", () => {
@@ -376,25 +413,28 @@ describe("the environment-zone allowlist is a ratchet", () => {
     // alone widens the exemption while every assertion above stays green — the
     // cheapest possible way past both guards, and invisible in review.
     //
-    // `src/lib/date-only.ts` is the one file excused by a different block (its
-    // own, which also drops the encoding group), so it is named here rather than
-    // duplicated into the reasons list, where a second matching block would
-    // silently win.
+    // `src/lib/date-only.ts` USED TO BE NAMED HERE TOO, as the one file excused
+    // by a block of its own. #3123 deleted the six `= APP_TIME_ZONE` defaults and
+    // the import from that adapter, so its block stopped dropping this group and
+    // the exception went with them. If some file needs a block of its own again,
+    // name it here rather than adding it to the reasons list, where a second
+    // matching block would silently win.
     const excused = [...ENVIRONMENT_ZONE_EXEMPT_FILES].sort();
-    const explained = [
-      ...ENVIRONMENT_ZONE_ADAPTERS.map((entry) => entry.file),
-      "src/lib/date-only.ts",
-    ].sort();
+    const explained = ENVIRONMENT_ZONE_ADAPTERS.map((entry) => entry.file).sort();
     expect(excused).toEqual(explained);
   });
 
-  it("names a real file for every entry", () => {
-    const missing = ENVIRONMENT_ZONE_ADAPTERS.filter(
-      (entry) => !fs.existsSync(path.join(ROOT, entry.file)),
-    ).map((entry) => entry.file);
-    // An entry naming a file that no longer exists is an exemption nobody is
-    // using and nobody can see is unused — and it would silently cover a NEW
-    // file created at that path later.
+  it("names a real file for every file the config excuses", () => {
+    // Read from the CONFIG's exempt set rather than from the reasons list, so a
+    // file excused by a block of its own is checked too — the staleness leg below
+    // records what that distinction already cost.
+    //
+    // An exemption naming a file that no longer exists is one nobody is using and
+    // nobody can see is unused — and it would silently cover a NEW file created
+    // at that path later.
+    const missing = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter(
+      (file) => !fs.existsSync(path.join(ROOT, file)),
+    );
     expect(missing).toEqual([]);
   });
 
@@ -407,16 +447,51 @@ describe("the environment-zone allowlist is a ratchet", () => {
     }
   });
 
-  it("still reads the environment in every file it excuses", () => {
-    // The other direction, and the one that catches a stale entry: an allowlist
-    // row for a file that no longer names the environment's zone is an exemption
-    // that has outlived its cause, and it will quietly re-admit the defect the
-    // day somebody edits that file.
-    const stale = ENVIRONMENT_ZONE_ADAPTERS.filter((entry) => {
-      const source = fs.readFileSync(path.join(ROOT, entry.file), "utf8");
+  it("still reads the environment in every file the config excuses", () => {
+    // The other direction, and the one that catches a stale exemption: one for a
+    // file that no longer names the environment's zone has outlived its cause,
+    // and it will quietly re-admit the defect the day somebody edits that file.
+    //
+    // IT READS THE CONFIG'S EXEMPT SET, NOT THE REASONS LIST, and #3123 widened
+    // it for a measured reason. It used to iterate `ENVIRONMENT_ZONE_ADAPTERS`,
+    // which is only the files excused by the SHARED block — so
+    // `src/lib/date-only.ts`, excused by a block of its own, sat outside the one
+    // leg that would have noticed anything. It duly kept its environment-zone
+    // exemption straight through the commit that deleted the last
+    // `= APP_TIME_ZONE` default and the import from it, with every assertion in
+    // this file green. Deriving the set from `SRC_RESTRICTION_EXEMPTIONS` closes
+    // that by construction: the next block written the same way is covered the
+    // day it is added, and there is no second list to remember.
+    //
+    // COMMENTS ARE STRIPPED FIRST, and that is a correction rather than a
+    // refinement (#3123). This leg used to read RAW source, while the census in
+    // `club-time-escape-hatch-census.test.ts` — the instrument it is supposed to
+    // be independent of, measuring the same property — strips them. Two
+    // instruments that disagree about what counts are one instrument and a
+    // rubber stamp.
+    //
+    // The cost was measured, not hypothesised: `member-guest-delegate-page.ts`
+    // kept this exemption after its defect was fixed, because the only
+    // `APP_TIME_ZONE` left in it was a DOCBLOCK explaining the fix. This
+    // repository deliberately documents each defect at the site where it removed
+    // it, so postmortems are densest in exactly the files that no longer commit
+    // the defect — which makes a raw-text guard here strictly worse than no
+    // guard, since it reads as green while excusing the wrong set.
+    const stale = [...ENVIRONMENT_ZONE_EXEMPT_FILES].filter((file) => {
+      const full = path.join(ROOT, file);
+      // A glob cannot be read, so it cannot be checked. Fail closed rather than
+      // skip it: an exemption this leg cannot measure is exactly the shape it
+      // exists to refuse.
+      if (!fs.existsSync(full) || !fs.statSync(full).isFile()) return true;
+      const source = stripComments(fs.readFileSync(full, "utf8"));
       return !/APP_TIME_ZONE|process\.env\.(TZ|NEXT_PUBLIC_TZ)/.test(source);
-    }).map((entry) => entry.file);
-    expect(stale).toEqual([]);
+    });
+    expect(
+      stale,
+      "these files are excused from the environment-zone guard but no longer name " +
+        "the environment zone in CODE (or are not a readable file) — delete the " +
+        "exemption:\n" + stale.join("\n"),
+    ).toEqual([]);
   });
 });
 

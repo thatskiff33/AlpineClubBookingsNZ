@@ -49,7 +49,7 @@ lines: 411
 reason: two lines. The default season year for the subscriptions list.
 
 file: src/lib/admin-family-group-requests-service.ts
-lines: 1594
+lines: 1607
 reason: twenty lines, and most of them are a signature and its docblock.
   `getChildRequestTierMetadata` is SYNCHRONOUS and is called from a `.map`, so it
   cannot await the database read the club's zone needs; it now takes the season
@@ -59,9 +59,19 @@ reason: twenty lines, and most of them are a signature and its docblock.
   an age tier decides a price band. Splitting a three-field metadata helper away
   from the review service that is its only caller would put the parameter and the
   reason for it in different files.
+  **Plus thirteen lines from #3123**, which is the same shape as this entry
+  one level out. `formatMemberIdentityAge` now REQUIRES the club's day, so
+  `findPotentialMemberMatches` and `replaceDateOfBirthWithAge` take it as a
+  parameter and the list resolves the zone ONCE for both temporal questions it
+  asks — the season start it already read, and the day. Most of the growth is
+  the signature re-wrapping that one extra parameter forces on a nine-field
+  inline object type, plus its docblock. An age LABEL decides which of two
+  similar member records a reviewer is looking at, which is this screen's
+  whole purpose, so two rows judged against two different days would defeat it
+  exactly as two seasons would.
 
 file: src/lib/admin-member-detail-service.ts
-lines: 1680
+lines: 1697
 reason: eighteen lines across two hoists plus their comments. The member payload
   now reads the club's current season ONCE before the parallel loads that consume
   it, and the age-tier restore branch shares one reference day between its two
@@ -76,6 +86,16 @@ reason: eighteen lines across two hoists plus their comments. The member payload
   lines are the comment saying so. Recorded here because this gate measures
   against `main` and one file may hold only one allowance, so the whole 1675-to-
   1680 growth has to be one entry.
+  **Plus seventeen more from #3123**, the third increment on this entry and
+  the one that makes the hoist above pay twice. The single zone read now
+  yields a second derived value — the club's day, computed once as the
+  UTC-midnight `@db.Date` encoding — threaded to four consumers: the
+  linked-guest bound, the partner-share lock prefix, the sweep and the hosting
+  fan-out. Three of those run inside the transaction further down, holding the
+  global cohort key, the affected lodge keys and the member lifecycle keys,
+  where `INV-LOCK-004` forbids resolving the club timezone at all. Twelve of
+  the seventeen lines are the comment saying so, which is what stops the next
+  author computing the day twice from a zone that is already in hand.
 
 file: src/lib/admin-members-service.ts
 lines: 1750
@@ -91,7 +111,7 @@ reason: eight lines. The member listing pins one moment for the whole page and
   own file: one allowance per path, measured against `main`.
 
 file: src/lib/diagnostics/tools/packs/booking-evidence.ts
-lines: 2157
+lines: 2178
 reason: fifty-three lines, and they are the point of the change rather than
   overhead. ONE helper in this pack answered two different temporal questions — a
   booking's stored `checkIn`, and "now" — which is precisely what forced it to read
@@ -104,6 +124,12 @@ reason: fifty-three lines, and they are the point of the change rather than
   the reason they may not is the whole finding. Splitting a diagnostics pack whose
   entries share a bounded read-only transaction and a SELECT-only grant allowlist
   is a real piece of work and cannot ride along with a season-year correction.
+  **Plus five from #3123**: the `club-time/server` import and a four-line
+  `today:` argument on `getBookingEditPolicy`, which no longer defaults it. A
+  diagnostic reporting a booking as locked on the ENVIRONMENT's day would be
+  describing a state the member never saw — which is the same class of
+  wrongness the two-questions-one-helper finding above is about, in the pack
+  whose job is detecting it.
 
 file: src/lib/membership-subscription-billing.ts
 lines: 1456
@@ -131,7 +157,7 @@ reason: fifty-four lines, of which about forty-five are two comments. The FIRST 
   is a rule nobody reads before adding the caller that breaks it.
 
 file: src/lib/nomination.ts
-lines: 2552
+lines: 2565
 reason: four lines. Two season reads and one age-tier reference day move onto the
   club's zone; the growth is the line wrapping the multi-argument call needs.
   **Plus seventy lines from #3104**, and they close a defect the corrected age
@@ -153,6 +179,14 @@ reason: four lines. Two season reads and one age-tier reference day move onto th
   these three helpers rather than deepening it. What is left here is the
   validation at the call sites, which cannot move: it is where the decision to
   refuse is taken.
+  **Plus thirteen from #3123**, and the pre-transaction zone read this entry
+  already records is what pays for them: it now yields TWO answers instead of
+  one, the season year and the joining fee's schedule day, necessarily from
+  the same read. `getEffectiveJoiningFee` stops defaulting `asOf` from the
+  environment, which picked the wrong `JoiningFee` schedule row for a club
+  behind its container — and that row's `amountCents` lands on an IMMUTABLE
+  invoice. The measured case quoted $100 where the club's own schedule said
+  $250.
 
 file: src/lib/notices.ts
 lines: 716
@@ -161,20 +195,47 @@ reason: eight lines. Both audience resolvers take a caller-supplied `now`, which
   three comment lines say that the pinnable moment is still pinnable.
 
 file: src/lib/seasonal-membership-assignments.ts
-lines: 1681
+lines: 1736
 reason: twelve lines. Three functions read the club's current season once at the
   top rather than at each comparison, and the roll-forward shares one value between
   its "is the target the current season?" test, its age-tier reconcile reference day
   and its post-copy Xero trigger — a long run must not be able to answer that
   question differently at its start and its end. The comment says so.
+  **Plus fifty-five from #3123**, the largest increment on this file and the
+  one that makes "once per bulk operation" structural rather than
+  conventional. `getSeasonalMembershipChangePreview`'s `now` becomes REQUIRED,
+  and `clubCurrentSeasonYear` stops being optional — it was optional, and the
+  Xero member import was not passing it, so that loop still made the per-row
+  `ClubTimeSettings` read the parameter exists to prevent. With both required
+  and both derived from the caller's single zone read, this function now
+  performs no settings query on any path at all. `now` bounds four "still to
+  come" reads, so it decides which bookings a membership-type change is
+  reported as affecting. The rest is the same pre-transaction hoist in
+  `saveSeasonalMembershipAssignment` — read above the preview re-derivation,
+  because the preview TOKEN is verified against that re-derivation and the two
+  must not differ for a reason nobody can see — and in
+  `rollForwardSeasonalMembershipAssignments`, whose per-chunk transactions
+  each take the global cohort key and every affected lodge key. About forty of
+  the lines are two docblocks.
 
 file: src/lib/xero-member-import.ts
-lines: 1259
+lines: 1270
 reason: one line. The season the import assigns comes from the club's calendar day.
+  **Plus eleven from #3123.** The one zone read this entry records now also
+  yields the club's DAY, because the seasonal preview called once per matched
+  member requires both — and was defaulting the day from the environment,
+  which on this path meant one uncached `ClubTimeSettings` query per member
+  and a long import judging its first and last members against different days.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2466
+lines: 2476
 reason: one line. The season stamped on a queued cancellation operation.
+  **Plus ten from #3123**, nine of them a docblock. The entrance-fee enqueue
+  takes `asOf` alongside the `seasonYear` this entry recorded, for the
+  identical reason: it selects the `JoiningFee` row whose `amountCents` lands
+  on an immutable invoice, and resolving it below a caller's open transaction
+  would read `ClubTimeSettings` on the global client while that transaction
+  holds its advisory locks.
 
 file: src/app/api/admin/lodge/route.ts
 lines: 462

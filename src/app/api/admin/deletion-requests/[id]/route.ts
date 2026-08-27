@@ -855,8 +855,14 @@ export async function POST(
     let sweptShares: SweptPartnerSharedAllocation[] = [];
     // #2255: who was still pointed at this member when we anonymised them.
     let detachedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;
+    // #3123 / INV-LOCK-004 — one club day for this whole transaction, resolved
+    // before it opens. Reading the club's persisted timezone is a
+    // `clubTimeSettings.findUnique`; inside the transaction below that would
+    // take a second pooled connection while the global cohort key, every
+    // affected lodge key and the member lifecycle keys are held.
+    const clubTodayForSweep = await clubTodayDateOnlyInstant();
     await prisma.$transaction(async (tx) => {
-      await acquireFuturePartnerSharedAllocationLocks(tx, [member.id]);
+      await acquireFuturePartnerSharedAllocationLocks(tx, [member.id], clubTodayForSweep);
       await acquireMemberLifecycleLocks(tx, [member.id]);
       // Race-safe re-check of the last-admin invariant inside the mutation
       // transaction (issue #1604): the fail-fast check above ran before the
@@ -890,11 +896,12 @@ export async function POST(
         memberId: member.id,
         reason: "member_deactivated",
         db: tx,
+        today: clubTodayForSweep,
       });
 
       // Record the exact bounded fan-out before deactivation and guest unlinking
       // remove the evidence. It commits or rolls back with anonymisation.
-      await enqueueHostingCoverageReevaluationForMember(member.id, tx, {
+      await enqueueHostingCoverageReevaluationForMember(member.id, tx, clubTodayForSweep, {
         cause: "SYSTEM_CHANGE",
         actorMemberId: session.user.id,
       });

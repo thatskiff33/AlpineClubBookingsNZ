@@ -104,7 +104,8 @@ import {
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveRequestBookingHoldUntil } from "@/lib/booking-request";
-import { formatDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { paymentLinkExpiryForCheckIn } from "@/lib/payment-link-expiry";
 import {
@@ -462,26 +463,38 @@ export function isOrganiserBookingActive(booking: {
 // test seam
 /**
  * True when the group's stay has fully ended (#1723 path 3): the organiser
- * booking's check-out (an NZ date-only lodge night) is on or before the NZ
- * date-only day of `now`. Semantics match the unpaid-finished-stays predicate
+ * booking's check-out (a date-only lodge night) is on or before the club's
+ * current calendar day. Semantics match the unpaid-finished-stays predicate
  * (`checkOut lte today`) — a stay checking out today has fully ended. Such a
  * group is excluded from the joinable set entirely (owner decision A): a join
  * created now could only ever produce a retroactive card obligation.
+ *
+ * `todayAtClub` IS REQUIRED, and that is the fix (#3123). It used to default to
+ * `normalizeDateOnlyForTimeZone(new Date())`, which derives the day from the
+ * CONTAINER's timezone rather than the club's persisted one — so a club whose
+ * configured zone differed from its deployment's closed, or kept open, a
+ * group's joins on the wrong day. This function is pure and sync and is called
+ * from inside write paths, so it cannot read the zone itself: every caller
+ * resolves it once, outside any transaction, and passes it down.
+ *
+ * Pass the UTC-midnight `@db.Date` encoding of the club's today —
+ * `dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))` — so
+ * both sides of the comparison are in one frame. `checkOut` is a stored
+ * `@db.Date` value and is used as it is stored, which is correct for exactly
+ * that reason.
  */
 export function hasGroupStayFullyEnded(
   organiserBooking: { checkOut: Date },
-  now: Date = new Date()
+  todayAtClub: Date
 ): boolean {
-  return (
-    organiserBooking.checkOut.getTime() <=
-    normalizeDateOnlyForTimeZone(now).getTime()
-  );
+  return organiserBooking.checkOut.getTime() <= todayAtClub.getTime();
 }
 
 // test seam
 /** Pure mapping from the selected record to the public-safe summary. */
 export function toGroupBookingSummary(
   group: GroupBookingRecordForSummary,
+  todayAtClub: Date,
   now: Date = new Date()
 ): GroupBookingSummary {
   return {
@@ -500,7 +513,7 @@ export function toGroupBookingSummary(
     isJoinable:
       isGroupJoinable(group, now) &&
       isOrganiserBookingActive(group.organiserBooking) &&
-      !hasGroupStayFullyEnded(group.organiserBooking, now),
+      !hasGroupStayFullyEnded(group.organiserBooking, todayAtClub),
   };
 }
 
@@ -539,7 +552,13 @@ export async function resolveGroupBookingByCode(
   if (!group) {
     return null;
   }
-  return toGroupBookingSummary(group);
+  // The club's today, from its PERSISTED timezone (#3123, INV-CONFIG-002). The
+  // CLI-safe runtime reader: `src/instrumentation.node.ts` reaches this module
+  // through the Xero inbound chain, where `server-only` throws at import.
+  return toGroupBookingSummary(
+    group,
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest())),
+  );
 }
 
 /**
@@ -655,10 +674,14 @@ export async function joinGroupBookingAsMember(
   if (!isGroupJoinable(group)) {
     throw new GroupBookingError("This group is not accepting joins", 409);
   }
-  // #1723 path 3: a stay that has fully ended (check-out on or before NZ
-  // today) accepts no further joins — a join now could only create a
-  // retroactive card obligation on a finished stay.
-  if (hasGroupStayFullyEnded(group.organiserBooking)) {
+  // #1723 path 3: a stay that has fully ended (check-out on or before the
+  // club's today) accepts no further joins — a join now could only create a
+  // retroactive card obligation on a finished stay. The zone is read here,
+  // OUTSIDE the capacity-lock transaction below (#3123).
+  const clubTodayForJoin = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+  if (hasGroupStayFullyEnded(group.organiserBooking, clubTodayForJoin)) {
     throw new GroupBookingError("This group's stay has ended", 409);
   }
   const organiserSettled =
@@ -936,6 +959,9 @@ export async function joinGroupBookingAsMember(
     const leadTime = checkInternetBankingLeadTime({
       checkIn,
       settings: internetBankingSettings,
+      // #3123 — the SAME club day this join already resolved above for the
+      // stay-has-ended gate. One read, one answer, for the whole join.
+      today: clubTodayForJoin,
     });
     if (!leadTime.allowed) {
       throw new GroupBookingError(
@@ -956,6 +982,13 @@ export async function joinGroupBookingAsMember(
   let outcome: Awaited<ReturnType<typeof createConfirmedBooking>>;
   try {
     outcome = await createConfirmedBooking({
+      // #3123 — the CLUB's day (`INV-CONFIG-002`), resolved here, outside every
+      // transaction. `createConfirmedBooking` is transaction-aware and so
+      // cannot read the club's zone for itself (`INV-LOCK-004`). The runtime
+      // reader rather than `club-time/server`: this module sits on the shared
+      // `src/lib` graph a CLI entry point reaches, where `server-only` is a bare
+      // throw at import.
+      todayAtClub: clubToday(await readClubTimeZoneOutsideRequest()),
     effectiveMemberId: sessionUserId,
     isOnBehalf: false,
     sessionUserId,
@@ -1112,8 +1145,12 @@ export async function createNonMemberJoinRequest(
       code: "GROUP_NOT_JOINABLE",
     });
   }
-  // #1723 path 3: a fully ended stay accepts no further join requests.
-  if (hasGroupStayFullyEnded(group.organiserBooking)) {
+  // #1723 path 3: a fully ended stay accepts no further join requests. The
+  // club's own day, read from its persisted timezone (#3123).
+  const clubTodayForRequest = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+  if (hasGroupStayFullyEnded(group.organiserBooking, clubTodayForRequest)) {
     throw new GroupBookingError("This group's stay has ended", 409, {
       code: "GROUP_STAY_ENDED",
     });
@@ -1417,8 +1454,16 @@ export async function verifyAndCreateNonMemberJoin(
     return { outcome: "not_joinable", message: "This group is no longer accepting joins" };
   }
   // #1723 path 3: a fully ended stay accepts no further joins, even when the
-  // verification email was sent while the stay was still running.
-  if (hasGroupStayFullyEnded(organiserBooking)) {
+  // verification email was sent while the stay was still running. ONE zone read
+  // for this whole path — the payment-link expiry below uses the same
+  // `clubZone` rather than reading the setting a second time (#3123).
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  if (
+    hasGroupStayFullyEnded(
+      organiserBooking,
+      dateOnlyInstantOf(clubToday(clubZone)),
+    )
+  ) {
     return { outcome: "not_joinable", message: "This group's stay has ended" };
   }
   if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
@@ -1546,9 +1591,9 @@ export async function verifyAndCreateNonMemberJoin(
     reviewedAt
   );
   // The pay link stays valid to the end of the check-in day in the CLUB's
-  // persisted zone; booking status gates actual payment. Read here, not inside
-  // the capacity-lock transaction below — `payment-link-expiry.ts`.
-  const clubZone = await readClubTimeZoneOutsideRequest();
+  // persisted zone; booking status gates actual payment. `clubZone` was
+  // resolved once at the top of this path, outside the capacity-lock
+  // transaction below — `payment-link-expiry.ts`.
   const paymentLinkExpiresAt = paymentLinkExpiryForCheckIn(checkIn, clubZone);
   const { token: payToken, tokenHash: payTokenHash } = issueActionToken();
 

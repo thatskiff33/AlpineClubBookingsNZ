@@ -1,7 +1,8 @@
 import "server-only";
 
 import type { SiteBannerPriority } from "@prisma/client";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
 
 // Display order for stacked banners: most severe first.
@@ -102,7 +103,7 @@ export function serializeAdminSiteBanner(banner: SiteBannerRow): AdminSiteBanner
  * newest start date, so the most severe notice sits at the top of the stack.
  */
 export async function getCurrentSiteBanners(): Promise<CurrentSiteBanner[]> {
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
 
   const banners = await prisma.siteBanner.findMany({
     where: {
@@ -134,7 +135,7 @@ export async function getCurrentSiteBanners(): Promise<CurrentSiteBanner[]> {
  * recently ended banners.
  */
 export async function listSiteBannersForAdmin(): Promise<AdminSiteBannerGroups> {
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
 
   const banners = await prisma.siteBanner.findMany({
     orderBy: [{ startDate: "desc" }, { createdAt: "desc" }],

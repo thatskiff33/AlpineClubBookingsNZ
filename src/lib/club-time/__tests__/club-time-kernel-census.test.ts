@@ -10,7 +10,7 @@
  * nothing checks is a comment, and this repository has shipped several of those
  * that stopped being true.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -234,8 +234,29 @@ describe("the kernel owns exactly one formatter factory", () => {
   });
 });
 
-describe("the legacy adapters are adapters, not a second implementation", () => {
-  it("leaves no Intl.DateTimeFormat in nzst-date.ts or date-only.ts", () => {
+describe("the legacy adapter is an adapter, not a second implementation", () => {
+  /*
+    ONE ADAPTER LEFT. `src/lib/nzst-date.ts` was the other, and #3123 DELETED it
+    once its last production caller moved — so the rendering seam is now the
+    kernel and nothing else. What follows guards the one that remains.
+  */
+  it("has really deleted the rendering adapter, rather than thinning it", () => {
+    /*
+      The failure mode this lane existed to prevent: a re-export shim, a
+      "compatibility" module or a test-only stub left behind under the same name.
+      A second rendering seam is a second rule system whatever its size, so the
+      check is that the FILE is gone, not that it is small.
+    */
+    expect(
+      existsSync(path.join(ROOT, "src/lib/nzst-date.ts")),
+      "src/lib/nzst-date.ts is back. It was the club's second rendering seam and " +
+        "#3123 (CT-6, #2991) deleted it so the kernel would be the only one. Render " +
+        "through @/lib/club-time: formatClubDate and friends for a calendar day, " +
+        "formatClubInstant* with the club's persisted zone for a real instant.",
+    ).toBe(false);
+  });
+
+  it("leaves no Intl.DateTimeFormat in date-only.ts", () => {
     /*
       The equivalence suite catches a re-frozen formatter whose SHAPE drifts. It
       cannot catch one whose shape is identical — which is the likelier
@@ -243,16 +264,16 @@ describe("the legacy adapters are adapters, not a second implementation", () => 
       is to build a formatter there. Two implementations that agree today are two
       implementations, and CT-6 has to delete one of them.
     */
-    for (const adapter of ["src/lib/nzst-date.ts", "src/lib/date-only.ts"]) {
+    for (const adapter of ["src/lib/date-only.ts"]) {
       const source = withoutComments(
         readFileSync(path.join(ROOT, adapter), "utf8"),
       );
       expect(source.length).toBeGreaterThan(0);
       expect(
         source.includes("new Intl.DateTimeFormat"),
-        `${adapter} builds its own Intl.DateTimeFormat again. Both files are ` +
-          "compatibility adapters over @/lib/club-time (CT-2, #2990) and CT-6 (#2991) " +
-          "deletes them; a formatter here is a second rule system growing back under " +
+        `${adapter} builds its own Intl.DateTimeFormat again. It is a ` +
+          "compatibility adapter over @/lib/club-time (CT-2, #2990) and CT-6 (#2991) " +
+          "deletes it; a formatter here is a second rule system growing back under " +
           "the one the epic exists to establish.",
       ).toBe(false);
     }

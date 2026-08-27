@@ -94,8 +94,14 @@ export const clubTime = cache(async (): Promise<BoundClubTime> =>
  * importing it kills every `tsx` entry point that reaches it — at import, before
  * `main()`. That has happened twice. Such a module composes
  * `dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))`
- * instead; nine sites do, and `docs/CLUB_TIME_KERNEL.md` states which of the two
- * readers a given module wants and how to check.
+ * instead — the cron jobs, the Xero writers, the group booking and settlement
+ * paths and the subscription biller all do — and `docs/CLUB_TIME_KERNEL.md`
+ * states which of the two readers a given module wants and how to check. NO
+ * COUNT IS GIVEN, deliberately: this sentence used to say "nine sites do", the
+ * number roughly doubled as CT-6 landed, and nothing anywhere would have failed.
+ * `git grep -c "dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()))" -- src/`
+ * answers it in a second, which is worth more than a figure the next reader has
+ * to take on trust.
  */
 export async function clubTodayDateOnlyInstant(): Promise<Instant> {
   return dateOnlyInstantOf((await clubTime()).today());

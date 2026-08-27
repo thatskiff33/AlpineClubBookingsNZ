@@ -11,10 +11,10 @@
 
 import { FinanceMonthlyStatementKind } from "@prisma/client";
 import {
-  financeDashboardTrendMonthLabel,
   financeDashboardWindowMonths,
   type FinanceDashboardDateWindow,
 } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
 import {
   listMonthlyFacts,
   type FinanceMonthlyFactRecord,
