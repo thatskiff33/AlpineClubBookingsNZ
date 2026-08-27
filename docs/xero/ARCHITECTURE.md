@@ -1487,6 +1487,20 @@ and no generation, held until the next refresh. That residual is single-request
 and pre-existing; the counter's job is to stop a stale answer being **repeated**
 for a whole TTL.
 
+**Do not read that module global to decide anything on a background path
+(#3116).** `financial-year.ts`'s cached year-end is written only by
+`refreshFinancialYearConfig`, and nothing on the Xero cron, the outbox worker or
+any other non-request path calls it — so on those paths it is the March default
+whatever the club has configured. Two places got that wrong and both are fixed:
+the membership sweep, which used it to decide **which season a Xero invoice
+falls in** (and to bound the invoice query it sends), and four invoice and
+credit-note descriptions, which used it to **name** the season. The sweep's
+year-end is now a required field on `SubscriptionInvoiceMatchOptions`, resolved
+once per run by `buildSubscriptionInvoiceMatchOptions` so a single sweep cannot
+classify two invoices against two different windows; the description sites
+resolve it and pass it explicitly. A caller that holds the value passes it; a
+caller that does not resolves it — neither reads the global.
+
 The lock-dates read is where that matters most. It is the fail-closed one: a
 retroactive booking whose check-in falls on or before the effective lock date is
 rejected at create time, and the read throws rather than degrading so the guard

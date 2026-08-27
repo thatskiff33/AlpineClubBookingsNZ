@@ -731,12 +731,11 @@ export async function createXeroMembershipCancellationCreditNote(
   const mapping = await getResolvedAccountMapping("membershipCancellationCredit");
   const accountCode = mapping.code ?? "203";
   const creditLineItem: LineItem = {
-    // The club's own year-end names the season (#3116), resolved rather than
-    // defaulted: this runs from the outbox worker, where the `financial-year.ts`
-    // cache is the March default. A credit note derives at send time and is not
-    // persisted, so a retry spanning a deployment can render the new wording
-    // against a note whose first attempt used the old one — harmless, because
-    // the credit note is matched by its claim row and not by this text.
+    // The club's own year-end names the season, resolved not defaulted because
+    // this runs from the outbox worker (#3116). A credit note derives at send
+    // time and is not persisted, so a retry spanning a deployment can render the
+    // new wording where the first attempt used the old one - harmless, as the
+    // note is matched by its claim row rather than by this text.
     description: `Membership cancellation credit for ${seasonYearsLabel(subscription.seasonYear, await refreshFinancialYearConfig())} annual subscription`,
     quantity: 1,
     unitAmount: amountCents / 100,

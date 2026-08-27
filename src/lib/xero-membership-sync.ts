@@ -11,6 +11,7 @@ import { Invoice, type XeroClient } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
 import { clubSeasonYear } from "./financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -28,8 +29,7 @@ import {
   getSubscriptionItemCodes,
 } from "./xero-mappings";
 import {
-  getFinancialYearEndMonth,
-  getSeasonStartMonth,
+  seasonStartMonthOf,
   seasonYearOfCalendarDate,
 } from "@/lib/financial-year";
 import {
@@ -91,7 +91,7 @@ function getMembershipSyncCursorScope(seasonYear: number): string {
   return `season:${seasonYear}`;
 }
 
-function getMembershipSeasonWindow(seasonYear: number): {
+function getMembershipSeasonWindow(seasonYear: number, yearEndMonth: number): {
   start: Date;
   end: Date;
 } {
@@ -99,7 +99,7 @@ function getMembershipSeasonWindow(seasonYear: number): {
   // runs until the instant before the next season starts. Using an exclusive
   // next-season boundary keeps this correct for any year-end month, including
   // 30-day end months and a December (calendar-year) year-end.
-  const startMonth = getSeasonStartMonth(); // 1-12
+  const startMonth = seasonStartMonthOf(yearEndMonth); // 1-12
   const start = new Date(Date.UTC(seasonYear, startMonth - 1, 1, 0, 0, 0, 0));
   const nextStart = new Date(
     Date.UTC(seasonYear + 1, startMonth - 1, 1, 0, 0, 0, 0)
@@ -109,9 +109,10 @@ function getMembershipSeasonWindow(seasonYear: number): {
 
 function buildMembershipInvoiceWhereClause(
   seasonYear: number,
+  yearEndMonth: number,
   xeroContactId?: string
 ): string {
-  const startMonth = getSeasonStartMonth(); // 1-12
+  const startMonth = seasonStartMonthOf(yearEndMonth); // 1-12
   const conditions = [
     `Date >= DateTime(${seasonYear},${startMonth},1)`,
     `Date < DateTime(${seasonYear + 1},${startMonth},1)`,
@@ -166,6 +167,8 @@ async function listChangedMembershipInvoices(input: {
   xero: XeroClient;
   tenantId: string;
   seasonYear: number;
+  /** The club's year-end, resolved by the sweep (#3116). Bounds the Xero query. */
+  yearEndMonth: number;
   ifModifiedSince?: Date;
 }): Promise<Invoice[]> {
   const invoices: Invoice[] = [];
@@ -178,7 +181,7 @@ async function listChangedMembershipInvoices(input: {
         input.xero.accountingApi.getInvoices(
           input.tenantId,
           input.ifModifiedSince,
-          buildMembershipInvoiceWhereClause(input.seasonYear),
+          buildMembershipInvoiceWhereClause(input.seasonYear, input.yearEndMonth),
           "UpdatedDateUTC ASC",
           undefined,
           undefined,
@@ -670,6 +673,11 @@ export async function checkMembershipStatus(
     // A charge snapshot owns an immutable invoice identity. Fetch that invoice
     // directly, including for non-recipient family members. Legacy subscriptions
     // without charge coverage retain contact-scoped discovery.
+    // Built BEFORE the query rather than beside the match, because the query's
+    // own season window now derives from the same resolved year-end (#3116).
+    // Hoisting it also stops the settings/mapping read happening twice per
+    // member on the matching path.
+    const matchOptions = await buildSubscriptionInvoiceMatchOptions();
     const response = immutableChargeInvoiceId
       ? await callXeroApi(
           () =>
@@ -691,6 +699,7 @@ export async function checkMembershipStatus(
               undefined, // ifModifiedSince
               buildMembershipInvoiceWhereClause(
                 year,
+                matchOptions.yearEndMonth,
                 member.xeroContactId ?? undefined
               ), // where
               undefined, // order
@@ -719,11 +728,7 @@ export async function checkMembershipStatus(
         (invoice) => invoice.invoiceID === immutableChargeInvoiceId
       );
     } else {
-      subscriptionInvoice = findSubscriptionInvoice(
-        invoices,
-        year,
-        await buildSubscriptionInvoiceMatchOptions()
-      );
+      subscriptionInvoice = findSubscriptionInvoice(invoices, year, matchOptions);
     }
 
     if (!subscriptionInvoice) {
@@ -1079,6 +1084,14 @@ async function releaseVoidedSubscriptionInvoice(input: {
 }
 
 export interface SubscriptionInvoiceMatchOptions {
+  /**
+   * The club's financial year-end month (1-12), RESOLVED by the caller.
+   *
+   * Required and never defaulted: see the note in
+   * {@link collectSubscriptionInvoiceMatches}. Build these options with
+   * {@link buildSubscriptionInvoiceMatchOptions}, which resolves it.
+   */
+  yearEndMonth: number;
   /** Chart-of-account code that marks a line as a membership subscription. */
   accountCode: string;
   /**
@@ -1140,9 +1153,20 @@ export function collectSubscriptionInvoiceMatches(
     textFallbackEnabled = true,
   } = options;
   const itemCodeSet = new Set(itemCodes.filter((code): code is string => Boolean(code)));
-  // The club's configured financial year-end, read once for the whole sweep so a
-  // single batch cannot classify two invoices against two different windows.
-  const yearEndMonth = getFinancialYearEndMonth();
+  // The club's configured financial year-end, taken from the options so it is
+  // read once for the whole sweep and a single batch cannot classify two
+  // invoices against two different windows.
+  //
+  // IT IS RESOLVED BY THE CALLER AND REQUIRED, never defaulted (#3116). This ran
+  // `getFinancialYearEndMonth()` - the `financial-year.ts` process cache - and
+  // the membership sweep's caller is `xero-cron-runner.ts`, a background path
+  // that never calls `refreshFinancialYearConfig()`. On a cold process that
+  // answered March regardless of the club's setting, so for a non-March club
+  // this classified invoices into the WRONG SEASON and drove a paid member's
+  // status from a season row that is not theirs - the same failure
+  // `subscription-lockout-enforcement.ts` records for the diagnostics path, and
+  // worse here than a wrong label because it decides who reads as unfinancial.
+  const { yearEndMonth } = options;
 
   const matches: SubscriptionInvoiceMatch[] = [];
 
@@ -1307,9 +1331,12 @@ export function hasStrongSubscriptionInvoiceMatch(
  * matching regardless of the fee-schedule read.
  */
 export async function buildSubscriptionInvoiceMatchOptions(): Promise<SubscriptionInvoiceMatchOptions> {
-  const [subscriptionMapping, lockoutSettings] = await Promise.all([
+  const [subscriptionMapping, lockoutSettings, yearEndMonth] = await Promise.all([
     getResolvedAccountMapping("subscriptionIncome"),
     loadMembershipLockoutSettings(),
+    // Resolved here rather than defaulted from the process cache, because the
+    // sweep that consumes these options runs from the Xero cron (#3116).
+    refreshFinancialYearConfig(),
   ]);
   const primaryItemCode = subscriptionMapping.itemCode;
   const feeScheduleCodes = lockoutSettings.useFeeScheduleItemCodes
@@ -1322,6 +1349,7 @@ export async function buildSubscriptionInvoiceMatchOptions(): Promise<Subscripti
     ])
   ).sort();
   return {
+    yearEndMonth,
     accountCode: subscriptionMapping.code ?? "203",
     itemCodes,
     primaryItemCode,
@@ -1424,13 +1452,18 @@ export async function refreshAllMembershipStatuses(
     ? new Date(cursor.cursorDateTime.getTime() - MEMBERSHIP_CURSOR_OVERLAP_MS)
     : undefined;
   const { xero, tenantId } = await getAuthenticatedXeroClient();
+  // One resolution for the whole sweep, so the query window and every invoice
+  // classified from it agree, and neither depends on what warmed the process
+  // cache (#3116).
+  const yearEndMonth = await refreshFinancialYearConfig();
   const { start: windowStart, end: windowEnd } =
-    getMembershipSeasonWindow(year);
+    getMembershipSeasonWindow(year, yearEndMonth);
 
   const changedInvoices = await listChangedMembershipInvoices({
     xero,
     tenantId,
     seasonYear: year,
+    yearEndMonth,
     ifModifiedSince,
   });
   const changedContactIds = Array.from(

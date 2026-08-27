@@ -31,3 +31,18 @@
   A club whose financial year ends in a month other than March gets the correct
   single-year or two-year season name from now on, on invoices as well as on
   screen.
+
+  **A second, more serious version of the same fault is fixed alongside it.**
+  When the system reads invoices back from Xero to work out who has paid their
+  subscription, it has to decide which season each invoice belongs to. That
+  decision was being made against the club's financial year-end too - and on the
+  scheduled job that does the reading, it was falling back to assuming a March
+  year-end no matter how the club was actually configured. For a club with, say,
+  a December year-end, invoices would have been sorted into the wrong season,
+  which feeds directly into whether a member shows as paid up or unfinancial. A
+  member who had paid could have been shown as owing money, or the reverse. The
+  same job also asked Xero for the wrong range of dates in the first place.
+
+  As with the invoice wording, no club running today was affected, because every
+  one of them has a March financial year and March was what the fallback assumed.
+  Both now use the club's real setting, so neither depends on that coincidence.

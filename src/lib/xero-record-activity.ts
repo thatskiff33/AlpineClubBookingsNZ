@@ -57,22 +57,11 @@ function formatStatusLabel(value: string): string {
 }
 
 /**
- * The club's financial year-end month, RESOLVED rather than read from the cache.
- *
- * `seasonYearsLabel` defaults its `yearEndMonth` to `getFinancialYearEndMonth()`,
- * the `financial-year.ts` process cache. Taking that default here would be the
- * defect #3116 exists to remove, not a shortcut: the cache is seeded only by
- * `refreshFinancialYearConfig()`, whose callers are two request paths, the
- * finance dashboard and the eligibility reader. Nothing on this panel's path
- * seeds it, so on a cold process the label would silently answer from the March
- * default, and a December-year-end club would read a season name contradicting
- * every other surface - the same shape `subscription-lockout-enforcement.ts`
- * records for the diagnostics path.
- *
- * The RETURN VALUE is what gets passed down, never the cache this call also
- * happens to seed, so the answer cannot depend on what else warmed the process.
- * The underlying read is in-process cached with a TTL and never rejects
- * (`xero-organisation.ts`), so a display path can afford it.
+ * The club's year-end, RESOLVED rather than taken from `seasonYearsLabel`'s
+ * default - see `season-label.ts` for why that default is wrong off a request
+ * path (#3116). The RETURN VALUE is what gets passed down, never the cache this
+ * call also seeds, so the answer cannot depend on what warmed the process. The
+ * read is in-process cached and never rejects, so a display path can afford it.
  */
 async function resolveYearEndMonth(): Promise<number> {
   return refreshFinancialYearConfig();

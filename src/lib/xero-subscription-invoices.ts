@@ -307,21 +307,15 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   //
   // THE FALLBACK IS THE ONE PLACE IN THIS FLOW THAT DERIVES TEXT AT SEND TIME.
   // Every other line reads `component.description`, a persisted column written at
-  // plan time — so those are byte-identical to what Xero already holds no matter
-  // what the deriving code now says. This branch is taken only by a pre-backfill
-  // charge carrying no component rows, and it re-derives inline.
+  // plan time, so those stay byte-identical to what Xero holds whatever the
+  // deriving code now says. This branch is taken only by a pre-backfill charge
+  // carrying no component rows.
   //
-  // It uses the club's own year-end (#3116). It previously named the season as
-  // two calendar years unconditionally, which is wrong for a club whose financial
-  // year ends in December: that club's season starts in January and ends in the
-  // SAME calendar year, so the label contradicted the season year printed beside
-  // it. The year-end is RESOLVED and passed rather than defaulted, because this
-  // runs on the outbox worker where the `financial-year.ts` cache is never seeded
-  // and would answer March.
-  //
-  // Nothing matches on this text: reconciliation finds the invoice by its
-  // immutable `Reference` and `subscriptionInvoiceMatchesSnapshot` compares
-  // amount, account code and item code only.
+  // The season follows the club's own year-end, resolved and passed because this
+  // runs on the outbox worker where the cache is never seeded (#3116;
+  // `season-label.ts` has the reasoning). Nothing matches on this text:
+  // reconciliation finds the invoice by its immutable `Reference` and
+  // `subscriptionInvoiceMatchesSnapshot` compares amount, account and item code.
   const componentLines = charge.components.length > 0
     ? charge.components.map((component) => ({
         amountCents: component.chargedAmountCents,

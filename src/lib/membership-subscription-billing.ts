@@ -248,25 +248,17 @@ export function calculateMembershipCharge(input: {
 //
 // WHAT KEEPS AN EXISTING CHARGE'S LINE STABLE IS PERSISTENCE, NOT THIS LITERAL,
 // and the comment that stood here said otherwise (#3116). It claimed a frozen
-// string contract: that a backfilled legacy charge re-driven through the outbox
-// mints a byte-identical line BECAUSE this text never changes. That is not the
-// mechanism. `MembershipSubscriptionChargeComponent.description` is a persisted
-// column; this function WRITES it at plan time and the mint READS THE STORED
-// COLUMN BACK (`xero-subscription-invoices.ts`). So changing this derivation
-// changes newly-planned charges only, and every charge already on the books
-// re-drives from its own stored text regardless of what this function now says.
+// string contract: a re-driven backfilled charge mints a byte-identical line
+// BECAUSE this text never changes. That is not the mechanism.
+// `MembershipSubscriptionChargeComponent.description` is a persisted column;
+// this function WRITES it at plan time and the mint READS THE STORED COLUMN BACK
+// (`xero-subscription-invoices.ts`, whose fallback branch is the one place that
+// re-derives at send time). So changing this derivation changes newly-planned
+// charges only.
 //
-// The one place that genuinely re-derives at send time is that module's fallback
-// branch, taken only by a pre-backfill charge carrying no component rows; it is
-// documented there.
-//
-// `yearEndMonth` IS REQUIRED, and deliberately has no default. The club's season
-// naming follows its financial year-end, and `seasonYearsLabel` would happily
-// default it to the `financial-year.ts` process cache — which is the March
-// default on any process that never called `refreshFinancialYearConfig()`,
-// including the outbox worker. Requiring it makes an unstated year-end a compile
-// error rather than a silently wrong label on an invoice (#3116; the same remedy
-// #3123 applied to the club timezone).
+// `yearEndMonth` IS REQUIRED and deliberately has no default, so an unstated
+// year-end is a compile error rather than a silently wrong invoice line - see
+// `season-label.ts` for why the default is wrong off a request path.
 export function buildComponentLineDescription(input: {
   membershipTypeName: string;
   seasonYear: number;
@@ -310,10 +302,8 @@ export async function buildSubscriptionBillingPreview(input: {
   store?: Prisma.TransactionClient | typeof prisma;
   /**
    * The club's financial year-end month, when the caller already holds it.
-   *
-   * Omitted, it is resolved here — which is correct for a request path and
-   * REFUSED inside a transaction, above. A confirm passes the frozen preview's
-   * value so the rebuilt descriptions match the token it is checking.
+   * Omitted, it is resolved here - correct for a request path, and REFUSED
+   * inside a transaction (see the guard below).
    */
   yearEndMonth?: number;
 }): Promise<SubscriptionBillingPreview> {
@@ -344,12 +334,11 @@ export async function buildSubscriptionBillingPreview(input: {
     );
   }
   // The same rule, for the same reason, one release later (#3116). Resolving the
-  // financial year-end reads `MembershipLockoutSettings` and — with no admin
-  // override set — CALLS XERO for the organisation's accounting year. Doing that
-  // under a held `pg_advisory_xact_lock` would be a provider call inside a
-  // transaction, which this repository forbids outright, on top of lengthening
-  // the hold for no gain. A transactional caller has a preview in hand and passes
-  // that preview's frozen `yearEndMonth`.
+  // financial year-end reads settings and - with no admin override - CALLS XERO
+  // for the organisation's accounting year. Under a held `pg_advisory_xact_lock`
+  // that is a provider call inside a transaction, which this repository forbids
+  // outright. A transactional caller has a preview in hand and passes its frozen
+  // `yearEndMonth`.
   if (input.store && input.yearEndMonth === undefined) {
     throw new SubscriptionBillingError(
       "A preview built inside a transaction must be given its financial year-end month. " +
