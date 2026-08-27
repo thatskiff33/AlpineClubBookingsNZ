@@ -132,15 +132,23 @@ export async function buildShiftPreviewResponse({
     ),
   }));
 
-  // C1 (privacy re-review of MG3 #2308, LOW-3). This is the file's SECOND
-  // person-night guard call and the source contract now checks every one of
-  // them, not just the first. Today it is unreachable except under
+  // C1 (privacy re-review of MG3 #2308, LOW-3). The source contract checks
+  // EVERY person-night guard call, not just the first, and this file's one call
+  // is checked like any other. Today it is unreachable except under
   // `adminOverride`, so `skipAuthorization` is always true here and the call
-  // returns without a query — but "the only member-facing caller is the one
-  // above" is a property of today's gating, not of this function, and the whole
-  // point of C1 was that an unmarked party is a silent read-out. Marking every
-  // caller uniformly costs nothing and cannot be forgotten if the shift preview
-  // is ever opened up.
+  // returns without a query — but that is a property of today's gating, not of
+  // this function, and the whole point of C1 was that an unmarked party is a
+  // silent read-out. Marking every caller uniformly costs nothing and cannot be
+  // forgotten if the shift preview is ever opened up.
+  //
+  // This paragraph used to say "the file's SECOND guard call" and "the only
+  // member-facing caller is the one above". Both were true in
+  // `modify-quote/route.ts`, where this function lived until #3128 moved it
+  // here; neither survived the move, and the second one argued — wrongly, from
+  // here — that the mark below is redundant belt-and-braces. Recorded rather
+  // than silently overwritten: prose that moves verbatim can still land false,
+  // and this is what that looks like. The route's own guard call, the one that
+  // WAS above, is still there.
   const translatedRangesForGuard = await markCrossFamilyGuestsOnBooking(
     prisma,
     booking.memberId,
