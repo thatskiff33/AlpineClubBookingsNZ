@@ -52,7 +52,7 @@ vi.mock("@/lib/audit", () => ({
 
 import { GET, POST } from "@/app/api/admin/promo-codes/route";
 import { DELETE, PUT } from "@/app/api/admin/promo-codes/[id]/route";
-import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo";
+import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo-usage-counts";
 
 function request(url: string, body: Record<string, unknown>) {
   return new NextRequest(url, {
