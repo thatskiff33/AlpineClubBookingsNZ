@@ -39,6 +39,8 @@ import {
 } from "@/lib/xero";
 import { XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE } from "@/lib/xero-operation-outbox-payload";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { seasonYearsLabel } from "@/lib/season-label";
 
 const MEMBERSHIP_CANCELLATION_CREDIT_ROLE = "MEMBERSHIP_CANCELLATION_CREDIT_NOTE";
 const MEMBERSHIP_CANCELLATION_CREDIT_ALLOCATION_ROLE =
@@ -61,10 +63,6 @@ type XeroGroupReference = {
   id: string;
   name: string | null;
 };
-
-function seasonLabel(seasonYear: number): string {
-  return `${seasonYear}/${seasonYear + 1}`;
-}
 
 function centsFromAmount(value: unknown): number {
   const cents = providerAmountToCents(value);
@@ -733,7 +731,13 @@ export async function createXeroMembershipCancellationCreditNote(
   const mapping = await getResolvedAccountMapping("membershipCancellationCredit");
   const accountCode = mapping.code ?? "203";
   const creditLineItem: LineItem = {
-    description: `Membership cancellation credit for ${seasonLabel(subscription.seasonYear)} annual subscription`,
+    // The club's own year-end names the season (#3116), resolved rather than
+    // defaulted: this runs from the outbox worker, where the `financial-year.ts`
+    // cache is the March default. A credit note derives at send time and is not
+    // persisted, so a retry spanning a deployment can render the new wording
+    // against a note whose first attempt used the old one — harmless, because
+    // the credit note is matched by its claim row and not by this text.
+    description: `Membership cancellation credit for ${seasonYearsLabel(subscription.seasonYear, await refreshFinancialYearConfig())} annual subscription`,
     quantity: 1,
     unitAmount: amountCents / 100,
     taxType: "OUTPUT2",

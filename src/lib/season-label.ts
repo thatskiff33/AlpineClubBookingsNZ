@@ -70,49 +70,64 @@
  * plumbed value is passed in, and a passed value cannot differ between two
  * module instances of a cache.
  *
- * ## The rest of the tree writes this label by hand NINETEEN times
+ * ## The rest of the tree still writes this label by hand SEVEN times
  *
- * Measured on this branch: **19 non-test sites** render a season as
- * `${seasonYear}/${seasonYear + 1}`, each carrying the same two-calendar-year
- * assumption. #3103 holds the list and the owner's decision, which covers four
- * of them - the admin member card, the admin membership-types page, the MEMBER
- * profile page (which inlines it TWICE, and is not an admin surface) and the
- * member data-export route.
+ * It was nineteen when this module was written. #3103 adopted five of them (four
+ * files - the MEMBER profile page inlines it twice), #3116 adopted the four
+ * money and provider sites below, and a further three went with the surfaces
+ * those changes touched.
  *
- * **AND NO GREP RETURNS EXACTLY THOSE NINETEEN.** Measured on this branch,
- * excluding tests and this file: `/[Ss]easonYear \+ 1/` matches 24 lines, and
- * FIVE of them are date ARITHMETIC rather than a label - a season's end bound in
+ * **Measured on this branch**, excluding tests and this file:
+ * `/[Ss]easonYear \+ 1/` matches **12** lines, of which **FIVE are date
+ * ARITHMETIC rather than a label** - a season's end bound in
  * `membership-subscription-billing.ts`, two in `xero-membership-sync.ts` (one
  * inside a Xero query string), and two building a picker's year window.
- * Rewriting one of those does not change a label, it changes a date. Meanwhile
- * the obvious lower-case `/seasonYear \+ 1/` matches only 18 lines and misses
- * FOUR of the nineteen outright, because they spell it `currentSeasonYear + 1`.
- * So 24 minus 5 is the nineteen, and the short grep silently finds fifteen of
- * them. Read each call site rather than trusting either number.
+ * Rewriting one of those does not change a label, it changes a date. So 12 minus
+ * 5 leaves the **seven** remaining names, in `admin/reports`, `bookings`,
+ * `bookings/[id]/confirm-draft`, `member/subscription-status`,
+ * `group-booking.ts`, `membership-type-policy.ts` and
+ * `subscription-lockout-enforcement.ts`.
  *
- * **FOUR OF THE NINETEEN ARE ON MONEY AND PROVIDER PATHS AND ARE OUT OF SCOPE.**
- * Do not sweep them in, and do not reach them by grepping the template:
+ * **NO SINGLE GREP RETURNS EXACTLY THAT SET**, which is why the count is stated
+ * with its method rather than on its own. The obvious lower-case
+ * `/seasonYear \+ 1/` misses every site spelling it `currentSeasonYear + 1`, and
+ * a raw-text scan additionally matches this very paragraph. Read each call site
+ * rather than trusting any number here, and see
+ * `__tests__/season-label-adoption-contract.test.ts`, which discriminates a NAME
+ * from ARITHMETIC with a self-checked pattern over comment-stripped source.
  *
- * - `xero-subscription-invoices.ts` and `membership-subscription-billing.ts` -
- *   Xero **invoice line descriptions**;
- * - `membership-cancellation-xero.ts` - a **credit-note** description;
- * - `xero-record-activity.ts` - `server-only`, so the cache IS seeded wherever
- *   it runs.
+ * **THE FOUR MONEY AND PROVIDER SITES ADOPTED THIS IN #3116, AND THE EXCLUSION
+ * LIST IS NOW EMPTY.** They were `xero-subscription-invoices.ts` and
+ * `membership-subscription-billing.ts` (Xero **invoice line descriptions**),
+ * `membership-cancellation-xero.ts` (a **credit-note** description) and
+ * `xero-record-activity.ts` (a `server-only` activity label).
  *
- * `buildComponentLineDescription` in `membership-subscription-billing.ts` states
- * a frozen-string contract in its own comment: a single-component fee
- * reproduces that EXACT text, so a backfilled legacy charge re-driven through
- * the outbox mints a byte-identical invoice line. Unify it and a re-driven
- * charge stops doing that, and reconciliation sees a mismatch nothing explains.
+ * They were held back on a frozen-string contract: a single-component fee
+ * reproduces an exact invoice line, so a backfilled legacy charge re-driven
+ * through the outbox was said to mint byte-identical text. **The mechanism was
+ * misattributed.** `MembershipSubscriptionChargeComponent.description` is a
+ * persisted column - the planner writes it, the mint reads it back - so an
+ * existing charge is stable because the text was STORED, not because the
+ * deriving code still produces it. And no matcher reads the text at all:
+ * reconciliation finds the invoice by its immutable `Reference`, and the
+ * snapshot comparison is handed amount, account code and item code only.
  *
- * **That leaves a real unresolved tension rather than a tidy exclusion.** Those
- * four run on the server, where the year-end IS available - so for a
- * December-year-end club they already render `2026/2027` for a season entirely
- * inside 2026. This module is what establishes that such a season is ONE
- * calendar year, which makes the frozen-string contract and the correct label
- * directly incompatible: byte-identity requires keeping a label this module says
- * is wrong. Nothing here resolves that and nothing should - it needs its own
- * decision if a club with a non-March financial year ever adopts this product.
+ * ## The real hazard was the DEFAULT, not the sharing
+ *
+ * Every helper below defaults `yearEndMonth` to `getFinancialYearEndMonth()`,
+ * the `financial-year.ts` process cache. That default is right for a request
+ * path and WRONG for a background one: the cache is seeded only by
+ * `refreshFinancialYearConfig()`, and no outbox path calls it. Adopting the
+ * shared derivation at those four sites while taking the default would have
+ * reworded every existing club's invoice lines AND still rendered the
+ * two-calendar-year name for the December-year-end club the change was for.
+ *
+ * So each of the four resolves the year-end and passes it explicitly, and
+ * `buildComponentLineDescription` makes it a REQUIRED parameter - an unstated
+ * year-end is a compile error rather than a silently wrong invoice line. **If
+ * you are adopting these helpers on a cron, an outbox worker or any other path
+ * that does not seed the cache, pass the year-end.** The default will not tell
+ * you it guessed.
  */
 import { calendarDateFromParts, formatClubShortMonth } from "@/lib/club-time";
 import {

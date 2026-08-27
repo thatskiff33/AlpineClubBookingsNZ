@@ -24,6 +24,8 @@ import {
   getSeasonStartMonth,
   seasonYearOfStoredDate,
 } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { seasonYearsLabel } from "@/lib/season-label";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
@@ -102,6 +104,12 @@ export type SubscriptionBillingPlanException = {
 export type SubscriptionBillingPreview = {
   seasonYear: number;
   decisionDate: string;
+  // The club's financial year-end month this preview's invoice-line descriptions
+  // were NAMED from (#3116). Frozen here for the same reason `decisionDate` is:
+  // the confirm path rebuilds the preview inside the transaction and compares
+  // `confirmationToken`, and the descriptions are part of that token — so confirm
+  // must replay the year-end the preview used rather than resolve a fresh one.
+  yearEndMonth: number;
   dueDays: number;
   scopeMemberIds: string[] | null;
   entries: SubscriptionBillingPlanEntry[];
@@ -233,19 +241,42 @@ export function calculateMembershipCharge(input: {
   };
 }
 
-// The historical single-line invoice description. A single-component fee (every
-// existing fee post-backfill) reproduces this EXACT text — including the
-// `(1 month)` vs `(N months)` pluralization — so a backfilled legacy charge
-// re-driven through the outbox mints a byte-identical line. Multi-component fees
-// append the component label to distinguish their lines.
+// The single-line invoice description. A single-component fee (every existing fee
+// post-backfill) reproduces this text — including the `(1 month)` vs `(N months)`
+// pluralization. Multi-component fees append the component label to distinguish
+// their lines.
+//
+// WHAT KEEPS AN EXISTING CHARGE'S LINE STABLE IS PERSISTENCE, NOT THIS LITERAL,
+// and the comment that stood here said otherwise (#3116). It claimed a frozen
+// string contract: that a backfilled legacy charge re-driven through the outbox
+// mints a byte-identical line BECAUSE this text never changes. That is not the
+// mechanism. `MembershipSubscriptionChargeComponent.description` is a persisted
+// column; this function WRITES it at plan time and the mint READS THE STORED
+// COLUMN BACK (`xero-subscription-invoices.ts`). So changing this derivation
+// changes newly-planned charges only, and every charge already on the books
+// re-drives from its own stored text regardless of what this function now says.
+//
+// The one place that genuinely re-derives at send time is that module's fallback
+// branch, taken only by a pre-backfill charge carrying no component rows; it is
+// documented there.
+//
+// `yearEndMonth` IS REQUIRED, and deliberately has no default. The club's season
+// naming follows its financial year-end, and `seasonYearsLabel` would happily
+// default it to the `financial-year.ts` process cache — which is the March
+// default on any process that never called `refreshFinancialYearConfig()`,
+// including the outbox worker. Requiring it makes an unstated year-end a compile
+// error rather than a silently wrong label on an invoice (#3116; the same remedy
+// #3123 applied to the club timezone).
 export function buildComponentLineDescription(input: {
   membershipTypeName: string;
   seasonYear: number;
   coveredMonths: number;
   label: string;
   isSoleComponent: boolean;
+  yearEndMonth: number;
 }) {
-  const base = `${input.membershipTypeName} membership ${input.seasonYear}/${input.seasonYear + 1}`
+  const base = `${input.membershipTypeName} membership `
+    + `${seasonYearsLabel(input.seasonYear, input.yearEndMonth)}`
     + ` (${input.coveredMonths} month${input.coveredMonths === 1 ? "" : "s"})`;
   return input.isSoleComponent ? base : `${base} — ${input.label}`;
 }
@@ -277,6 +308,14 @@ export async function buildSubscriptionBillingPreview(input: {
   decisionDate?: Date;
   memberIds?: string[];
   store?: Prisma.TransactionClient | typeof prisma;
+  /**
+   * The club's financial year-end month, when the caller already holds it.
+   *
+   * Omitted, it is resolved here — which is correct for a request path and
+   * REFUSED inside a transaction, above. A confirm passes the frozen preview's
+   * value so the rebuilt descriptions match the token it is checking.
+   */
+  yearEndMonth?: number;
 }): Promise<SubscriptionBillingPreview> {
   const db = input.store ?? prisma;
   // "Today" means the CLUB's calendar day, from its PERSISTED timezone, encoded
@@ -304,9 +343,28 @@ export async function buildSubscriptionBillingPreview(input: {
         "re-derive from the frozen preview's date rather than from a fresh today.",
     );
   }
+  // The same rule, for the same reason, one release later (#3116). Resolving the
+  // financial year-end reads `MembershipLockoutSettings` and — with no admin
+  // override set — CALLS XERO for the organisation's accounting year. Doing that
+  // under a held `pg_advisory_xact_lock` would be a provider call inside a
+  // transaction, which this repository forbids outright, on top of lengthening
+  // the hold for no gain. A transactional caller has a preview in hand and passes
+  // that preview's frozen `yearEndMonth`.
+  if (input.store && input.yearEndMonth === undefined) {
+    throw new SubscriptionBillingError(
+      "A preview built inside a transaction must be given its financial year-end month. " +
+        "Resolving it here would read settings — and possibly call Xero — while this " +
+        "transaction holds the season's advisory lock, and a confirm must replay the " +
+        "frozen preview's year-end rather than resolve a fresh one.",
+    );
+  }
   const decisionDate =
     input.decisionDate ??
     dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  // Resolved, never defaulted from the `financial-year.ts` cache: this value is
+  // written into invoice-line text, and the cache is the March default on any
+  // process that did not seed it (#3116).
+  const yearEndMonth = input.yearEndMonth ?? (await refreshFinancialYearConfig());
   // Validate the date against the selected membership year before querying,
   // including an otherwise-empty preview.
   const bounds = seasonBounds(input.seasonYear);
@@ -994,6 +1052,7 @@ export async function buildSubscriptionBillingPreview(input: {
             coveredMonths: calculated.coveredMonths,
             label: component.label,
             isSoleComponent,
+            yearEndMonth,
           }),
           annualAmountCents: component.amountCents,
           chargedAmountCents: componentChargedCents(component.amountCents, component.prorate, calculated.coveredMonths),
@@ -1074,6 +1133,7 @@ export async function buildSubscriptionBillingPreview(input: {
   return {
     seasonYear: input.seasonYear,
     decisionDate: decisionDateOnly,
+    yearEndMonth,
     dueDays,
     scopeMemberIds,
     entries,
@@ -1161,12 +1221,19 @@ async function resolveSupersededExceptions(
 export async function reconcileSubscriptionBillingExceptions(input: {
   seasonYear: number;
   decisionDate: Date;
+  /**
+   * Resolved by the request path that calls this, because the preview it builds
+   * runs inside the season's advisory lock and must not resolve it there
+   * (#3116).
+   */
+  yearEndMonth: number;
 }): Promise<{ resolvedCount: number }> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.seasonYear}`}))`;
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.seasonYear,
       decisionDate: input.decisionDate,
+      yearEndMonth: input.yearEndMonth,
       store: tx,
     });
     const result = await resolveSupersededExceptions(tx, {
@@ -1195,6 +1262,11 @@ export async function confirmSubscriptionBillingPreview(input: {
       seasonYear: input.preview.seasonYear,
       decisionDate: parseDateOnly(input.preview.decisionDate),
       memberIds: input.preview.scopeMemberIds ?? undefined,
+      // The year-end the preview was NAMED from, not a fresh resolve. The
+      // descriptions feed `confirmationToken`, so re-resolving here would turn a
+      // year-end change between preview and confirm into a token mismatch that
+      // reads as "someone else edited the plan" (#3116).
+      yearEndMonth: input.preview.yearEndMonth,
       store: tx,
     });
     if (preview.confirmationToken !== input.expectedConfirmationToken) {

@@ -982,16 +982,36 @@ describe("membership subscription billing", () => {
     });
   });
 
-  describe("component line description (#1932, E6)", () => {
-    it("reproduces the exact legacy single-line text with pluralization for a sole component", () => {
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 1, label: "Annual membership fee", isSoleComponent: true }))
-        .toBe("Full membership 2026/2027 (1 month)");
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true }))
-        .toBe("Full membership 2026/2027 (12 months)");
+  describe("component line description (#1932, E6; season naming #3116)", () => {
+    it("names the season from the club's year-end, with pluralization, for a sole component", () => {
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 1, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (1 month)");
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (12 months)");
     });
     it("appends the label for a multi-component line", () => {
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 9, label: "Work party fee", isSoleComponent: false }))
-        .toBe("Full membership 2026/2027 (9 months) — Work party fee");
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 9, label: "Work party fee", isSoleComponent: false, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (9 months) — Work party fee");
+    });
+
+    // #3116: the defect this function had. A December year-end makes the season
+    // start in January and end in the SAME calendar year, so naming it as two
+    // calendar years contradicted the season year printed beside it on the
+    // invoice. Before this change the text below read "2026/2027".
+    it("names a single-calendar-year season with one year, for a December year-end", () => {
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 12 }))
+        .toBe("Full membership 2026 (12 months)");
+    });
+
+    // The year-end is threaded, not read from the process cache. If this function
+    // ever went back to defaulting it, this case would answer from whatever
+    // `financial-year.ts` happened to hold and would stop discriminating.
+    it("follows the year-end it is given rather than any ambient default", () => {
+      const june = buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 6 });
+      const december = buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 12 });
+      expect(june).toBe("Full membership 2026 - 2027 (12 months)");
+      expect(december).toBe("Full membership 2026 (12 months)");
+      expect(june).not.toBe(december);
     });
   });
 

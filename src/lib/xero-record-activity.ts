@@ -7,7 +7,9 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
+import { seasonYearsLabel } from "@/lib/season-label";
 import { formatCents } from "@/lib/utils";
 import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
@@ -54,8 +56,26 @@ function formatStatusLabel(value: string): string {
   return value.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatSeasonLabel(seasonYear: number): string {
-  return `${seasonYear}/${seasonYear + 1}`;
+/**
+ * The club's financial year-end month, RESOLVED rather than read from the cache.
+ *
+ * `seasonYearsLabel` defaults its `yearEndMonth` to `getFinancialYearEndMonth()`,
+ * the `financial-year.ts` process cache. Taking that default here would be the
+ * defect #3116 exists to remove, not a shortcut: the cache is seeded only by
+ * `refreshFinancialYearConfig()`, whose callers are two request paths, the
+ * finance dashboard and the eligibility reader. Nothing on this panel's path
+ * seeds it, so on a cold process the label would silently answer from the March
+ * default, and a December-year-end club would read a season name contradicting
+ * every other surface - the same shape `subscription-lockout-enforcement.ts`
+ * records for the diagnostics path.
+ *
+ * The RETURN VALUE is what gets passed down, never the cache this call also
+ * happens to seed, so the answer cannot depend on what else warmed the process.
+ * The underlying read is in-process cached with a TTL and never rejects
+ * (`xero-organisation.ts`), so a display path can afford it.
+ */
+async function resolveYearEndMonth(): Promise<number> {
+  return refreshFinancialYearConfig();
 }
 
 function createRecordReference(
@@ -108,7 +128,7 @@ function getInboundEventCategoryForObjectType(xeroObjectType: string): string | 
   }
 }
 
-async function getMemberScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const member = await prisma.member.findUnique({
     where: { id: localId },
     select: {
@@ -140,7 +160,7 @@ async function getMemberScope(localId: string): Promise<XeroRecordScope | null> 
     createRecordReference(
       "MemberSubscription",
       subscription.id,
-      `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+      `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
       "Subscription"
     )
   );
@@ -360,7 +380,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
   };
 }
 
-async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberSubscriptionScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const subscription = await prisma.memberSubscription.findUnique({
     where: { id: localId },
     select: {
@@ -384,7 +404,7 @@ async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordSc
   const rootRecord = createRecordReference(
     "MemberSubscription",
     subscription.id,
-    `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+    `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
     "Subscription"
   );
   const relatedMember = createRecordReference(
@@ -528,7 +548,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
 async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): Promise<XeroRecordScope | null> {
   switch (localModel) {
     case "Member":
-      return getMemberScope(localId);
+      return getMemberScope(localId, await resolveYearEndMonth());
     case "Payment":
       return getPaymentScope(localId);
     case "Booking":
@@ -536,7 +556,7 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): 
     case "BookingModification":
       return getBookingModificationScope(localId);
     case "MemberSubscription":
-      return getMemberSubscriptionScope(localId);
+      return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":
       return getMembershipCancellationRequestScope(localId);
     case "MembershipCancellationRequestParticipant":
