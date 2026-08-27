@@ -2,11 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Node runs this file directly (ci.yml: `node scripts/ci/check-website-render-modes.mjs`),
-// with no transpiler. Node 24 — which package.json `engines` requires and every
-// setup-node in ci.yml pins — strips types from a `.mts` import natively, so the
-// extension is explicit and there is no loader in the path of a required check.
-import { stripComments } from "../../src/lib/__tests__/support/strip-comments.mts";
+// Node runs this file directly (ci.yml: `node scripts/ci/check-website-render-modes.mjs`)
+// with no transpiler, so the import below is resolved by Node, not by a bundler:
+// the extension is explicit because Node requires it, and Node 24 — which
+// package.json `engines` demands and every setup-node in ci.yml pins — strips the
+// types natively. No loader sits in the path of a required check.
+//
+// The helper stays a `.ts` with an extensionless specifier for its twenty test
+// callers because that is the only spelling `tsc` resolves here: an explicit
+// `.ts`/`.mts` specifier needs `allowImportingTsExtensions` (TS5097) and an
+// extensionless one does not resolve to `.mjs` or `.mts` under this
+// `moduleResolution`. Measured both ways before settling on this one (#3132).
+import { stripComments } from "../../src/lib/__tests__/support/strip-comments.ts";
 
 /**
  * Guards the public website's STRUCTURE: its two route groups, their render modes,

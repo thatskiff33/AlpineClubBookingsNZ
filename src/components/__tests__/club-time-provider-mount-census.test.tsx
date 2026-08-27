@@ -46,7 +46,7 @@ import { stripComments } from "@/lib/__tests__/support/strip-comments";
  * ## Reading the source rather than matching it raw
  *
  * Every presence check here runs over `stripComments(source)`, the one shared
- * implementation in `src/lib/__tests__/support/strip-comments.mts`, whose first
+ * implementation in `src/lib/__tests__/support/strip-comments.ts`, whose first
  * caller had already met and documented this hazard: a POSITIVE rule ("this layout must render
  * `<AppProviders>`") is satisfied by a comment mentioning it, so an un-stripped
  * substring match passes on a layout with no provider anywhere. Measured on this
