@@ -1,7 +1,7 @@
 import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
-import { type MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
+import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import { nameField } from "@/lib/zod-helpers";
 
 // The request contract for `POST /api/bookings/[id]/modify-quote`, split
