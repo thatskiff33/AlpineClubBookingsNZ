@@ -38,19 +38,6 @@ import {
 import logger from "@/lib/logger";
 
 /**
- * Drop any payload row that would land on a custodian-held bed-night (#2286
- * review M1).
- *
- * Called immediately before a `createMany`, on the SAME client that performs
- * it. The planner is already fed the holds as never-evictable unknown
- * occupants, but that read is not the write: no unique index and no database
- * constraint stands behind the custodian exclusion, so a hold that commits
- * between the plan and the write would otherwise be silently written over. This
- * is the write-time half, and it is what makes the DOMAIN_INVARIANTS claim
- * ("every placing write re-checks the live holds immediately before writing")
- * true for the lifecycle planner rather than only for `runAutoBedAllocation`.
- */
-/**
  * Drop any payload row that would land on a bed-night the database still shows
  * as occupied (#2656).
  *
@@ -136,6 +123,19 @@ export async function dropRowsOnOccupiedBedNights<
   return writable;
 }
 
+/**
+ * Drop any payload row that would land on a custodian-held bed-night (#2286
+ * review M1).
+ *
+ * Called immediately before a `createMany`, on the SAME client that performs
+ * it. The planner is already fed the holds as never-evictable unknown
+ * occupants, but that read is not the write: no unique index and no database
+ * constraint stands behind the custodian exclusion, so a hold that commits
+ * between the plan and the write would otherwise be silently written over. This
+ * is the write-time half, and it is what makes the DOMAIN_INVARIANTS claim
+ * ("every placing write re-checks the live holds immediately before writing")
+ * true for the lifecycle planner rather than only for `runAutoBedAllocation`.
+ */
 export async function dropRowsOnCustodianHeldBedNights<
   TRow extends { bedId: string; stayDate: Date },
 >(
