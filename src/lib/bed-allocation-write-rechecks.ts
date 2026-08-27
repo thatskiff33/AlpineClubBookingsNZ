@@ -9,13 +9,29 @@
  * decision, #2286 option (a)) — so anything that commits between the plan and
  * the write would otherwise be silently written over.
  *
- * They take the caller's client and acquire nothing: every advisory lock, every
- * transaction boundary and every status-guarded claim stays in
- * `bed-allocation-lifecycle.ts`, which calls all three from inside the locked
- * apply (`INV-LOCK-004` — a read taken while a lock is held goes through the
- * caller's transaction client). Each returns a filtered copy and writes nothing
- * itself, so a dropped row simply stays in the awaiting-allocation queue for the
- * next reconcile.
+ * They take the caller's client and acquire nothing. Every advisory lock,
+ * transaction boundary and status-guarded claim stays in
+ * `bed-allocation-lifecycle.ts`; these three read through whatever client they
+ * are handed, which is what `INV-LOCK-004` requires of a read taken while a lock
+ * is held. Each returns a filtered copy and writes nothing itself, so a dropped
+ * row simply stays in the awaiting-allocation queue for the next reconcile.
+ *
+ * WHETHER A LOCK IS HELD AT ALL IS THE CALLER'S CONTRACT, AND OFTEN THERE IS
+ * NONE. An earlier draft of this paragraph said the lifecycle "calls all three
+ * from inside the locked apply". That is false, and false in the direction that
+ * matters: on the no-displacement path — the COMMON case — the lifecycle calls
+ * them on its raw `db` argument with no transaction opened and no lodge key
+ * taken, and even inside `applyPlan` the lock list is empty when the caller
+ * already owns the transaction. The reconcile is routinely called post-commit
+ * and unlocked, which the prose further down this file and both
+ * `custodian-write-path-contract.test.ts` mechanism strings already say.
+ *
+ * That is not a gap in these functions — it is the whole reason they exist.
+ * Nothing in the database stands behind the custodian or whole-lodge exclusion,
+ * so a hold that commits between the plan and the write would otherwise be
+ * written over. Read the first paragraph as an unconditional lock guarantee and
+ * one of these looks like redundant belt-and-braces; delete it on that reading
+ * and the defect it was written to prevent comes straight back.
  *
  * `custodian-write-path-contract.test.ts` reads the CALL SITES in the lifecycle
  * module as its evidence that these re-filters are still wired in, so moving a
@@ -72,14 +88,23 @@ export async function dropRowsOnOccupiedBedNights<
      * `sourceBedId:bookingGuestId:stayDate` — the bed each displaced row was on
      * BEFORE the displacement ran.
      *
-     * The source bed has to be part of the key (#2669 review). This read runs
-     * after the displacements on the same client, so a DELETEd row is already
-     * gone and this exclusion is only belt-and-braces for it; but a MOVEd row
-     * still exists, at its NEW bed. Keyed by guest-night alone the exclusion
+     * The source bed has to be part of the key (#2669 review). Keyed by
+     * guest-night alone the exclusion
      * would strike that row out too, and the MOVE's DESTINATION bed-night would
      * read as free — admitting a payload row onto an occupied bed, which is the
      * one outcome this whole function exists to prevent. Keyed by source bed the
      * exclusion only ever forgives an occupant found where it used to be.
+     *
+     * THE JUSTIFICATION THIS BLOCK USED TO CARRY WAS BACKWARDS, and it is worth
+     * recording rather than silently deleting. It said "this read runs after the
+     * displacements … so a DELETEd row is already gone and this exclusion is
+     * only belt-and-braces for it". The call site runs this read BEFORE the
+     * displacement apply (#2669 review F1 moved it there, and the function
+     * docblock above says so), so neither the DELETE nor the MOVE has happened
+     * and the exclusion is load-bearing for BOTH. The conclusion — key by source
+     * bed — was right the whole time and is unchanged; only the reasoning was
+     * stale, and a reader who trusted it would have concluded half of this key
+     * was optional.
      */
     vacatedOccupantSlots?: Set<string>;
   },
