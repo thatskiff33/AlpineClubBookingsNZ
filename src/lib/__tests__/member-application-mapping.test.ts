@@ -15,7 +15,6 @@ const { prismaMock } = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: vi.fn().mockReturnValue(2026) }));
 vi.mock("@/lib/email", () => ({}));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn(),

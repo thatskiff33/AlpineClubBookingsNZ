@@ -14,8 +14,15 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { getAdminCalendarBookingDayRange } from "@/lib/admin-booking-calendar-ranges";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateFromParts,
+  calendarDateParts,
+  calendarDayOfWeek,
+  daysInCalendarMonth,
+  formatClubDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 interface CalendarBooking {
   id: string;
@@ -65,15 +72,18 @@ const ROW_BOTTOM_PADDING = 4; // breathing room below the deepest bar in a row
 // busy week never grows without bound.
 const MAX_LANES = 6;
 
+// Both facts are CALENDAR-DAY facts, so the kernel answers both and no `Date` is
+// built (CT-4, #2870). The spelling this replaces was host-local-midnight in and
+// host-local out — self-consistent, and therefore right — but it is the shape from
+// which the next author reaches for a UTC-midnight value and keeps `.getDay()`,
+// shifting the whole grid by a column for every viewer west of Greenwich.
+// `booking-calendar.tsx` carries the same note over the same change.
 function getMonthDays(year: number, month: number) {
-  // month is 0-indexed
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  // Get day of week (0=Sun..6=Sat), convert to Mon-based (0=Mon..6=Sun)
-  let startDow = firstDay.getDay() - 1;
-  if (startDow < 0) startDow = 6;
-  const daysInMonth = lastDay.getDate();
-  return { startDow, daysInMonth };
+  // `month` stays 0-based, matching `Date.getMonth()`; the kernel counts 1-12.
+  const weekday = calendarDayOfWeek(calendarDateFromParts(year, month + 1, 1));
+  // 0=Sun..6=Sat converted to Mon-based (0=Mon..6=Sun).
+  const startDow = weekday === 0 ? 6 : weekday - 1;
+  return { startDow, daysInMonth: daysInCalendarMonth(year, month + 1) };
 }
 
 const ENABLED_STATUSES_STORAGE_KEY = "admin-calendar-enabled-statuses";
@@ -85,13 +95,23 @@ export function AdminBookingCalendar() {
   const deletedParam = searchParams.get("deleted");
   const lodgeParam = searchParams.get("lodgeId");
 
-  // Seed the initial view from NZ "today" (getTodayDateOnly is pinned to UTC
-  // midnight of the club-timezone date) so the default month and the "today"
-  // highlight (todayStr, below) stay consistent for admins whose browser clock
-  // trails NZ. A raw new Date() here could open the previous month post-midnight.
-  const nzToday = getTodayDateOnly();
-  const [year, setYear] = useState(nzToday.getUTCFullYear());
-  const [month, setMonth] = useState(nzToday.getUTCMonth()); // 0-indexed
+  /**
+   * "Today" is the CLUB's calendar day (CT-4, #2870; INV-CONFIG-002), so the
+   * default month and the "today" highlight below stay consistent for an admin
+   * whose browser clock trails the club's. A raw `new Date()` here could open the
+   * previous month post-midnight.
+   *
+   * WHAT CHANGED IS THE AUTHORITY, not the shape. `getTodayDateOnly()` asked
+   * `APP_TIME_ZONE` - the container's `TZ`; `clubTime.today()` asks the club's
+   * recorded setting, and returns the day as a `CalendarDate` string rather than
+   * a UTC-midnight `Date`, so the month and year are read off the calendar day
+   * itself instead of through `getUTC*`.
+   */
+  const clubTime = useClubTime();
+  const todayStr = clubTime.today();
+  const todayParts = calendarDateParts(todayStr);
+  const [year, setYear] = useState(todayParts.year);
+  const [month, setMonth] = useState(todayParts.month - 1); // 0-indexed
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [availability, setAvailability] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -175,9 +195,9 @@ export function AdminBookingCalendar() {
   }, [monthKey]);
 
   const goToday = () => {
-    const today = getTodayDateOnly();
-    setYear(today.getUTCFullYear());
-    setMonth(today.getUTCMonth());
+    const today = calendarDateParts(clubTime.today());
+    setYear(today.year);
+    setMonth(today.month - 1);
   };
 
   const goPrev = () => {
@@ -202,10 +222,6 @@ export function AdminBookingCalendar() {
   const filteredBookings = bookings.filter((b) => enabledStatuses.has(b.status));
 
   const { startDow, daysInMonth } = getMonthDays(year, month);
-  // NZ date-only "today" (day < today greys out; today itself stays live). Using
-  // the shared club-timezone helper avoids the browser-local drift that a raw
-  // `new Date()` comparison would introduce for admins whose clock trails NZ.
-  const todayStr = formatDateOnly(getTodayDateOnly());
 
   // Build the day cells grid
   const totalCells = startDow + daysInMonth;
@@ -570,7 +586,7 @@ export function AdminBookingCalendar() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Bookings on {openDay ? formatNZDate(parseDateOnly(openDay)) : ""}
+              Bookings on {openDay ? formatClubDate(requireCalendarDate(openDay)) : ""}
             </DialogTitle>
             <DialogDescription>
               All {openDayBookings.length} booking

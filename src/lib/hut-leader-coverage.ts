@@ -1,10 +1,7 @@
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
-import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   loadHutLeaderLookaheadDays,
   normalizeHutLeaderLookaheadDays,
@@ -105,7 +102,7 @@ export async function getUnassignedHutLeaderDates(input: {
   scope: HutLeaderCoverageScope;
 }): Promise<UnassignedHutLeaderDate[]> {
   const db = input.db ?? (prisma as unknown as HutLeaderCoverageDb);
-  const today = input.today ?? getTodayDateOnly();
+  const today = input.today ?? (await clubTodayDateOnlyInstant());
 
   const hasWindow = input.from != null && input.to != null;
   let windowStart: Date;

@@ -67,8 +67,8 @@ export async function resolveSubscriptionLockoutMode(): Promise<SubscriptionLock
     // module still on. Every request-path reseeder in the tree routes through
     // this function (the five booking write paths, `findUnpaidMemberGuests` and
     // the member notice builder), so narrowing it left such a club with no
-    // request-path reseed at all: after a container restart, `getSeasonYear` and
-    // `computeAgeTier` would resolve against the March default instead of the
+    // request-path reseed at all: after a container restart, the season helpers
+    // and `computeAgeTier` would resolve against the March default instead of the
     // club's real year-end month, and the rate resolved for a booking can differ
     // from the correct one. Restored to the pre-#2543 condition.
     await refreshFinancialYearConfig();

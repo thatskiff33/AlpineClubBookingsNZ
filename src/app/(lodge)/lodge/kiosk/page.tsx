@@ -5,8 +5,8 @@ import { CalendarDays, RefreshCw } from "lucide-react";
 import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import type { KioskTier } from "@/lib/kiosk-access";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
-import { parseDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time";
 // #2621: one 12-hour rendering of the expected arrival time, shared with the
 // booking page editor and the lobby wall. Three private copies of the same six
 // lines is how three surfaces end up disagreeing about midnight.
@@ -99,7 +99,8 @@ type KioskView = "week" | "day";
 
 /*
   #2474 — a lodge night on this page is a date-only KEY ("2026-04-15"), never a
-  `Date`. Every "today" comes from `todayDateOnlyForTimeZone()` (the club's day)
+  `Date`. Every "today" comes from the club's own day — `clubTime.today()` since
+  CT-4 (#2870), the persisted setting rather than the container's environment —
   and every step comes from `addDaysToDateKey` (UTC date-only arithmetic), so
   the kiosk agrees with the server guards it calls and with the week strip it
   renders.
@@ -132,21 +133,22 @@ type KioskView = "week" | "day";
 // suite advances its fake clock by this many ms with a comment pointing back.
 const CLUB_DAY_TICK_MS = 60000;
 
-// Not one of the shared helpers: the kiosk header names the DAY OF THE WEEK in
-// full ("Wednesday, 15 April 2026") because that is what a hut leader scans for.
-const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
+// The kiosk header names the DAY OF THE WEEK in full ("Wednesday, 15 April
+// 2026") because that is what a hut leader scans for. A CALENDAR DAY, SO NO
+// TIMEZONE AT ALL (CT-4, #2870): the kernel's `longWeekdayDate` shape is that
+// exact bag, pinned to `UTC` over the UTC-midnight encoding, which is provably
+// the identity for every club. The local formatter this replaces was the fourth
+// copy of the same options in the same locale.
 
 function displayDate(dateStr: string): string {
-  // Date-only lodge night: parse at UTC midnight (the repo's date-only seam) so
-  // the club-time formatter cannot roll it back a day for a viewer outside
-  // New Zealand.
-  return LONG_WEEKDAY_DATE.format(parseDateOnly(dateStr));
+  // `parseCalendarDate`, not `requireCalendarDate`: this is the night the whole
+  // page is keyed on, and a throw here would blank an unattended wall tablet.
+  // The fallback is NEW rather than preserved — `parseDateOnly` returned
+  // `new Date(NaN)` for a malformed key and `Intl` then threw `Invalid time
+  // value` out of the render, which on a lodge wall screen nobody is watching is
+  // the worst available outcome.
+  const night = parseCalendarDate(dateStr);
+  return night === null ? dateStr : formatClubLongWeekdayDate(night);
 }
 
 export default function KioskPage() {
@@ -182,7 +184,16 @@ export default function KioskPage() {
   // `date` — the night every fetch, every roster write and every check-in is
   // keyed on — stayed on yesterday. That divergence would open at 00:00 NZ, the
   // exact hour a late arrival is being checked in.
-  const [clubToday, setClubToday] = useState(() => todayDateOnlyForTimeZone());
+  /*
+    THE CLUB'S DAY, FROM THE CLUB'S PERSISTED TIMEZONE (CT-4, #2870; epic #2988;
+    INV-CONFIG-002) — delivered to this browser as data by `ClubTimeProvider`,
+    where it used to come from the container's environment zone. It has never
+    been the tablet's own clock, and that is the whole point of #2474 above: a
+    lodge device set to the wrong zone must not open on the wrong night. Same
+    shape, same answer on every deployment today; only the authority moved.
+  */
+  const clubTime = useClubTime();
+  const [clubToday, setClubToday] = useState<string>(() => clubTime.today());
   const [date, setDate] = useState(clubToday);
   const [view, setView] = useState<KioskView>("week");
   const [weekStart, setWeekStart] = useState(() => getWeekStartDateKey(clubToday));
@@ -339,7 +350,7 @@ export default function KioskPage() {
   // is the behaviour we want anyway.
   useEffect(() => {
     const timer = setInterval(() => {
-      const nextClubDay = todayDateOnlyForTimeZone();
+      const nextClubDay: string = clubTime.today();
       if (nextClubDay === clubToday) return;
 
       setClubToday(nextClubDay);
@@ -353,7 +364,7 @@ export default function KioskPage() {
       );
     }, CLUB_DAY_TICK_MS);
     return () => clearInterval(timer);
-  }, [clubToday, view]);
+  }, [clubTime, clubToday, view]);
 
   const refreshNow = async () => {
     setRefreshing(true);
@@ -417,7 +428,7 @@ export default function KioskPage() {
     // a minute behind the club at midnight, and **Today** must never send a hut
     // leader to yesterday. Setting all three together keeps the chip, the
     // served night and the week on the same day.
-    const today = todayDateOnlyForTimeZone();
+    const today: string = clubTime.today();
     setClubToday(today);
     setDate(today);
     setWeekStart(getWeekStartDateKey(today));

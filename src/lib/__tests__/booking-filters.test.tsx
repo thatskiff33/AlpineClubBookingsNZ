@@ -1,9 +1,20 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingFilters } from "@/components/admin/booking-filters";
-import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+
+/*
+ * Fixed date fixtures, NOT "today" (#3123). These values are only ever written
+ * into a URL query string and read back out of an input — `BookingFilters`
+ * takes the club's year from `ClubTimeProvider` (`clubTime.today()`) and never
+ * compares a filter bound against today — so the suite has no reason to consult
+ * a clock at all. The particular day is arbitrary; it is the frozen clock's
+ * Auckland day, so every assertion below keeps the exact string it had.
+ */
+const FILTER_DAY = "2026-07-01";
+const FILTER_DAY_PLUS_14 = "2026-07-15";
+const FILTER_DAY_PLUS_30 = "2026-07-31";
 
 const mocks = vi.hoisted(() => ({
   currentSearch: "",
@@ -155,8 +166,8 @@ describe("BookingFilters", () => {
     // Server-side, legacy `from` bounds check-IN and legacy `to` bounds
     // check-OUT (admin-bookings-service). Seeding must match, so the URL
     // rewrite keeps the legacy link's result set.
-    const legacyFrom = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    const legacyFrom = FILTER_DAY;
+    const legacyTo = FILTER_DAY_PLUS_14;
     mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}`;
     setLocation(mocks.currentSearch);
 
@@ -179,8 +190,8 @@ describe("BookingFilters", () => {
     // admin-bookings-service drops legacy `to` whenever an explicit
     // checkInTo/checkOutTo param exists, so seeding it here would add a
     // check-out bound the server never applied.
-    const checkInTo = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
+    const checkInTo = FILTER_DAY;
+    const legacyTo = FILTER_DAY_PLUS_30;
     mocks.currentSearch = `checkInTo=${checkInTo}&to=${legacyTo}`;
     setLocation(mocks.currentSearch);
 
@@ -197,8 +208,8 @@ describe("BookingFilters", () => {
   });
 
   it("keeps an explicit checkOutTo over legacy to", async () => {
-    const checkOutTo = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 30));
+    const checkOutTo = FILTER_DAY;
+    const legacyTo = FILTER_DAY_PLUS_30;
     mocks.currentSearch = `checkOutTo=${checkOutTo}&to=${legacyTo}`;
     setLocation(mocks.currentSearch);
 
@@ -215,8 +226,8 @@ describe("BookingFilters", () => {
   it("preserves page across a pure legacy→canonical rewrite (#1732)", async () => {
     // A paginated legacy bookmark encodes the SAME result set the canonical
     // params do, so rewriting the param names must keep the user's place.
-    const legacyFrom = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    const legacyFrom = FILTER_DAY;
+    const legacyTo = FILTER_DAY_PLUS_14;
     mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}&page=3`;
     setLocation(mocks.currentSearch);
 
@@ -234,7 +245,7 @@ describe("BookingFilters", () => {
   it("resets to page 1 when a filter actually changes", async () => {
     // A real filter change means a different result set — page 3 of the old
     // one is meaningless, so the rewrite drops the page param.
-    const checkInFrom = formatDateOnly(getTodayDateOnly());
+    const checkInFrom = FILTER_DAY;
     mocks.currentSearch = `checkInFrom=${checkInFrom}&page=3`;
     setLocation(mocks.currentSearch);
 
@@ -262,7 +273,7 @@ describe("BookingFilters", () => {
     // The reverted state equals the mount snapshot, so without the divergence
     // latch it would be treated as a pure rewrite and re-attach page 2 — a
     // stale page from a different result set.
-    const checkInFrom = formatDateOnly(getTodayDateOnly());
+    const checkInFrom = FILTER_DAY;
     mocks.currentSearch = `checkInFrom=${checkInFrom}&page=3`;
     setLocation(mocks.currentSearch);
 
@@ -317,8 +328,8 @@ describe("BookingFilters", () => {
   it("carries the sort verbatim through a legacy→canonical rewrite (#1738)", async () => {
     // A bookmarked legacy link that also pins a desc sort must keep that sort
     // (no asc flip) and its page while the param names are rewritten.
-    const legacyFrom = formatDateOnly(getTodayDateOnly());
-    const legacyTo = formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 14));
+    const legacyFrom = FILTER_DAY;
+    const legacyTo = FILTER_DAY_PLUS_14;
     mocks.currentSearch = `from=${legacyFrom}&to=${legacyTo}&sortBy=member&sortDir=desc&page=3`;
     setLocation(mocks.currentSearch);
 

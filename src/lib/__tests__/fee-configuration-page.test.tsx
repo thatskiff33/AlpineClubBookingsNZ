@@ -1,7 +1,35 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+
+/**
+ * The club's day at the frozen instant (`2026-07-01T00:00:00.000Z`, midday NZ)
+ * under the suite's default provider zone, `Pacific/Auckland`.
+ *
+ * IT PROVES NOTHING ABOUT ZONE AUTHORITY on its own: that zone is also what
+ * `APP_TIME_ZONE` resolves to under test, so the migrated code and the
+ * `getTodayDateOnly()` it replaced agree. The zone-authority test further down
+ * chooses a zone the environment is not on, and is the one that can tell them
+ * apart (CT-4, #2870).
+ */
+const CLUB_TODAY = "2026-07-01";
+
+/**
+ * The `yyyy-MM-dd` day a given zone is on at the frozen instant, computed
+ * independently of the kernel under test — an oracle, so that one defect inside
+ * `@/lib/club-time` cannot satisfy both sides of a comparison at once.
+ */
+const todayIn = (zone: string) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
 const mocks = vi.hoisted(() => ({ toastSuccess: vi.fn(), toastError: vi.fn(), scrollToError: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }));
@@ -168,10 +196,13 @@ beforeAll(async () => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   Element.prototype.releasePointerCapture = vi.fn();
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-07-13T12:30:00.000Z")); // 14 July in Pacific/Auckland
+  // The clock-pinning dance that used to sit here is gone with the defect it
+  // worked around (CT-4, #2870). The "effective from" default was a MODULE-LEVEL
+  // constant computed at import, so this suite had to pin a fake clock across
+  // the dynamic import to control it — and in the product that meant a tab left
+  // open across midnight kept yesterday's date. It is read per render now, from
+  // the club's persisted zone, so the frozen test clock is enough.
   FeeConfigurationPage = (await import("@/app/(admin)/admin/fees/_components/finance-fees-sections")).FinanceFeesSections;
-  vi.useRealTimers();
 });
 
 afterEach(() => {
@@ -236,11 +267,11 @@ describe("fee configuration page", () => {
     });
   });
 
-  it("uses the NZ date and discards membership form edits on cancel with no API call", async () => {
+  it("uses the club's date and discards membership form edits on cancel with no API call", async () => {
     const fetchMock = stubFetch(response(true, editableData));
     render(<FeeConfigurationPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
-    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(CLUB_TODAY);
     fireEvent.click(screen.getByRole("button", { name: "Edit Full Flat (all ages) fee" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("100.00");
     fireEvent.click(screen.getByRole("button", { name: "Close section" }));
@@ -248,8 +279,77 @@ describe("fee configuration page", () => {
     expect(screen.queryByLabelText("Annual amount (NZD)")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Edit membership fees" }));
     expect((screen.getByLabelText("Annual amount (NZD)") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe("2026-07-14");
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(CLUB_TODAY);
     expect(postCalls(fetchMock)).toHaveLength(0);
+  });
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * The test above asserts the shape but cannot assert the AUTHORITY: it renders
+   * under `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to in
+   * this suite, so the migrated code and the `getTodayDateOnly()` it replaced
+   * return the identical string. It would pass against either.
+   *
+   * A fee's "effective from" is money — it decides which annual amount a
+   * member is charged from which day — so which day it defaults to has to come
+   * from the club's PERSISTED zone (`INV-CONFIG-002`) and nothing else. A club
+   * zone the environment is NOT on is what shows that: at the frozen instant a
+   * club six hours behind UTC is still on 30 June while one fourteen hours ahead
+   * has reached 1 July.
+   *
+   * ## Why the zone is CHOSEN rather than written down
+   *
+   * The premise here used to be `expect(DENVER_TODAY).not.toBe(CLUB_TODAY)` —
+   * two of this file's own constants, which can never disagree. So it could not
+   * fail, and MEASURED on this branch: with `TZ=America/Denver` the environment
+   * became Denver, this assertion stopped telling the persisted zone from the
+   * environment, and nothing went red. A premise that never consults the
+   * environment is not a premise about the environment.
+   */
+  it("defaults the effective-from date to the club's PERSISTED zone, not APP_TIME_ZONE or the host", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "today",
+      cases: [
+        { zone: "America/Denver", today: "2026-06-30" }, // −6: still 30 June
+        { zone: "Pacific/Kiritimati", today: "2026-07-01" }, // +14: already 1 July
+      ],
+      // An INDEPENDENT oracle, not `clubToday`: reading "what this zone would
+      // say" through the kernel under test would let one defect satisfy both
+      // sides. `en-CA` numeric is `yyyy-MM-dd`, the shape this field holds.
+      answerFor: (zone) => todayIn(zone),
+      // NOT `["UTC"]`. At THIS instant there are exactly two calendar days on
+      // earth, both already taken by the two candidates, so a second rival
+      // would leave nothing to choose and the chooser would refuse a correct
+      // tree. Two is a fact about this fixture, not the world: the inhabited
+      // span is 25 hours (-11 to +14), so at UTC hour 10 there are THREE. This
+      // fixture is at UTC hour 0; re-derive the count if you move it. It is not needed either: `clubToday` consults only the zone it is
+      // handed, so "read the machine's clock" is not a reachable mutation — the
+      // reachable one is "read APP_TIME_ZONE", which the environment excludes.
+    });
+    const environmentToday = todayIn(APP_TIME_ZONE);
+    expect(chosen.today).not.toBe(environmentToday);
+
+    stubFetch(response(true, editableData));
+    render(<FeeConfigurationPage />, {
+      wrapper: ({ children }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit membership fees" }));
+    expect((document.querySelector("#membership-from") as HTMLInputElement).value).toBe(chosen.today);
+
+    // The joining-fee default is a SEPARATE piece of state seeded from the same
+    // club day, and its field only exists once its own section is in edit mode.
+    // Asserting it behind `?.value ?? chosen.today` — as this line did until the
+    // CT-4 review — made it `expect(x).toBe(x)` for an element that was never
+    // rendered, so the joining fee, which is money a new member is charged, had
+    // no zone coverage at all. Open the section and assert unconditionally.
+    fireEvent.click(screen.getByRole("button", { name: "Edit joining fees" }));
+    const joiningFrom = document.querySelector("#entrance-from") as HTMLInputElement | null;
+    expect(joiningFrom).not.toBeNull();
+    expect(joiningFrom?.value).toBe(chosen.today);
   });
 
   it("commits an unchanged membership fee payload from edit mode", async () => {

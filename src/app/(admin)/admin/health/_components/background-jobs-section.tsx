@@ -8,6 +8,7 @@ import {
   formatDate,
   formatOptionalDate,
 } from "./shared";
+import { useClubTime } from "@/components/club-time-provider";
 import type { HealthData } from "./types";
 
 export function BackgroundJobsSection({
@@ -17,12 +18,32 @@ export function BackgroundJobsSection({
   cronJobs: HealthData["cronJobs"];
   cronHealth: HealthData["cronHealth"];
 }) {
+  // Cron run stamps are real INSTANTS, shown in the club's persisted zone
+  // (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   return (
     <div>
       <h2 className="text-lg font-semibold text-foreground mb-3 flex items-center gap-2">
         <Clock className="h-5 w-5" />
         Cron Jobs
       </h2>
+      {cronHealth?.timezoneRestartRequired ? (
+        <div className="mb-3 rounded-lg border border-warning-6 bg-warning-2 p-4 text-sm">
+          <p className="font-semibold">
+            These jobs are still running on the old time zone
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            The club time zone was changed to{" "}
+            <span className="font-medium">{cronHealth.configuredTimezone}</span>
+            , but the scheduled jobs below were set up when the application last
+            started and are still firing on{" "}
+            <span className="font-medium">{cronHealth.runningTimezone}</span>.
+            Every &ldquo;expected&rdquo; time on this page is the time they fire
+            today. Restart the application to move them onto{" "}
+            {cronHealth.configuredTimezone}.
+          </p>
+        </div>
+      ) : null}
       {(cronHealth
         ? cronHealth.jobs.length === 0
         : Object.keys(cronJobs).length === 0) ? (
@@ -78,9 +99,9 @@ export function BackgroundJobsSection({
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 text-xs text-muted-foreground">
-                    <p>Latest run: {formatOptionalDate(job.latestRunAt)}</p>
-                    <p>Latest success: {formatOptionalDate(job.latestSuccessAt)}</p>
-                    <p>Latest failure: {formatOptionalDate(job.latestFailureAt)}</p>
+                    <p>Latest run: {formatOptionalDate(clubTime, job.latestRunAt)}</p>
+                    <p>Latest success: {formatOptionalDate(clubTime, job.latestSuccessAt)}</p>
+                    <p>Latest failure: {formatOptionalDate(clubTime, job.latestFailureAt)}</p>
                   </div>
                 </div>
                 <div className="divide-y">
@@ -97,7 +118,7 @@ export function BackgroundJobsSection({
                       <div key={run.id} className="p-3 flex items-center justify-between text-sm">
                         <div className="flex items-center gap-3">
                           <StatusBadge status={run.status} />
-                          <span className="text-muted-foreground">{formatDate(run.startedAt)}</span>
+                          <span className="text-muted-foreground">{formatDate(clubTime, run.startedAt)}</span>
                         </div>
                         <div className="flex items-center gap-4 text-muted-foreground">
                           {run.durationMs != null && <span>{run.durationMs}ms</span>}
@@ -121,7 +142,7 @@ export function BackgroundJobsSection({
                     <div key={run.id} className="p-3 flex items-center justify-between text-sm">
                       <div className="flex items-center gap-3">
                         <StatusBadge status={run.status} />
-                        <span className="text-muted-foreground">{formatDate(run.startedAt)}</span>
+                        <span className="text-muted-foreground">{formatDate(clubTime, run.startedAt)}</span>
                       </div>
                       <div className="flex items-center gap-4 text-muted-foreground">
                         {run.durationMs != null && <span>{run.durationMs}ms</span>}

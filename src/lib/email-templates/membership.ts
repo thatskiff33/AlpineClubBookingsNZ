@@ -20,7 +20,7 @@ import {
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 export function nominationRequestTemplate(params: {
   nominatorName: string;
@@ -46,7 +46,7 @@ export function nominationRequestTemplate(params: {
     ${paragraph("Please review the application and confirm whether you agree to nominate this person for membership.")}
     ${alertBox("You will need to sign in before you can confirm the nomination.", "info")}
     ${button("Review Application", params.reviewUrl)}
-    ${muted("This link expires on " + escapeHtml(formatNZDateTime(params.expiresAt)) + ".")}
+    ${muted("This link expires on " + escapeHtml(emailClubDateTime(params.expiresAt)) + ".")}
   `);
 }
 
@@ -122,7 +122,7 @@ export function membershipCancellationConfirmationTemplate(params: {
     )}
     ${paragraph(
       "This link expires on <strong>" +
-        escapeHtml(formatNZDateTime(params.expiresAt)) +
+        escapeHtml(emailClubDateTime(params.expiresAt)) +
         "</strong>."
     )}
     ${button("Review Cancellation Request", params.confirmationUrl, { sameOrigin: true })}
@@ -366,7 +366,7 @@ export function membershipPaymentRecordedTemplate(data: {
       ...(data.amountCents !== null
         ? [{ label: "Amount recorded", value: formatCents(data.amountCents) }]
         : []),
-      { label: "Date recorded", value: formatNZDate(data.recordedAt) },
+      { label: "Date recorded", value: emailClubDate(data.recordedAt) },
     ])}
     ${paragraph("Your membership is now marked paid for the season, so there is nothing further for you to pay.")}
     ${supportContactSentence("If anything looks wrong, contact the club at ")}

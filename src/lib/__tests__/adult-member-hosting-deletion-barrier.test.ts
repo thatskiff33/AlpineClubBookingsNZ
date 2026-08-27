@@ -37,7 +37,7 @@ function hasStandingFanoutBarrierContract(
     "await lockHostingCoverageMemberLifecycleTarget(db, memberId)",
   );
   const firstRead = fanout.indexOf(
-    "await loadHostingCoverageMemberFanoutCandidates(memberId, db)",
+    "await loadHostingCoverageMemberFanoutCandidates(memberId, db, today)",
   );
   const emptyReturn = fanout.indexOf("if (plannedAttended.length === 0) return 0");
 
@@ -122,9 +122,9 @@ describe("standing fanout and booking-request linked-member fencing (#2597)", ()
     expect(route).not.toContain("lockHostingCoverageMemberLifecycleTarget");
 
     const routeMarkers = [
-      "acquireFuturePartnerSharedAllocationLocks(tx, [member.id])",
+      "acquireFuturePartnerSharedAllocationLocks(tx, [member.id], clubTodayForSweep)",
       "acquireMemberLifecycleLocks(tx, [member.id])",
-      "enqueueHostingCoverageReevaluationForMember(member.id, tx,",
+      "enqueueHostingCoverageReevaluationForMember(member.id, tx, clubTodayForSweep,",
       "await tx.member.update({",
       "await tx.bookingGuest.updateMany({",
     ];
@@ -164,7 +164,7 @@ describe("standing fanout and booking-request linked-member fencing (#2597)", ()
     const fanout = standingFanoutBody(review);
     const lock = "await lockHostingCoverageMemberLifecycleTarget(db, memberId);";
     const read =
-      "const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db);";
+      "const plannedAttended = await loadHostingCoverageMemberFanoutCandidates(memberId, db, today);";
     const movedBody = fanout.replace(lock, "").replace(read, `${read}\n  ${lock}`);
     const moved = review.replace(fanout, movedBody);
     const emptyReturn = "if (plannedAttended.length === 0) return 0;";

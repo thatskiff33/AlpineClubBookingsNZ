@@ -1,22 +1,24 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   formatDateOnly,
-  getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  financeDashboardDayLabel,
+  financeDashboardMonthLabel,
+  monthStartString,
+} from "@/lib/finance-dashboard-labels";
 import { getFinancialYearEndMonth } from "@/lib/financial-year";
 import { isMonthKey, shiftMonthKey } from "@/lib/finance-monthly-facts";
-import { formatNZDate, formatNZMonthYear } from "@/lib/nzst-date";
 
-// Trend-axis month label ("Jun 2026"). Deliberately the SHORT month, unlike the
-// shared `formatNZMonthYear` ("June 2026") used for headings: chart axes have to
-// fit a dozen ticks side by side, so this keeps its own pinned formatter.
-const TREND_MONTH_LABEL = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  month: "short",
-  year: "numeric",
-});
+// #3123 FINISHED THE FILE. The three `getTodayDateOnly()` reads that chose the
+// reporting month became one required `today` parameter. Nothing in this module
+// reads a zone any more, which is what its place on the browser graph requires.
+//
+// The display labels — the long month heading, the short trend-axis month and
+// the window-bound day — live in `@/lib/finance-dashboard-labels`, which #3123
+// split out and which carries the zone-correction history of each of them. That
+// module inherits this one's place on the browser graph.
 
 export const FINANCE_DASHBOARD_VIEWS = [
   "bookings",
@@ -226,24 +228,16 @@ function monthKeyFromDate(date: Date): string {
   return formatDateOnly(date).slice(0, 7);
 }
 
-function monthStartString(monthKey: string): string {
-  return `${monthKey}-01`;
-}
-
 function monthEndString(monthKey: string): string {
   const [year, month] = monthKey.split("-").map(Number);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return `${monthKey}-${String(lastDay).padStart(2, "0")}`;
 }
 
-function formatMonthLabel(monthKey: string) {
-  return formatNZMonthYear(parseDateOnly(monthStartString(monthKey)));
-}
-
 function monthRangeLabel(fromMonth: string, toMonth: string) {
   return fromMonth === toMonth
-    ? formatMonthLabel(fromMonth)
-    : `${formatMonthLabel(fromMonth)} to ${formatMonthLabel(toMonth)}`;
+    ? financeDashboardMonthLabel(fromMonth)
+    : `${financeDashboardMonthLabel(fromMonth)} to ${financeDashboardMonthLabel(toMonth)}`;
 }
 
 function monthRangeWindow(
@@ -306,7 +300,7 @@ function readCustomMonthParam(input: {
   if (isDateOnlyString(value)) {
     const monthKey = value.slice(0, 7);
     input.warnings.push(
-      `${input.label} now uses whole months; ${value} was read as ${formatMonthLabel(monthKey)}.`
+      `${input.label} now uses whole months; ${value} was read as ${financeDashboardMonthLabel(monthKey)}.`
     );
     return monthKey;
   }
@@ -352,11 +346,12 @@ function resolveCustomMonthWindow(input: {
 export function resolvePrimaryFinanceRange(input: {
   option: FinanceDashboardRangeOption;
   searchParams?: SearchParams;
-  today?: Date;
+  /** REQUIRED — see the note on `resolveFinanceDashboardSelection` (#3123). */
+  today: Date;
   financialYearEndMonth?: number;
   warnings?: string[];
 }): FinanceDashboardDateWindow {
-  const today = input.today ?? getTodayDateOnly();
+  const today = input.today;
   const warnings = input.warnings ?? [];
   const yearEndMonth = input.financialYearEndMonth ?? getFinancialYearEndMonth();
   const currentMonth = monthKeyFromDate(today);
@@ -451,11 +446,12 @@ export function resolveComparisonFinanceRange(input: {
 function resolveForwardFinanceWindow(input: {
   option: FinanceDashboardForwardOption;
   searchParams?: SearchParams;
-  today?: Date;
+  /** REQUIRED — see the note on `resolveFinanceDashboardSelection` (#3123). */
+  today: Date;
   seasons?: FinanceDashboardSeasonWindow[];
   warnings?: string[];
 }): FinanceDashboardForwardWindow {
-  const today = input.today ?? getTodayDateOnly();
+  const today = input.today;
   const warnings = input.warnings ?? [];
   const currentMonth = monthKeyFromDate(today);
   const nextMonth = shiftMonthKey(currentMonth, 1);
@@ -521,7 +517,7 @@ function resolveForwardFinanceWindow(input: {
     return {
       from,
       to,
-      label: `${seasonLabel}: ${formatDate(from)} to ${formatDate(to)}`,
+      label: `${seasonLabel}: ${financeDashboardDayLabel(from)} to ${financeDashboardDayLabel(to)}`,
       seasonName: activeOrUpcoming.name,
       seasonLodgeName,
     };
@@ -554,14 +550,35 @@ export function resolveFinanceDashboardView(
   return isOneOf(requested, FINANCE_DASHBOARD_VIEWS) ? requested : "bookings";
 }
 
+/**
+ * The whole finance dashboard's range selection, resolved from the URL.
+ *
+ * ## `today` IS REQUIRED, AND THAT IS THE #3123 FIX
+ *
+ * It used to default to `getTodayDateOnly()`, which reads `APP_TIME_ZONE` — the
+ * container's clock, not the club's configured one. `today` becomes
+ * `monthKeyFromDate(today)`, which picks the reporting month and the
+ * financial-year bucket, so at a month boundary a wrong day moves a whole
+ * finance figure into the wrong period. It is a `@db.Date`-shaped
+ * UTC-midnight instant: build it with `dateOnlyInstantOf(club.today())`.
+ *
+ * THIS MODULE MAY NOT READ THE ZONE ITSELF, so the day arrives as data.
+ * `finance-dashboard-client.tsx` is `"use client"` and imports from here, which
+ * puts the whole module on the browser graph — where neither the server reader
+ * nor the runtime reader exists, and the viewer's own clock is never the answer.
+ * `buildFinanceDashboardPageModel` resolves it once at the server boundary and
+ * threads it down through the two `resolve*` helpers below, which is why they
+ * require it too: a default on either of them is the same defect one layer down.
+ */
 export function resolveFinanceDashboardSelection(input: {
   searchParams?: SearchParams;
-  today?: Date;
+  /** The club's today, as a UTC-midnight date-only instant. See above. */
+  today: Date;
   seasons?: FinanceDashboardSeasonWindow[];
   financialYearEndMonth?: number;
 }): FinanceDashboardSelection {
   const warnings: string[] = [];
-  const today = input.today ?? getTodayDateOnly();
+  const today = input.today;
   const financialYearEndMonth =
     input.financialYearEndMonth ?? getFinancialYearEndMonth();
   const requestedRange = readParam(input.searchParams, "range");
@@ -616,34 +633,6 @@ export function resolveFinanceDashboardSelection(input: {
     ratioRangeKey: readParam(input.searchParams, "ratioRange") ?? null,
     warnings,
   };
-}
-
-// #2264: `parseDateOnly` answers `new Date(NaN)` for anything that is not a
-// `YYYY-MM-DD` string, and `Intl.format` THROWS on that where the
-// `toLocaleDateString` call this replaced quietly rendered "Invalid Date".
-// `financeDashboardWindowDetail` below is exported and takes plain strings, so
-// a malformed window must degrade to a readable label rather than throw a
-// finance page away entirely.
-function formatDate(dateOnly: string) {
-  const parsed = parseDateOnly(dateOnly);
-  return Number.isNaN(parsed.getTime()) ? dateOnly : formatNZDate(parsed);
-}
-
-/** Short month label ("Jun 2026") for trend axes. */
-export function financeDashboardTrendMonthLabel(monthKey: string) {
-  return TREND_MONTH_LABEL.format(parseDateOnly(monthStartString(monthKey)));
-}
-
-export function financeDashboardWindowDetail(
-  window: {
-    from: string | null;
-    to: string | null;
-  } | null
-) {
-  if (!window || !window.from || !window.to) {
-    return window ? "Unavailable" : "None";
-  }
-  return `${formatDate(window.from)} to ${formatDate(window.to)}`;
 }
 
 export function financeDashboardDateRangeDayCount(window: {

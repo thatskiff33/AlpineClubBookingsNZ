@@ -7,28 +7,33 @@ import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import {
-  eachDateOnlyInRange,
-  formatDateOnlyForTimeZone,
-  normalizeDateOnlyForTimeZone,
-  parseDateOnly,
-} from "@/lib/date-only";
+import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
+import { eachDateOnlyInRange, parseDateOnly } from "@/lib/date-only";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import logger from "@/lib/logger";
 
+/*
+  EVERY VALUE IN HERE IS A CALENDAR DAY, SO NO ZONE APPEARS IN THIS FUNCTION
+  (CT-4, #2870). `checkIn`/`checkOut` are `@db.Date` lodge nights and arrive as
+  their UTC-midnight encoding; `monthStart`/`nextMonthStart` are built the same
+  way by `parseDateOnly`, so comparing and ranging them is date-only arithmetic
+  with nothing to convert.
+
+  Each of the four reads below used to be wrapped in `normalizeDateOnlyForTimeZone`,
+  which round-trips a value through the club zone. That is the identity for a
+  club at or ahead of UTC — which is why it has always looked right here — and
+  lands on the PREVIOUS DAY for a club behind it, where the calendar day would
+  silently drop out of the visible month by one night.
+*/
 function getMaxActiveGuestsInVisibleMonth(booking: {
   checkIn: Date;
   checkOut: Date;
   guests: Array<{ stayStart?: Date | null; stayEnd?: Date | null }>;
 }, monthStart: Date, nextMonthStart: Date) {
   const visibleStart =
-    normalizeDateOnlyForTimeZone(booking.checkIn) > monthStart
-      ? normalizeDateOnlyForTimeZone(booking.checkIn)
-      : monthStart;
+    booking.checkIn > monthStart ? booking.checkIn : monthStart;
   const visibleEnd =
-    normalizeDateOnlyForTimeZone(booking.checkOut) < nextMonthStart
-      ? normalizeDateOnlyForTimeZone(booking.checkOut)
-      : nextMonthStart;
+    booking.checkOut < nextMonthStart ? booking.checkOut : nextMonthStart;
 
   const nights = eachDateOnlyInRange(visibleStart, visibleEnd);
   if (nights.length === 0) {
@@ -128,8 +133,11 @@ export async function GET(request: NextRequest) {
     const result = bookings.map((b) => ({
       id: b.id,
       memberName: `${b.member.firstName} ${b.member.lastName}`,
-      checkIn: formatDateOnlyForTimeZone(b.checkIn),
-      checkOut: formatDateOnlyForTimeZone(b.checkOut),
+      // Lodge nights, so the wire shape is the stored calendar day with no
+      // zone conversion (CT-4, #2870). The zoned encoder this replaced read a
+      // `@db.Date` value as if it were a moment.
+      checkIn: calendarDateOfDateOnlyInstant(b.checkIn),
+      checkOut: calendarDateOfDateOnlyInstant(b.checkOut),
       status: b.status,
       deletedAt: b.deletedAt?.toISOString() ?? null,
       guestCount: getMaxActiveGuestsInVisibleMonth(

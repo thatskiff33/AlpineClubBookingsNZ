@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
     promoRedemptionAllocation: {
       groupBy: vi.fn(),
     },
+    // CT-4 (#2870): the redeemed-date window is built from the club's PERSISTED
+    // timezone. Without this delegate `loadPersistedClubTimeSettings()` returns
+    // null and the route falls back to the container's `TZ` in silence, so a
+    // suite that omits it cannot tell the two authorities apart.
+    clubTimeSettings: { findUnique: vi.fn() },
   },
 }));
 
@@ -44,6 +49,17 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { GET } from "@/app/api/admin/promo-codes/[id]/redemptions/route";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { startOfDateOnlyForTimeZone } from "@/lib/date-only";
+
+/** Persist a club timezone for the route's `clubTimeZone()` read to resolve. */
+function persistClubZone(timeZone: string) {
+  mocks.prisma.clubTimeSettings.findUnique.mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date(0),
+  });
+}
 
 function params(id: string) {
   return { params: Promise.resolve({ id }) };
@@ -674,5 +690,82 @@ describe("GET /api/admin/promo-codes/[id]/redemptions - export truncation (#2244
       rowCount: 3,
       matchedRowCount: 5,
     });
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 — the redeemed-date window is club civil time, and it
+  comes from the club's own setting.
+
+  `PromoRedemption.createdAt` is a real INSTANT, so "redeemed on 1 July" only
+  means something once a zone says when 1 July began and ended. That zone is the
+  persisted `ClubTimeSettings.timeZone` (`INV-CONFIG-002`), never the container's
+  `TZ` — and the difference is not cosmetic here: a redemption at 07:00Z on 1
+  July is inside the club's 1 July in Denver and inside its 30 JUNE in New
+  Zealand, so the report shows or hides a real row depending on which authority
+  answered.
+
+  The neighbouring `applies date-range and lodge filters` case above asserts only
+  that the two bounds are Dates in the right order, which every zone satisfies.
+  This is the one that says which zone.
+*/
+describe("promo redemptions — the window comes from the persisted club zone (CT-4, #2870)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.auth.mockResolvedValue(bookingsUser("edit"));
+    mocks.requireActiveSessionUser.mockResolvedValue(null);
+    persistClubZone("America/Denver");
+  });
+
+  it("bounds a one-day window by the club's civil day, not the container's", async () => {
+    // The premise, measured as an ANSWER rather than a zone identifier: the
+    // environment authority — which is what `startOfDateOnlyForTimeZone` reads,
+    // and what this route used to call — must open the day somewhere else, or
+    // the assertions below cannot fail for the right reason. Comparing zone
+    // NAMES would not establish that; `America/Chicago` gives Denver's answer.
+    expect(
+      startOfDateOnlyForTimeZone("2026-07-01", APP_TIME_ZONE).toISOString(),
+      "INV-CONFIG-002: the environment authority now opens the club day at the " +
+        "same instant the persisted zone does, so this window cannot tell which " +
+        "of the two the route obeyed.",
+    ).not.toBe("2026-07-01T06:00:00.000Z");
+
+    seedHappyPath();
+    const res = await GET(
+      req(`${BASE_URL}?from=2026-07-01&to=2026-07-01`),
+      params("pc-1"),
+    );
+    expect(res.status).toBe(200);
+
+    const rowsCall = mocks.prisma.promoRedemption.findMany.mock.calls[1][0];
+    // 1 July 2026 in Denver is MDT (UTC-6): the club's day runs 06:00Z to
+    // 05:59:59.999Z the next morning. Under the environment's Pacific/Auckland
+    // it would be 2026-06-30T12:00Z to 2026-07-01T11:59:59.999Z — a different
+    // set of redemptions over a real instant column.
+    expect(rowsCall.where.createdAt.gte.toISOString()).toBe("2026-07-01T06:00:00.000Z");
+    // The `lte` keeps the INCLUSIVE last millisecond this filter has always
+    // used; the kernel's own day end is half-open, hence the -1.
+    expect(rowsCall.where.createdAt.lte.toISOString()).toBe("2026-07-02T05:59:59.999Z");
+  });
+
+  /*
+    `9999-12-31` is a REAL day, so it passes `isDateOnlyString` and reaches the
+    window derivation. What it has not got is a day AFTER it, and the club day's
+    end is defined as the next day's start — so `addCalendarDays` throws a
+    `RangeError` from outside any `try`, and the request dies as an unhandled
+    rejection instead of answering. `src/lib/club-time/calendar-date.ts` records
+    `/admin/audit-log?to=9999-12-31` as a value that has really reached
+    production, which is why this is a guard rather than a curiosity.
+  */
+  it("refuses a window whose end has no day after it, rather than throwing", async () => {
+    mocks.prisma.promoCode.findUnique.mockResolvedValue(PROMO_CODE);
+
+    const res = await GET(
+      req(`${BASE_URL}?from=2026-07-01&to=9999-12-31`),
+      params("pc-1"),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mocks.prisma.promoRedemption.findMany).not.toHaveBeenCalled();
   });
 });

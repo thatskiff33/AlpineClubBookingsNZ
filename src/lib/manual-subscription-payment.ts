@@ -7,6 +7,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 /**
  * E14 (#1944): audited manual mark-paid / mark-unpaid for a member subscription,
@@ -146,6 +147,14 @@ export async function applyManualSubscriptionPayment(
   const note = trimmedNote ? trimmedNote.slice(0, MANUAL_PAYMENT_NOTE_MAX) : null;
   const notifyMember = input.direction === "paid" && input.notifyMember;
 
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. `enqueueHostingCoverageReevaluationForMember` takes a `Member` row
+  // lock and then bounds its fan-out on `checkOut >= today`, so it cannot
+  // resolve the club's persisted timezone itself: that read is a
+  // `clubTimeSettings.findUnique` and would take a second pooled connection
+  // under the lock.
+  const clubTodayForFanout = await clubTodayDateOnlyInstant();
+
   // The write commits first; the member email is dispatched afterwards, never
   // inside the transaction (no provider call inside a database transaction).
   const { result, recipient } = await prisma.$transaction(async (tx) => {
@@ -277,6 +286,7 @@ export async function applyManualSubscriptionPayment(
       await enqueueHostingCoverageReevaluationForMember(
         subscription.memberId,
         tx,
+        clubTodayForFanout,
         {
           cause: "SYSTEM_CHANGE",
           actorMemberId: input.actingMemberId,
@@ -379,6 +389,7 @@ export async function applyManualSubscriptionPayment(
     await enqueueHostingCoverageReevaluationForMember(
       subscription.memberId,
       tx,
+      clubTodayForFanout,
       {
         cause: "SYSTEM_CHANGE",
         actorMemberId: input.actingMemberId,

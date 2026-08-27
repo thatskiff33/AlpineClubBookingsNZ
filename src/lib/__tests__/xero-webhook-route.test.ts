@@ -308,6 +308,75 @@ describe("Xero webhook route", () => {
     expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
   });
 
+  it("reads the offset-less eventDateUtc Xero really sends as UTC, on every host zone", async () => {
+    /*
+      THE SHAPE THAT WAS WRONG, AND THE ONE THE OLD FIXTURES COULD NOT SEE
+      (#2869 review). Xero's webhook envelope documents `eventDateUtc` WITHOUT
+      an offset — its own example is "2018-08-23T05:44:47.622" — and the route
+      read it with `new Date(...)`, which resolves a wall-clock reading in the
+      container's zone. Under the `TZ=Pacific/Auckland` pin in the Dockerfile
+      that stored `XeroInboundEvent.eventCreatedAt` about thirteen hours early.
+
+      Every existing fixture in this file is `Z`-suffixed, where the two
+      readings coincide, so none of them could discriminate the defect.
+    */
+    // `withTimeZoneAsync`, NOT `withTimeZone`: the synchronous wrapper restores
+    // the zone in a `finally` that runs when `run()` RETURNS, which for an async
+    // route handler is before it has read anything. The pin would be gone by the
+    // time the payload was parsed and all three iterations would silently run on
+    // the host's own zone — vacuous on CI, where that zone is UTC and the defect
+    // and the fix agree.
+    const { withTimeZoneAsync } = await import("@/lib/__tests__/helpers/timezone");
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      mockRecordXeroInboundEvent.mockClear();
+      const response = await withTimeZoneAsync(hostZone, () =>
+        POST(
+          signedRequest({
+            events: [
+              {
+                eventType: "UPDATE",
+                eventCategory: "INVOICE",
+                resourceId: "invoice-offset-less",
+                eventDateUtc: "2018-08-23T05:44:47.622",
+              },
+            ],
+          }),
+        ),
+      );
+
+      expect(response.status, hostZone).toBe(200);
+      expect(
+        mockRecordXeroInboundEvent.mock.calls[0][0].eventCreatedAt,
+        hostZone,
+      ).toEqual(new Date("2018-08-23T05:44:47.622Z"));
+    }
+  });
+
+  it("rejects an event date no Xero wire shape can produce", async () => {
+    // The old validator was `!Number.isNaN(new Date(value).getTime())`, which is
+    // as lenient as `new Date` itself — so this prose date was ACCEPTED and then
+    // parsed in the host's zone. Classification at the boundary refuses it.
+    const { POST } = await import("@/app/api/webhooks/xero/route");
+
+    const response = await POST(
+      signedRequest({
+        events: [
+          {
+            eventType: "UPDATE",
+            eventCategory: "INVOICE",
+            resourceId: "invoice-1",
+            eventDateUtc: "11 March 2019",
+          },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockRecordXeroInboundEvent).not.toHaveBeenCalled();
+  });
+
   it("records valid signed Xero events with required resource identity", async () => {
     const { POST } = await import("@/app/api/webhooks/xero/route");
 

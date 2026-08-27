@@ -103,6 +103,25 @@
     // lanes land.
     "src/lib/integration-credentials.ts": ["exports", "types"],
     "src/lib/integration-crypto.ts": ["types"],
+    // #2990 (epic #2988) foundation surface, the same shape as the #2079
+    // credential-store carve-out above. `src/lib/club-time/**` is the canonical
+    // temporal kernel every later child of the club-time epic imports. CT-2
+    // builds it and points the legacy adapters (`nzst-date.ts`, since deleted by
+    // #3123, and `date-only.ts`) and the lobby-display boards at the parts they
+    // need; the rest — the
+    // calendar-date formatters, the wall-time policy, the clock seam and the
+    // request-scoped server binding — is what CT-3 (#2872), CT-4 (#2870) and
+    // CT-5 (#2869) migrate the remaining ~400 call sites onto. The alternative
+    // was shipping a kernel with an arbitrary hole in its API and letting the
+    // migrating lanes invent the missing half, which is exactly the "three
+    // versions of the same thing" the epic's parallelism rule forbids.
+    //
+    // REMOVE THESE AS THE CONSUMING LANES LAND. CT-6 (#2991) is convergence and
+    // must find them already gone; a carve-out still here at CT-6 means an
+    // export nobody ever needed.
+    "src/lib/club-time/server.ts": ["files", "exports", "types"],
+    "src/lib/club-time/index.ts": ["exports", "types"],
+    "src/lib/club-time/bound.ts": ["exports", "types"],
     // #1138 booking-modify split: this file's header comment states it is
     // "now a pure barrel" so "everything importable from @/lib/booking-modify
     // is unchanged" — a deliberate backward-compat contract. Several flagged

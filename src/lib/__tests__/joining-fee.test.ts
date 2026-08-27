@@ -31,10 +31,6 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 // Keep the current season deterministic so policy resolution is stable.
-vi.mock("@/lib/utils", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/utils")>();
-  return { ...actual, getSeasonYear: () => 2026 };
-});
 
 // Minimal mocks so importing the Xero invoice line builder is side-effect-free.
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
@@ -76,6 +72,13 @@ beforeEach(() => {
   membershipTypeFindMany.mockResolvedValue([]);
 });
 
+/**
+ * The club's day, supplied explicitly (#3123): the joining-fee preview's `asOf`
+ * is required now, because defaulting it read the environment's zone and quoted
+ * a fee schedule row a day before it took effect.
+ */
+const CLUB_TODAY = new Date("2026-07-01T00:00:00.000Z");
+
 describe("deriveJoiningFeeCategory", () => {
   it("is type-driven for Family and age-driven otherwise (INFANT folds to CHILD)", () => {
     expect(deriveJoiningFeeCategory("FAMILY", "ADULT")).toBe("FAMILY");
@@ -87,6 +90,43 @@ describe("deriveJoiningFeeCategory", () => {
 });
 
 describe("resolveMemberJoiningFeeClassification", () => {
+  it("refuses a transaction client with no explicit season", async () => {
+    /*
+      A CONCURRENCY GUARD, tested directly because nothing else can reach it.
+
+      This function is three hops below `approveMemberApplication`
+      (`enqueueXeroEntranceFeeInvoiceOperation` -> `getEntranceFeeContext` -> here),
+      inside a transaction holding `pg_advisory_xact_lock('member-application:<id>')`
+      plus one `member-lifecycle:<memberId>` lock per MAP target. Resolving the
+      club's zone here is an UNCACHED read on the GLOBAL Prisma client, so a second
+      pool connection under those locks — and `readPersistedClubTimeZoneRow` swallows
+      every throw, so a pool timeout would resolve the season from the environment
+      seed and pick the `JoiningFee` row whose amount lands on an IMMUTABLE invoice.
+
+      The approval threads its pre-transaction season, so the refusal is unreachable
+      from any current caller — which is exactly why removing it SURVIVED the
+      approval suite (measured). A guard whose only protection is that today's
+      callers happen to be correct needs its own test, or the next caller reopens
+      the hole silently.
+    */
+    const txLike = { member: { findUnique: memberFindUnique } } as never;
+
+    await expect(
+      resolveMemberJoiningFeeClassification("m1", txLike),
+    ).rejects.toThrow(/needs an explicit seasonYear when it is given a transaction client/);
+    // It refuses BEFORE reading anything, so no query is made under the caller's locks.
+    expect(memberFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("accepts a transaction client when the season is supplied", async () => {
+    memberFindUnique.mockResolvedValue({ ageTier: "NOT_APPLICABLE" });
+    const txLike = { member: { findUnique: memberFindUnique } } as never;
+
+    await expect(
+      resolveMemberJoiningFeeClassification("org1", txLike, 2026),
+    ).resolves.toMatchObject({ exempt: true });
+  });
+
   it("exempts N/A members BEFORE resolving a membership type", async () => {
     memberFindUnique.mockResolvedValue({ ageTier: "NOT_APPLICABLE" });
 
@@ -133,7 +173,7 @@ describe("getJoiningFeePreviewForMember", () => {
     membershipTypeFindMany.mockResolvedValue([builtInType("type-full", "FULL")]);
     stubJoiningFee({ ADULT: 10000 }, null);
 
-    const preview = await getJoiningFeePreviewForMember("m1");
+    const preview = await getJoiningFeePreviewForMember("m1", { asOf: CLUB_TODAY });
 
     expect(preview.exempt).toBe(false);
     expect(preview.defaultAmountCents).toBe(10000);
@@ -159,7 +199,7 @@ describe("getJoiningFeePreviewForMember", () => {
     ]);
     stubJoiningFee({}, 20000);
 
-    const preview = await getJoiningFeePreviewForMember("m1");
+    const preview = await getJoiningFeePreviewForMember("m1", { asOf: CLUB_TODAY });
     expect(preview.defaultAmountCents).toBe(20000);
     expect(preview.defaultNarration).toBe(buildJoiningFeeNarration("Family"));
   });
@@ -170,7 +210,7 @@ describe("getJoiningFeePreviewForMember", () => {
     membershipTypeFindMany.mockResolvedValue([builtInType("type-school", "SCHOOL")]);
     stubJoiningFee({}, null);
 
-    const preview = await getJoiningFeePreviewForMember("s1");
+    const preview = await getJoiningFeePreviewForMember("s1", { asOf: CLUB_TODAY });
     expect(preview.exempt).toBe(false);
     expect(preview.defaultAmountCents).toBeNull();
     expect(preview.source).toBe("NONE");
@@ -189,7 +229,7 @@ describe("getJoiningFeePreviewForInputs", () => {
 
     const preview = await getJoiningFeePreviewForInputs(
       { membershipTypeKey: "FULL", ageTier: "YOUTH" },
-      { store: tx },
+      { store: tx, asOf: CLUB_TODAY },
     );
 
     expect(preview.defaultAmountCents).toBe(7500);
@@ -200,7 +240,10 @@ describe("getJoiningFeePreviewForInputs", () => {
   });
 
   it("exempts a NOT_APPLICABLE age tier in raw-inputs mode", async () => {
-    const preview = await getJoiningFeePreviewForInputs({ membershipTypeKey: "SCHOOL", ageTier: "NOT_APPLICABLE" });
+    const preview = await getJoiningFeePreviewForInputs(
+      { membershipTypeKey: "SCHOOL", ageTier: "NOT_APPLICABLE" },
+      { asOf: CLUB_TODAY },
+    );
     expect(preview.exempt).toBe(true);
     expect(preview.exemptReason).toBe(JOINING_FEE_EXEMPT_MESSAGE);
     expect(preview.defaultAmountCents).toBeNull();

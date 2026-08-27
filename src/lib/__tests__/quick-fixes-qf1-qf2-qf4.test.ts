@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { requireCalendarDate } from "@/lib/club-time";
 
 // ─── QF-1: Cancel Preview Logic ─────────────────────────────────────────────
 
@@ -61,9 +62,10 @@ describe("QF-1: Cancel Preview", () => {
     });
 
     it("daysUntilDate calculates correctly", () => {
-      const now = new Date("2026-04-01T00:00:00Z");
+      // #3123 — the second operand is the CLUB's calendar day now, not an
+      // instant this function projects through the container's zone.
       const checkIn = new Date("2026-04-15T00:00:00Z");
-      expect(daysUntilDate(checkIn, now)).toBe(14);
+      expect(daysUntilDate(checkIn, requireCalendarDate("2026-04-01"))).toBe(14);
     });
 
     it("getRefundTier returns matching tier", () => {

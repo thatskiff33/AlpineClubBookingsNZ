@@ -8,7 +8,10 @@
  */
 
 import logger from "@/lib/logger";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  classifyXeroWireTemporal,
+  xeroCalendarDateAsDateOnly,
+} from "@/lib/xero-provider-dates";
 import {
   getXeroErrorHeader,
   getXeroErrorStatusCode,
@@ -812,43 +815,28 @@ interface OrgLockDatesCacheEntry {
 let lockDatesCache: OrgLockDatesCacheEntry | null = null;
 
 /**
- * Parse a Xero lock-date value into a date-only Date, or null when unset or
- * unparseable. xero-node TYPES these fields as optional strings, but its
- * ObjectSerializer converts any string payload starting with `/Date(` into a
- * JS Date at runtime (deserializeDateFormats), so when an organisation has a
- * lock date set the value arrives here as a Date object. A raw string can
- * still appear as a Microsoft-JSON `/Date(1234567890000+1300)/` timestamp or
- * an ISO date string, so all three shapes must parse.
+ * A Xero lock date as a date-only `Date` in UTC, or `null` when unset or
+ * unreadable.
+ *
+ * `Organisation.periodLockDate` and `endOfYearLockDate` are CALENDAR DATES — a
+ * whole accounting day, never a moment — and the wire shape they arrive in
+ * varies, which is why they go through the one Xero temporal boundary
+ * (`xero-provider-dates.ts`) rather than through a fourth private parser. That
+ * module carries the measured evidence for each shape; this function keeps only
+ * what is specific to a lock date: a SET but unreadable value must not silently
+ * disable the retroactive-booking guard, so treat-as-unset is logged loudly.
  */
 function parseXeroLockDate(value: string | Date | undefined | null): Date | null {
   if (!value) return null;
 
-  if (value instanceof Date) {
-    if (!Number.isNaN(value.getTime())) {
-      // Normalize to a date-only Date in UTC, matching the MS-JSON path below.
-      const parsed = parseDateOnly(formatDateOnly(value));
-      if (!Number.isNaN(parsed.getTime())) return parsed;
-    }
-    logger.warn({ value }, "Unparseable Xero lock date; treating as unset");
-    return null;
-  }
+  const lockDate = xeroCalendarDateAsDateOnly(value);
+  if (lockDate) return lockDate;
 
-  const msJson = /\/Date\((\d+)/.exec(value);
-  if (msJson) {
-    const epochMs = Number(msJson[1]);
-    if (Number.isFinite(epochMs)) {
-      // Normalize to a date-only Date in UTC (lock dates are whole days).
-      const parsed = parseDateOnly(formatDateOnly(new Date(epochMs)));
-      if (!Number.isNaN(parsed.getTime())) return parsed;
-    }
-  } else {
-    const parsed = parseDateOnly(value.slice(0, 10));
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-
-  // A SET but unrecognisable lock date must not silently disable the guard —
-  // treat-as-unset fails open, so make the format drift loud.
-  logger.warn({ value }, "Unparseable Xero lock date; treating as unset");
+  // Fails open, so make the format drift loud.
+  logger.warn(
+    { value, shape: classifyXeroWireTemporal(value) },
+    "Unparseable Xero lock date; treating as unset",
+  );
   return null;
 }
 

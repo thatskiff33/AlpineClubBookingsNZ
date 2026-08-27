@@ -3,13 +3,21 @@
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  formatMemberDateNz,
-  formatPromoBenefit,
-} from "@/lib/admin-member-detail-helpers"
+import { formatPromoBenefit } from "@/lib/admin-member-detail-helpers"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day"
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import type { MemberPromoCode } from "../_types"
 
 export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: MemberPromoCode[]; className?: string }) {
+  // Both kinds appear in this one cell. `assignedAt` is a real INSTANT — when
+  // the assignment row was written — and reads in the club's persisted zone.
+  // The promo window (`validFrom`/`validUntil`) and the stay gate
+  // (`bookingStartFrom`/`bookingStartUntil`) are `@db.Date` CALENDAR DAYS and
+  // carry no zone: projecting them is `INV-DATE-019`, and a day early on the
+  // stay gate is the difference between a code that works for a booking and
+  // one that does not.
+  const clubTime = useClubTime()
   return (
     <Card className={className}>
       <CardHeader>
@@ -60,15 +68,15 @@ export function MemberPromoCodesCard({ promoCodes, className }: { promoCodes: Me
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     <div className="space-y-1">
-                      <p>Assigned {promo.assignedAt ? formatMemberDateNz(promo.assignedAt) : "unknown"}</p>
+                      <p>Assigned {promo.assignedAt ? formatPayloadInstantDate(clubTime, promo.assignedAt) : "unknown"}</p>
                       <p>
-                        Valid {promo.validFrom ? formatMemberDateNz(promo.validFrom) : "now"} -{" "}
-                        {promo.validUntil ? formatMemberDateNz(promo.validUntil) : "no end"}
+                        Valid {promo.validFrom ? formatPayloadCalendarDay(promo.validFrom) : "now"} -{" "}
+                        {promo.validUntil ? formatPayloadCalendarDay(promo.validUntil) : "no end"}
                       </p>
                       {(promo.bookingStartFrom || promo.bookingStartUntil) && (
                         <p>
-                          Stay dates {promo.bookingStartFrom ? formatMemberDateNz(promo.bookingStartFrom) : "any"} -{" "}
-                          {promo.bookingStartUntil ? formatMemberDateNz(promo.bookingStartUntil) : "any"}
+                          Stay dates {promo.bookingStartFrom ? formatPayloadCalendarDay(promo.bookingStartFrom) : "any"} -{" "}
+                          {promo.bookingStartUntil ? formatPayloadCalendarDay(promo.bookingStartUntil) : "any"}
                         </p>
                       )}
                     </div>

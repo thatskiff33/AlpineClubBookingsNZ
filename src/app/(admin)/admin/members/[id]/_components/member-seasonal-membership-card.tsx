@@ -22,8 +22,12 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ROLE_LABELS } from "@/lib/member-roles";
-import { formatCents, getSeasonYear } from "@/lib/utils";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatCents } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
+import { formatPayloadCalendarDay } from "../../../_lib/calendar-day";
 import type {
   MembershipTypeSummary,
   MemberDetail,
@@ -122,12 +126,24 @@ function responseErrorMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
-function formatSeasonLabel(seasonYear: number) {
-  return `${seasonYear}/${seasonYear + 1}`;
+/**
+ * A CALENDAR DATE from a `@db.Date` column — a lodge night, an assignment's
+ * `applyFrom`. No timezone, ever: the value arrives as UTC midnight and the
+ * calendar-date formatter pins "UTC" over that encoding, so the projection is
+ * the identity for every club (CT-4, #2870).
+ *
+ * Split from {@link formatInstantDate} deliberately. One helper used to serve
+ * both this and `paidAt`, which is a real instant — so whichever zone it chose
+ * was wrong for one of them.
+ */
+function formatCalendarDay(date: string | null) {
+  return formatPayloadCalendarDay(date, "-");
 }
 
-function formatDate(date: string | null) {
-  return date ? formatNZDate(new Date(date)) : "-";
+/** A real INSTANT, in the club's persisted zone (INV-CONFIG-002). */
+function formatInstantDate(clubTime: BoundClubTime, date: string | null) {
+  const instant = date === null ? null : parseInstant(date);
+  return instant === null ? "-" : clubTime.instantDate(instant);
 }
 
 function BookingSummaryBlock({
@@ -150,7 +166,7 @@ function BookingSummaryBlock({
           {summary.list.map((booking) => (
             <div key={booking.id} className="text-xs text-muted-foreground">
               <span className="font-medium text-foreground">
-                {formatDate(booking.checkIn)} to {formatDate(booking.checkOut)}
+                {formatCalendarDay(booking.checkIn)} to {formatCalendarDay(booking.checkOut)}
               </span>{" "}
               - {booking.status} - {booking.guestCount} guest
               {booking.guestCount === 1 ? "" : "s"} -{" "}
@@ -180,12 +196,20 @@ export function MemberSeasonalMembershipCard({
   // Saving a change writes /api/admin/members/[id]/seasonal-membership
   // (membership area); a view-only membership admin may still preview but
   // cannot commit the change (#1997).
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("membership");
   const [membershipTypes, setMembershipTypes] = useState<
     MembershipTypeSummary[]
   >([]);
+  // The club's season, from the zone the SERVER read and handed to the provider
+  // (CT-4 group F1, #2870). Before this it went through a helper that read a
+  // `Date`'s host-local components, so the fallback answered from whatever zone
+  // the bundle was built with rather than the club's — and no better argument
+  // could have fixed that, which is why the helper was replaced instead.
+  // Season NAMES come from `season-label.ts`, which also records why the
+  // year-end is unplumbed here and why that keeps name and value in step.
   const effectiveCurrentSeasonYear =
-    member.currentSeasonYear ?? getSeasonYear(new Date());
+    member.currentSeasonYear ?? clubSeasonYear(clubTime.zone);
   const seasonalAssignments =
     member.seasonalMembershipAssignments ?? EMPTY_SEASONAL_ASSIGNMENTS;
   const [typesLoading, setTypesLoading] = useState(true);
@@ -485,14 +509,14 @@ export function MemberSeasonalMembershipCard({
             </div>
             <div className="mt-1 font-medium text-foreground">
               {currentAssignment
-                ? `${currentAssignment.membershipType.name} for ${formatSeasonLabel(
+                ? `${currentAssignment.membershipType.name} for ${seasonSelectLabel(
                     currentAssignment.seasonYear,
                   )}`
-                : `No assignment for ${formatSeasonLabel(seasonYear)}`}
+                : `No assignment for ${seasonSelectLabel(seasonYear)}`}
             </div>
             {currentAssignment?.applyFrom && (
               <div className="mt-1 text-xs text-muted-foreground">
-                Applies from {formatDate(currentAssignment.applyFrom)}
+                Applies from {formatCalendarDay(currentAssignment.applyFrom)}
               </div>
             )}
           </div>
@@ -561,16 +585,16 @@ export function MemberSeasonalMembershipCard({
                 Subscription summary
               </div>
               <div className="mt-1 text-muted-foreground">
-                Applies from {preview.applyFrom ? formatDate(preview.applyFrom) : "season start"}
+                Applies from {preview.applyFrom ? formatCalendarDay(preview.applyFrom) : "season start"}
               </div>
               <div className="mt-1 text-muted-foreground">
-                {formatSeasonLabel(preview.currentSeasonSubscription.seasonYear)}
+                {seasonSelectLabel(preview.currentSeasonSubscription.seasonYear)}
                 : {preview.currentSeasonSubscription.status}
                 {preview.currentSeasonSubscription.xeroInvoiceNumber
                   ? ` - invoice ${preview.currentSeasonSubscription.xeroInvoiceNumber}`
                   : ""}
                 {preview.currentSeasonSubscription.paidAt
-                  ? ` - paid ${formatDate(preview.currentSeasonSubscription.paidAt)}`
+                  ? ` - paid ${formatInstantDate(clubTime, preview.currentSeasonSubscription.paidAt)}`
                   : ""}
               </div>
               {preview.subscriptionHistory.recent.length > 0 && (
@@ -579,7 +603,7 @@ export function MemberSeasonalMembershipCard({
                   {preview.subscriptionHistory.recent
                     .map(
                       (record) =>
-                        `${formatSeasonLabel(record.seasonYear)} ${record.status}`,
+                        `${seasonSelectLabel(record.seasonYear)} ${record.status}`,
                     )
                     .join(", ")}
                 </div>

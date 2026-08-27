@@ -25,7 +25,9 @@ import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
+import { calendarDayAsLocalDate } from "./_components/host-local-day";
+import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 import { escapeCsvCell } from "@/lib/csv";
 import { formatCents } from "@/lib/utils";
 import {
@@ -143,6 +145,41 @@ function getAdditionalLedgerGapWarning(summary: {
   return `Net Collected Cash may understate by ${formatCents(summary.additionalLedgerGapCents)}: ${summary.additionalLedgerGapBookings} overlapping booking${singular ? "" : "s"} record${singular ? "s" : ""} an additional payment as collected without a matching captured additional-payment record. Ask a developer to reconcile ${singular ? "that payment's ledger" : "those payments' ledgers"} before trusting this figure.`;
 }
 
+/**
+ * A range bound (`yyyy-MM-dd`) in the house medium shape — "16 Apr 2026".
+ *
+ * WHICH FORMATTER, and the rule that decides it (CT-4 review, #2870). The
+ * kernel's shapes are LOCALE-AWARE: `formatClubDate` formats through
+ * `APP_LOCALE`, while a date-fns pattern string hard-codes English month names
+ * whatever the deployment is configured for. So a value in a house shape belongs
+ * on the kernel — which is also what `payments/page.tsx` and
+ * `subscriptions/page.tsx` did with this same "d MMM yyyy" shape, and leaving
+ * this one behind would have put two contradictory rules in one change. For
+ * `en-NZ` the two are byte-identical, so nothing visible changes here.
+ *
+ * The patterns that are NOT house shapes — the chart axes' `"MMM d"`,
+ * `"EEE, MMM d yyyy"`, `"MMM d, yyyy"`, and the `"d MMM"` below — stay on
+ * date-fns because the kernel has no equivalent to bend them onto. That IS a
+ * locale limitation and it is a pre-existing one; this change neither adds to it
+ * nor pretends it away.
+ *
+ * The bounds come from the URL, so an unusable one renders as itself rather
+ * than throwing a `RangeError` that blanks the report.
+ */
+function formatRangeDay(value: string): string {
+  const day = parseCalendarDate(value);
+  return day === null ? value : formatClubDate(day);
+}
+
+/**
+ * The same bounds through a date-fns pattern that is NOT a house shape. See
+ * {@link formatRangeDay} for why these two exist side by side.
+ */
+function formatRangeDayPattern(value: string, pattern: string): string {
+  const day = calendarDayAsLocalDate(value);
+  return day === null ? value : format(day, pattern);
+}
+
 function StatCard({
   title,
   value,
@@ -179,7 +216,10 @@ export default function ReportsPage() {
   // default range on the club-timezone "today" rather than the browser's local
   // date (a browser trailing NZ across a month boundary would otherwise seed a
   // window a whole month behind).
-  const clubToday = todayDateOnlyForTimeZone();
+  // The club's day, from the PERSISTED zone rather than APP_TIME_ZONE or the
+  // browser (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
+  const clubToday = clubTime.today();
   const { from: defaultFrom, to: defaultTo } =
     getReportsDatasetDefaults(clubToday);
 
@@ -384,7 +424,7 @@ export default function ReportsPage() {
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
-    const dateStr = todayDateOnlyForTimeZone();
+    const dateStr = clubTime.today();
     anchor.href = url;
     anchor.download = `tac-report-${dateStr}.csv`;
     anchor.click();
@@ -397,7 +437,9 @@ export default function ReportsPage() {
     setGeneratingPDF(true);
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
-      await generateReportPDF(reportRef.current, { from, to }, {
+      // The club's persisted zone decides the cover date and the filename day
+      // (#3123); this component already holds the binding.
+      await generateReportPDF(reportRef.current, { from, to }, clubTime, {
         title: `${club.name} — Reports`,
       });
     } catch (err) {
@@ -499,8 +541,8 @@ export default function ReportsPage() {
           <div className="hidden print:block">
             <h1 className="text-2xl font-bold text-foreground">Reports</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Date range: {format(new Date(from + "T00:00:00"), "d MMM yyyy")} to{" "}
-              {format(new Date(to + "T00:00:00"), "d MMM yyyy")}
+              Date range: {formatRangeDay(from)} to{" "}
+              {formatRangeDay(to)}
             </p>
             <p className="text-xs text-muted-foreground">
               Member subscription cards use current season data ({data.memberStats.currentSeasonLabel}
@@ -590,7 +632,7 @@ export default function ReportsPage() {
               <StatCard
                 title="New Members"
                 value={data.memberStats.newMembers}
-                subtitle={`Joined between ${format(new Date(from + "T00:00:00"), "d MMM")} and ${format(new Date(to + "T00:00:00"), "d MMM yyyy")}`}
+                subtitle={`Joined between ${formatRangeDayPattern(from, "d MMM")} and ${formatRangeDay(to)}`}
                 icon={UserPlus}
               />
             </div>

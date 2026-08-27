@@ -14,10 +14,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BYTE_ORDER_MARK,
+  auditControlCharacters,
   auditDefinitionHeadingShapes,
   auditDocReachability,
   auditDocs,
   auditEncoding,
+  auditTextScanCoverage,
   auditIndexRows,
   auditInvariantFilesLinkedFromIndex,
   auditInvariantIds,
@@ -33,6 +35,7 @@ import {
   resolveInvariantBaselineRef,
   routingTableRows,
   auditStableIndexHeadings,
+  findFilesHiddenFromTextScan,
   scanMarkdownFenceLines,
   scannableLines,
   STABLE_INDEX_HEADINGS,
@@ -2470,5 +2473,375 @@ describe("auditEncoding", () => {
     ].join("\n");
 
     expect(auditEncoding(repo({ "docs/example.md": prose }))).toEqual([]);
+  });
+});
+
+// Every control byte below is CONSTRUCTED from its code point, never typed as a
+// literal. That is the rule this check enforces, and obeying it here is what
+// keeps this test file itself scannable: a literal 0x08 in a fixture would make
+// the suite fail its own subject when the real repository is scanned.
+const ctrl = (codePoint) => String.fromCharCode(codePoint);
+
+describe("auditControlCharacters", () => {
+  it("passes the clean fixture repository", () => {
+    expect(auditControlCharacters(repo())).toEqual([]);
+  });
+
+  it("names the file, the line, the column and the escape the author meant", () => {
+    // The real defect: `/\bINTERVAL\b/i` written with the byte 0x08 names.
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/example.test.ts": [
+          "const banned = [",
+          `  /${ctrl(0x08)}INTERVAL${ctrl(0x08)}/i,`,
+          "];",
+        ].join("\n"),
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/example.test.ts:2");
+    expect(problems[0]).toContain("0x08");
+    // The escape, not just the code point: "a control character is here" sends
+    // the reader hunting a corrupt file, and this is a dead word boundary.
+    expect(problems[0]).toContain("a \\b escape names");
+    // Both hits on the line are counted and located.
+    expect(problems[0]).toContain("2 raw control character(s)");
+    // `  /` is columns 1-3, so the opening byte is 4 and `INTERVAL` runs 5-12.
+    expect(problems[0]).toContain("column 4");
+    expect(problems[0]).toContain("column 13");
+  });
+
+  it("spells out each byte an editing tool commonly eats", () => {
+    for (const [codePoint, escape] of [
+      [0x00, "\\0"],
+      [0x07, "\\a"],
+      [0x08, "\\b"],
+      [0x0b, "\\v"],
+      [0x0c, "\\f"],
+      [0x1b, "\\e"],
+    ]) {
+      const problems = auditControlCharacters(
+        repo({ "src/lib/example.ts": `const x = "${ctrl(codePoint)}";\n` }),
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain(`a ${escape} escape names`);
+    }
+  });
+
+  it("still reports a byte that spells no common escape", () => {
+    const problems = auditControlCharacters(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x01)}";\n` }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x01");
+    // Two hex digits always, so 0x0B can never be read as 0xB.
+    expect(problems[0]).not.toContain("escape names");
+  });
+
+  it("reports DEL, which is outside the C0 range", () => {
+    const problems = auditControlCharacters(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x7f)}";\n` }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x7f");
+  });
+
+  it("leaves TAB, LF and CR alone, because they are the text format", () => {
+    expect(
+      auditControlCharacters(
+        repo({
+          "src/lib/example.ts": `const x = 1;${ctrl(0x09)}// tab\r\n\tindented\n`,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("has no allowlist: a comment is scanned like any other line", () => {
+    // #3072 found `D:\var\backups` rendered unreadable inside a comment. A
+    // comment is where you look to understand the code under it.
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/example.test.ts": `// a path like D:${ctrl(0x0b)}ar${ctrl(0x08)}ackups\n`,
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0x0b");
+    expect(problems[0]).toContain("0x08");
+  });
+
+  it("reports Markdown too, including inside a fenced example", () => {
+    // Unlike the invariant-id scan, a fence is not a hiding place here: a
+    // control byte in a code sample is the same editing accident.
+    const problems = auditControlCharacters(
+      repo({
+        "docs/example.md": [
+          "# Example",
+          "",
+          "```ts",
+          `const re = /${ctrl(0x08)}word${ctrl(0x08)}/;`,
+          "```",
+          "",
+        ].join("\n"),
+      }),
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("docs/example.md:4");
+  });
+
+  it("reports every offending file, sorted, so a failure is a work list", () => {
+    const problems = auditControlCharacters(
+      repo({
+        "src/lib/zebra.ts": `const z = "${ctrl(0x08)}";\n`,
+        "src/lib/alpha.ts": `const a = "${ctrl(0x0c)}";\n`,
+      }),
+    );
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/lib/alpha.ts");
+    expect(problems[1]).toContain("src/lib/zebra.ts");
+  });
+});
+
+describe("auditTextScanCoverage", () => {
+  it("passes when no file is hidden by an early NUL", () => {
+    expect(auditTextScanCoverage([])).toEqual([]);
+  });
+
+  it("names the file, the byte offset, and both remedies that work", () => {
+    // Measured against git 2.53: Git calls a file binary on a NUL in the first
+    // 8000 bytes and only then, so this is the one way the scan above can be
+    // blinded. Without this check the file silently leaves the file set and the
+    // whole run goes green having scanned one file fewer.
+    const problems = auditTextScanCoverage([
+      { path: "src/lib/hidden.ts", byteOffset: 200 },
+    ]);
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("src/lib/hidden.ts");
+    expect(problems[0]).toContain("0x00");
+    // The offset, not just "somewhere in the first 8000 bytes": the byte is
+    // invisible, so a reader needs to be told where to look.
+    expect(problems[0]).toContain("at byte 200");
+    expect(problems[0]).toContain("\\0");
+    expect(problems[0]).toContain("binary");
+  });
+
+  it("warns AGAINST the `diff` attribute, which cannot make the gate pass", () => {
+    // The remedy the first version prescribed. Both halves were measured:
+    // adding `diff` really does restore Git's textual classification, and the
+    // file then enters the scan where `auditControlCharacters` rejects it — with
+    // no allowlist, permanently. So for the one case the sentence addressed — a
+    // file that genuinely must carry the byte — the advice was unfollowable, and
+    // a message that sends its reader somewhere they cannot get out of is worse
+    // than one that says nothing.
+    const [problem] = auditTextScanCoverage([
+      { path: "src/lib/hidden.ts", byteOffset: 1 },
+    ]);
+
+    expect(problem).toContain("Do NOT reach for a `diff` attribute");
+  });
+
+  it("sorts by path, so the failure reads the same way twice", () => {
+    const problems = auditTextScanCoverage([
+      { path: "src/b.ts", byteOffset: 2 },
+      { path: "src/a.ts", byteOffset: 1 },
+    ]);
+
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain("src/a.ts");
+    expect(problems[1]).toContain("src/b.ts");
+  });
+});
+
+describe("findFilesHiddenFromTextScan", () => {
+  // These need a real repository: the whole question is what Git's own text
+  // classification does, and mocking that would test the mock.
+  const NUL = ctrl(0x00);
+
+  function repoWithHiddenFiles(extraAttributes = "") {
+    const repoRoot = initGitRepo();
+    commitFiles(repoRoot, "seed", {
+      ".gitattributes": `*.md text eol=lf\n*.ts text eol=lf\n${extraAttributes}`,
+      // A source file with an early NUL: hidden, and the accident this catches.
+      "src/hidden.ts": `${"x".repeat(200)}${NUL}\n// tail\n`,
+      // The same shape in a class nobody pinned. This is the case the first
+      // version of the check let through: measured, 43 of this repository's
+      // 4,960 text files sat in 18 such classes, `knip.jsonc` among them.
+      "unpinned.jsonc": `${"y".repeat(200)}${NUL}\n// tail\n`,
+      // Content-free files. `git grep` omits both, which the first version read
+      // as proof of an invisible NUL.
+      "docs/empty-stub.md": "",
+      "docs/newline-only.md": "\n",
+      // Present so the repository has something the scan can see.
+      "docs/README.md": "# Docs\n",
+    });
+    return repoRoot;
+  }
+
+  it("reports a hidden file whose class nobody pinned, not just a declared-text one", () => {
+    const { hiddenWithEarlyNul } = findFilesHiddenFromTextScan(
+      repoWithHiddenFiles(),
+    );
+
+    expect(hiddenWithEarlyNul.map((entry) => entry.path).sort()).toEqual([
+      "src/hidden.ts",
+      "unpinned.jsonc",
+    ]);
+    // The offset is read from the file, so the message cannot claim a byte that
+    // is not there.
+    for (const entry of hiddenWithEarlyNul) {
+      expect(entry.byteOffset).toBe(200);
+    }
+  });
+
+  it("exempts a declared binary asset, and ONLY a declared one", () => {
+    // `binary` is Git's standard macro for `-diff -merge -text`. Declaring the
+    // asset is a statement about what the file is; leaving a class undeclared
+    // now fails loudly instead of silently leaving the scan.
+    const repoRoot = repoWithHiddenFiles();
+    commitFiles(repoRoot, "assets", {
+      ".gitattributes":
+        `*.md text eol=lf\n*.ts text eol=lf\n*.png binary\n`,
+      "docs/images/logo.png": `PNG${NUL}payload\n`,
+      "docs/images/logo.webp": `WEBP${NUL}payload\n`,
+    });
+
+    const paths = findFilesHiddenFromTextScan(repoRoot).hiddenWithEarlyNul.map(
+      (entry) => entry.path,
+    );
+
+    expect(paths).not.toContain("docs/images/logo.png");
+    // The undeclared sibling format is the fail-closed direction: a new binary
+    // class reds the gate until somebody says what it is.
+    expect(paths).toContain("docs/images/logo.webp");
+  });
+
+  it("does not report a content-free file as carrying an invisible NUL", () => {
+    // `git grep -Il -e ""` omits a file with no line content — measured: 0 bytes
+    // and a lone newline are omitted, while `\r\n`, ` \n` and `\n\n\n` are all
+    // matched. An empty `.md` stub, or the natural fixture for "handles empty
+    // input", would otherwise turn the required `verify` job red and send the
+    // author hunting a byte that does not exist.
+    const paths = findFilesHiddenFromTextScan(
+      repoWithHiddenFiles(),
+    ).hiddenWithEarlyNul.map((entry) => entry.path);
+
+    expect(paths).not.toContain("docs/empty-stub.md");
+    expect(paths).not.toContain("docs/newline-only.md");
+  });
+
+  it("does not report a tracked-but-deleted path in a dirty working tree", () => {
+    // `git grep` omits it and exits 0. `loadTrackedFiles` excludes this case on
+    // purpose — "git status reports it and reading it would throw here" — and
+    // the first version of this check reintroduced it.
+    const repoRoot = repoWithHiddenFiles();
+    rmSync(path.join(repoRoot, "docs/README.md"));
+
+    const paths = findFilesHiddenFromTextScan(repoRoot).hiddenWithEarlyNul.map(
+      (entry) => entry.path,
+    );
+
+    expect(paths).not.toContain("docs/README.md");
+  });
+
+  it("returns the tracked total, so the success line can reconcile its own count", () => {
+    // "Scanned 4959" is what a file leaving the scan looked like: a number
+    // nobody could check. Printing "N of M" makes the same event visible.
+    const { trackedCount, hiddenWithEarlyNul } = findFilesHiddenFromTextScan(
+      repoWithHiddenFiles(),
+    );
+
+    expect(trackedCount).toBe(6);
+    expect(hiddenWithEarlyNul.length).toBeGreaterThan(0);
+  });
+
+  it("leaves a NUL past Git's window to the control-character check", () => {
+    // Pins the DIVISION OF LABOUR between the two checks, which is the thing a
+    // future edit could get wrong. It does not pin the whole-file read inside
+    // `firstNulByteOffset`: under git 2.53 a file hidden from the text scan
+    // always has its first NUL inside the 8,000-byte window, so no fixture can
+    // distinguish a whole-file read from a windowed one. The whole-file read is
+    // future-proofing against a Git that widens the window, argued rather than
+    // measured, and saying so is better than a test name implying otherwise.
+    const repoRoot = initGitRepo();
+    commitFiles(repoRoot, "seed", {
+      ".gitattributes": "*.ts text eol=lf\n",
+      "src/late.ts": `${"z".repeat(20_000)}${NUL}\n`,
+      "docs/README.md": "# Docs\n",
+    });
+
+    // Git sees this one as text — the NUL is past its window — so it is not
+    // hidden at all, and `auditControlCharacters` is what reports it.
+    expect(
+      findFilesHiddenFromTextScan(repoRoot).hiddenWithEarlyNul,
+    ).toEqual([]);
+    expect(
+      auditControlCharacters(loadTrackedFiles(repoRoot)).filter((problem) =>
+        problem.includes("src/late.ts"),
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("the control-character checks are wired into the whole check", () => {
+  // The regression this exists for: #3072's first attempt defined and EXPORTED
+  // `auditControlCharacters` but never added it to `auditDocs`, so
+  // `docs:indexcheck` passed a tree that still carried the bytes. An audit
+  // function nobody calls is indistinguishable from no check at all, and
+  // nothing else in this suite would have noticed.
+  it("auditDocs reports a raw control character", () => {
+    const problems = auditDocs(
+      repo({ "src/lib/example.ts": `const x = "${ctrl(0x08)}";\n` }),
+    );
+
+    expect(
+      problems.filter((problem) => problem.includes("raw control character")),
+    ).toHaveLength(1);
+  });
+
+  it("auditDocs reports a file hidden from the text scan", () => {
+    const problems = auditDocs(repo(), {
+      hiddenFilesWithEarlyNul: [
+        { path: "src/lib/hidden.ts", byteOffset: 200 },
+      ],
+    });
+
+    expect(
+      problems.filter((problem) => problem.includes("src/lib/hidden.ts")),
+    ).toHaveLength(1);
+  });
+
+  it("auditDocs stays clean when neither applies", () => {
+    expect(
+      auditDocs(repo()).filter(
+        (problem) =>
+          problem.includes("raw control character") ||
+          problem.includes("hiding it from this scan"),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("the checker's own source", () => {
+  it("carries no control byte, so it cannot trip its own rule", () => {
+    // #3072's first attempt wrote a literal NUL into the very docblock
+    // explaining that a literal NUL is an accident, which would have failed the
+    // check it was adding. Every byte class in this file is built with
+    // `String.fromCharCode`, and this keeps it that way.
+    const checkerSource = readFileSync(
+      path.join(REPO_ROOT, "scripts/ci/check-doc-index-integrity.mjs"),
+      "utf8",
+    );
+
+    expect(
+      auditControlCharacters(
+        new Map([["scripts/ci/check-doc-index-integrity.mjs", checkerSource]]),
+      ),
+    ).toEqual([]);
   });
 });

@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   computeAge,
-  computeSeasonYear,
   computeAgeTierWithSettings,
   AGE_TIER_DEFAULTS,
   getSeasonStartDate,
 } from "../age-tier";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 describe("computeAge", () => {
   const ref = new Date("2026-04-03");
@@ -29,18 +29,21 @@ describe("computeAge", () => {
 });
 
 describe("getSeasonStartDate", () => {
+  // Read in UTC, which is the encoding (#3082, INV-DATE-019's first exact
+  // boundary). The host-local getters these assertions used to use were correct
+  // only because the value was CONSTRUCTED with the matching local setters; now
+  // that it is UTC midnight they would answer 31 March on any host behind
+  // Greenwich, so they would pass here and on CI and fail for an adopter.
   it("returns April 1 of the given season year", () => {
-    const d = getSeasonStartDate(2026);
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(3); // April = 3 in JS
-    expect(d.getDate()).toBe(1);
+    expect(getSeasonStartDate(2026).toISOString()).toBe(
+      "2026-04-01T00:00:00.000Z",
+    );
   });
 
   it("works for other season years", () => {
-    const d = getSeasonStartDate(2025);
-    expect(d.getFullYear()).toBe(2025);
-    expect(d.getMonth()).toBe(3);
-    expect(d.getDate()).toBe(1);
+    expect(getSeasonStartDate(2025).toISOString()).toBe(
+      "2025-04-01T00:00:00.000Z",
+    );
   });
 });
 
@@ -127,21 +130,26 @@ describe("computeAgeTierWithSettings (new TAC boundaries: CHILD<10, YOUTH 10-17,
   });
 });
 
-describe("computeSeasonYear", () => {
+// `computeSeasonYear` (an alias of the retired host-local `getSeasonYear`) is gone
+// with it (CT-4 group F1, #2870). Every value here is a UTC-midnight date-only
+// string, i.e. a `@db.Date` encoding, so `seasonYearOfStoredDate` is the successor
+// and it takes no zone. `club-season-year.test.ts` is where the zone-aware
+// half - `clubSeasonYear` - and the host-indifference sweeps live.
+describe("seasonYearOfStoredDate", () => {
   it("returns current year when month >= April", () => {
-    expect(computeSeasonYear(new Date("2026-04-01"))).toBe(2026);
-    expect(computeSeasonYear(new Date("2026-06-15"))).toBe(2026);
-    expect(computeSeasonYear(new Date("2026-12-31"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-06-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-31"))).toBe(2026);
   });
 
   it("returns previous year when month < April", () => {
-    expect(computeSeasonYear(new Date("2026-01-01"))).toBe(2025);
-    expect(computeSeasonYear(new Date("2026-02-15"))).toBe(2025);
-    expect(computeSeasonYear(new Date("2026-03-31"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-01-01"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-02-15"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025);
   });
 
   it("handles year boundary correctly", () => {
-    expect(computeSeasonYear(new Date("2025-03-31"))).toBe(2024);
-    expect(computeSeasonYear(new Date("2025-04-01"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2025-03-31"))).toBe(2024);
+    expect(seasonYearOfStoredDate(new Date("2025-04-01"))).toBe(2025);
   });
 });

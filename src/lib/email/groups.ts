@@ -9,10 +9,6 @@ import {
   groupSettlementReceiptTemplate,
 } from "@/lib/email-templates/groups";
 import { CLUB_NAME } from "@/config/club-identity";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
 import {
@@ -20,6 +16,7 @@ import {
   type BookingEmailSourceContext,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 /**
  * Verification email for a non-member joining a group booking. Reuses the
@@ -59,10 +56,10 @@ export async function sendGroupBookingJoinVerificationEmail(params: {
       firstName: params.firstName,
       token: params.token,
       verifyUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -94,8 +91,8 @@ export async function sendGroupSettlementReceiptEmail(params: {
     templateName: "group-settlement-receipt",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
       total: formatMoneyCents(params.totalCents),
     },
@@ -130,8 +127,8 @@ export async function sendGroupJoinSettledEmail(params: {
     templateData: {
       firstName: params.firstName,
       organiserName: params.organiserName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
     },
   });
@@ -164,8 +161,8 @@ export async function sendGroupSettlementExpiredEmail(params: {
     templateName: "group-settlement-expired",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       joinerCount: params.joinerCount,
       total: formatMoneyCents(params.totalCents),
     },
@@ -198,8 +195,8 @@ export async function sendGroupJoinReleasedEmail(params: {
     templateData: {
       firstName: params.firstName,
       organiserName: params.organiserName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
   });
 }
@@ -234,8 +231,8 @@ export async function sendGroupJoinCancelledEmail(params: {
     templateData: {
       firstName: params.firstName,
       organiserName: params.organiserName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
   });
 }

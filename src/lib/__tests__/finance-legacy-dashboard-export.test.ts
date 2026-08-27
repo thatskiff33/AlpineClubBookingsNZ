@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BookingStatus } from "@prisma/client";
 
-import { APP_TIME_ZONE } from "@/config/operational";
+import { requireClubTimeZone } from "@/lib/club-time";
+import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
+
+/**
+ * The CLUB's zone, supplied explicitly (CT-5, #2869). It used to default to
+ * `APP_TIME_ZONE` — `process.env.TZ` — so this export's `created_date` column
+ * moved by a day when the container moved region.
+ */
+const CLUB_ZONE = requireClubTimeZone("Pacific/Auckland");
 
 const { mockFindMany } = vi.hoisted(() => ({
   mockFindMany: vi.fn(),
@@ -46,6 +54,7 @@ describe("finance legacy dashboard export", () => {
     const result = await getLegacyDashboardBookingExport({
       historyStartDate: "2026-04-01",
       asOfDate: "2026-04-10",
+      clubTimeZone: CLUB_ZONE,
     });
 
     expect(mockFindMany).toHaveBeenCalledWith(
@@ -103,12 +112,8 @@ describe("finance legacy dashboard export", () => {
   });
 
   it("reports created_date on the club calendar, not the UTC day (#2697)", async () => {
-    // docs/TESTING.md rule 6: TZ=UTC moves APP_TIME_ZONE too, which would turn
-    // this assertion red and make it read like the product bug it proves fixed.
-    expect(
-      APP_TIME_ZONE,
-      "This case exists to prove the club day and the UTC day differ, so it needs the club zone to be New Zealand. TZ (or NEXT_PUBLIC_TZ) is overriding APP_TIME_ZONE — see docs/TESTING.md rule 6.",
-    ).toBe("Pacific/Auckland");
+    // No `APP_TIME_ZONE` premise any more, and that is the point of CT-5: the
+    // zone is an ARGUMENT, so this case holds whatever `TZ` the runner carries.
 
     // 2026-04-08 00:00 in Pacific/Auckland — the first instant of the club day,
     // while UTC is still on the 7th. Deliberately the START of the club day
@@ -134,6 +139,7 @@ describe("finance legacy dashboard export", () => {
     const result = await getLegacyDashboardBookingExport({
       historyStartDate: "2026-04-01",
       asOfDate: "2026-04-10",
+      clubTimeZone: CLUB_ZONE,
     });
 
     expect(result.bookings[0].created_date).toBe("2026-04-08");
@@ -142,11 +148,49 @@ describe("finance legacy dashboard export", () => {
     expect(result.bookings[0].end_date).toBe("2026-04-10");
   });
 
+  it("keeps the club's calendar day whatever zone the container runs in", async () => {
+    /*
+      THE #2869 s4 REQUIREMENT, stated almost verbatim in the issue: a report's
+      date column must not change because the report was generated on a server
+      in another region. Before this the column came from
+      `formatDateOnlyForTimeZone(createdAt)`, which defaults to `APP_TIME_ZONE`
+      — `process.env.TZ` — so a container moved to Denver reported 7 April for a
+      booking the club made on the 8th.
+
+      The host zones are pinned through PowerShell-safe `withTimeZone`, and the
+      instant is the first of the club day so that any host west of NZ disagrees.
+    */
+    mockFindMany.mockResolvedValue([
+      {
+        id: "booking-nz-morning",
+        checkIn: new Date("2026-04-08T00:00:00.000Z"),
+        checkOut: new Date("2026-04-10T00:00:00.000Z"),
+        status: BookingStatus.PAID,
+        finalPriceCents: 20000,
+        createdAt: new Date("2026-04-07T12:00:00.000Z"),
+        guests: [{ id: "guest-1" }],
+      },
+    ]);
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      const created = await withTimeZoneAsync(hostZone, async () => {
+        const result = await getLegacyDashboardBookingExport({
+          historyStartDate: "2026-04-01",
+          asOfDate: "2026-04-10",
+          clubTimeZone: CLUB_ZONE,
+        });
+        return result.bookings[0]?.created_date;
+      });
+      expect(created, `host zone ${hostZone}`).toBe("2026-04-08");
+    }
+  });
+
   it("rejects malformed export dates before querying", async () => {
     await expect(
       getLegacyDashboardBookingExport({
         historyStartDate: "04-01-2026",
         asOfDate: "2026-04-10",
+        clubTimeZone: CLUB_ZONE,
       })
     ).rejects.toThrow("historyStartDate must use YYYY-MM-DD");
     expect(mockFindMany).not.toHaveBeenCalled();

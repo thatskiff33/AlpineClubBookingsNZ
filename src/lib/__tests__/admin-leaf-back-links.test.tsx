@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { ClubTimeTestProvider } from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 
 // #1940: several leaf pages now read the session permission matrix for view-only
@@ -93,23 +94,34 @@ import XeroRecordActivityPage from "@/app/(admin)/admin/xero/records/[localModel
 import AdminInductionSettingsPage from "@/app/(admin)/admin/induction/settings/page";
 import { MemberDetailHeader } from "@/app/(admin)/admin/members/[id]/_components/member-detail-header";
 
+/**
+ * Every admin leaf renders inside the app shell, which since CT-4 (#2870)
+ * mounts `ClubTimeProvider` — so a leaf that formats an instant reads the
+ * club’s persisted zone rather than the viewer’s. Rendering one bare here would
+ * throw, which is the provider doing its job; the shell is what the test is
+ * standing in for.
+ */
+function renderLeaf(node: ReactElement): string {
+  return renderToStaticMarkup(<ClubTimeTestProvider>{node}</ClubTimeTestProvider>);
+}
+
 describe("admin drill-down leaf back links", () => {
   it("points a Booking Policies leaf back at the Booking Policies hub (replaced inline link)", () => {
-    const html = renderToStaticMarkup(<BookingPeriodsPage />);
+    const html = renderLeaf(<BookingPeriodsPage />);
 
     expect(html).toContain('href="/admin/booking-policies"');
     expect(html).toContain("← Booking Policies");
   });
 
   it("points the Membership Types leaf back at the Membership & Members hub (new link — owner finding 7)", () => {
-    const html = renderToStaticMarkup(<AdminMembershipTypesPage />);
+    const html = renderLeaf(<AdminMembershipTypesPage />);
 
     expect(html).toContain('href="/admin/membership-setup"');
     expect(html).toContain("← Membership &amp; Members");
   });
 
   it("points a Site Appearance leaf back at the Site Appearance & Content hub (new link)", () => {
-    const html = renderToStaticMarkup(<SiteContentAdminPage />);
+    const html = renderLeaf(<SiteContentAdminPage />);
 
     expect(html).toContain('href="/admin/appearance"');
     expect(html).toContain("← Site Appearance &amp; Content");
@@ -118,7 +130,7 @@ describe("admin drill-down leaf back links", () => {
   // #2046 F6: the Induction Settings leaf replaced its ad-hoc outline button
   // ("Induction register") with the shared BackLink to the register.
   it("points the Induction Settings leaf back at the Induction Register", () => {
-    const html = renderToStaticMarkup(<AdminInductionSettingsPage />);
+    const html = renderLeaf(<AdminInductionSettingsPage />);
 
     expect(html).toContain('href="/admin/induction"');
     expect(html).toContain("← Induction Register");
@@ -142,7 +154,7 @@ describe("admin drill-down leaf back links", () => {
   ])(
     "points the Lobby Display %s leaf back at its parent hub",
     (_name, Page, href, label) => {
-      const html = renderToStaticMarkup(<Page />);
+      const html = renderLeaf(<Page />);
 
       expect(html).toContain(`href="${href}"`);
       expect(html).toContain(label);

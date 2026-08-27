@@ -21,10 +21,19 @@ import {
   KeyRound,
   Undo2,
 } from "lucide-react";
+import { useClubTime } from "@/components/club-time-provider";
+import { calendarMonthOf } from "@/lib/club-time";
+// ZONE-FREE UTC date-only arithmetic, kept on the adapter deliberately. Every
+// value below is a `yyyy-MM-dd` lodge night with no timezone in it, and these
+// three helpers only add days and re-encode — they read no clock and no zone,
+// so CT-4 (#2870) has nothing to correct in them. They stay because
+// `calculateOverlapDays` (in `src/lib`, a different lane's file) takes `Date`
+// arguments; converting this screen to `CalendarDate` end to end means changing
+// that signature, which is reported on #2870 rather than half-done here. The
+// CLOCK reads are what CT-4 moved: they now come from the club's persisted zone.
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
@@ -76,10 +85,6 @@ interface UnassignedDate {
   lodgeName?: string | null;
   bookingCount: number;
   guestCount: number;
-}
-
-function monthKeyForDate(date: Date) {
-  return formatDateOnly(date).slice(0, 7);
 }
 
 // Compute the last inclusive day of a "YYYY-MM" month.
@@ -213,8 +218,9 @@ export default function HutLeadersPage() {
     if (overCapacity) overCapacityCardRef.current?.focus();
   }, [overCapacity]);
 
+  const clubTime = useClubTime();
   const [visibleMonthKey, setVisibleMonthKey] = useState(() =>
-    monthKeyForDate(getTodayDateOnly()),
+    calendarMonthOf(clubTime.today()),
   );
   // Windowed "needs a leader" dates and occupied nights, keyed by visible month.
   const [redDatesByMonth, setRedDatesByMonth] = useState<Record<string, string[]>>({});
@@ -708,7 +714,13 @@ export default function HutLeadersPage() {
     };
   }, [target, selection.startDate, selection.endDate, assignments, redDatesByMonth]);
 
-  const today = formatDateOnly(getTodayDateOnly());
+  // The club's day decides whether a coverage block reads as active or past —
+  // not the build's `NEXT_PUBLIC_TZ`, which is fixed at compile time rather than
+  // read from the club's persisted setting, and which falls back to
+  // `Pacific/Auckland` for every viewer on a deployment that sets only `TZ`.
+  // Either way a block could read finished a day early (CT-4, #2870;
+  // INV-CONFIG-002).
+  const today: string = clubTime.today();
 
   /*
     #2160: the view-only explanation lives here, once, at the top of the section —

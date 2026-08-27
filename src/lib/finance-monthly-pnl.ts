@@ -13,9 +13,9 @@
 import { FinanceMonthlyStatementKind } from "@prisma/client";
 import {
   financeDashboardWindowMonths,
-  financeDashboardTrendMonthLabel,
   type FinanceDashboardDateWindow,
 } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
 import {
   formatDollarsDisplay,
   formatSignedDollarsDisplay,

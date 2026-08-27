@@ -2,11 +2,9 @@ import { prisma } from "./prisma";
 import { sendAdminCapacityWarningAlert } from "./email";
 import { computeNightOccupancy } from "./capacity";
 import { getLodgeCapacity } from "./lodge-capacity";
-import {
-  addDaysDateOnly,
-  eachDateOnlyInRange,
-  getTodayDateOnly,
-} from "./date-only";
+import { addDaysDateOnly, eachDateOnlyInRange } from "./date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 
 const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
@@ -24,15 +22,19 @@ const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
  * skipped: they cannot be overbooked and would otherwise alarm daily.
  */
 export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> {
-  const todayNZ = getTodayDateOnly();
-  const endDate = addDaysDateOnly(todayNZ, 14);
+  // The club's own day, read through the runtime reader rather than the
+  // request-scoped binding: `src/instrumentation.node.ts` loads this job with a
+  // lazy `await import`, and `@/lib/club-time/server` is `server-only`, which
+  // throws on that graph (#3123, docs/CLUB_TIME_KERNEL.md).
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  const endDate = addDaysDateOnly(today, 14);
 
   // UTC date-only nights, stepped with the domain's own helper (#2286 review
   // L3). date-fns `eachDayOfInterval` returns LOCAL-midnight dates, so on a host
   // whose clock is not UTC every night in this list was shifted off the
   // date-only grid the rest of the capacity code keys on — a pre-existing bug
   // that the custodian night index would have inherited.
-  const nights = eachDateOnlyInRange(todayNZ, endDate);
+  const nights = eachDateOnlyInRange(today, endDate);
 
   const activeLodges = await prisma.lodge.findMany({
     where: { active: true },
@@ -67,7 +69,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
     // own note and the who-counts-what tables in docs/CAPACITY_MODEL.md.)
     const occupancy = await computeNightOccupancy({
       lodgeId: lodge.id,
-      from: todayNZ,
+      from: today,
       toExclusive: endDate,
       nights,
     });

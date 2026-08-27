@@ -135,7 +135,7 @@ describe("ordinary admin editors share one settled lodge-scope gate (#2701, #288
       const head = behaviour.slice(0, behaviour.indexOf(importLine))
       const symbol = (head.split(/^import /m).pop() ?? "")
         .replace(/[{}]/g, " ")
-        .replace(/type/g, " ")
+        .replace(/\btype\b/g, " ")
         .split(",")[0]
         .trim()
       expect(

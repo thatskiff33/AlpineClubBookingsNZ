@@ -8,6 +8,8 @@ import {
 import { XeroClient } from "xero-node";
 import type { FinanceMonthlyFactRowInput } from "@/lib/finance-monthly-facts";
 import { replaceMonthlyFacts } from "@/lib/finance-monthly-fact-store";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
   completeFinanceSyncRun,
@@ -54,6 +56,18 @@ export interface FinanceSyncDatasetContext {
   startedAt: Date;
   xeroTenantId: string;
   xero: XeroClient;
+  /**
+   * The club's civil-time authority for this run (CT-5, #2869).
+   *
+   * `startedAt` is an INSTANT and therefore has no calendar day of its own, and
+   * every dataset needs one — the snapshot's `asOfDate`, its period start, the
+   * monthly-fact month key. Resolving the persisted zone ONCE per run and
+   * carrying it on the context is what keeps those answers identical across
+   * every dataset in a run, keeps the read outside every database transaction,
+   * and stops each dataset re-deriving the zone from `process.env.TZ`
+   * (`INV-CONFIG-002`).
+   */
+  clubTimeZone: ClubTimeZone;
 }
 
 export interface FinanceSyncDatasetDefinition {
@@ -282,6 +296,13 @@ export async function runFinanceSync(
     startedAt,
     xeroTenantId: connection.tenantId,
     xero: connection.xero,
+    // Read once per run, before any dataset executes and outside every
+    // transaction. See the field's own note on the context type.
+    //
+    // The CLI-reachable reader rather than the request-scoped one: this service
+    // is also the entry point of `npm run finance:backfill-monthly-facts`, and a
+    // `server-only` import throws under `tsx` before the script prints anything.
+    clubTimeZone: await readClubTimeZoneOutsideRequest(),
   };
 
   for (const dataset of input.datasets) {

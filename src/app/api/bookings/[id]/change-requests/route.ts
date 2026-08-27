@@ -3,7 +3,12 @@ import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
-import { formatDateOnly, normalizeDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+} from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -65,7 +70,7 @@ function normalizeReason(value: string | undefined) {
 }
 
 function formatBookingDate(value: Date) {
-  return formatDateOnly(normalizeDateOnlyForTimeZone(value));
+  return calendarDateOfDateOnlyInstant(value);
 }
 
 function changedDate(
@@ -90,14 +95,23 @@ function requestTouchesLockedPeriod({
 }) {
   const today = editPolicy.today;
   const editableFrom = editPolicy.editableFrom;
-  const currentCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-  const currentCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+  const currentCheckIn = storedDateOnly(booking.checkIn);
+  const currentCheckOut = storedDateOnly(booking.checkOut);
 
-  // `today` is produced by getTodayDateOnly() (NZ-normalised midnight UTC).
-  // `requestedEffectiveDate` and the booking dates come from parseDateOnly /
-  // normalizeDateOnlyForTimeZone, which also yield midnight UTC. The
-  // comparisons below rely on both sides being on the same midnight-UTC
-  // date-only frame.
+  // Every value compared below is a calendar day at midnight UTC, which is what
+  // makes the comparisons meaningful: `requestedEffectiveDate` from
+  // `parseDateOnly`, the booking's own dates from `storedDateOnly`, and
+  // `editPolicy.today` / `editPolicy.editableFrom` from `getBookingEditPolicy`.
+  //
+  // BE PRECISE ABOUT `today`, because a comment here once was not. Since #3123
+  // it is the CLUB's day — the persisted `ClubTimeSettings.timeZone` that
+  // `INV-CONFIG-002` names — supplied to `getBookingEditPolicy` as a REQUIRED
+  // parameter by this route. It used to be the environment's day, read from
+  // `APP_TIME_ZONE` inside that policy; migrating it as a threaded value rather
+  // than an `await` is what kept that synchronous, widely-called pure function
+  // synchronous. `editableFrom` was always on the club's frame: it is the
+  // booking's own `@db.Date` check-in, and CT-4 (#2870) stopped that one being
+  // projected through a zone on the way out.
   if (requestedEffectiveDate && requestedEffectiveDate <= today) {
     return true;
   }
@@ -259,8 +273,8 @@ export async function POST(
     return NextResponse.json({ error: "Invalid booking date" }, { status: 400 });
   }
 
-  const nextCheckIn = requestedCheckIn ?? normalizeDateOnlyForTimeZone(booking.checkIn);
-  const nextCheckOut = requestedCheckOut ?? normalizeDateOnlyForTimeZone(booking.checkOut);
+  const nextCheckIn = requestedCheckIn ?? storedDateOnly(booking.checkIn);
+  const nextCheckOut = requestedCheckOut ?? storedDateOnly(booking.checkOut);
   if (nextCheckOut <= nextCheckIn) {
     return NextResponse.json(
       { error: "Check-out must be after check-in" },
@@ -288,6 +302,9 @@ export async function POST(
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone. This policy's `today` and
+    // `editableFrom` are quoted back to the member in the change-request copy.
+    today: await clubTodayDateOnlyInstant(),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(

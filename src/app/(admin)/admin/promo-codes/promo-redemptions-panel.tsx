@@ -23,14 +23,34 @@ import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { APP_LOCALE } from "@/config/operational";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  formatClubDate,
+  parseCalendarDate,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { useLodgeOptions } from "@/components/lodge-select";
-import {
-  buildPromoRedemptionsCsvContent,
-  formatRedeemedAt,
-} from "@/lib/promo-redemptions-csv";
+import { buildPromoRedemptionsCsvContent } from "@/lib/promo-redemptions-csv";
+
+/**
+ * A redemption's "Redeemed" stamp — a real INSTANT, read in the club's
+ * PERSISTED zone (`INV-CONFIG-002`) rather than `APP_TIME_ZONE`.
+ *
+ * KNOWN SPLIT, and it is deliberate rather than an oversight. The CSV export
+ * below renders the same field through `@/lib/promo-redemptions-csv`, which
+ * formats it internally against the environment's zone and cannot be told a
+ * different one from here. The two agree on any deployment whose `TZ` matches
+ * its persisted zone — every deployment today — and diverge for one that does
+ * not. Zoning the CSV builder is a `src/lib` signature change, tracked on
+ * #2870 for the group that owns that surface; the screen is fixed here because
+ * the screen is this file's to fix.
+ */
+function redeemedAtLabel(clubTime: BoundClubTime, value: string): string {
+  const instant = parseInstant(value);
+  return instant === null ? value : clubTime.instantDateTime(instant);
+}
 
 const TYPE_LABELS: Record<string, string> = {
   PERCENTAGE: "Percentage",
@@ -129,13 +149,14 @@ interface PromoSummary {
   archived: boolean;
 }
 
+// `value` is a yyyy-MM-dd lodge night from the API — a CALENDAR DATE, which
+// takes no timezone at all (CT-4, #2870). The hand-rolled parts-to-UTC-midnight
+// dance existed only to stop the INSTANT formatter shifting the day; the
+// calendar-date formatter has no zone to shift by. A malformed value still
+// renders as itself rather than throwing inside a table row.
 function formatStayDate(value: string): string {
-  // `value` is a yyyy-MM-dd lodge night from the API; parse the parts directly
-  // to UTC midnight so the club-time formatter renders that exact calendar day
-  // with no shift.
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return value;
-  return formatNZDate(new Date(Date.UTC(year, month - 1, day)));
+  const day = parseCalendarDate(value);
+  return day ? formatClubDate(day) : value;
 }
 
 // The truncation notice asks an operator to compare two five-figure counts, so
@@ -149,8 +170,17 @@ function formatCount(value: number): string {
 // says so in its own name. The suffix is the only truncation marker outside the
 // UI: the CSV body stays a plain row set, since a trailing "truncated" line
 // would corrupt every spreadsheet and parser that reads it.
-function csvFilename(code: string, truncated: boolean): string {
-  const dateStr = todayDateOnlyForTimeZone();
+// The club's PERSISTED day, not the build's `NEXT_PUBLIC_TZ`. Two admins never
+// disagreed about this filename — that constant is fixed at build time, so they
+// already shared an answer. The defect was that the shared answer could be the
+// wrong day for the club, and is `Pacific/Auckland` for everyone on a deployment
+// that sets only `TZ` (CT-4, #2870).
+function csvFilename(
+  clubTime: BoundClubTime,
+  code: string,
+  truncated: boolean,
+): string {
+  const dateStr = clubTime.today();
   return `promo-${code}-redemptions-${dateStr}${truncated ? "-partial" : ""}.csv`;
 }
 
@@ -201,6 +231,7 @@ export function PromoRedemptionsPanel({
   promo: PromoSummary;
   onBack: () => void;
 }) {
+  const clubTime = useClubTime();
   const { lodges } = useLodgeOptions("admin");
   const multiLodge = lodges.length > 1;
 
@@ -352,13 +383,19 @@ export function PromoRedemptionsPanel({
         });
       }
 
-      const csvContent = buildPromoRedemptionsCsvContent(promo.code, json.rows);
+      // The "Redeemed" column is a real instant, so the club's persisted zone
+      // decides its day (#3123) — the same binding the filename below uses.
+      const csvContent = buildPromoRedemptionsCsvContent(
+        clubTime,
+        promo.code,
+        json.rows,
+      );
 
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = csvFilename(promo.code, truncation != null);
+      anchor.download = csvFilename(clubTime, promo.code, truncation != null);
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -635,7 +672,7 @@ export function PromoRedemptionsPanel({
                         ) : null}
                       </TableCell>
                       <TableCell className="text-xs">
-                        {formatRedeemedAt(row.createdAt)}
+                        {redeemedAtLabel(clubTime, row.createdAt)}
                       </TableCell>
                       <TableCell>
                         <Link

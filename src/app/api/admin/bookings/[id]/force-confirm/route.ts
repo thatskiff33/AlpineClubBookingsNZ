@@ -12,7 +12,8 @@ import {
 import { wholeLodgeBlockedNights } from "@/lib/over-capacity-confirmation";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { formatDateOnly } from "@/lib/date-only";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getProvisionalNonMemberChildSummary } from "@/lib/booking-split-summary";
 import logger from "@/lib/logger";
@@ -65,6 +66,11 @@ export async function POST(
   const allowOverbook = parsed.data.allowOverbook ?? false;
   const notifyMember = parsed.data.notifyMember;
   const auditRequest = getAuditRequestContext(request);
+  // The club's calendar day from the PERSISTED timezone (CT-4, #2870; INV-CONFIG-002),
+  // as the UTC-midnight value `Booking.checkOut` (`@db.Date`) compares against. Resolved
+  // before the transaction, which holds the global advisory lock and must not wait on a
+  // settings read over a second connection.
+  const clubTodayDateOnly = await clubTodayDateOnlyInstant();
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -207,7 +213,7 @@ export async function POST(
       // now sits on the Unpaid Finished Stays queue.
       const createdUnpaidFinishedStay =
         nextStatus === BookingStatus.PAYMENT_PENDING &&
-        booking.checkOut.getTime() <= getTodayDateOnly().getTime();
+        booking.checkOut.getTime() <= clubTodayDateOnly.getTime();
 
       // #1769b honesty rule: record the notify choice only when a member email
       // was actually suppressed. The confirmation email only sends when the

@@ -19,6 +19,7 @@ import { primeClubIdentitySync } from "@/lib/club-identity-settings";
 import { acquireConfigImportLock } from "@/lib/config-transfer-lock";
 import { acquireLodgeCapacityLock } from "@/lib/lodge-capacity-lock";
 import { findLodgeDeactivationRefusal } from "@/lib/lodge-deactivation-guard";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -75,6 +76,15 @@ export async function PATCH(
     return NextResponse.json({ error: "Lodge not found" }, { status: 404 });
   }
 
+  // #3123 / INV-LOCK-004 — the club's day, resolved ONCE here, before the
+  // transaction below opens. Resolving it is a `clubTimeSettings.findUnique`,
+  // which inside that transaction would take a second pooled connection while
+  // the config-import singleton and the per-lodge capacity key are held. One
+  // read also means the cheap ask and the locked re-check are judged against
+  // the same day; two independent reads could straddle club midnight and
+  // disagree.
+  const clubToday = await clubTodayDateOnlyInstant();
+
   // The same predicate the locked re-read below runs, asked cheaply first so
   // the common refusals cost no lock. Only the locked answer is authoritative.
   const earlyRefusal = await findLodgeDeactivationRefusal(prisma, {
@@ -82,6 +92,7 @@ export async function PATCH(
     lodgeIsActive: existing.active,
     requestedActive: parsed.data.active,
     force: parsed.data.force,
+    today: clubToday,
   });
   if (earlyRefusal) {
     return NextResponse.json(earlyRefusal.body, { status: earlyRefusal.status });
@@ -151,6 +162,8 @@ export async function PATCH(
       lodgeIsActive: lockedExisting.active,
       requestedActive: parsed.data.active,
       force: parsed.data.force,
+      // The SAME day the early ask used, resolved outside this transaction.
+      today: clubToday,
     });
     if (lockedRefusal) {
       return {

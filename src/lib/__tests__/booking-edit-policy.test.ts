@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   bookingStayHasStarted,
   canModifyBookingStatusForRole,
@@ -35,15 +35,17 @@ describe("booking edit policy", () => {
     expect(usesActiveBookingEditLifecycle("WAITLISTED")).toBe(false);
   });
 
-  it("allows in-progress paid/completed stays from NZ tomorrow while locking check-in", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
-
+  // #3123 - the club's day is now an INPUT, so these cases state it outright
+  // instead of pinning the process clock and letting the environment's zone
+  // project it. That is strictly more determinate: the old form passed only
+  // because `APP_TIME_ZONE` happened to be Pacific/Auckland.
+  it("allows in-progress paid/completed stays from the club's tomorrow while locking check-in", () => {
     const paidPolicy = getBookingEditPolicy({
       status: "PAID",
       role: "MEMBER",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      today: new Date("2026-08-21T00:00:00.000Z"),
     });
     expect(paidPolicy.canModify).toBe(true);
     expect(paidPolicy.mode).toBe("in-progress");
@@ -55,23 +57,20 @@ describe("booking edit policy", () => {
       role: "MEMBER",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      today: new Date("2026-08-21T00:00:00.000Z"),
     });
     expect(completedPolicy.canModify).toBe(true);
     expect(completedPolicy.mode).toBe("in-progress");
-
-    vi.useRealTimers();
   });
 
   it("keeps a PAID stay editable/extendable on its check-out day (#2029)", () => {
-    vi.useFakeTimers();
-    // 2026-08-23T12:00Z is 2026-08-24 00:00 NZ, so NZ today == check-out day.
-    vi.setSystemTime(new Date("2026-08-23T12:00:00.000Z"));
-
+    // The club's today IS the check-out day.
     const policy = getBookingEditPolicy({
       status: "PAID",
       role: "MEMBER",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      today: new Date("2026-08-24T00:00:00.000Z"),
     });
 
     // The booking is still PAID this whole day and must stay amendable so guests
@@ -83,79 +82,84 @@ describe("booking edit policy", () => {
     // Extending moves check-out to >= tomorrow, which adds the check-out-day
     // night and beyond; today and earlier stay locked.
     expect(policy.editableFrom?.toISOString().slice(0, 10)).toBe("2026-08-25");
-
-    vi.useRealTimers();
   });
 
   it("locks the stay only once the whole check-out day has passed (#2029)", () => {
-    vi.useFakeTimers();
-    // 2026-08-24T12:00Z is 2026-08-25 00:00 NZ — the day AFTER check-out.
-    vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z"));
-
+    // The day AFTER check-out at the club.
     const policy = getBookingEditPolicy({
       status: "PAID",
       role: "MEMBER",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      today: new Date("2026-08-25T00:00:00.000Z"),
     });
 
     expect(policy.today.toISOString().slice(0, 10)).toBe("2026-08-25");
     expect(policy.canModify).toBe(false);
     expect(policy.mode).toBeNull();
-
-    vi.useRealTimers();
   });
 
   it("locks fully past completed stays", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
-
     const policy = getBookingEditPolicy({
       status: "COMPLETED",
       role: "MEMBER",
       checkIn: new Date("2026-08-20T00:00:00.000Z"),
       checkOut: new Date("2026-08-24T00:00:00.000Z"),
+      today: new Date("2026-08-26T00:00:00.000Z"),
     });
 
     expect(policy.canModify).toBe(false);
     expect(policy.mode).toBeNull();
+  });
 
-    vi.useRealTimers();
+  it("answers from the club day it was GIVEN, and from nothing else (#3123)", () => {
+    // The whole point of the migration: two calls differing ONLY in the club
+    // day must classify the SAME booking differently, and neither the process
+    // clock nor `APP_TIME_ZONE` can influence either answer.
+    const base = {
+      status: "PAID",
+      role: "MEMBER" as const,
+      checkIn: new Date("2026-08-20T00:00:00.000Z"),
+      checkOut: new Date("2026-08-24T00:00:00.000Z"),
+    };
+    const onCheckOutDay = getBookingEditPolicy({
+      ...base,
+      today: new Date("2026-08-24T00:00:00.000Z"),
+    });
+    const dayAfter = getBookingEditPolicy({
+      ...base,
+      today: new Date("2026-08-25T00:00:00.000Z"),
+    });
+
+    expect(onCheckOutDay.today.toISOString()).toBe("2026-08-24T00:00:00.000Z");
+    expect(dayAfter.today.toISOString()).toBe("2026-08-25T00:00:00.000Z");
+    expect(onCheckOutDay.canModify).toBe(true);
+    expect(dayAfter.canModify).toBe(false);
   });
 });
 
 describe("bookingStayHasStarted (#2029)", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("treats a stay whose NZ check-in is today or earlier as started", () => {
-    vi.useFakeTimers();
-    // 2026-08-23T18:00Z = 2026-08-24 06:00 NZ, so NZ today = 2026-08-24.
-    vi.setSystemTime(new Date("2026-08-23T18:00:00.000Z"));
+  it("treats a stay whose check-in is the club's today or earlier as started", () => {
+    // #3123 - the club's day is supplied, not projected from the process clock
+    // through `APP_TIME_ZONE`.
+    const clubTodayDateOnly = new Date("2026-08-24T00:00:00.000Z");
 
     // Check-in yesterday (mid-stay) and today (check-in day / check-out day of a
     // one-night stay) are both "started".
-    expect(bookingStayHasStarted(new Date("2026-08-23T00:00:00.000Z"))).toBe(true);
-    expect(bookingStayHasStarted(new Date("2026-08-24T00:00:00.000Z"))).toBe(true);
+    expect(bookingStayHasStarted(new Date("2026-08-23T00:00:00.000Z"), clubTodayDateOnly)).toBe(true);
+    expect(bookingStayHasStarted(new Date("2026-08-24T00:00:00.000Z"), clubTodayDateOnly)).toBe(true);
     // A future check-in has not started.
-    expect(bookingStayHasStarted(new Date("2026-08-25T00:00:00.000Z"))).toBe(false);
+    expect(bookingStayHasStarted(new Date("2026-08-25T00:00:00.000Z"), clubTodayDateOnly)).toBe(false);
   });
 
-  it("resolves the boundary in NZ time, not UTC (post-midnight NZ, previous UTC day)", () => {
-    vi.useFakeTimers();
-    // 2026-07-17T12:30Z is 2026-07-18 00:30 NZ. A UTC-based comparison would use
-    // 2026-07-17 and wrongly call an 07-18 check-in "not started".
-    vi.setSystemTime(new Date("2026-07-17T12:30:00.000Z"));
-
-    expect(bookingStayHasStarted(new Date("2026-07-18T00:00:00.000Z"))).toBe(true);
-    expect(bookingStayHasStarted(new Date("2026-07-19T00:00:00.000Z"))).toBe(false);
-  });
-
-  it("honours an injected today for deterministic comparisons", () => {
-    const today = new Date("2026-08-24T00:00:00.000Z");
-    expect(bookingStayHasStarted(new Date("2026-08-24T00:00:00.000Z"), today)).toBe(true);
-    expect(bookingStayHasStarted(new Date("2026-08-25T00:00:00.000Z"), today)).toBe(false);
+  it("moves its answer with the CLUB's day and with nothing else (#3123)", () => {
+    // The same stay judged on two adjacent club days. Under the old default both
+    // answers came from `APP_TIME_ZONE`, so a club behind its container was told
+    // its stay had started a day early and lost a self-service cancel it was
+    // still entitled to.
+    const checkIn = new Date("2026-07-18T00:00:00.000Z");
+    expect(bookingStayHasStarted(checkIn, new Date("2026-07-17T00:00:00.000Z"))).toBe(false);
+    expect(bookingStayHasStarted(checkIn, new Date("2026-07-18T00:00:00.000Z"))).toBe(true);
   });
 });
 
@@ -236,19 +240,21 @@ describe("booking-detail canCancel mirror (#2029)", () => {
 describe("booking edit policy — admin override (issue #1668)", () => {
   // Anchor "now" mid-stay for the in-progress case, well after the fully-past
   // stays so those refuse without the flag.
+  // #3123 - the club's day travels WITH each fixture instead of being pinned on
+  // the process clock and projected through `APP_TIME_ZONE`. Same days as
+  // before: mid-stay for IN_PROGRESS, well past for FULLY_PAST.
   const IN_PROGRESS = {
     checkIn: new Date("2026-08-20T00:00:00.000Z"),
     checkOut: new Date("2026-08-24T00:00:00.000Z"),
+    today: new Date("2026-08-23T00:00:00.000Z"),
   };
   const FULLY_PAST = {
     checkIn: new Date("2026-08-01T00:00:00.000Z"),
     checkOut: new Date("2026-08-05T00:00:00.000Z"),
+    today: new Date("2026-08-26T00:00:00.000Z"),
   };
 
   it("unlocks an in-progress PAID stay for an admin override", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-22T12:00:00.000Z"));
-
     const withOverride = getBookingEditPolicy({
       status: "PAID",
       role: "ADMIN",
@@ -269,13 +275,9 @@ describe("booking edit policy — admin override (issue #1668)", () => {
     expect(withoutOverride.mode).toBe("in-progress");
     expect(withoutOverride.checkInEditable).toBe(false);
 
-    vi.useRealTimers();
   });
 
   it("unlocks a fully-past COMPLETED stay for an admin override", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
-
     const withOverride = getBookingEditPolicy({
       status: "COMPLETED",
       role: "ADMIN",
@@ -295,13 +297,9 @@ describe("booking edit policy — admin override (issue #1668)", () => {
     expect(withoutOverride.canModify).toBe(false);
     expect(withoutOverride.mode).toBeNull();
 
-    vi.useRealTimers();
   });
 
   it("unlocks a fully-past PAID stay for an admin override", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
-
     const withOverride = getBookingEditPolicy({
       status: "PAID",
       role: "ADMIN",
@@ -320,13 +318,9 @@ describe("booking edit policy — admin override (issue #1668)", () => {
     expect(withoutOverride.canModify).toBe(false);
     expect(withoutOverride.mode).toBeNull();
 
-    vi.useRealTimers();
   });
 
   it("ignores the override flag for a non-admin role (byte-for-byte fall-through)", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
-
     const withFlag = getBookingEditPolicy({
       status: "COMPLETED",
       role: "MEMBER",
@@ -342,13 +336,9 @@ describe("booking edit policy — admin override (issue #1668)", () => {
     expect(withFlag.canModify).toBe(false);
     expect(withFlag.mode).toBeNull();
 
-    vi.useRealTimers();
   });
 
   it("still refuses an override for an ineligible status (CANCELLED)", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-25T12:00:00.000Z"));
-
     const policy = getBookingEditPolicy({
       status: "CANCELLED",
       role: "ADMIN",
@@ -361,6 +351,5 @@ describe("booking edit policy — admin override (issue #1668)", () => {
       "This booking cannot be modified in its current status",
     );
 
-    vi.useRealTimers();
   });
 });

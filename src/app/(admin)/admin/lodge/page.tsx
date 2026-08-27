@@ -14,7 +14,8 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 
 // Multi-lodge kiosks: one shared login per lodge device. Each account can
 // bind to a lodge (a MemberLodgeAccess STAFF grant, managed through this
@@ -54,6 +55,8 @@ function AccountCard({
   canEdit: boolean | undefined;
   onSaved: () => void;
 }) {
+  // Kiosk-account created/updated stamps are real INSTANTS (CT-4, #2870).
+  const clubTime = useClubTime();
   const [email, setEmail] = useState(account.email);
   const [firstName, setFirstName] = useState(account.firstName);
   const [lastName, setLastName] = useState(account.lastName);
@@ -266,8 +269,8 @@ function AccountCard({
         )}
 
         <div className="text-xs text-muted-foreground">
-          <p>Created: {formatNZDateTime(new Date(account.createdAt))}</p>
-          <p>Last updated: {formatNZDateTime(new Date(account.updatedAt))}</p>
+          <p>Created: {clubTime.instantDateTime(requireInstant(account.createdAt))}</p>
+          <p>Last updated: {clubTime.instantDateTime(requireInstant(account.updatedAt))}</p>
         </div>
 
         {saveMessage && (

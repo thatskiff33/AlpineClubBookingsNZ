@@ -85,7 +85,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 
 function stripHtml(html: string): string {
@@ -117,13 +117,20 @@ function describeFooterSections(keys: readonly string[]): string {
   return keys.map((key) => FOOTER_SECTION_LABELS[key] ?? key).join(", ");
 }
 
-function formatUpdatedAt(value: string | null): string {
-  if (!value) {
-    return "Never updated";
-  }
-  // Club time, not the admin's own (#2264): the stamp says when the club's
-  // document changed, so an officer abroad must not read it in their zone.
-  return formatNZDateTime(new Date(value));
+/**
+ * "Last saved", in the club's time rather than the admin's own.
+ *
+ * The stamp says when the CLUB's document changed, so an officer abroad must not
+ * read it in their zone (#2264). The stamp is a real INSTANT, so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before - only the zone's AUTHORITY moved, from the environment to
+ * the club's recorded setting. A hook because that setting reaches the browser
+ * as data through `ClubTimeProvider`, so it is not a module constant any more.
+ */
+function useUpdatedAtFormatter() {
+  const clubTime = useClubTime();
+  return (value: string | null): string =>
+    value ? clubTime.instantDateTime(new Date(value)) : "Never updated";
 }
 
 export type WysiwygEditorHandle = {
@@ -1499,6 +1506,7 @@ export const WysiwygEditor = forwardRef<
 });
 
 export function PageContentPanel() {
+  const formatUpdatedAt = useUpdatedAtFormatter();
   const canEdit = useAdminAreaEditAccess("content");
   const { confirm, confirmDialog } = useConfirm();
   const [pages, setPages] = useState<EditablePageRecord[]>([]);

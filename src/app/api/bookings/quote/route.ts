@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -21,7 +22,7 @@ import {
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { evaluateNonMemberPricingRequirements } from "@/lib/subscription-lockout-enforcement";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
@@ -260,6 +261,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), encoded at UTC midnight for the `@db.Date` frame the
+  // guard compares against (`INV-DATE-026`). The person-night guard never
+  // resolves one for itself: its authoritative callers reach it from inside
+  // booking-write transactions holding `pg_advisory_xact_lock(1)` and the
+  // per-lodge capacity key, where a `clubTimeSettings` read would take a second
+  // pooled connection (`INV-LOCK-004`). This quote path holds no locks and
+  // supplies the value the same way every other caller does.
+  const today = await clubTodayDateOnlyInstant();
+
   // Duplicate member nights (upstream #80cbdf4c): a member cannot hold two
   // bookings covering the same night. D-8: for a cross-family guest this refuses
   // neutrally instead of returning that member's already-booked nights.
@@ -271,6 +282,7 @@ export async function POST(request: NextRequest) {
       checkIn,
       checkOut,
       guests,
+      today,
     });
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
@@ -382,7 +394,7 @@ export async function POST(request: NextRequest) {
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: subscriptionLockoutMode,
       lodgeId: quoteLodgeId,
-      seasonYear: getSeasonYear(checkIn),
+      seasonYear: seasonYearOfStoredDate(checkIn),
       checkIn,
       checkOut,
       // Owner decision, 3 Aug 2026: an unfinancial member triggers the

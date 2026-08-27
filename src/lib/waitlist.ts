@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus, type AgeTier, type Prisma } from "@prisma/client";
 import { acquireLodgeCapacityLock, checkCapacityForGuestRanges } from "./capacity";
+import { addDaysDateOnly } from "@/lib/date-only";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { isMemberEligibleToBookLodge } from "@/lib/lodge-access";
 import {
@@ -37,9 +38,11 @@ import {
   calculateBookingHoldDecision,
   toGroupDiscountConfig,
 } from "@/lib/policies/booking-route-decisions";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
@@ -133,6 +136,16 @@ async function repriceWaitlistCandidate(
   // own lodge. Upstream #1035 priced club-wide; per-lodge seasons make
   // that a lodge-scoped read here.
   lodgeId: string,
+  // #3123 — the club's own calendar day, resolved by the sweep BEFORE it opened
+  // this transaction, for exactly the same reason as the mode below and passed
+  // the same way. It decides the promotion's validity window in the reprice, and
+  // reading the club's persisted timezone here would be a
+  // `clubTimeSettings.findUnique` on a second pooled connection while this
+  // transaction holds every active lodge's capacity key (`INV-LOCK-004`).
+  //
+  // REQUIRED, and positioned ahead of the optional mode so it cannot be
+  // defaulted: the default is what put this decision on the container's zone.
+  todayAtClub: CalendarDate,
   // #2543 — the club's mode, resolved by the sweep BEFORE it opened this
   // transaction. This reprice inherits the unpaid-subscription reprice like every
   // other pricing call, and it passes no locked night prices, so the WHOLE stay
@@ -163,7 +176,7 @@ async function repriceWaitlistCandidate(
       guests: guestsForPricing,
       seasons: seasonRateData,
       groupDiscount: toGroupDiscountConfig(groupDiscountSetting),
-      seasonYear: getSeasonYear(candidate.checkIn),
+      seasonYear: seasonYearOfStoredDate(candidate.checkIn),
       subscriptionLockoutMode,
       // Finding 2 (privacy re-review of MG3 #2308). An unattended sweep with no
       // member on the other end of the response: there is nobody to collapse the
@@ -186,6 +199,7 @@ async function repriceWaitlistCandidate(
       booking: candidate,
       newTotalPriceCents,
       guestNightRates,
+      todayAtClub,
     });
     const newFinalPriceCents =
       newTotalPriceCents + promoResult.newPromoAdjustmentCents;
@@ -287,6 +301,13 @@ export async function processWaitlistForDates(freedDates: {
   // capacity lock. `resolveSubscriptionLockoutMode` can refresh the
   // financial-year cache from Xero, which must never happen inside it.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // #3123 — and the club's own day, resolved here for the same reason: the
+  // offer-time reprice inside the transaction below judges the booking's
+  // promotion against it, and the club's persisted timezone must not be read
+  // while every active lodge's capacity key is held (`INV-LOCK-004`). The
+  // runtime reader, not `club-time/server`: this module is reachable from
+  // `src/instrumentation.node.ts` through `cron-waitlist.ts`.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -456,6 +477,7 @@ export async function processWaitlistForDates(freedDates: {
             tx,
             candidate,
             offerLodgeId,
+            todayAtClub,
             subscriptionLockoutMode,
           );
         }
@@ -536,7 +558,7 @@ export async function processWaitlistForDates(freedDates: {
       const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
         mode: subscriptionLockoutMode,
         lodgeId: offerDetails.offeredLodgeId ?? offerDetails.lodgeId ?? "",
-        seasonYear: getSeasonYear(offerDetails.checkIn),
+        seasonYear: seasonYearOfStoredDate(offerDetails.checkIn),
         checkIn: offerDetails.checkIn,
         checkOut: offerDetails.checkOut,
         // Owner decision, 3 Aug 2026. Threaded for consistency with the confirm
@@ -845,7 +867,7 @@ export async function confirmWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offerLodgeId,
-      seasonYear: getSeasonYear(offerKind.checkIn),
+      seasonYear: seasonYearOfStoredDate(offerKind.checkIn),
       checkIn: offerKind.checkIn,
       checkOut: offerKind.checkOut,
       // Owner decision, 3 Aug 2026. The guard above has already established that
@@ -994,7 +1016,7 @@ export async function confirmWaitlistOffer(
       // Math.ceil mirrors bookings/route.ts: fractional days over threshold → PENDING.
       const hasNonMembers = booking.guests.some((g) => !g.isMember);
       const holdPolicy = hasNonMembers
-        ? await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId)
+        ? await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId, tx)
         : { enabled: false, holdDays: 0, source: "default" as const };
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
@@ -1014,8 +1036,8 @@ export async function confirmWaitlistOffer(
       };
 
       if (newStatus === BookingStatus.PENDING) {
-        const holdDate = new Date(booking.checkIn);
-        holdDate.setDate(holdDate.getDate() - holdPolicy.holdDays);
+        // INV-DATE-014: calendar arithmetic, never the host's clock face.
+        const holdDate = addDaysDateOnly(booking.checkIn, -holdPolicy.holdDays);
         updateData.nonMemberHoldUntil = holdDate;
       }
 

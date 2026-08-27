@@ -4,14 +4,14 @@ import {
   canReadLodgeInstructions,
   getSanitizedLodgeInstructions,
 } from "@/lib/lodge-instructions";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { hasAdminAccess } from "@/lib/access-roles";
 import { prisma } from "@/lib/prisma";
 
 /**
  * The distinct lodge ids the member is a hut leader for (current or upcoming
- * assignments, NZ date-only semantics). Assignments with a null lodgeId count
+ * assignments, club date-only semantics). Assignments with a null lodgeId count
  * as the club's default lodge, matching resolveKioskLodgeId's hut-leader
  * semantics. This is both the set the member may read documents for (M4) and
  * the basis for the no-lodgeId default below.
@@ -19,8 +19,16 @@ import { prisma } from "@/lib/prisma";
 async function getMemberInstructionLodgeIds(
   memberId: string,
 ): Promise<Set<string>> {
+  /*
+    CT-4 (#2870): "today" is the CLUB's day, from the persisted ClubTimeSettings
+    zone and not the container's TZ (INV-CONFIG-002, INV-DATE-019).
+    `HutLeaderAssignment.endDate` is `@db.Date`, so the bound must be that day at
+    UTC MIDNIGHT: a club-local midnight bound narrows to the PREVIOUS day and
+    silently drops an assignment that ends today (INV-DATE-026).
+  */
+  const today = await clubTodayDateOnlyInstant();
   const assignments = await prisma.hutLeaderAssignment.findMany({
-    where: { memberId, endDate: { gte: getTodayDateOnly() } },
+    where: { memberId, endDate: { gte: today } },
     select: { lodgeId: true },
   });
 

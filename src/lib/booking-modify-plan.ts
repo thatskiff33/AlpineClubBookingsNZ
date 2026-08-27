@@ -15,6 +15,7 @@ import {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
+import type { CalendarDate } from "@/lib/club-time";
 import {
   assertOtherLodgeExists,
   requestCarriesOtherLodgeElection,
@@ -37,6 +38,7 @@ import {
 import {
   daysUntilDate,
   loadCancellationPolicy,
+  type CancellationPolicyDb,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
 import {
@@ -103,12 +105,12 @@ import {
 import {
   addDaysDateOnly,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { assertNoBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
   BookingModifyReviewJustificationRequiredError,
@@ -593,6 +595,7 @@ export async function prepareGuestPlan(
     newCheckOut,
     memberGuestPolicy,
     subscriptionLockoutMode,
+    today,
     now = new Date(),
   }: {
     booking: LoadedBookingForModify;
@@ -624,6 +627,27 @@ export async function prepareGuestPlan(
      * planner's own unit tests.
      */
     subscriptionLockoutMode?: SubscriptionLockoutMode;
+    /**
+     * The CLUB's today, as the UTC-midnight `Date` a `@db.Date` round-trips
+     * through, resolved by the caller BEFORE it opened this transaction
+     * (`INV-CONFIG-002`, `INV-LOCK-004`).
+     *
+     * REQUIRED, and deliberately unlike `memberGuestPolicy` and
+     * `subscriptionLockoutMode` above, which are optional so the planner's own
+     * unit tests keep compiling. Both of those have a safe reading when absent —
+     * MG1 behaviour and HARD_BLOCK, each a refusal. A missing day has no safe
+     * reading: the only two candidates are the container's zone, which is the
+     * defect this issue removes, and a read taken here under
+     * `pg_advisory_xact_lock(1)` plus the per-lodge capacity key, which is the
+     * pool-starvation shape `INV-LOCK-004` forbids. So the compiler enumerates
+     * the callers instead.
+     *
+     * It reaches the person-night guard below, whose `evaluateGuestSelfRemoval`
+     * decides whether a clashing guest may take themselves off the other
+     * booking — a member-facing answer that must be the club's day, not the
+     * host's.
+     */
+    today: Date;
     now?: Date;
   },
 ): Promise<GuestPlan> {
@@ -683,7 +707,7 @@ export async function prepareGuestPlan(
   // booking, and a cold cache, all at once.
   const otherLodgeEligibleGuestIds = requestCarriesOtherLodgeElection(input)
     ? await resolveOtherLodgeRateEligibleGuestIds(tx, {
-        seasonYear: getSeasonYear(booking.checkIn),
+        seasonYear: seasonYearOfStoredDate(booking.checkIn),
         guests: booking.guests,
       })
     : new Set<string>();
@@ -947,6 +971,9 @@ export async function prepareGuestPlan(
     checkOut: newCheckOut,
     guests: guestsForPricing,
     excludeBookingId: booking.id,
+    // Supplied by the caller from outside this transaction (`INV-LOCK-004`) —
+    // see the `today` parameter's docblock.
+    today,
   });
 
   const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
@@ -1020,7 +1047,7 @@ export async function prepareGuestPlan(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(newCheckIn),
+      seasonYear: seasonYearOfStoredDate(newCheckIn),
       checkIn: newCheckIn,
       checkOut: newCheckOut,
       // Owner decision, 3 Aug 2026. On the apply path this also closes the
@@ -1236,9 +1263,13 @@ function guestNightBreakdown(entry: {
   return {
     priceCents: entry.priceCents,
     perNightCents: [...entry.perNightCents],
-    nightDates: entry.nights.map((night) =>
-      normalizeDateOnlyForTimeZone(night)
-    ),
+    // #3107: `storedDateOnly`, not `normalizeDateOnlyForTimeZone` (INV-DATE-013).
+    // These arrive from the in-progress plan already on the true calendar, and
+    // this is the projection that REACHES THE DATABASE - `syncGuestNights`
+    // writes these values into `BookingGuestNight.stayDate`, so an in-progress
+    // edit stored its nights a day early. The ordinary edit branch takes its
+    // nights from `pricing.ts`'s zone-free normaliser and never had the defect.
+    nightDates: entry.nights.map((night) => storedDateOnly(night)),
   };
 }
 
@@ -1390,7 +1421,7 @@ export async function calculateModifiedPricing(
     subscriptionLockoutMode?: SubscriptionLockoutMode;
   },
 ): Promise<PricingResult> {
-  const seasonYear = getSeasonYear(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: booking.memberId,
     guests: guestsForPricing,
@@ -1758,6 +1789,7 @@ export async function applyPromoCodeChanges(
     newCheckIn,
     newTotalPriceCents,
     guestNightRates,
+    todayAtClub,
   }: {
     booking: LoadedBookingForModify;
     bookingId: string;
@@ -1771,6 +1803,18 @@ export async function applyPromoCodeChanges(
       isMember: boolean;
       perNightRates: number[];
     }>;
+    /**
+     * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by the
+     * caller BEFORE it opened the transaction whose client arrives as `tx`.
+     *
+     * REQUIRED. `INV-LOCK-004` names the club timezone as one of only two reads
+     * that cannot take a transaction client, and every caller of this function
+     * holds `pg_advisory_xact_lock(1)` plus the per-lodge capacity key by the
+     * time it gets here. It decides the promotion's validity window, so a day
+     * from the container's zone instead of the club's could refuse a live
+     * promotion or honour an expired one.
+     */
+    todayAtClub: CalendarDate;
   },
 ): Promise<PromoChangeResult> {
   if (inProgressPlan) {
@@ -1865,6 +1909,8 @@ export async function applyPromoCodeChanges(
           promoAddedGuestIndexes: input.promoAddedGuestIndexes,
         }),
         lodgeId: bookingLodgeId,
+        // #3123 — resolved by the caller before this transaction opened.
+        todayAtClub,
       },
     );
     if (application.error || !application.discount) {
@@ -1933,6 +1979,8 @@ export async function applyPromoCodeChanges(
         // is applying a code, nobody holds a discount from it yet, and "this
         // code is full" is the honest answer.
         capOverflow: "coverExisting",
+        // #3123 — resolved by the caller before this transaction opened.
+        todayAtClub,
       },
     );
 
@@ -1973,16 +2021,33 @@ export async function applyPromoCodeChanges(
   };
 }
 
+/**
+ * `db` is REQUIRED and reads the cancellation policy set: this module is
+ * transaction-scoped and imports no module-level client, so a default would hide
+ * a second pooled connection under the caller's locks. `INV-LOCK-004`; see
+ * `CancellationPolicyDb` in `cancellation.ts`.
+ */
 export async function calculateModificationChangeFee({
   booking,
   newCheckIn,
   checkInChanged,
   skipBookingLifecycleRules,
+  db,
+  todayAtClub,
 }: {
   booking: LoadedBookingForModify;
   newCheckIn: Date;
   checkInChanged: boolean;
   skipBookingLifecycleRules: boolean;
+  db: CancellationPolicyDb;
+  /**
+   * The club's own calendar day (#3123), resolved by the caller BEFORE it opened
+   * the transaction `db` belongs to — `INV-LOCK-004`, the same rule that makes
+   * `db` required here. It is the late-notice change fee's tier boundary, so
+   * the container's day instead of the club's charged a member the wrong fee
+   * band at the edge.
+   */
+  todayAtClub: CalendarDate;
 }): Promise<number> {
   if (skipBookingLifecycleRules || !checkInChanged) {
     return 0;
@@ -1993,11 +2058,12 @@ export async function calculateModificationChangeFee({
   if (booking.status === BookingStatus.DRAFT) {
     return 0;
   }
-  const now = new Date();
-  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+  const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, db);
   const feeResult = calculateChangeFee({
-    daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
-    daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
+    // #3123 — one club day for both operands, so the old and new day-counts
+    // cannot be measured from two different todays.
+    daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+    daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
     originalFinalPriceCents: booking.finalPriceCents,
     policyRules: policy,
   });

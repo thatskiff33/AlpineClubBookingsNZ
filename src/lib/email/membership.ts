@@ -20,10 +20,10 @@ import {
   CLUB_BOOKINGS_NAME,
   CLUB_NAME,
 } from "@/config/club-identity";
-import { formatNZDate, formatNZDateTime } from "../nzst-date";
 import { formatCents } from "@/lib/utils";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailClubDate, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 export async function sendNominationRequestEmail(params: {
   email: string;
@@ -55,7 +55,7 @@ export async function sendNominationRequestEmail(params: {
       token: params.token,
       reviewUrl,
       familyMemberCount: params.familyMemberCount,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -109,7 +109,7 @@ export async function sendMembershipPaymentRecordedEmail(params: {
         params.amountCents !== null ? formatCents(params.amountCents) : null,
         { trailing: "\n" },
       ),
-      date: formatNZDate(params.recordedAt),
+      date: emailClubDate(params.recordedAt),
     },
   });
 }
@@ -268,7 +268,7 @@ export async function sendMembershipCancellationConfirmationEmail(params: {
       participantName: params.participantName,
       token: params.token,
       confirmationUrl,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }

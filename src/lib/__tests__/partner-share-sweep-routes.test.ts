@@ -52,6 +52,11 @@ vi.mock("@/lib/prisma", () => ({
     xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
     xeroSyncOperation: { findFirst: vi.fn().mockResolvedValue(null) },
     xeroObjectLink: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    // CT-4 (#2870): both routes driven here resolve a "future" cut-off from the
+    // club's PERSISTED timezone. Without this delegate
+    // `loadPersistedClubTimeSettings()` returns null -- fail-soft by design --
+    // and they fall back to the container's `TZ` in silence.
+    clubTimeSettings: { findUnique: vi.fn() },
     $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(),
   },
@@ -130,6 +135,8 @@ import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as bulkUpdate } from "@/app/api/admin/members/bulk-update/route";
 import { POST as reviewDeletion } from "@/app/api/admin/deletion-requests/[id]/route";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { getTodayDateOnly } from "@/lib/date-only";
 
 const fullAdminGuard = {
   ok: true,
@@ -473,6 +480,75 @@ describe("#2106 bulk set-role ORG grant — linked-guest N/A block", () => {
       }),
     );
     expect(prisma.bedAllocation.deleteMany).toHaveBeenCalled();
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 -- WHICH day the linked-guest block measures "future"
+  from.
+
+  The block above decides whether an ORG grant is refused, and it is refused
+  exactly when the member still holds a future linked-guest booking on someone
+  else's stay. `BookingGuest.stayEnd` is `@db.Date`, so the cut-off has to be a
+  calendar day, and `INV-CONFIG-002` says the day comes from the persisted
+  `ClubTimeSettings.timeZone` rather than the container's `TZ`. A day either way
+  moves a real stay across the line and changes who the batch refuses.
+
+  The two cases above cannot see this: they stub `bookingGuest.findMany` to a
+  fixed answer, so the cut-off they were queried with never enters the result.
+  This one reads the bound itself.
+*/
+describe("bulk set-role linked-guest cut-off comes from the persisted club zone (CT-4, #2870)", () => {
+  it("bounds the linked-guest query by the club's day, not the container's", async () => {
+    vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+      timeZone: "America/Denver",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    } as never);
+
+    // The premise, measured as an ANSWER rather than a zone identifier: two
+    // zone names can still name the same day, and then this proves nothing.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * zone exists to get OFF the environment; here the environment IS the
+     * subject of the assertion — the line measures what the environment
+     * authority answers so it can prove the persisted zone answers differently.
+     * A literal zone name here would assert something about that name instead,
+     * and the premise would stop tracking the environment it is guarding.
+     */
+    expect(
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      "INV-CONFIG-002: the environment authority now names the same day as the " +
+        "persisted club zone, so this bound cannot tell the two apart.",
+    ).not.toBe("2026-06-30T00:00:00.000Z");
+
+    vi.mocked(prisma.member.findMany).mockResolvedValue([userTarget] as never);
+    vi.mocked(prisma.bookingGuest.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...userTarget,
+      role: "SCHOOL",
+      ageTier: "NOT_APPLICABLE",
+    } as never);
+
+    const res = await bulkUpdate(
+      jsonRequest("http://localhost/api/admin/members/bulk-update", {
+        ids: ["user2"],
+        action: "set-role",
+        role: "SCHOOL",
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // The frozen clock is 2026-07-01T00:00:00Z -- midday on 1 July in New
+    // Zealand, still the evening of 30 JUNE in Denver -- so the club's day is
+    // the 30th, encoded as UTC midnight for the `@db.Date` bound. The
+    // environment would have said 1 July, and a stay ending on 30 June would
+    // have stopped counting a day early.
+    const guestQuery = vi.mocked(prisma.bookingGuest.findMany).mock
+      .calls[0][0] as unknown as { where: { stayEnd: { gt: Date } } };
+    expect(guestQuery.where.stayEnd.gt.toISOString()).toBe(
+      "2026-06-30T00:00:00.000Z",
+    );
   });
 });
 

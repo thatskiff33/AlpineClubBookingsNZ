@@ -20,6 +20,11 @@ vi.mock("@/lib/prisma", () => ({
     },
     passwordResetToken: { create: vi.fn() },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
+    // CT-4 (#2870): "is this cancellation date in the future?" is asked against
+    // the club's day, read from `ClubTimeSettings`. Without this delegate
+    // `loadPersistedClubTimeSettings()` returns null -- fail-soft by design --
+    // and the route falls back to the container's `TZ` in silence.
+    clubTimeSettings: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -82,6 +87,25 @@ function mockCreateTransaction() {
   );
 }
 
+import { APP_TIME_ZONE } from "@/config/operational";
+
+/**
+ * The club this suite is about. The route reads the PERSISTED zone (CT-4,
+ * #2870), so the fixtures below have to be built in the SAME zone -- deriving
+ * "today" from `APP_TIME_ZONE` instead would agree only on a host that happens
+ * to sit in New Zealand, and diverge silently anywhere else.
+ */
+const SUITE_CLUB_ZONE = "Pacific/Auckland";
+
+/** Persist a club timezone for the route's `clubTime()` read to resolve. */
+function persistClubZone(timeZone: string) {
+  vi.mocked(prisma.clubTimeSettings.findUnique).mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date(0),
+  } as never);
+}
+
 function importRequest(body: Record<string, unknown>) {
   return importMembers(
     new NextRequest("http://localhost/api/admin/members/import", {
@@ -99,6 +123,7 @@ describe("issue #1946 — importing cancelled members", () => {
     mockRequireAdmin.mockResolvedValue(fullAdminGuard);
     vi.mocked(prisma.memberFieldsSettings.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+    persistClubZone(SUITE_CLUB_ZONE);
     mockCreateTransaction();
   });
 
@@ -354,7 +379,8 @@ describe("issue #1946 — importing cancelled members", () => {
   // FIX-4: today-boundary in the club time zone. Today is accepted (a
   // cancellation dated to now is legitimate); tomorrow is rejected as future.
   it("accepts a cancelledDate equal to NZ-today", async () => {
-    const today = todayDateOnlyForTimeZone();
+    // The CLUB's today, not the container's -- see `SUITE_CLUB_ZONE`.
+    const today = todayDateOnlyForTimeZone(SUITE_CLUB_ZONE);
     const res = await importRequest({
       rows: [
         {
@@ -375,7 +401,7 @@ describe("issue #1946 — importing cancelled members", () => {
 
   it("rejects a cancelledDate of NZ-tomorrow as a future date", async () => {
     const tomorrow = formatDateOnly(
-      addDaysDateOnly(parseDateOnly(todayDateOnlyForTimeZone()), 1),
+      addDaysDateOnly(parseDateOnly(todayDateOnlyForTimeZone(SUITE_CLUB_ZONE)), 1),
     );
     const res = await importRequest({
       rows: [
@@ -391,6 +417,67 @@ describe("issue #1946 — importing cancelled members", () => {
 
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.created).toBe(0);
+    expect(data.errors).toHaveLength(1);
+    expect(
+      data.errors[0].errors.some((error: string) =>
+        error.toLowerCase().includes("future"),
+      ),
+    ).toBe(true);
+    expect(createdMemberData).toHaveLength(0);
+  });
+
+  /*
+    CT-4 (#2870), epic #2988 -- WHOSE today the future-date rule is measured
+    against.
+
+    The two cases above build their fixture in `SUITE_CLUB_ZONE`, which is the
+    zone `beforeEach` persists AND the one the environment answers with, so they
+    agree with the route whichever authority it consulted and could not notice a
+    regression to the container's `TZ`. This one names an absolute date and
+    persists a club zone the environment disagrees with.
+
+    The frozen clock is 2026-07-01T00:00:00Z: midday on 1 July in New Zealand,
+    still the evening of 30 JUNE in Denver. So 1 July is TODAY for the
+    environment -- a date the rule accepts -- and TOMORROW for the club, which
+    the rule must refuse. A member imported with a cancellation dated in their
+    own club's future is a membership record that says someone stopped being a
+    member before they did.
+  */
+  it("measures the future-date rule against the PERSISTED club day (CT-4, #2870)", async () => {
+    persistClubZone("America/Denver");
+
+    // The premise, measured as an ANSWER rather than as a zone identifier: two
+    // zone names can still name the same day, and then this proves nothing.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else in this file an
+     * explicit zone exists to get OFF the environment; here the environment IS
+     * the subject — the line measures what the environment authority answers so
+     * it can prove the persisted zone answers differently. A literal zone name
+     * would assert something about that name instead, and the premise would stop
+     * tracking the environment it is guarding.
+     */
+    expect(
+      todayDateOnlyForTimeZone(APP_TIME_ZONE),
+      "INV-CONFIG-002: the environment authority now names the same day as the " +
+        "persisted club zone, so this row cannot tell the two apart.",
+    ).not.toBe("2026-06-30");
+
+    const res = await importRequest({
+      rows: [
+        {
+          firstName: "Dana",
+          lastName: "Denver",
+          email: "dana@example.com",
+          cancelledDate: "2026-07-01",
+        },
+      ],
+      sendInvites: false,
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // The environment would have called 1 July "today" and created the member.
     expect(data.created).toBe(0);
     expect(data.errors).toHaveLength(1);
     expect(

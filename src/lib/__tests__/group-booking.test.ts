@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   AgeTier,
   BookingStatus,
@@ -135,47 +137,72 @@ describe("isOrganiserBookingActive", () => {
 });
 
 describe("hasGroupStayFullyEnded", () => {
-  // Booking dates are NZ date-only lodge nights stored as UTC midnights; the
-  // helper derives "today" from `now` in the NZ time zone. All instants here
-  // are fixed — never real-now-dependent fixtures.
+  // Booking dates are date-only lodge nights stored as UTC midnights, and the
+  // second argument is now THE CLUB'S TODAY in that same encoding rather than a
+  // raw instant the helper projects for itself (#3123). It used to derive the
+  // day from `APP_TIME_ZONE`, i.e. the container's — so a club whose configured
+  // zone differed from its deployment's closed, or kept open, a group's joins
+  // on the wrong day, and no call site could see it happening. Every caller now
+  // resolves the club's day once, outside any transaction, and passes it down.
   const checkOut = new Date("2026-06-17T00:00:00Z");
+  const clubDay = (day: string) => new Date(`${day}T00:00:00.000Z`);
 
   it("has ended when the stay checks out today (matches the unpaid-finished-stays cutoff)", () => {
-    // Midday NZST on the check-out day itself.
-    expect(
-      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-17T00:00:00Z"))
-    ).toBe(true);
+    expect(hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-17"))).toBe(
+      true,
+    );
   });
 
   it("has ended once the check-out day is in the past", () => {
-    expect(
-      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-20T00:00:00Z"))
-    ).toBe(true);
+    expect(hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-20"))).toBe(
+      true,
+    );
   });
 
   it("has not ended while the stay checks out tomorrow", () => {
-    expect(
-      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T00:00:00Z"))
-    ).toBe(false);
+    expect(hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-16"))).toBe(
+      false,
+    );
   });
 
-  it("uses the NZ calendar day, not the UTC day, of `now`", () => {
-    // 2026-06-16T13:00Z is 01:00 NZST on the 17th: still the 16th in UTC, but
-    // the NZ day has rolled over, so a stay checking out on the 17th has ended.
-    expect(
-      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T13:00:00Z"))
-    ).toBe(true);
-    // 2026-06-16T11:00Z is 23:00 NZST on the 16th: not yet the check-out day.
-    expect(
-      hasGroupStayFullyEnded({ checkOut }, new Date("2026-06-16T11:00:00Z"))
-    ).toBe(false);
+  it("follows the CLUB's day, wherever the container thinks it is (#3123)", () => {
+    // This case used to hand in `2026-06-16T13:00Z` — 01:00 on the 17th in New
+    // Zealand — and rely on the helper projecting it. That projection was the
+    // defect: it read the CONTAINER's zone, not the club's. The day is now
+    // stated, so the same two answers come from the two days themselves.
+    expect(hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-17"))).toBe(
+      true,
+    );
+    expect(hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-16"))).toBe(
+      false,
+    );
+  });
+
+  it("is invariant to the host process's own zone", () => {
+    // Both operands are UTC-midnight day encodings, so nothing about the
+    // machine can move this answer — which is the property the migration buys.
+    const original = process.env.TZ;
+    try {
+      const answers = ["UTC", "Pacific/Kiritimati", "Pacific/Pago_Pago"].map(
+        (zone) => {
+          process.env.TZ = zone;
+          return hasGroupStayFullyEnded({ checkOut }, clubDay("2026-06-16"));
+        },
+      );
+      expect(new Set(answers)).toEqual(new Set([false]));
+    } finally {
+      process.env.TZ = original ?? "";
+    }
   });
 });
 
 describe("toGroupBookingSummary", () => {
   // Fixed evaluation instant well before the fixture's check-out, so the
-  // ended-stay exclusion (#1723 path 3) never depends on the real clock.
+  // ended-stay exclusion (#1723 path 3) never depends on the real clock. The
+  // club's own day is stated separately from the instant now (#3123): the
+  // deadline comparison is an instant one, the ended-stay one is a calendar day.
   const now = new Date("2026-06-16T00:00:00Z");
+  const clubToday = new Date("2026-06-16T00:00:00.000Z");
   const baseRecord: GroupBookingRecordForSummary = {
     joinCode: "ABCD2345",
     status: GroupBookingStatus.OPEN,
@@ -192,7 +219,7 @@ describe("toGroupBookingSummary", () => {
   };
 
   it("exposes only public-safe fields", () => {
-    const summary = toGroupBookingSummary(baseRecord, now);
+    const summary = toGroupBookingSummary(baseRecord, clubToday, now);
     expect(summary).toEqual({
       code: "ABCD2345",
       status: GroupBookingStatus.OPEN,
@@ -219,6 +246,7 @@ describe("toGroupBookingSummary", () => {
         ...baseRecord,
         status: GroupBookingStatus.CLOSED,
       },
+      clubToday,
       now,
     );
     expect(summary.isJoinable).toBe(false);
@@ -230,6 +258,7 @@ describe("toGroupBookingSummary", () => {
         ...baseRecord,
         organiserBooking: { ...baseRecord.organiserBooking, status: BookingStatus.CANCELLED },
       },
+      clubToday,
       now,
     );
     expect(cancelledHost.isJoinable).toBe(false);
@@ -242,22 +271,28 @@ describe("toGroupBookingSummary", () => {
           deletedAt: new Date("2026-06-01T00:00:00Z"),
         },
       },
+      clubToday,
       now,
     );
     expect(deletedHost.isJoinable).toBe(false);
   });
 
   it("is not joinable once the group's stay has fully ended (#1723 path 3)", () => {
-    // The fixture checks out on 2026-07-03; from that NZ day onward the group
-    // leaves the joinable set even while OPEN with an active host booking.
+    // The fixture checks out on 2026-07-03; from that CLUB day onward the group
+    // leaves the joinable set even while OPEN with an active host booking. The
+    // club's day is now stated rather than projected out of the container's
+    // zone (#3123); `now` still drives the join-deadline comparison, which is a
+    // genuine instant one.
     const onCheckOutDay = toGroupBookingSummary(
       baseRecord,
+      new Date("2026-07-03T00:00:00.000Z"),
       new Date("2026-07-03T00:00:00Z"),
     );
     expect(onCheckOutDay.isJoinable).toBe(false);
 
     const wellAfter = toGroupBookingSummary(
       baseRecord,
+      new Date("2026-08-01T00:00:00.000Z"),
       new Date("2026-08-01T00:00:00Z"),
     );
     expect(wellAfter.isJoinable).toBe(false);
@@ -364,5 +399,64 @@ describe("resolveGroupJoinVerificationLodgeName", () => {
       resolveGroupJoinVerificationLodgeName("not-a-token")
     ).resolves.toBeNull();
     expect(groupBookingJoinFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("joinGroupBookingAsMember resolves the club's day ONCE (#3123)", () => {
+  /*
+    A source contract, because the alternative is a whole booking, member,
+    lodge, promotion and Xero fixture to observe one variable.
+
+    `joinGroupBookingAsMember` used to read the club's zone TWICE — once at the
+    top for the stay-has-ended refusal and the Internet Banking lead time, and
+    again a few hundred lines later for `createConfirmedBooking`'s retroactive
+    envelope and promotion window. Both reads were outside every transaction, so
+    this was never an `INV-LOCK-004` breach; it was worse in a quieter way. A
+    join running across club midnight gated the first pair on day D and handed
+    D+1 to the second, and the in-tree comment claimed "one read, one answer,
+    for the whole join" the whole time it was untrue. This is the instrument
+    that makes the comment a contract (`INV-CONFIG-002`, owner's
+    single-source-of-truth rule: resolve an authority once at the boundary and
+    thread it).
+
+    Note that ONE read now feeds TWO values of different KINDS — the
+    `CalendarDate` `createConfirmedBooking` takes, and the UTC-midnight
+    `@db.Date` instant the stored `checkOut` column is compared against. That
+    split is the point, not a smell: conflating those two encodings is the
+    defect class this issue exists to remove.
+  */
+  const READER = "readClubTimeZoneOutsideRequest(";
+
+  /** The body of `joinGroupBookingAsMember`, comments and strings blanked. */
+  function joinBody(): string {
+    const source = readFileSync(
+      path.join(__dirname, "..", "group-booking.ts"),
+      "utf8",
+    );
+    // Comments blanked so the prose above the read — which names the reader —
+    // cannot be counted, and strings blanked so neither can a message.
+    const masked = source
+      .replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, " "))
+      .replace(/\/\/[^\n]*/g, (match) => match.replace(/[^\n]/g, " "));
+    const start = masked.indexOf("export async function joinGroupBookingAsMember");
+    expect(start, "the function has been renamed or removed").toBeGreaterThan(-1);
+    const rest = masked.slice(start + 1);
+    const nextDeclaration = rest.search(/^(?:export\s+)?(?:async\s+)?function\s/m);
+    return nextDeclaration === -1 ? rest : rest.slice(0, nextDeclaration);
+  }
+
+  it("reads the club's timezone exactly once for the whole join", () => {
+    const body = joinBody();
+    expect(body.split(READER).length - 1).toBe(1);
+  });
+
+  it("NOT VACUOUS: the slice really is the join, and really contains the read", () => {
+    const body = joinBody();
+    // Landmarks from three widely separated parts of the function, so a slice
+    // that has silently collapsed to nothing cannot pass the count above.
+    expect(body).toContain("hasGroupStayFullyEnded");
+    expect(body).toContain("checkInternetBankingLeadTime");
+    expect(body).toContain("createConfirmedBooking");
+    expect(body).toContain(READER);
   });
 });

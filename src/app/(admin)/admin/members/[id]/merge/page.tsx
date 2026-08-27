@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/admin/back-link";
 import { Input } from "@/components/ui/input";
 import { MemberPicker, type PickedMember } from "@/components/admin/member-picker";
+import { useClubTime } from "@/components/club-time-provider";
 import {
   formatMergeFieldValue,
   mergeFieldValueKind,
@@ -74,6 +75,13 @@ export default function MemberMergePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // The `instant` branch of `formatMergeFieldValue` defaults its zone to
+  // `APP_TIME_ZONE`; production never passed one, so this screen read the
+  // environment. It is handed the club's PERSISTED zone here
+  // (`INV-CONFIG-002`) — a day-early stamp on the screen immediately before an
+  // IRREVERSIBLE merge is the worst place in the admin tree to have one. The
+  // `calendarDay` branch ignores the argument by design.
+  const clubTime = useClubTime();
   const { id: masterId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -389,13 +397,13 @@ export default function MemberMergePage({
                         <tr key={r.field} className="border-t">
                           <td className="py-1 pr-3 font-medium">{r.field}</td>
                           <td className="py-1 pr-3 text-muted-foreground">
-                            {formatMergeFieldValue(r.master, kind)}
+                            {formatMergeFieldValue(r.master, kind, clubTime.zone)}
                           </td>
                           <td className="py-1 pr-3 text-muted-foreground">
-                            {formatMergeFieldValue(r.loser, kind)}
+                            {formatMergeFieldValue(r.loser, kind, clubTime.zone)}
                           </td>
                           <td className="py-1 pr-3 font-medium text-success-11">
-                            {formatMergeFieldValue(r.result, kind)}{" "}
+                            {formatMergeFieldValue(r.result, kind, clubTime.zone)}{" "}
                             <span className="text-muted-foreground">({r.source})</span>
                           </td>
                         </tr>

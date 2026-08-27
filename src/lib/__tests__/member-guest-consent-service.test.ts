@@ -447,10 +447,13 @@ describe("respondToMemberGuestConsent — authorization", () => {
     });
     // An approval adds an occupant, so nothing is removed.
     expect(h.removeGuest).not.toHaveBeenCalled();
-    expect(h.enqueueHostingCoverage).toHaveBeenCalledWith(TARGET, expect.anything(), {
-      cause: "SYSTEM_CHANGE",
-      actorMemberId: TARGET,
-    });
+    expect(h.enqueueHostingCoverage).toHaveBeenCalledWith(
+      TARGET,
+      expect.anything(),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
+      { cause: "SYSTEM_CHANGE", actorMemberId: TARGET },
+    );
   });
 
   it("records the DELEGATE as the responder, not the target they answered for", async () => {

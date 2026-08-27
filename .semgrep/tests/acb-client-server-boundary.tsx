@@ -102,8 +102,12 @@ export type { AuditEvent } from "@/lib/audit";
 // Ordinary client-side imports.
 // ok: acb-client-server-boundary
 import { useState } from "react";
+// The temporal kernel. Deliberately isomorphic — no `server-only`, no Prisma, no
+// `process.env` zone read — because 112 client files reach it, so reporting it
+// would be a false positive. It is also a strict PREFIX of `club-time-zone-env`
+// two entries below, which the anchored alternation has to tell apart.
 // ok: acb-client-server-boundary
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 // ok: acb-client-server-boundary
 import { Button } from "@/components/ui/button";
 // A module whose NAME merely contains one of the banned words is not the banned
@@ -129,7 +133,7 @@ export function Fixture() {
   return (
     <Button>
       {n} {String(prisma)} {String(siblingPrisma)} {String(auth)} {String(cookies)}
-      {String(fs)} {String(readFile)} {String(spawn)} {formatNZDate(new Date())}
+      {String(fs)} {String(readFile)} {String(spawn)} {formatClubDate(requireCalendarDate("2026-04-16"))}
       {String(describePrismaError)} {String(useAuthState)} {String(createHmac)}
       {String(hostname)} {String(request)} {String(Readable)} {String(recordAudit)}
       {String(getXeroClient)} {String(pathToRegexp)} {String(cryptoRandomId)}
@@ -157,6 +161,6 @@ export async function dynamicPermitted() {
   // ok: acb-client-server-boundary
   const chart = await import("@/components/ui/chart");
   // ok: acb-client-server-boundary
-  const dates = await import("@/lib/nzst-date");
+  const dates = await import("@/lib/club-time");
   return { chart, dates };
 }

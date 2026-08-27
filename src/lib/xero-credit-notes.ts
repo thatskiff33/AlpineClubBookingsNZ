@@ -44,7 +44,9 @@ import {
   retryXeroWriteWithContactRepair,
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 import { buildSyntheticAllocationId } from "./xero-invoice-helpers";
 import {
   buildRefundCreditNotePayment,
@@ -280,10 +282,10 @@ export async function createXeroCreditNote(
 
   // The credit note's own date decides which GST period and financial year the
   // refund lands in, so it is the club's calendar day (INV-DATE-019, #2834). The
-  // stay dates in the line description above are `@db.Date` lodge nights and are
-  // correctly left on truncation (INV-DATE-010). Read once, outside the closure,
-  // which runs for the recorded payload and again per contact-repair attempt.
-  const creditNoteDate = formatDateOnlyForTimeZone(new Date());
+  // stay dates above are `@db.Date` lodge nights, left on truncation —
+  // INV-DATE-019's first boundary with INV-DATE-026, not INV-DATE-010 (#3080).
+  // Read once, outside the closure: it runs per payload and per repair attempt.
+  const creditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -409,6 +411,8 @@ export async function createXeroCreditNote(
         creditNoteId: createdNote.creditNoteID,
         refundAmountCents: effectiveRefundAmountCents,
         bankCode,
+        // The club's calendar day, from the persisted zone (CT-5, #2869).
+        paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
       });
       const refundPaymentResponse = await callXeroApi(
         () =>
@@ -667,7 +671,7 @@ export async function createUnappliedXeroCreditNote(
 
   // Club calendar day, for the same reason as the refund note above
   // (INV-DATE-019, #2834), read once outside the closure.
-  const creditNoteDate = formatDateOnlyForTimeZone(new Date());
+  const creditNoteDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
 
   const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -838,7 +842,7 @@ export async function allocateCreditNoteToInvoice(
   // An allocation carries its own date, which is when the credit is applied to
   // the invoice in the ledger. Club calendar day (INV-DATE-019, #2834), read
   // once so a retried provider call sends the same date it first sent.
-  const allocationDate = formatDateOnlyForTimeZone(new Date());
+  const allocationDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
   const idempotencyKey = buildXeroIdempotencyKey(
     "credit-note",
     creditNoteId,

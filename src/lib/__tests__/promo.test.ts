@@ -6,6 +6,14 @@ import {
   type PromoRuleSubject,
 } from "../promo";
 import { calculatePromoDiscount, type PromoCodeInput } from "../pricing";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -35,7 +43,11 @@ function makePromoCode(overrides: Partial<PromoRuleSubject> = {}): PromoRuleSubj
 }
 
 const defaultBookingDetails = { memberId: "member-1" };
-const now = new Date("2026-07-15T12:00:00Z");
+// #3123 — `validatePromoCodeRules` now takes the CLUB's calendar day, not an
+// instant it projects through `APP_TIME_ZONE`. This constant is the day the
+// old `new Date("2026-07-15T12:00:00Z")` fixture resolved to under the
+// container's zone, so every window boundary below is unchanged.
+const now = requireCalendarDate("2026-07-16");
 
 const singleMemberGuest = [
   { memberId: "member-1", isMember: true, perNightRates: [5000, 5000, 5000] },
@@ -73,19 +85,44 @@ describe("validatePromoCodeRules", () => {
       validatePromoCodeRules(
         makePromoCode({ validFrom: new Date("2026-07-15T00:00:00Z") }),
         defaultBookingDetails,
-        new Date("2026-07-15T12:00:00Z")
+        requireCalendarDate("2026-07-15")
       )
     ).toBeNull();
   });
 
-  it("uses New Zealand date keys for validFrom", () => {
+  // #3123 — WHAT THIS CASE USED TO ASSERT, AND WHY IT HAD TO CHANGE.
+  //
+  // It was called "uses New Zealand date keys for validFrom" and it passed
+  // `2026-06-30T12:01:00.000Z` — an instant that is 30 June in UTC and 1 July in
+  // New Zealand — expecting a promotion valid from 1 July to be live. So what it
+  // actually pinned was that the validator projected an instant through
+  // `APP_TIME_ZONE`, the CONTAINER's zone, which is the exact defect #3123
+  // removes: a club configured for `America/Denver` on a New Zealand host was
+  // told its promotion had already started.
+  //
+  // The claim it was reaching for — that a real instant becomes a calendar day in
+  // the CLUB's zone — is still true and still tested, but it belongs to
+  // `clubCalendarDateOf` / `clubToday` and to whichever caller resolves the day.
+  // Here the day arrives already resolved, so what is left to state is the
+  // boundary itself: the first valid day is IN, the day before it is OUT.
+  it("the first valid day is in and the day before it is out", () => {
+    const promo = makePromoCode({
+      validFrom: new Date("2026-07-01T00:00:00.000Z"),
+    });
     expect(
       validatePromoCodeRules(
-        makePromoCode({ validFrom: new Date("2026-07-01T00:00:00.000Z") }),
+        promo,
         defaultBookingDetails,
-        new Date("2026-06-30T12:01:00.000Z")
+        requireCalendarDate("2026-07-01")
       )
     ).toBeNull();
+    expect(
+      validatePromoCodeRules(
+        promo,
+        defaultBookingDetails,
+        requireCalendarDate("2026-06-30")
+      )
+    ).toBe("This promo code is not yet valid");
   });
 
   it("returns error when promo code has expired", () => {
@@ -108,19 +145,27 @@ describe("validatePromoCodeRules", () => {
     ).toBeNull();
   });
 
-  it("keeps validUntil active through the selected New Zealand date", () => {
+  // #3123 — same correction as the validFrom pair above. This was "keeps
+  // validUntil active through the selected New Zealand date" and split its two
+  // legs on `11:59:59Z` versus `12:00:00Z`, i.e. on the moment New Zealand rolls
+  // over — the container's zone deciding a club-facing answer. `validUntil` is
+  // INCLUSIVE, so the boundary is now stated as the two club days either side.
+  it("validUntil is inclusive: its own day is in, the next day is out", () => {
+    const promo = makePromoCode({
+      validUntil: new Date("2026-07-15T00:00:00.000Z"),
+    });
     expect(
       validatePromoCodeRules(
-        makePromoCode({ validUntil: new Date("2026-07-15T00:00:00.000Z") }),
+        promo,
         defaultBookingDetails,
-        new Date("2026-07-15T11:59:59.000Z")
+        requireCalendarDate("2026-07-15")
       )
     ).toBeNull();
     expect(
       validatePromoCodeRules(
-        makePromoCode({ validUntil: new Date("2026-07-15T00:00:00.000Z") }),
+        promo,
         defaultBookingDetails,
-        new Date("2026-07-15T12:00:00.000Z")
+        requireCalendarDate("2026-07-16")
       )
     ).toBe("This promo code has expired");
   });
@@ -866,7 +911,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1", "member-2"],
-      { excludeBookingId: "booking-1" }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, excludeBookingId: "booking-1" }
     );
 
     expect(result.error).toBeUndefined();
@@ -925,6 +971,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     // Per-booking cap of 1 limits to one night; lifetime budget of 1 remaining
@@ -976,6 +1024,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1", "member-2"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -1021,6 +1071,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1", "member-2"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBe("All linked member guests have used this promo code");
@@ -1063,7 +1115,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"],
-      { selectedGuestIndexes: [0, 1] }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, selectedGuestIndexes: [0, 1] }
     );
 
     expect(result.error).toBeUndefined();
@@ -1116,6 +1169,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -1166,6 +1221,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBe(
@@ -1203,6 +1260,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBe("Choose which guests should receive this promo code");
@@ -1245,6 +1304,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     // Both the member guest and the non-member guest are repriced to the
@@ -1299,6 +1360,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBe("This promo code is not assigned to you");
@@ -1340,6 +1403,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     // Only the assigned member's own night is repriced; the non-member guest
@@ -1379,6 +1444,8 @@ describe("validateAndCalculatePromoDiscount", () => {
         ],
       },
       ["member-1"]
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     // member-guests-only excludes the group treatment, so the booker is still

@@ -16,6 +16,7 @@ import {
 } from "@/lib/bed-allocation-board-scope";
 import { prisma } from "@/lib/prisma";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
+import { clubTime } from "@/lib/club-time/server";
 
 // requireAdmin() is enforced by requireBedAllocationRead().
 export async function GET(request: NextRequest) {
@@ -23,10 +24,17 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   try {
-    const range = parseBedAllocationDateRange({
-      from: request.nextUrl.searchParams.get("from"),
-      to: request.nextUrl.searchParams.get("to"),
-    });
+    // The club's own day, for the board's default window when the caller names
+    // no `from` (#3123, `INV-CONFIG-002`). Resolved here, once, and passed in:
+    // the parse is synchronous and must not read the setting itself — see its
+    // docblock and `INV-LOCK-004`.
+    const range = parseBedAllocationDateRange(
+      {
+        from: request.nextUrl.searchParams.get("from"),
+        to: request.nextUrl.searchParams.get("to"),
+      },
+      (await clubTime()).today(),
+    );
     const bookingId = request.nextUrl.searchParams.get("bookingId");
     // #2678: A NAMED BOOKING FIXES THE LODGE, AND THE SERVER OWNS IT.
     //

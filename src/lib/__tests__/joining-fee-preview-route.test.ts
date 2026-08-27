@@ -42,6 +42,15 @@ function makeRequest(body?: unknown): NextRequest {
 
 const routeParams = { params: Promise.resolve({ id: "app-1" }) };
 
+/**
+ * The club's zone, named rather than taken from a helper default (#3123).
+ * This suite is about the DOB round-trip, and both cases below turn on what
+ * the club calls the stored instant. That the zone comes from the PERSISTED
+ * club timezone is pinned in
+ * `joining-fee/preview/__tests__/club-time-authority.test.ts`.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 beforeEach(() => {
   vi.clearAllMocks();
   requireAdmin.mockResolvedValue({ ok: true, session: { user: { id: "admin-1" } } });
@@ -53,7 +62,7 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
   it("accepts the NZ date-only DOB the applications API serialises (UTC-midnight storage)", async () => {
     // What the DB hands the applications API, and what that API now emits.
     const storedDob = new Date("1990-05-15T00:00:00.000Z");
-    const serialised = formatDateOnlyForTimeZone(storedDob);
+    const serialised = formatDateOnlyForTimeZone(storedDob, CLUB_ZONE);
     expect(serialised).toBe("1990-05-15");
 
     const response = await POST(
@@ -68,6 +77,11 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
         membershipTypeKey: "FULL",
         dateOfBirth: new Date("1990-05-15T00:00:00.000Z"),
       }),
+      // #3123 - the route now resolves the club's day and passes it as the fee
+      // schedule's `asOf`. WHICH day it is belongs to
+      // `joining-fee/preview/__tests__/club-time-authority.test.ts`; this suite
+      // is about the DOB round-trip, so it only pins that one is supplied.
+      expect.objectContaining({ asOf: expect.any(Date) }),
     );
     expect(previewForMember).not.toHaveBeenCalled();
   });
@@ -77,7 +91,7 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
     // .toISOString().slice(0, 10) would produce 1990-05-14 (the wrong day);
     // the club-time-zone formatter produces the honest NZ date.
     const storedDob = new Date("1990-05-14T12:00:00.000Z");
-    const serialised = formatDateOnlyForTimeZone(storedDob);
+    const serialised = formatDateOnlyForTimeZone(storedDob, CLUB_ZONE);
     expect(serialised).toBe("1990-05-15");
 
     const response = await POST(
@@ -88,6 +102,7 @@ describe("POST /api/admin/members/[id]/joining-fee/preview — applicant DOB rou
     expect(response.status).toBe(200);
     expect(previewForInputs).toHaveBeenCalledWith(
       expect.objectContaining({ dateOfBirth: new Date("1990-05-15T00:00:00.000Z") }),
+      expect.objectContaining({ asOf: expect.any(Date) }),
     );
   });
 

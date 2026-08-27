@@ -24,7 +24,8 @@ import {
 import { formatAgeTierName } from "@/lib/use-age-tier-options";
 import { canonicalizeAgeTiers } from "@/lib/age-tier-schema";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 
 type GroupingMode = "NONE" | "MEMBERSHIP_TYPE" | "MEMBERSHIP_TYPE_AND_AGE";
 type RuleKind = "MANAGED" | "ACCEPTED";
@@ -121,6 +122,8 @@ async function api(body: unknown) {
 }
 
 export default function XeroMemberGroupingPage() {
+  // The Xero contact-group cache refresh stamp is a real INSTANT (CT-4, #2870).
+  const clubTime = useClubTime();
   // Mode/rule/bulk controls need finance:edit; the dry-run is read-only and
   // matches the API's finance:view guard (E1 pattern, #1934 review).
   const canEdit = useAdminAreaEditAccess("finance");
@@ -323,7 +326,7 @@ export default function XeroMemberGroupingPage() {
         <span className="font-medium">Last synced:</span>
         <span className="text-muted-foreground">
           {config.lastRefreshedAt
-            ? formatNZDateTime(new Date(config.lastRefreshedAt))
+            ? clubTime.instantDateTime(requireInstant(config.lastRefreshedAt))
             : "never — refresh from Xero to populate the contact-group cache"}
         </span>
       </div>

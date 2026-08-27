@@ -45,10 +45,6 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
-
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { GET as getSubscriptions } from "@/app/api/admin/subscriptions/route";
@@ -803,7 +799,11 @@ describe("Admin Audit Log API", () => {
       (clause: any) => Boolean(clause.createdAt)
     );
     expect(dateWhere.createdAt.gte).toEqual(new Date("2026-03-31T11:00:00.000Z"));
-    expect(dateWhere.createdAt.lte).toEqual(new Date("2026-04-30T11:59:59.999Z"));
+    // #3123: the upper bound is HALF-OPEN — `lt` against the next club
+    // midnight rather than `lte` against the day's last millisecond. Postgres
+    // keeps microseconds, so the inclusive form could drop a row written in
+    // that final millisecond.
+    expect(dateWhere.createdAt.lt).toEqual(new Date("2026-04-30T12:00:00.000Z"));
   });
 
   it("filters by category, outcome, severity, entity, and text search", async () => {

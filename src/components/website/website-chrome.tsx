@@ -1,4 +1,5 @@
 import { AnalyticsConsent } from "@/components/analytics-consent";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { HelpWidgetPublic } from "@/components/help-widget/help-widget-public";
 import { SiteBanners } from "@/components/site-banners";
 import { WebsiteHeader } from "@/components/website-header";
@@ -11,6 +12,7 @@ import {
   getCachedClubIdentity,
   getCachedWebsiteThemeRenderState,
 } from "@/lib/public-layout-config";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { getCurrentSiteBanners } from "@/lib/site-banners";
 import { SETUP_IN_PROGRESS_COPY } from "@/lib/setup-in-progress-screen";
 
@@ -95,13 +97,22 @@ export async function WebsiteChrome({
   nonce: string | undefined;
   children: React.ReactNode;
 }) {
-  const [theme, siteBanners, modules] = await Promise.all([
+  const [theme, siteBanners, modules, clubZone] = await Promise.all([
     // Tagged cache wrapper, matching (public)/layout.tsx (#2322): this read used
     // to hit ClubTheme on every request. The `public-layout:theme` tag is
     // revalidated on theme save by the admin/site-style PUT.
     getCachedWebsiteThemeRenderState(),
     getCurrentSiteBanners(),
     loadEffectiveModuleFlags(),
+    // CT-4 (#2870): the club's PERSISTED timezone, so the public site's client
+    // components can render an instant in club time without asking the viewer's
+    // browser what time it is (INV-CONFIG-002). Read alongside the others rather
+    // than sequenced after them - it is one primary-key read of a one-row table
+    // and this component already performs three. It never throws: an absent row
+    // or an unreachable database falls through to the environment seed and then
+    // to the documented default, which is the same judgement every other reader
+    // of this setting makes.
+    clubTimeZone(),
     // NOTE: the club identity is NOT fetched here. It is used only by the
     // pre-setup branch below, which since #2420 is a rare fallback rather than
     // the pre-setup norm, so it is resolved inside that branch — the same
@@ -165,57 +176,76 @@ export async function WebsiteChrome({
       getCachedClubIdentity(),
     ]);
     return (
-      <div
-        className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
-      >
-        {themeStyle}
-        <main className="flex min-h-screen items-center justify-center px-4 py-16">
-          <section className="mx-auto max-w-2xl text-center">
-            <p className="website-eyebrow mb-4">
-              {SETUP_IN_PROGRESS_COPY.eyebrow}
-            </p>
-            <h1 className="font-heading text-4xl font-bold text-brand-charcoal sm:text-5xl">
-              {SETUP_IN_PROGRESS_COPY.heading(clubIdentity.name)}
-            </h1>
-            <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-brand-deep/80 sm:text-lg">
-              {SETUP_IN_PROGRESS_COPY.body}
-            </p>
-            <p className="mt-6 text-sm text-brand-ridge">
-              {SETUP_IN_PROGRESS_COPY.contactPrefix}{" "}
-              <a
-                href={`mailto:${contactEmail}`}
-                className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
-              >
-                {contactEmail}
-              </a>
-            </p>
-          </section>
-        </main>
-      </div>
+      <ClubTimeProvider zone={clubZone}>
+        <div
+          className={`${clubThemeFontVariableClassName} website-theme min-h-screen bg-background text-foreground`}
+        >
+          {themeStyle}
+          <main className="flex min-h-screen items-center justify-center px-4 py-16">
+            <section className="mx-auto max-w-2xl text-center">
+              <p className="website-eyebrow mb-4">
+                {SETUP_IN_PROGRESS_COPY.eyebrow}
+              </p>
+              <h1 className="font-heading text-4xl font-bold text-brand-charcoal sm:text-5xl">
+                {SETUP_IN_PROGRESS_COPY.heading(clubIdentity.name)}
+              </h1>
+              <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-brand-deep/80 sm:text-lg">
+                {SETUP_IN_PROGRESS_COPY.body}
+              </p>
+              <p className="mt-6 text-sm text-brand-ridge">
+                {SETUP_IN_PROGRESS_COPY.contactPrefix}{" "}
+                <a
+                  href={`mailto:${contactEmail}`}
+                  className="font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4"
+                >
+                  {contactEmail}
+                </a>
+              </p>
+            </section>
+          </main>
+        </div>
+      </ClubTimeProvider>
     );
   }
 
+  /**
+   * CT-4 (#2870), epic #2988. One of the epic's two client-boundary mount points:
+   * this component is composed by BOTH public route-group layouts, so wrapping
+   * here is what puts the club's zone in reach of every `"use client"` component
+   * on the public website - the ski-field conditions stamp, the site banners, the
+   * footer - without either layout changing. `AppProviders` covers the other five
+   * route groups, and `club-time-provider-mount-census.test.tsx` fails if a group
+   * ever appears that neither covers. See `club-time-provider.tsx` for why the
+   * hook throws rather than falling back to a plausible wrong zone.
+   *
+   * BOTH RETURNS ARE WRAPPED, including the pre-setup holding screen above. That
+   * screen renders no timestamp today, but the guarantee the census enforces is
+   * "every page has a provider" rather than "every page that currently needs
+   * one", and a conditional guarantee is the kind that stops holding quietly.
+   */
   return (
-    <div
-      className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
-    >
-      {themeStyle}
-      <a
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
-        href="#main-content"
+    <ClubTimeProvider zone={clubZone}>
+      <div
+        className={`${clubThemeFontVariableClassName} website-theme min-h-screen flex flex-col bg-background text-foreground`}
       >
-        Skip to main content
-      </a>
-      <SiteBanners banners={siteBanners} />
-      <WebsiteHeader logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
-      <main className="flex-1" id="main-content">
-        {children}
-      </main>
-      <WebsiteFooter logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
-      <AnalyticsConsent config={analyticsConfig} nonce={nonce} />
-      {/* Public help widget: hardcoded llmEnabled=false; hides itself while the
-          AnalyticsConsent banner occupies the same bottom corner. */}
-      <HelpWidgetPublic />
-    </div>
+        {themeStyle}
+        <a
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:ring-2 focus:ring-ring"
+          href="#main-content"
+        >
+          Skip to main content
+        </a>
+        <SiteBanners banners={siteBanners} />
+        <WebsiteHeader logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
+        <main className="flex-1" id="main-content">
+          {children}
+        </main>
+        <WebsiteFooter logoUrl={theme.logoUrl} logoDataUrl={theme.logoDataUrl} />
+        <AnalyticsConsent config={analyticsConfig} nonce={nonce} />
+        {/* Public help widget: hardcoded llmEnabled=false; hides itself while the
+            AnalyticsConsent banner occupies the same bottom corner. */}
+        <HelpWidgetPublic />
+      </div>
+    </ClubTimeProvider>
   );
 }

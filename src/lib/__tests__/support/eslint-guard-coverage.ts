@@ -80,7 +80,6 @@ export const PRODUCTION_GUARD_ROSTER: readonly GuardRosterEntry[] = [
   { file: "scripts/x.ts", why: "an operator script / money backfill" },
   { file: "prisma/seed-x.ts", why: "a seed or migration helper" },
   // --- the narrowed blocks: an exemption from one guard must not lift another -
-  { file: "src/lib/nzst-date.ts", why: "the NZ date helper — exempt from the DATE rules only" },
   { file: "src/lib/date-only.ts", why: "the date-only helper — exempt from the DATE rules only" },
   {
     file: "src/lib/email-templates/chores.ts",

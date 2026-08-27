@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
-import { DATE_ONLY_IN_DATETIME_COLUMN } from "@/lib/__tests__/support/date-only-reviewed-fields";
+import {
+  DATE_ONLY_COLUMN_FIELDS,
+  DATE_ONLY_IN_DATETIME_COLUMN,
+} from "@/lib/__tests__/support/date-only-reviewed-fields";
 import {
   formatMergeFieldValue,
   mergeFieldValueKind,
@@ -89,6 +92,14 @@ const CALENDAR_DAY_STRING = "1985-06-15";
 // the two operations stop agreeing, and the only place the calendar-day
 // assertions become decidable.
 const ZONE_BEHIND_UTC = "America/New_York";
+/**
+ * The club's own zone, named rather than left to `formatDateOnlyForTimeZone`'s
+ * `APP_TIME_ZONE` default, which #3123 deletes. It is New Zealand because that
+ * is this file's premise, and `expectClubTimeZonePremise()` below asserts the
+ * environment still agrees — so this constant cannot drift out of step and leave
+ * the divergence cases measuring nothing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 describe("#2860 the premise: the club zone is New Zealand and each instant really is divergent", () => {
   it("runs with the club time zone actually set to New Zealand", () => {
@@ -103,7 +114,7 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
       // than asserted against each other as literals, so a fixture that drifted
       // out of the divergence window fails here instead of quietly passing.
       expect(instant.toISOString().slice(0, 10)).toBe(utcDay);
-      expect(formatDateOnlyForTimeZone(instant)).toBe(clubDay);
+      expect(formatDateOnlyForTimeZone(instant, CLUB_ZONE)).toBe(clubDay);
     },
   );
 
@@ -117,7 +128,9 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
   it.each(CLUB_DAY_CASES)(
     "$label: one millisecond earlier is still the previous club day, and a DEEPER zone gets that wrong",
     ({ justBefore, justBeforeClubDay, clubDay, deeperZone }) => {
-      expect(formatDateOnlyForTimeZone(justBefore)).toBe(justBeforeClubDay);
+      expect(formatDateOnlyForTimeZone(justBefore, CLUB_ZONE)).toBe(
+        justBeforeClubDay,
+      );
       // UTC+14 has already rolled over, so the pair brackets the club offset
       // from both sides rather than only proving "deep enough".
       expect(formatDateOnlyForTimeZone(justBefore, deeperZone)).toBe(clubDay);
@@ -128,7 +141,9 @@ describe("#2860 the premise: the club zone is New Zealand and each instant reall
 describe("#2860 the other half of the premise: a calendar day is read by TRUNCATION, which is a DIFFERENT operation", () => {
   it("agrees with the club-zone formatter in New Zealand, which is exactly why an NZ-only assertion cannot decide it", () => {
     expect(formatDateOnly(CALENDAR_DAY)).toBe(CALENDAR_DAY_STRING);
-    expect(formatDateOnlyForTimeZone(CALENDAR_DAY)).toBe(CALENDAR_DAY_STRING);
+    expect(formatDateOnlyForTimeZone(CALENDAR_DAY, CLUB_ZONE)).toBe(
+      CALENDAR_DAY_STRING,
+    );
   });
 
   it("disagrees in a zone BEHIND UTC — the club-zone formatter would move a stored calendar day a day early", () => {
@@ -284,39 +299,129 @@ describe("#2860 the classification agrees with #2684's reviewed record of the sa
     ([, kind]) => kind !== "plain",
   );
 
+  /*
+    #2872 WIDENED WHAT COUNTS AS "REVIEWED", AND IT IS NOW USUALLY THE SCHEMA.
+    A column holds a calendar day either because the database says so
+    (`@db.Date`) or because a reviewed exception says so despite the column type.
+    Since CT-3 migrated all ten of #2684's entries, the reviewed record is empty
+    and every calendar day on this screen is settled by the schema — so the
+    binding has to consult BOTH, or it would fail on exactly the fields the
+    migration made structurally correct.
+  */
+  /*
+    `Object.hasOwn`, NOT `in`. Now that the reviewed record is empty, `in` would
+    make that disjunct a pure PROTOTYPE CHANNEL: `constructor`, `toString`,
+    `valueOf`, `hasOwnProperty` and `__proto__` are all `in` an ordinary object
+    literal, so a merged field with one of those names would be classified as a
+    reviewed calendar day by a list that reviewed nothing. The record itself also
+    carries a null prototype now, which closes the same hole for #2684's guard,
+    which asks the question its own way and lives in a file this lane may not
+    edit. Two independent defences, and the test below pins both.
+  */
+  const reviewedOrStructural = (field: string) =>
+    Object.hasOwn(DATE_ONLY_IN_DATETIME_COLUMN, field) ||
+    DATE_ONLY_COLUMN_FIELDS.has(field);
+
   it("has some date-kinded fields to check", () => {
     // Vacuity guard: if every field became `plain`, both assertions below would
     // pass over an empty list.
     expect(dateKinds.length).toBeGreaterThan(0);
   });
 
-  it("records every calendar day it declares on #2684's reviewed list", () => {
+  it("can still see the schema's own date-only columns", () => {
+    // The second vacuity guard, and the one #2872 made necessary:
+    // DATE_ONLY_COLUMN_FIELDS is PARSED from prisma/schema.prisma, so a change
+    // to the schema's formatting could return an empty set and turn the
+    // calendar-day assertion below into a permanent failure — or, worse, turn
+    // the instant assertion into one that passes over nothing. Pin the
+    // archetype: `Booking.checkIn` is the lodge night this whole contract is
+    // named after.
+    expect(
+      DATE_ONLY_COLUMN_FIELDS.has("checkIn"),
+      "The @db.Date scan found no `checkIn`, so prisma/schema.prisma has " +
+        "stopped parsing and every classification below is meaningless.",
+    ).toBe(true);
+    /*
+      A FLOOR AT THE MEASURED COUNT, not at a token one. This was 15 against 31
+      real names, which tolerated losing half the set to a schema-format change
+      and still passing. A floor cannot be tripped by ADDING a `@db.Date` column
+      — the count only goes up — so pinning it at today's figure costs a future
+      lane nothing. Removing one does trip it, deliberately: a calendar-day
+      column leaving this set is exactly the change somebody should look at. If
+      that removal is right, move this number and say why in the pull request.
+    */
+    expect(
+      DATE_ONLY_COLUMN_FIELDS.size,
+      "Fewer `@db.Date` field names than the 31 measured when this floor was " +
+        "set. Either the schema scan has partially broken (which makes every " +
+        "classification below weaker without failing it), or a calendar-day " +
+        "column was narrowed back to a bare `DateTime` — say which, in the PR.",
+    ).toBeGreaterThanOrEqual(31);
+  });
+
+  it("does not read a reviewed exception off Object.prototype", () => {
+    /*
+      #2872 review. The reviewed record is EMPTY, so `field in record` had become
+      a pure prototype channel: every name below is `in` an ordinary object
+      literal, and a merged field carrying one would have been reported as a
+      reviewed calendar day — silently, by a list that reviews nothing. Both
+      defences are asserted here, because either alone would close it and the
+      point is that neither can be dropped unnoticed: this binding asks with
+      `Object.hasOwn`, and the record has a null prototype, which is what also
+      protects #2684's guard in a file this lane may not edit.
+    */
+    for (const inherited of [
+      "constructor",
+      "toString",
+      "valueOf",
+      "hasOwnProperty",
+      "__proto__",
+      "isPrototypeOf",
+    ]) {
+      expect(inherited in {}, `${inherited} is not an inherited key`).toBe(true);
+      expect(
+        reviewedOrStructural(inherited),
+        `${inherited} was treated as a reviewed calendar day`,
+      ).toBe(false);
+    }
+
+    expect(
+      Object.getPrototypeOf(DATE_ONLY_IN_DATETIME_COLUMN),
+      "DATE_ONLY_IN_DATETIME_COLUMN must have a null prototype: #2684's guard " +
+        "asks `field in` it and cannot use Object.hasOwn from here.",
+    ).toBeNull();
+  });
+
+  it("records every calendar day it declares as a date-only column, or on #2684's reviewed list", () => {
     const missing = dateKinds
       .filter(([, kind]) => kind === "calendarDay")
       .map(([field]) => field)
-      .filter((field) => !(field in DATE_ONLY_IN_DATETIME_COLUMN));
+      .filter((field) => !reviewedOrStructural(field));
 
     expect(
       missing,
       "This field is rendered by TRUNCATION on the merge screen, which is only " +
-        "correct for a column that holds a calendar day — but it is not on " +
-        "#2684's reviewed list in src/lib/__tests__/support/" +
-        "date-only-reviewed-fields.ts. Add it there WITH THE WRITE THAT PROVES " +
-        "IT, or classify it as an instant here (INV-DATE-019).",
+        "correct for a column that holds a calendar day — but the schema does " +
+        "not declare it `@db.Date` and it is not on #2684's reviewed list in " +
+        "src/lib/__tests__/support/date-only-reviewed-fields.ts. Narrow the " +
+        "column (that is what #2872 did to the other ten), add it to the " +
+        "reviewed list WITH THE WRITE THAT PROVES IT, or classify it as an " +
+        "instant here (INV-DATE-019).",
     ).toEqual([]);
   });
 
-  it("declares no instant that #2684 reviewed as a calendar day", () => {
+  it("declares no instant that the schema or #2684 treats as a calendar day", () => {
     const contradictory = dateKinds
       .filter(([, kind]) => kind === "instant")
       .map(([field]) => field)
-      .filter((field) => field in DATE_ONLY_IN_DATETIME_COLUMN);
+      .filter(reviewedOrStructural);
 
     expect(
       contradictory,
-      "Two guards now disagree about what this column means: it is an instant " +
-        "here and a reviewed calendar day on #2684's list. One of them is wrong, " +
-        "and whichever it is, some surface is showing a date a day early.",
+      "Two records now disagree about what this column means: it is an instant " +
+        "here and a calendar day in prisma/schema.prisma or on #2684's list. " +
+        "One of them is wrong, and whichever it is, some surface is showing a " +
+        "date a day early.",
     ).toEqual([]);
   });
 });

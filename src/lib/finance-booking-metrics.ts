@@ -11,7 +11,9 @@ import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
-import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { type CalendarDate } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
+import { formatDateOnly } from "@/lib/date-only";
 import {
   OPERATIONAL_STAY_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
@@ -442,22 +444,6 @@ function maxDateFromList(values: Date[]): Date {
   return values.reduce((currentMax, value) => maxDate(currentMax, value));
 }
 
-/**
- * Today's date in the CLUB's time zone (#2682).
- *
- * This is the default `asOfDate` — the cut-off deciding which stays count as
- * realised. New Zealand runs 12-13 hours ahead of UTC, so a UTC "today" is
- * still yesterday in New Zealand for roughly the first half of every NZ day:
- * anyone reconciling in the morning would see a different day's figures than
- * they would that afternoon, with no input having changed.
- * `todayDateOnlyForTimeZone` is the canonical answer
- * (`src/lib/date-only.ts`; `INV-DATE-019`,
- * `docs/invariants/booking-dates-and-capacity.md`).
- */
-function getCurrentIsoDate(): string {
-  return todayDateOnlyForTimeZone();
-}
-
 function normalizeRealizedWindow(
   input: FinanceRealizedStayMetricsQuery
 ): NormalizedRealizedWindow {
@@ -482,11 +468,26 @@ function normalizeRealizedWindow(
   };
 }
 
+/**
+ * `todayAtClub` is the default `asOfDate` — the cut-off deciding which stays
+ * count as forward-booked rather than realised.
+ *
+ * It used to be read here from `todayDateOnlyForTimeZone()`, which answers from
+ * the CONTAINER's timezone rather than the club's persisted one (#3123,
+ * `INV-CONFIG-002`). A club whose configured zone differs from its deployment's
+ * would split one day's stays across the realised/forward boundary depending
+ * on which side of the container's midnight the report ran — the same
+ * "different figures with no input changed" complaint #2682 fixed from the UTC
+ * side. This helper is pure and sync, so the day is resolved once in
+ * `getFinanceBookingMetrics` and passed down (`INV-DATE-019`,
+ * `docs/invariants/booking-dates-and-capacity.md`).
+ */
 function normalizeForwardWindow(
-  input: FinanceForwardBookingMetricsQuery
+  input: FinanceForwardBookingMetricsQuery,
+  todayAtClub: CalendarDate,
 ): NormalizedForwardWindow {
   const base = normalizeDateWindow(input, "forward");
-  const asOfDate = input.asOfDate ?? getCurrentIsoDate();
+  const asOfDate = input.asOfDate ?? todayAtClub;
   const asOf = parseIsoDate(asOfDate, "forward.asOfDate");
   const effectiveFromDate = maxDate(base.fromDate, addUtcDays(asOf, 1));
   const hasEffectiveWindow =
@@ -1199,8 +1200,11 @@ export async function getFinanceBookingMetrics(
   const realizedWindow = query.realized
     ? normalizeRealizedWindow(query.realized)
     : null;
+  // ONE read of the club's persisted timezone and ONE clock read for this
+  // report (#3123). `club-time/server` rather than the CLI-safe reader: nothing
+  // outside a React request reaches this module, so the memo is free.
   const forwardWindow = query.forward
-    ? normalizeForwardWindow(query.forward)
+    ? normalizeForwardWindow(query.forward, (await clubTime()).today())
     : null;
 
   const activeWindows = [

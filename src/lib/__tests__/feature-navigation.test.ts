@@ -9,11 +9,18 @@ import { getNavBarLinks } from "@/components/nav-bar";
 import { buildBookingRequestsHref } from "@/lib/admin-booking-requests-path";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
+import { requireCalendarDate } from "@/lib/club-time";
 
 // All modules on; derived so it covers every module key without drifting.
 const allOn: FeatureFlags = Object.fromEntries(
   MODULE_KEYS.map((key) => [key, true]),
 ) as FeatureFlags;
+
+/**
+ * #3123 — the club's day, first and REQUIRED on the nav exports. Nothing in this
+ * file asserts on the one dated href, so one fixed day serves every call.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
 
 /**
  * Every `/admin/**` page on disk, from whichever route group it lives in.
@@ -92,7 +99,7 @@ describe("feature-aware navigation", () => {
   });
 
   it("hides disabled effective admin sidebar items", () => {
-    const items = getVisibleAdminNavSections({
+    const items = getVisibleAdminNavSections(CLUB_DAY, {
       ...allOn,
       bedAllocation: false,
       chores: false,
@@ -115,7 +122,7 @@ describe("feature-aware navigation", () => {
   });
 
   it("keeps feature-gated setup entries behind the same route visibility rules", () => {
-    const items = getVisibleAdminNavSections({
+    const items = getVisibleAdminNavSections(CLUB_DAY, {
       ...allOn,
       chores: false,
       skifieldConditions: false,
@@ -131,7 +138,7 @@ describe("feature-aware navigation", () => {
   });
 
   it("links booking request navigation to the combined request page", () => {
-    const item = getVisibleAdminNavSections(allOn)
+    const item = getVisibleAdminNavSections(CLUB_DAY, allOn)
       .flatMap((section) => section.items)
       .find((navItem) => navItem.label === "Booking Requests");
 
@@ -139,13 +146,13 @@ describe("feature-aware navigation", () => {
   });
 
   it("only renders Needs Attention links for queues with pending counts", () => {
-    const noPending = getRenderedAdminNavSections(allOn, {});
+    const noPending = getRenderedAdminNavSections(CLUB_DAY, allOn, {});
 
     expect(noPending.map((section) => section.label)).not.toContain(
       "Needs Attention",
     );
 
-    const withPending = getRenderedAdminNavSections(allOn, {
+    const withPending = getRenderedAdminNavSections(CLUB_DAY, allOn, {
       "/admin/booking-requests": 2,
       "/admin/family-groups": 3,
       "/admin/issue-reports": 1,
@@ -165,7 +172,7 @@ describe("feature-aware navigation", () => {
 
   it("links only to public admin routes that exist", () => {
     const routeSet = collectAdminPageRoutes();
-    const navHrefs = getVisibleAdminNavSections(allOn).flatMap((section) =>
+    const navHrefs = getVisibleAdminNavSections(CLUB_DAY, allOn).flatMap((section) =>
       section.items.map((item) => item.href),
     );
 

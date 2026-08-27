@@ -20,8 +20,13 @@ import {
   formatDateOnly,
   isDateOnlyString,
   parseDateOnly,
-  startOfDateOnlyForTimeZone,
 } from "@/lib/date-only";
+import {
+  requireCalendarDate,
+  startOfClubDay,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
 /**
  * The club calendar day after `day`, as `yyyy-MM-dd`.
@@ -75,8 +80,18 @@ function nextDateOnly(day: string): string {
  * omitted, giving a half-open sweep; a day that is PRESENT but not a real
  * calendar day is refused rather than dropped, because "not supplied" and
  * "supplied wrongly" must not mean the same thing on a tool that can `--apply`.
+ *
+ * CT-5 (#2869) changed one thing and nothing else: the club day the instant
+ * arms start at is now the PERSISTED club timezone rather than `APP_TIME_ZONE`,
+ * which was `process.env.TZ`. The operator naming two days means the club's
+ * days, so which container the repair happens to run in must not move the
+ * window (`INV-CONFIG-002`). The `checkIn` arm still takes the date-only value
+ * and takes no zone at all, for exactly the reason above.
  */
-function buildScopeWhere(scope: BookingXeroRepairScope): Prisma.BookingWhereInput {
+function buildScopeWhere(
+  scope: BookingXeroRepairScope,
+  clubTimeZone: ClubTimeZone,
+): Prisma.BookingWhereInput {
   const and: Prisma.BookingWhereInput[] = [];
 
   if (scope.bookingId) {
@@ -99,8 +114,12 @@ function buildScopeWhere(scope: BookingXeroRepairScope): Prisma.BookingWhereInpu
       ...(dayAfterTo ? { lt: parseDateOnly(dayAfterTo) } : {}),
     };
     const instantRange = {
-      ...(fromDay ? { gte: startOfDateOnlyForTimeZone(fromDay) } : {}),
-      ...(dayAfterTo ? { lt: startOfDateOnlyForTimeZone(dayAfterTo) } : {}),
+      ...(fromDay
+        ? { gte: startOfClubDay(requireCalendarDate(fromDay), clubTimeZone) }
+        : {}),
+      ...(dayAfterTo
+        ? { lt: startOfClubDay(requireCalendarDate(dayAfterTo), clubTimeZone) }
+        : {}),
     };
 
     and.push({
@@ -131,7 +150,7 @@ export async function loadAuditData(
   deps: RepairDependencies
 ) {
   const bookings = await deps.prisma.booking.findMany({
-    where: buildScopeWhere(scope),
+    where: buildScopeWhere(scope, await readClubTimeZoneOutsideRequest()),
     select: bookingRepairSelect,
     orderBy: [
       { createdAt: "asc" },

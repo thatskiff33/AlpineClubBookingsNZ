@@ -1,7 +1,5 @@
-import {
-  normalizeDateOnlyForTimeZone,
-  parseDateOnly,
-} from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   normalizeGuestStayRange,
   type NormalizedBookingGuestStayRange,
@@ -126,6 +124,43 @@ function toDate(value: Date | string | null | undefined, fallback: Date): Date {
   return fallback;
 }
 
+/**
+ * A guest's STORED range, as the calendar days the `@db.Date` columns hold.
+ *
+ * CT-4 (#2870), and this line is one half of a cross-file FRAME PAIR — read the
+ * next paragraph before changing it. `normalizeDateOnlyForTimeZone`, which this
+ * replaces, projected the stored value through `APP_TIME_ZONE` first: the
+ * identity for a club ahead of Greenwich, the PREVIOUS day for one behind it.
+ *
+ * Two callers depend on this agreeing with how they decoded the same columns
+ * themselves, and both now decode in UTC:
+ *
+ *  - `/api/bookings/[id]/modify-quote` compares its own `storedDateOnly(...)`
+ *    of `guest.stayStart` against the range this returns to decide whether the
+ *    member changed anything. One projected side made `guestRangesChanged` true
+ *    for a delta that moved no dates, and then priced a window one night from
+ *    the one it compared against — a date-change charge for no date change.
+ *  - `buildModificationProposalParties` builds the frozen policy-exception BASE
+ *    party from the values its caller passes in and the PROPOSED party from
+ *    this, so a projection here alone shifted the proposal a day off its own
+ *    base, and `verifyLiveProposalIntegrity` then read the pair as drift.
+ *
+ * Both consequences are invisible on a deployment at or ahead of UTC, which is
+ * why they survived: `Pacific/Auckland` makes the projection the identity.
+ *
+ * THE SIBLING PATH IS NOW CONVERGED TOO (group F4b). This docblock used to warn
+ * that `normalizeGuestStayRange` in `booking-guest-stay-range-input.ts` still
+ * projected, and that one of those sites was reachable from here: the `added`
+ * map below normalises every ADDED guest through it, so one carrying no range of
+ * their own was defaulted from the envelope a night early on a club behind
+ * Greenwich. Worse, the two passes below then disagreed with each other — pass 1
+ * defaults that same guest to `{ requestedCheckIn, requestedCheckOut }`
+ * unprojected, so the guest's resolved range could fall a night OUTSIDE the
+ * envelope the same call returned. F4b read those two calls as stored calendar
+ * days; `__tests__/booking-range-less-guest-frame.test.ts` pins it on the
+ * environment and the host axis. Measured under `America/Denver`, correcting
+ * this line took the resolver's own suites from 32 failures to 28.
+ */
 function storedRange(
   guest: LiveGuestStayRow,
   booking: { checkIn: Date; checkOut: Date },
@@ -135,8 +170,8 @@ function storedRange(
       ? guest.nights.map((night) => night.stayDate)
       : undefined;
   return {
-    stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
-    stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+    stayStart: storedDateOnly(guest.stayStart ?? booking.checkIn),
+    stayEnd: storedDateOnly(guest.stayEnd ?? booking.checkOut),
     ...(nights ? { nights } : {}),
   };
 }

@@ -3,7 +3,8 @@ import {
   buildInitialRequestNotificationParents,
   buildInitialRequestSelections,
   buildSharedEmailClusters,
-  formatFamilyGroupDate,
+  formatFamilyGroupCalendarDay,
+  formatFamilyGroupInstantDate,
   getFamilyGroupRequestSummary,
   getFamilyGroupRequestTypeLabel,
   mapFamilyGroupRequestSearchResults,
@@ -11,6 +12,7 @@ import {
   type FamilyGroupMemberRow,
   type FamilyGroupRequest,
 } from "@/lib/admin-family-group-ui-helpers";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 
 const baseRequest: FamilyGroupRequest = {
@@ -246,16 +248,34 @@ describe("admin-family-group-ui-helpers", () => {
   });
 });
 
-// #2256: formatFamilyGroupDate used to be a bare `toLocaleDateString()` — no
-// locale, no time zone — so the six family-group surfaces that render through
-// it (request "Requested" stamps, dates of birth on the review card) showed
-// "4/16/2026" to a US-locale admin and could show the wrong calendar day to any
-// admin whose machine sat behind New Zealand. These cases pin both halves:
-// the rendered format, and independence from the runtime's own zone.
-describe("formatFamilyGroupDate (#2256)", () => {
-  // 2026-04-15T23:30:00Z is 2026-04-16 11:30 in Pacific/Auckland, so the NZ
-  // calendar date differs from the UTC one at this instant.
-  const INSTANT = "2026-04-15T23:30:00.000Z";
+/*
+  ONE HELPER BECAME TWO, and these two blocks are why (CT-4, #2870).
+
+  #2256: `formatFamilyGroupDate` was a bare `toLocaleDateString()` — no locale,
+  no time zone — so the six family-group surfaces that render through it showed
+  "4/16/2026" to a US-locale admin and could show the wrong calendar day to any
+  admin whose machine sat behind New Zealand. That fix pinned `APP_TIME_ZONE`
+  for all of them, which is right for a request's `createdAt` and wrong for a
+  date of birth: a calendar day has no timezone, and projecting the UTC-midnight
+  encoding of one through a zone behind Greenwich names the day before.
+
+  So there are now two helpers with two contracts, and the tests are split the
+  same way. Both keep the "Not provided" placeholder and the never-throw
+  contract: these values arrive over `fetch` with no runtime schema check and
+  render inside a reviewer's queue, where a `RangeError` reaches the nearest
+  error boundary and blanks the whole screen.
+
+  WHAT THIS FILE CAN AND CANNOT SEE. `APP_TIME_ZONE` resolves to
+  `Pacific/Auckland` under test, which is AHEAD of Greenwich — so projecting a
+  UTC-midnight day through it lands on club midday, the SAME day, and a
+  calendar-day assertion here cannot tell a correct implementation from one that
+  projects through the CONFIGURED zone. `admin-calendar-day-helpers-west-of-utc.test.ts`
+  is the file that can: it mocks the config module to a zone behind Greenwich for
+  exactly that. What is checked below is the rendered shape, both spellings a
+  `@db.Date` column reaches a browser in, independence from the HOST's own zone,
+  and the placeholder contract.
+*/
+describe("formatFamilyGroupCalendarDay — a date of birth, with no zone", () => {
   const hostTimeZone = captureHostTimeZone();
 
   afterEach(() => {
@@ -265,33 +285,110 @@ describe("formatFamilyGroupDate (#2256)", () => {
     hostTimeZone.restore();
   });
 
-  it("renders the NZ calendar date in the app's standard medium format", () => {
-    expect(formatFamilyGroupDate(INSTANT)).toBe("16 Apr 2026");
+  it("renders a bare yyyy-MM-dd day in the app's standard medium format", () => {
+    expect(formatFamilyGroupCalendarDay("2018-01-01")).toBe("1 Jan 2018");
+    expect(formatFamilyGroupCalendarDay("2014-08-28")).toBe("28 Aug 2014");
   });
 
-  it("renders a date-only value (a date of birth) as that same calendar day", () => {
-    expect(formatFamilyGroupDate("2018-01-01")).toBe("1 Jan 2018");
-    expect(formatFamilyGroupDate("2014-08-28")).toBe("28 Aug 2014");
+  it("renders the UTC-midnight spelling of the same day identically", () => {
+    // The two shapes a `@db.Date` column reaches the browser in: Prisma's
+    // serialised `Date`, and a bare day from a route that encoded it itself.
+    // Both name one civil day, so a caller must not have to know which it holds.
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+      "1 Jan 2018",
+    );
+    expect(formatFamilyGroupCalendarDay("2014-08-28T00:00:00.000Z")).toBe(
+      "28 Aug 2014",
+    );
   });
 
-  it("ignores the runtime's own time zone on both sides of the NZ date", () => {
-    // UTC is behind NZ (still 15 April at this instant) and Kiritimati is ahead
-    // of it (already 16 April, two hours later) — a formatter that leaned on the
-    // ambient zone could not answer "16 Apr 2026" to both.
-    process.env.TZ = "UTC";
-    expect(formatFamilyGroupDate(INSTANT)).toBe("16 Apr 2026");
+  it("ignores the HOST's time zone on both sides of the stored day", () => {
+    // The mutant this kills is a formatter that dropped its `timeZone: "UTC"`
+    // pin and so reads whatever the process resolves. New York is behind
+    // Greenwich, where the UTC-midnight encoding reads as the PREVIOUS evening,
+    // and Kiritimati is far ahead of it — no host-reading formatter answers
+    // "1 Jan 2018" to both.
     process.env.TZ = "America/New_York";
-    expect(formatFamilyGroupDate(INSTANT)).toBe("16 Apr 2026");
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+      "1 Jan 2018",
+    );
     process.env.TZ = "Pacific/Kiritimati";
-    expect(formatFamilyGroupDate(INSTANT)).toBe("16 Apr 2026");
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+      "1 Jan 2018",
+    );
+    process.env.TZ = "UTC";
+    expect(formatFamilyGroupCalendarDay("2018-01-01T00:00:00.000Z")).toBe(
+      "1 Jan 2018",
+    );
   });
 
   it("keeps the placeholder for missing values and never throws on a bad one", () => {
-    expect(formatFamilyGroupDate(null)).toBe("Not provided");
-    expect(formatFamilyGroupDate(undefined)).toBe("Not provided");
-    expect(formatFamilyGroupDate("")).toBe("Not provided");
-    // Intl.DateTimeFormat throws RangeError on an invalid Date, which would
+    expect(formatFamilyGroupCalendarDay(null)).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay(undefined)).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("")).toBe("Not provided");
+    // `Intl.DateTimeFormat` throws RangeError on an invalid Date, which would
     // take the whole request-review card down; the guard degrades instead.
-    expect(formatFamilyGroupDate("not-a-date")).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("not-a-date")).toBe("Not provided");
+    // A day that does not exist. Neither branch rolls it forward to 1 March:
+    // the bare decoder refuses it, and the instant decoder refuses an ISO
+    // string whose date part is not a real day.
+    expect(formatFamilyGroupCalendarDay("2026-02-30")).toBe("Not provided");
+    expect(formatFamilyGroupCalendarDay("2026-02-30T00:00:00.000Z")).toBe(
+      "Not provided",
+    );
+    // A timestamp with NO offset names a wall-clock reading in whichever zone
+    // happens to be reading it, which is the one thing neither decoder accepts.
+    expect(formatFamilyGroupCalendarDay("2018-01-01T13:45:00")).toBe(
+      "Not provided",
+    );
+  });
+});
+
+describe("formatFamilyGroupInstantDate — a Requested stamp, in the club's zone", () => {
+  // 23:30 UTC on 15 April is 11:30 on the 16th in Auckland and 17:30 on the
+  // 15th in Denver, so this one moment has two different civil dates to choose
+  // between and the choice is the thing under test.
+  const INSTANT = "2026-04-15T23:30:00.000Z";
+  const denver = bindClubTime(requireClubTimeZone("America/Denver"));
+  const auckland = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
+  const hostTimeZone = captureHostTimeZone();
+
+  afterEach(() => {
+    hostTimeZone.restore();
+  });
+
+  it("dates the instant in the BOUND zone, not in one zone for everybody", () => {
+    // The literals are hand-written rather than recomputed through the kernel,
+    // so a kernel defect cannot agree with itself here. A helper that ignored
+    // its binding could not answer both.
+    expect(formatFamilyGroupInstantDate(auckland, INSTANT)).toBe("16 Apr 2026");
+    expect(formatFamilyGroupInstantDate(denver, INSTANT)).toBe("15 Apr 2026");
+  });
+
+  it("ignores the host's time zone, on either side of the club's day", () => {
+    process.env.TZ = "Pacific/Kiritimati";
+    expect(formatFamilyGroupInstantDate(denver, INSTANT)).toBe("15 Apr 2026");
+    process.env.TZ = "America/New_York";
+    expect(formatFamilyGroupInstantDate(auckland, INSTANT)).toBe("16 Apr 2026");
+  });
+
+  it("keeps the placeholder for missing values and never throws on a bad one", () => {
+    expect(formatFamilyGroupInstantDate(auckland, null)).toBe("Not provided");
+    expect(formatFamilyGroupInstantDate(auckland, undefined)).toBe(
+      "Not provided",
+    );
+    expect(formatFamilyGroupInstantDate(auckland, "")).toBe("Not provided");
+    expect(formatFamilyGroupInstantDate(auckland, "not-a-date")).toBe(
+      "Not provided",
+    );
+    // An offset-free timestamp, and a bare calendar day, are both refused
+    // rather than read in the reader's own zone. That refusal IS the contract:
+    // this helper only ever renders a value that names a real moment.
+    expect(formatFamilyGroupInstantDate(auckland, "2026-04-15T23:30:00")).toBe(
+      "Not provided",
+    );
+    expect(formatFamilyGroupInstantDate(auckland, "2026-04-16")).toBe(
+      "Not provided",
+    );
   });
 });

@@ -13,7 +13,10 @@ import {
   membershipCancellationBlockerHint,
   type MembershipCancellationBlocker,
 } from "@/lib/membership-cancellation-blocker-messages";
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 
 /**
  * Everything standing between this participant and an approval, in the server's
@@ -37,8 +40,17 @@ const CANCELLATION_SETTINGS_PATH = "/admin/membership-cancellation";
  */
 const PANEL_BLOCKER_LIMIT = 20;
 
+/**
+ * A blocker's dates are CALENDAR DAYS - a booking's `@db.Date` lodge nights and
+ * an invoice due date - so they take no timezone at all (CT-4, #2870;
+ * INV-DATE-010). The kernel's calendar-date formatter pins UTC over the
+ * UTC-midnight encoding, which makes the projection the identity.
+ *
+ * WHAT THIS REPLACES read the day through a zone: the same answer for a club
+ * east of Greenwich, the PREVIOUS DAY for any club west of it.
+ */
 function formatDateOnly(value: string) {
-  return formatNZDate(new Date(value));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 /** Stable list key across every blocker kind. */

@@ -30,6 +30,8 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseCalendarDate } from "@/lib/club-time";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   NOTICE_BODY_MAX_LENGTH,
@@ -77,24 +79,69 @@ interface NoticeEditorProps {
   notice?: AdminNoticeData;
 }
 
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours(),
-  )}:${pad(d.getMinutes())}`;
-}
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
-function localInputToIso(value: string): string | null {
-  if (!value) return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString();
+/**
+ * The notice-expiry field, read and written in CLUB WALL TIME (CT-4, #2870;
+ * epic #2988 rule 4; INV-CONFIG-002).
+ *
+ * WHAT THIS REPLACES USED THE BROWSER'S CLOCK IN BOTH DIRECTIONS.
+ * `d.getHours()` filled the `datetime-local` control from the ADMIN's zone and
+ * `new Date(value).toISOString()` parsed it back the same way, so an officer in
+ * London who typed 5pm stored 5pm London - 4am the next day at a New Zealand
+ * club - and an officer who then opened the same notice at the lodge saw a
+ * different time from the one their colleague had typed. A club expiry means
+ * five o'clock at the CLUB.
+ *
+ * The round trip is exact: `wallTimeOf` reads the instant's club-local clock
+ * face, and `atWallTime` turns a club-local clock face back into the instant.
+ *
+ * `nextExistingInstant` FOR A SKIPPED TIME, deliberately. On the morning a zone
+ * springs forward some wall times do not exist (`INV-DATE-025`), and the
+ * kernel's default is to throw - right for a job definition, wrong for a form,
+ * where it would blank the page instead of saving. The transition instant is the
+ * honest answer for "as soon as that time would have arrived".
+ */
+function useNoticeExpiryField() {
+  const clubTime = useClubTime();
+  return {
+    /**
+     * The club's zone, NAMED ON SCREEN beside the field.
+     *
+     * A `datetime-local` control is the one input in this tree that presents
+     * itself as the reader's own clock: the browser labels it that way, there is
+     * no zone in the widget, and every other date field here is a calendar day
+     * with no time at all. So an officer in London types 5pm meaning 5pm, and
+     * what is stored is 5pm at the club. That is the correct behaviour — a club
+     * expiry means five o'clock at the club — but silence about it is how a
+     * correct behaviour reads as a bug.
+     */
+    zone: clubTime.zone,
+    toInput(iso: string | null): string {
+      if (!iso) return "";
+      const instant = new Date(iso);
+      if (Number.isNaN(instant.getTime())) return "";
+      const wall = clubTime.wallTimeOf(instant);
+      return `${wall.date}T${pad2(wall.hour)}:${pad2(wall.minute)}`;
+    },
+    toIso(value: string): string | null {
+      const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(value);
+      if (!match) return null;
+      const day = parseCalendarDate(match[1]);
+      if (day === null) return null;
+      return clubTime
+        .atWallTime(
+          day,
+          { hour: Number(match[2]), minute: Number(match[3]) },
+          { skipped: "nextExistingInstant" },
+        )
+        .toISOString();
+    },
+  };
 }
 
 export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
+  const expiryField = useNoticeExpiryField();
   const router = useRouter();
   const canEdit = useAdminAreaEditAccess("membership");
 
@@ -110,7 +157,7 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
     notice?.financialMembersOnly ?? false,
   );
   const [expiresInput, setExpiresInput] = useState(
-    isoToLocalInput(notice?.expiresAt ?? null),
+    expiryField.toInput(notice?.expiresAt ?? null),
   );
   const [audiences, setAudiences] = useState<Audience[]>(
     notice?.audiences?.some((a) => a.kind === "ALL_MEMBERS") ||
@@ -177,7 +224,7 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
       pinned,
       requiresAcknowledgement,
       financialMembersOnly,
-      expiresAt: localInputToIso(expiresInput),
+      expiresAt: expiryField.toIso(expiresInput),
       audiences,
     };
     payload.bodyHtml = html;
@@ -332,8 +379,9 @@ export function NoticeEditor({ mode, notice }: NoticeEditorProps) {
                 onChange={(e) => setExpiresInput(e.target.value)}
               />
               <p className="mt-1 text-xs text-muted-foreground">
-                After this time the notice is hidden from members. Leave blank
-                for no expiry.
+                Times here are the club&apos;s ({expiryField.zone}), not your
+                own. After this time the notice is hidden from members. Leave
+                blank for no expiry.
               </p>
             </div>
 

@@ -19,6 +19,8 @@ import {
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
+import { clubTime, clubTodayDateOnlyInstant } from "@/lib/club-time/server";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
@@ -75,9 +77,9 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
@@ -115,7 +117,7 @@ import {
   assertProposedDateEditClearsXeroLockDate,
 } from "@/lib/xero-period-lock-guard";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -302,6 +304,19 @@ export async function modifyBookingDates({
     );
   }
 
+  // #3123 — the club's day, resolved BEFORE the transaction opens. The edit
+  // policy inside it is a pure synchronous classifier and takes the day as a
+  // value: resolving the club's persisted zone in there would be a
+  // `clubTimeSettings.findUnique` on a second pooled connection while the global
+  // cohort key and the lodge capacity key are both held (`INV-LOCK-004`).
+  //
+  // FOUR decisions inside the transaction read this ONE day: the edit policy's
+  // gate, the promotion's validity window, the late-notice change fee's two
+  // day-counts, and the reduction refund's settlement tier. The last three move
+  // money, and two todays on one date change would price it against itself.
+  const todayAtClub = (await clubTime()).today();
+  const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): a date change moves money (reduction
     // refund / additional charge) AND claims capacity for the new range, so it
@@ -371,6 +386,7 @@ export async function modifyBookingDates({
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       adminOverride,
+      today: clubTodayDateOnly,
     });
     if (!editPolicy.canModify) {
       throw new ApiError(
@@ -422,9 +438,15 @@ export async function modifyBookingDates({
       existingAssignmentDates.map((assignment) => assignment.date),
     );
 
+    // CT-4 (#2870), #3088: THE STORED DAY, NOT A ZONE PROJECTION OF IT. The
+    // preview twin — the `editPolicy.today` gate in `modify-quote/route.ts` —
+    // reads the REQUESTED day through `storedDateOnly` too, so a projection here
+    // alone quoted one window and refused another, a day apart, behind
+    // Greenwich. What `editPolicy.today` is — and is NOT — is stated once, at
+    // `getBookingEditPolicy`. Same reads in `booking-modify-validation.ts`.
     if (
       actor.role !== "ADMIN" &&
-      normalizeDateOnlyForTimeZone(newCheckIn) <= editPolicy.today
+      storedDateOnly(newCheckIn) <= editPolicy.today
     ) {
       throw new ApiError(
         "NZ today and earlier are locked for self-service changes",
@@ -525,7 +547,7 @@ export async function modifyBookingDates({
       // only the nights the new range adds price at current season rates.
       lockedNightPrices: lockedNightPricesForGuest(g),
     }));
-    const seasonYear = getSeasonYear(newCheckIn);
+    const seasonYear = seasonYearOfStoredDate(newCheckIn);
     await assertMembershipTypeBookingAllowed(tx, {
       ownerMemberId: booking.memberId,
       guests: guestsForPricing,
@@ -599,6 +621,10 @@ export async function modifyBookingDates({
       checkOut: newCheckOut,
       guests: guestsForMemberNightGuard,
       excludeBookingId: bookingId,
+      // The club day resolved before this transaction opened, threaded in
+      // rather than read under the locks (`INV-LOCK-004`). The same day the
+      // edit policy, the change fee and the settlement tier above use.
+      today: clubTodayDateOnly,
     });
 
     const newTotalPriceCents = priceBreakdown.totalPriceCents;
@@ -653,6 +679,8 @@ export async function modifyBookingDates({
           // #2390: a member moving their dates is never blocked by somebody
           // else's cap consumption, and never loses a discount they already had.
           capOverflow: "coverExisting",
+          // #3123 — resolved above, before this transaction opened.
+          todayAtClub,
         },
       );
 
@@ -692,11 +720,11 @@ export async function modifyBookingDates({
       newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
     if (checkInChanged) {
-      const now = new Date();
-      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId);
+      const policy = await loadCancellationPolicy(booking.checkIn, booking.lodgeId, tx);
       const feeResult = calculateChangeFee({
-        daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
-        daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
+        // #3123 — one club day for both operands.
+        daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+        daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
         originalFinalPriceCents: booking.finalPriceCents,
         policyRules: policy,
       });
@@ -714,6 +742,8 @@ export async function modifyBookingDates({
     const settlementOptions = await calculateModificationSettlementOptions({
       booking: booking as unknown as LoadedBookingForModify,
       netChargeCents,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
+      todayAtClub,
     });
     if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
       throw new ApiError(
@@ -744,10 +774,7 @@ export async function modifyBookingDates({
     let newStatus = booking.status;
 
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(
-        newCheckIn,
-        booking.lodgeId,
-      );
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,
@@ -1311,6 +1338,13 @@ export async function adminShiftBookingDates({
   // emailed about the change; absent means notify (no silent default).
   const notifyMember = input.notifyMember !== false;
 
+  // #3123 — the club's day, resolved BEFORE the transaction opens. The edit
+  // policy inside it is a pure synchronous classifier and takes the day as a
+  // value: resolving the club's persisted zone in there would be a
+  // `clubTimeSettings.findUnique` on a second pooled connection while the global
+  // cohort key and the lodge capacity key are both held (`INV-LOCK-004`).
+  const clubTodayDateOnly = await clubTodayDateOnlyInstant();
+
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
     // the new range and can move money (recalculate mode), so it takes BOTH
@@ -1357,6 +1391,7 @@ export async function adminShiftBookingDates({
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       adminOverride: true,
+      today: clubTodayDateOnly,
     });
     if (!editPolicy.canModify) {
       throw new ApiError(
@@ -1369,8 +1404,11 @@ export async function adminShiftBookingDates({
     // both bounds are normalised to UTC midnight first, so the delta and every
     // shift are DST-safe (addDaysDateOnly for shifting, never raw ms on unnorm-
     // alised Dates).
-    const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-    const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+    // The stored days, matching `buildShiftPreviewResponse` read for read — see
+    // the note at the self-service gate above. The night count, the delta and
+    // every translated guest row below all derive from these two.
+    const oldCheckIn = storedDateOnly(booking.checkIn);
+    const oldCheckOut = storedDateOnly(booking.checkOut);
     const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
 
     const providedCheckIn = input.checkIn ? parseDateOnly(input.checkIn) : null;
@@ -1437,19 +1475,10 @@ export async function adminShiftBookingDates({
     // the stay). Guests with no night rows keep envelope-only semantics.
     const translatedGuests = booking.guests.map((guest) => ({
       guest,
-      stayStart: addDaysDateOnly(
-        normalizeDateOnlyForTimeZone(guest.stayStart),
-        deltaDays,
-      ),
-      stayEnd: addDaysDateOnly(
-        normalizeDateOnlyForTimeZone(guest.stayEnd),
-        deltaDays,
-      ),
+      stayStart: addDaysDateOnly(storedDateOnly(guest.stayStart), deltaDays),
+      stayEnd: addDaysDateOnly(storedDateOnly(guest.stayEnd), deltaDays),
       nights: guest.nights.map((night) => ({
-        stayDate: addDaysDateOnly(
-          normalizeDateOnlyForTimeZone(night.stayDate),
-          deltaDays,
-        ),
+        stayDate: addDaysDateOnly(storedDateOnly(night.stayDate), deltaDays),
         priceCents: night.priceCents,
       })),
     }));
@@ -1511,6 +1540,9 @@ export async function adminShiftBookingDates({
       checkOut: newCheckOut,
       guests: capacityRangesForGuard,
       excludeBookingId: bookingId,
+      // Resolved before this transaction opened (`INV-LOCK-004`); the same day
+      // the shift's edit-policy gate reads.
+      today: clubTodayDateOnly,
     });
 
     // Writes: translate each guest's envelope and rebuild its night rows at the
@@ -1541,7 +1573,7 @@ export async function adminShiftBookingDates({
     let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
     let newStatus = booking.status;
     if (hasNonMembers) {
-      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId);
+      const holdPolicy = await getNonMemberHoldPolicy(newCheckIn, booking.lodgeId, tx);
       const holdDecision = calculateBookingHoldDecision({
         hasNonMembers,
         checkIn: newCheckIn,

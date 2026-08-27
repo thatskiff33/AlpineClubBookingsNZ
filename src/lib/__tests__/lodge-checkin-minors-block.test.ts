@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dateOnlyFromParts } from "@/lib/date-only";
 import { AdminReviewStatus } from "@prisma/client";
 import { ADULT_SUPERVISION_REVIEW_REASON } from "@/lib/booking-review";
 
@@ -70,8 +71,23 @@ const REVIEW_ALLOWED_FRAGMENT = {
   ],
 };
 
+/**
+ * A `@db.Date` calendar day, which round-trips as exactly UTC midnight.
+ *
+ * This used to be `new Date(y, m, d)` — HOST-LOCAL midnight, so on a UTC+12 host
+ * it produced noon UTC on the PREVIOUS day. PostgreSQL cannot keep a time in a
+ * `date` column, so the fixture described a row that cannot exist, and it read
+ * back correctly only while every reader projected it through the same host zone
+ * that undid the offset. A helper called `dateOnly` handing back a value carrying
+ * a time of day is the `INV-DATE-019` defect wearing the right name.
+ *
+ * Two lanes found this independently — #3107 through the stored-day decode and
+ * #3113 through the calendar-day formatter, which now refuses such a value
+ * outright. `dateOnlyFromParts` is preferred over `Date.UTC` because `Date.UTC`
+ * maps years 0-99 to 1900-1999, which a fixture helper must not do silently.
+ */
 function dateOnly(y: number, m: number, d: number) {
-  return new Date(y, m, d);
+  return dateOnlyFromParts(y, m, d);
 }
 
 describe("lodge check-in blocks a pending minors-only review (#1372)", () => {

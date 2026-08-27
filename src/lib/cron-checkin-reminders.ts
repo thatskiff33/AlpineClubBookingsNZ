@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { sendCheckinReminderEmail, shouldSendEmail } from "./email";
-import { addDaysDateOnly, getTodayDateOnly } from "./date-only";
+import { addDaysDateOnly } from "./date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { checkinNotBlockedByPendingReviewFilter } from "@/lib/booking-review";
@@ -14,17 +16,27 @@ import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
  */
 export async function sendCheckinReminders(): Promise<{ sent: number; skipped: number }> {
   const now = new Date();
-  const tomorrowNZ = addDaysDateOnly(getTodayDateOnly(), 1);
-  const dayAfterNZ = new Date(tomorrowNZ);
-  dayAfterNZ.setDate(dayAfterNZ.getDate() + 1);
+  // ONE zone read per run, both bounds derived from it. The club's day is read
+  // through the runtime reader because `src/instrumentation.node.ts` loads this
+  // job with a lazy `await import` and `@/lib/club-time/server` is `server-only`
+  // (#3123, docs/CLUB_TIME_KERNEL.md).
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const tomorrow = addDaysDateOnly(dateOnlyInstantOf(clubToday(clubZone)), 1);
+  // The exclusive upper bound of tomorrow's lodge night, stepped with the
+  // zone-free calendar helper rather than through the host's clock face
+  // (INV-DATE-014, CT-6 #2991). `setDate(getDate() + 1)` added one LOCAL day,
+  // which on a daylight-saving weekend is 23 or 25 hours -- so the bound landed
+  // an hour off UTC midnight and a `@db.Date` night stored exactly there fell
+  // on the wrong side of it.
+  const dayAfter = addDaysDateOnly(tomorrow, 1);
 
   // Find paid/operational bookings checking in tomorrow
   const bookings = await prisma.booking.findMany({
     where: {
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: {
-        gte: tomorrowNZ,
-        lt: dayAfterNZ,
+        gte: tomorrow,
+        lt: dayAfter,
       },
       // #1422: a booking blocked by a pending admin review can't check in until
       // an admin clears the review, so it should get no "check-in coming up"
@@ -42,8 +54,8 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
       choreAssignments: {
         where: {
           date: {
-            gte: tomorrowNZ,
-            lt: dayAfterNZ,
+            gte: tomorrow,
+            lt: dayAfter,
           },
         },
         include: {

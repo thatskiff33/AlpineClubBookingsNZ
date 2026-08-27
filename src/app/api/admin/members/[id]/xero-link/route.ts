@@ -16,7 +16,8 @@ import logger from "@/lib/logger";
 import { z } from "zod";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   linkedContactRecovery,
   xeroPartialSuccessBody,
@@ -134,7 +135,7 @@ export async function POST(
       const seasonYearsToRefresh =
         flushedSubscriptionHistory.seasonYears.length > 0
           ? [
-              getSeasonYear(new Date()),
+              clubSeasonYear(await clubTimeZone()),
               ...flushedSubscriptionHistory.seasonYears,
             ]
           : undefined;

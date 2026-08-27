@@ -155,7 +155,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
   cn: (...classes: Array<string | false | null | undefined>) =>
     classes.filter(Boolean).join(" "),
 }));

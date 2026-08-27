@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  CLUB_TIME_TEST_ZONE,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/lib/__tests__/support/club-time-render";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /*
@@ -53,6 +61,8 @@ vi.mock("next-auth/react", () => ({
 }));
 
 import { BookingNoEmailsControls } from "@/components/admin/booking-no-emails-controls";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 
 type FetchCall = { url: string; method: string; body: unknown };
 let fetchCalls: FetchCall[];
@@ -318,5 +328,90 @@ describe("BookingNoEmailsControls (#2259)", () => {
     );
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+});
+
+
+/**
+ * THE DATE THE SILENCE STARTED IS THE CLUB'S (CT-4, #2870; epic #2988;
+ * INV-CONFIG-002).
+ *
+ * The third of the kernel's display shapes to be pinned in this group, and the
+ * one where being a day out matters most in prose: this line is the record of
+ * WHEN an officer took on the obligation to tell a member by hand, and it is read
+ * back by whoever inherits that obligation. `instantDate` renders a real moment,
+ * so the zone is a choice — unlike the lodge nights elsewhere on the same screen,
+ * which are calendar days and take none.
+ *
+ * Same fixture, two provider zones, two answers. The suite above is about the
+ * acknowledgement mechanism and renders through the harness default, where the
+ * persisted zone and `APP_TIME_ZONE` agree; those tests are not about the zone
+ * and are correctly left alone.
+ */
+describe("BookingNoEmailsControls stamps the club's day (CT-4, #2870)", () => {
+  /** Behind UTC, so it disagrees with the harness zone and with a UTC host. */
+  const CLUB_ZONE_BEHIND_UTC = "America/Denver";
+
+  /** When the switch went on, read as different DAYS by the two zones. */
+  const TURNED_ON_AT = "2026-07-20T02:00:00.000Z";
+
+  function providerFor(zone: string) {
+    return function PinnedClubTime({ children }: { children: ReactNode }) {
+      return <ClubTimeProvider zone={zone}>{children}</ClubTimeProvider>;
+    };
+  }
+
+  function spelledIn(zone: string): string {
+    return bindClubTime(requireClubTimeZone(zone)).instantDate(
+      new Date(TURNED_ON_AT),
+    );
+  }
+
+  function renderIn(zone: string) {
+    installFetch();
+    return render(
+      <BookingNoEmailsControls
+        bookingId="bk-1"
+        noEmails
+        noEmailsAt={TURNED_ON_AT}
+        setByName="Ada Officer"
+        hasLiveWaitlistOffer={false}
+      />,
+      { wrapper: providerFor(zone) },
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("reads a Denver club's switch as the day before New Zealand's", () => {
+    // PREMISE, as an ANSWER rather than an identifier: the two zones really do
+    // disagree about this instant, and by a whole day.
+    expect(spelledIn(CLUB_ZONE_BEHIND_UTC)).toBe("19 Jul 2026");
+    expect(spelledIn(CLUB_TIME_TEST_ZONE)).toBe("20 Jul 2026");
+
+    const { container } = renderIn(CLUB_ZONE_BEHIND_UTC);
+
+    expect(container.textContent).toContain(
+      `Turned on by Ada Officer on ${spelledIn(CLUB_ZONE_BEHIND_UTC)}`,
+    );
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_TIME_TEST_ZONE),
+    );
+  });
+
+  it("follows a DIFFERENT club zone for the same switch", () => {
+    // The mirror image, and it is what makes the case above about the PROVIDER
+    // rather than about a hard-coded 19 July.
+    const { container } = renderIn(CLUB_TIME_TEST_ZONE);
+
+    expect(container.textContent).toContain(
+      `Turned on by Ada Officer on ${spelledIn(CLUB_TIME_TEST_ZONE)}`,
+    );
+    expect(container.textContent).not.toContain(
+      spelledIn(CLUB_ZONE_BEHIND_UTC),
+    );
   });
 });

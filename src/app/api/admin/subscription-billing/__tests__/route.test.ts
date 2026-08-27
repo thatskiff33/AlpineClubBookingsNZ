@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   familyGroup: { findUnique: vi.fn() },
   familyMarker: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(),
+  clubTimeSettings: { findUnique: vi.fn() },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -38,11 +39,12 @@ vi.mock("@/lib/prisma", () => ({
     membershipSubscriptionBillingSettings: mocks.settings,
     familyGroup: mocks.familyGroup,
     familyGroupSeasonInvoiceMarker: mocks.familyMarker,
+    clubTimeSettings: mocks.clubTimeSettings,
     $transaction: mocks.transaction,
   },
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: vi.fn().mockReturnValue(2026) }));
 
+import { APP_TIME_ZONE } from "@/config/operational";
 import { GET, POST } from "@/app/api/admin/subscription-billing/route";
 
 const preview = {
@@ -320,5 +322,85 @@ describe("admin subscription billing route", () => {
     expect(response.status).toBe(403);
     expect(mocks.familyGroup.findUnique).not.toHaveBeenCalled();
     expect(mocks.familyMarker.create).not.toHaveBeenCalled();
+  });
+});
+
+/*
+  CT-4 (#2870), epic #2988 — the default decision date is the CLUB's day.
+
+  Omit `?decisionDate=` and the billing preview is dated "today". Which today
+  that is decides which members are already covered, which are due, and
+  therefore what a treasurer is about to invoice — so it is a business decision,
+  and `INV-CONFIG-002` says a business decision reads the persisted
+  `ClubTimeSettings.timeZone` rather than the container's `TZ`.
+
+  The value's SHAPE matters as much as its day. An explicit `?decisionDate=` is
+  parsed to a date-only value at UTC midnight, and the default has to be the same
+  kind of thing: the billing engine and the `@db.Date` columns it compares
+  against both hold UTC midnight as the encoding of a calendar day
+  (`INV-DATE-010`). A club-midnight instant would be the previous day once
+  narrowed — that is `INV-DATE-026`'s corollary, which is the rule for a bound
+  against one of these columns.
+*/
+describe("subscription billing — the default decision date is the club's day (CT-4, #2870)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAdmin.mockResolvedValue({
+      ok: true,
+      session: { user: { id: "admin-1" } },
+    });
+    mocks.buildPreview.mockResolvedValue(preview);
+    mocks.charges.findMany.mockResolvedValue([]);
+    mocks.exceptions.findMany.mockResolvedValue([]);
+    mocks.settings.findUnique.mockResolvedValue(null);
+    mocks.clubTimeSettings.findUnique.mockResolvedValue({
+      timeZone: "America/Denver",
+      updatedByMemberId: null,
+      updatedAt: new Date(0),
+    });
+  });
+
+  it("defaults to the club's calendar day, encoded as UTC midnight", async () => {
+    // The premise, measured as an ANSWER rather than as a zone identifier. What
+    // has to hold for the assertion below to discriminate is that the
+    // ENVIRONMENT authority names a different day; comparing the two zone NAMES
+    // does not establish that, because two different names can agree
+    // (`America/Chicago` gives Denver's answer at this instant) and the check
+    // would then pass while the assertion went vacuous.
+    const { getTodayDateOnly } = await import("@/lib/date-only");
+    expect(
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      "INV-CONFIG-002: the environment authority now names the same day as the " +
+        "persisted club zone, so this default cannot tell which of the two " +
+        "produced it. Pick a persisted zone the environment disagrees with.",
+    ).not.toBe("2026-06-30T00:00:00.000Z");
+
+    const response = await GET(
+      new NextRequest("http://localhost/api/admin/subscription-billing?seasonYear=2026"),
+    );
+    expect(response.status).toBe(200);
+
+    // The suite runs on the repository's frozen clock, 2026-07-01T00:00:00Z.
+    // That is midday on 1 July in New Zealand and still the evening of 30 JUNE
+    // in Denver, so the two candidate authorities name different days — which
+    // is what makes this assertion worth making.
+    const { decisionDate } = mocks.buildPreview.mock.calls[0][0] as {
+      decisionDate: Date;
+    };
+    expect(decisionDate.toISOString()).toBe("2026-06-30T00:00:00.000Z");
+  });
+
+  it("leaves an explicitly supplied decision date alone", async () => {
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/subscription-billing?seasonYear=2026&decisionDate=2026-07-13",
+      ),
+    );
+    expect(response.status).toBe(200);
+
+    const { decisionDate } = mocks.buildPreview.mock.calls[0][0] as {
+      decisionDate: Date;
+    };
+    expect(decisionDate.toISOString()).toBe("2026-07-13T00:00:00.000Z");
   });
 });

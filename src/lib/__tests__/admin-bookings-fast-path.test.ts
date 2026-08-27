@@ -13,7 +13,24 @@ import {
   ADMIN_BOOKINGS_PAGE_SIZE,
   adminBookingsQuerySchema,
   listAdminBookings,
+  type AdminBookingsClubDay,
 } from "@/lib/admin-bookings-service";
+import {
+  dateOnlyInstantOf,
+  requireCalendarDate,
+  requireClubTimeZone,
+} from "@/lib/club-time";
+
+/**
+ * The club's day and zone these cases mean, stated rather than read (#3123).
+ * `listAdminBookings` and its `where` builders take them as data instead of
+ * projecting through `APP_TIME_ZONE`; that the value comes from the PERSISTED
+ * club timezone is pinned in `admin-bookings-club-time-authority.test.ts`.
+ */
+const TEST_CLUB_DAY: AdminBookingsClubDay = {
+  zone: requireClubTimeZone("Pacific/Auckland"),
+  today: dateOnlyInstantOf(requireCalendarDate("2026-07-01")),
+};
 import { prisma } from "@/lib/prisma";
 import { installAdminBookingsDbMock } from "./admin-bookings-db-mock";
 
@@ -103,7 +120,7 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     ];
     installAdminBookingsDbMock(fixtures);
 
-    const result = await listAdminBookings(adminBookingsQuerySchema.parse({}));
+    const result = await listAdminBookings(adminBookingsQuerySchema.parse({}), {}, TEST_CLUB_DAY);
 
     // Default sort is lastUpdated desc; ordering must match the legacy comparator.
     expect(result.bookings.map((b) => b.id)).toEqual(["b1", "b3", "b2"]);
@@ -173,7 +190,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
       vi.mocked(prisma.booking.count).mockClear();
       installAdminBookingsDbMock(fixtures);
       const result = await listAdminBookings(
-        adminBookingsQuerySchema.parse({ sortBy, sortDir })
+        adminBookingsQuerySchema.parse({ sortBy, sortDir }),
+        {},
+        TEST_CLUB_DAY,
       );
       expect(result.bookings.map((b) => b.id)).toEqual(expected);
     }
@@ -187,7 +206,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ paymentSource: "STRIPE" })
+      adminBookingsQuerySchema.parse({ paymentSource: "STRIPE" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((b) => b.id)).toEqual(["b-stripe"]);
@@ -211,7 +232,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     installAdminBookingsDbMock(fixtures);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ paymentSource: "NONE" })
+      adminBookingsQuerySchema.parse({ paymentSource: "NONE" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     expect(result.bookings.map((b) => b.id)).toEqual(["b-none"]);
@@ -229,7 +252,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     installAdminBookingsDbMock(fixtures);
 
     await listAdminBookings(
-      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" })
+      adminBookingsQuerySchema.parse({ xeroState: "invoiceMissing" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     const calls = vi.mocked(prisma.booking.findMany).mock.calls;
@@ -267,7 +292,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
         changeState: "hasModification",
         sortBy: "checkIn",
         sortDir: "asc",
-      })
+      }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     // Exact totals and page contents are preserved — no truncation.
@@ -305,7 +332,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     vi.mocked(prisma.booking.findMany).mockResolvedValue(fixtures as never);
 
     const result = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" }),
+      {},
+      TEST_CLUB_DAY,
     );
 
     const order = result.bookings.map((b) => b.id);
@@ -332,7 +361,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
 
     vi.mocked(prisma.booking.findMany).mockResolvedValue(makeFixtures() as never);
     const fastResult = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" })
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc" }),
+      {},
+      TEST_CLUB_DAY,
     );
     // Fast path: projection pass + page load + exclusive-hold overlap query
     // (issue #119) = three findMany calls.
@@ -341,7 +372,9 @@ describe("listAdminBookings fast path (#1146, #1884)", () => {
     vi.mocked(prisma.booking.findMany).mockClear();
     installAdminBookingsDbMock(makeFixtures());
     const fullResult = await listAdminBookings(
-      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" })
+      adminBookingsQuerySchema.parse({ sortBy: "status", sortDir: "asc", bedState: "complete" }),
+      {},
+      TEST_CLUB_DAY,
     );
     // Derived path: one bounded scan chunk + one page hydration + the
     // exclusive-hold overlap query for the page (#119).

@@ -10,6 +10,7 @@ import {
   type InboundMemberContactPatch,
 } from "@/lib/xero-contact-create-recovery";
 import { parseXeroContactDateOfBirth } from "@/lib/xero-contact-date-of-birth";
+import { xeroCalendarDateAsDateOnly } from "@/lib/xero-provider-dates";
 import { writeXeroInboundAuditLogs } from "./audit";
 
 function extractContactPhone(contact: Contact) {
@@ -65,6 +66,15 @@ function extractContactAddresses(contact: Contact) {
   };
 }
 
+/**
+ * The calendar day of a contact's earliest Xero invoice, as the UTC-midnight
+ * date-only value `Member.joinedDate` holds.
+ *
+ * A private sibling of the exported reader in `xero-contacts.ts`: the workflow
+ * label and the operation ledger context differ, the temporal semantics do not,
+ * and both now decode through the one Xero boundary rather than through two
+ * copies of `new Date(...)`.
+ */
 async function getContactFirstInvoiceDate(
   xero: XeroClient,
   tenantId: string,
@@ -95,13 +105,11 @@ async function getContactFirstInvoiceDate(
         context: `reconcileContactFirstInvoiceDate(${contactId})`,
       }
     );
-    const firstInvoice = response.body.invoices?.[0];
-    if (!firstInvoice?.date) {
-      return null;
-    }
-
-    const invoiceDate = new Date(firstInvoice.date);
-    return Number.isNaN(invoiceDate.getTime()) ? null : invoiceDate;
+    // Same classification as the exported reader in `xero-contacts.ts` — see
+    // `xero-provider-dates.ts`. This clone existed BEFORE that boundary did, and
+    // it carried the identical `new Date(provider.date)` hazard one indirection
+    // away from the spelling any census was searching for (#2869, INV-DATE-019).
+    return xeroCalendarDateAsDateOnly(response.body.invoices?.[0]?.date);
   } catch (error) {
     if (error instanceof XeroDailyLimitError) {
       throw error;

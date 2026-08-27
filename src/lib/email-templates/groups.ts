@@ -15,7 +15,7 @@ import {
   supportContactSentence,
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
-import { formatNZDate } from "@/lib/nzst-date";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 export function groupSettlementReceiptTemplate(data: {
   firstName: string;
@@ -28,8 +28,8 @@ export function groupSettlementReceiptTemplate(data: {
     ${heading("Your Group Booking Is Settled")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", thanks for settling your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge. Everyone you are paying for is now confirmed.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Joiners settled", value: String(data.joinerCount) },
       { label: "Total paid", value: formatCents(data.totalCents) },
     ])}
@@ -49,8 +49,8 @@ export function groupJoinSettledTemplate(data: {
     ${heading("Your Spot Is Confirmed")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " has settled the cost of your stay at " + escapeHtml(CLUB_NAME) + "'s lodge as part of their group booking. Your spot is confirmed and there is nothing for you to pay.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
     ])}
     ${supportContactSentence("If you have any questions about your stay, contact the club at ")}
@@ -68,8 +68,8 @@ export function groupSettlementExpiredTemplate(data: {
     ${heading("Your Group Settlement Has Expired")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the combined payment you started for your group's stay at " + escapeHtml(CLUB_NAME) + "'s lodge was not completed in time, so the beds held for your joiners have been released.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Joiners affected", value: String(data.joinerCount) },
       { label: "Amount not charged", value: formatCents(data.totalCents) },
     ])}
@@ -88,8 +88,8 @@ export function groupJoinReleasedTemplate(data: {
     ${heading("Your Held Spot Has Been Released")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", " + escapeHtml(data.organiserName) + " started a combined payment for your stay at " + escapeHtml(CLUB_NAME) + "'s lodge but it was not completed in time, so your held bed has been released.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}
     ${paragraph("Your booking is back to awaiting payment. If the group still plans to come, the organiser can restart the payment — or check with them about what happens next.")}
     ${supportContactSentence("If you have any questions, contact the club at ")}
@@ -111,8 +111,8 @@ export function groupJoinCancelledTemplate(data: {
     ${heading("Your Group Booking Has Been Cancelled")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", the combined group payment " + escapeHtml(data.organiserName) + " started for your stay at " + escapeHtml(CLUB_NAME) + "'s lodge was never completed, so your pending booking has now been cancelled. Nothing has been charged to you.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
     ])}
     ${paragraph("If you still want to come, you can make your own booking for these dates — or talk to the organiser about starting a fresh group trip.")}
     ${supportContactSentence("If you have any questions, contact the club at ")}

@@ -22,6 +22,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 const LOCK_POLL_TIMEOUT_MS = 5_000;
@@ -512,11 +520,12 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       tx: Prisma.TransactionClient,
       afterStandingFanout?: () => Promise<void>,
     ): Promise<number> {
-      await acquireFuturePartnerSharedAllocationLocks(tx, [IDS.target]);
+      await acquireFuturePartnerSharedAllocationLocks(tx, [IDS.target], CLUB_TODAY_DATE_ONLY);
       await acquireMemberLifecycleLocks(tx, [IDS.target]);
       const queued = await enqueueHostingCoverageReevaluationForMember(
         IDS.target,
         tx,
+        CLUB_TODAY_DATE_ONLY,
         { cause: "SYSTEM_CHANGE", actorMemberId: IDS.actor },
       );
       await afterStandingFanout?.();
@@ -572,6 +581,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       const queued = await enqueueHostingCoverageReevaluationForMember(
         IDS.target,
         tx,
+        CLUB_TODAY_DATE_ONLY,
         { cause: "SYSTEM_CHANGE", actorMemberId: IDS.actor },
       );
       await afterStandingFanout?.();
@@ -2969,7 +2979,7 @@ let deletionApprovalWasReleased: (typeof import("@/lib/deletion-request-decision
       });
       await expect(
         ordinary.$transaction((tx) =>
-          enqueueHostingCoverageReevaluationForMember(IDS.target, tx),
+          enqueueHostingCoverageReevaluationForMember(IDS.target, tx, CLUB_TODAY_DATE_ONLY),
         ),
       ).resolves.toBe(2);
       expect(

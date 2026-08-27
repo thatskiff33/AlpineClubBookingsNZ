@@ -12,7 +12,7 @@ import {
   getUnreadNoticeCount,
   listNoticesForMember,
 } from "@/lib/notices";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 
 /**
  * Dashboard "Recent News" card: the member's top few visible notices (pinned
@@ -25,6 +25,14 @@ export async function RecentNewsCard({ memberId }: { memberId: string }) {
   // below (each would otherwise re-resolve them), keeping a single `now` so the
   // season/visibility window is consistent between the list and the count.
   const now = new Date();
+  /**
+   * `publishedAt` is a real INSTANT, so the date beside a notice reads in the
+   * club's PERSISTED timezone (CT-4, #2870; INV-CONFIG-002) rather than the
+   * container's `TZ`. `now` above stays a bare instant on purpose: it is a
+   * visibility-window COMPARISON, not a civil date, and comparing two instants
+   * needs no zone.
+   */
+  const club = await clubTime();
   const keys = await getMemberAudienceKeys(memberId, { now });
   if (!keys) {
     return null;
@@ -92,7 +100,7 @@ export async function RecentNewsCard({ memberId }: { memberId: string }) {
                   </span>
                   {notice.publishedAt ? (
                     <span className="block text-xs text-muted-foreground">
-                      {formatNZDate(new Date(notice.publishedAt))}
+                      {club.instantDate(new Date(notice.publishedAt))}
                     </span>
                   ) : null}
                 </span>

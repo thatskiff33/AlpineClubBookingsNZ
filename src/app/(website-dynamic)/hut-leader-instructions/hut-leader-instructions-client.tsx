@@ -12,7 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatNZLongDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 type InstructionDocument = {
   key: "OPEN" | "CLOSE" | "DAY_TO_DAY";
@@ -27,11 +27,25 @@ type InstructionDocument = {
 const INSTRUCTION_HTML_CLASSES =
   "text-base leading-7 text-foreground [&_a]:text-info-11 [&_a]:underline [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-4 [&_li]:my-1 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6";
 
-function formatUpdatedAt(value: string | null): string | null {
-  if (!value) return null;
-  // Member-facing (#2264, owner decision): the long "16 April 2026" form the
-  // club has always shown here, pinned to club time.
-  return formatNZLongDate(new Date(value));
+/**
+ * The instructions' "last updated" stamp, projected through the club's PERSISTED
+ * timezone (CT-4, #2870; epic #2988; INV-CONFIG-002).
+ *
+ * `updatedAt` is a real INSTANT, so it has no civil date until a zone is chosen.
+ * It used to be `APP_TIME_ZONE` — the container's `TZ` — which is the club's
+ * zone only by accident. Same shape and the same long form INV-DATE-016 reserves
+ * for this surface (#2264, owner decision); only the AUTHORITY moved. A hook
+ * because that setting reaches the browser as data through `ClubTimeProvider`,
+ * so it is not a module constant any more.
+ */
+function useUpdatedAtFormatter() {
+  const clubTime = useClubTime();
+  // The FALSY guard the module function used, kept deliberately: the payload is
+  // typed `string | null` but nothing validates it on the way in, and an empty
+  // string would reach `Intl` as an invalid Date and throw out of a client
+  // render. Rendering no stamp at all is what this surface did before.
+  return (value: string | null): string | null =>
+    value ? clubTime.instantLongDate(new Date(value)) : null;
 }
 
 export function HutLeaderInstructionsClient({
@@ -39,6 +53,7 @@ export function HutLeaderInstructionsClient({
 }: {
   assignmentId: string | null;
 }) {
+  const formatUpdatedAt = useUpdatedAtFormatter();
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);

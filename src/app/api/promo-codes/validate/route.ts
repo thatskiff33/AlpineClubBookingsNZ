@@ -28,6 +28,7 @@ import {
 import {
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
+import { clubTime } from "@/lib/club-time/server";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { z } from "zod";
@@ -295,7 +296,17 @@ export async function POST(req: NextRequest) {
         guests: promoGuests,
       },
       assignedMemberIds,
-      { db: prisma, selectedGuestIndexes: parsed.data.promoGuestIndexes, lodgeId: quoteLodgeId }
+      {
+        db: prisma,
+        selectedGuestIndexes: parsed.data.promoGuestIndexes,
+        lodgeId: quoteLodgeId,
+        // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
+        // and what the promotion's validity window is judged against. No
+        // transaction is open on this route, and it is not reachable from a CLI
+        // or from instrumentation, so the request-scoped `server-only` binding
+        // is the right reader.
+        todayAtClub: (await clubTime()).today(),
+      }
     );
     if (application.requiresGuestSelection) {
       return NextResponse.json({

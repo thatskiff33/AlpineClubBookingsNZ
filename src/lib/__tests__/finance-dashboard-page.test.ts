@@ -1,6 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
+/*
+  `APP_TIME_ZONE` IS PINNED BEHIND GREENWICH, AND THE CLUB'S PERSISTED ZONE IS
+  NOT IT (#3123).
+
+  Two of this page model's temporal questions used to be answered by the
+  container: `generatedOn` went through `formatNZDateTime`, and the reporting
+  month came from `getTodayDateOnly()`. Both read `APP_TIME_ZONE`. Pinning it to
+  `America/Denver` while the persisted zone below is `Pacific/Auckland` makes the
+  two disagree about the frozen instant (2026-07-01T00:00:00.000Z is 1 July in
+  Auckland and 30 June in Denver), so `currentMonth: "2026-07"` and the season
+  windows further down are now assertions about the CLUB's day rather than the
+  host's. Deliberately not `Pacific/Auckland` here: that is exactly what
+  `APP_TIME_ZONE` falls back to, so a suite agreeing with it could not tell the
+  persisted zone from the environment's.
+*/
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "America/Denver",
+  APP_LOCALE: "en-NZ",
+}));
+
 const {
   mockBuildFinanceMonthlyPnlSummary,
   mockBuildFinanceMonthlyBalanceSeries,
@@ -16,6 +38,7 @@ const {
   mockSeasonFindMany,
   mockLodgeFindMany,
   mockGetXeroOrgShortCode,
+  mockClubTimeSettingsFindUnique,
 } = vi.hoisted(() => ({
   mockBuildFinanceMonthlyPnlSummary: vi.fn(),
   mockBuildFinanceMonthlyBalanceSeries: vi.fn(),
@@ -31,8 +54,17 @@ const {
   mockSeasonFindMany: vi.fn(),
   mockLodgeFindMany: vi.fn(),
   mockGetXeroOrgShortCode: vi.fn(),
+  mockClubTimeSettingsFindUnique: vi.fn(),
 }));
 
+/*
+  THE `clubTimeSettings` DELEGATE IS NOT OPTIONAL ON THIS MOCK (#3123).
+  `getClubTimeZone` is fail-soft in three places — no delegate, a throwing query,
+  no row — and every one of them degrades SILENTLY to the environment. A prisma
+  mock without it therefore passes for exactly the reason the club-zone cases in
+  this file exist to rule out: they would measure `APP_TIME_ZONE` and report it
+  as the club's answer.
+*/
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     season: {
@@ -40,6 +72,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     lodge: {
       findMany: mockLodgeFindMany,
+    },
+    clubTimeSettings: {
+      findUnique: mockClubTimeSettingsFindUnique,
     },
   },
 }));
@@ -96,8 +131,20 @@ vi.mock("@/lib/xero-link-short-code", () => ({
 }));
 
 import { buildFinanceDashboardPageModel } from "@/lib/finance-dashboard-page";
+
 import type { FinanceDashboardView } from "@/lib/finance-dashboard-ranges";
 import { buildXeroReportsUrl } from "@/lib/xero-links";
+
+/** The club's persisted zone. Held apart from `APP_TIME_ZONE` above. */
+const CLUB_ZONE = "Pacific/Auckland";
+
+function persistClubZone(timeZone: string) {
+  mockClubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+}
 
 function financeManager() {
   return {
@@ -357,6 +404,7 @@ function balanceSeries() {
 describe("finance dashboard page model", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    persistClubZone(CLUB_ZONE);
     mockGetXeroOrgShortCode.mockResolvedValue("!aBc12");
     mockSeasonFindMany.mockResolvedValue([]);
     // Single active lodge by default: the reporting-lodge selector stays hidden
@@ -1070,5 +1118,76 @@ describe("finance dashboard page model", () => {
     expect(trend.data[1]).toMatchObject({ label: "Jun 2026", amount: 120_000 });
     // The unaligned month omits the comparison key so the chart draws a gap.
     expect("comparison" in trend.data[1]).toBe(false);
+  });
+
+  /*
+    #3123 — the finance page's own two temporal questions come from the CLUB.
+
+    `generatedOn` is a real INSTANT (the moment the model was built) and takes the
+    club's persisted zone; the reporting month comes from the club's TODAY, which
+    the page resolves once and threads into `finance-dashboard-ranges` because that
+    module is on the browser graph and may read no zone at all.
+
+    Under the frozen clock (2026-07-01T00:00:00.000Z) Auckland reads 1 July and
+    Denver reads 30 June, so the two never agree and nothing here can pass by
+    coincidence. This block shares the file's `APP_TIME_ZONE = America/Denver` pin,
+    which is what makes the default cases above assertions about the club rather
+    than the container.
+  */
+  describe("the finance page's dates come from the persisted club zone (#3123)", () => {
+    beforeEach(() => {
+      mockGetFinanceBookingMetrics.mockResolvedValue(bookingMetrics());
+    });
+
+    it("stamps generatedOn with the club's day, not the container's", async () => {
+      // BEFORE the migration this read "1 Jul 2026, 6:00 pm" — Denver's clock
+      // through APP_TIME_ZONE — no matter what the club had configured.
+      persistClubZone("America/Denver");
+      const model = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view: "bookings" },
+      });
+      expect(model.generatedOn).toContain("30 Jun 2026");
+      expect(model.generatedOn).not.toContain("1 Jul 2026");
+    });
+
+    it("moves generatedOn with the persisted zone — kills a hard-coded one", async () => {
+      // The leg a literal club zone cannot pass.
+      persistClubZone("Pacific/Auckland");
+      const auckland = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view: "bookings" },
+      });
+      persistClubZone("Pacific/Pago_Pago");
+      const pago = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view: "bookings" },
+      });
+      expect(auckland.generatedOn).toContain("1 Jul 2026");
+      expect(pago.generatedOn).toContain("30 Jun 2026");
+    });
+
+    it("picks the reporting month from the club's today, across a month end", async () => {
+      /*
+        THE ONE THAT MOVES MONEY. `currentMonth` selects the reporting month and
+        the financial-year bucket, so on 1 July UTC a club at UTC-11 is still in
+        June and its "last completed month" is May, not June. Reading that day off
+        the container put a whole finance figure in the wrong period.
+      */
+      persistClubZone("Pacific/Auckland");
+      const auckland = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view: "bookings" },
+      });
+      persistClubZone("Pacific/Pago_Pago");
+      const pago = await buildFinanceDashboardPageModel({
+        member: financeManager(),
+        searchParams: { view: "bookings" },
+      });
+      expect(auckland.selection.currentMonth).toBe("2026-07");
+      expect(pago.selection.currentMonth).toBe("2026-06");
+      expect(auckland.selection.primary.fromMonth).toBe("2026-06");
+      expect(pago.selection.primary.fromMonth).toBe("2026-05");
+    });
   });
 });
