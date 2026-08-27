@@ -57,8 +57,11 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
-import { z } from "zod";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import {
+  modifyQuoteSchema,
+  OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
+  type NormalizedAddGuest,
+} from "@/lib/booking-modify-quote-request";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -70,7 +73,6 @@ import {
   loadMemberGuestAddPolicy,
   markCrossFamilyGuestsOnBooking,
   markCrossFamilyMemberGuests,
-  type MemberGuestConsentGuestFields,
 } from "@/lib/member-guest-add-policy";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import {
@@ -87,7 +89,6 @@ import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
-import { nameField } from "@/lib/zod-helpers";
 import { BookingGuestStayRangeValidationError } from "@/lib/booking-guest-stay-range-input";
 import {
   resolveModificationStayRanges,
@@ -128,119 +129,6 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
-
-const modifyQuoteSchema = z.object({
-  checkIn: z.string().optional(),
-  checkOut: z.string().optional(),
-  addGuests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
-      })
-    )
-    .optional(),
-  removeGuestIds: z.array(z.string()).optional(),
-  guestStayRanges: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
-      })
-    )
-    .optional(),
-  guestUpdates: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        firstName: nameField(),
-        lastName: nameField(),
-      })
-    )
-    .optional(),
-  // #2337: mirror of the apply route's placeholder→member link so the preview
-  // shows the same re-rate delta the save will settle. Gated identically.
-  linkGuestToMember: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        memberId: z.string().min(1),
-      })
-    )
-    .max(60)
-    .optional(),
-  // Other Lodges epic: mirror of the apply route's reciprocal other-club rate
-  // election, so the preview prices the tick exactly as the save will charge it.
-  // Both fields are an END STATE, never a delta — see booking-other-lodge-rate.ts.
-  otherLodgeId: z.string().min(1).nullable().optional(),
-  otherLodgeMemberGuestIds: z.array(z.string().min(1)).max(200).optional(),
-  promoCode: z.string().optional(),
-  // #2266 (MED-4): beneficiaries for guest-targeted promo codes, mirroring the
-  // apply route — EXISTING guests bind by bookingGuestId (a stale id refuses
-  // loudly instead of re-pointing the discount), and positional indexes exist
-  // only for TO-BE-ADDED guests within this request, relative to addGuests.
-  promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
-  promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
-  removePromoCode: z.boolean().optional(),
-  // #2266: the member's credit election, mirroring the create quote/create
-  // routes. The preview never moves money — the apply route stores the election
-  // on the booking (Booking.creditElectionCents, #2265) and the pay step
-  // consumes it — so the preview only has to keep the request price-preserving
-  // when credit is the ONLY change.
-  applyCreditCents: z.number().int().min(0).max(100_000_000).optional(),
-  // Admin-only date override (issue #1668). The preview mirrors apply exactly.
-  adminOverride: z.boolean().optional(),
-  pricingMode: z.enum(["shift", "recalculate"]).optional(),
-  confirmOverCapacity: z.boolean().optional(),
-  // Admin-only (#1746): mirror of the apply route's partner-sharer flags so
-  // the preview reflects the #1745 reserved-slot outcome.
-  partnerSharedGuests: z
-    .array(
-      z.object({
-        memberId: z.string().min(1),
-        partnerMemberId: z.string().min(1),
-      }),
-    )
-    .max(10)
-    .optional(),
-});
-
-const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
-  "addGuests",
-  "removeGuestIds",
-  "guestStayRanges",
-  "guestUpdates",
-  // #2337: a placeholder→member link is a guest change, never a date override.
-  "linkGuestToMember",
-  // The other-lodge rate election re-rates guests, so it is a guest change too.
-  "otherLodgeId",
-  "otherLodgeMemberGuestIds",
-  "promoCode",
-  "promoGuestIds",
-  "promoAddedGuestIndexes",
-  "removePromoCode",
-  // #1746: partner-shared flags ride guest changes, never a date override.
-  "partnerSharedGuests",
-] as const;
-
-type NormalizedAddGuest = MemberGuestConsentGuestFields & {
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  isMember: boolean;
-  memberId?: string;
-  stayStart?: string | null;
-  stayEnd?: string | null;
-  nights?: ReadonlyArray<string> | null;
-};
 
 type PromoRedemptionWithTargets = {
   promoCode: {
