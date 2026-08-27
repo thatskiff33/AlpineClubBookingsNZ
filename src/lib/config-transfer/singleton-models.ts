@@ -134,6 +134,17 @@ export const MODEL_LEVEL_EXCLUSIONS: Record<string, string> = {
     "because a bundle apply is none of those things. A fresh import keeps the " +
     "target's own override, and a target with none keeps resolving from its own " +
     "deployment declaration (INV-CONFIG-003) — instance-local",
+  ClubPostSettings:
+    "club message board retention (#2999) carries retentionDays, the window " +
+    "after which a nightly job PERMANENTLY DELETES member posts. Like " +
+    "MaintenanceReportSettings' photo-retention window it is an operational " +
+    "posture a source club must never set on a target's behalf -- importing a " +
+    "non-zero window would start destroying a target club's member content on a " +
+    "schedule it never chose, and INV-CONFIG-001 is explicit that the " +
+    "keep-everything default exists so an upgrade cannot do that. The cleanup " +
+    "bookkeeping beside it (cleanupStartedAt, lastCleanupAt, lastCleanupDeleted) " +
+    "is this install's own run history and is meaningless on another -- " +
+    "instance-local",
   ServerNzSettings:
     "this install's own Alpine Central Server connection: a base URL bound to the " +
     "server THIS club was issued a key for (the key itself lives in the encrypted " +

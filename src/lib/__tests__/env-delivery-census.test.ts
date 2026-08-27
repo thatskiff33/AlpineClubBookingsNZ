@@ -274,6 +274,10 @@ const DELIBERATELY_NOT_DELIVERED: Record<string, string> = {
   // the container, so giving it to the app would be actively misleading; the app
   // reads BACKUP_LOCAL_DIR, the mount target, which IS delivered.
   BACKUP_LOCAL_HOST_DIR: "host-side only; the container reads BACKUP_LOCAL_DIR",
+  // Epic #2992, same shape as its backup twin above: the HOST side of the
+  // post-images bind mount. The app must never see a host path -- it is not
+  // meaningful inside the container -- so delivering it would be the bug.
+  POST_IMAGE_HOST_DIR: "host-side only; the container reads POST_IMAGE_DIR",
 
   // A build arg (docker-compose.yml `build.args`), not a runtime variable: the
   // per-release CSP nonce has to be fixed for the life of the image.

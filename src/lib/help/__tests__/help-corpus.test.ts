@@ -69,6 +69,7 @@ describe("member guide parity", () => {
     // "+ Add Member Guest" (epic #2305, MG2 #2307): the consent card lives on
     // the booking's own page, so the answers are distilled into that entry.
     "being-added-to-a-booking.md": "/bookings/abc123",
+    "the-message-board.md": "/message-board",
   };
 
   // Files in docs/user-guide/ that are deliberately NOT member guides. Keep this

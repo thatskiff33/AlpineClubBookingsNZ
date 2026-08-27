@@ -84,6 +84,7 @@ const MODULES = {
   // `constraints.required` audit rejects a projected null, so the fixture must
   // carry all of them (a real DB row always does).
   lobbyDisplay: false, aiAssistant: false, memberGuests: false,
+  commsPortal: false,
 };
 const EMAIL = {
   clubName: "Grads", bookingsName: "Bookings", lodgeName: "Lodge",

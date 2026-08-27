@@ -246,6 +246,11 @@ export const explicitPublicApiRoutes = {
     reason:
       "Mock-Xero token-exchange endpoint for the E2E harness (#2080). Production-inert via the same XERO_MOCK_API_ORIGIN + runtime-role double gate; mints fake tokens consumed only by the gated mock OAuth branch.",
   },
+  "src/app/api/webhooks/servernz-posts/route.ts": {
+    boundary: "webhook",
+    reason:
+      "Alpine Central Server signed shared-post doorbell (epic #2992): HMAC over `${timestamp}.${body}` with the registration-issued secret, constant-time compare, 5-minute replay window. The body's CONTENT is ignored -- verification only ever triggers a pull of the authenticated /api/v1/feed/sync, so even a forged pass could not inject content.",
+  },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
     reason: "AWS SNS signed SES feedback webhook.",
