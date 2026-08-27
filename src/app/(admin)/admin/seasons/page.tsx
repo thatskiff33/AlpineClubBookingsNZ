@@ -12,14 +12,16 @@ import { Alert } from "@/components/ui/alert"
 import { AdminPageHeader } from "@/components/admin/admin-page-header"
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
-import { formatNZDate } from "@/lib/nzst-date"
 import {
   LodgeSelect,
   initialLodgeIdFromLocation,
   useLodgeOptions,
 } from "@/components/lodge-select"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
-import { dateOnlyFromIsoString } from "@/lib/date-only";
+import {
+  calendarDayFromPayload,
+  formatPayloadCalendarDay,
+} from "../_lib/calendar-day";
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 
 // Season WINDOWS only (#1933, E7): name, type, dates, and active state per
@@ -35,6 +37,15 @@ interface Season {
   startDate: string
   endDate: string
   active: boolean
+}
+
+// CT-4 (#2870): a season edge is a CALENDAR DATE and calendar dates take no
+// timezone — the API serialises the `@db.Date` column as UTC midnight, and the
+// kernel's calendar-date formatter pins "UTC" over that encoding, so the
+// projection is the identity for every club. It used to be read through
+// APP_TIME_ZONE, which for a club behind UTC named the previous day.
+function formatSeasonEdge(value: string): string {
+  return formatPayloadCalendarDay(value, value)
 }
 
 export default function SeasonsPage() {
@@ -150,8 +161,8 @@ export default function SeasonsPage() {
     setEditingId(season.id)
     setName(season.name)
     setType(season.type)
-    setStartDate(dateOnlyFromIsoString(season.startDate))
-    setEndDate(dateOnlyFromIsoString(season.endDate))
+    setStartDate(calendarDayFromPayload(season.startDate) ?? "")
+    setEndDate(calendarDayFromPayload(season.endDate) ?? "")
     setActive(season.active)
   }
 
@@ -369,8 +380,8 @@ export default function SeasonsPage() {
                   )}
                 </div>
                 <CardDescription>
-                  {formatNZDate(new Date(season.startDate))} &mdash;{" "}
-                  {formatNZDate(new Date(season.endDate))}
+                  {formatSeasonEdge(season.startDate)} &mdash;{" "}
+                  {formatSeasonEdge(season.endDate)}
                 </CardDescription>
               </CardHeader>
             </Card>

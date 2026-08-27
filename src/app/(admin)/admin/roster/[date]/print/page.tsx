@@ -4,18 +4,18 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useParams, useSearchParams } from "next/navigation"
 import { useClubIdentity } from "@/components/club-identity-provider"
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational"
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 
-// #2264: deliberately not one of the shared `nzst-date` helpers — the printed
-// chore roster heads the page with the full weekday and month, matching the
+// #2264: deliberately not one of the shared house shapes — the printed chore
+// roster heads the page with the full weekday and month, matching the
 // on-screen roster and the chore-roster email.
-const ROSTER_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-})
+//
+// CT-4 (#2870): the roster day is a CALENDAR DATE and calendar dates have no
+// timezone — 16 April 2026 is a Thursday everywhere on earth. The kernel's
+// `longWeekdayDate` shape pins "UTC" over its own UTC-midnight encoding, which
+// is the IDENTITY for every club rather than a projection, so this needs no zone
+// plumbing at all. The local copy of the same options this replaces was one of
+// six.
 
 interface Assignment {
   id: string
@@ -95,7 +95,10 @@ export default function PrintRosterPage() {
   }
 
   const chores = [...byChore.values()].sort((a, b) => a.sortOrder - b.sortOrder)
-  const formattedDate = ROSTER_LONG_DATE.format(new Date(dateStr + "T00:00:00Z"))
+  const rosterDay = parseCalendarDate(dateStr)
+  // The day comes from the URL, so a malformed one renders as itself rather
+  // than throwing and blanking the print view behind an error boundary.
+  const formattedDate = rosterDay ? formatClubLongWeekdayDate(rosterDay) : dateStr
 
   return (
     <>

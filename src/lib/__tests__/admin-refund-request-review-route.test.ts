@@ -4,6 +4,11 @@ import {
   contentAdminSession,
   readOnlyAdminSession,
 } from "./helpers/admin-area-gate-sessions";
+import {
+  formatClubInstantDate,
+  requireClubTimeZone,
+  requireInstant,
+} from "@/lib/club-time";
 
 const mocks = vi.hoisted(() => ({
   enqueueRefundRequestRefundRecovery: vi.fn(),
@@ -371,6 +376,63 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       })
     );
     expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  /*
+    CT-4 (#2870), epic #2988 — the lodge nights this email prints are CALENDAR
+    DAYS, so no timezone touches them.
+
+    `Booking.checkIn` / `checkOut` are `@db.Date`. They used to reach the member
+    through `formatNZDate`, which is an INSTANT formatter: it takes the column's
+    UTC-midnight encoding and asks what civil day that moment falls on in a
+    zone. For New Zealand that is midday on the same date, so the answer was
+    right and stayed right. Anywhere behind UTC it is the evening BEFORE, and the
+    member is told their stay starts a day earlier than it does — on the email
+    confirming a refund decision about that stay.
+
+    WHAT THIS PROVES, AND WHAT IT CANNOT. It proves the two dates in the email
+    are the stored days, read with no zone at all. It says NOTHING about which
+    zone AUTHORITY the route obeys, because a correct calendar-day read consults
+    none: `src/app/api/admin/refund-requests/[id]/route.ts` contains no
+    `clubTime()` / `clubTimeZone()` call, and an earlier version of this test
+    persisted `America/Denver` into a Prisma mock the route never reads — 0
+    delegate calls, measured — behind a comment claiming the two zones had to
+    differ so a zoned read could be told from a zone-free one. They did not, and
+    it could not. The premise below is the thing that actually keeps the
+    assertion honest: it checks that the INSTANT formatter would answer
+    differently, so the fixture can still catch a regression to it.
+  */
+  it("prints the stored lodge nights in the outcome email, with no zone applied", async () => {
+    // The defect, spelled out on this very fixture: read 1 July's `@db.Date`
+    // encoding as a moment in a zone behind UTC and the member is told 30 June.
+    expect(
+      formatClubInstantDate(
+        requireInstant(new Date("2026-07-01T00:00:00.000Z")),
+        requireClubTimeZone("America/Denver"),
+      ),
+      "This fixture no longer distinguishes a calendar-day read from an instant " +
+        "one, so the assertion below cannot fail for the right reason.",
+    ).toBe("30 Jun 2026");
+
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateData: expect.objectContaining({
+          // The house medium shape, unchanged from what `formatNZDate` produced
+          // in New Zealand — and the stay's real dates, which the instant
+          // formatter would not give anywhere behind UTC.
+          checkIn: "1 Jul 2026",
+          checkOut: "3 Jul 2026",
+        }),
+      }),
+    );
   });
 
   // #1792: admin per-action member-email choice. `notifyMember` gates ONLY the

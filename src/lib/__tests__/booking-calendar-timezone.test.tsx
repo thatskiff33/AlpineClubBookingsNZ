@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/club-identity-provider", () => ({
@@ -64,8 +64,10 @@ async function selectDstNightInZone(tz: string) {
     expect(screen.getByText(/Select check-in date/)).toBeTruthy(),
   );
 
-  // The initial month follows the browser's own clock, so step forward to the
-  // club-pinned "September 2026" heading rather than assuming a click count.
+  // The initial month follows the CLUB's day since CT-4 (#2870) - it used to
+  // follow the browser's own clock - so step forward to the "September 2026"
+  // heading rather than assuming a click count. Either way the count is not the
+  // thing under test here; the day IDENTITY is.
   for (let i = 0; i < 6 && !screen.queryByText("September 2026"); i++) {
     fireEvent.click(screen.getByRole("button", { name: /Next/ }));
   }

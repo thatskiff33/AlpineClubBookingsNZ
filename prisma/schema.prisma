@@ -511,7 +511,7 @@ model Member {
   firstName               String
   lastName                String
   gender                  Gender?
-  dateOfBirth             DateTime?
+  dateOfBirth             DateTime? @db.Date
   // Free-text occupation. Optional, adult-only, and admin-toggleable via
   // MemberFieldsSettings.showOccupation.
   occupation              String?
@@ -567,10 +567,10 @@ model Member {
   detailsConfirmedAt                  DateTime?
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
-  joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
+  joinedDate                          DateTime? @db.Date // Membership start date, sourced from Xero first invoice
   // Historical life-membership date retained for existing records. Seasonal
   // membership type changes are managed through SeasonalMembershipAssignment.
-  lifeMemberDate                      DateTime?
+  lifeMemberDate                      DateTime? @db.Date
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   hutLeaderEligible                   Boolean            @default(false)
   hutLeaderEligibleAt                 DateTime?
@@ -734,6 +734,8 @@ model Member {
   noticesCreated                             Notice[]                                   @relation("NoticeCreatedBy")
   noticesUpdated                             Notice[]                                   @relation("NoticeUpdatedBy")
   noticeAudienceTargets                      NoticeAudience[]                           @relation("NoticeAudienceMember")
+  clubPostsAuthored                          ClubPost[]                                 @relation("ClubPostAuthor")
+  clubPostReports                            ClubPostReport[]                           @relation("ClubPostReporter")
   noticeReadReceipts                         NoticeReadReceipt[]                        @relation("NoticeReadReceiptMember")
   // B5 (#2262): actor back-refs for manual booking-payment settlement and for
   // completing/dismissing the manual-refund tasks a cash cancellation raises.
@@ -927,7 +929,7 @@ model MemberApplication {
   applicantFirstName    String
   applicantLastName     String
   applicantEmail        String
-  applicantDateOfBirth  DateTime?
+  applicantDateOfBirth  DateTime? @db.Date
   applicantPhone        String?
   applicantAddress      Json?
   familyMembers         Json?
@@ -2127,7 +2129,7 @@ model GroupBooking {
   joinCode           String                  @unique
   paymentMode        GroupBookingPaymentMode
   status             GroupBookingStatus      @default(OPEN)
-  joinDeadline       DateTime?
+  joinDeadline       DateTime?               @db.Date
   maxJoiners         Int?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
@@ -2952,10 +2954,10 @@ model PromoCode {
   maxUniqueMembersTotal        Int? // Hard cap on distinct members who can ever redeem (null = unlimited)
   maxUsesPerMember             Int? // Cap on how many bookings one member can apply this code to (null = unlimited, 1 = single-use)
   currentRedemptions           Int               @default(0)
-  validFrom                    DateTime?
-  validUntil                   DateTime?
-  bookingStartFrom             DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  bookingStartUntil            DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  validFrom                    DateTime?         @db.Date
+  validUntil                   DateTime?         @db.Date
+  bookingStartFrom             DateTime?         @db.Date // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil            DateTime?         @db.Date // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
   membersOnly                  Boolean           @default(false) // Booker must be a member
   memberGuestsOnly             Boolean           @default(false) // Promo only applies to guest rows flagged as members
   assignedMembersOnlyOwnNights Boolean           @default(true) // Assigned members can only apply the promo to their own linked guest nights
@@ -4430,6 +4432,15 @@ model ClubModuleSettings {
   // central hub to upload/download shared data. Off by default; configured
   // under Admin → Integrations → Alpine Central Server.
   alpineCentralServer     Boolean  @default(false)
+  // Communication Portal (#2993, epic #2992). Default OFF, deliberately
+  // inverting the memberNotices precedent above: a member post shared from this
+  // module leaves the club and reaches every other connected club, so an
+  // upgrade must not start publishing member-written content because nobody
+  // opted out. The local board alone needs no central-server connection; only
+  // sharing does. Safe to add as a defaulted column because every read narrows
+  // to CLUB_MODULE_SETTINGS_COLUMN_SELECT, so the previously deployed client
+  // never names it.
+  commsPortal             Boolean  @default(false)
   updatedByMemberId       String?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @default(now()) @updatedAt
@@ -4571,7 +4582,30 @@ model ServerNzSettings {
   // safely here because Prisma pools connections and the unlock could land on a
   // different one, and an xact-scoped lock would mean holding a transaction open
   // across the central server's HTTP calls.
-  otherLodgesSyncStartedAt  DateTime?
+  otherLodgesSyncStartedAt DateTime?
+
+  // Shared item: the cross-club message board (epic #2992). The cursor is the
+  // pair the server's /api/v1/feed/sync hands back — an updatedAt instant plus
+  // a tiebreak id — stored as strings because it is THEIR cursor, not a value
+  // this install computes or compares. Null means "never synced": the first
+  // pull is a full sync of visible posts, which is exactly what a new install
+  // wants (no backlog of tombstones for posts it never held).
+  commsCursorSince   String?   @db.VarChar(64)
+  commsCursorSinceId String?   @db.VarChar(64)
+  // Single-flight claim for a sync pass, same pattern and same reasoning as
+  // otherLodgesSyncStartedAt above: the webhook, the cron and a manual pull all
+  // drive the same writer.
+  commsSyncStartedAt DateTime?
+  commsLastSyncAt    DateTime?
+  // Poison-change tracking for the mirror ingest (#3091 review 2). A change
+  // that throws stops the pass BEFORE the cursor advances, so the same change
+  // is retried next pass; these record which change is failing and how many
+  // consecutive passes it has failed. At the third failure the ingest steps
+  // OVER it (logged as an error) so one bad row from the central server
+  // cannot wedge every club's mirror sync permanently. Cleared whenever a
+  // pass applies its page cleanly.
+  commsPoisonChangeId String?  @db.VarChar(64)
+  commsPoisonCount    Int      @default(0)
 
   updatedByMemberId String?
   createdAt         DateTime @default(now())
@@ -4742,7 +4776,16 @@ model EmailTemplateOverride {
   id                String   @id @default(cuid())
   templateName      String   @unique
   subject           String?
+  // With a rich body (below), bodyText is DERIVED on save — the block-aware
+  // text extraction of bodyHtml — so audit rows, diffs, stale-content
+  // comparison and token validation keep operating on text. For legacy rows
+  // it remains the authored body and the render source.
   bodyText          String?
+  // Fork #38 (owner decision, 25 Aug 2026): the rich-editor body, sanitised
+  // against the email policy BEFORE storage. Null for every row saved before
+  // the feature — those keep rendering through the plain-text path
+  // byte-for-byte until re-saved. Additive and nullable — blue/green safe.
+  bodyHtml          String?
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -4973,6 +5016,203 @@ model NoticeReadReceipt {
   @@index([noticeId, readAt])
   @@index([memberId])
 }
+
+// ---------------------------------------------------------------------------
+// Communication Portal (#2993, epic #2992) — the member message board.
+//
+// CLUB-WIDE, NOT LODGE-SCOPED (decision D-C1). A post can be shared onto a
+// network of other CLUBS, which has no concept of this club's buildings, so a
+// lodge on the row would have nowhere to go and nothing to mean. This matches
+// ServerNzSettings, which docs/multi-lodge/lodge-scoping-contract.md records as
+// club-wide for the same reason, and Notice above, which carries no lodgeId.
+//
+// A post written here stays here unless a member ticks "share with all clubs".
+// Only then is it uploaded to the central server and mirrored to other clubs.
+// A club-only post is never transmitted at all — which is a stronger guarantee
+// than a visibility filter, because there is no filter to get wrong.
+// ---------------------------------------------------------------------------
+
+model ClubPost {
+  id               String    @id @default(cuid())
+  // NULL = written by this club. Non-null = mirrored from another club via the
+  // central server, which also means the content is READ-ONLY here (D-C4):
+  // editing another club's post while still showing their name and badge on it
+  // would misrepresent them to our members. Hiding and removing the local copy
+  // stay available and say what they actually do.
+  originClubCode   String?   @db.VarChar(40)
+  originClubName   String?   @db.VarChar(200)
+  // Both null until shared. serverPostId is the ONLY handle by which the
+  // network copy can ever be withdrawn, so it must never be cleared before the
+  // central server confirms the withdrawal. Capped at 64 for the same reason
+  // ServerNzSettings.otherLodgesCursor is: an over-long value fails AFTER rows
+  // are written and BEFORE the cursor advances, which wedges sync permanently.
+  // The member ASKED for this to go to the network. Distinct from sharedAt,
+  // which means the server actually took it, and the gap between them is the
+  // point: the central server can be down, mid-deploy or slow, and a post must
+  // never be lost or silently kept local because of that. A request that has
+  // not yet succeeded is retried by the cron; until it does, the post is live
+  // on this club's own board exactly as any other.
+  shareRequestedAt DateTime?
+  // Why the last attempt failed, for the member and the admin screen. Cleared
+  // on success. Bounded because it can carry the remote's own error text.
+  shareError       String?   @db.VarChar(300)
+  // How many times the share has been attempted and failed (#3091 review 5).
+  // MAX_SHARE_ATTEMPTS in club-post-sharing.ts is the cap: at the cap the
+  // request is cleared with the reason on shareError, so eight permanently
+  // failing posts cannot occupy the sweep's page forever — and the sweep
+  // selects fewest-attempts-first, so a stuck head cannot starve newer posts.
+  shareAttempts    Int       @default(0)
+  sharedAt         DateTime?
+  serverPostId     String?   @unique @db.VarChar(64)
+  // The central server CONFIRMED the takedown of this club's own shared post
+  // (#3091 review 1). Null with removedAt set and serverPostId present means
+  // the network copy may still be visible to other clubs: the withdrawal
+  // sweep retries it each cycle and the moderation screen names it until this
+  // is stamped. Only ever set on posts this club authored (originClubCode
+  // null) — removing a MIRROR is a local act with nothing to withdraw.
+  withdrawnAt      DateTime?
+  // Taken from the authenticated session at compose time, never from a form
+  // field. The central server cannot verify author identity — it trusts this
+  // club's API key — so that trust is only warranted if the value is a real
+  // session here. SetNull rather than Cascade: a post survives the member
+  // record going away, exactly as Notice.createdByMemberId does.
+  authorMemberId   String?
+  authorName       String    @db.VarChar(200)
+  // The plain-text form. Still authoritative: it is what search matches, what
+  // the dashboard card and moderation list show, and what a consumer that
+  // cannot render HTML falls back to. Never HTML, and never rendered as HTML.
+  content          String    @db.VarChar(4000)
+  // The rich form the WYSIWYG composer writes, SANITISED ON WRITE against the
+  // allowlist in post-html.ts and sanitised again on render. Null for every
+  // post written before the editor existed, and for anything whose HTML
+  // sanitised down to nothing — `content` covers both, which is why this is
+  // additive rather than a replacement (mirrors Notice.bodyHtml).
+  //
+  // Larger than `content` because the same words carry markup: 4000 characters
+  // of text with headings, alignment and colour does not fit in 4000 bytes.
+  bodyHtml         String?   @db.VarChar(20000)
+  postedAt         DateTime  @default(now())
+  // Hidden is reversible with the content intact; removed is not. Both are
+  // local-only decisions and neither reaches another club.
+  hiddenAt         DateTime?
+  removedAt        DateTime?
+  // Cached count of non-dismissed reports, recomputed from the rows rather than
+  // incremented, so a dismissal actually stops counting.
+  reportCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  author  Member?          @relation("ClubPostAuthor", fields: [authorMemberId], references: [id], onDelete: SetNull)
+  images  ClubPostImage[]
+  reports ClubPostReport[]
+
+  @@index([postedAt])
+  @@index([originClubCode])
+  @@index([sharedAt])
+  @@index([shareRequestedAt])
+  @@index([authorMemberId])
+}
+
+model ClubPostImage {
+  id                 String    @id @default(cuid())
+  // NULL until the post is submitted. A member picks an image while still
+  // typing, so the file exists before the post does; the composer claims these
+  // rows on submit. An image nobody ever claims is swept by the retention job
+  // rather than lingering as an orphan on the mount.
+  postId             String?
+  post               ClubPost? @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Who uploaded it. A BARE SCALAR with no @relation, exactly like
+  // MediaImage.uploadedByMemberId: it is the audit answer to "who put this
+  // here", so a member merge leaves it pointing at the id that actually did.
+  // It is also the only attribution an unclaimed upload has, since there is no
+  // post to ask.
+  uploadedByMemberId String?
+  // Path relative to the configured upload root, never absolute and never
+  // client-supplied.
+  storageKey         String    @db.VarChar(300)
+  // What the serving route takes, so a storage key never appears in a URL and
+  // one image's address cannot be derived from another's.
+  publicId           String    @unique @db.VarChar(64)
+  // Sniffed from the file's own leading bytes on upload, never from the name
+  // or the browser-supplied type, and echoed back as the Content-Type.
+  mimeType           String    @db.VarChar(40)
+  // Of the stored bytes. Lets a shared copy be matched to its origin without
+  // re-uploading, and makes a truncated write detectable.
+  sha256             String    @db.VarChar(64)
+  // Nullable: dimensions are read opportunistically and a format this
+  // deployment cannot measure must not block a member's post.
+  width              Int?
+  height             Int?
+  bytes              Int
+  position           Int       @default(0)
+  createdAt          DateTime  @default(now())
+
+  @@index([postId])
+}
+
+model ClubPostReport {
+  id       String   @id @default(cuid())
+  postId   String
+  post     ClubPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  // Single-club, so unlike the central server's equivalent table the uniqueness
+  // key needs no club: member ids are unique within this deployment.
+  reporterMemberId String?
+  reporterName     String   @db.VarChar(200)
+  reason           ClubPostReportReason
+  details          String?  @db.VarChar(1000)
+  // Stamped rather than deleted when an admin dismisses, so the history stays
+  // visible to the next admin and the post remains re-reportable by a fresh set
+  // of members. Zeroing a counter while these rows stayed would do neither.
+  dismissedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  reporter Member? @relation("ClubPostReporter", fields: [reporterMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([postId, reporterMemberId])
+  @@index([postId])
+  @@index([reporterMemberId])
+}
+
+// Retention and cleanup policy for the club message board (#2999, epic #2992).
+// A singleton, like MaintenanceReportSettings: this is a club decision, not a
+// per-lodge one, for the same reason ClubPost itself carries no lodge (D-C1).
+model ClubPostSettings {
+  id String @id @default("default")
+
+  /// Days a post is kept before the cleanup pass deletes it permanently.
+  /// DEFAULT 0 = KEEP EVERYTHING, and that default is load-bearing: an upgrade
+  /// must never begin destroying member content because a default said so.
+  /// A club chooses a window deliberately (INV-CONFIG-001).
+  retentionDays Int @default(0)
+
+  /// Single-flight claim for the cleanup pass, held while one runs.
+  ///
+  /// A status-guarded claim rather than a Postgres advisory lock, for the
+  /// reason src/lib/servernz-sync-claim.ts sets out at length: a session-scoped
+  /// advisory lock is taken and released through Prisma's connection POOL, so
+  /// the unlock can execute on a different connection and wedge the job until
+  /// the pool recycles. An xact-scoped lock would mean holding a transaction
+  /// open across the whole pass. A conditional update whose matched-row count
+  /// IS the claim has neither problem, and a process killed mid-pass is reaped
+  /// by staleness rather than by a sweeper.
+  cleanupStartedAt DateTime?
+
+  /// When the last pass finished, and what it deleted, so the admin screen can
+  /// say what happened without keeping a separate history.
+  lastCleanupAt      DateTime?
+  lastCleanupDeleted Int       @default(0)
+
+  updatedAt         DateTime @default(now()) @updatedAt
+  updatedByMemberId String?
+}
+
+enum ClubPostReportReason {
+  SPAM
+  INAPPROPRIATE
+  HARASSMENT
+  OTHER
+}
+
 
 enum NotificationDeliveryMode {
   ALWAYS
@@ -5791,12 +6031,12 @@ model FamilyGroupJoinRequest {
   // For CHILD_REQUEST: child details submitted by parent
   childFirstName   String?
   childLastName    String?
-  childDateOfBirth DateTime?
+  childDateOfBirth DateTime? @db.Date
 
   // For ADULT_REQUEST: non-login adult details submitted by a family adult
   requestedFirstName   String?
   requestedLastName    String?
-  requestedDateOfBirth DateTime?
+  requestedDateOfBirth DateTime? @db.Date
   requestedEmail       String?
 
   // Set by admin when approving CHILD_REQUEST — links to existing member
@@ -6524,6 +6764,16 @@ model MembershipNominationSettings {
   minimumMembershipMonths Int       @default(12)
   minimumNights           Int       @default(6)
   requiredSignOffs        Int       @default(2)
+  // NOT `@db.Date`, and that is a decision rather than an oversight (#2872,
+  // CT-3). This column is MIXED: the admin panel sends a calendar day from an
+  // `<input type="date">`, but `api/admin/membership-nomination-settings`
+  // stamps `new Date()` — a real instant — the first time the gate is enabled
+  // with the cutoff box left empty, which the panel's own help text presents as
+  // ordinary use. A column with a clock writer is exactly what excluded
+  // `MemberInduction.inductionDate` from the same migration. Narrowing it would
+  // also make that migration's fail-closed preflight RAISE on any club that has
+  // already enabled the gate that way. See "WHAT IS DELIBERATELY NOT HERE" in
+  // prisma/migrations/20260825010000_narrow_calendar_date_columns/migration.sql.
   gateEffectiveFrom       DateTime?
   updatedByMemberId       String?
   createdAt               DateTime  @default(now())

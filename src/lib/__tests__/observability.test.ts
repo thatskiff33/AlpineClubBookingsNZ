@@ -112,6 +112,10 @@ vi.mock("@/lib/session-guards", async () => ({
     mockRequireActiveSessionUser(...args),
 }));
 
+vi.mock("@/lib/club-time-zone-settings", () => ({
+  getClubTimeZone: vi.fn(async () => "Pacific/Auckland"),
+}));
+
 vi.mock("@/lib/health-check", () => ({
   getDetailedHealthReport: vi.fn(),
 }));
@@ -643,8 +647,11 @@ describe("OBS-07: GET /api/admin/health", () => {
         expect.objectContaining({
           jobName: "finance-daily-sync",
           schedule: "15 10 * * *",
+          // CT-5 (#2869): the schedule is described in the CLUB's persisted
+          // timezone, which the route resolves and passes in — never in the
+          // container's `TZ`, and never as a hard-coded New Zealand string.
           timezone: "Pacific/Auckland",
-          expectedLocalTime: "10:15 NZT/NZDT daily",
+          expectedLocalTime: "10:15 daily in Pacific/Auckland",
         }),
         expect.objectContaining({
           jobName: "xero-membership-refresh",

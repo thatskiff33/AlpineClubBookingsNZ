@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { requireAdmin } from "@/lib/session-guards";
 
 const paramsSchema = z.object({
@@ -51,11 +54,19 @@ export async function POST(
     );
   }
 
+  // #3123 — ONE read of the club's persisted zone, and both civil-time answers
+  // the preview needs derived from it: the day its "still to come" booking
+  // bounds are judged against, and the current season its age tiers are. Both
+  // used to be defaulted inside the preview — the day from the ENVIRONMENT's
+  // zone, which is a different day for a club configured behind its container.
+  const clubZone = await clubTimeZone();
   const result = await getSeasonalMembershipChangePreview({
     memberId: parsedParams.data.id,
     seasonYear: parsedBody.data.seasonYear,
     membershipTypeId: parsedBody.data.membershipTypeId,
     applyFrom: parsedBody.data.applyFrom ?? null,
+    now: dateOnlyInstantOf(clubToday(clubZone)),
+    clubCurrentSeasonYear: clubSeasonYear(clubZone),
   });
 
   return NextResponse.json(result.body, result.init);

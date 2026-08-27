@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validatePromoCodeRules, type PromoRuleSubject } from "../promo";
+import { requireCalendarDate } from "@/lib/club-time";
 
 function makePromoCode(overrides: Partial<PromoRuleSubject> = {}): PromoRuleSubject {
   return {
@@ -16,7 +17,9 @@ function makePromoCode(overrides: Partial<PromoRuleSubject> = {}): PromoRuleSubj
   };
 }
 
-const now = new Date("2026-07-15T12:00:00Z");
+// #3123 — the CLUB's calendar day, which is what the validator takes now.
+// Same day the old instant fixture projected to under the container's zone.
+const now = requireCalendarDate("2026-07-16");
 
 describe("validatePromoCodeRules - member assignments", () => {
   it("allows any member when no assignments (null)", () => {

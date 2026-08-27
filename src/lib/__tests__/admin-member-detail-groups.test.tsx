@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
+// NOT bare `@testing-library/react`: since CT-4 (#2870) this tree reads the
+// club's zone from `ClubTimeProvider`, and `useClubTime()` throws without one —
+// deliberately, so a tree that forgot to mount it fails loudly instead of
+// rendering a plausible wrong day. The support wrapper mounts it with
+// `CLUB_TIME_TEST_ZONE`, which is the zone this suite's expectations already
+// assumed, so no assertion here changes meaning.
 import type { ReactNode } from "react";
 import { Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -252,7 +258,7 @@ describe("Admin member detail grouped layout", () => {
     ).toBeTruthy();
     expect(screen.getByText("Can log in · 1 role · Active")).toBeTruthy();
     expect(
-      screen.getByText("2026/2027: Full Member", { exact: false })
+      screen.getByText("2026 - 2027 (Apr-Mar): Full Member", { exact: false })
     ).toBeTruthy();
     expect(
       screen.getByText("Credit $40.50 · Not linked to Xero")
@@ -277,12 +283,12 @@ describe("Admin member detail grouped layout", () => {
 
     // The Membership group's preview line…
     expect(
-      screen.getByText("2026/2027: Non-Member", { exact: false })
+      screen.getByText("2026 - 2027 (Apr-Mar): Non-Member", { exact: false })
     ).toBeTruthy();
     expect(screen.queryByText(/No seasonal type set/)).toBeNull();
     // …and the summary strip beside it, whose Membership tile read "None".
     // Matched by the tile's own value node: the preview line above renders
-    // "2026/2027: Non-Member", so an exact match can only be the tile.
+    // "2026 - 2027 (Apr-Mar): Non-Member", so an exact match can only be the tile.
     expect(screen.getByText("Non-Member", { exact: true })).toBeTruthy();
   });
 
@@ -294,7 +300,7 @@ describe("Admin member detail grouped layout", () => {
     await renderPage();
 
     expect(
-      screen.getByText("2026/2027: No seasonal type set", { exact: false })
+      screen.getByText("2026 - 2027 (Apr-Mar): No seasonal type set", { exact: false })
     ).toBeTruthy();
   });
 

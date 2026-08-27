@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
   BookingGuestRemovalError,
@@ -302,6 +304,13 @@ async function removeClaimedConsentGuest(
     kind: "CONSENT_DECLINE" | "CONSENT_EXPIRY";
     /** D-15's credit election. Only the sweep passes it. */
     settlementMethod?: "credit";
+    /**
+     * The club's today (#3123), resolved by the caller before it opened this
+     * transaction — see `removeBookingGuestInTransaction`'s own parameter, and
+     * `INV-LOCK-004`. This transaction holds `pg_advisory_xact_lock(1)` and the
+     * per-lodge capacity key.
+     */
+    today: Date;
   },
 ): Promise<{ removed: true; creditCents: number }> {
   try {
@@ -311,6 +320,7 @@ async function removeClaimedConsentGuest(
       guestId: params.guestId,
       actorMemberId: params.actorMemberId,
       actorRole: "MEMBER",
+      today: params.today,
       ...(params.settlementMethod ? { settlementMethod: params.settlementMethod } : {}),
       consentAuthority: {
         kind: params.kind,
@@ -458,6 +468,17 @@ export async function respondToMemberGuestConsent(params: {
   });
   if (bookingBeforeLock?.deletedAt) refuseDeletedBooking();
 
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. Inside it this path holds `pg_advisory_xact_lock(1)` and the
+  // per-lodge capacity key, where resolving the club's persisted timezone would
+  // be a `clubTimeSettings.findUnique` taking a second pooled connection. The
+  // RUNTIME reader, not the server binding: this module is reached from
+  // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
+  // `server-only` is a bare throw at import.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+
   try {
     return await db.$transaction(async (tx) => {
       // Global money/status lock first, then the per-lodge capacity lock: this
@@ -489,10 +510,15 @@ export async function respondToMemberGuestConsent(params: {
           now,
         );
         if (!claimed) return { outcome: "ALREADY_RESOLVED" } as const;
-        await enqueueHostingCoverageReevaluationForMember(targetMemberId, tx, {
-          cause: "SYSTEM_CHANGE",
-          actorMemberId,
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          targetMemberId,
+          tx,
+          clubTodayDateOnly,
+          {
+            cause: "SYSTEM_CHANGE",
+            actorMemberId,
+          },
+        );
         return { outcome: "APPROVED" } as const;
       }
 
@@ -517,6 +543,7 @@ export async function respondToMemberGuestConsent(params: {
         targetMemberId,
         actorMemberId,
         kind: "CONSENT_DECLINE",
+        today: clubTodayDateOnly,
       });
 
       return {
@@ -559,6 +586,17 @@ export async function expireMemberGuestConsent(params: {
   db?: typeof prisma;
 }): Promise<MemberGuestConsentOutcome> {
   const { guestId, now = new Date(), db = prisma } = params;
+
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. Inside it this path holds `pg_advisory_xact_lock(1)` and the
+  // per-lodge capacity key, where resolving the club's persisted timezone would
+  // be a `clubTimeSettings.findUnique` taking a second pooled connection. The
+  // RUNTIME reader, not the server binding: this module is reached from
+  // `instrumentation.node.ts` through `cron-member-guest-consent-expiry`, where
+  // `server-only` is a bare throw at import.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
 
   try {
     return await db.$transaction(async (tx) => {
@@ -611,6 +649,7 @@ export async function expireMemberGuestConsent(params: {
         actorMemberId: guest.booking.memberId,
         kind: "CONSENT_EXPIRY",
         settlementMethod: "credit",
+        today: clubTodayDateOnly,
       });
 
       return {

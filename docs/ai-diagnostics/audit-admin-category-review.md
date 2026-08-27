@@ -584,11 +584,11 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  455
+row-producing sites:  462
 uncategorised:        0
 category values: admin 104, booking 101, xero 34, family 35, payment 37,
                  lodge 65, account 19, security 22, privacy 19,
-                 communication 14, system 4
+                 communication 21, system 4
 ```
 
 `admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
@@ -621,6 +621,16 @@ as "override off". That is the figure above, and it was taken from
 `npm run audit:census` on the merged tree rather than by adding one branch's
 delta to the other's total. The category values sum to 454 rather than 455
 because one site forwards its category rather than naming one.
+maintenance-report writers (`lodge` 55 → 65, 443 → 453). And the Communication
+Portal (epic #2992) added the six club message board moderation writers
+(`communication` 14 → 20, 453 → 459). The federation work then added the
+board image upload writer (`communication` 20 → 21, 459 → 460). The upstream
+merge then brought the club-time and environment-safety writers with it
+(`admin` 102 → 104, 460 → 462). That is the figure
+above, and it was taken from `npm run audit:census` on the merged tree rather
+than by adding one branch's delta to the other's total. The category values sum
+to 461 rather than 462 because one site forwards its category rather than
+naming one.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in

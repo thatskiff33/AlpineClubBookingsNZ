@@ -336,6 +336,37 @@ describe("the seam opens ONE bounded read-only transaction (#2786)", () => {
   });
 });
 
+/**
+ * Modules that reach the application's GLOBAL Prisma client for a database read, so
+ * importing one from a pack module puts that read outside the seam (#2870).
+ *
+ * `reaches` names the line a reviewer should look at, so this table is checkable
+ * rather than asserted.
+ */
+const GLOBAL_CLIENT_BY_PROXY: readonly { module: string; reaches: string }[] = [
+  {
+    module: "@/lib/club-time-zone-runtime",
+    reaches: 'its own `import { prisma } from "@/lib/prisma"`, via readPersistedClubTimeZoneRow',
+  },
+];
+
+/**
+ * Pack modules permitted to import one of the above, each with the reason.
+ *
+ * `packs/support-evidence.ts` reads the configured club timezone at
+ * `readBackgroundJobHealthEvidence` BEFORE it opens the seam, to compare the
+ * persisted zone against the one the scheduler pinned at boot. That is the same
+ * pre-seam shape as the `usage-summary-no-tx-client` row, it PREDATES #2870, and it
+ * carries no matching `READ_ONLY_SEAM_EXEMPTIONS` id today — reported on #2870 for
+ * the pack's owner rather than declared here by a passing lane, because adding a row
+ * to that closed world is a decision somebody should make on purpose. Listing it
+ * keeps this guard honest about what it is not yet enforcing instead of weakening
+ * the rule for every pack.
+ */
+const INDIRECT_GLOBAL_CLIENT_ALLOWANCES: Record<string, readonly string[]> = {
+  "packs/support-evidence.ts": ["@/lib/club-time-zone-runtime"],
+};
+
 describe("the seam is the ONLY place the global client is reached (#2786)", () => {
   it("reaches exactly one property on the global Prisma client", () => {
     const source = toolsSource("read-only-transaction.ts");
@@ -514,6 +545,32 @@ describe("the modules the seam exists for (#2786)", () => {
 
     expect(code.match(/prisma\.[A-Za-z$]+/g)).toBeNull();
     expect(code).not.toContain('from "@/lib/prisma"');
+    // AND NOT ONE IMPORT AWAY EITHER (#2870).
+    //
+    // The two lines above match the literal token `prisma.` and the direct import.
+    // `booking-evidence.ts` never wrote either, and still reached the global client
+    // for a whole pull request: it imported `readClubTimeZoneOutsideRequest`, whose
+    // own module holds `import { prisma } from "@/lib/prisma"`. The read sat inside
+    // `withBoundedReadOnlyTransaction`, escaping the READ ONLY fence, the snapshot
+    // and the statement timeout — and all 374 tests here passed.
+    //
+    // So the census now names the modules that reach the global client on a pack's
+    // behalf. It is a NAMED SET rather than a transitive import walk because the
+    // set is small, a walk would flag every shared helper in the tree, and a guard
+    // nobody can read is a guard nobody maintains. Add to it when a new such module
+    // appears; a pack that genuinely needs one declares a
+    // `READ_ONLY_SEAM_EXEMPTIONS` row and is listed below with its id.
+    for (const indirect of GLOBAL_CLIENT_BY_PROXY) {
+      const allowed = INDIRECT_GLOBAL_CLIENT_ALLOWANCES[relativePath];
+      if (allowed?.includes(indirect.module)) continue;
+      expect(
+        code,
+        `${relativePath} imports ${indirect.module}, which reaches the global Prisma ` +
+          `client (${indirect.reaches}). A pack module must take its database reads ` +
+          `from the \`tx\` its caller opened, or declare a READ_ONLY_SEAM_EXEMPTIONS ` +
+          `row and be listed in INDIRECT_GLOBAL_CLIENT_ALLOWANCES with that id.`,
+      ).not.toContain(`from "${indirect.module}"`);
+    }
     // Non-vacuous: the strip left real code behind, so a null match means "reaches
     // the client nowhere" rather than "the strip ate the file".
     expect(code.trim().length, `${relativePath} stripped to nothing`).toBeGreaterThan(0);

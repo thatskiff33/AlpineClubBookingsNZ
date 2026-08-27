@@ -17,6 +17,14 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { applyPromoCodeChanges } from "../booking-modify-plan";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 type Call = { op: string; id?: string };
 
@@ -107,6 +115,7 @@ const newPromoRow = {
 
 function runSwap(tx: ReturnType<typeof makeTx>["tx"]) {
   return applyPromoCodeChanges(tx as unknown as ApplyArgs[0], {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
     booking: {
       memberId: "member-1",
       lodgeId: "lodge-1",
@@ -176,6 +185,7 @@ describe("applyPromoCodeChanges promo row locking (#2299)", () => {
     const { tx, calls } = makeTx({});
 
     await applyPromoCodeChanges(tx as unknown as ApplyArgs[0], {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
       booking: {
         memberId: "member-1",
         lodgeId: "lodge-1",

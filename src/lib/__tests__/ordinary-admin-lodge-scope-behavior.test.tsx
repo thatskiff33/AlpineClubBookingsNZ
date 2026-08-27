@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest"
 import { useEffect, type ReactElement } from "react"
-import { act, cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, render, screen } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions"
 

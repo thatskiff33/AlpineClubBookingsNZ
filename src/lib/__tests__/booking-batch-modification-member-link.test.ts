@@ -66,9 +66,27 @@ vi.mock("@/lib/logger", () => ({
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } from "@/lib/booking-modify";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { requireCalendarDate } from "@/lib/club-time";
 
-const storedCheckIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const storedCheckOut = addDaysDateOnly(getTodayDateOnly(), 33);
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
+
+/*
+ * The zone every relative fixture below is built in (#3123).
+ * `modifyBookingBatch` takes its own day from `(await clubTime()).today()`, the
+ * persisted `ClubTimeSettings` zone; this suite's prisma mock serves no such
+ * row, so that resolver falls back to `APP_TIME_ZONE` — `Pacific/Auckland`
+ * under test. The fixtures must be built in the same zone the service reads, or
+ * the "mid-stay" booking below stops straddling the service's today. Zone
+ * AUTHORITY is not what this suite tests, so it names the agreeing zone.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
+const storedCheckIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const storedCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 33);
 const LODGE = "lodge-1";
 const GUEST_PLAN_SENTINEL = new Error("reached-the-guest-plan");
 
@@ -79,8 +97,8 @@ function inProgressBooking() {
   return {
     ...loadedBooking(),
     status: "PAID",
-    checkIn: addDaysDateOnly(getTodayDateOnly(), -1),
-    checkOut: addDaysDateOnly(getTodayDateOnly(), 2),
+    checkIn: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -1),
+    checkOut: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 2),
   };
 }
 
@@ -146,6 +164,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
         input: link,
@@ -164,6 +183,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
         input: link,
@@ -187,6 +207,7 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
         input: link,
@@ -206,11 +227,12 @@ describe("modifyBookingBatch member-link service gate (#2337)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
         input: {
           ...link,
-          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 34)),
+          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34)),
         },
         ipAddress: "127.0.0.1",
       }),

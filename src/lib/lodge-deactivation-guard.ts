@@ -1,5 +1,4 @@
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
-import { getTodayDateOnly } from "@/lib/date-only";
 import { BookingStatus, type PrismaClient } from "@prisma/client";
 
 /**
@@ -17,6 +16,14 @@ import { BookingStatus, type PrismaClient } from "@prisma/client";
  * pre-lock ask and the transaction client for the locked one — only the
  * locked answer is authoritative, and the pre-lock answer exists to refuse the
  * common cases without paying for a lock.
+ *
+ * It reads no clock and resolves no timezone. The club's day arrives as a
+ * required argument (#3123) for two separate reasons, and both matter:
+ * `INV-LOCK-004` — the locked ask runs inside the route's `$transaction` under
+ * the per-lodge capacity key, where resolving the club timezone would take a
+ * second pooled connection — and single-source-of-truth: the pre-lock refusal
+ * and the locked re-check must be judged against the SAME day, which two
+ * independent reads straddling club midnight would not be.
  */
 
 /**
@@ -58,6 +65,15 @@ export async function findLodgeDeactivationRefusal(
     /** The requested value; anything but `false` is not a deactivation. */
     requestedActive: boolean | undefined;
     force: boolean | undefined;
+    /**
+     * The club's today, as the UTC-midnight `@db.Date` encoding
+     * (`INV-DATE-026`), resolved by the caller BEFORE it opened its
+     * transaction and passed to BOTH asks. Required, never defaulted: a
+     * default is what let this read take the container's timezone
+     * (`INV-CONFIG-002`), and a required parameter is what makes the caller
+     * resolve it in the one place that is outside the locks.
+     */
+    today: Date;
   },
 ): Promise<LodgeDeactivationRefusal | null> {
   if (input.requestedActive !== false || !input.lodgeIsActive) return null;
@@ -82,11 +98,12 @@ export async function findLodgeDeactivationRefusal(
   // explicit force to proceed. (What deactivation ultimately means for existing
   // bookings is an open operational decision — see docs/multi-lodge.)
   //
-  // checkOut and hutLeaderAssignment.endDate are @db.Date (NZ calendar date at
+  // checkOut and hutLeaderAssignment.endDate are @db.Date (a calendar date at
   // UTC midnight). Compare against the date-only "today" so a stay or hut-leader
-  // term ending today still registers as a live dependency for the whole NZ
-  // day, not just the first ~13h under the TZ=Pacific/Auckland pin (F32, #1888).
-  const today = getTodayDateOnly();
+  // term ending today still registers as a live dependency for the whole club
+  // day, not just the first hours of it (F32, #1888). The day is the CLUB's,
+  // from its persisted timezone, supplied by the caller (#3123).
+  const today = input.today;
   const [futureBookings, waitlistEntries, hutLeaderAssignments, kioskBindings] =
     await Promise.all([
       db.booking.count({

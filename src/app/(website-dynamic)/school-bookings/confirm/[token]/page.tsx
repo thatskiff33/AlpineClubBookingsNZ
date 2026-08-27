@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSchoolAttendeeConfirmation } from "@/lib/school-attendee-confirmation";
-import { formatNZDate } from "@/lib/nzst-date";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 import { SchoolAttendeeConfirmForm } from "./school-attendee-confirm-form";
 
 // The attendee-confirmation link carries a one-time token and must never be
@@ -42,6 +42,18 @@ export default async function SchoolAttendeeConfirmationPage({
         ) : null}
       </CardHeader>
       <CardContent className="space-y-6">
+        {/*
+          `checkIn`/`checkOut` are `@db.Date` LODGE NIGHTS serialised to ISO by
+          `getSchoolAttendeeConfirmation`, so they are CALENDAR DATES and take no
+          zone at all (INV-DATE-010): the kernel's decoder reads the day out of
+          the value's first ten characters, and the formatter pins `UTC` over it,
+          so the projection is provably the identity (CT-4, #2870;
+          INV-DATE-019's first exact boundary with INV-DATE-026, which are the
+          citation for that decode and INV-DATE-010 is not — #3080). The
+          old `formatNZDate` projected them through `APP_TIME_ZONE`, which is the
+          identity only for a club east of Greenwich and a day early for one that
+          is not.
+        */}
         {details.booking ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -49,7 +61,9 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-in
               </p>
               <p className="mt-1 text-sm">
-                {formatNZDate(new Date(details.booking.checkIn))}
+                {formatClubDate(
+                  calendarDateOfSerialisedDbDate(details.booking.checkIn),
+                )}
               </p>
             </div>
             <div>
@@ -57,7 +71,9 @@ export default async function SchoolAttendeeConfirmationPage({
                 Check-out
               </p>
               <p className="mt-1 text-sm">
-                {formatNZDate(new Date(details.booking.checkOut))}
+                {formatClubDate(
+                  calendarDateOfSerialisedDbDate(details.booking.checkOut),
+                )}
               </p>
             </div>
           </div>

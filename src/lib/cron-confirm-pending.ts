@@ -23,7 +23,11 @@ import {
   revokePaymentLinksForBooking,
   type MintedSplitGuestPaymentLink,
 } from "@/lib/payment-link";
-import { endOfDateOnlyForTimeZone, formatDateOnly } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  paymentLinkExpiryForCheckIn,
+  type ClubTimeZone,
+} from "@/lib/payment-link-expiry";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
@@ -385,9 +389,15 @@ function triggerWaitlistProcessing(booking: PendingBooking) {
   );
 }
 
+/**
+ * `clubZone` IS SUPPLIED BY THE CALLER, never read here: this body holds
+ * `lock(1)` AND the per-lodge lock throughout, and resolving the zone is a
+ * settings query. See `payment-link-expiry.ts`.
+ */
 async function resolveHoldWindowUnderLock(
   bookingId: string,
-  now: Date
+  now: Date,
+  clubZone: ClubTimeZone
 ): Promise<HoldResolution> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -555,8 +565,8 @@ async function resolveHoldWindowUnderLock(
         // the still-unpaid request booking. Use the SAME boundary the approval
         // uses for the payment link's hard expiry
         // (booking-request.ts:approveBookingRequest sets
-        // paymentLinkExpiresAt = endOfDateOnlyForTimeZone(checkIn)), so the two
-        // can never disagree: past it the requester's /pay link is dead anyway,
+        // paymentLinkExpiryForCheckIn) — literally the same function, so the
+        // two can never disagree: past it the /pay link is dead anyway,
         // yet without this the hold kept extending (and the admin alert kept
         // firing) forever. UNLIKE the split child (#1993), this booking HOLDS
         // REAL capacity, so this is a capacity change: the guarded
@@ -569,9 +579,8 @@ async function resolveHoldWindowUnderLock(
         // booking-events.ts). A PAID/CONFIRMED booking is never here (not
         // PENDING); the CONVERTED request row is left as the historical record.
         const checkInDayEnded =
-          endOfDateOnlyForTimeZone(
-            formatDateOnly(booking.checkIn)
-          ).getTime() <= now.getTime();
+          paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
+          now.getTime();
         if (checkInDayEnded) {
           const cancelled = await tx.booking.updateMany({
             where: { id: booking.id, status: BookingStatus.PENDING },
@@ -682,9 +691,8 @@ async function resolveHoldWindowUnderLock(
         // PENDING); the parent is never touched; no Xero void (an unsettled
         // child has no invoice).
         const checkInDayEnded =
-          endOfDateOnlyForTimeZone(
-            formatDateOnly(booking.checkIn)
-          ).getTime() <= now.getTime();
+          paymentLinkExpiryForCheckIn(booking.checkIn, clubZone).getTime() <=
+          now.getTime();
         if (checkInDayEnded) {
           const cancelled = await tx.booking.updateMany({
             where: { id: booking.id, status: BookingStatus.PENDING },
@@ -768,10 +776,11 @@ async function resolveHoldWindowUnderLock(
 
         // Mint only when no active (unexpired) link exists; a pre-existing
         // active link means a prior run already emailed the member.
-        const mintedLink = await mintSplitGuestPaymentLinkIfAbsent(tx, {
-          id: booking.id,
-          checkIn: booking.checkIn,
-        });
+        const mintedLink = await mintSplitGuestPaymentLinkIfAbsent(
+          tx,
+          { id: booking.id, checkIn: booking.checkIn },
+          clubZone
+        );
 
         return {
           type: "split_child_payment_link",
@@ -1038,6 +1047,10 @@ async function cancelSupersededLinkIntentsBestEffort(
 export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   const now = new Date();
 
+  // ONE settings read per run, outside every transaction, so no lock waits on
+  // it and two bookings in one tick share a club day (`payment-link-expiry.ts`).
+  const clubZone = await readClubTimeZoneOutsideRequest();
+
   // Find all PENDING bookings past their hold deadline, including split
   // non-member child bookings (#738). Process oldest first so older provisional
   // non-member windows resolve before newer competing holds.
@@ -1068,7 +1081,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
     let paymentIntentId = candidate.payment?.stripePaymentIntentId || "N/A";
 
     try {
-      const resolution = await resolveHoldWindowUnderLock(candidate.id, now);
+      const resolution = await resolveHoldWindowUnderLock(
+        candidate.id,
+        now,
+        clubZone
+      );
 
       if (resolution.type === "already_processed") {
         continue;
@@ -1316,10 +1333,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             'Skipped minting a split guest payment link: the booking has "No emails" turned on'
           );
         } else if (resolution.mintedLink) {
-          const { token, paymentLinkId } = resolution.mintedLink;
-          const expiresAt = endOfDateOnlyForTimeZone(
-            formatDateOnly(resolution.booking.checkIn)
-          );
+          // `expiresAt` comes back FROM the mint, so the email states the row's
+          // own instant rather than deriving the boundary a second time.
+          const { token, paymentLinkId, expiresAt } = resolution.mintedLink;
           let delivered = false;
           let withheld = false;
           try {

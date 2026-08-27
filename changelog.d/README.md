@@ -13,6 +13,42 @@ The `CHANGELOG.md merge=union` declaration in `.gitattributes` (#2451) stays as
 belt-and-braces through the transition, so the pull requests that still edit
 `CHANGELOG.md` directly keep merging without a manual resolve.
 
+## The general rule, of which this is one instance
+
+**An artifact every lane adds an entry to is a directory of per-lane fragments,
+never one shared file** - a lane adds a file rather than editing a shared list,
+so two lanes cannot collide. That rule lives in `AGENTS.md` -> "Change
+Discipline", and the row in its routing table points back here for the detail.
+
+There are four instances, and until [#3111](https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/3111)
+they read as four unrelated special cases rather than as one rule - which is how
+a fifth artifact came to be appended to by four lanes at once before anyone
+recognised what it was:
+
+| Artifact | Remedy | Why it is in the class |
+|---|---|---|
+| `changelog.d/` | fragment directory | Every code-bearing pull request adds one entry (#2452) |
+| `size-allowances.d/` | fragment directory | Every lane that grows an over-budget file adds one allowance |
+| `CHANGELOG.md` | `merge=union` (#2451) | A flat list of released lines, none of which refers to another |
+| `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` | `merge=union` (#3111) | One row per migration, hand-appended by every schema lane |
+
+**The fragment directory is the default; `merge=union` is the exception.** Union
+keeps both sides' added lines, which is precisely the resolution a human would
+make for a flat list of unrelated lines. It is the wrong answer for a document
+with sections: it interleaves blocks in arbitrary order and can duplicate
+headings, and it does so **silently**, where a conflict is loud. So a narrative
+document several lanes co-edit stays an ordinary file and takes the conflicts.
+#3111 measured `docs/CLUB_TIME_KERNEL.md` and found it is that shape - a
+seven-section topical reference each lane revises in place - rather than a
+ledger, which is why it was left alone.
+
+`src/lib/__tests__/additive-artifact-fragments.test.ts` checks the four artifacts
+above have not regressed, and fails a new top-level `*.d/` directory that nobody
+registered. It cannot recognise a newly invented shared **file** that should have
+been a fragment directory - no offline check can, and #3111 records the two
+measurements that killed the attempt. That gap is what the stated rule and its
+routing row are for.
+
 ## Adding a fragment
 
 1. Create `changelog.d/<pr-number>-<short-slug>.md`, for example

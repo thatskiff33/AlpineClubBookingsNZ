@@ -13,11 +13,9 @@ import {
 } from "@/config/club";
 import { DEFAULT_MEMBERSHIP_NOMINATION_SETTINGS } from "@/config/club-settings-defaults";
 import { buildStructuredAuditLogCreateArgs } from "@/lib/audit";
-import {
-  isDateOnlyString,
-  parseDateOnly,
-  todayDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { clubToday, type CalendarDate } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { MEMBER_IMPORT_ROLE_VALUES } from "@/lib/member-roles";
 import { prisma } from "@/lib/prisma";
 import {
@@ -227,7 +225,23 @@ export interface RunInductionBaselineOptions {
   fallbackClubNameSource?: ClubConfigSource;
 }
 
-function validateInputs(options: RunInductionBaselineOptions): {
+/**
+ * `todayAtClub` is passed in rather than read here (#3123).
+ *
+ * The guard used to call `todayDateOnlyForTimeZone()`, which answers from the
+ * CONTAINER's timezone rather than the club's persisted one
+ * (`INV-CONFIG-002`) — so an operator on the club's own last permissible day
+ * could be refused, or given one day too many. This function is sync and
+ * private, and keeping it that way is what lets the guard be tested without a
+ * database; `runInductionBaseline` resolves the day once and hands it over.
+ *
+ * Both operands are four-digit-year `yyyy-MM-dd` strings, so the lexical
+ * comparison below is a correct chronological one.
+ */
+function validateInputs(
+  options: RunInductionBaselineOptions,
+  todayAtClub: CalendarDate,
+): {
   actorMemberId: string;
   baselineDate: string;
   baselineTimestamp: Date;
@@ -245,9 +259,9 @@ function validateInputs(options: RunInductionBaselineOptions): {
       "The baseline date must be a real NZ date-only value in YYYY-MM-DD form.",
     );
   }
-  if (options.baselineDate > todayDateOnlyForTimeZone()) {
+  if (options.baselineDate > todayAtClub) {
     throw new InductionBaselineError(
-      "The baseline date cannot be later than the current New Zealand date.",
+      "The baseline date cannot be later than the club's current date.",
     );
   }
 
@@ -636,7 +650,15 @@ function buildReport(params: {
 export async function runInductionBaseline(
   options: RunInductionBaselineOptions,
 ): Promise<InductionBaselineReport> {
-  const input = validateInputs(options);
+  // The club's own current date, from its PERSISTED timezone (#3123). The
+  // CLI-safe runtime reader is MANDATORY here: `scripts/induction-baseline.ts`
+  // imports this module directly (through `await import(...)`, which the static
+  // CLI census cannot see), and `server-only` is a bare throw the moment that
+  // command reaches the import.
+  const input = validateInputs(
+    options,
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const apply = options.apply === true;
   const store = options.store ?? (prisma as unknown as InductionBaselineStore);
   const fallbackClubName = options.fallbackClubName ?? clubConfig.name;

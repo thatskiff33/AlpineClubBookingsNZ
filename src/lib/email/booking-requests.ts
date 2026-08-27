@@ -11,10 +11,6 @@ import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail, type EmailSendOutcome } from "./core";
 import {
@@ -22,6 +18,7 @@ import {
   type BookingEmailSourceContext,
 } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Public booking request flow (issue #707) ----
 
@@ -62,10 +59,10 @@ export async function sendBookingRequestVerificationEmail(params: {
       firstName: params.firstName,
       token: params.token,
       verifyUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -112,13 +109,23 @@ export async function sendBookingRequestApprovedEmail(params: {
       firstName: params.firstName,
       token: params.token,
       payUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
       bookingReference: params.bookingReference,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      // PERSISTED zone, matching the HTML body two blocks up (#2870, CT-4).
+      // A saved body override re-renders the WHOLE email from this object
+      // (`email-message-renderer.ts` -> `prepareEmailMessage`), and the shipped
+      // default body for this template already contains `{{expiresAt}}` — so
+      // `formatNZDateTime` here spelled the payment deadline in the CONTAINER's
+      // zone for any club that has edited the wording, while the default body
+      // spelled the same instant in the club's. On a divergent deployment those
+      // two readings named different times, and in the club-behind direction a
+      // different DAY. `emailClubDateTime` is the same accessor the default body
+      // uses, so the override and the default can no longer disagree.
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -168,13 +175,15 @@ export async function sendSplitGuestPaymentLinkEmail(params: {
       firstName: params.firstName,
       token: params.token,
       payUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       priceCents: params.priceCents,
       price: formatMoneyCents(params.priceCents),
       bookingReference: params.bookingReference,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      // PERSISTED zone — see the identical note on `booking-request-approved`
+      // above. Same value, same override branch, same defect.
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -230,15 +239,15 @@ export async function sendBookingRequestQuoteEmail(params: {
       firstName: params.firstName,
       token: params.token,
       respondUrl,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       requestType: params.requestType,
       schoolName: params.schoolName ?? "",
       quoteOptions: params.options
         .map((option) => `${option.label}: ${formatMoneyCents(option.totalCents)}`)
         .join("\n"),
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }
@@ -271,8 +280,8 @@ export async function sendBookingRequestDeclinedEmail(params: {
     templateName: "booking-request-declined",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       reason: params.reason ?? "",
       // #2268: pre-composed optional line — a decline with no note must not
       // print a dangling "Note:".
@@ -315,8 +324,8 @@ export async function sendBookingRequestPaymentExpiredEmail(params: {
     templateName: "booking-request-payment-expired",
     templateData: {
       firstName: params.firstName,
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
     },
   });
 }
@@ -368,8 +377,8 @@ export async function sendSchoolAttendeeConfirmationEmail(params: {
       // flat body's "{{schoolName}}'s stay" is never orphaned as "'s stay"
       // when the booking records no school name.
       schoolName: params.schoolName ?? "your school group",
-      checkIn: formatNZDate(params.checkIn),
-      checkOut: formatNZDate(params.checkOut),
+      checkIn: emailCalendarDay(params.checkIn),
+      checkOut: emailCalendarDay(params.checkOut),
       guestCount: params.guestCount,
       isReminder: params.isReminder,
     },

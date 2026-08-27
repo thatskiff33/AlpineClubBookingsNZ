@@ -57,8 +57,32 @@ vi.mock("@/lib/finance-legacy-dashboard-export", () => ({
 }));
 
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { BookingRequestForm } from "@/app/(website-dynamic)/booking-requests/booking-request-form";
 import { SchoolBookingForm } from "@/app/(website-dynamic)/school-bookings/school-booking-form";
+
+/*
+  CT-4 (#2870) MOVED WHERE THESE TWO FORMS GET THE CLUB'S DAY FROM, and this
+  suite's fixture is unchanged by it.
+
+  Both used to call `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE`:
+  the container's `TZ`. They now read the club's PERSISTED zone from
+  `ClubTimeProvider`, so each render below has to say which club it is rendering
+  for. It says `Pacific/Auckland`, which is the same answer `APP_TIME_ZONE`
+  gives here, so every expected string in this file is the one #2682 pinned and
+  the suite still means exactly what it meant.
+
+  It is named at the call site rather than taken from the shared default in
+  `support/club-time-render`, because on THIS suite the zone is the subject: the
+  whole claim is that the day offered is New Zealand's and not UTC's, and a
+  reader has to be able to see which zone produced it.
+
+  Zone AUTHORITY, meaning that the club's persisted setting beats the
+  environment and the browser, is a different claim and is not made here. It is
+  made under `America/Denver` in
+  `src/app/__tests__/member-public-club-time-authority.test.tsx`.
+*/
+const CLUB_ZONE = "Pacific/Auckland";
 
 // Only the fields the forms read need real values; the cast satisfies the type.
 const STUB_CLUB = {
@@ -113,14 +137,21 @@ describe("#2682 the fixture really is inside the UTC/NZ divergence window", () =
 
   it("is a different calendar day in UTC than in New Zealand", () => {
     expect(new Date().toISOString().slice(0, 10)).toBe(UTC_DAY);
-    expect(todayDateOnlyForTimeZone()).toBe(NZ_DAY);
+    // `CLUB_ZONE`, named, for the reason the block above gives: on this suite
+    // the zone IS the subject, so the reader has to be able to see which one
+    // produced the day (#3123).
+    expect(todayDateOnlyForTimeZone(CLUB_ZONE)).toBe(NZ_DAY);
     expect(UTC_DAY).not.toBe(NZ_DAY);
   });
 });
 
 describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", () => {
   it("the public booking-request form's earliest selectable night is the NZ day", async () => {
-    render(<BookingRequestForm club={STUB_CLUB} />);
+    render(
+      <ClubTimeProvider zone={CLUB_ZONE}>
+        <BookingRequestForm club={STUB_CLUB} />
+      </ClubTimeProvider>,
+    );
 
     const checkIn = (await screen.findByLabelText(/check-?in/i)) as HTMLInputElement;
     await waitFor(() => expect(checkIn.getAttribute("min")).toBeTruthy());
@@ -133,7 +164,11 @@ describe("#2682 public lodge-night pickers offer the NZ day, not the UTC day", (
   });
 
   it("the public school-booking form's earliest selectable night is the NZ day", async () => {
-    render(<SchoolBookingForm club={STUB_CLUB} />);
+    render(
+      <ClubTimeProvider zone={CLUB_ZONE}>
+        <SchoolBookingForm club={STUB_CLUB} />
+      </ClubTimeProvider>,
+    );
 
     const checkIn = (await screen.findByLabelText(/check-?in/i)) as HTMLInputElement;
     await waitFor(() => expect(checkIn.getAttribute("min")).toBeTruthy());
@@ -247,14 +282,30 @@ describe("#2682 no surface derives today from UTC any more", () => {
         ),
         `${page} must not define its own "today" helper — import todayDateOnlyForTimeZone from @/lib/date-only`,
       ).toBe(false);
-      // Imported from the canonical module, however the import is spelled — a
-      // second symbol added to the same statement must not red the build.
+      /*
+        AND IT TAKES "TODAY" FROM THE ONE CANONICAL PLACE, which CT-4 (#2870)
+        moved. It used to be `todayDateOnlyForTimeZone` from `@/lib/date-only`,
+        which reads `APP_TIME_ZONE`; it is now `useClubTime()` from
+        `@/components/club-time-provider`, whose zone is the persisted
+        `ClubTimeSettings.timeZone` delivered to the browser as data
+        (INV-CONFIG-002). The point of the assertion is unchanged, so the import
+        it names moved with the answer rather than being deleted: neither public
+        form may invent its own.
+
+        The legacy helper is refused BY NAME as well. Re-adding it would put a
+        second temporal authority in a file that already has one, and the two
+        agree on every deployment today, so nothing at runtime would say so.
+      */
       expect(
-        /import\s*\{[^}]*\btodayDateOnlyForTimeZone\b[^}]*\}\s*from\s*["']@\/lib\/date-only["']/.test(
+        /import\s*\{[^}]*\buseClubTime\b[^}]*\}\s*from\s*["']@\/components\/club-time-provider["']/.test(
           source,
         ),
-        `${page} must import todayDateOnlyForTimeZone from @/lib/date-only`,
+        `${page} must take the club's today from useClubTime() (@/components/club-time-provider) — the persisted club zone, delivered to the browser as data (CT-4, #2870; INV-CONFIG-002).`,
       ).toBe(true);
+      expect(
+        /\btodayDateOnlyForTimeZone\s*\(/.test(source),
+        `${page} must not also call todayDateOnlyForTimeZone(): that reads APP_TIME_ZONE, the container's TZ, so the file would carry two temporal authorities that agree on every deployment today and therefore nothing would catch the difference (CT-4, #2870).`,
+      ).toBe(false);
     }
   });
 

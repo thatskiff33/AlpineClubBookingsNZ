@@ -445,6 +445,8 @@ export const rateLimiters = {
   twoFactorVerify: { id: "two-factor-verify", limit: 10, windowSeconds: 10 * 60, authSensitive: true } as RateLimitConfig,
   /** Guest chore token routes: 20 hits per 15 minutes */
   guestChoreToken: { id: "guest-chore-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Booking .ics calendar download (fork #35): 30 hits per 15 minutes — a one-shot email download; the headroom absorbs mail-client link prefetchers and household re-clicks, and starves token guessing */
+  bookingCalendarDownload: { id: "booking-calendar-download", limit: 30, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Family group join request: 3 per hour */
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */
@@ -659,6 +661,25 @@ export const rateLimiters = {
    * fault report at the moment somebody is standing in front of the fault.
    */
   maintenanceReportMember: { id: "maintenance-report-member", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /**
+   * Club message board: 10 posts per hour per member (#2994).
+   *
+   * The board is a conversation, so the limit is set to stop one member filling
+   * it rather than to make posting feel rationed - ten an hour is far above
+   * ordinary use and far below what it takes to bury everyone else's posts.
+   * Applied member-scoped, so the IP key carries ten times the budget and a
+   * household or a lodge on one connection is not throttled as if it were one
+   * person.
+   *
+   * Deliberately NOT `authSensitive`: there is no credential behind it, and
+   * quartering the allowance during a database blip would silence the board at
+   * the moment somebody is trying to tell the club something.
+   */
+  clubPostCreate: { id: "club-post-create", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
+  // Deliberately below clubPostCreate's ten posts x six images: an upload holds
+  // a decoded bitmap in memory while sharp works, so THIS limit rather than the
+  // byte cap is what stops one member exhausting the container.
+  clubPostImageUpload: { id: "club-post-image-upload", limit: 30, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // test seam

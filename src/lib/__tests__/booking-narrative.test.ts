@@ -6,6 +6,16 @@ import {
   type NarrativeEvent,
 } from "@/lib/booking-narrative";
 import { DUPLICATE_CAPTURE_REFUND_EVENT_KIND } from "@/lib/duplicate-capture-refund-event";
+import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
+
+/**
+ * The club's binding, supplied the way both real callers supply it (#3123). It
+ * governs the real instants this resolver renders and nothing else: the stay
+ * dates below are `@db.Date` lodge nights and take no zone.
+ * `club-time-authority.test.ts` beside this file is where the two are pulled
+ * apart under a club zone the environment does not hold.
+ */
+const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
 
 const CHECK_IN = new Date("2026-08-01T00:00:00.000Z");
 const CHECK_OUT = new Date("2026-08-03T00:00:00.000Z");
@@ -42,6 +52,7 @@ function event(
 describe("resolveBookingNarrative", () => {
   it("describes a payable booking with the amount and NZT dates", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "PENDING" }),
       events: [event(BookingEventType.CREATED, "2026-07-01T00:00:00.000Z")],
     });
@@ -54,6 +65,7 @@ describe("resolveBookingNarrative", () => {
 
   it("offers a fresh link (not an error) when the link has expired but the booking is payable", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "PENDING" }),
       events: [],
       link: {
@@ -70,6 +82,7 @@ describe("resolveBookingNarrative", () => {
 
   it("treats a revoked link on a still-payable booking as expired-but-payable", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "PAYMENT_PENDING" }),
       events: [],
       link: {
@@ -85,6 +98,7 @@ describe("resolveBookingNarrative", () => {
 
   it("confirms a paid booking with the amount paid and the NZT date", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "PAID" }),
       events: [
         event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z"),
@@ -102,6 +116,7 @@ describe("resolveBookingNarrative", () => {
 
   it("treats COMPLETED like PAID", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "COMPLETED" }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -115,6 +130,7 @@ describe("resolveBookingNarrative", () => {
 
   it("confirms a $0 booking without claiming a payment was taken", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "PAID", finalPriceCents: 0 }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -129,6 +145,7 @@ describe("resolveBookingNarrative", () => {
 
   it("explains a bumped booking (released, no payment) with the release date", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z"),
@@ -147,6 +164,7 @@ describe("resolveBookingNarrative", () => {
 
   it("treats a BUMPED-status booking as bumped even without a bump event", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "BUMPED" }),
       events: [],
     });
@@ -156,6 +174,7 @@ describe("resolveBookingNarrative", () => {
 
   it("explains a pre-payment cancellation with nothing to refund", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z"),
@@ -170,6 +189,7 @@ describe("resolveBookingNarrative", () => {
 
   it("reproduces the cancelled-post-payment example exactly from stored facts", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -207,6 +227,7 @@ describe("resolveBookingNarrative", () => {
     // no-refund cancellation from the CANCELLED snapshot and NEVER pick up the
     // duplicate-capture refund as this cancellation's settlement clause.
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -250,6 +271,7 @@ describe("resolveBookingNarrative", () => {
 
   it("describes a credit refund as account credit rather than a card refund", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -279,6 +301,7 @@ describe("resolveBookingNarrative", () => {
 
   it("describes a no-refund cancellation as the full amount retained", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "CANCELLED" }),
       events: [
         event(BookingEventType.MEMBER_PAID, "2026-05-02T00:00:00.000Z", {
@@ -304,6 +327,7 @@ describe("resolveBookingNarrative", () => {
 
   it("surfaces an admin-declined review with the reason", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({
         status: "CANCELLED",
         adminReviewStatus: "REJECTED",
@@ -321,6 +345,7 @@ describe("resolveBookingNarrative", () => {
 
   it("describes an awaiting-review booking", () => {
     const result = resolveBookingNarrative({
+      club: CLUB,
       booking: booking({ status: "AWAITING_REVIEW", adminReviewStatus: "PENDING" }),
       events: [event(BookingEventType.CREATED, "2026-05-01T00:00:00.000Z")],
     });
@@ -353,6 +378,7 @@ describe("resolveBookingNarrative", () => {
 
     // Public payment-link view (carries the link state) vs admin history view.
     const publicView = resolveBookingNarrative({
+      club: CLUB,
       booking: cancelledBooking,
       events,
       link: {
@@ -362,6 +388,7 @@ describe("resolveBookingNarrative", () => {
       },
     });
     const adminView = resolveBookingNarrative({
+      club: CLUB,
       booking: cancelledBooking,
       events,
     });
@@ -377,7 +404,7 @@ describe("resolveBookingNarrative", () => {
       booking({ status: "BUMPED" }),
     ];
     for (const b of states) {
-      const result = resolveBookingNarrative({ booking: b, events: [] });
+      const result = resolveBookingNarrative({ booking: b, events: [], club: CLUB });
       expect(result.message).not.toMatch(/contact the booking officer/i);
       expect(result.nextStep).not.toMatch(/contact the booking officer/i);
     }
@@ -390,6 +417,7 @@ describe("resolveBookingNarrative", () => {
   it("gives every BookingStatus a non-empty headline, message, and concrete next step", () => {
     const missingGuidance = Object.values(BookingStatus).filter((status) => {
       const result = resolveBookingNarrative({
+        club: CLUB,
         booking: booking({ status }),
         events: [],
       });

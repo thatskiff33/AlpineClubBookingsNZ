@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
@@ -18,11 +18,9 @@ import {
   isSubscriptionNotRequiredForMembershipType,
 } from "@/lib/membership-types";
 import { UNASSIGNED_MEMBERSHIP_TYPE_VALUE } from "@/lib/membership-type-filter";
-import {
-  formatDateOnly,
-  formatDateOnlyForTimeZone,
-  todayDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { fixedClubClock } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
+import { formatDateOnly } from "@/lib/date-only";
 import { escapeCsvCell } from "@/lib/csv";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
@@ -54,10 +52,16 @@ export async function GET(req: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const flags = await loadMemberFieldsFlags();
+  // The club's own temporal API, bound to the PERSISTED club timezone (CT-4,
+  // #2870; INV-CONFIG-002) rather than the container's environment.
+  const club = await clubTime();
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q") || undefined;
   const now = new Date();
-  const currentSeasonYear = getSeasonYear(now);
+  // The season the CLUB is in at `now`, from its persisted zone rather than the
+  // container's month (CT-4, #2870). `now` is pinned so the whole export is one
+  // moment's answer.
+  const currentSeasonYear = clubSeasonYear(club.zone, fixedClubClock(now));
   const ageTierSettings = await getAgeTierSettings();
   const notRequiredAgeTiers = new Set(
     ageTierSettings
@@ -416,7 +420,7 @@ export async function GET(req: NextRequest) {
           header: "Cancelled At",
           value: (m: MemberRow) =>
             m.cancelledAt
-              ? formatDateOnlyForTimeZone(new Date(m.cancelledAt))
+              ? club.calendarDateOf(new Date(m.cancelledAt))
               : "",
         },
         {
@@ -460,7 +464,7 @@ export async function GET(req: NextRequest) {
     const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join(
       "\r\n",
     );
-    const today = todayDateOnlyForTimeZone();
+    const today = club.today();
 
     // Privacy audit: record that a members CSV was exported. Only the applied
     // filters and the row count are stored — never member row contents.

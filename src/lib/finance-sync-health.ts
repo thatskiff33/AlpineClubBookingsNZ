@@ -1,5 +1,5 @@
 import { FinanceMonthlyStatementKind } from "@prisma/client";
-import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardTrendMonthLabel } from "@/lib/finance-dashboard-labels";
 import { DEFAULT_FINANCE_MONTHLY_FACT_SCOPE } from "@/lib/finance-monthly-fact-store";
 import {
   getFinanceSyncDiagnosticsStatus,
@@ -108,7 +108,9 @@ function formatHoursAgo(now: Date, value: Date): string {
 // the PREVIOUS month pinned to UTC midnight — a date-only value by construction,
 // built from a `yyyy-MM` key rather than from any clock or `DateTime` column —
 // so the canonical date-only encoder reads back exactly the month it encodes
-// (INV-DATE-010). It used to assemble the same string from `getUTCFullYear()`
+// (INV-DATE-019's first exact boundary, with INV-DATE-026; INV-DATE-010 rules
+// that the value is an encoding rather than a moment and is not the citation for
+// a decode — #3080). It used to assemble the same string from `getUTCFullYear()`
 // and a padded `getUTCMonth()`, which is the truncation written a fourth way and
 // invisible to every guard that looks for the ISO spellings (#2684).
 function previousMonthKey(monthKey: string): string {

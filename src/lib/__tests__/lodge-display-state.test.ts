@@ -53,11 +53,53 @@ vi.mock("@/lib/lodge-instructions", () => ({
   getSanitizedLodgeInstructions: (...args: unknown[]) =>
     mockInstructions(...args),
 }));
-vi.mock("@/lib/date-only", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/date-only")>();
+/*
+  THE WALL'S "TODAY" NOW COMES FROM THE CLUB'S PERSISTED TIMEZONE (CT-4, #2870).
+
+  `buildDisplayState` used to open its window on `getTodayDateOnly()` — the
+  CONTAINER's day — which this file pinned by mocking `date-only`. It now derives
+  the day from `clubTime()`, so the seam moved and the mock moves with it.
+
+  TWO KNOBS, AND THE SECOND ONE IS THE POINT. `zone` is what the club has
+  persisted. `today` short-circuits the derivation to a fixed calendar day, which
+  is what keeps the fifty fixtures below on 13 April 2026 instead of on the
+  frozen test clock's 1 July; it is NOT an opt-out, because the discriminating
+  case at the end of this file sets it to `null` and makes the real
+  `clubToday(zone, clock)` derivation run, so the zone has to reach the code for
+  that pair to pass.
+*/
+const clubTimeState = vi.hoisted(() => ({
+  zone: "Pacific/Auckland",
+  today: "2026-04-13" as string | null,
+}));
+
+vi.mock("@/lib/club-time/server", async () => {
+  const {
+    bindClubTime,
+    dateOnlyInstantOf,
+    requireCalendarDate,
+    requireClubTimeZone,
+  } = await import("@/lib/club-time");
+  const bindWithKnobs = () => {
+    const bound = bindClubTime(requireClubTimeZone(clubTimeState.zone));
+    return {
+      ...bound,
+      today: () =>
+        clubTimeState.today === null
+          ? bound.today()
+          : requireCalendarDate(clubTimeState.today),
+    };
+  };
   return {
-    ...actual,
-    getTodayDateOnly: () => actual.parseDateOnly("2026-04-13"),
+    clubTimeZone: async () => requireClubTimeZone(clubTimeState.zone),
+    clubTime: async () => bindWithKnobs(),
+    // `clubTodayDateOnlyInstant` IS `dateOnlyInstantOf(clubTime().today())` in the
+    // real module (F4a, #2870), so the double is composed from the same two knobs
+    // rather than given a literal of its own — otherwise setting `today` to `null`
+    // for the discriminating case at the end of this file would stop reaching the
+    // derivation through this path.
+    clubTodayDateOnlyInstant: async () =>
+      dateOnlyInstantOf(bindWithKnobs().today()),
   };
 });
 
@@ -145,6 +187,10 @@ beforeEach(() => {
   mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue(null);
   mockFlags.mockResolvedValue({ bedAllocation: false, chores: false });
   mockInstructions.mockResolvedValue([]);
+  // Back to the defaults the fixtures below assume; the discriminating case at
+  // the end of this file moves both and must not leak them.
+  clubTimeState.zone = "Pacific/Auckland";
+  clubTimeState.today = "2026-04-13";
 });
 
 describe("reduceName / bookingLabel / clamp / config (pure rules)", () => {
@@ -1531,5 +1577,91 @@ describe("buildDisplayState expected arrival time (#2621)", () => {
     expect(withTime!.bookings.map((r) => [r.stayStart, r.stayEnd])).toEqual(
       without!.bookings.map((r) => [r.stayStart, r.stayEnd])
     );
+  });
+});
+
+describe("the wall's window opens on the CLUB's today, not the container's (CT-4, #2870)", () => {
+  /*
+    THE STRADDLE GROUP E'S OWN DIFF CREATED, and this pair is what closes it.
+
+    `display-header-clock.tsx` was migrated to read the live day through
+    `club.calendarDateOf(now)` — the club's PERSISTED zone. This function, which
+    keys everything on the board (occupancy, arrivals, roster, chores, custodian
+    in residence), still opened its window on `getTodayDateOnly()`: the
+    CONTAINER's day. For a club in `Pacific/Auckland` on a `TZ=UTC` host that is
+    a twelve-hour window every day in which the header reads "Fri, 17 Apr" above
+    a board still showing 16 April's guests — on an unattended screen, with
+    nobody to reload it.
+
+    THE PAIR IS THE PROOF, and it does not depend on this machine's zone. The
+    same frozen instant is asked of two clubs and required to give DIFFERENT
+    days: an implementation that read the environment, the host or a hard-coded
+    zone has one answer and fails one half. `clubTimeState.today` is set to
+    `null` for both halves so the real `clubToday(zone, clock)` derivation runs
+    rather than the fixed day the rest of this file pins.
+
+    The frozen test clock is 2026-07-01T00:00:00.000Z (`vitest.clock-setup.ts`),
+    which is 1 July in Auckland (UTC+12) and 30 JUNE in Denver (UTC-6).
+  */
+  const FROZEN_UTC_DAY = "2026-07-01";
+  const DENVER_DAY = "2026-06-30";
+
+  beforeEach(() => {
+    clubTimeState.today = null;
+  });
+
+  it("the two clubs really disagree about the frozen instant's day", () => {
+    /*
+      PREMISE AS AN ANSWER, from `Intl` rather than from the kernel: recomputing
+      the expectation with the code under test would prove only determinism. If
+      a runtime change ever put the two clubs on the same day, this fails here
+      instead of leaving the pair below asserting the same thing twice.
+    */
+    const dayIn = (zone: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+    expect(dayIn("Pacific/Auckland")).toBe(FROZEN_UTC_DAY);
+    expect(dayIn("America/Denver")).toBe(DENVER_DAY);
+  });
+
+  it("opens the window on the persisted zone's day for a club ahead of UTC", async () => {
+    clubTimeState.zone = "Pacific/Auckland";
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+
+    const state = await buildDisplayState("lodge-a", { days: 1 });
+
+    expect(state!.window.start).toBe(FROZEN_UTC_DAY);
+  });
+
+  it("opens it a day earlier for a club behind UTC, on the same instant", async () => {
+    clubTimeState.zone = "America/Denver";
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+
+    const state = await buildDisplayState("lodge-a", { days: 1 });
+
+    expect(state!.window.start).toBe(DENVER_DAY);
+    // And the nights the board queries move with it, so this is the whole board
+    // rather than a label: `checkOut: { gte: startDate }` is the arrivals and
+    // occupancy bound.
+    const where = mockPrisma.booking.findMany.mock.calls[0]![0].where;
+    expect(where.checkOut.gte).toEqual(new Date(`${DENVER_DAY}T00:00:00.000Z`));
+  });
+
+  it("an admin preview's simulated date still wins over both", async () => {
+    // The preview branch passes an explicit `windowStart`; it is a chosen day,
+    // not a derived one, so no zone may touch it.
+    clubTimeState.zone = "America/Denver";
+    const { buildDisplayState } = await import("@/lib/lodge-display-state");
+
+    const state = await buildDisplayState("lodge-a", {
+      days: 1,
+      windowStart: new Date("2026-04-16T00:00:00.000Z"),
+    });
+
+    expect(state!.window.start).toBe("2026-04-16");
   });
 });

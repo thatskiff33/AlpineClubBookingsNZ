@@ -329,15 +329,29 @@ derivation).
 
 ### INV-DATE-010
 
-- **Storage encoding, not semantics.** A stored lodge night is an NZ calendar
+- **Storage encoding, not semantics.** A stored lodge night is a club calendar
   date. The `@db.Date` columns pin that date to UTC midnight internally — an
-  instant that renders as club midday in NZST (1pm during NZ daylight saving),
-  either way the same NZ calendar day in every zone, so a CI runner in UTC and
-  a club in NZ agree on the date ([`docs/TESTING.md`](../TESTING.md) pins the
-  frozen test clock to an NZST instance of exactly this instant as evidence).
-  The UTC-midnight pinning is an internal encoding of the NZ date and nothing
-  more: it is NOT the midday boundary instant, NZ time is the semantic truth,
-  and no rule may be derived from the UTC reading of these values.
+  instant that renders as club midday in NZST and 1pm during NZ daylight saving,
+  which is the same club calendar day either way, so a CI runner in UTC and a
+  club in New Zealand agree on the date ([`docs/TESTING.md`](../TESTING.md) pins
+  the frozen test clock to an instance of exactly this instant as evidence).
+  The UTC-midnight pinning is an internal encoding of the calendar date and
+  nothing more: it is NOT the midday boundary instant, and the club's calendar
+  day is the semantic truth.
+- **That agreement is NOT universal, and an earlier wording of this rule said it
+  was.** It held only because every deployment so far sits at or ahead of
+  Greenwich. Read one of these values in a zone BEHIND Greenwich and it names the
+  PREVIOUS day — measured during epic #2988, which exists to remove exactly that
+  assumption. So the encoding is the same everywhere; the day you get back is not,
+  unless you decode it correctly.
+- **Decode it in UTC, and cite the rules that say so.** `INV-DATE-019` states the
+  exact boundaries for truncating a stored `@db.Date` value, and `INV-DATE-026`
+  its corollary; those are the authority for a decode, not this rule. What no
+  rule may be derived from is one of these values read as a **moment** — an
+  instant carrying a time of day — rather than as the calendar date it encodes.
+  Do not cite this rule as permission to read one in a zone, and do not cite it
+  as a prohibition on decoding one in UTC; several docblocks have paraphrased it
+  as its own inverse and propagated that.
 
 ## Date handling rules
 
@@ -358,9 +372,18 @@ derivation).
   `BookingGuest.stayStart`/`stayEnd`, `HutLeaderAssignment.endDate`) store an NZ
   calendar date, encoded internally at UTC midnight (the storage-encoding note
   in the invariant above). Compare them only against date-only values
-  (`getTodayDateOnly()` / `normalizeDateOnlyForTimeZone()` from
-  `src/lib/date-only.ts`), never a raw `new Date()` or a local-midnight
-  (`setHours(0,0,0,0)`) instant (F8/F32, #1888).
+  (`getTodayDateOnly()` for today; `storedDateOnly()` from
+  `src/lib/stored-calendar-day.ts` to normalise one of these columns), never a
+  raw `new Date()` or a local-midnight (`setHours(0,0,0,0)`) instant (F8/F32,
+  #1888).
+
+  **Not `normalizeDateOnlyForTimeZone()` on one of these columns**, which this
+  bullet used to name. It projects the value through the environment zone
+  before re-encoding it — the identity for a club at or ahead of Greenwich and
+  the PREVIOUS day for one behind it — so it decodes a stored day by asking a
+  zone, which is what `INV-DATE-019`'s first exact boundary and `INV-DATE-026`
+  settle without one (#3107). It remains correct for a real instant, which is a
+  different receiver.
 
   **The two mistakes fail differently, and the local-midnight one is the worse
   of them (#2838).** A bound value is narrowed to a `DATE` parameter by its UTC
@@ -439,12 +462,24 @@ derivation).
   `scripts/`, `e2e/` and `prisma/` was enumerated (the seed), and each survivor
   was then traced forward to the columns it actually binds (the census).
 
-  That leaves one site in application code: `monthGridRange`
+  That left one site in application code: `monthGridRange`
   (`src/lib/calendar-client.ts`), whose `setHours(0, 0, 0, 0)` and
-  `setHours(23, 59, 59, 999)` are the two ends of one browser-side month-grid
+  `setHours(23, 59, 59, 999)` were the two ends of one browser-side month-grid
   range. Traced through the calendar view, its query parameters and the events
-  route, both ends bind `CalendarEvent.startsAt`/`endsAt` — both bare `DateTime`
-  — so the pair is outside this class by column type, not by luck.
+  route, both ends bound `CalendarEvent.startsAt`/`endsAt` — both bare
+  `DateTime` — so the pair was outside this class by column type, not by luck.
+
+  **That site is gone (CT-4 group F5, #2870), and for a different reason than
+  this rule.** It was not binding a `@db.Date` column, but the two `setHours`
+  ends were still the BROWSER's day rather than the club's, so a member abroad
+  fetched a window shifted from the grid they were shown. Both ends are now club
+  day boundaries from `startOfClubDay` / `endOfClubDayExclusive`.
+
+  Re-censused on that change, the only `setHours` left in non-test application
+  code is `guest-chore-token.ts`'s `setHours(getHours() + N)`, which ADDS hours
+  to an expiry instant rather than truncating a day — a different operation, and
+  outside this class. Every other occurrence under `src/` is prose in a comment
+  recording the history above, or a fixture in a test.
 
   **Read that as "no site is currently known", never as "the class is closed",**
   and note precisely where the residual sits: the trace is sound for everything
@@ -460,14 +495,58 @@ derivation).
   by side (`Booking.draftExpiresAt` and `CalendarEvent.startsAt` against
   `Booking.checkIn`/`checkOut`) and names which is which.
 
+### INV-DATE-025
+
+- **A club-local wall time is not guaranteed to exist, and may exist twice.**
+  Deriving an instant from "this date at this clock time in the club's zone" has
+  two failure modes that a single offset lookup cannot see, and both are the
+  DST transition itself rather than an edge case invented for a test.
+- **The kernel resolves it with THREE probes, not two.** Measured across all 418
+  zones this runtime knows, on every transition-adjacent day from 2015 to 2036:
+  local midnight is **skipped in 19 zones** and **ambiguous in 8**. The
+  two-probe correction the legacy helper used names the **wrong calendar day in
+  11** of them — Havana, Santiago, São Paulo, Asunción, Cuiabá, Campo Grande,
+  Coyhaique, Punta Arenas, Scoresbysund, Palmer, Azores — and differs from the
+  correct answer in 16. It is also blind to an ambiguity when both probes land
+  the same side of the transition: on `Asia/Amman`, 2015-10-30 midnight occurs at
+  21:00Z **and again** at 22:00Z, the old code returns the later, and "the start
+  of 30 October" silently loses its own first hour. Probing a day before, at, and
+  a day after — and reading every candidate back — is what closes both.
+- **The policy is explicit at the call site, on two independent axes.** A
+  *skipped* wall time defaults to `reject`, because nothing asks on purpose for a
+  moment that never happened; a day-boundary caller opts into
+  `nextExistingInstant` so a booking screen can never fail to render. An
+  *ambiguous* wall time defaults to `earliest`, because a job scheduled at 01:30
+  on a fall-back day should run once, at the first 01:30 — refusing there would
+  break a legitimate schedule.
+- **Noon is measurably safer than midnight, and that is an argument for the stay
+  boundary rather than a happy accident — but it is not a guarantee, and the
+  first draft of this bullet over-claimed it.** In the sweep above — 418 zones,
+  2015 to 2036 — local noon is **never skipped and never ambiguous**, where
+  midnight is skipped in 19 zones and ambiguous in 8. Over a wider 1900–2100
+  window noon *is* skipped in 16 zones, and while eleven of those are pre-1968
+  local-mean-time one-offs, **five are date-line moves and the most recent was
+  2011**: Apia and Fakaofo (2011-12-30), Kiritimati and Enderbury (1994-12-31),
+  Kwajalein (1993-08-21). A country moving across the date line skips a whole
+  calendar day, noon included. Four such moves in twenty years is a live class,
+  not a museum piece.
+- So the honest rule is: **the noon-to-noon stay window needs no policy on any
+  zone any club runs today, and `noonOfClubDay` still carries one** — because the
+  case that would defeat it is a whole-day skip, and a booking screen must render
+  rather than throw. Do not read "noon is safe" as "noon cannot be skipped".
+- Decided on #2990 (CT-2) under epic #2988; the measurements are that issue's,
+  re-runnable from the sweep it records.
+
 ### INV-DATE-024
 
 - **`Member.dateOfBirth` is a CALENDAR DAY, stored at UTC midnight.** The column
-  is still `DateTime?` rather than `@db.Date`, so nothing in the schema enforces
-  this and every writer has to. Typing it is **#2872** — settled as a follow-up
-  by the owner on 14 August 2026, in the decision recorded on #2859: the column
-  stays `DateTime?` here, and #2872 carries the typing with its own migration
-  and a sweep of every reader.
+  is `@db.Date` as of **#2872**, which the owner settled as a follow-up on
+  14 August 2026 in the decision recorded on #2859, and which shipped with a
+  fail-closed migration and a sweep of every reader. **The writer rule below did
+  not go away with it.** A column type pins what the database stores, not the
+  value a writer computes: a writer that builds server-local midnight now has
+  its wrong day truncated to a wrong day, which is no improvement at all. What
+  the typing adds is that the wrong value can no longer hide a time inside it.
   Build it with `parseDateOnly(\`${yyyy}-${mm}-${dd}\`)`, an explicit
   `T00:00:00.000Z`, or `Date.UTC(...)`. **Never**
   `new Date(\`${yyyy}-${mm}-${dd}T00:00:00\`)`: with no `Z` and no offset that
@@ -486,30 +565,114 @@ derivation).
   instead, so a value nobody can read as a calendar day never becomes a
   birthday. Prefer it everywhere.
 - **Compare a stored date of birth only against another date-only value.** A SQL
-  range filter compares instants, so a bound derived from `getSeasonStartDate` —
-  which is local midnight — must cover the whole cutoff calendar day rather than
-  compare instants (`src/lib/cron-age-up.ts`, #2859). Getting that wrong moves
-  an age tier, and an age tier moves a member's price and their hosting
-  eligibility.
+  range filter compares instants, so the bound the age-up candidate query filters
+  on must cover the whole cutoff calendar day rather than compare instants
+  (`src/lib/cron-age-up.ts`, #2859). Getting that wrong moves an age tier, and an
+  age tier moves a member's price and their hosting eligibility.
+- **Both sides of the age comparison are calendar days, and they read one
+  frame** (#3082). `computeAge` (`src/lib/policies/age-tier.ts`) decodes its date
+  of birth **and** its reference date in UTC through
+  `requireStoredCalendarDay`, which refuses a value carrying a UTC time of day
+  rather than flooring it; `getSeasonStartDate` is that day encoded at UTC
+  midnight, and `getSeasonStartCalendarDate` is the same day as text. Do not
+  correct one half: they were interlocked, and the straddle is worse than either
+  end. The reasoning lives in the `policies/age-tier.ts` module docblock and is
+  not repeated here.
 
-  The two in-process readers recover the calendar day **only east of UTC**, and
-  that is a property of the deployment rather than of the code. `computeAge`
-  (`src/lib/policies/age-tier.ts`) uses `getFullYear`/`getMonth`/`getDate`,
-  which are HOST-local: under the `TZ=Pacific/Auckland` pin every stored
-  UTC-midnight value reads back as the same calendar day, but on a server west
-  of UTC — this repository is a template with live forks — UTC midnight is the
-  *previous* evening locally and every member's birthday moves a day.
-  `member-age.ts` reads through the club zone, which has the same dependence.
-  The correct reading of a UTC-midnight column is UTC getters or
-  `formatDateOnly`; treat the local-getter readers as working by deployment
-  accident, not by construction.
+  **What #3082 fixed, because the shape recurs.** Both functions used to be
+  host-local. The reference side survived that by a round trip — local getters
+  read back exactly the parts the local constructor was given, in every zone
+  (swept: 418 zones, 2015-2036, all twelve possible season-start months, zero
+  failures) — and the date-of-birth side did not, because it is stored at UTC
+  midnight. A host behind Greenwich read it a day early, which makes the member
+  look a day **older**, so the misclassified member is the one born the day
+  **after** a tier boundary, not on it. Measured across every stored date of
+  birth in a year: **161 of 418 zones moved exactly one day of birthdays, by +1
+  year.** Every zone at or ahead of Greenwich, this deployment included, was
+  already right — which is how it stayed latent.
+
+  **The age-up cron was not affected**, and an earlier version of this paragraph
+  implied otherwise. `cron-age-up.ts` prefilters candidates on a bound whose
+  exclusive edge coincides exactly with the misclassification boundary, so the one
+  day of birthdays the old read got wrong was never proposed as a candidate — and
+  for candidates it did misread, both readings land at or above the tier minimum,
+  which `validateAgeTierPartition` guarantees means ADULT either way. Swept over
+  27 638 160 admitted candidates across 418 zones: **zero promote-or-skip verdict
+  changes**, and the candidate set itself byte-identical. Price bands and hosting
+  eligibility DID move, because billing calls `computeAgeTierWithSettings` with no
+  prefilter in front of it.
+
+  `member-age.ts` had the same dependence in a subtler form before #2872: it read
+  through the club zone, agreed in New Zealand, and reported an age a year old on
+  the day before a birthday for any club behind UTC. It reads `formatDateOnly`
+  now; "today" on the other side of that comparison is still the club's, and
+  correctly so. Its 29 February convention differs from `computeAge`'s
+  deliberately — it clamps the anniversary to 28 February for an identity check,
+  where `computeAge` compares the day as written. The two can only disagree when
+  the REFERENCE date is 28 February, and `computeAge`'s reference is always a
+  season start, which is always day 1 of a month — so on the price path the
+  divergence is **structurally unreachable** and aligning the conventions would
+  move nobody's tier. This document used to say aligning them "would move a real
+  member's tier for one day a year, so it needs a decision rather than a
+  tidy-up"; that was measured false (enumerated in
+  `computeAgeOnCalendarDays`'s docblock). The conventions still stand as they
+  are, on the ground that the divergence is harmless and `member-age.ts` serves a
+  different purpose — not on the ground that changing them would move somebody.
+
+  The correct reading of a UTC-midnight column is UTC getters, `formatDateOnly`
+  or the kernel's `calendarDateOfDateOnlyInstant`. A local-getter reader is
+  working by deployment accident, not by construction — there are none left on
+  this path.
+
+### INV-DATE-026
+
+- **A column holding a calendar day is `@db.Date`.** Not a bare `DateTime` that
+  writers agree to keep at UTC midnight — the schema states it, and PostgreSQL
+  refuses to keep a time. #2872 narrowed eleven such columns and the reviewed
+  exception list `DATE_ONLY_IN_DATETIME_COLUMN` is now **empty**, which is the
+  terminal state it was always meant to reach rather than a temporary quiet.
+- **A column only qualifies if EVERY writer agrees.** Three were examined and
+  deliberately left as `DateTime`, and the reason is the same each time — one
+  writer puts a real moment in them. `MemberInduction.inductionDate` is stamped
+  with the clock when the last sign-off lands. `MembershipNominationSettings.gateEffectiveFrom`
+  is a date the admin types, except on the branch where they leave it blank and
+  the panel's own help text promises it "defaults to the date you first enable
+  the gate" — which the route implements as `new Date()`. `CalendarEventSeries.until`
+  is written at local **noon**, so a UTC-day truncation would move the stored
+  day for half the year and not the other half. Narrowing a mixed column does
+  not tidy it; it destroys the evidence of which rows were which, and here it
+  would also abort the deploy, because the preflight is fail-closed and every
+  such row is an offender.
+- **A bare `DateTime` may hold a calendar day only through that list**, one entry
+  per field, naming the write that proves it. An entry dies when its column is
+  narrowed, and `date-only-encoding-guard.test.ts` fails an entry that outlives
+  its fix, so the list cannot silently accumulate.
+- **The corollary is the part that actually breaks things: a Prisma bound against
+  a `@db.Date` column must be a calendar day at UTC midnight.** The adapter
+  narrows whatever instant you hand it, so a bound built as midnight in the club
+  zone — or, worse, on the host — becomes the **previous day**, and nothing warns
+  you. That is not visible in a schema diff, which is why narrowing a column
+  without censusing its readers is the dangerous half of the change. #2872 found
+  three: an age-up cutoff that dropped the member born exactly on the
+  season-start anniversary (an age tier, and therefore a price), a joined-date
+  report bound that started a day early, and a date of birth projected through a
+  club zone, which agrees in New Zealand and returns the previous day for any
+  club behind UTC.
+- `src/lib/__tests__/prisma-date-column-binding.test.ts` is the executable form
+  of the corollary, and `DATE_ONLY_COLUMN_FIELDS` — parsed from
+  `schema.prisma` rather than hand-listed — is what keeps the field set honest.
+- Minted on #2872 (CT-3) under epic #2988.
+
 
 ### INV-DATE-019
 
 - **When a server asks for "today", it asks the club's calendar.**
   `todayDateOnlyForTimeZone()` returns it as a `yyyy-MM-dd` string and
   `getTodayDateOnly()` as a date-only `Date`; both live in
-  `src/lib/date-only.ts` and both work on the server and in the browser. Never
+  `src/lib/date-only.ts` and both work on the server and in the browser. Since
+  CT-2 (#2990) both are adapters over `clubToday()` in `@/lib/club-time`, which
+  is where new code should ask; the answer is unchanged and the signatures are
+  preserved. Never
   `new Date().toISOString().slice(0, 10)` (or `.substring(0, 10)`, or
   `.split("T")[0]`) — that is the **UTC** day, which is still *yesterday* in New
   Zealand for roughly the first half of every NZ day. #2682 fixed fifteen sites
@@ -541,9 +704,9 @@ derivation).
     `src/lib/member-family-service.ts`, which reached the pattern through that
     file's own `toDateInputValue` wrapper. That wrapper is still correct, and
     still used, for the three date-only receivers beside it — with one
-    exception worth knowing about. `Member.dateOfBirth` is `DateTime?`, not
-    `@db.Date`, so nothing but writer convention pins it to UTC midnight, and
-    the Xero import parses `dd/MM/yyyy` as SERVER-LOCAL midnight
+    exception worth knowing about. `Member.dateOfBirth` has been `@db.Date`
+    since #2872, but that pins storage rather than the value a writer hands it,
+    and the Xero import parses `dd/MM/yyyy` as SERVER-LOCAL midnight
     (`parseXeroCompanyNumberDate`, in `src/lib/xero-contacts.ts` and a
     byte-identical clone in the import-member-contact route). Under the
     container's `TZ=Pacific/Auckland` that stores the previous UTC day, so a
@@ -583,12 +746,11 @@ derivation).
     **That declaration adds no exception to the rule above; it applies it.**
     `photoUpdatedAt` and `hutLeaderEligibleAt` are real instants and are read
     through `formatDateOnlyForTimeZone`, exactly as this bullet requires.
-    `dateOfBirth`, `joinedDate` and `lifeMemberDate` are bare `DateTime?`
-    columns holding a date-only value, which is the pre-existing reviewed
-    exception the guard already records field-by-field in
-    `DATE_ONLY_IN_DATETIME_COLUMN` — all three were on that list before #2860
-    and the merge screen simply reads them the way the list says they may be
-    read. The flat prohibition on truncating a `DateTime` is unchanged: it is
+    `dateOfBirth`, `joinedDate` and `lifeMemberDate` are `@db.Date` columns
+    since #2872 and the merge screen reads them as the calendar days they are.
+    All three used to be bare `DateTime?` and sat on the reviewed exception list
+    `DATE_ONLY_IN_DATETIME_COLUMN` instead; narrowing the columns emptied that
+    list, which is the state it was always meant to reach. The flat prohibition on truncating a `DateTime` is unchanged: it is
     the *column type* that never settles the question, and the reviewed list is
     where a field is allowed to settle it instead.
 
@@ -657,9 +819,11 @@ derivation).
   for a booker far enough from New Zealand. The value submitted, the club-pinned
   label displayed, the night count, and the hold deadline are all derived from
   the string via `parseDateOnly` / `addDaysDateOnly` / `countNightsDateOnly`,
-  which encode the NZ calendar day internally at UTC midnight (the
-  storage-encoding note in the stay-boundary invariant above: the instant that
-  renders as club midday, the same calendar day in every zone).
+  which encode the club calendar day internally at UTC midnight — an encoding and
+  not a moment, per `INV-DATE-010`, which is also where the qualification lives:
+  that encoding renders as club midday only for a club at or ahead of Greenwich,
+  and the day it names comes back correctly because it is decoded in UTC rather
+  than projected.
   `formatCalendarDayOnly(year, monthIndex, day)` is the
   canonical encoder; the #2264 `localCalendarDayToDateOnly` bridge, which patched
   only the display half of this hazard while the fragile encoding lived on, is
@@ -667,16 +831,30 @@ derivation).
   lodge-night identity across browsers behind, at, and ahead of NZ, on an NZ
   DST-transition night. (This is the CLIENT representation; server-side capacity
   date arithmetic keeps its own `@db.Date`/date-only helpers, above.)
+- **Since CT-6 (#2991) this fails mechanically rather than by review.** Two
+  `no-restricted-syntax` arms over `src/**` ban reading or writing a `Date`
+  through the host's clock face — `getFullYear`/`getMonth`/`getDate` and their
+  `set*` counterparts, in both the plain and the computed spelling — and ban
+  importing `date-fns`, which performs the identical read inside `node_modules`
+  where no selector can see it. The host-clock arm ships with NO exemption: the
+  seventeen call sites it found in eight files were all migrated, three of them
+  live daylight-saving defects. `date-fns` keeps a seven-file ratchet, each entry
+  naming what it uses and what blocks it. `club-time-boundary-guard.test.ts`
+  proves both arms twice — that they RESOLVE at every production path, and that
+  they actually REPORT a violation there — with a clean control at each path so
+  the ban is about the host's clock rather than about `Date`.
 
 ### INV-DATE-015
 
 - **Rendering** a date or a time is a separate invariant from storing or
-  comparing one, and has its own single seam: `src/lib/nzst-date.ts`. Its six
-  helpers — `formatNZDate` ("16 Apr 2026"), `formatNZDateTime`
-  ("16 Apr 2026, 11:30 am"), `formatNZLongDate` ("16 April 2026"),
-  `formatNZTime` ("11:30 am"), `formatNZMonthYear` ("April 2026") and
-  `formatNZWeekdayDate` ("Thu, 16 Apr 2026") — each pin BOTH `APP_LOCALE` and
-  `APP_TIME_ZONE`. A bare `toLocaleDateString()` / `toLocaleTimeString()` /
+  comparing one, and has its own single seam: `@/lib/club-time`. The six house
+  shapes — "16 Apr 2026", "16 Apr 2026, 11:30 am", "16 April 2026", "11:30 am",
+  "April 2026" and "Thu, 16 Apr 2026" — each pin `APP_LOCALE`, and each comes in
+  a CALENDAR-DAY form that takes no zone and an INSTANT form that requires one.
+  Until #3123 the seam was `src/lib/nzst-date.ts` and those shapes were its six
+  `formatNZ*` helpers, which pinned `APP_LOCALE` and `APP_TIME_ZONE` together;
+  that file is deleted and the kernel is the only seam. A bare
+  `toLocaleDateString()` / `toLocaleTimeString()` /
   `toLocaleString()` renders in the VIEWER's zone and locale, so an
   administrator abroad read a different lodge night than the one stored, and a
   lobby-display television reported its own local time (#2256, #2264). An
@@ -693,26 +871,61 @@ derivation).
   `new Intl.DateTimeFormat(APP_LOCALE, { timeZone: APP_TIME_ZONE, … })` constant
   instead. That, not an `eslint-disable`, is the escape hatch, and there are no
   disables in the tree.
+- **Since CT-2 (#2990) the seam is `@/lib/club-time`, and since #3123 it is the
+  ONLY one.** Code formats through the kernel: a CALENDAR DATE takes no zone
+  argument at all (16 April 2026 is a Thursday everywhere, and the kernel pins
+  `timeZone: "UTC"` over the UTC-midnight encoding so the projection is provably
+  the identity), while an INSTANT takes the club zone explicitly. CT-2 made the
+  six legacy helpers one-line delegations so no call site changed; CT-3 to CT-5
+  and then #3113/#3118 and #3107/#3121 moved those call sites onto the right
+  temporal question; #3123 deleted `src/lib/nzst-date.ts` once no production file
+  imported it. It had already left the `toLocale*` exemption block in CT-2,
+  because it no longer formatted anything. **It was not replaced by a shim, a
+  re-export or a test-only stub, and must not be** — two rendering seams is one
+  too many, which is the whole reason the file went;
+  `club-time-kernel-census.test.ts` asserts it has not come back. The lint arms
+  above are unchanged in what they MATCH — deliberately, so none of the
+  unmigrated `date-only` call sites newly fails — and changed only in where
+  their message sends you.
 - **Where the zone those formatters pin comes from is now a different
   invariant.** Since CT-1 (#2989) the club's timezone is the persisted
   `ClubTimeSettings.timeZone`, read through `getClubTimeZone()` — `INV-CONFIG-002`
   in [`product-configuration.md`](product-configuration.md). `APP_TIME_ZONE` is
-  the transitional constant these six helpers and the module-level formatters
-  still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2 to CT-5
-  migrate the call sites and CT-6 (#2991) retires it. Nothing about the rendering
-  seam changes here — this note exists so that the next reader of these helpers
-  knows the zone has an owner elsewhere, and does not conclude from
+  the transitional constant `src/lib/date-only.ts` and the module-level
+  formatters still read, and it still derives from `TZ` / `NEXT_PUBLIC_TZ`; CT-2
+  to CT-5 migrate the call sites and CT-6 (#2991) retires it. Nothing about the
+  rendering seam changes here — this note exists so that the next reader of those
+  helpers knows the zone has an owner elsewhere, and does not conclude from
   `APP_TIME_ZONE` that the environment is still the club's civil-time authority.
+- **CT-6 (#2991) closed the recurrence path and counted the remainder.** Naming
+  the environment's zone — `process.env.TZ`, `NEXT_PUBLIC_TZ`, or an
+  `APP_TIME_ZONE` import — is a lint error under `src/**` outside a named
+  nine-file ratchet, of which two are structural (the config module that defines
+  it and CT-1's seed reader) and seven are measured callers each carrying the
+  issue that blocks them. What a selector cannot express is counted instead:
+  `club-time-escape-hatch-census.test.ts` counts the call sites that still let a
+  zone-defaulting `@/lib/date-only` helper take the environment's answer. Every
+  ceiling there is TIGHT — equal to the live count, with no deliberate slack — so
+  a measurement below one means the ceiling is stale, not that there is room.
+  They may only fall, and they have: #3113/#3118 took `nzst-date` from 25
+  importers to 13, #3107/#3121 took the defaulted calls from 123 in 56 files to
+  81 in 52, and **#3123 took the `nzst-date` importer count to zero and then
+  deleted the module**, so that ceiling is retired along with its subject.
 
 ### INV-DATE-016
 
-- `formatNZLongDate` is reserved for the MEMBER-FACING surfaces the owner asked
-  to keep the long spelled-out month on (#2264): booking messages and the emails
-  built from them, the lodge and hut-leader instruction "last updated" stamps,
-  and the generated report cover. Admin and internal screens use the medium
-  `formatNZDate`. `src/lib/__tests__/member-facing-long-dates.test.ts` pins the
-  four call sites so a later "tidy every date onto formatNZDate" pass fails
-  loudly rather than silently shortening what a member reads.
+- The LONG spelled-out date — `formatClubLongDate` for a calendar day,
+  `formatClubInstantLongDate` (or a binding's `instantLongDate`) for a moment —
+  is reserved for the MEMBER-FACING surfaces the owner asked to keep it on
+  (#2264): booking messages and the emails built from them, the lodge and
+  hut-leader instruction "last updated" stamps, and the generated report cover.
+  Admin and internal screens use the medium shape (`formatClubDate` /
+  `formatClubInstantDate`). Until #3123 these were `formatNZLongDate` and
+  `formatNZDate` on the retired `nzst-date` adapter; the rule is about the SHAPE,
+  not the spelling, and the shape is byte-identical.
+  `src/lib/__tests__/member-facing-long-dates.test.ts` pins the four call sites
+  so a later "tidy every date onto the medium form" pass fails loudly rather than
+  silently shortening what a member reads.
 
 ### INV-DATE-017
 

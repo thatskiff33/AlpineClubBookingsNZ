@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MODULE_KEYS } from "@/config/modules";
 import type { FeatureFlags } from "@/config/schema";
@@ -181,9 +186,9 @@ describe("AdminCommandPalette", () => {
       document.body.querySelectorAll("[cmdk-group-heading]"),
     ).map((el) => el.textContent);
 
-    // Matches the sidebar's navSections order. Regression guard: the de-dup
-    // keys "Bookings & Beds" pages first under "Needs Attention", which must not
-    // drag that group ahead of "Needs Attention".
+    // Matches the sidebar's buildAdminNavSections order. Regression guard:
+    // the de-dup keys "Bookings & Beds" pages first under "Needs Attention",
+    // which must not drag that group ahead of "Needs Attention".
     expect(headings).toEqual([
       "General",
       "Needs Attention",

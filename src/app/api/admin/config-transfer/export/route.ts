@@ -8,7 +8,7 @@ import { buildConfigExport } from "@/lib/config-transfer/export";
 import { requireFullAdminForConfigTransfer } from "@/lib/config-transfer/route-helpers";
 import { configTransferErrorResponse } from "@/lib/config-transfer/route-error";
 import { CONFIG_TRANSFER_CATEGORIES } from "@/lib/config-transfer/manifest";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubTime } from "@/lib/club-time/server";
 
 // POST /api/admin/config-transfer/export — full-admin only.
 // Builds a configuration bundle (zip) for the selected categories and returns it
@@ -61,7 +61,9 @@ export async function POST(request: Request) {
       },
     });
 
-    const stamp = todayDateOnlyForTimeZone();
+    // The club's calendar day, from the PERSISTED club timezone rather than the
+    // container's `TZ` (CT-4, #2870; INV-CONFIG-002).
+    const stamp = (await clubTime()).today();
     return new NextResponse(new Uint8Array(result.zip), {
       status: 200,
       headers: {

@@ -6,7 +6,9 @@ import {
   resolveGuestNameUpdates,
   type ResolvedGuestNameUpdate,
 } from "@/lib/booking-modify";
-import { addDaysDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { sendSchoolAttendeeConfirmationEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -39,13 +41,20 @@ export async function sendSchoolAttendeeConfirmationPrompts(
     return { scanned: 0, sent: 0, failed: 0 };
   }
 
-  // checkIn is stored as @db.Date (the NZ calendar date at UTC midnight), so
+  // checkIn is stored as @db.Date (a calendar date at UTC midnight), so
   // comparing it against the raw `now` instant shifts the window boundary by a
-  // day for the first ~13h of each NZ day under the TZ=Pacific/Auckland server
-  // pin. Derive the NZ calendar date and step it with the date-only helpers so
-  // the window lines up with how @db.Date is stored (F32, #1888). `now` stays
-  // the instant used below for the cadence and timestamp writes.
-  const today = normalizeDateOnlyForTimeZone(now);
+  // day for part of every club day. `now` is a real INSTANT and has no calendar
+  // day until one is supplied, so it is projected through the club's PERSISTED
+  // timezone — not the container's, which is what this used to read (#3123,
+  // INV-CONFIG-002) — and the result is encoded back to the UTC-midnight shape
+  // `@db.Date` round-trips (F32, #1888). `now` stays the instant used below for
+  // the cadence and timestamp writes.
+  //
+  // The CLI-safe runtime reader rather than `club-time/server`: this module is
+  // loaded by `general-cron-runner` from `src/instrumentation.node.ts`, where
+  // `server-only` is a bare throw at import.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const today = dateOnlyInstantOf(clubCalendarDateOf(now, clubZone));
   const windowEnd = addDaysDateOnly(today, leadDays);
   const requests = await prisma.bookingRequest.findMany({
     where: {
@@ -412,8 +421,12 @@ export async function countUnconfirmedSchoolAttendeeLists(
   if (leadDays <= 0) return 0;
 
   // Same @db.Date boundary as sendSchoolAttendeeConfirmationPrompts (F32, #1888):
-  // pin the NZ calendar date to UTC midnight so the count matches the prompts.
-  const today = normalizeDateOnlyForTimeZone(now);
+  // project the instant through the CLUB's persisted timezone and pin the
+  // resulting calendar date to UTC midnight, so the count matches the prompts
+  // rather than answering from the container's zone (#3123).
+  const today = dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
+  );
   return prisma.bookingRequest.count({
     where: {
       type: BookingRequestType.SCHOOL,
@@ -487,12 +500,16 @@ export async function resendSchoolAttendeeConfirmation({
   // Rotate before sending, like the cron. Pre-check-in links stay valid
   // until check-in; after check-in a short window covers late roster fixes.
   const { token, tokenHash } = issueActionToken();
-  // checkIn is @db.Date; compare it against the NZ calendar date (not the raw
-  // `now` instant) so a check-in still in the future is not mis-classified as
-  // past for the first ~13h of each NZ day (F32, #1888). The 3-day fallback
-  // stays a genuine timestamp window measured from `now`.
+  // checkIn is @db.Date; compare it against the CLUB's calendar date (not the
+  // raw `now` instant, and not the container's day) so a check-in still in the
+  // future is not mis-classified as past for part of every club day (F32,
+  // #1888; #3123). The 3-day fallback stays a genuine timestamp window measured
+  // from `now`.
+  const todayAtClub = dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
+  );
   const expiresAt =
-    booking.checkIn > normalizeDateOnlyForTimeZone(now)
+    booking.checkIn > todayAtClub
       ? booking.checkIn
       : new Date(now.getTime() + 3 * DAY_MS);
   await prisma.bookingRequest.update({

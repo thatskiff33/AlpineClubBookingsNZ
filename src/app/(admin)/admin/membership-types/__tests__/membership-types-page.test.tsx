@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+// The shared renderer, not Testing Library directly: this page derives the club's
+// current season from `useClubTime()` since CT-4 group F1 (#2870), and that hook
+// throws deliberately when no provider is mounted.
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 // #1940: the page now reads the session permission matrix for view-only gating;
 // provide an edit-level admin session so the pre-existing edit-interaction cases

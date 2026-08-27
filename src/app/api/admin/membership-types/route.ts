@@ -21,7 +21,8 @@ import {
 } from "@/lib/membership-types";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 const membershipTypeSelect = {
   id: true,
@@ -70,7 +71,7 @@ async function loadMembershipTypes() {
     // #2107: expose the config-driven current season year so clients (the bulk
     // membership dialog) can default the season select correctly Jan–season-start
     // instead of guessing the calendar year.
-    currentSeasonYear: getSeasonYear(),
+    currentSeasonYear: clubSeasonYear(await clubTimeZone()),
   };
 }
 

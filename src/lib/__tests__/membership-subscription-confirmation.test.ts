@@ -310,6 +310,7 @@ describe("membership subscription confirmation", () => {
       const result = await reconcileSubscriptionBillingExceptions({
         seasonYear: 2026,
         decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+        yearEndMonth: 3,
       });
       expect(result).toEqual({ resolvedCount: 4 });
       expect(mocks.exceptionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -339,6 +340,7 @@ describe("membership subscription confirmation", () => {
       await reconcileSubscriptionBillingExceptions({
         seasonYear: 2026,
         decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+        yearEndMonth: 3,
       });
       const where = (mocks.exceptionUpdateMany.mock.calls[0][0] as { where: { fingerprint?: { notIn: string[] } } }).where;
       expect(where.fingerprint?.notIn).toHaveLength(1);
@@ -349,6 +351,7 @@ describe("membership subscription confirmation", () => {
       await reconcileSubscriptionBillingExceptions({
         seasonYear: 2026,
         decisionDate: new Date("2026-07-13T00:00:00.000Z"),
+        yearEndMonth: 3,
       });
       const execRaw = (mocks.client as { $executeRaw: ReturnType<typeof vi.fn> }).$executeRaw;
       expect(execRaw).toHaveBeenCalledTimes(1);

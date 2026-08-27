@@ -62,6 +62,12 @@ upstream rebuild. When the page structure changes more deeply, use the
    `whakapapa.com` or `snow.nz` — other hosts are rejected.
 2. Under **Advanced: element selectors**, override individual selectors only if a
    section stops appearing. Leave a field blank to use the built-in default.
+   One section is special: **Trails**. Whakapapa's 2026 UI update moved the
+   trail lists behind collapsible panels whose content is not in the page at
+   all (it is drawn in the browser), so when the selectors find no trails the
+   scraper automatically reads the same `/api/report` data feed the panels
+   draw from — no selector change needed, and the trail selectors resume
+   working by themselves if the upstream page ever includes trails again.
 3. Click **Preview** to fetch and parse with the current URL and selectors
    **without saving** — the parsed result is shown so you can confirm the
    sections populate. When it looks right, click **Save configuration**. The URL

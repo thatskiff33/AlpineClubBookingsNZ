@@ -24,6 +24,13 @@ import {
   validateFeeScheduleInput,
 } from "@/lib/authoritative-fees";
 
+/**
+ * The club's day, supplied explicitly (#3123). `asOf` used to default to the
+ * environment's day inside `authoritative-fees.ts`, which for a club configured
+ * behind its container selected a fee schedule row a day before it took effect.
+ */
+const CLUB_TODAY = new Date("2026-07-01T00:00:00.000Z");
+
 describe("authoritative fee schedules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -136,8 +143,11 @@ describe("authoritative fee schedules", () => {
 
   it("returns null when neither a tier row nor a flat annual fee row exists (#2067)", async () => {
     mocks.membershipAnnualFeeFindFirst.mockResolvedValue(null);
-    await expect(getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: "ADULT" }))
-      .resolves.toBeNull();
+    await expect(
+      // #3123 - `asOf` is required now; the club day is stated rather than
+      // defaulted from the environment.
+      getEffectiveMembershipAnnualFee({ membershipTypeId: "full", ageTier: "ADULT" }, CLUB_TODAY),
+    ).resolves.toBeNull();
     expect(mocks.membershipAnnualFeeFindFirst).toHaveBeenCalledTimes(2);
   });
 
@@ -145,13 +155,13 @@ describe("authoritative fee schedules", () => {
     // No age-tier row, but a flat NULL-tier row exists (the Family flat fee).
     mocks.joiningFeeFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ amountCents: 20000, effectiveFrom: new Date("2026-02-01") });
     await expect(
-      getEffectiveJoiningFee({ membershipTypeId: "type-family", ageTier: "ADULT" }),
+      getEffectiveJoiningFee({ membershipTypeId: "type-family", ageTier: "ADULT" }, CLUB_TODAY),
     ).resolves.toEqual({ amountCents: 20000, effectiveFrom: "2026-02-01", source: "SCHEDULE" });
 
     // Nothing configured -> NONE (no legacy fallback).
     mocks.joiningFeeFindFirst.mockResolvedValue(null);
     await expect(
-      getEffectiveJoiningFee({ membershipTypeId: "type-school", ageTier: "ADULT" }),
+      getEffectiveJoiningFee({ membershipTypeId: "type-school", ageTier: "ADULT" }, CLUB_TODAY),
     ).resolves.toEqual({ amountCents: null, effectiveFrom: null, source: "NONE" });
   });
 

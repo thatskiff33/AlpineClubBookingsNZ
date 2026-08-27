@@ -1,11 +1,49 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+/*
+  THE PINNED ZONE IS THE DISCRIMINATOR, AND IT IS `Atlantic/Azores` (#3123).
+
+  `daysUntilDate` reads no timezone at all any more, so nothing in this file can
+  be moved by this pin while the function is correct — which is the point. The
+  regression it guards is the PROJECTION it used to perform: both operands went
+  through `normalizeDateOnlyForTimeZone`, so a stored `@db.Date` night was pushed
+  into `APP_TIME_ZONE` before being counted. Under this repo's own fallback zone,
+  `Pacific/Auckland`, that projection is the identity for a UTC-midnight value, so
+  reintroducing it would not move a single number here. Pinned to a zone BEHIND
+  Greenwich it does.
+
+  `Atlantic/Azores` rather than any other such zone because it is the only IANA
+  zone that changes the SIGN of its offset across DST — UTC-1 in standard time,
+  UTC+0 in summer (swept across all 418 zones for 2026, #3107). Every other
+  behind-Greenwich zone shifts every night by the same day, so a projection stays
+  a translation there and differences between two counts still cancel. Here they
+  do not, which is what lets the DST case below compare two ranges of equal
+  length and see the projection appear in one of them and not the other.
+*/
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "Atlantic/Azores",
+  APP_LOCALE: "en-NZ",
+}));
 
 // getRefundTier / calculateRefundAmount are re-implemented below to avoid
 // importing "../cancellation", which pulls in prisma. daysUntilDate is imported
 // straight from the prisma-free policy module so these tests exercise the real
-// NZ-lodge-day boundary logic (issue #1166) rather than a stale copy.
+// lodge-day boundary logic (issue #1166) rather than a stale copy.
+import { APP_TIME_ZONE } from "@/config/operational";
 import { daysUntilDate } from "../policies/cancellation";
+import { requireCalendarDate } from "@/lib/club-time";
 import type { CancellationRule } from "../cancellation";
+
+/** A stored `@db.Date` lodge night: the calendar day encoded at UTC midnight. */
+const storedNight = (day: string) => new Date(`${day}T00:00:00.000Z`);
+
+/** What the removed projection would have made of that stored night. */
+const projected = (day: string) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: APP_TIME_ZONE }).format(
+    storedNight(day),
+  );
 
 function getRefundTier(
   daysUntilCheckIn: number,
@@ -258,125 +296,207 @@ describe("calculateRefundAmount", () => {
   });
 });
 
+// #3123: EVERY `checkIn` fixture below is a stored `@db.Date` lodge night, i.e.
+// UTC midnight, because that is the only value `Booking.checkIn` can ever hold
+// (`prisma/schema.prisma:1662`). Five of these cases used to pass a real
+// timestamp and so pinned a contract the schema forbids: that a check-in with a
+// time of day is projected through a zone. `daysUntilDate` DECODES the stored
+// day instead, so those fixtures were the wrong half of the pair and have been
+// corrected rather than the behaviour.
+//
+// AND THE SECOND OPERAND IS NOW A CALENDAR DAY, NOT AN INSTANT. Every case
+// below used to hand in a `Date` and rely on this function projecting it through
+// `APP_TIME_ZONE` to reach a New Zealand day — which is exactly the environment
+// authority #3123 removes. The club's day is resolved by the caller now and
+// arrives as a `CalendarDate`, so these cases STATE the day instead of encoding
+// it as an instant plus an assumed zone.
 describe("daysUntilDate", () => {
   it("calculates days correctly for future date", () => {
-    const now = new Date("2025-07-01T12:00:00Z");
-    const checkIn = new Date("2025-07-15T12:00:00Z");
-    expect(daysUntilDate(checkIn, now)).toBe(14);
+    expect(
+      daysUntilDate(
+        new Date("2025-07-15T00:00:00.000Z"),
+        requireCalendarDate("2025-07-01"),
+      ),
+    ).toBe(14);
   });
 
   it("returns 0 for same day", () => {
-    const now = new Date("2025-07-01T12:00:00Z");
-    const checkIn = new Date("2025-07-01T23:00:00Z");
-    expect(daysUntilDate(checkIn, now)).toBe(0);
+    expect(
+      daysUntilDate(
+        new Date("2025-07-02T00:00:00.000Z"),
+        requireCalendarDate("2025-07-02"),
+      ),
+    ).toBe(0);
   });
 
   it("returns negative for past date", () => {
-    const now = new Date("2025-07-15T12:00:00Z");
-    const checkIn = new Date("2025-07-10T12:00:00Z");
-    expect(daysUntilDate(checkIn, now)).toBe(-5);
+    expect(
+      daysUntilDate(
+        new Date("2025-07-11T00:00:00.000Z"),
+        requireCalendarDate("2025-07-16"),
+      ),
+    ).toBe(-5);
   });
 
   it("handles exact day boundary", () => {
-    const now = new Date("2025-07-01T00:00:00Z");
-    const checkIn = new Date("2025-07-08T00:00:00Z");
-    expect(daysUntilDate(checkIn, now)).toBe(7);
+    expect(
+      daysUntilDate(
+        new Date("2025-07-08T00:00:00.000Z"),
+        requireCalendarDate("2025-07-01"),
+      ),
+    ).toBe(7);
   });
 
-  it("counts whole NZ lodge days regardless of intra-day times", () => {
-    // NZST (UTC+12): 18:00Z is 06:00 on 2 Jul NZ; 06:00Z is 18:00 on 8 Jul NZ.
-    // Six NZ calendar days apart (2 Jul -> 8 Jul), not the raw 6.5 wall-clock days.
-    const now = new Date("2025-07-01T18:00:00Z");
-    const checkIn = new Date("2025-07-08T06:00:00Z");
-    expect(daysUntilDate(checkIn, now)).toBe(6);
-  });
-
-  it("keeps the 7-day tier for the whole NZ boundary day", () => {
-    // NZST (UTC+12): 11:00Z is 23:00 on 1 Jul NZ; 11:30Z is 23:30 on 8 Jul NZ.
-    // Seven NZ lodge days apart, so the 7-day tier (50%) applies.
-    const now = new Date("2025-07-01T11:00:00Z");
-    const checkIn = new Date("2025-07-08T11:30:00Z");
-    const days = daysUntilDate(checkIn, now);
+  it("keeps the 7-day tier for the whole club boundary day", () => {
+    // Seven lodge days from the club's 1 July to the stored night of 8 July, so
+    // the 7-day tier (50%) applies for the WHOLE of that club day — there is no
+    // time of day left in either operand that could split it.
+    const days = daysUntilDate(
+      new Date("2025-07-08T00:00:00.000Z"),
+      requireCalendarDate("2025-07-01"),
+    );
     expect(days).toBe(7);
-    // Should get the 7-day tier, not below it
     expect(getRefundTier(days, standardPolicy)).toEqual(
       expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
     );
   });
 
-  it("drops to the lower tier once the NZ day count falls below the threshold", () => {
-    // NZST (UTC+12): 12:00Z is 00:00 on 2 Jul NZ; 11:00Z is 23:00 on 8 Jul NZ.
-    // Six NZ lodge days apart, one short of the 7-day tier, so 0% applies.
-    const now = new Date("2025-07-01T12:00:00Z");
-    const checkIn = new Date("2025-07-08T11:00:00Z");
-    const days = daysUntilDate(checkIn, now);
+  it("drops to the lower tier once the day count falls below the threshold", () => {
+    const days = daysUntilDate(
+      new Date("2025-07-08T00:00:00.000Z"),
+      requireCalendarDate("2025-07-02"),
+    );
     expect(days).toBe(6);
     expect(getRefundTier(days, standardPolicy)).toEqual(
       expect.objectContaining({ refundPercentage: 0, daysBeforeStay: 0 })
     );
   });
+
+  it("takes the check-in day off the UTC clock face, not out of a zone (#3123)", () => {
+    // The stored night is DECODED — its UTC day is read — so the count does not
+    // move with a time of day the value happens to carry, and no zone can shift
+    // it. Projecting instead is what moved the night a day back for every club
+    // behind Greenwich.
+    const clubDay = requireCalendarDate("2025-07-01");
+    expect(daysUntilDate(new Date("2025-07-15T00:00:00.000Z"), clubDay)).toBe(14);
+    expect(daysUntilDate(new Date("2025-07-15T12:00:00.000Z"), clubDay)).toBe(14);
+    expect(daysUntilDate(new Date("2025-07-15T23:59:00.000Z"), clubDay)).toBe(14);
+  });
+
+  it("THE MONEY CASE: a club behind Greenwich counts one day more, and it is right (#3123)", () => {
+    // The regression this replaced. Projecting the UTC-midnight encoding of the
+    // stored night through a zone BEHIND Greenwich moved the night back a day
+    // while leaving `now` where it was, so the two errors SUBTRACTED instead of
+    // cancelling: measured on `America/Denver`, 31 where the answer is 32.
+    //
+    // At the frozen instant `2026-07-01T00:00:00.000Z` the club's own day is
+    // 1 July for Pacific/Auckland and 30 June for America/Denver
+    // (`src/lib/club-time/clock.ts` records that measurement), so the two clubs
+    // legitimately get 31 and 32 — and 32 is the answer the old code could not
+    // produce for any deployment at all.
+    const augustFirst = new Date("2026-08-01T00:00:00.000Z");
+    expect(daysUntilDate(augustFirst, requireCalendarDate("2026-07-01"))).toBe(31);
+    expect(daysUntilDate(augustFirst, requireCalendarDate("2026-06-30"))).toBe(32);
+  });
 });
 
-// Issue #1166: the refund-tier boundary is counted in NZ lodge days, so it
-// falls at NZ-local midnight (matching the member-visible "N days before
-// check-in" countdown) rather than at UTC-midnight-of-check-in minus N*24h.
-// TZ is left unset (repo convention) so APP_TIME_ZONE resolves to
-// Pacific/Auckland. In each case `checkIn` is a date-only value (UTC midnight
-// of the NZ lodge date) and `now` is chosen so the NZ-local calendar date, or
-// the raw wall-clock ms, would disagree with the NZ-day answer.
-describe("daysUntilDate — NZ lodge-day boundary (issue #1166)", () => {
-  it("NZDT (summer, UTC+13): a late NZ evening on the boundary date keeps the 7-day tier", () => {
-    // 2026-01-13T09:00Z is 22:00 on 13 Jan in NZ (NZDT). The member countdown
-    // still reads 7 days (13 Jan -> 20 Jan), so the 50% tier applies. The old
-    // raw-ms diff was 6.6 days -> floor 6 -> wrongly dropped to the 0% tier.
-    const now = new Date("2026-01-13T09:00:00.000Z");
-    const checkIn = new Date("2026-01-20T00:00:00.000Z");
-    expect(daysUntilDate(checkIn, now)).toBe(7);
-    expect(getRefundTier(daysUntilDate(checkIn, now), standardPolicy)).toEqual(
-      expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+// Issue #1166: the refund-tier boundary is counted in whole lodge days, so it
+// falls at the CLUB's midnight rather than at UTC-midnight-of-check-in minus
+// N*24h.
+//
+// WHERE HALF OF THIS BLOCK'S CLAIM WENT (#3123). It used to prove two things at
+// once: that the boundary is a whole-day count, and that the day either side of
+// it is derived in New Zealand's zone. The second half was only ever true
+// because `APP_TIME_ZONE` happened to be `Pacific/Auckland` — the environment
+// deciding a club-facing answer, which is the defect this issue removes.
+// Deriving a club calendar day from an instant is now `clubCalendarDateOf` /
+// `clubToday`, tested against the PERSISTED zone in
+// `src/lib/club-time/__tests__/`, and asserted as money on the paths that use
+// it in `cancel-preview-club-time-authority.test.ts`. What is left here is the
+// first half, which is this function's own contract.
+describe("daysUntilDate — whole-lodge-day boundary (issue #1166)", () => {
+  it("the boundary day keeps the 7-day tier, summer or winter", () => {
+    // 13 Jan -> 20 Jan and 13 Jul -> 20 Jul are both 7 nights, and "summer or
+    // winter" is load-bearing under the pin above: January is Azores STANDARD
+    // time, where the removed projection moves the stored night back a day and
+    // this count becomes 6 — a whole refund tier — while July is Azores summer,
+    // where it moves nothing. One fixture proves the arithmetic and the pair
+    // proves it is not being reached through a zone.
+    for (const [clubDay, checkIn] of [
+      ["2026-01-13", "2026-01-20T00:00:00.000Z"],
+      ["2025-07-13", "2025-07-20T00:00:00.000Z"],
+    ] as const) {
+      const days = daysUntilDate(new Date(checkIn), requireCalendarDate(clubDay));
+      expect(days).toBe(7);
+      expect(getRefundTier(days, standardPolicy)).toEqual(
+        expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+      );
+    }
+  });
+
+  it("the next club day drops to six, and the tier drops with it", () => {
+    const days = daysUntilDate(
+      new Date("2026-01-20T00:00:00.000Z"),
+      requireCalendarDate("2026-01-14"),
+    );
+    expect(days).toBe(6);
+    expect(getRefundTier(days, standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 0, daysBeforeStay: 0 })
     );
   });
 
-  it("NZST (winter, UTC+12): a late NZ evening on the boundary date keeps the 7-day tier", () => {
-    // 2025-07-13T10:00Z is 22:00 on 13 Jul in NZ (NZST). Same NZ-day count of
-    // 7; the old raw-ms diff was 6.6 days -> floor 6 -> wrong 0% tier.
-    const now = new Date("2025-07-13T10:00:00.000Z");
-    const checkIn = new Date("2025-07-20T00:00:00.000Z");
-    expect(daysUntilDate(checkIn, now)).toBe(7);
-    expect(getRefundTier(daysUntilDate(checkIn, now), standardPolicy)).toEqual(
-      expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+  it("crossing a DST transition inside the range does not change the count", () => {
+    /*
+      TWO RANGES OF FOURTEEN NIGHTS, each straddling one of `Atlantic/Azores`'s
+      2026 transitions: 22 Mar -> 5 Apr crosses the 29 March spring-forward, and
+      18 Oct -> 1 Nov crosses the 25 October fall-back.
+
+      Under exact calendar arithmetic both are 14 and both hold the 100% tier.
+      Under the projection this function used to perform they are 14 and 13,
+      because the sign change means the stored night is pushed back a day on the
+      WINTER side of a transition and left alone on the SUMMER side. So the
+      count depends on which side of a DST change the stay falls — which is
+      exactly what this case's name says must not happen, and which no
+      uniformly-shifting zone could have shown.
+
+      The earlier spelling of this case asserted a single New Zealand range and
+      blamed millisecond division. That could not fail: the old implementation
+      normalised BOTH operands to UTC midnight before dividing, so the interval
+      was always an exact multiple of 86_400_000 whatever DST did inside it.
+    */
+    const acrossSpringForward = daysUntilDate(
+      storedNight("2026-04-05"),
+      requireCalendarDate("2026-03-22"),
+    );
+    const acrossFallBack = daysUntilDate(
+      storedNight("2026-11-01"),
+      requireCalendarDate("2026-10-18"),
+    );
+    expect(acrossSpringForward).toBe(14);
+    expect(acrossFallBack).toBe(14);
+    // Stated as money as well as as a number, because the tier is what the
+    // member is actually refunded and 14 -> 13 crosses a published boundary.
+    expect(getRefundTier(acrossFallBack, standardPolicy)).toEqual(
+      getRefundTier(acrossSpringForward, standardPolicy),
+    );
+    expect(getRefundTier(acrossFallBack, standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 100, daysBeforeStay: 14 }),
     );
   });
+});
 
-  it("NZDT: an early NZ morning counts from the NZ date, not the earlier UTC date", () => {
-    // 2026-01-13T13:00Z is 02:00 on 14 Jan in NZ — the NZ calendar date is a
-    // day ahead of the UTC date (13 Jan). Counting from the NZ date gives 6;
-    // counting from the UTC date would wrongly give 7.
-    const now = new Date("2026-01-13T13:00:00.000Z");
-    const checkIn = new Date("2026-01-20T00:00:00.000Z");
-    expect(daysUntilDate(checkIn, now)).toBe(6);
-  });
-
-  it("NZST: an early NZ morning counts from the NZ date, not the earlier UTC date", () => {
-    // 2025-07-13T13:00Z is 01:00 on 14 Jul in NZ (NZST). NZ date is 14 Jul,
-    // UTC date is 13 Jul; NZ counting gives 6, the UTC date would give 7.
-    const now = new Date("2025-07-13T13:00:00.000Z");
-    const checkIn = new Date("2025-07-20T00:00:00.000Z");
-    expect(daysUntilDate(checkIn, now)).toBe(6);
-  });
-
-  it("any time on the same NZ calendar day yields the same whole-day count", () => {
-    // 00:30 and 23:30 on 13 Jan NZ (NZDT) are the same NZ lodge day, so both
-    // are 7 days before the 20 Jan check-in. The old raw-ms diff split them
-    // across the boundary (7 vs 6), landing identical bookings in different
-    // refund tiers purely on the time of day.
-    const checkIn = new Date("2026-01-20T00:00:00.000Z");
-    const earlyNzDay = new Date("2026-01-12T11:30:00.000Z"); // 00:30 on 13 Jan NZ
-    const lateNzDay = new Date("2026-01-13T10:30:00.000Z"); // 23:30 on 13 Jan NZ
-    expect(daysUntilDate(checkIn, earlyNzDay)).toBe(7);
-    expect(daysUntilDate(checkIn, lateNzDay)).toBe(7);
-    expect(daysUntilDate(checkIn, earlyNzDay)).toBe(
-      daysUntilDate(checkIn, lateNzDay)
-    );
+describe("PREMISE: the pinned zone's projection is not a uniform shift", () => {
+  it("moves a stored night on one side of a DST change and not the other", () => {
+    expect(APP_TIME_ZONE).toBe("Atlantic/Azores");
+    // Asserted from raw `Intl`, never from a helper, so the premise cannot drift
+    // with the code under test. Standard time is UTC-1: a `@db.Date` UTC
+    // midnight lands on the previous evening.
+    expect(projected("2026-01-20")).toBe("2026-01-19");
+    expect(projected("2026-11-01")).toBe("2026-10-31");
+    // Summer time is UTC+0: the same encoding lands on its own day.
+    expect(projected("2025-07-20")).toBe("2025-07-20");
+    expect(projected("2026-04-05")).toBe("2026-04-05");
+    // If either behaviour ever disappears from the IANA data this file has
+    // stopped discriminating, so both are asserted rather than assumed.
   });
 });

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { startOfDateOnlyForTimeZone } from "@/lib/date-only";
+import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
+import type { ClubTimeZone } from "@/lib/club-time";
 import {
   aggregatePolicyExceptionViolations,
   sortPolicyExceptionViolations,
@@ -130,15 +131,27 @@ const DAY_MS = 24 * HOUR_MS;
  * {@link POLICY_EXCEPTION_HOLD_MIN_TTL_HOURS}, so a late request still gets a
  * real review window.
  *
- * `firstHeldNight` is an NZ date-only lodge night (`YYYY-MM-DD`) — the earliest
- * night in the reservation footprint. Absent (a HOLD aggregate whose footprint
- * did not grow, or the reaper's fallback for a row written before the column
- * existed) the cap simply does not apply.
+ * `firstHeldNight` is a date-only lodge night (`YYYY-MM-DD`) — the earliest
+ * night in the reservation footprint. Absent, or not a real calendar date (a
+ * HOLD aggregate whose footprint did not grow, or the reaper's fallback for a
+ * row written before the column existed) the cap simply does not apply.
+ *
+ * `zone` is REQUIRED and is the club's PERSISTED timezone (`INV-CONFIG-002`,
+ * #3123). Turning a lodge night into the instant that night starts is the one
+ * thing here that cannot be answered without a zone, and it used to be answered
+ * from `APP_TIME_ZONE` — the environment's claim — so a club configured behind
+ * its container's zone capped the hold on the wrong day. The parameter is
+ * required rather than defaulted, and this function stays SYNCHRONOUS and PURE,
+ * because both callers loop: the reaper walks every candidate row and the
+ * request path is inside a creation flow, so a zone read in here would be one
+ * uncached `ClubTimeSettings` query per row. Each caller resolves the club's
+ * zone ONCE and passes it in.
  */
 export function computePolicyExceptionHoldExpiry(input: {
   createdAt: Date;
   firstHeldNight?: string | null;
   ttlDays?: number;
+  zone: ClubTimeZone;
 }): Date {
   const ttlDays = input.ttlDays ?? POLICY_EXCEPTION_HOLD_TTL_DAYS;
   const createdMs = input.createdAt.getTime();
@@ -147,9 +160,16 @@ export function computePolicyExceptionHoldExpiry(input: {
 
   let deadline = ttlDeadline;
   if (input.firstHeldNight) {
-    const nightStart = startOfDateOnlyForTimeZone(input.firstHeldNight);
-    if (!Number.isNaN(nightStart.getTime())) {
-      deadline = Math.min(deadline, nightStart.getTime());
+    // A lodge night is a CALENDAR DAY (`YYYY-MM-DD`), and the value wanted here
+    // is the INSTANT that day begins at the club — so the zone is genuinely
+    // required, unlike a stored `@db.Date` comparison which takes none
+    // (`INV-DATE-026`). An unparseable night keeps the pre-#3123 contract of
+    // "the cap simply does not apply": the old adapter returned `new Date(NaN)`
+    // and the `Number.isNaN` guard skipped it, and `parseCalendarDate`
+    // returning null skips it here for the same reason.
+    const night = parseCalendarDate(input.firstHeldNight);
+    if (night !== null) {
+      deadline = Math.min(deadline, startOfClubDay(night, input.zone).getTime());
     }
   }
 
@@ -637,9 +657,9 @@ export interface PolicyExceptionDriftResult {
 /**
  * Classify how the CURRENT violations of the frozen proposal compare to the
  * violations that were reviewed. Both inputs are the result of evaluating the
- * SAME frozen proposal — the reviewed set at submit time, the current set at
- * approval time against today's policy configuration — so any difference is a
- * genuine policy-config change (or tampering), never snapshot noise.
+ * SAME frozen proposal — reviewed at submit, current at approval — so a
+ * difference is real, never snapshot noise. It is NOT proof a policy was edited:
+ * the fingerprint covers the nights (`INV-EXCEPT-035`), so no refusal says so.
  *
  * This is the whole of #2365's "if a reviewed soft rule disappeared, execute
  * without override; new/materially-changed violations require resubmission",

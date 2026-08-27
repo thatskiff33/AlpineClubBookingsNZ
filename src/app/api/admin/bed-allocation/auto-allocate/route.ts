@@ -14,6 +14,7 @@ import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
+import { clubTime } from "@/lib/club-time/server";
 
 // requireAdmin() with bookings:edit is enforced by requireBedAllocationWrite().
 const autoAllocateSchema = z
@@ -52,7 +53,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const range = parseBedAllocationDateRange(body.data);
+    // ONE club day, resolved BEFORE `runAutoBedAllocation` opens its
+    // transaction under `pg_advisory_xact_lock(1)` and the lodge capacity key
+    // (#3123, `INV-LOCK-004`).
+    const range = parseBedAllocationDateRange(
+      body.data,
+      (await clubTime()).today(),
+    );
     const result = await runAutoBedAllocation({
       range,
       lodgeId,

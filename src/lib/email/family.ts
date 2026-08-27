@@ -18,9 +18,9 @@ import {
   composeOptionalEmailLine,
 } from "../email-message-notes";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
-import { formatNZDateTime } from "../nzst-date";
 import { sendEmail } from "./core";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Family group emails ----
 
@@ -220,7 +220,7 @@ export async function sendPartnerInviteEmail(params: {
       groupName: params.groupName,
       token: params.token,
       claimUrl,
-      expiresAt: formatNZDateTime(params.expiresAt),
+      expiresAt: emailClubDateTime(params.expiresAt),
     },
   });
 }

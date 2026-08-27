@@ -7,9 +7,10 @@
  * (#2286).
  */
 import { Prisma, type BedType, type LodgeBed } from "@prisma/client";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 import { getEarliestCurrentBedNightDate } from "@/lib/booking-guest-stay-ranges";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   findAnyCustodianHoldsForBeds,
   findFutureCustodianHoldsForBed,
@@ -126,6 +127,11 @@ export async function updateBedAllocationBed(input: {
   bedType?: BedType;
   bunkGroup?: string | null;
 }): Promise<LodgeBed> {
+  // #3123 / INV-LOCK-004 — the club's day is resolved HERE, before the
+  // transaction opens. Resolving it is a `clubTimeSettings.findUnique`, and
+  // inside the transaction below that would take a second pooled connection
+  // while the global cohort key and the per-lodge capacity key are held.
+  const today = await clubTodayDateOnlyInstant();
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const bedKey = await tx.lodgeBed.findUnique({
@@ -138,7 +144,7 @@ export async function updateBedAllocationBed(input: {
     if (bedKey.room.lodgeId) {
       await acquireLodgeCapacityLock(tx, bedKey.room.lodgeId);
     }
-    return updateBedAllocationBedWithLocksHeld({ ...input, db: tx });
+    return updateBedAllocationBedWithLocksHeld({ ...input, db: tx, today });
   });
 }
 
@@ -151,6 +157,15 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
   bedType?: BedType;
   bunkGroup?: string | null;
   db: BedAllocationDb;
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding
+   * (`INV-DATE-026`), resolved by the caller BEFORE it opened the transaction
+   * this runs inside (#3123, `INV-LOCK-004`). Required and never defaulted —
+   * only the deactivate branch reads it, but making it required is what stops
+   * the read drifting back inside the locks. The DELETE writer takes no such
+   * parameter because its custodian refusal has no date predicate at all.
+   */
+  today: Date;
 }): Promise<LodgeBed> {
   const touchesBunk =
     input.bedType !== undefined || input.bunkGroup !== undefined;
@@ -161,6 +176,7 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
       bedId: input.id,
       db,
       action: "deactivate",
+      today: input.today,
     });
     // #2286: deactivating a bed removes it from the bookable pool, which would
     // silently strand a custodian who is meant to be sleeping in it.
@@ -168,6 +184,7 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
       bedId: input.id,
       db,
       action: "deactivate",
+      today: input.today,
     });
   }
 
@@ -274,17 +291,32 @@ export async function updateBedAllocationBedWithLocksHeld(input: {
  */
 const BED_ALLOCATION_GUARD_MESSAGE_ROWS = 5;
 
-async function assertNoFutureBedAllocations(input: {
-  bedId: string;
-  db: BedAllocationDb;
-  action: "deactivate" | "delete";
-}) {
+async function assertNoFutureBedAllocations(
+  input: {
+    bedId: string;
+    db: BedAllocationDb;
+  } & (
+    | { action: "delete" }
+    /**
+     * #3123 — DEACTIVATE is the only arm with a date predicate, so it is the
+     * only arm that carries the club's day, and the union means the compiler
+     * both DEMANDS it there and REFUSES it on delete. The value is the
+     * UTC-midnight `@db.Date` encoding (`INV-DATE-026`), resolved by the caller
+     * outside its transaction (`INV-LOCK-004`).
+     */
+    | { action: "deactivate"; today: Date }
+  ),
+) {
   const blockingAllocations = await input.db.bedAllocation.findMany({
     where: {
       bedId: input.bedId,
       ...(input.action === "delete"
         ? {}
-        : { stayDate: { gte: getEarliestCurrentBedNightDate() } }),
+        : {
+            stayDate: {
+              gte: getEarliestCurrentBedNightDate(input.today),
+            },
+          }),
     },
     select: {
       stayDate: true,
@@ -334,11 +366,23 @@ async function assertNoFutureBedAllocations(input: {
  * The message names the Hut Leaders page because that, not the board, is where
  * the fix lives.
  */
-async function assertNoCustodianHoldsForBed(input: {
-  bedId: string;
-  db: BedAllocationDb;
-  action: "deactivate" | "delete";
-}) {
+async function assertNoCustodianHoldsForBed(
+  input: {
+    bedId: string;
+    db: BedAllocationDb;
+  } & (
+    | { action: "delete" }
+    /**
+     * #3123 — DEACTIVATE is the only arm with a date predicate, so it is the
+     * only arm that carries the club's day, and the union means the compiler
+     * both DEMANDS it there and REFUSES it on delete. The value is the
+     * UTC-midnight `@db.Date` encoding (`INV-DATE-026`), resolved by the
+     * caller outside its transaction (`INV-LOCK-004`); this function reads no
+     * clock and resolves no timezone.
+     */
+    | { action: "deactivate"; today: Date }
+  ),
+) {
   const holds =
     input.action === "delete"
       ? await findAnyCustodianHoldsForBeds({
@@ -347,7 +391,7 @@ async function assertNoCustodianHoldsForBed(input: {
         })
       : await findFutureCustodianHoldsForBed({
           bedId: input.bedId,
-          today: getTodayDateOnly(),
+          today: input.today,
           db: input.db,
         });
   if (holds.length === 0) return;

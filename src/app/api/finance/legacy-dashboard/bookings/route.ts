@@ -2,7 +2,8 @@ import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubToday } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { getLegacyDashboardBookingExport } from "@/lib/finance-legacy-dashboard-export";
 import logger from "@/lib/logger";
 
@@ -41,16 +42,6 @@ function safeBearerCompare(provided: string, expected: string) {
     timingSafeEqual(paddedProvidedBuffer, expectedBuffer) &&
     providedBuffer.length === expectedBuffer.length
   );
-}
-
-/**
- * Today's date in the CLUB's time zone (#2682) — the default `asOfDate` cut-off
- * for this export. A UTC "today" is still yesterday in New Zealand for roughly
- * the first half of every NZ day, so the export would carry the wrong day's
- * figures every morning. See `src/lib/date-only.ts`.
- */
-function getCurrentIsoDate() {
-  return todayDateOnlyForTimeZone();
 }
 
 export async function GET(request: NextRequest) {
@@ -92,10 +83,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    /*
+      The CLUB's zone, persisted, resolved once for this request (CT-5, #2869).
+      Two dates in this export depend on it and both used to come from
+      `APP_TIME_ZONE` — the CONTAINER's `TZ`: the default `asOfDate` cut-off,
+      which decides which stays count as realised (#2682), and every row's
+      `created_date`. A report column that moves because the server moved
+      region is exactly what #2869 s4 forbids.
+    */
+    const zone = await clubTimeZone();
     const exportPayload = await getLegacyDashboardBookingExport({
       historyStartDate:
         parsed.data.historyStartDate ?? DEFAULT_HISTORY_START_DATE,
-      asOfDate: parsed.data.asOfDate ?? getCurrentIsoDate(),
+      asOfDate: parsed.data.asOfDate ?? clubToday(zone),
+      clubTimeZone: zone,
     });
 
     return NextResponse.json(exportPayload);

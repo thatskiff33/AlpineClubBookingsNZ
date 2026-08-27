@@ -55,9 +55,48 @@ permission area; a view-only support role can read but not save.
    **Save Template**. Use **Restore Default** to drop your override and return to
    the built-in wording.
 
+### Formatting: the rich body editor
+
+The body is edited in a rich editor like the message board's composer
+(fork #38): select text and use the toolbar — **bold**, *italic*,
+underline, a heading, bullet and numbered lists, and left/centre/right
+alignment — and the styling shows in place as you type. `{{token}}` markers
+are ordinary text in the editor and substitute exactly as before.
+
+What the editor deliberately does **not** offer, so emails stay on the club
+theme in every mail client: colours, fonts, text sizes, images and links
+(web addresses are written out in full, as before). Anything pasted from
+elsewhere is reduced to the allowed formatting when you save — pasted
+colours, fonts and pictures are dropped, and pasted HTML can never reach a
+member as markup. Always check **Preview**, which shows the exact email a
+member receives.
+
+A body saved before this feature keeps rendering exactly as it always has.
+When you open one, the editor shows its first line as the email's heading
+and the rest as paragraphs, ready to format — nothing changes until you
+save. The Heading toolbar button turns any line into (or back out of) that
+heading style, so the heading is always yours to keep, move or remove.
+
+**Editing the wording never changes a date, a time or a deadline in it.** Every
+date and time a token fills in is worked out before your wording is applied, and
+the built-in wording and a saved override are filled in from the same answer. So
+the two always name the same day and the same moment. If they ever appear not to,
+that is a defect worth reporting rather than something to fix by rewording.
+
+There are two kinds of date in these messages, and the difference matters if you
+are ever comparing what an email said with what a screen shows:
+
+- **A lodge night, a roster date or a season date is a calendar day.** It is the
+  day itself — 1 August is 1 August — so no timezone is involved and none can
+  move it. A club overseas reads the same night the club's own records hold.
+- **A deadline or a timestamp is a moment**, so it is shown in the club's own
+  timezone, the one set under [Club Time Zone](club-time.md). Change that
+  setting and these move; the calendar days above do not.
+
 ### There is no "only if" — write lines that always read correctly
 
-The body is plain text with token substitution and **nothing else**. There is no
+The body substitutes tokens and **nothing else** — whether you write it as
+plain text or format it in the rich editor, there is no
 `if`, no conditional, no way to show a line only when a value exists. A token
 whose value is not applicable to a particular send simply renders as **nothing
 at all** — so a line you write as `Door code: {{doorCode}}` prints a bare
@@ -72,6 +111,22 @@ siblings each render the **entire** line — label, value and the blank line aft
 it — or nothing whatsoever. Put one of those tokens on its own, with no label of
 your own in front of it, and the email reads correctly whether or not the value
 exists.
+
+One of these blocks is several lines at once: **`{{ical}}`** on the Booking
+Confirmed message renders a short add-to-calendar section — a link that
+downloads the stay as a calendar file (`.ics`), plus links for Google Calendar
+and Outlook.com (personal Microsoft accounts — a work Microsoft 365 account
+cannot use that one), each covering the whole stay as all-day entries from
+check-in through checkout day. The links are built per booking by the system;
+the download link carries its own signed key, works for a recipient who is not
+signed in, and expires 60 days after checkout. Place the token on a line of
+its own; like every block token, it renders complete lines or nothing at all.
+In your own override wording the token renders exactly as the built-in
+message does: three tappable icons (a calendar-file tile, Google Calendar,
+Outlook.com) after the "Add this stay to your calendar:" lead-in. A mail app
+that blocks images shows the three service names instead — members never see
+the written-out addresses. Place the token on its own line inside your
+wording and Preview to see the row in place.
 
 A second, related pair works the other way round: **`{{rebookLabel}}` and
 `{{rebookPath}}`** in the **Booking Update** (bumped) message. That email goes to

@@ -60,7 +60,14 @@ interface CronHealthJob {
 interface CronHealthReport {
   generatedAt: string;
   cronEnabled: boolean;
+  /** The zone the "expected" times below are stated in (CT-5, #2869). */
   defaultTimezone: string;
+  /** The club's persisted setting; a running job adopts it only on restart. */
+  configuredTimezone: string;
+  /** The zone the scheduler pinned at boot, or `null` when unknown. */
+  runningTimezone: string | null;
+  /** True when the two are known to differ, so a restart is outstanding. */
+  timezoneRestartRequired: boolean;
   jobs: CronHealthJob[];
 }
 

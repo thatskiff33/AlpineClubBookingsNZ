@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   bookingFilterDateRangePresets,
   findMatchingDateRangePreset,
@@ -6,15 +6,18 @@ import {
   reportsDateRangePresets,
 } from "@/lib/date-range-presets";
 
-describe("date-range-presets", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-13T12:00:00Z"));
-  });
+/**
+ * #3123 deleted this module's `today` default, so nothing here reads a clock any
+ * more and the suite no longer moves one. Every case states the day it is about,
+ * which is also what the one caller now does: `DateRangeControls` passes
+ * `dateOnlyInstantOf(useClubTime().today())`, the club's persisted-zone day
+ * delivered to the browser as data. Where that day comes from is proved in
+ * `date-range-controls-club-time.test.tsx`; what the presets DO with it is
+ * proved here.
+ */
+const APRIL_13 = new Date("2026-04-13T00:00:00.000Z");
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+describe("date-range-presets", () => {
 
   it("builds last month ranges for filters", () => {
     const preset = bookingFilterDateRangePresets.find(
@@ -22,7 +25,7 @@ describe("date-range-presets", () => {
     );
 
     expect(preset).toBeDefined();
-    expect(getDateRangeForPreset(preset!)).toEqual({
+    expect(getDateRangeForPreset(preset!, APRIL_13)).toEqual({
       from: "2026-03-01",
       to: "2026-03-31",
     });
@@ -34,7 +37,7 @@ describe("date-range-presets", () => {
     );
 
     expect(preset).toBeDefined();
-    expect(getDateRangeForPreset(preset!)).toEqual({
+    expect(getDateRangeForPreset(preset!, APRIL_13)).toEqual({
       from: "2026-05-01",
       to: "2026-05-31",
     });
@@ -67,7 +70,7 @@ describe("date-range-presets", () => {
     );
 
     expect(preset).toBeDefined();
-    expect(getDateRangeForPreset(preset!)).toEqual({
+    expect(getDateRangeForPreset(preset!, APRIL_13)).toEqual({
       from: "2025-01-01",
       to: "2025-12-31",
     });
@@ -100,21 +103,34 @@ describe("date-range-presets", () => {
       findMatchingDateRangePreset(
         "2026-03-01",
         "2026-03-31",
-        bookingFilterDateRangePresets
+        bookingFilterDateRangePresets,
+        APRIL_13
       )
     ).toBe("last_month");
   });
 
-  it("matches presets against NZ today by default", () => {
-    vi.setSystemTime(new Date("2026-04-30T13:00:00Z"));
-
+  it("matches presets against the day it is given, not a clock", () => {
     expect(
       findMatchingDateRangePreset(
         "2026-05-01",
         "2026-05-31",
-        bookingFilterDateRangePresets
+        bookingFilterDateRangePresets,
+        new Date("2026-05-01T00:00:00.000Z")
       )
     ).toBe("this_month");
+  });
+
+  it("has no default day, so omitting it does not compile (#3123)", () => {
+    // Never called: `@ts-expect-error` is a COMPILE-time assertion, and `tsc`
+    // fails if either signature regains the environment-zone default this issue
+    // removed.
+    const refusedByTheCompiler = () => {
+      // @ts-expect-error the reference day is required (#3123)
+      getDateRangeForPreset(bookingFilterDateRangePresets[0]);
+      // @ts-expect-error the reference day is required (#3123)
+      findMatchingDateRangePreset("2026-05-01", "2026-05-31", bookingFilterDateRangePresets);
+    };
+    expect(refusedByTheCompiler).toBeTypeOf("function");
   });
 
   it("returns null for custom ranges", () => {
@@ -122,7 +138,8 @@ describe("date-range-presets", () => {
       findMatchingDateRangePreset(
         "2026-02-10",
         "2026-04-05",
-        reportsDateRangePresets
+        reportsDateRangePresets,
+        APRIL_13
       )
     ).toBeNull();
   });

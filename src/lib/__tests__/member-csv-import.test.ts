@@ -10,6 +10,15 @@ import {
   parseMemberImportCsv,
 } from "@/lib/member-csv-import";
 
+/**
+ * The club's today, supplied rather than read (#3123). `buildMemberImportPreview`
+ * runs in the browser as well as on the server, so it takes the day as data;
+ * these cases do not exercise the cancelled-date-in-future boundary, so any
+ * fixed club day serves. `member-csv-import-club-time-authority.test.ts` is where
+ * the boundary itself is pinned against a persisted zone.
+ */
+const CLUB_TODAY = "2026-07-01";
+
 describe("member CSV import parser", () => {
   it("parses quoted fields with commas and escaped quotes", () => {
     const parsed = parseMemberImportCsv(
@@ -88,7 +97,7 @@ describe("member CSV import parser", () => {
     if (!parsed.ok) return;
 
     const mapping = inferMemberImportColumnMapping(parsed.data.headers);
-    const preview = buildMemberImportPreview(parsed.data, mapping);
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY);
 
     expect(preview.hasErrors).toBe(false);
     expect(preview.rows).toHaveLength(12);
@@ -115,6 +124,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
       {
         dateOfBirth: "dd/MM/yyyy",
         joinedDate: "d MMM yyyy",
@@ -150,6 +160,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(false);
@@ -171,6 +182,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -192,6 +204,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
       {
         ...createDefaultMemberImportDateFormatMapping(),
         dateOfBirth: "dd/MM/yyyy",
@@ -215,6 +228,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
       {
         ...createDefaultMemberImportDateFormatMapping(),
         dateOfBirth: "dd/MM/yyyy",
@@ -302,6 +316,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -322,7 +337,7 @@ describe("member CSV import parser", () => {
     if (!parsed.ok) return;
 
     const mapping = inferMemberImportColumnMapping(parsed.data.headers);
-    const preview = buildMemberImportPreview(parsed.data, mapping);
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY);
 
     expect(preview.hasErrors).toBe(false);
     expect(preview.rows[0].values).toMatchObject({
@@ -355,6 +370,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -377,6 +393,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(false);
@@ -400,6 +417,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -424,6 +442,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(false);
@@ -444,7 +463,7 @@ describe("member CSV import parser", () => {
     const mapping = inferMemberImportColumnMapping(parsed.data.headers);
     expect(mapping.cancelledDate).not.toBeNull();
 
-    const preview = buildMemberImportPreview(parsed.data, mapping, {
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY, {
       cancelledDate: "dd/MM/yyyy",
     });
 
@@ -469,6 +488,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -502,7 +522,7 @@ describe("member CSV import parser", () => {
     expect(mapping.cancelledDate).toBeNull();
 
     // With the flag column left unmapped, the row imports cleanly.
-    const preview = buildMemberImportPreview(parsed.data, mapping);
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY);
     expect(preview.hasErrors).toBe(false);
     expect(preview.rows[0].normalizedDateValues.cancelledDate).toBeUndefined();
   });
@@ -538,7 +558,7 @@ describe("member CSV import parser", () => {
     const mapping = inferMemberImportColumnMapping(parsed.data.headers);
     expect(mapping.cancelledDate).not.toBeNull();
 
-    const preview = buildMemberImportPreview(parsed.data, mapping);
+    const preview = buildMemberImportPreview(parsed.data, mapping, CLUB_TODAY);
     expect(preview.hasErrors).toBe(true);
     const cancelledError = preview.rows[0].errors.find((error) =>
       error.includes("Cancelled Date"),
@@ -561,6 +581,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
     expect(preview.hasErrors).toBe(true);
     const dobError = preview.rows[0].errors.find((error) =>
@@ -584,6 +605,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(false);
@@ -608,6 +630,7 @@ describe("member CSV import parser", () => {
     const preview = buildMemberImportPreview(
       parsed.data,
       inferMemberImportColumnMapping(parsed.data.headers),
+      CLUB_TODAY,
     );
 
     expect(preview.hasErrors).toBe(true);

@@ -33,7 +33,11 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { countNightsDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
 import { parseDecimalDollarsToCents } from "@/lib/money-input";
@@ -310,8 +314,18 @@ function isMemberWholeLodgeRequest(request: PublicBookingRequestData) {
   return Boolean(request.requestedByMemberId) && request.exclusivityRequested;
 }
 
+/**
+ * A lodge night as the calendar day it IS - no timezone, because a calendar day
+ * has none (CT-4, #2870; INV-DATE-010). The value arrives as the JSON form of a
+ * Prisma `@db.Date`, i.e. UTC midnight, so the day comes out of the string and
+ * goes to the kernel's calendar-date formatter, which pins UTC over that
+ * encoding and is therefore the identity.
+ *
+ * WHAT THIS REPLACES read the same value through a ZONE. That is the identity
+ * for a club east of Greenwich and the PREVIOUS DAY for any club west of it.
+ */
 function formatDate(value: string) {
-  return formatNZDate(new Date(value));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
 // #2338: nights in a check-in/check-out range, for the whole-lodge flat-price
@@ -320,9 +334,16 @@ function nightsBetween(checkIn: string, checkOut: string): number {
   return countNightsDateOnly(new Date(checkIn), new Date(checkOut));
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return null;
-  return formatNZDateTime(new Date(value));
+/**
+ * A real INSTANT in the club's PERSISTED timezone (CT-4, #2870; INV-CONFIG-002).
+ * A hook rather than a plain function because the zone is not a module constant
+ * any more: it reaches the browser as data through `ClubTimeProvider`, never
+ * from `process.env` and never from the viewer's own clock.
+ */
+function useInstantFormatter() {
+  const clubTime = useClubTime();
+  return (value: string | null) =>
+    value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
 function statusBadgeClass(status: PublicBookingRequestData["status"]) {
@@ -389,6 +410,7 @@ export function PublicBookingRequestsPanel({
   showHeading = true,
   canEdit = true,
 }: PublicBookingRequestsPanelProps) {
+  const formatDateTime = useInstantFormatter();
   const { hutLeaderLabel } = useClubIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();

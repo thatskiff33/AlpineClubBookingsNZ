@@ -1,10 +1,11 @@
 import type { MemberGuestConsentStatus } from "@prisma/client";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  normalizeDateOnlyForTimeZone,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  requireStoredCalendarDay,
+  startOfClubDay,
+  type ClubTimeZone,
+} from "@/lib/club-time";
 
 /**
  * Member-guest consent model — the pure, database-free half of "+ Add Member
@@ -118,8 +119,8 @@ export const MEMBER_GUEST_CONSENT_MIN_HOLD_MS = 2 * 60 * 60 * 1000;
  *
  * WHY THE CLAMP IS CHECK-IN MINUS ONE DAY AND NOT CHECK-IN. The sweep releases
  * the bed through the same removal path a member's own self-removal uses, and
- * that path refuses `STAY_NOT_FUTURE` once the NZ-local check-in date is no
- * longer in the future (`booking-guest-self-removal.ts`). An expiry clamped to
+ * that path refuses `STAY_NOT_FUTURE` once the check-in day is no longer after
+ * the club's own day (`booking-guest-self-removal.ts`). An expiry clamped to
  * check-in itself would therefore fire on a morning when the removal is already
  * refused — every such row would land on the admin exception list instead of
  * releasing, which is precisely the outcome D-4's expiry exists to prevent.
@@ -127,7 +128,7 @@ export const MEMBER_GUEST_CONSENT_MIN_HOLD_MS = 2 * 60 * 60 * 1000;
  * check-in.
  *
  * The clamp lands on the START of the day before check-in in club time, so the
- * nightly sweep (04:30 NZ) is guaranteed to be past it on that day.
+ * nightly sweep (04:30 club time) is guaranteed to be past it on that day.
  *
  * THE ONE CASE THE CLAMP CANNOT SAVE, stated rather than hidden: a booking made
  * inside the last two days before check-in. The two-hour floor wins over the
@@ -135,12 +136,43 @@ export const MEMBER_GUEST_CONSENT_MIN_HOLD_MS = 2 * 60 * 60 * 1000;
  * removal refused. That row goes to the exception list with honest copy. The
  * alternative — an already-expired request — would be worse: the member would
  * never get a chance to answer at all.
+ *
+ * TWO SEPARATE THINGS USED TO BE WRONG HERE, and #3123 fixed both. They are
+ * described apart because fixing one and not the other leaves a defect that is
+ * harder to see than either was.
+ *
+ * 1. `timeZone` WAS OPTIONAL, so the sole production caller
+ *    (`member-guest-add-policy.ts`) passed nothing and the clamp was computed in
+ *    whatever zone the container happened to run in. It is now REQUIRED and
+ *    branded: the club's persisted `ClubTimeSettings.timeZone`
+ *    (`INV-CONFIG-002`), resolved once per add and threaded in on
+ *    `MemberGuestAddPolicy`. A default would have left the same hole open for
+ *    the next caller; a required parameter means no caller can silently get the
+ *    environment's answer.
+ *
+ * 2. THE CHECK-IN WAS PROJECTED THROUGH THAT ZONE, which is wrong however good
+ *    the zone is. `bookingCheckIn` is a `@db.Date` column — a CALENDAR DAY,
+ *    encoded as UTC midnight (`INV-DATE-010`, `INV-DATE-026`) — and a calendar
+ *    day takes no zone at all. `normalizeDateOnlyForTimeZone` read it back
+ *    through the club's zone, which for any club BEHIND Greenwich names the
+ *    previous day: measured on `America/Denver`, a stored 4 August read back as
+ *    3 August, so "the day before check-in" became 2 August and the whole
+ *    deadline landed exactly 24 hours early. The member is given a day less to
+ *    answer than the club's policy says, and where the booking is made close in,
+ *    the now-past clamp hands the decision to the two-hour floor instead.
+ *
+ * So the two concerns are separated: the stored day is decoded ZONE-FREE, the
+ * `-1` is calendar arithmetic on that day, and the club's zone is used only at
+ * the last step, to turn the resulting day into the INSTANT it begins at the
+ * club. The zone belongs on the instant, never on the day.
  */
 export function computeMemberGuestConsentExpiry(params: {
   now: Date;
   pendingHoldExpiryDays: number;
+  /** The booking's stored `@db.Date` check-in. A calendar day, not a moment. */
   bookingCheckIn: Date;
-  timeZone?: string;
+  /** The club's PERSISTED zone (`INV-CONFIG-002`). Required — see the note above. */
+  timeZone: ClubTimeZone;
 }): Date {
   const { now, pendingHoldExpiryDays, bookingCheckIn, timeZone } = params;
 
@@ -148,14 +180,18 @@ export function computeMemberGuestConsentExpiry(params: {
     now.getTime() + pendingHoldExpiryDays * 24 * 60 * 60 * 1000,
   );
 
-  const dayBeforeCheckIn = addDaysDateOnly(
-    normalizeDateOnlyForTimeZone(bookingCheckIn, timeZone),
+  const dayBeforeCheckIn = addCalendarDays(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(bookingCheckIn, {
+        subject: "A member-guest consent deadline's check-in",
+        instead:
+          "Pass the booking's stored @db.Date check-in column, or resolve a real " +
+          "timestamp's club day with clubCalendarDateOf first and pass that.",
+      }),
+    ),
     -1,
   );
-  const latest = startOfDateOnlyForTimeZone(
-    formatDateOnly(dayBeforeCheckIn),
-    timeZone,
-  );
+  const latest = startOfClubDay(dayBeforeCheckIn, timeZone);
 
   const clamped = requested.getTime() < latest.getTime() ? requested : latest;
   const floor = now.getTime() + MEMBER_GUEST_CONSENT_MIN_HOLD_MS;

@@ -5,7 +5,7 @@ import type {
   MembershipFeeProrationRule,
   Prisma,
 } from "@prisma/client";
-import { formatDateOnly, getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 
 export const MEMBERSHIP_FEE_BILLING_BASES = [
@@ -165,10 +165,23 @@ export interface EffectiveJoiningFee {
  * materialised every legacy amount into JoiningFee, so this reads JoiningFee
  * only. Accepts an optional transaction client (#1886 contract) so approval can
  * resolve fees for rows created inside the still-open transaction.
+ *
+ * `asOf` is REQUIRED (#3123). It is the day the schedule's effective window is
+ * evaluated on (`effectiveFrom <= asOf`, `effectiveTo >= asOf`), so a wrong day
+ * selects a wrong PRICE — and it used to default to the ENVIRONMENT's day,
+ * which for a club configured behind its container's zone starts a new fee a
+ * day early. It is required rather than resolved in here for two reasons that
+ * both matter: `store` may be a transaction client on the approval path, where
+ * an uncached `ClubTimeSettings` read would take a second pooled connection
+ * under the application and member-lifecycle advisory locks (the same rule
+ * `resolveMemberJoiningFeeClassification`'s `seasonYear` already states); and
+ * `effectiveFrom`/`effectiveTo` are `@db.Date` calendar days, so the value must
+ * arrive on the UTC-midnight frame the caller is already working in
+ * (`INV-DATE-026`). `INV-MONEY`, `docs/AUTHORITATIVE_FEES.md`.
  */
 export async function getEffectiveJoiningFee(
   params: { membershipTypeId: string; ageTier: AgeTier | null },
-  asOf: Date = getTodayDateOnly(),
+  asOf: Date,
   store: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<EffectiveJoiningFee> {
   const activeWindow = {
@@ -216,10 +229,13 @@ export async function getEffectiveJoiningFee(
  * are offered for it. Passing a null ageTier reads the flat row directly, which
  * is byte-identical to the pre-#2067 behaviour for every all-flat config.
  * Components are always included so the returned row carries its invoice lines.
+ *
+ * `asOf` is REQUIRED for the same reasons as {@link getEffectiveJoiningFee} —
+ * see it (#3123).
  */
 export async function getEffectiveMembershipAnnualFee(
   params: { membershipTypeId: string; ageTier: AgeTier | null },
-  asOf: Date = getTodayDateOnly(),
+  asOf: Date,
   store: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
   const activeWindow = {

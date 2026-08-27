@@ -45,7 +45,9 @@ import {
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { memberName } from "@/lib/member-serialization";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -76,21 +78,36 @@ const emptyFacets: AuditFacets = {
   severities: [],
 };
 
-// #2264: not one of the shared `nzst-date` helpers on purpose — the audit trail
-// keeps seconds, so entries logged within the same minute stay orderable. Owner
-// decision: do not migrate this to `formatNZDateTime`, which drops seconds.
-const AUDIT_DATE_TIME = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  second: "2-digit",
-});
+// #2264: not one of the shared house shapes on purpose — the audit trail keeps
+// seconds, so entries logged within the same minute stay orderable. Owner
+// decision: do not migrate this to the shared date-time shape
+// (`formatClubInstantDateTime`, once `formatNZDateTime`), which drops seconds.
+// CT-4 (#2870): an audit stamp is a real INSTANT and is projected through the
+// club's PERSISTED zone (INV-CONFIG-002), which a `"use client"` file receives
+// as data — so the formatter is memoised per zone rather than frozen at module
+// scope against APP_TIME_ZONE.
+const AUDIT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
-function formatDateTime(value: string) {
-  return AUDIT_DATE_TIME.format(new Date(value));
+function auditFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
+  const cached = AUDIT_FORMATTERS.get(zone);
+  if (cached) return cached;
+  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+    timeZone: zone,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  AUDIT_FORMATTERS.set(zone, created);
+  return created;
+}
+
+function formatDateTime(clubTime: BoundClubTime, value: string) {
+  const instant = parseInstant(value);
+  if (instant === null) return value;
+  return auditFormatter(clubTime.zone).format(instant);
 }
 
 function titleCase(value: string) {
@@ -359,6 +376,7 @@ function MemberSearchFilter({
 }
 
 export default function AuditLogPage() {
+  const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [eventType, setEventType] = useState(searchParams.get("eventType") || "all");
@@ -893,7 +911,7 @@ export default function AuditLogPage() {
                           ) : null}
                         </TableCell>
                         <TableCell className="align-top text-xs text-muted-foreground">
-                          {formatDateTime(entry.createdAt)}
+                          {formatDateTime(clubTime, entry.createdAt)}
                         </TableCell>
                         <TableCell className="align-top">
                           <div className="space-y-1">

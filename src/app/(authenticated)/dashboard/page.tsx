@@ -27,17 +27,21 @@ import {
   ClipboardCheck,
   ChevronRight,
   Wrench,
+  MessageSquare,
+  Users,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { CLUB_HUT_LEADER_LABEL, CLUB_NAME } from "@/config/club-identity";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  addCalendarDays,
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+  formatClubDate,
+  formatClubDayMonth,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import {
   isDashboardPaymentOwed,
@@ -50,6 +54,8 @@ import {
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
 import { RecentNewsCard } from "@/components/recent-news-card";
+import { MessageBoardCard } from "@/components/message-board-card";
+import { countClubPostsSince } from "@/lib/club-posts";
 import {
   buildHrefWithReturnTo,
   buildProfilePathWithReturnTo,
@@ -60,19 +66,26 @@ import {
   PAYMENT_OWED_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import { checkCapacity } from "@/lib/capacity";
-import { formatNZDate, formatNZTime } from "@/lib/nzst-date";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
-// Not one of the shared helpers: the three tightest slots on this page — the
-// upcoming-events list (a fixed-width `w-14` column), the "Next Stay" summary
-// pair and the draft "Expires" note — deliberately drop the year to stay
-// compact, and always have. The admin dashboard's twin cards do the same.
-// Zone-pinned to club time like every other date on this page.
-const COMPACT_DAY_MONTH = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-});
+/*
+  The three tightest slots on this page — the upcoming-events list (a fixed-width
+  `w-14` column), the "Next Stay" summary pair and the draft "Expires" note —
+  deliberately drop the year to stay compact, and always have. The admin
+  dashboard's twin cards do the same. F3 (#3079) declared that bag as the
+  kernel's `dayMonth` shape, so `formatClubDayMonth` replaces the local formatter
+  this file kept.
+
+  IT RENDERS CALENDAR DAYS ONLY, and the shape takes no zone (CT-4, #2870): the
+  day is encoded at UTC midnight and read back pinned to `UTC`, which is provably
+  the identity for every club. Before CT-4 the local formatter was pinned to
+  `APP_TIME_ZONE` and handed BOTH lodge nights and real instants, which is one
+  concept wearing another's clothes: identical output in New Zealand, and for a
+  club west of Greenwich a lodge night rendered a day early.
+
+  Every real instant on this page is projected to the club's calendar day first,
+  by `club.calendarDateOf(...)`, which is the one operation allowed to decide
+  which day a moment falls on (INV-DATE-019).
+*/
 
 function formatPromoBenefitSummary(promo: AvailablePromoCode) {
   if (promo.type === "PERCENTAGE") {
@@ -157,7 +170,7 @@ export default async function DashboardPage() {
   //
   // WHAT THAT COST WAS VISIBILITY, NOT PERMISSION. `getKioskAccessTier`
   // (`src/lib/kiosk-access.ts:31-81`) is the authority on lodge access, derives
-  // its day from `getTodayDateOnly()`, and already implemented
+  // its day from the club's own calendar, and already implemented
   // `[checkIn-1, checkOut]` and `[startDate-1, endDate]`; every `/api/lodge/*`
   // route enforces it, and both buttons below just link to `/lodge/kiosk`. So on
   // the day BEFORE check-in the member's access already worked and only the
@@ -173,9 +186,20 @@ export default async function DashboardPage() {
   // pin this is the identical instant `setHours(0, 0, 0, 0)` produced, so those
   // two reads are unchanged; deriving it from the club's calendar rather than
   // the process's own zone keeps it right if the process is ever not pinned.
-  const today = getTodayDateOnly();
-  const tomorrow = addDaysDateOnly(today, 1);
-  const startOfTodayNZ = startOfDateOnlyForTimeZone(formatDateOnly(today));
+  //
+  // AND THE CLUB'S CALENDAR IS NOW THE CLUB'S RECORDED SETTING (CT-4, #2870;
+  // INV-CONFIG-002), not `APP_TIME_ZONE`. `getTodayDateOnly()` and
+  // `startOfDateOnlyForTimeZone()` both read the container's environment, so on
+  // a deployment where the two disagree this whole page ran on the machine's
+  // idea of the day. The date-only ends are re-encoded to UTC midnight because
+  // that is the only shape a `@db.Date` bind accepts (INV-DATE-026), and the
+  // step is whole CALENDAR days rather than 86 400 000 ms so a DST transition
+  // cannot move it.
+  const club = await clubTime();
+  const todayDate = club.today();
+  const today = dateOnlyInstantOf(todayDate);
+  const tomorrow = dateOnlyInstantOf(addCalendarDays(todayDate, 1));
+  const startOfTodayNZ = club.startOfDay(todayDate);
 
   // Check if member is a staying guest (PAID booking where checkIn-1 <= today <= checkOut)
   //
@@ -408,6 +432,19 @@ export default async function DashboardPage() {
 
   const modules = await loadEffectiveModuleFlags();
 
+  // Headline for the message board tile.
+  //
+  // Skipped -- query included -- when the board module is off, following the
+  // events card below: the dashboard must not read for a surface it is not
+  // going to show.
+  //
+  // Seven CLUB days, stepped over the club's calendar rather than derived from
+  // the process's own zone (INV-DATE-019; CT-4 #2870), so every viewer is told
+  // about the same seven days no matter where they are reading from.
+  const recentPostCount = modules.commsPortal
+    ? await countClubPostsSince(club.startOfDay(addCalendarDays(todayDate, -7)))
+    : 0;
+
   // Upcoming club events for the next two weeks (Events card → /calendar).
   //
   // Skipped entirely — query included — when the club has the eventsCalendar
@@ -427,9 +464,7 @@ export default async function DashboardPage() {
   // from: it is stepped in whole CALENDAR days over the CLUB's date-only value
   // and only then turned back into an instant, rather than being derived from
   // the process's own zone (INV-DATE-019).
-  const twoWeeksOut = startOfDateOnlyForTimeZone(
-    formatDateOnly(addDaysDateOnly(today, 14)),
-  );
+  const twoWeeksOut = club.startOfDay(addCalendarDays(todayDate, 14));
   const upcomingEvents = showEventsCard
     ? await prisma.calendarEvent.findMany({
         where: { startsAt: { gte: startOfTodayNZ, lte: twoWeeksOut } },
@@ -519,9 +554,13 @@ export default async function DashboardPage() {
           {nextStay ? (
             <>
               <div className="text-lg font-semibold">
-                {COMPACT_DAY_MONTH.format(new Date(nextStay.checkIn))}
+                {formatClubDayMonth(
+                  calendarDateOfDateOnlyInstant(nextStay.checkIn),
+                )}
                 {" — "}
-                {COMPACT_DAY_MONTH.format(new Date(nextStay.checkOut))}
+                {formatClubDayMonth(
+                  calendarDateOfDateOnlyInstant(nextStay.checkOut),
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {nextStay._count.guests} guest
@@ -603,7 +642,7 @@ export default async function DashboardPage() {
                     className="flex items-baseline gap-2 text-sm"
                   >
                     <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">
-                      {COMPACT_DAY_MONTH.format(new Date(event.startsAt))}
+                      {formatClubDayMonth(club.calendarDateOf(event.startsAt))}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-foreground">
                       {event.title}
@@ -616,7 +655,7 @@ export default async function DashboardPage() {
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {event.allDay
                         ? "All day"
-                        : formatNZTime(new Date(event.startsAt))}
+                        : club.instantTime(event.startsAt)}
                     </span>
                   </li>
                 ))}
@@ -735,6 +774,51 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Message board tile. Gated on the same module as the board itself:
+            /message-board is feature-routed on `commsPortal`, so an ungated
+            tile would be a button to a blocked route. */}
+        {modules.commsPortal && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Message Board
+              </CardTitle>
+              <MessageSquare className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">
+                {recentPostCount} new message{recentPostCount === 1 ? "" : "s"}
+              </div>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/message-board">Open Message Board</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Kiosk tile. `/lodge` is feature-routed on `kiosk`, hence the gate.
+            Deliberately NOT gated on kiosk access tier: a member with no tier
+            gets the read-only lodge view rather than a refusal, which is the
+            "who is in the lodge" this card offers. */}
+        {modules.kiosk && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Lodge Kiosk</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg font-semibold">Who is in the lodge</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                The lodge kiosk will show you who is arriving and leaving the
+                lodge.
+              </p>
+              <Button asChild size="sm" variant="outline" className="mt-4 w-full">
+                <Link href="/lodge/kiosk">Open Kiosk</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Draft bookings */}
@@ -770,9 +854,13 @@ export default async function DashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">
-                        {formatNZDate(new Date(booking.checkIn))}
+                        {formatClubDate(
+                          calendarDateOfDateOnlyInstant(booking.checkIn),
+                        )}
                         {" — "}
-                        {formatNZDate(new Date(booking.checkOut))}
+                        {formatClubDate(
+                          calendarDateOfDateOnlyInstant(booking.checkOut),
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
@@ -781,8 +869,8 @@ export default async function DashboardPage() {
                         {booking.draftExpiresAt && (
                           <span className="text-warning-11 ml-2">
                             Expires{" "}
-                            {COMPACT_DAY_MONTH.format(
-                              new Date(booking.draftExpiresAt),
+                            {formatClubDayMonth(
+                              club.calendarDateOf(booking.draftExpiresAt),
                             )}
                           </span>
                         )}
@@ -859,9 +947,13 @@ export default async function DashboardPage() {
                   >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">
-                        {formatNZDate(new Date(booking.checkIn))}
+                        {formatClubDate(
+                          calendarDateOfDateOnlyInstant(booking.checkIn),
+                        )}
                         {" — "}
-                        {formatNZDate(new Date(booking.checkOut))}
+                        {formatClubDate(
+                          calendarDateOfDateOnlyInstant(booking.checkOut),
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {booking._count.guests} guest
@@ -882,6 +974,11 @@ export default async function DashboardPage() {
           )}
         </Card>
       </div>
+
+      {/* Club message board (commsPortal module). Last on the page, below the
+          booking lists. Renders nothing when the board is empty, so a club
+          that has not started using it sees no empty shell. */}
+      {modules.commsPortal && <MessageBoardCard memberId={memberId} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { getTodayDateOnly } from "./date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "./prisma";
 
 /**
@@ -25,9 +25,10 @@ export async function isHutLeader(
 export async function hasActiveHutLeaderAssignment(
   memberId: string
 ): Promise<boolean> {
-  // NZ date-only semantics, matching hasCurrentOrUpcomingHutLeaderAssignment
-  // in lodge-instructions.ts so nav visibility and reader access agree.
-  const today = getTodayDateOnly();
+  // The club's own day, date-only, matching
+  // hasCurrentOrUpcomingHutLeaderAssignment in lodge-instructions.ts so nav
+  // visibility and reader access agree (#3123).
+  const today = await clubTodayDateOnlyInstant();
   const count = await prisma.hutLeaderAssignment.count({
     where: {
       memberId,

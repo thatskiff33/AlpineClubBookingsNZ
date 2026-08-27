@@ -40,7 +40,9 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useScrollToFeedback } from "@/hooks/use-scroll-to-feedback";
-import { getSeasonYear } from "@/lib/utils";
+import { useClubTime } from "@/components/club-time-provider";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import {
   ADMIN_FORBIDDEN_SAVE_REASON,
@@ -250,10 +252,6 @@ function draftPayload(
       draft.allowedAgeTiers.includes(ageTier),
     ),
   };
-}
-
-function formatSeasonLabel(seasonYear: number) {
-  return `${seasonYear}/${seasonYear + 1}`;
 }
 
 function rollForwardExceptionLabel(exception: RollForwardException) {
@@ -1014,7 +1012,14 @@ function MembershipTypeList({
 }
 
 export default function AdminMembershipTypesPage() {
-  const defaultSeasonYear = getSeasonYear(new Date());
+  // The club's season, from the zone the SERVER read and handed to the provider
+  // (CT-4 group F1, #2870). Before this it went through a helper that read a
+  // `Date`'s host-local components, so it answered from whatever zone the bundle
+  // was built with rather than the club's.
+  // Season NAMES come from `season-label.ts`, which also records why the
+  // year-end is unplumbed here and why that keeps name and value in step.
+  const clubTime = useClubTime();
+  const defaultSeasonYear = clubSeasonYear(clubTime.zone);
   const [membershipTypes, setMembershipTypes] = useState<MembershipType[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftMembershipType>>({});
   const [newDraft, setNewDraft] = useState<DraftMembershipType>(() =>
@@ -1733,8 +1738,8 @@ export default function AdminMembershipTypesPage() {
                   Seasons
                 </div>
                 <div className="mt-1 text-foreground">
-                  {formatSeasonLabel(rollForwardResult.fromSeasonYear)} to{" "}
-                  {formatSeasonLabel(rollForwardResult.toSeasonYear)}
+                  {seasonSelectLabel(rollForwardResult.fromSeasonYear)} to{" "}
+                  {seasonSelectLabel(rollForwardResult.toSeasonYear)}
                 </div>
               </div>
               <div>

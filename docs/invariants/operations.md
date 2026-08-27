@@ -148,6 +148,30 @@ rules first written here. #2765 extended it with the measured-audience half.
   means classifying the writer and naming the counterpart it excludes — never
   editing a count, which is what coupled approval to file layout before #2722.
 
+## INV-LOCK-004
+
+- **A read taken while a lock is held goes through the caller's transaction
+  client, never the module-level one (#3110).** The policy readers are shaped for
+  this in two ways. Three families take a trailing `db` that an in-transaction
+  caller MUST supply: `validateMinimumStay` (`booking-policies.ts`),
+  `loadAdultMemberHostingPolicy` (`adult-member-hosting-review.ts`), and the
+  three cancellation and non-member-hold readers in `cancellation.ts`. Two more
+  cannot take one - the subscription-lockout mode and the club timezone - and are
+  resolved before the transaction opens and passed in as a value instead. Which shape a
+  reader gets is decided by whether it is keyed by state the transaction re-reads
+  under the lock: if it is, the read must move with that state and the client is
+  threaded; if it is not, hoisting it out is both cheaper and safe. The reasoning,
+  the writer inventory and the pool-starvation argument live in
+  `docs/CONCURRENCY_AND_LOCKING.md` -> the five "Which client reads ..." sections
+  and are deliberately not restated here. Pinned by
+  `cancellation-policy-client-contract.test.ts`,
+  `adult-member-hosting-call-sites.test.ts`,
+  `payment-link-expiry-club-zone.test.ts`, and the two minimum-stay call-site
+  tests. The first of those is allowlist-free in both directions - it reads the
+  transaction spans off the source and separately requires any reader called
+  inside a client-taking helper to pass that client on - so a new
+  in-transaction call site is a CI failure rather than the next audit's finding.
+
 ## INV-OPS-014
 
 - **The statement handed to a raw `Unsafe` call is visibly static at the call
@@ -332,14 +356,14 @@ rules first written here. #2765 extended it with the measured-audience half.
   still unreleased and unapplied anywhere. A GENERAL "did a reclassification ship
   without a
   backfill" check is **not available**, and pretending otherwise would be worse
-  than having none: the audit-writer census pins only 127 of its 454 write sites
+  than having none: the audit-writer census pins only 127 of its 462 write sites
   per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
   `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
   `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
   by `audit-writer-census.test.ts` so this figure and the copy of it in
   `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
   deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 328 there is no baseline
+  something edit a 400-line literal — so for the other 335 there is no baseline
   a check could compare against, and the category distribution alone cannot see a
   reclassification that another one compensates for. The two `verify` gates that
   can read a pull request parse its BODY, not its diff. So outside the pinned

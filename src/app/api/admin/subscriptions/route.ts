@@ -3,7 +3,8 @@ import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
 import {
@@ -184,7 +185,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { status, ageTier, xeroContactGroup, sortBy, sortDir, page, pageSize } = parsed.data;
-  const seasonYear = parsed.data.seasonYear ?? getSeasonYear(new Date());
+  const seasonYear =
+    parsed.data.seasonYear ?? clubSeasonYear(await clubTimeZone());
 
   try {
     const ageTierSettings = await getAgeTierSettings();

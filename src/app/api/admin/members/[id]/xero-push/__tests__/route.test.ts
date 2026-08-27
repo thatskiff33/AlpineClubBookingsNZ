@@ -77,7 +77,6 @@ vi.mock("@/lib/xero-api-errors", () => ({
     status: 502,
   }),
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: () => 2026 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroEntranceFeeInvoiceOperation: vi.fn(),
   processQueuedXeroOutboxOperations: vi.fn(),

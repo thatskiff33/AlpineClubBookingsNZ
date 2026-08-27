@@ -11,6 +11,17 @@ import type {
   DisplayStateGuest,
 } from "@/lib/lodge-display-state";
 
+/**
+ * The club timezone these renders are about (CT-4, #2870).
+ *
+ * `DisplayScreen` takes the zone as a REQUIRED prop because `/display` sits
+ * outside both route-group chrome components and so has no shared provider above
+ * it: the server page resolves the club's persisted setting and hands it down.
+ * A test therefore has to say which club it is rendering for, which is what makes
+ * a zone assertion here capable of failing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // Issue #2047 — the template pack renders end to end through the REAL server
 // assembler (buildLayoutRender) and the REAL client layout engine (DisplayScreen
 // → LayoutScreen → Area/RotatorArea), mirroring the LTV-038 parity smoke. Two
@@ -138,7 +149,7 @@ async function renderBoard(def: Def, state: DisplayState) {
     body: { ...state, template: FALLBACK_TEMPLATE_FIELD, layoutRender },
   });
   const { DisplayScreen } = await import("@/app/display/display-screen");
-  const utils = render(<DisplayScreen />);
+  const utils = render(<DisplayScreen zone={CLUB_ZONE} />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(10);
   });

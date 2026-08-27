@@ -55,7 +55,7 @@ function writeBackup(directory: string, filename: string, mtime?: Date) {
 describe("resolveLocalBackupDirectory", () => {
   it("accepts an absolute path outside the application, unchanged", () => {
     // POSIX in, POSIX out — deliberately NOT `path.resolve`, which on a Windows
-    // developer machine would answer `D:arackups\...` and take the value
+    // developer machine would answer `D:\var\backups\...` and take the value
     // out of the shape the Linux container will use it in.
     expect(resolveLocalBackupDirectory("/var/backups/tacbookings")).toBe(
       "/var/backups/tacbookings",

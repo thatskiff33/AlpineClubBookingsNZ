@@ -1,7 +1,14 @@
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
-import { APP_TIME_ZONE } from "@/config/operational";
-import { eachDateOnlyInRange, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import {
+  clubCalendarDateOf,
+  dateOnlyInstantOf,
+  type CalendarDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { eachDateOnlyInRange } from "@/lib/date-only";
+import { calculateMemberAgeParts } from "@/lib/member-age";
 import {
   familyAdultDelegateResolver,
   type MemberGuestConsentDelegateResolver,
@@ -12,15 +19,6 @@ import {
   type PredictableConsentDeclineBlocker,
 } from "@/lib/member-guest-consent-card";
 import { prisma } from "@/lib/prisma";
-
-// NOT display formatting: `en-CA` is the shortest way to get a `YYYY-MM-DD`
-// rendering of an instant in a named timezone, and the result is immediately
-// split on "-" to do calendar arithmetic. The locale is deliberately NOT
-// APP_LOCALE — swapping it for a club locale would change the field order and
-// break the parse — so this can never move to an `nzst-date` helper.
-const CLUB_ISO_DATE = new Intl.DateTimeFormat("en-CA", {
-  timeZone: APP_TIME_ZONE,
-});
 
 /**
  * The delegate consent page's whole decision, extracted from the route so it is
@@ -85,15 +83,28 @@ export type DelegateConsentPageState =
   | { kind: "LAPSED"; guestFirstName: string }
   | { kind: "ASK"; facts: DelegateConsentAskFacts };
 
-/** Whole years between a date of birth and now, in club time. Null if unknown. */
-function ageInYears(dateOfBirth: Date | null, now: Date): number | null {
-  if (!dateOfBirth) return null;
-  const format = (date: Date) => CLUB_ISO_DATE.format(date);
-  const [nowYear, nowMonth, nowDay] = format(now).split("-").map(Number);
-  const [dobYear, dobMonth, dobDay] = format(dateOfBirth).split("-").map(Number);
-  let age = nowYear - dobYear;
-  if (nowMonth < dobMonth || (nowMonth === dobMonth && nowDay < dobDay)) age -= 1;
-  return age >= 0 ? age : null;
+/**
+ * Whole years between a date of birth and the club's today. Null if unknown.
+ *
+ * THIS USED TO BE A SECOND COPY OF THE AGE RULE, and it read both operands
+ * through `APP_TIME_ZONE` (#3123). Two things were wrong with that. The zone was
+ * the container's rather than the club's persisted one (`INV-CONFIG-002`); and
+ * `Member.dateOfBirth` is a stored `@db.Date` calendar day
+ * (`prisma/schema.prisma:514`), which takes no timezone at all — projecting its
+ * UTC-midnight encoding into a zone behind Greenwich lands on the previous
+ * evening, so a member born on 1 January read a year short on their own
+ * birthday for every club west of UTC. That is #3082, and `member-age.ts`
+ * already fixed it once; this file now uses that answer rather than keeping its
+ * own.
+ *
+ * `todayInClub` is a `yyyy-MM-dd` calendar date, which
+ * `calculateMemberAgeParts` takes as written.
+ */
+function ageInYears(
+  dateOfBirth: Date | null,
+  todayInClub: CalendarDate,
+): number | null {
+  return calculateMemberAgeParts(dateOfBirth, todayInClub)?.years ?? null;
 }
 
 export async function resolveDelegateConsentPageState(params: {
@@ -115,6 +126,16 @@ export async function resolveDelegateConsentPageState(params: {
   } = params;
 
   if (!guestId || !viewerMemberId) return { kind: "NOT_FOUND" };
+
+  // The club's PERSISTED timezone, resolved ONCE for this page (#3123,
+  // INV-CONFIG-002). `clubTimeZone()` rather than the CLI-safe runtime reader:
+  // nothing outside a React request reaches this module — no CLI root, no
+  // instrumentation edge — so the request-scoped React `cache()` memo is free
+  // here. Both temporal answers below are derived from this one value, so the
+  // age and the stay-started prediction can never be worked out on two
+  // different days.
+  const zone: ClubTimeZone = await clubTimeZone();
+  const todayInClub = clubCalendarDateOf(now, zone);
 
   const guest = await db.bookingGuest.findUnique({
     where: { id: guestId },
@@ -208,7 +229,7 @@ export async function resolveDelegateConsentPageState(params: {
       guest: {
         firstName: guest.firstName,
         lastName: guest.lastName,
-        ageYears: ageInYears(target?.dateOfBirth ?? null, now),
+        ageYears: ageInYears(target?.dateOfBirth ?? null, todayInClub),
       },
       bookerName:
         `${guest.booking.member.firstName} ${guest.booking.member.lastName}`.trim(),
@@ -229,12 +250,15 @@ export async function resolveDelegateConsentPageState(params: {
         bookingCheckIn: guest.booking.checkIn,
         bookingGuestCount: guest.booking.guests.length,
         isQuotePriced: quotePriced,
-        // The SAME clock the age above is worked out from. `now` is already an
-        // injectable parameter of this resolver, so leaving the prediction to
+        // The SAME club day the age above is worked out from. `now` is already
+        // an injectable parameter of this resolver, so leaving the prediction to
         // read the wall clock for itself would have meant one call answering
         // two questions against two different days — and a caller that pinned
-        // the clock would still have got a wall-clock answer here.
-        today: normalizeDateOnlyForTimeZone(now),
+        // the clock would still have got a wall-clock answer here. `now` is a
+        // real instant, so it is PROJECTED through the club's zone; the stored
+        // `@db.Date` check-in it is compared against is decoded, not projected
+        // (`predictConsentDeclineRefusal`).
+        today: dateOnlyInstantOf(todayInClub),
       }),
     },
   };

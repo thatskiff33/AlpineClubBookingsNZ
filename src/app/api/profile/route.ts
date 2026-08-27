@@ -3,7 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   isXeroConnected,
   syncManagedXeroContactGroupForMember,
@@ -17,7 +18,9 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
-import { getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { evaluateSelfServiceProfilePayload } from "@/lib/member-profile-completeness";
 import {
   buildStructuredAuditLogCreateArgs,
@@ -245,13 +248,16 @@ export async function PUT(req: NextRequest) {
         { status: 422 },
       );
     }
-    // "In the future" means a later NZ CALENDAR DAY, not a later instant
+    // "In the future" means a later CLUB CALENDAR DAY, not a later instant
     // (#2682). `dob` is a date-only value at UTC midnight, so comparing it
-    // against the raw clock refuses today's NZ date for the first ~12-13h of
-    // every NZ day — which is exactly the date the form's own `max` offers.
+    // against the raw clock refuses today's club date for the first ~12-13h of
+    // every club day — which is exactly the date the form's own `max` offers.
     // `request-child/route.ts` and `create-group/route.ts` already compare
     // this way.
-    if (dob > getTodayDateOnly()) {
+    // CT-4 (#2870): that day comes from the persisted ClubTimeSettings zone,
+    // not the container's TZ (INV-CONFIG-002, INV-DATE-019).
+    const today = dateOnlyInstantOf((await clubTime()).today());
+    if (dob > today) {
       return NextResponse.json(
         { error: "Date of birth cannot be in the future" },
         { status: 422 },
@@ -274,14 +280,18 @@ export async function PUT(req: NextRequest) {
   // #2106: apply age-tier enforcement to a DOB change. Only touch the tier when
   // the member supplied a DOB (self-service edits never submit a tier directly).
   if (dobProvided) {
+    // ONE season for both halves of this decision, from the club's PERSISTED zone
+    // (CT-4, #2870): the tier the date of birth implies and the exemption that may
+    // override it must be judged in the same season.
+    const clubCurrentSeasonYear = clubSeasonYear(await clubTimeZone());
     const dobDerivedTier = await computeAgeTier(
       updateData.dateOfBirth as Date,
-      getSeasonStartDate(getSeasonYear()),
+      getSeasonStartDate(clubCurrentSeasonYear),
     );
     const typeExemption = await loadMemberCurrentSeasonTypeExemption(
       prisma,
       session.user.id,
-      getSeasonYear(),
+      clubCurrentSeasonYear,
     );
     const resolved = resolveEnforcedAgeTier({
       isOrganisation: isOrganisationMember({

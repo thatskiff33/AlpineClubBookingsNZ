@@ -22,7 +22,7 @@ import {
 } from "./layout";
 import { CLUB_LODGE_TRAVEL_NOTE, CLUB_NAME } from "@/config/club-identity";
 import { emailPalette } from "@/lib/email-theme";
-import { formatNZDate } from "@/lib/nzst-date";
+import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 
 // ---- N-01: Check-in Reminder ----
 
@@ -46,8 +46,8 @@ export function checkinReminderTemplate(
     ${heading("Check-in Reminder")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge stay begins <strong>tomorrow</strong>!")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guests.length) },
     ])}
     ${paragraph("<strong>Guest list:</strong>")}
@@ -82,8 +82,8 @@ export function preArrivalReminderTemplate(params: {
   checkoutChoreNote?: string;
 }): string {
   const rows: Array<{ label: string; value: string }> = [
-    { label: "Check-in", value: formatNZDate(params.checkIn) },
-    { label: "Check-out", value: formatNZDate(params.checkOut) },
+    { label: "Check-in", value: emailCalendarDay(params.checkIn) },
+    { label: "Check-out", value: emailCalendarDay(params.checkOut) },
     { label: "Guests", value: String(params.guestCount) },
   ];
 
@@ -141,9 +141,9 @@ export function additionalPaymentReminderTemplate(params: {
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", a change to your lodge booking increased the total, and the extra amount has not been paid yet.")}
     ${infoTable([
       { label: "Amount still to pay", value: formatCents(params.additionalAmountCents) },
-      { label: "Requested on", value: formatNZDate(params.requestedOn) },
-      { label: "Check-in", value: formatNZDate(params.checkIn) },
-      { label: "Check-out", value: formatNZDate(params.checkOut) },
+      { label: "Requested on", value: emailClubDate(params.requestedOn) },
+      { label: "Check-in", value: emailCalendarDay(params.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(params.checkOut) },
     ])}
     ${alertBox(
       "Open your booking and complete the outstanding payment. If you have already paid, or you think this is wrong, please contact the club.",
@@ -180,8 +180,8 @@ export function wholeLodgeGuestNamesReminderTemplate(data: {
     ${heading(data.isFinal ? "Last Chance: Who Is Coming With You?" : "Who Is Coming With You?")}
     ${paragraph("Hi " + escapeHtml(data.firstName) + ", your whole-lodge booking at " + escapeHtml(CLUB_NAME) + "'s lodge is coming up and some of your party are still listed as placeholders rather than by name.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Guests", value: String(data.guestCount) },
       { label: "Still unnamed", value: String(data.unnamedGuestCount) },
     ])}

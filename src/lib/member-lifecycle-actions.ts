@@ -7,6 +7,7 @@ import {
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { hasAdminAccess, memberHoldsPrivilegedRole } from "@/lib/access-roles";
 import {
   actorIsFullAdmin,
@@ -1532,6 +1533,14 @@ export async function reviewMemberArchiveRequest({
   // because the links it describes no longer exist once the sweep commits.
   let orphanedByArchive: OrphanedFamilyLinks = EMPTY_ORPHANED_FAMILY_LINKS;
 
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. `enqueueHostingCoverageReevaluationForMember` takes a `Member` row
+  // lock and then bounds its fan-out on `checkOut >= today`, so it cannot
+  // resolve the club's persisted timezone itself: that read is a
+  // `clubTimeSettings.findUnique` and would take a second pooled connection
+  // under the lock.
+  const clubTodayForFanout = await clubTodayDateOnlyInstant();
+
   const approved = await prisma.$transaction(async (tx) => {
     // See reviewMemberDeleteRequest for the advisory-lock rationale.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${request.memberId}`}))`;
@@ -1631,10 +1640,15 @@ export async function reviewMemberArchiveRequest({
     // Recorded in this transaction, so the archive and the obligation to check what
     // it broke commit or roll back together. Bounded to the bookings this person
     // actually attends; never refuses the archive.
-    await enqueueHostingCoverageReevaluationForMember(request.memberId, tx, {
-      cause: "SYSTEM_CHANGE",
-      actorMemberId: reviewedByMemberId,
-    });
+    await enqueueHostingCoverageReevaluationForMember(
+      request.memberId,
+      tx,
+      clubTodayForFanout,
+      {
+        cause: "SYSTEM_CHANGE",
+        actorMemberId: reviewedByMemberId,
+      },
+    );
 
     const reviewed = await tx.memberLifecycleActionRequest.findUniqueOrThrow({
       where: { id: request.id },

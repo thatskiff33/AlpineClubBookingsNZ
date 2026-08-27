@@ -16,7 +16,7 @@ import {
   muted,
   paragraph,
 } from "./layout";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Waitlist templates ----
 
@@ -31,8 +31,8 @@ export function waitlistConfirmationTemplate(
     ${heading("You're on the Waitlist")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", the lodge is currently fully booked for your requested dates, but you've been added to the waitlist.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guestCount) },
       { label: "Waitlist Position", value: "#" + String(position) },
     ])}
@@ -80,8 +80,8 @@ export function waitlistOfferTemplate(
       ...(crossLodgeOffer && crossLodgeOffer.lodgeName
         ? [{ label: "Lodge", value: escapeHtml(crossLodgeOffer.lodgeName) }]
         : []),
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "Guests", value: String(guestCount) },
       {
         label: crossLodgeOffer ? "Price at this lodge" : "Price",
@@ -100,7 +100,7 @@ export function waitlistOfferTemplate(
         ? paragraph(escapeHtml(subscriptionMemberRateNotice))
         : ""
     }
-    ${alertBox("This offer expires on " + formatNZDateTime(expiresAt) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
+    ${alertBox("This offer expires on " + emailClubDateTime(expiresAt) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
     ${button("Confirm Booking", BASE_URL + "/bookings/" + bookingId)}
     ${muted("If you no longer need this booking, you can decline from your booking page.")}
   `);
@@ -116,8 +116,8 @@ export function waitlistOfferExpiredTemplate(
     ${heading("Waitlist Offer Expired")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your waitlist offer for the dates below has expired.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "New Position", value: "#" + String(position) },
     ])}
     ${paragraph("You've been returned to the waitlist. We'll notify you again if another spot opens up.")}
@@ -147,8 +147,8 @@ export function waitlistPlaceRestoredTemplate(
     ${heading("Your Waitlist Place Is Back")}
     ${paragraph("Hi " + escapeHtml(firstName) + ", your booking for the dates below could not be finished, so we have put you back on the waitlist. This was not something you did wrong, and your offer did not run out — you confirmed in time and our system could not complete it.")}
     ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Check-in", value: emailCalendarDay(checkIn) },
+      { label: "Check-out", value: emailCalendarDay(checkOut) },
       { label: "New Position", value: "#" + String(position) },
     ])}
     ${paragraph("You do not need to do anything. We will email you again as soon as a spot opens up for these nights.")}

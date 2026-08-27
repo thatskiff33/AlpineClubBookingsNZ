@@ -17,6 +17,7 @@ import {
   getAdminFeatureSearchIndex,
   type AdminFeatureSearchEntry,
 } from "@/components/admin-sidebar";
+import { useClubTime } from "@/components/club-time-provider";
 import type { FeatureFlags } from "@/config/schema";
 import type { AdminPermissionMatrix } from "@/lib/admin-permissions";
 import { ADMIN_COMMAND_PALETTE_OPEN_EVENT } from "@/lib/admin-command-palette-events";
@@ -114,15 +115,29 @@ export function AdminCommandPalette({
   // what the sidebar renders right now — the queue-driven "Needs Attention"
   // deep links are always searchable even when their queue is empty — never a
   // permission superset.
+  /*
+    The SAME authority the sidebar uses, for the same reason (#3123). One entry
+    in this index — the unpaid-finished-stays queue — is a deep link whose
+    `checkOutTo` bound is the club's own day, and the sidebar renders that link
+    beside its badge count. Both surfaces now derive it from
+    `buildAdminNavSections`, one definition, fed the club's day from THIS
+    provider; before #3123 the day came from a module-level constant evaluated
+    once per bundle load, so the palette and the sidebar could only ever agree by
+    both being stale together. `admin-sidebar-club-time.test.tsx` pins the two
+    against each other.
+  */
+  const clubToday = useClubTime().today();
+
   const index = useMemo(
     () =>
       getAdminFeatureSearchIndex(
+        clubToday,
         features,
         permissionMatrix,
         isFullAdmin,
         hutLeaderLabel,
       ),
-    [features, permissionMatrix, isFullAdmin, hutLeaderLabel],
+    [clubToday, features, permissionMatrix, isFullAdmin, hutLeaderLabel],
   );
 
   const groups = useMemo(() => groupBySection(index), [index]);

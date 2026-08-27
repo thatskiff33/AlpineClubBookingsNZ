@@ -325,9 +325,13 @@ cancel/refund flow if the party is not coming.
 Terminal state at check-in (#1993 Part A, owner-selected Option 1). A split
 child still `PENDING` (unsettled, no saved card) once its check-in day has ended
 is **auto-cancelled** by the settlement cron: `PENDING -> CANCELLED`. The boundary
-is the same one the link-mint stop uses
-(`endOfDateOnlyForTimeZone(formatDateOnly(checkIn)) <= now`), so the two can never
-disagree about "check-in has passed". Because the child holds no capacity this is
+is the same one the link-mint stop uses — literally the same function,
+`paymentLinkExpiryForCheckIn(checkIn, clubZone) <= now` (#2870), rather than the
+same expression written out twice — so the two can never disagree about
+"check-in has passed". The day ends in the club's **persisted** timezone
+(`INV-CONFIG-002`), read once per cron run outside every transaction and threaded
+in, because resolving it is a settings query and this decision runs under both
+the global and the per-lodge advisory lock. Because the child holds no capacity this is
 bookkeeping + notification, not a capacity change: under the per-lodge lock a
 guarded `updateMany({ status: PENDING } -> CANCELLED)` CAS (count 0 => a payment
 won the lock seconds earlier — `already_processed`, safe), then bed reconcile and

@@ -4,7 +4,7 @@ import { useId, useState } from "react";
 import { ChevronDown, ChevronRight, TriangleAlert } from "lucide-react";
 
 import type { DiagnosticsAskProvenance } from "@/lib/diagnostics/answer/contract";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * WHERE THIS ANSWER CAME FROM — one line, expandable (AID-7, #2378; owner decision
@@ -48,11 +48,18 @@ function stateTone(state: string): string {
  * and the audit rows, the booking nights and every other admin screen are all in club
  * time, so the one instant that disagreed would be the one used to decide whether the
  * evidence predates a change. #2256/#2264 made that a lint-enforced invariant.
+ *
+ * "THE CLUB'S ZONE" NOW MEANS THE PERSISTED ONE (CT-4, #2870; INV-CONFIG-002),
+ * not the container's `TZ`. A hook because that setting reaches the browser as
+ * data through `ClubTimeProvider` and cannot be a module constant.
  */
-function formatInstant(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso;
-  return formatNZDateTime(parsed);
+function useInstantFormatter() {
+  const clubTime = useClubTime();
+  return (iso: string): string => {
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) return iso;
+    return clubTime.instantDateTime(parsed);
+  };
 }
 
 export function DiagnosticsProvenance({
@@ -60,6 +67,7 @@ export function DiagnosticsProvenance({
 }: {
   provenance: DiagnosticsAskProvenance;
 }) {
+  const formatInstant = useInstantFormatter();
   const [open, setOpen] = useState(false);
   const detailId = useId();
 

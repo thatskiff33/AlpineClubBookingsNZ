@@ -75,7 +75,7 @@ export function buildFinanceChartOfAccountsSnapshot(input: {
 export async function syncFinanceChartOfAccountsSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   // getAccounts only needs accounting.settings.read, which the operational Xero
   // connection already holds, so this dataset works even before the one-time
   // granular report-scope re-consent that the report datasets require.

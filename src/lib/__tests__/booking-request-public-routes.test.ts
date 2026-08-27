@@ -93,6 +93,32 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+/*
+  CT-4 (#2870): the routes under test now resolve the club's day through
+  `clubTime()`, which reaches `getClubTimeZone` and therefore `@/lib/prisma`.
+  Without this mock the module graph constructs a REAL `PrismaClient` at import —
+  it throws outright when `DATABASE_URL` is unset, and quietly opens a client with
+  a connection pool when it is set, which is how the failure hid from a local run
+  and from CI alike.
+
+  `clubTimeSettings` is not optional on this mock. `getClubTimeZone` degrades
+  silently to the environment when the delegate is missing, so leaving it off
+  would put the zone back on `APP_TIME_ZONE` with nothing failing. It is pinned to
+  the environment's own default deliberately: these cases are about request
+  handling, and the zone AUTHORITY is proven by the dedicated club-time suites and
+  by `api-club-time-convergence`.
+*/
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    clubTimeSettings: {
+      findUnique: vi.fn().mockResolvedValue({
+        timeZone: "Pacific/Auckland",
+        updatedByMemberId: null,
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    },
+  },
+}));
 const mockApplyRateLimit = vi.fn();
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: (...args: unknown[]) => mockApplyRateLimit(...args),

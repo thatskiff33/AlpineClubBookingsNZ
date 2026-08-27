@@ -5,6 +5,9 @@ import {
   modificationExceptionRequestStore,
   newBookingExceptionRequestStore,
   resolvePolicyExceptionRequestTerminal,
+  POLICY_DRIFT_MESSAGE,
+  PROPOSAL_DRIFT_MESSAGE,
+  PROPOSAL_UNREPLAYABLE_MESSAGE,
   type PolicyExceptionApprovalHooks,
 } from "@/lib/booking-exception-execution";
 import {
@@ -1030,5 +1033,135 @@ describe("newBookingExceptionRequestStore", () => {
     expect(data.openStateKey).toBeNull();
     expect(data.reviewedByMemberId).toBe("officer-1");
     expect(data.adminNotes).toBe("Not this weekend.");
+  });
+});
+
+/**
+ * #3089 (INV-EXCEPT-035): A REFUSAL MAY NOT NAME A CAUSE THE ENGINE CANNOT SEE.
+ *
+ * Both refusals below are CORRECT — what would be applied is not what was
+ * reviewed, so refusing once and having the member resubmit is the right outcome.
+ * What was wrong was the explanation. Each path observes exactly ONE thing (a
+ * hash that no longer matches; a fingerprint that moved) and each of those has
+ * more than one possible cause:
+ *
+ *  - the replay mismatch means the live booking was edited OR that corrected code
+ *    re-derives the frozen evidence differently — the CT-4 shape of #3087, where
+ *    a range-less added guest used to be frozen a night early. The engine holds no
+ *    record of which reader produced the stored snapshot, so it cannot tell;
+ *  - the fingerprint covers the AFFECTED NIGHTS, so a re-derived night set moves
+ *    it with every policy standing exactly as reviewed.
+ *
+ * These are content assertions on purpose. The failure mode was a TRUE mechanism
+ * with a FALSE cause, which every outcome-shaped assertion in this file passed
+ * straight through — that is precisely how it survived to be found twice.
+ */
+describe("refusal messages name only what the engine established (#3089)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /**
+   * The two causes each message used to assert. Named so a regression fails
+   * against the SPECIFIC wrong answer rather than against "something else":
+   * restoring either old string reaches exactly one of these. They apply ONLY to
+   * the two messages that must name no cause — `PROPOSAL_UNREPLAYABLE_MESSAGE`
+   * deliberately says "nothing about the booking has changed", which is a denial
+   * and not a claim, and would match the first of them.
+   */
+  const ASSERTS_A_LIVE_EDIT = /booking (has|was) (changed|edited)/i;
+  const ASSERTS_A_POLICY_EDIT = /polic(y|ies) (have|has) changed/i;
+  /** A message that is true but leaves the reader nothing to do is not a fix. */
+  const TELLS_THE_READER_WHAT_TO_DO = /submit it again|resubmit/i;
+
+  function modRow() {
+    const row = baseRow({ proposalHash: MOD_HASH });
+    row.proposalSnapshot = MOD_SNAPSHOT as never;
+    return row;
+  }
+
+  async function approveWithIntegrity(
+    integrity: Awaited<
+      ReturnType<NonNullable<PolicyExceptionApprovalHooks["verifyLiveProposalIntegrity"]>>
+    >,
+  ) {
+    const { db } = makeDb({ row: modRow() });
+    return approveAndExecutePolicyExceptionRequest({
+      requestId: "req-1",
+      expectedVersion: 1,
+      actorMemberId: "admin-1",
+      hooks: makeHooks({
+        verifyLiveProposalIntegrity: vi.fn(async () => integrity),
+      }),
+      db: db as never,
+    });
+  }
+
+  it("a replay refused because corrected code re-derived the evidence does NOT claim the booking changed", async () => {
+    // Exactly what `verifyLiveProposalIntegrity` reports for the #3087 shape:
+    // the replayed hash differs, and `drift` is all it can say about why.
+    const result = await approveWithIntegrity({ intact: false, reason: "drift" });
+
+    expect(result.outcome).toBe("proposalDrift");
+    if (result.outcome !== "proposalDrift") return;
+    expect(result.message).toBe(PROPOSAL_DRIFT_MESSAGE);
+    expect(result.message).not.toMatch(ASSERTS_A_LIVE_EDIT);
+    expect(result.message).toMatch(TELLS_THE_READER_WHAT_TO_DO);
+  });
+
+  it("a real live edit and a re-derivation are ONE signal, so they get identical words", async () => {
+    // The boolean form is the same refusal with even less information. If either
+    // ever carried a cause-specific message, the engine would be asserting a
+    // distinction it has no input for.
+    const asBoolean = await approveWithIntegrity(false);
+    const asReason = await approveWithIntegrity({ intact: false, reason: "drift" });
+
+    expect(asBoolean.outcome).toBe("proposalDrift");
+    expect(asReason.outcome).toBe("proposalDrift");
+    if (asBoolean.outcome !== "proposalDrift") return;
+    if (asReason.outcome !== "proposalDrift") return;
+    expect(asBoolean.message).toBe(asReason.message);
+    expect(asBoolean.message).not.toMatch(ASSERTS_A_LIVE_EDIT);
+  });
+
+  it("the unreplayable cause KEEPS its own words, because that one IS established", async () => {
+    // Not a licence to collapse every refusal into one sentence: a row carrying
+    // no replayable delta is a cause the engine really did observe (#2526).
+    const result = await approveWithIntegrity({
+      intact: false,
+      reason: "unreplayable",
+    });
+
+    expect(result.outcome).toBe("proposalDrift");
+    if (result.outcome !== "proposalDrift") return;
+    expect(result.message).toBe(PROPOSAL_UNREPLAYABLE_MESSAGE);
+    expect(result.message).not.toBe(PROPOSAL_DRIFT_MESSAGE);
+  });
+
+  it("a night-set fingerprint move refuses WITHOUT claiming a policy changed", async () => {
+    // Same policy, same version, same minimum: only the affected night moved, as
+    // it does when a date read is corrected. No policy was edited at all.
+    const { db } = makeDb({ row: baseRow() });
+    const hooks = makeHooks({
+      evaluateCurrentViolations: vi.fn(async () => [
+        minStay("pol-1", 1, ["2026-06-30"]),
+      ]),
+    });
+    const result = await approveAndExecutePolicyExceptionRequest({
+      requestId: "req-1",
+      expectedVersion: 1,
+      actorMemberId: "admin-1",
+      hooks,
+      db: db as never,
+    });
+
+    expect(result.outcome).toBe("policyDrift");
+    if (result.outcome !== "policyDrift") return;
+    // The refusal itself is right: what would be overridden is not what was
+    // reviewed.
+    expect(result.changedReviewed).toEqual([
+      { reasonCode: "MINIMUM_STAY", policyId: "pol-1" },
+    ]);
+    expect(result.message).toBe(POLICY_DRIFT_MESSAGE);
+    expect(result.message).not.toMatch(ASSERTS_A_POLICY_EDIT);
+    expect(result.message).toMatch(TELLS_THE_READER_WHAT_TO_DO);
   });
 });

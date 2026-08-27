@@ -1,7 +1,15 @@
 import "server-only";
 
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  formatClubInstantDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
+import { seasonYearsLabel } from "@/lib/season-label";
 import { formatCents } from "@/lib/utils";
 import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
@@ -24,17 +32,39 @@ interface XeroRecordScope {
   backLink: XeroRecordBackLink | null
 }
 
-function formatDisplayDate(value: Date | string): string {
-  const date = value instanceof Date ? value : new Date(value);
-  return formatNZDate(date);
+/**
+ * A `@db.Date` lodge night as its own calendar day. NO ZONE, deliberately: a
+ * calendar day is never timezone-converted (CT-5, #2869; INV-DATE-010).
+ */
+function formatStayDate(value: Date | string): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(value instanceof Date ? value : new Date(value)),
+  );
+}
+
+/**
+ * A real INSTANT as the club calendar day it fell on. The zone is required and
+ * comes from the persisted club setting — one formatter for two different
+ * concepts is how a `submittedAt` came to be rendered by the same helper as a
+ * lodge night (INV-DATE-019).
+ */
+function formatInstantDate(value: Date, zone: ClubTimeZone): string {
+  return formatClubInstantDate(value, zone);
 }
 
 function formatStatusLabel(value: string): string {
   return value.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatSeasonLabel(seasonYear: number): string {
-  return `${seasonYear}/${seasonYear + 1}`;
+/**
+ * The club's year-end, RESOLVED rather than taken from `seasonYearsLabel`'s
+ * default - see `season-label.ts` for why that default is wrong off a request
+ * path (#3116). The RETURN VALUE is what gets passed down, never the cache this
+ * call also seeds, so the answer cannot depend on what warmed the process. The
+ * read is in-process cached and never rejects, so a display path can afford it.
+ */
+async function resolveYearEndMonth(): Promise<number> {
+  return refreshFinancialYearConfig();
 }
 
 function createRecordReference(
@@ -87,7 +117,7 @@ function getInboundEventCategoryForObjectType(xeroObjectType: string): string | 
   }
 }
 
-async function getMemberScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const member = await prisma.member.findUnique({
     where: { id: localId },
     select: {
@@ -119,7 +149,7 @@ async function getMemberScope(localId: string): Promise<XeroRecordScope | null> 
     createRecordReference(
       "MemberSubscription",
       subscription.id,
-      `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+      `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
       "Subscription"
     )
   );
@@ -170,7 +200,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
   const relatedBooking = createRecordReference(
     "Booking",
     payment.booking.id,
-    `Booking ${formatDisplayDate(payment.booking.checkIn)} - ${formatDisplayDate(payment.booking.checkOut)}`,
+    `Booking ${formatStayDate(payment.booking.checkIn)} - ${formatStayDate(payment.booking.checkOut)}`,
     "Booking"
   );
 
@@ -222,7 +252,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
   const rootRecord = createRecordReference(
     "Booking",
     booking.id,
-    `${booking.member.firstName} ${booking.member.lastName} (${formatDisplayDate(booking.checkIn)} - ${formatDisplayDate(booking.checkOut)})`,
+    `${booking.member.firstName} ${booking.member.lastName} (${formatStayDate(booking.checkIn)} - ${formatStayDate(booking.checkOut)})`,
     "Booking"
   );
   const scopeRecords = [rootRecord];
@@ -312,7 +342,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
     createRecordReference(
       "Booking",
       modification.booking.id,
-      `Booking ${formatDisplayDate(modification.booking.checkIn)} - ${formatDisplayDate(modification.booking.checkOut)}`,
+      `Booking ${formatStayDate(modification.booking.checkIn)} - ${formatStayDate(modification.booking.checkOut)}`,
       "Booking"
     ),
   ];
@@ -339,7 +369,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
   };
 }
 
-async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberSubscriptionScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const subscription = await prisma.memberSubscription.findUnique({
     where: { id: localId },
     select: {
@@ -363,7 +393,7 @@ async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordSc
   const rootRecord = createRecordReference(
     "MemberSubscription",
     subscription.id,
-    `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+    `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
     "Subscription"
   );
   const relatedMember = createRecordReference(
@@ -415,7 +445,7 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
   const rootRecord = createRecordReference(
     "MembershipCancellationRequest",
     request.id,
-    `Membership cancellation ${formatDisplayDate(request.submittedAt)} (${formatStatusLabel(request.status)})`,
+    `Membership cancellation ${formatInstantDate(request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(request.status)})`,
     "Membership Cancellation Request",
   );
   const participantRecords = request.participants.map((participant) =>
@@ -483,7 +513,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
   const requestRecord = createRecordReference(
     "MembershipCancellationRequest",
     participant.request.id,
-    `Membership cancellation ${formatDisplayDate(participant.request.submittedAt)} (${formatStatusLabel(participant.request.status)})`,
+    `Membership cancellation ${formatInstantDate(participant.request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(participant.request.status)})`,
     "Membership Cancellation Request",
   );
   const relatedMember = createRecordReference(
@@ -507,7 +537,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
 async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): Promise<XeroRecordScope | null> {
   switch (localModel) {
     case "Member":
-      return getMemberScope(localId);
+      return getMemberScope(localId, await resolveYearEndMonth());
     case "Payment":
       return getPaymentScope(localId);
     case "Booking":
@@ -515,7 +545,7 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): 
     case "BookingModification":
       return getBookingModificationScope(localId);
     case "MemberSubscription":
-      return getMemberSubscriptionScope(localId);
+      return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":
       return getMembershipCancellationRequestScope(localId);
     case "MembershipCancellationRequestParticipant":

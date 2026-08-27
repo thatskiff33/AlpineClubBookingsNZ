@@ -10,9 +10,14 @@ import { findOrCreateXeroContact } from "@/lib/xero-contacts";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  formatDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  xeroCalendarDate,
+  xeroDocumentDateForClubToday,
+} from "@/lib/xero-provider-dates";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import { buildXeroInvoiceUrl, stripXeroOrgShortCode } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -25,6 +30,8 @@ import {
   sendXeroInvoiceEmail,
 } from "@/lib/xero-invoice-email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { seasonYearsLabel } from "@/lib/season-label";
 
 /**
  * A Xero invoice's total in integer cents, or `null` when it cannot be read.
@@ -56,38 +63,36 @@ function invoiceCents(invoice: Invoice): number | null {
 }
 
 /**
- * Read a date back off a Xero invoice as the calendar day Xero holds.
+ * How many days a Xero invoice allowed between its issue date and its due date.
  *
- * `formatDateOnly` here is deliberate and must NOT become
- * `formatDateOnlyForTimeZone` (#2834). This is not a clock read and not a
- * `DateTime` column: `invoice.date` / `invoice.dueDate` are plain calendar dates
- * on a document Xero already has, and whatever the SDK deserialised them into —
- * a `Date` at midnight, an ISO prefix, a `/Date(…)/` string — encodes that day,
- * so reading it back as a date-only value yields that day, and zone conversion
- * would shift it. A shift here changes `invoiceDueIntervalDays`, so
+ * NO ZONE IS INVOLVED AND NONE MAY BE (#2834). This is not a clock read and not
+ * a `DateTime` column: `invoice.date` / `invoice.dueDate` are plain calendar
+ * dates on a document Xero already has, and whatever the SDK deserialised them
+ * into — a `Date` at midnight, an ISO prefix, a `/Date(…)/` string — encodes
+ * that day, so reading each back as a calendar day yields that day and zone
+ * conversion would shift it. A shift here changes the interval, so
  * `subscriptionInvoiceMatchesSnapshot` stops matching, so a pre-existing invoice
  * stops being adopted: the charge goes to `CONFLICT`/`PROVIDER_MISMATCH` and the
  * member is left unbilled.
+ *
+ * IT USED TO CARRY ITS OWN COPY OF THE BOUNDARY — a private
+ * `normalizeXeroDateOnly` that re-implemented the `Date`, ISO-prefix and
+ * Microsoft-JSON branches by hand (#2869 review). The copy was correct, and
+ * being correct is not the point: a second reader of the same wire shapes is a
+ * second thing to fix when a fifth shape turns up, and it is exactly the
+ * "clone one indirection away from the spelling any census was searching for"
+ * pattern this epic removed elsewhere. `xeroCalendarDate` answers the same day
+ * for every shape the clone handled, additionally accepts a space-separated
+ * `"2019-03-11 00:00:00"`, and refuses an impossible day such as `2026-02-30`
+ * instead of rolling it into March — where the clone would have returned a real
+ * interval computed from a date Xero cannot have sent.
  */
-function normalizeXeroDateOnly(value: unknown): string | null {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return formatDateOnly(value);
-  }
-  if (typeof value !== "string") return null;
-  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/)?.[1];
-  if (dateOnly) return dateOnly;
-  const microsoftJsonMs = value.match(/^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/)?.[1];
-  if (!microsoftJsonMs) return null;
-  const parsed = new Date(Number(microsoftJsonMs));
-  return Number.isNaN(parsed.getTime()) ? null : formatDateOnly(parsed);
-}
-
 function invoiceDueIntervalDays(invoice: Invoice): number | null {
-  const issueDate = normalizeXeroDateOnly(invoice.date);
-  const dueDate = normalizeXeroDateOnly(invoice.dueDate);
+  const issueDate = xeroCalendarDate(invoice.date);
+  const dueDate = xeroCalendarDate(invoice.dueDate);
   if (!issueDate || !dueDate) return null;
-  const issueMs = Date.parse(`${issueDate}T00:00:00.000Z`);
-  const dueMs = Date.parse(`${dueDate}T00:00:00.000Z`);
+  const issueMs = dateOnlyInstantOf(issueDate).getTime();
+  const dueMs = dateOnlyInstantOf(dueDate).getTime();
   return (dueMs - issueMs) / (24 * 60 * 60 * 1000);
 }
 
@@ -299,9 +304,18 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   }
 
   // One invoice line per frozen component snapshot (#1932, E6), in stable order.
-  // The synthetic fallback reproduces the identical historical single line for
-  // any invoiceable charge minted before the component backfill — the exact same
-  // derivation the backfill used — so there is one line shape forever.
+  //
+  // THE FALLBACK IS THE ONE PLACE IN THIS FLOW THAT DERIVES TEXT AT SEND TIME.
+  // Every other line reads `component.description`, a persisted column written at
+  // plan time, so those stay byte-identical to what Xero holds whatever the
+  // deriving code now says. This branch is taken only by a pre-backfill charge
+  // carrying no component rows.
+  //
+  // The season follows the club's own year-end, resolved and passed because this
+  // runs on the outbox worker where the cache is never seeded (#3116;
+  // `season-label.ts` has the reasoning). Nothing matches on this text:
+  // reconciliation finds the invoice by its immutable `Reference` and
+  // `subscriptionInvoiceMatchesSnapshot` compares amount, account and item code.
   const componentLines = charge.components.length > 0
     ? charge.components.map((component) => ({
         amountCents: component.chargedAmountCents,
@@ -313,7 +327,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         amountCents: charge.chargedAmountCents,
         accountCode,
         itemCode: charge.xeroItemCode,
-        description: `${charge.membershipTypeName} membership ${charge.seasonYear}/${charge.seasonYear + 1} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
+        description: `${charge.membershipTypeName} membership ${seasonYearsLabel(charge.seasonYear, await refreshFinancialYearConfig())} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
       }];
 
   let invoiceId = charge.xeroInvoiceId;
@@ -359,7 +373,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
       // whether a pre-existing Xero invoice may be adopted against this
       // immutable charge; adding `dueDays x 24h` to the instant instead would
       // slip an hour across a daylight-saving transition and could move the day.
-      const issueDate = formatDateOnlyForTimeZone(new Date());
+      const issueDate = xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest());
       const dueDate = formatDateOnly(
         addDaysDateOnly(parseDateOnly(issueDate), charge.dueDays),
       );

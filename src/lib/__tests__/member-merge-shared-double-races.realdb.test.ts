@@ -36,6 +36,14 @@ import {
 
 import { realElapsedMs } from "@/lib/__tests__/helpers/clock";
 
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 const RUN = process.env.RUN_CONCURRENCY_RACE_TESTS === "1";
 const RACE_DB_URL = process.env.CONCURRENCY_RACE_DATABASE_URL ?? "";
 
@@ -880,7 +888,8 @@ async function queueableMergeWriter() {
  *      the two sorted `member-lifecycle:` advisory locks:
  *
  *          const partnerShareLodgeIds =
- *            await acquireMemberMergePartnerSharedLodgeLocks(tx, [masterId, loserId]);
+ *            await acquireMemberMergePartnerSharedLodgeLocks(
+ *              tx, [masterId, loserId], clubTodayForMerge);
  *
  *      — every affected lodge key, sorted, and deliberately NOT the global cohort
  *      `lock(1)` (#2595 owner decision): a merge holds its keys for up to 120s,
@@ -898,6 +907,7 @@ async function queueableMergeWriter() {
  *            memberIds: [masterId, loserId],
  *            lockedLodgeIds: partnerShareLodgeIds,
  *            reason: "members_merged",
+ *            today: clubTodayForMerge,
  *            db: tx,
  *          });
  *
@@ -926,8 +936,9 @@ async function runSecondReconciliationPass() {
     const lockedLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(tx, [
       MASTER_ID,
       LOSER_ID,
-    ]);
+    ], CLUB_TODAY_DATE_ONLY);
     return sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: [MASTER_ID, LOSER_ID],
       lockedLodgeIds,
       reason: "members_merged",

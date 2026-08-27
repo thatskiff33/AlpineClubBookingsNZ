@@ -13,7 +13,7 @@ import {
   buildUnsettledAdditionalFinishedStaysWhere,
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 export type AdminPendingCounts = {
   familyRequests: number;
@@ -72,6 +72,11 @@ export type AdminPendingCounts = {
  * changes.
  */
 export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
+  // ONE club day for the whole panel. Three of these queues and the hut-leader
+  // coverage read are all bounded on today, and three independent reads across
+  // this `Promise.all` could straddle club midnight and report counts from two
+  // different days beside each other (#3123).
+  const today = await clubTodayDateOnlyInstant();
   const [
     familyRequests,
     memberApplications,
@@ -110,13 +115,13 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
       where: buildBookingRequestListWhere("QUEUE"),
     }),
     prisma.booking.count({
-      where: buildUnpaidFinishedStaysWhere(getTodayDateOnly()),
+      where: buildUnpaidFinishedStaysWhere(today),
     }),
     prisma.booking.count({
-      where: buildUnsettledAdditionalFinishedStaysWhere(getTodayDateOnly()),
+      where: buildUnsettledAdditionalFinishedStaysWhere(today),
     }),
     prisma.booking.count({
-      where: buildUnsettledAdditionalUpcomingStaysWhere(getTodayDateOnly()),
+      where: buildUnsettledAdditionalUpcomingStaysWhere(today),
     }),
     getPendingMembershipCancellationReviewCount(),
     getPendingMemberArchiveReviewCount(),
@@ -125,7 +130,7 @@ export async function getAdminPendingCounts(): Promise<AdminPendingCounts> {
     }),
     getPendingMemberDeleteReviewCount(),
     prisma.issueReport.count({ where: { resolvedAt: null } }),
-    getUnassignedHutLeaderDates({ scope: { kind: "all" } }),
+    getUnassignedHutLeaderDates({ today, scope: { kind: "all" } }),
   ]);
 
   return {

@@ -53,6 +53,18 @@ import {
 } from "@/lib/pricing";
 import { eachDateOnlyInRange, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
 
+/**
+ * The zone the LEGACY oracle below reads, named rather than left to
+ * `normalizeDateOnlyForTimeZone`'s `APP_TIME_ZONE` default, which #3123 deletes.
+ *
+ * It is New Zealand because that is what `APP_TIME_ZONE` resolves to here — CI
+ * sets no `TZ` — so naming it transcribes the pre-#2736 code exactly rather than
+ * modernising the oracle. On the UTC-midnight `@db.Date` values this file feeds
+ * it, that read is the identity, which is what makes the oracle agree with the
+ * shipped `storedDateOnly` the implementation now uses.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const D = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const key = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -216,10 +228,16 @@ function planInput(args: {
  * by the nights #2743 stops selling, and by nothing else.
  */
 function legacyPlan(input: BuildInProgressGuestRangePlanInput) {
-  const editableFrom = normalizeDateOnlyForTimeZone(input.editableFrom);
-  const bookingCheckIn = normalizeDateOnlyForTimeZone(input.booking.checkIn);
-  const bookingCheckOut = normalizeDateOnlyForTimeZone(input.booking.checkOut);
-  const newCheckOut = normalizeDateOnlyForTimeZone(input.newCheckOut);
+  const editableFrom = normalizeDateOnlyForTimeZone(input.editableFrom, CLUB_ZONE);
+  const bookingCheckIn = normalizeDateOnlyForTimeZone(
+    input.booking.checkIn,
+    CLUB_ZONE,
+  );
+  const bookingCheckOut = normalizeDateOnlyForTimeZone(
+    input.booking.checkOut,
+    CLUB_ZONE,
+  );
+  const newCheckOut = normalizeDateOnlyForTimeZone(input.newCheckOut, CLUB_ZONE);
   const addGuests = input.addGuests ?? [];
   const removeSet = new Set(input.removeGuestIds ?? []);
   const max = (a: Date, b: Date) => (a > b ? a : b);
@@ -237,8 +255,8 @@ function legacyPlan(input: BuildInProgressGuestRangePlanInput) {
     end: Date,
     guest: { ageTier: "ADULT"; isMember: boolean; rateMembershipTypeId: string },
   ) => {
-    const s = normalizeDateOnlyForTimeZone(start);
-    const e = normalizeDateOnlyForTimeZone(end);
+    const s = normalizeDateOnlyForTimeZone(start, CLUB_ZONE);
+    const e = normalizeDateOnlyForTimeZone(end, CLUB_ZONE);
     if (e <= s) return 0;
     return calculateBookingPrice(
       s,
@@ -255,8 +273,14 @@ function legacyPlan(input: BuildInProgressGuestRangePlanInput) {
   };
 
   const existing = input.booking.guests.map((guest) => {
-    const stayStart = normalizeDateOnlyForTimeZone(guest.stayStart ?? bookingCheckIn);
-    const stayEnd = normalizeDateOnlyForTimeZone(guest.stayEnd ?? bookingCheckOut);
+    const stayStart = normalizeDateOnlyForTimeZone(
+      guest.stayStart ?? bookingCheckIn,
+      CLUB_ZONE,
+    );
+    const stayEnd = normalizeDateOnlyForTimeZone(
+      guest.stayEnd ?? bookingCheckOut,
+      CLUB_ZONE,
+    );
     const oldFuturePriceCents = priceRange(
       max(stayStart, editableFrom),
       stayEnd,

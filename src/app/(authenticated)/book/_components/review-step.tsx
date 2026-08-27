@@ -28,8 +28,11 @@ import {
 import { type LodgeOption } from "@/components/lodge-select";
 import { formatMissingPaidUpAdultRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { sumDeferredGuestPortionCents } from "@/lib/deferred-guest-portion";
-import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
-import { formatNZWeekdayDate } from "@/lib/nzst-date";
+import {
+  addCalendarDays,
+  formatClubWeekdayDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import {
@@ -258,12 +261,16 @@ export function ReviewStep({
   // UTC date-only arithmetic (#2474): subtracting whole days from a lodge-night
   // string is exact and DST-immune, where the old local-midnight `Date` minus a
   // millisecond span landed off-midnight and could name the wrong night.
+  //
+  // AND IT NEEDS NO TIMEZONE AT ALL (CT-4, #2870): a lodge night is a CALENDAR
+  // DATE, the same day in every zone on earth. `formatNZWeekdayDate` projected
+  // it through `APP_TIME_ZONE`, the identity only east of Greenwich.
   const holdDeadline =
     checkIn && holdDays > 0
-      ? addDaysDateOnly(parseDateOnly(checkIn), -holdDays)
+      ? addCalendarDays(requireCalendarDate(checkIn), -holdDays)
       : null;
   const holdDeadlineLabel = holdDeadline
-    ? formatNZWeekdayDate(holdDeadline)
+    ? formatClubWeekdayDate(holdDeadline)
     : null;
 
   useEffect(() => {
@@ -332,13 +339,13 @@ export function ReviewStep({
             <div>
               <span className="text-muted-foreground">Check-in:</span>{" "}
               <span className="font-medium">
-                {formatNZWeekdayDate(parseDateOnly(checkIn!))}
+                {formatClubWeekdayDate(requireCalendarDate(checkIn!))}
               </span>
             </div>
             <div>
               <span className="text-muted-foreground">Check-out:</span>{" "}
               <span className="font-medium">
-                {formatNZWeekdayDate(parseDateOnly(checkOut!))}
+                {formatClubWeekdayDate(requireCalendarDate(checkOut!))}
               </span>
             </div>
             <div>

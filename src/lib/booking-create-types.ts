@@ -10,6 +10,7 @@ import { AgeTier, BookingStatus, type Booking, type BookingGuest } from "@prisma
 import type { GroupDiscountConfig } from "@/lib/pricing";
 import type { BookingPaymentMethod } from "@/lib/booking-payment-methods";
 import type { InternetBankingPaymentSettingsValues } from "@/lib/internet-banking-settings";
+import type { CalendarDate } from "@/lib/club-time";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
 import type { PrismaTransactionClient } from "@/lib/db-transaction";
@@ -150,6 +151,28 @@ interface BaseInput {
 export type DraftBookingInput = BaseInput;
 
 export interface ConfirmedBookingInput extends BaseInput {
+  /**
+   * The CLUB's calendar day (`INV-CONFIG-002`), resolved by the caller before
+   * it opened ANY transaction. REQUIRED, with no default.
+   *
+   * WHY THE CALLER RESOLVES IT (`INV-LOCK-004`, #3123 review).
+   * `createConfirmedBooking` is transaction-AWARE: it runs inside `input.tx`
+   * when one is supplied — the atomic approve-and-execute path, which by then
+   * already holds `pg_advisory_xact_lock(1)` and the per-lodge capacity key —
+   * and opens its own `prisma.$transaction` otherwise. So NO position inside
+   * that function is outside a transaction on every path, and a
+   * `clubTimeSettings` read there would take a second pooled connection under
+   * the caller's locks. The day arrives as a value instead.
+   *
+   * ONE day serves every decision in the create: the retroactive / past-date
+   * envelope, the promotion's validity window inside `resolvePromoInTransaction`
+   * (which additionally holds `FOR UPDATE` on the promo row by the time it needs
+   * the day), and the person-night guard's self-removal window. The route runs
+   * the same past-date rules before calling, so passing ITS day makes the two
+   * halves structurally incapable of disagreeing across club midnight — a
+   * property that used to rest on both sides happening to call the same helper.
+   */
+  todayAtClub: CalendarDate;
   status: BookingStatus;
   shouldBePending: boolean;
   holdDays: number;

@@ -26,19 +26,28 @@ import {
 } from "@/components/admin/view-only-action"
 import { LodgeScopeStatusNotice } from "@/components/admin/lodge-options-status"
 import { isRosterData, RosterEditor, type RosterData } from "@/components/admin/roster-editor"
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only"
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatClubLongWeekdayDate, parseCalendarDate } from "@/lib/club-time"
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access"
 import type { RosterDayStatus, RosterDayStatusResult } from "@/lib/roster-status"
 import { deriveSettledLodgeOptionScope } from "@/lib/lodge-option-scope"
 
-const ROSTER_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-})
+// #2264: deliberately not one of the shared house shapes — the printed chore
+// roster heads the page with the full weekday and month, matching the
+// on-screen roster and the chore-roster email.
+//
+// CT-4 (#2870): the roster day is a CALENDAR DATE and calendar dates have no
+// timezone — 16 April 2026 is a Thursday everywhere on earth. The kernel's
+// `longWeekdayDate` shape pins "UTC" over its own UTC-midnight encoding, which
+// is the IDENTITY for every club rather than a projection, so this needs no zone
+// plumbing at all. The local copy of the same options this replaces was one of
+// six.
+
+/** The roster day as a heading. Falsy/malformed renders as itself, not a throw. */
+function formatRosterDay(date: string): string {
+  const day = parseCalendarDate(date)
+  return day ? formatClubLongWeekdayDate(day) : date
+}
 
 const ROSTER_STATUS_OVERLAY: Record<
   Exclude<RosterDayStatus, "no-guests">,
@@ -98,7 +107,14 @@ function isEmailActionResult(
 
 export default function RosterPage() {
   const canEdit = useAdminAreaEditAccess("lodge")
-  const [selectedDate, setSelectedDate] = useState(formatDateOnly(getTodayDateOnly()))
+  // The roster opens on the CLUB's today. The chore roster is a lodge-night
+  // surface and the API windows it in club time, so seeding it from the build's
+  // `NEXT_PUBLIC_TZ` opened the wrong day. That constant is not the viewer's
+  // clock and never was -- it is fixed at build time, and on a deployment that
+  // sets only `TZ` it falls back to `Pacific/Auckland` for every viewer while
+  // the server uses `TZ` (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
+  const [selectedDate, setSelectedDate] = useState<string>(() => clubTime.today())
   const [roster, setRoster] = useState<RosterData | null>(null)
   const [rosterLoadVersion, setRosterLoadVersion] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -515,7 +531,7 @@ export default function RosterPage() {
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <CardTitle>Roster for {ROSTER_LONG_DATE.format(new Date(`${selectedDate}T00:00:00Z`))}</CardTitle>
+                    <CardTitle>Roster for {formatRosterDay(selectedDate)}</CardTitle>
                     {/* #2622: the count is everyone in the lodge on this
                         operational day, which includes the people checking out
                         this morning — not just tonight's sleepers. */}
