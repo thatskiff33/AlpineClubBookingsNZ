@@ -239,6 +239,15 @@ choice of whether it is prorated for a mid-year joiner.
   line text is a persisted column (`MembershipSubscriptionChargeComponent.description`),
   written at plan time and read back at mint, so changing the derivation changes
   only newly-planned charges.
+  **The day-one backfill migration below therefore keeps the OLD wording forever,
+  and that is correct rather than drift.** Migration
+  `20260717195000_annual_fee_components_and_billing_family` builds the historical
+  description in SQL, including the two-calendar-year season. It has already run
+  everywhere, its rows are read back verbatim, and they match invoices Xero
+  already holds. A committed migration reproduces what was true when it ran, so
+  **do not "fix" that SQL to match `buildComponentLineDescription`** — they are
+  deliberately different, and syncing them would rewrite the naming of charges
+  that were invoiced under the old wording.
 - **Day-one backfill** (owner-approved additive derivation): one default
   component per existing invoiceable fee, and one verbatim snapshot component per
   existing invoiceable charge whose description is rebuilt from the exact
