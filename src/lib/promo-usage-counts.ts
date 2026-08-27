@@ -14,6 +14,25 @@ import { prisma } from "@/lib/prisma";
  * Nothing here reads a date, opens a transaction or takes a lock, which is why
  * it could leave `promo.ts` at all: the club-day helpers and the row-lock
  * protocol stayed behind, with the comparisons and the writers they serve.
+ *
+ * ONE INBOUND CITATION IS NOW STALE, AND DELIBERATELY LEFT THAT WAY.
+ * `prisma/migrations/20260731140000_repair_zero_benefit_promo_allocations/migration.sql`
+ * names `isBeneficialPromoAllocation` / `BENEFICIAL_PROMO_ALLOCATION_FILTER`
+ * "in src/lib/promo.ts" and declares that the migration's `DELETE` and the
+ * application's benefit test can never disagree about which rows count. That
+ * lockstep claim is still exactly true — the two symbols simply live here now.
+ *
+ * The comment was not corrected, because editing an already-applied migration
+ * changes its Prisma checksum and breaks `migrate deploy` on every environment
+ * that has run it (`docs/BLUE_GREEN_MIGRATION_POLICY.md`). A stale file path is
+ * cheaper than a broken deploy, and both symbol names are unique in the tree,
+ * so the reader who follows that citation lands here by grep in one step.
+ * `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv` quotes the same sentence in that
+ * migration's historical review row and is likewise left alone: it is an audit
+ * record of what was reviewed at the time, not a live pointer.
+ *
+ * This note is the other half of that link. If either symbol is renamed or
+ * moved again, fix it HERE — the migration cannot be made to follow.
  */
 
 export type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
