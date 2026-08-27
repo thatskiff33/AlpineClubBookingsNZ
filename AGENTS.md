@@ -74,6 +74,7 @@ id and need the file it lives in.
 | Where code lives, module boundaries, the admin settings pattern | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | An admin settings section, a staged-edit form, or a view-only / permission-gated control — including adding a single toggle, field, row action or button to a settings page | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) → "Admin/member layer", which states the canonical settings pattern in full and is binding for new or modified sections |
 | Something a club could want switched off, or answered differently from ours — a new module, setting, seed default, or any value that varies by deployment | `INV-CONFIG` → [`product-configuration.md`](docs/invariants/product-configuration.md) | [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) — the four levers and which to reach for |
+| Adding a constant, helper, formatter, type, validation rule or config value that a second place will need — or writing a guard, census or ratchet that claims to cross-check another one | `INV-SSOT` → [`single-source-of-truth.md`](docs/invariants/single-source-of-truth.md) | "Single source of truth" under "Change Discipline" below, which holds the habit rather than the citable rules; [`TESTING.md`](docs/TESTING.md) for the mutation-verification a new guard owes |
 | Environment variables, secrets, setup, deployment configuration | — | [`CONFIGURATION.md`](CONFIGURATION.md) |
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
@@ -165,6 +166,37 @@ id and need the file it lives in.
   demanding one such value is the smell. `INV-CONFIG-001` is the rule;
   [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) is the
   canonical guide to the levers and is not restated here.
+- **Single source of truth — for code, not only for documentation.** This
+  repository already requires one canonical home per page, states each decision
+  once, and fails a duplicate invariant definition in `npm run docs:indexcheck`.
+  Code gets the same rule. Before adding a constant, helper, formatter, type,
+  validation rule or config value, **search for the existing one and route to
+  it**. If two places now need it, move it to one module and import it — never
+  copy. Produce both sides of a comparison with the same helper. **If you are
+  changing a fact and cannot change it in one place, that is the defect**, and
+  the fix is the move rather than the second edit.
+  - **Prefer unrepresentable over policed.** A required argument beats a lint
+    rule; one exported symbol beats an allowlist; a deleted default parameter
+    beats a counted ratchet. #3123 is the worked example: deleting the six
+    `= APP_TIME_ZONE` defaults from `src/lib/date-only.ts` turned a defect that
+    had needed an 81-entry counted census — lowered by hand in the same commit
+    as every migration — into a compile error. Every part of that machinery
+    existed because the default did. Where you take the guard instead, say which
+    structural option you rejected and why.
+  - **Two instruments that claim independence must measure the same way, or they
+    are one instrument and a rubber stamp.** In this repository that means
+    comments: the house style documents each defect at the site where it was
+    removed, so a scanner reading raw source misfires worst on the files that
+    were cleaned most. #3123 measured four — two false greens and two false
+    reds. `stripComments` lives once, at
+    `src/lib/__tests__/support/strip-comments.ts`; use it rather than carrying a
+    copy.
+  - `INV-SSOT` is the citable family, in
+    [`invariants/single-source-of-truth.md`](docs/invariants/single-source-of-truth.md).
+    `INV-SSOT-003` has a lint arm; the others are on you and on the standing
+    review lens. A canonical-homes registry was **declined by the owner on 26
+    Aug 2026** and is not to be re-proposed — the invariant file records what
+    that costs.
 - Money values must remain integer cents.
 - Booking dates must remain New Zealand date-only lodge nights unless a feature
   explicitly requires time-of-day semantics.
