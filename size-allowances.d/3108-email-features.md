@@ -19,7 +19,7 @@ default body survives an empty render). The table's own docblock mandates
 recording the declaration beside the sender change.
 
 file: src/lib/email/booking.ts
-lines: 1500
+lines: 1497
 reason: the authority-gated, fail-open compose of the calendar links, the
 flat {{ical}} block, and the icon-row twin in the booking-confirmed sender.
 The module's docblock names it the family boundary for booking sends.
