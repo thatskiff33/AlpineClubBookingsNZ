@@ -121,6 +121,7 @@ export async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot>
         aiDiagnostics: true,
         maintenanceReports: true,
         alpineCentralServer: true,
+        commsPortal: true,
       },
     }),
     prisma.ageTierSetting.count(),

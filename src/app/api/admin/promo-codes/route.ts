@@ -5,7 +5,7 @@ import { z } from "zod";
 import { parseJsonRequestBody } from "@/lib/api-json";
 import { logAudit } from "@/lib/audit";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
-import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo";
+import { BENEFICIAL_PROMO_ALLOCATION_FILTER } from "@/lib/promo-usage-counts";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",

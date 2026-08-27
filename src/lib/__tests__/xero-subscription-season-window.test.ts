@@ -77,7 +77,7 @@ describe("the season window", () => {
           const matches = collectSubscriptionInvoiceMatches(
             [subscriptionInvoice(date)],
             2026,
-            { accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+            { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
           );
           expect(matches, `${label} on ${hostZone}`).toHaveLength(1);
           expect(matches[0]?.isPaid, `${label} on ${hostZone}`).toBe(true);
@@ -100,7 +100,7 @@ describe("the season window", () => {
             collectSubscriptionInvoiceMatches(
               [subscriptionInvoice(date)],
               2025,
-              { accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+              { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
             ),
             `${label} on ${hostZone}`,
           ).toHaveLength(0);
@@ -120,12 +120,70 @@ describe("the season window", () => {
           collectSubscriptionInvoiceMatches(
             [subscriptionInvoice("2027-03-31")],
             2026,
-            { accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+            { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
           ),
           hostZone,
         ).toHaveLength(1);
       });
     }
+  });
+
+  // #3116. The season an invoice belongs to used to be decided with
+  // `getFinancialYearEndMonth()` - the `financial-year.ts` process cache - and
+  // the sweep that calls this runs from `xero-cron-runner.ts`, which never seeds
+  // that cache. So on a cold worker a non-March club had its invoices sorted by
+  // the March default, putting them in the WRONG SEASON and driving a member's
+  // paid/unpaid status from a season row that is not theirs.
+  //
+  // The `beforeEach` above pins the cache to MARCH and these cases pass DECEMBER
+  // in the options, so they fail if the classification ever reads the cache
+  // again: a 15 January invoice is season 2025 under a March year-end and season
+  // 2026 under a December one, which is the whole disagreement.
+  describe("the year-end comes from the caller, not the process cache (#3116)", () => {
+    const MID_JANUARY = "2026-01-15";
+
+    it("puts a January invoice in the SAME calendar year's season for a December year-end", async () => {
+      const { collectSubscriptionInvoiceMatches } = await import(
+        "@/lib/xero-membership-sync"
+      );
+
+      for (const hostZone of HOST_ZONES) {
+        withTimeZone(hostZone, () => {
+          expect(
+            collectSubscriptionInvoiceMatches(
+              [subscriptionInvoice(MID_JANUARY)],
+              2026,
+              { yearEndMonth: 12, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+            ),
+            hostZone,
+          ).toHaveLength(1);
+        });
+      }
+    });
+
+    it("puts the same invoice in the PREVIOUS season for a March year-end", async () => {
+      const { collectSubscriptionInvoiceMatches } = await import(
+        "@/lib/xero-membership-sync"
+      );
+
+      // Same invoice, same requested season, different year-end - and the answer
+      // flips. This is what proves the option is load-bearing rather than
+      // decorative: if it were ignored, both cases would agree.
+      expect(
+        collectSubscriptionInvoiceMatches(
+          [subscriptionInvoice(MID_JANUARY)],
+          2026,
+          { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+        ),
+      ).toHaveLength(0);
+      expect(
+        collectSubscriptionInvoiceMatches(
+          [subscriptionInvoice(MID_JANUARY)],
+          2025,
+          { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+        ),
+      ).toHaveLength(1);
+    });
   });
 
   it("drops an invoice whose date Xero sent unreadably, rather than guessing a season", async () => {
@@ -137,7 +195,7 @@ describe("the season window", () => {
       collectSubscriptionInvoiceMatches(
         [subscriptionInvoice("2026-02-30"), subscriptionInvoice(undefined)],
         2026,
-        { accountCode: SUBSCRIPTION_ACCOUNT_CODE },
+        { yearEndMonth: 3, accountCode: SUBSCRIPTION_ACCOUNT_CODE },
       ),
     ).toHaveLength(0);
   });

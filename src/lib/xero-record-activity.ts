@@ -7,7 +7,9 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { prisma } from "@/lib/prisma";
+import { seasonYearsLabel } from "@/lib/season-label";
 import { formatCents } from "@/lib/utils";
 import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOrgShortCode } from "@/lib/xero-link-short-code";
@@ -54,8 +56,15 @@ function formatStatusLabel(value: string): string {
   return value.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatSeasonLabel(seasonYear: number): string {
-  return `${seasonYear}/${seasonYear + 1}`;
+/**
+ * The club's year-end, RESOLVED rather than taken from `seasonYearsLabel`'s
+ * default - see `season-label.ts` for why that default is wrong off a request
+ * path (#3116). The RETURN VALUE is what gets passed down, never the cache this
+ * call also seeds, so the answer cannot depend on what warmed the process. The
+ * read is in-process cached and never rejects, so a display path can afford it.
+ */
+async function resolveYearEndMonth(): Promise<number> {
+  return refreshFinancialYearConfig();
 }
 
 function createRecordReference(
@@ -108,7 +117,7 @@ function getInboundEventCategoryForObjectType(xeroObjectType: string): string | 
   }
 }
 
-async function getMemberScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const member = await prisma.member.findUnique({
     where: { id: localId },
     select: {
@@ -140,7 +149,7 @@ async function getMemberScope(localId: string): Promise<XeroRecordScope | null> 
     createRecordReference(
       "MemberSubscription",
       subscription.id,
-      `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+      `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
       "Subscription"
     )
   );
@@ -360,7 +369,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
   };
 }
 
-async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordScope | null> {
+async function getMemberSubscriptionScope(localId: string, yearEndMonth: number): Promise<XeroRecordScope | null> {
   const subscription = await prisma.memberSubscription.findUnique({
     where: { id: localId },
     select: {
@@ -384,7 +393,7 @@ async function getMemberSubscriptionScope(localId: string): Promise<XeroRecordSc
   const rootRecord = createRecordReference(
     "MemberSubscription",
     subscription.id,
-    `Subscription ${formatSeasonLabel(subscription.seasonYear)} (${formatStatusLabel(subscription.status)})`,
+    `Subscription ${seasonYearsLabel(subscription.seasonYear, yearEndMonth)} (${formatStatusLabel(subscription.status)})`,
     "Subscription"
   );
   const relatedMember = createRecordReference(
@@ -528,7 +537,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
 async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): Promise<XeroRecordScope | null> {
   switch (localModel) {
     case "Member":
-      return getMemberScope(localId);
+      return getMemberScope(localId, await resolveYearEndMonth());
     case "Payment":
       return getPaymentScope(localId);
     case "Booking":
@@ -536,7 +545,7 @@ async function getXeroRecordScope(localModel: XeroLocalModel, localId: string): 
     case "BookingModification":
       return getBookingModificationScope(localId);
     case "MemberSubscription":
-      return getMemberSubscriptionScope(localId);
+      return getMemberSubscriptionScope(localId, await resolveYearEndMonth());
     case "MembershipCancellationRequest":
       return getMembershipCancellationRequestScope(localId);
     case "MembershipCancellationRequestParticipant":

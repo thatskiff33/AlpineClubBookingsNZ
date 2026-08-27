@@ -1261,7 +1261,11 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // the site and named in none of the four per-site maps, so it lands unpinned
     // like every other new feature's writer. 454 sites measured minus 127 pinned;
     // `pinned` is unchanged, which is the point — no existing classification moved.
-    ).toEqual({ pinned: 127, unpinned: 328 });
+    // 327/333 -> 335 (upstream merge, 25 Aug 2026): both lanes' writers are
+    // disjoint and all unpinned — upstream's club-time and environment-safety
+    // writers plus this branch's seven communication writers. 462 sites
+    // measured minus 127 pinned; `pinned` is unchanged on both sides.
+    ).toEqual({ pinned: 127, unpinned: 335 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

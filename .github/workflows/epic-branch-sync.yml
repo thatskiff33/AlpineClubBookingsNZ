@@ -22,6 +22,19 @@ name: Epic branch sync
 # conflict shows up as an ordinary un-mergeable pull request instead of something
 # this workflow has to resolve.
 #
+# WHY THE DESCRIPTION IT WRITES CARRIES A CONCURRENCY DECLARATION (#3142).
+# The `## Concurrency And Lock Impact` gate is the FIRST step of `verify`, and
+# a sync diff always trips it: it holds every commit `main` has gained since
+# the epic branch last saw it, which on 27 August 2026 was 411 commits and
+# 1,226 files across four branches, `prisma/schema.prisma` and ten migrations
+# among them. The description this workflow used to write had no such section,
+# so every sync pull request failed at nineteen seconds and lint, typecheck,
+# knip, the suite and the build were all skipped — the sync measured NOTHING,
+# which is the exact opposite of the reason it opens a pull request. The
+# description now lives in `.github/epic-branch-sync-pr-body.md`, and it says
+# in its own words that this workflow wrote it, so nobody mistakes it for a
+# declaration a person made after reading 1,226 files.
+#
 # It never resolves a conflict itself, never force-pushes, and never merges in
 # the `epic -> main` direction. Auto-merge means a clean sync needs no human at
 # all; a conflicted one waits for one, which is correct.
@@ -107,20 +120,35 @@ jobs:
               # explained all of the above — the defect was not merely present,
               # it was self-obscuring. A scheduled job nobody watches has to say
               # why it failed in the log, or the log is worth nothing.
+              #
+              # The description is a TEMPLATE FILE, not a heredoc, and that is
+              # load-bearing (#3142). It has to carry a complete
+              # `## Concurrency And Lock Impact` section, because that gate is
+              # the FIRST step of `verify` and a sync diff always holds
+              # concurrency-sensitive paths — every commit `main` has gained
+              # since this branch last saw it. Without the section the job died
+              # at nineteen seconds and lint, typecheck, knip, the suite and the
+              # build were all skipped: the sync proved nothing, which is the
+              # exact opposite of why it opens a pull request at all.
+              #
+              # The gate matches its five field labels EXACTLY, so the failure
+              # mode of a typo is a red pull request opened by a 06:20 UTC
+              # scheduled job that nobody is awake to read. Keeping the text in a
+              # file that `scripts/ci/render-epic-sync-pr-body.test.mjs` runs
+              # through the real gate is what moves that failure into `npm test`.
+              if ! body="$(BRANCH="${branch}" RUN_URL="${RUN_URL}" \
+                node scripts/ci/render-epic-sync-pr-body.mjs)"; then
+                echo "${branch}: could not render the pull request description."
+                needs_a_human="${needs_a_human} ${branch}(no-body)"
+                echo "::endgroup::"
+                continue
+              fi
+
               created_output="$(gh pr create \
                 --base "${branch}" \
                 --head main \
                 --title "Sync \`main\` into \`${branch}\`" \
-                --body "$(printf '%s\n' \
-                  "Automated daily sync of \`main\` into this epic's integration branch (#3002)." \
-                  "" \
-                  "It exists so the eventual \`${branch}\` → \`main\` merge is a series of small reconciles rather than one large one. This repository has twice shipped a **wrong value** out of a hand-resolved long-lived conflict — #2979's file-size ceiling, and the \`CHANGELOG.md\` churn #2452 ended — so the cost of letting this sit is not merely inconvenience." \
-                  "" \
-                  "**If it is green, it merges itself.** Auto-merge is armed." \
-                  "" \
-                  "**If it conflicts,** resolve it on \`${branch}\` by hand: \`git merge origin/main\`, resolve, commit, push. Do not force-push a shared integration branch, and do not let a merge tool pick a side unread. Classify each conflict: where the two sides differ only in a NUMBER, that number is usually measured and must be RE-measured after the merge rather than picked; where they differ in words, both edits usually belong." \
-                  "" \
-                  "Run: ${RUN_URL}")")" || created_output=""
+                --body "${body}")" || created_output=""
 
               created_url="$(printf '%s\n' "${created_output}" \
                 | grep -Eo 'https://[^[:space:]]+' | tail -n 1)" || created_url=""

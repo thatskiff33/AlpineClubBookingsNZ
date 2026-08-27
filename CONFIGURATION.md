@@ -378,7 +378,9 @@ string, and the default body carries only the token. `{{doorCodeNote}}`,
 `{{xeroLinksNote}}`, `{{refundOutcomeNote}}`, `{{settlementActionNote}}`,
 `{{creditNote}}`, `{{checkoutChoreNote}}` and `{{ownBookingNote}}` all behave
 this way, alongside the
-older `{{provisionalGuestsNote}}`, `{{paymentNote}}` and `{{promoSummary}}`. An
+older `{{provisionalGuestsNote}}`, `{{paymentNote}}` and `{{promoSummary}}`, and
+the multi-line `{{ical}}` add-to-calendar block on the Booking Confirmed
+message (fork #35), which renders its whole four-line section or nothing. An
 operator overriding one of these bodies should place the token on a line of its
 own and **never** write a label of their own in front of it. The raw value
 behind each (`{{doorCode}}`, `{{reason}}`, `{{adminNote}}` …) stays valid for
