@@ -471,8 +471,15 @@ const CENSUS_CEILING = {
    * means a change here fails the suite and asks for a human decision about
    * which direction it moved and why — that is the intended behaviour, not an
    * oversight.
+   *
+   * It moved 213 to 214 in #3128, and that is the benign direction described
+   * above rather than a new site: splitting `buildShiftPreviewResponse` verbatim
+   * out of `modify-quote/route.ts` into `src/lib/booking-shift-preview.ts` moved
+   * three zone-free calls (`addDaysDateOnly`, `eachDateOnlyInRange`,
+   * `parseDateOnly`) into a file of their own, so one importer became two. No
+   * call changed and no zone is consulted on either side of the seam.
    */
-  dateOnlyImporters: 213,
+  dateOnlyImporters: 214,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
