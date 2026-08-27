@@ -46,7 +46,9 @@ import {
   WholeLodgeHoldBlockedError,
 } from "@/lib/over-capacity-confirmation";
 import { ApiError } from "@/lib/api-error";
-import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   redeemPromoCode,
   shouldPersistPromoRedemption,
@@ -280,6 +282,16 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
   // mid-review). Admin-created drafts (auto-approved) stay as DRAFT.
   const draftStatus = review.blockForReview ? BookingStatus.AWAITING_REVIEW : BookingStatus.DRAFT;
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), read BEFORE the transaction opens. The promotion's
+  // validity window is judged against it inside `resolvePromoInTransaction`,
+  // which runs under `pg_advisory_xact_lock(1)`, the per-lodge capacity key and
+  // a `FOR UPDATE` lock on the promo row — `INV-LOCK-004` forbids a
+  // `clubTimeSettings` read there. The runtime reader, not `club-time/server`:
+  // this module is CLI-reachable through `e2e/setup/seed-second-lodge.ts`, and
+  // `server-only` is a bare throw outside the `react-server` condition.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+
   const newBooking = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // The explicit lodge id is the immutable lock key.  Take the capacity lock
@@ -304,6 +316,10 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       checkIn,
       checkOut,
       guests,
+      // The club day resolved above, before this transaction opened
+      // (`INV-LOCK-004`). The guard reaches `evaluateGuestSelfRemoval` with it,
+      // and the promo window below reads the same one — one day per create.
+      today: dateOnlyInstantOf(todayAtClub),
     });
     const draftExpiresAt = review.blockForReview
       ? null
@@ -363,6 +379,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         nightDatesByGuest: price.guests.map((g) => g.nightDates),
         promoGuestIndexes,
         lodgeId: bookingLodgeId,
+        todayAtClub,
       });
       discountCents = resolved.discountCents;
       promoAdjustmentCents = resolved.promoAdjustmentCents;
@@ -591,7 +608,34 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // resolved envelope actually starts in the past; when unset, every code
   // path below stays byte-identical to the member flow.
   const allowPastDates = Boolean(input.allowPastDates) && isOnBehalf;
-  const todayDateOnly = getTodayDateOnly();
+  // CT-4 (#2870): the club's day, from the persisted `ClubTimeSettings` zone and
+  // not the container's `TZ` (`INV-CONFIG-002`, `INV-DATE-019`), encoded at UTC
+  // midnight so it shares a frame with the stored dates and `addDaysDateOnly`.
+  //
+  // ONE HALF OF A FRAME PAIR — `POST /api/bookings` runs the same two rules
+  // before calling this, and the block below re-runs them as defence in depth on
+  // the RESOLVED envelope. Two "today"s from two different authorities are not
+  // defence in depth, they are a straddle: with the route on the club's day and
+  // this on the container's, a deployment whose container sits ahead of the club
+  // admits `clubToday - 365` at the door and then throws "Retroactive bookings
+  // can go back at most 365 days" here, one day later. The route now passes the
+  // day it used, so the pair is one value rather than two agreeing readers.
+  //
+  // #3123 review — and the day now arrives from the CALLER rather than being
+  // read here. This function is transaction-AWARE (`withOptionalTransaction`
+  // below), so on the atomic approve-and-execute path the caller's transaction
+  // is ALREADY open by the time control reaches this line: a `clubTimeSettings`
+  // read here would take a second pooled connection under
+  // `pg_advisory_xact_lock(1)` and the per-lodge capacity key. There is no
+  // position in this function that is outside the transaction on every path.
+  // See `ConfirmedBookingInput.todayAtClub` (`INV-LOCK-004`).
+  //
+  // ONE day serves both halves of this create: the retroactive / past-date
+  // envelope below, and the promotion's validity window inside
+  // `resolvePromoInTransaction`, which additionally holds `FOR UPDATE` on the
+  // promo row by the time it needs the day.
+  const todayAtClub = input.todayAtClub;
+  const todayDateOnly = dateOnlyInstantOf(todayAtClub);
   const retroactiveOverride = allowPastDates && checkIn < todayDateOnly;
   // Over-capacity warn-and-confirm (#1668/#1695, widened by #1767): every
   // on-behalf create may overbook behind an explicit admin confirmation —
@@ -801,6 +845,9 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         checkOut,
         guests,
         excludeBookingId: duplicateStayGuard?.excludeBookingId,
+        // The same club day the retroactive envelope and the promo window use,
+        // resolved before this transaction opened (`INV-LOCK-004`).
+        today: todayDateOnly,
       });
 
       const capacityGuestRanges = getCapacityGuestRanges(primaryGuests, checkIn, checkOut);
@@ -864,6 +911,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           nightDatesByGuest: price.guests.map((g) => g.nightDates),
           promoGuestIndexes: primaryPromoGuestIndexes,
           lodgeId: bookingLodgeId,
+          todayAtClub,
         });
         discountCents = resolved.discountCents;
         promoAdjustmentCents = resolved.promoAdjustmentCents;
@@ -1594,6 +1642,28 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     memberReviewJustification,
   });
 
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved ONCE here and read by both of this waitlist
+  // create's day-dependent decisions: the promotion's validity window in
+  // `validateAndCalculatePromoDiscount`, and the person-night guard's
+  // self-removal window inside the transaction below. Two reads would be two
+  // answers across club midnight.
+  //
+  // Read BEFORE the transaction below opens, because everything inside it holds
+  // the per-lodge capacity key and a `clubTimeSettings` query there would need a
+  // second pooled connection while that lock is held (`INV-LOCK-004`). The
+  // runtime reader rather than `club-time/server`: this module is CLI-reachable
+  // through `e2e/setup/seed-second-lodge.ts`, where `server-only` is a bare
+  // throw at import.
+  //
+  // The SPELLING matters here, not only the placement.
+  // `cross-lodge-waitlist-create.test.ts` finds this function's transaction by
+  // scanning for the interactive-transaction call as literal text, so naming
+  // that call in a comment ahead of the real one moves the scanner's idea of
+  // where the transaction starts and silently breaks an unrelated ordering
+  // contract. Say "the transaction below".
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
+
   const waitlistLodgeId = await resolveBookingLodgeId(
     prisma,
     lodgeId,
@@ -1681,7 +1751,12 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         guests: guestNightRates,
       },
       assignedMemberIds,
-      { db: prisma, selectedGuestIndexes: promoGuestIndexes, lodgeId: waitlistLodgeId }
+      {
+        db: prisma,
+        selectedGuestIndexes: promoGuestIndexes,
+        lodgeId: waitlistLodgeId,
+        todayAtClub,
+      }
     );
     if (application.error || !application.discount) {
       throw new BookingPromoError(application.error ?? "Promo code could not be applied");
@@ -1725,6 +1800,9 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       checkIn,
       checkOut,
       guests,
+      // Resolved above, before this transaction opened (`INV-LOCK-004`), and
+      // shared with the promotion's validity window — one day per create.
+      today: dateOnlyInstantOf(todayAtClub),
     });
 
     const createdBooking = await tx.booking.create({

@@ -6,14 +6,13 @@ import { MemberGuestFindPanel } from "@/components/book/member-guest-find-panel"
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { parseDateOnly } from "@/lib/date-only";
 import {
   getFamilyMemberBookingActionLabel,
   getFamilyMemberBookingBlockMessage,
 } from "@/lib/family-booking";
 import { describeMemberGuestConsentBadge } from "@/lib/member-guest-consent-card";
 import type { MemberGuestCandidate } from "@/lib/member-guest-find";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, requireCalendarDate } from "@/lib/club-time";
 import {
   describeMemberGuestWizardHelper,
   memberGuestConsentPreviewColumns,
@@ -207,8 +206,13 @@ export function GuestsStep({
           Add Guests
           {checkIn && checkOut && (
             <span className="ml-2 text-sm font-normal text-muted-foreground">
-              {formatNZDate(parseDateOnly(checkIn))} -{" "}
-              {formatNZDate(parseDateOnly(checkOut))} ({nights} night{nights !== 1 ? "s" : ""})
+              {/* Lodge nights are CALENDAR DATES and take no zone (CT-4,
+                  #2870): the wizard carries `yyyy-MM-dd` end to end (#2474) and
+                  the kernel's formatter pins `UTC` over the encoding, so the
+                  projection is the identity for every club rather than only for
+                  one east of Greenwich. */}
+              {formatClubDate(requireCalendarDate(checkIn))} -{" "}
+              {formatClubDate(requireCalendarDate(checkOut))} ({nights} night{nights !== 1 ? "s" : ""})
             </span>
           )}
         </CardTitle>

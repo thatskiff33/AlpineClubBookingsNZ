@@ -1,10 +1,36 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/*
+  `APP_TIME_ZONE` IS PINNED BEHIND GREENWICH, AND NOT TO THE CLUB ZONE BELOW.
+
+  This block is what makes the #3123 case at the bottom of this file mean
+  something. Before that migration these stamps went through `formatNZInstantOrRaw`,
+  whose zone IS `APP_TIME_ZONE` — the container's `TZ`. Pinning it to
+  `America/Denver` while the provider carries `Pacific/Auckland` makes the two
+  disagree about the day of the fixture instant, so the assertion cannot pass by
+  coincidence and could not have passed before the migration. A suite that
+  persisted `Pacific/Auckland` could not tell the persisted zone from the
+  environment's, because that is exactly what `APP_TIME_ZONE` falls back to
+  (#3123 execution contract).
+*/
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "America/Denver",
+  APP_LOCALE: "en-NZ",
+}));
 
 import {
   EnvironmentXeroContainment,
   type XeroContactContainment,
 } from "@/components/admin/environment-xero-containment";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+
+/** The club's persisted zone under test. Deliberately NOT the environment's. */
+const CLUB_ZONE = "Pacific/Auckland";
+/** What `APP_TIME_ZONE` claims above, held apart from it on purpose. */
+const ENVIRONMENT_ZONE = "America/Denver";
 
 /**
  * The Xero-containment block on `/admin/environment` (#3036; INV-CONFIG-005).
@@ -60,15 +86,24 @@ function containment(
 
 function render(
   props: Partial<Parameters<typeof EnvironmentXeroContainment>[0]> = {},
+  zone: string = CLUB_ZONE,
 ): string {
+  /*
+    The provider is not decoration. `EnvironmentXeroContainment` reads the club's
+    persisted zone through `useClubTime`, which THROWS rather than guessing when
+    no provider is above it — so a bare render of this component is a failure,
+    by design, and the zone every case below renders under is the one named here.
+  */
   return renderToStaticMarkup(
-    <EnvironmentXeroContainment
-      role="NON_PRODUCTION"
-      declarationKind="non-production"
-      overrideReadable
-      containment={containment()}
-      {...props}
-    />,
+    <ClubTimeProvider zone={zone}>
+      <EnvironmentXeroContainment
+        role="NON_PRODUCTION"
+        declarationKind="non-production"
+        overrideReadable
+        containment={containment()}
+        {...props}
+      />
+    </ClubTimeProvider>,
   );
 }
 
@@ -180,5 +215,83 @@ describe("EnvironmentXeroContainment", () => {
     const html = render({ containment: { available: false } });
     expect(html).toContain("Could not be counted on this installation");
     expect(html).toContain("This is not the same as none");
+  });
+});
+
+/*
+  #3123 — these stamps are the CLUB's, not the container's.
+
+  Every instant this block prints was going through `formatNZInstantOrRaw`,
+  whose zone is `APP_TIME_ZONE`. For a club behind Greenwich that named the
+  previous day for a destructive edit to the club's accounting records, on the
+  screen an operator opens precisely because something has already gone wrong.
+*/
+describe("the containment stamps take the club's persisted zone (#3123)", () => {
+  /** 2:00 UTC: 25 June 14:00 in Auckland, 24 June 20:00 in Denver. */
+  const STRADDLES = "2026-06-25T02:00:00.000Z";
+
+  const checkedOnly = () =>
+    containment({
+      rewrittenContacts: 0,
+      lastRewrittenAt: null,
+      rewritten: [],
+      mostRecentAt: STRADDLES,
+    });
+
+  it("PREMISE: the environment and the club disagree about this instant", () => {
+    /*
+      Without this leg the cases below pass just as well when the two zones
+      happen to agree, which is the false green #3123's contract names. It also
+      says "environment" out loud when a machine is configured oddly, rather
+      than leaving a bare date mismatch to be read as a dating bug.
+    */
+    const inEnvironment = new Intl.DateTimeFormat("en-NZ", {
+      timeZone: ENVIRONMENT_ZONE,
+      dateStyle: "medium",
+    }).format(new Date(STRADDLES));
+    const inClub = new Intl.DateTimeFormat("en-NZ", {
+      timeZone: CLUB_ZONE,
+      dateStyle: "medium",
+    }).format(new Date(STRADDLES));
+    expect(inEnvironment).toBe("24 Jun 2026");
+    expect(inClub).toBe("25 Jun 2026");
+  });
+
+  it("names the club's day, not the container's", () => {
+    // BEFORE the migration this read "24 Jun 2026" (APP_TIME_ZONE = Denver).
+    const html = render({ containment: checkedOnly() });
+    expect(html).toContain("Last checked 25 Jun 2026");
+    expect(html).not.toContain("24 Jun 2026");
+  });
+
+  it("moves with the persisted zone — kills a hard-coded Pacific/Auckland", () => {
+    /*
+      The leg a literal club zone cannot pass. Without it, swapping
+      `APP_TIME_ZONE` for a hard-coded "Pacific/Auckland" would go green and the
+      next club to configure a different one would be back where this started.
+    */
+    const ahead = render({ containment: checkedOnly() }, "Pacific/Kiritimati");
+    const behind = render({ containment: checkedOnly() }, "Pacific/Pago_Pago");
+    expect(ahead).toContain("Last checked 25 Jun 2026");
+    expect(behind).toContain("Last checked 24 Jun 2026");
+  });
+
+  it("still shows the RAW value when it will not parse, never Invalid Date", () => {
+    /*
+      The contract `formatNZInstantOrRaw` carried and `formatPayloadInstantDateTimeOrRaw`
+      inherits. An operator diagnosing a broken installation is better served by
+      whatever arrived than by the words "Invalid Date", and a throw here would
+      blank the screen through the nearest error boundary.
+    */
+    const html = render({
+      containment: containment({
+        rewrittenContacts: 0,
+        lastRewrittenAt: null,
+        rewritten: [],
+        mostRecentAt: "not-a-timestamp",
+      }),
+    });
+    expect(html).toContain("Last checked not-a-timestamp");
+    expect(html).not.toContain("Invalid Date");
   });
 });

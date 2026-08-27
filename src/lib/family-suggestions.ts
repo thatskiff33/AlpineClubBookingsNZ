@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import logger from "./logger";
 import { formatMemberIdentityAge } from "@/lib/member-age";
+import { clubTime } from "@/lib/club-time/server";
 
 export interface SuggestedFamilyGroup {
   signature: string;
@@ -71,6 +72,13 @@ export async function suggestFamilyGroups(): Promise<{
   totalMembers: number;
   hiddenCount: number;
 }> {
+  // #3123: one club "today" for every suggestion on the screen. The age label
+  // is what an administrator uses to tell a parent from a child before binding
+  // records together (#2568), so all of them are judged against the same day —
+  // and against the CLUB's day, not the container's. Measured: this module is
+  // reachable from no CLI entry point and no instrumentation edge, so the
+  // request-scoped `server-only` reader applies.
+  const clubDay = (await clubTime()).today();
   const [allMembers, hiddenSuggestions] = await Promise.all([
     prisma.member.findMany({
       where: { active: true },
@@ -146,7 +154,7 @@ export async function suggestFamilyGroups(): Promise<{
         ageTier: m.ageTier,
         canLogin: m.canLogin,
         xeroContactId: m.xeroContactId,
-        ageLabel: formatMemberIdentityAge(m.dateOfBirth),
+        ageLabel: formatMemberIdentityAge(m.dateOfBirth, clubDay),
       })),
     });
 
@@ -188,7 +196,7 @@ export async function suggestFamilyGroups(): Promise<{
           ageTier: m.ageTier,
           canLogin: m.canLogin,
           xeroContactId: m.xeroContactId,
-          ageLabel: formatMemberIdentityAge(m.dateOfBirth),
+          ageLabel: formatMemberIdentityAge(m.dateOfBirth, clubDay),
         })),
       })
     );

@@ -1,6 +1,24 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { BookingRequestStatus } from "@prisma/client";
 
+/*
+  The three date-bounded queues below are bounded on the CLUB's day, from its
+  persisted timezone, never on the container's (#3123). `APP_TIME_ZONE` is pinned
+  to `Pacific/Auckland` — what the replaced `getTodayDateOnly()` answered here,
+  and this codebase's own fallback — while the persisted club zone is
+  `America/Denver`. Under the frozen clock that is 1 July against 30 June, so a
+  bound taken from the environment fails these assertions instead of matching
+  them. Before #3123 this file compared against `getTodayDateOnly()` itself,
+  which agreed with the subject however wrong both were.
+*/
+vi.mock("server-only", () => ({}));
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_LOCALE: "en-NZ",
+}));
+
 const mocks = vi.hoisted(() => ({
   familyGroupJoinRequestCount: vi.fn(),
   memberApplicationCount: vi.fn(),
@@ -17,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   getPendingMemberArchiveReviewCount: vi.fn(),
   getPendingMemberDeleteReviewCount: vi.fn(),
   getUnassignedHutLeaderDates: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -36,6 +55,10 @@ vi.mock("@/lib/prisma", () => ({
     bookingRequest: { count: mocks.bookingRequestCount },
     deletionRequest: { count: mocks.deletionRequestCount },
     issueReport: { count: mocks.issueReportCount },
+    // Load-bearing: `getClubTimeZone` is fail-soft on a missing delegate and
+    // degrades silently to the environment, which is precisely the reading
+    // this file must be able to reject (#3123).
+    clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
   },
 }));
 
@@ -54,11 +77,24 @@ vi.mock("@/lib/hut-leader-coverage", () => ({
 }));
 
 import { getAdminPendingCounts } from "@/lib/admin-pending-counts";
-import { getTodayDateOnly } from "@/lib/date-only";
+
+/** The club's day at the frozen instant, as Prisma's `@db.Date` encoding. */
+const CLUB_DAY = new Date("2026-06-30T00:00:00.000Z");
+/** What `Pacific/Auckland` would have said. No bound below may equal this. */
+const ENVIRONMENT_DAY = new Date("2026-07-01T00:00:00.000Z");
+
+function persistClubZone(timeZone: string) {
+  mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+}
 
 describe("getAdminPendingCounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    persistClubZone("America/Denver");
     mocks.familyGroupJoinRequestCount.mockResolvedValue(1);
     mocks.memberApplicationCount.mockResolvedValue(2);
     mocks.refundRequestCount.mockResolvedValue(3);
@@ -171,7 +207,7 @@ describe("getAdminPendingCounts", () => {
       where: {
         deletedAt: null,
         status: "PAYMENT_PENDING",
-        checkOut: { lte: getTodayDateOnly() },
+        checkOut: { lte: CLUB_DAY },
       },
     });
     // Unsettled finished-stay additions (#1723 path 2): mirrors the sibling
@@ -180,7 +216,7 @@ describe("getAdminPendingCounts", () => {
     expect(mocks.bookingCount).toHaveBeenCalledWith({
       where: {
         deletedAt: null,
-        checkOut: { lte: getTodayDateOnly() },
+        checkOut: { lte: CLUB_DAY },
         status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
         payment: {
           is: {
@@ -218,5 +254,45 @@ describe("getAdminPendingCounts", () => {
     expect(mocks.issueReportCount).toHaveBeenCalledWith({
       where: { resolvedAt: null },
     });
+  });
+
+  it("bounds every date-sensitive queue on ONE club day, hut-leader coverage included", async () => {
+    // Three queues and the coverage read all key on today. Resolved
+    // independently they could straddle club midnight and report counts from two
+    // different days beside each other in the same sidebar (#3123).
+    await getAdminPendingCounts();
+
+    const bounds = mocks.bookingCount.mock.calls
+      .map(([args]) => (args as { where: { checkOut?: { lte?: Date } } }).where.checkOut?.lte)
+      .filter((bound): bound is Date => bound instanceof Date);
+    expect(bounds).toHaveLength(2);
+    expect(new Set(bounds.map((bound) => bound.toISOString()))).toEqual(
+      new Set([CLUB_DAY.toISOString()]),
+    );
+    expect(mocks.getUnassignedHutLeaderDates).toHaveBeenCalledWith({
+      today: CLUB_DAY,
+      scope: { kind: "all" },
+    });
+  });
+
+  it("moves those bounds when the persisted club zone moves", async () => {
+    // Kills a hard-coded `Pacific/Auckland` and every other way of ignoring the
+    // stored row. Same clock, same mocks; only the club's zone differs.
+    persistClubZone("Pacific/Kiritimati"); // UTC+14 — the club's day is 1 July
+
+    await getAdminPendingCounts();
+
+    expect(mocks.getUnassignedHutLeaderDates).toHaveBeenCalledWith({
+      today: ENVIRONMENT_DAY,
+      scope: { kind: "all" },
+    });
+  });
+
+  it("really asks the ClubTimeSettings row for the zone", async () => {
+    await getAdminPendingCounts();
+
+    expect(mocks.clubTimeSettingsFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "default" } }),
+    );
   });
 });

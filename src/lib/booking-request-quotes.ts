@@ -13,6 +13,8 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { lockActiveBookingRequestLinkedMembers } from "@/lib/adult-member-hosting-queue-participants";
 import { reconcileAdultMemberHostingReviewWithSiblings } from "@/lib/adult-member-hosting-review";
@@ -59,7 +61,7 @@ import { countActiveLodges, getDefaultLodgeId } from "@/lib/lodges";
 import { resolveGuestRateMembershipTypes } from "@/lib/membership-type-policy";
 import { prisma } from "@/lib/prisma";
 import { approveSchoolBookingRequest } from "@/lib/school-booking-request";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { formatDateOnly } from "@/lib/date-only";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -348,6 +350,15 @@ export async function findLinkedGuestMemberNightConflicts(input: {
   requestId: string;
   adminMemberId: string;
   links: BookingRequestLinkedGuestMember[];
+  /**
+   * The CLUB's today, encoded at UTC midnight, resolved by the caller
+   * (`INV-CONFIG-002`). Required and undefaulted for the same reason as every
+   * other caller of the person-night guard: the guard must never resolve a day
+   * for itself, because the authoritative callers reach it mid-transaction
+   * (`INV-LOCK-004`). This advisory path holds no locks, but a default here
+   * would be a default on the shared guard's contract.
+   */
+  today: Date;
 }): Promise<BookingMemberNightConflict[]> {
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
@@ -387,6 +398,7 @@ export async function findLinkedGuestMemberNightConflicts(input: {
     checkIn: request.checkIn,
     checkOut: request.checkOut,
     guests: linkedGuests,
+    today: input.today,
     // A request that already has a held booking (#1254) carries these same
     // linked members on that AWAITING_REVIEW hold, which is itself a
     // conflict-eligible status. Exclude it so the advisory never flags the
@@ -1267,6 +1279,20 @@ export async function holdBookingRequestSlots(input: {
   | { type: "held"; bookingId: string; reused: boolean }
   | { type: "capacityExceeded"; fullNights: string[] }
 > {
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved HERE, before the `prisma.$transaction` below
+  // takes the per-lodge capacity key and the per-member night locks. The
+  // person-night guard inside that transaction takes it as a value:
+  // `INV-LOCK-004` forbids a `clubTimeSettings` read under those locks, because
+  // it would need a second pooled connection while they are held.
+  //
+  // The runtime reader rather than `club-time/server`: `src/instrumentation.node.ts`
+  // reaches this module through the booking-request cron chain, and `server-only`
+  // is a bare throw at import outside the `react-server` condition.
+  const clubTodayDateOnly = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
+
   const request = await prisma.bookingRequest.findUnique({
     where: { id: input.requestId },
     include: {
@@ -1386,7 +1412,7 @@ export async function holdBookingRequestSlots(input: {
   // annotation nothing would check that it supplies a night set at all.
   const guestCreates: HeldBookingGuestInput[] = (
     await resolveGuestRateMembershipTypes(prisma, {
-      seasonYear: getSeasonYear(request.checkIn),
+      seasonYear: seasonYearOfStoredDate(request.checkIn),
       guests: guests.map((guest, index) => {
         const memberId = linkedMembers.get(index);
         return {
@@ -1528,6 +1554,8 @@ export async function holdBookingRequestSlots(input: {
         checkIn: request.checkIn,
         checkOut: request.checkOut,
         guests: guestCreates,
+        // Resolved before this transaction opened (`INV-LOCK-004`).
+        today: clubTodayDateOnly,
       });
 
       const ownerName =

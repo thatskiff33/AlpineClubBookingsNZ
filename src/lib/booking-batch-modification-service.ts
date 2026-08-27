@@ -89,6 +89,7 @@ import {
 } from "@/lib/member-guest-add-policy";
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
+import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import {
   lockRosterDateRangesAndDates,
   rosterOperationalDayRange,
@@ -225,6 +226,7 @@ export async function modifyBookingBatch({
   hostingCoverageOverride,
   input,
   ipAddress,
+  todayAtClub,
   tx: callerTx,
 }: {
   bookingId: string;
@@ -247,6 +249,33 @@ export async function modifyBookingBatch({
   hostingCoverageOverride?: HostingCoverageOverrideInput | null;
   input: BatchModifyInput;
   ipAddress: string;
+  /**
+   * The CLUB's calendar day (`INV-CONFIG-002`), resolved by the caller before it
+   * opened ANY transaction. REQUIRED, with no default.
+   *
+   * WHY THE CALLER RESOLVES IT AND NOT THIS FUNCTION (`INV-LOCK-004`, #3123
+   * review). This service is transaction-AWARE: `withOptionalTransaction` below
+   * runs its callback inside `tx` when the caller supplies one, and opens its
+   * own `prisma.$transaction` only when the caller does not. So the ordinary
+   * reading of "the read sits above the `withOptionalTransaction` call,
+   * therefore it is outside the transaction" is FALSE on the caller-supplied
+   * path: by the time control reaches this function
+   * `approveAndExecutePolicyExceptionRequest` already holds
+   * `pg_advisory_xact_lock(1)` and the per-lodge capacity key, and a
+   * `clubTimeSettings` read on the module client would take a SECOND pooled
+   * connection under both. There is no position inside this function that is
+   * outside the transaction on every path, which is precisely why the day has
+   * to arrive as a value.
+   *
+   * FIVE decisions inside the transaction read this one day and they must all
+   * agree: the edit policy's gate, the promotion's validity window
+   * (`applyPromoCodeChanges`), the late-notice change fee's tier
+   * (`calculateModificationChangeFee`), the reduction refund's settlement tier
+   * (`calculateModificationSettlementOptions`), and the person-night guard's
+   * self-removal window inside `prepareGuestPlan`. Three of them move money, so
+   * two todays here would be a batch edit priced against itself.
+   */
+  todayAtClub: CalendarDate;
   /**
    * Caller-supplied transaction (#2525). When present, the modification runs
    * inside it — so an atomic approve-and-execute can release a policy-exception
@@ -358,6 +387,11 @@ export async function modifyBookingBatch({
   // refresh the financial-year cache from Xero, which must never happen inside the
   // transaction below.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
+  // #3123 — the caller's club day, encoded at UTC midnight so it shares a frame
+  // with the stored `@db.Date` columns the edit policy compares against
+  // (`INV-DATE-026`). The day itself is a REQUIRED parameter; its docblock says
+  // why this function may not resolve one for itself.
+  const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
   // MG4-D-a, brought forward: an ADMIN actor is the one that passes
   // `skipAuthorization`, so its cross-family adds are consent-free and
   // always-notify, stamped with the acting admin.
@@ -524,6 +558,7 @@ export async function modifyBookingBatch({
       booking,
       role: actor.role,
       input,
+      today: clubTodayDateOnly,
     });
 
     // Lock the complete old and proposed booking envelopes before any
@@ -601,6 +636,10 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       newCheckOut: dates.newCheckOut,
       memberGuestPolicy,
+      // #3123 — the caller's club day, threaded on rather than read under the
+      // locks this transaction holds (`INV-LOCK-004`). The planner hands it to
+      // the person-night guard, whose self-removal window is member-facing.
+      today: clubTodayDateOnly,
       // #2543 — read before the transaction opened (like `memberGuestPolicy`), so
       // the planner's refusals and the paid-up-adult requirement branch on the
       // same mode `modify-quote` previewed, and no settings read happens under
@@ -715,6 +754,7 @@ export async function modifyBookingBatch({
           newCheckIn: dates.newCheckIn,
           newTotalPriceCents: pricing.newTotalPriceCents,
           guestNightRates: pricing.guestNightRates,
+          todayAtClub,
         });
 
     const newFinalPriceCents = pricing.newTotalPriceCents + promo.newPromoAdjustmentCents;
@@ -725,11 +765,15 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       checkInChanged: dates.checkInChanged,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
+      db: tx, // locked transaction; see `CancellationPolicyDb`
+      todayAtClub,
     });
 
     const settlementOptions = await calculateModificationSettlementOptions({
       booking,
       netChargeCents: priceDiffCents + changeFeeCents,
+      db: tx,
+      todayAtClub,
     });
     if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
       throw new BookingModificationSettlementMethodRequiredError();

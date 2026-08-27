@@ -27,14 +27,40 @@ import {
   lateCapturePaymentLabel,
 } from "@/lib/email-message-notes";
 import { emailPalette } from "@/lib/email-theme";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import {
+  emailCalendarDay,
+  emailCalendarDayOrUnknown,
+  emailClubDateTime,
+} from "@/lib/email-templates-club-time";
 
 // ---- N-04: Admin Alert — Payment Failure ----
 
 export function adminPaymentFailureTemplate(data: {
   memberName: string;
-  checkIn: Date;
-  checkOut: Date;
+  /**
+   * NULLABLE, and that is load-bearing rather than defensive (#3113 review).
+   *
+   * This is the club's general payment-anomaly alert, and three of its senders
+   * reach it from a money event whose booking they could not resolve — a
+   * superseded group-settlement intent, a paid settlement invoice whose group
+   * detail is gone, a stalled recovery queue. Those senders already pass
+   * `memberName: "Unknown group organiser"`, so the shape is established: the
+   * alert still has to go out, naming what IS known.
+   *
+   * Before this was nullable they passed `?? new Date()` instead, which is a
+   * wall-clock instant — and `emailCalendarDay` REFUSES one, correctly, because
+   * a lodge night is a stored calendar day and projecting an instant onto one is
+   * the defect epic #2988 exists to remove. But both callers wrap the send in a
+   * `catch` that only logs, so the refusal did not surface a bad date: it
+   * deleted the alert. That alert is the only notice that an organiser has been
+   * charged with nothing settled, so losing it is strictly worse than printing
+   * one odd field.
+   *
+   * `null` renders "Unknown". A caller that HAS the night keeps passing it and
+   * keeps the refusal, which is the guard doing its job.
+   */
+  checkIn: Date | null;
+  checkOut: Date | null;
   amountCents: number;
   errorMessage: string;
   /**
@@ -54,8 +80,8 @@ export function adminPaymentFailureTemplate(data: {
     ${alertBox("A payment has failed and may require manual attention.", "warning")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDayOrUnknown(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDayOrUnknown(data.checkOut) },
       { label: "Amount", value: formatCents(data.amountCents) },
       { label: "Error", value: escapeHtml(data.errorMessage) },
       { label: "Reference", value: escapeHtml(data.paymentIntentId) },
@@ -117,8 +143,8 @@ export function adminDuplicateCaptureRefundTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       {
         label: data.refundFailed ? "Amount to refund" : "Amount refunded",
         value: formatCents(data.amountCents),
@@ -208,8 +234,8 @@ export function adminLateCaptureAutoRefundTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Amount refunded", value: formatCents(data.amountCents) },
       {
         label: "Booking status",
@@ -298,8 +324,8 @@ export function adminLateCaptureHandBackConflictTemplate(data: {
     }
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Amount captured", value: formatCents(data.amountCents) },
       ...(data.handBackAmountCents === null
         ? []
@@ -357,8 +383,8 @@ export function adminManualSettlementConflictTemplate(data: {
     )}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Booking status", value: escapeHtml(data.bookingStatus) },
       { label: "Amount recorded as cash", value: formatCents(data.amountCents) },
@@ -406,8 +432,8 @@ export function adminManualRefundTaskTemplate(data: {
     )}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Booking", value: escapeHtml(data.bookingId) },
       { label: "Amount to refund", value: formatCents(data.refundAmountCents) },
       { label: "Reason", value: escapeHtml(data.reason) },
@@ -431,7 +457,7 @@ export function adminXeroSyncErrorTemplate(data: {
       { label: "Error Type", value: escapeHtml(data.errorType) },
       { label: "Operation", value: escapeHtml(data.operation) },
       { label: "Error Message", value: escapeHtml(data.errorMessage) },
-      { label: "Timestamp", value: formatNZDateTime(data.timestamp) },
+      { label: "Timestamp", value: emailClubDateTime(data.timestamp) },
     ])}
     ${button("View Xero Status", BASE_URL + "/admin/xero")}
   `);
@@ -472,7 +498,7 @@ export function adminXeroRepeatedFailureTemplate(data: {
     },
     {
       label: "Timestamp",
-      value: formatNZDateTime(data.timestamp),
+      value: emailClubDateTime(data.timestamp),
     },
   ];
 
@@ -509,8 +535,8 @@ export function adminRefundRequestTemplate(data: {
     ${paragraph(escapeHtml(data.memberName) + " has submitted a refund appeal.")}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
-      { label: "Check-in", value: formatNZDate(data.checkIn) },
-      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Check-in", value: emailCalendarDay(data.checkIn) },
+      { label: "Check-out", value: emailCalendarDay(data.checkOut) },
       { label: "Paid", value: "$" + (data.paidAmountCents / 100).toFixed(2) },
       { label: "Already Refunded", value: "$" + (data.refundedAmountCents / 100).toFixed(2) },
       { label: "Remaining", value: "$" + (remaining / 100).toFixed(2) },

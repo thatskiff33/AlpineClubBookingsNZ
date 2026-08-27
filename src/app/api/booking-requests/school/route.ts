@@ -13,7 +13,8 @@ import {
 } from "@/lib/school-booking-request";
 import { getDefaultLodgeCapacity, getLodgeCapacity } from "@/lib/lodge-capacity";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { nameField } from "@/lib/zod-helpers";
 import logger from "@/lib/logger";
 
@@ -83,7 +84,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
-  const today = getTodayDateOnly();
+  // CT-4 (#2870): the club's day, from the persisted ClubTimeSettings zone and
+  // not the container's TZ (INV-CONFIG-002, INV-DATE-019), encoded at UTC
+  // midnight so it shares a frame with the submitted date-only values.
+  const today = await clubTodayDateOnlyInstant();
   if (checkIn < today) {
     return NextResponse.json({ error: "Cannot request a booking in the past" }, { status: 400 });
   }

@@ -3,6 +3,8 @@ import {
   computeMemberGuestBoundary,
   type BookingGuestLookupDb,
 } from "@/lib/booking-guests";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   buildMemberGuestConsentWrite,
   computeMemberGuestConsentExpiry,
@@ -39,15 +41,7 @@ import { loadMemberGuestSettings } from "@/lib/member-guest-settings";
  * have loaded it already.
  */
 
-export interface MemberGuestAddPolicy {
-  /**
-   * Whether a beyond-family member may be added at all — the `memberGuests`
-   * module flag, which MG2 turns into the real switch it always claimed to be.
-   * Passed to `resolveLinkedBookingMembersWithBoundary`'s
-   * `memberGuestWideningEnabled`, which defaults to `false` so a caller that
-   * forgets keeps MG1's refusal.
-   */
-  wideningEnabled: boolean;
+interface MemberGuestAddPolicyValues {
   /** D-3: ask the target first. `true` is the shipped default. */
   approvalRequired: boolean;
   /** D-4: how long a PENDING request holds its bed before the sweep releases it. */
@@ -55,15 +49,72 @@ export interface MemberGuestAddPolicy {
 }
 
 /**
- * Read the module flag and the policy singleton for one request.
+ * The policy for one add, and A DISCRIMINATED UNION ON PURPOSE (#3123).
  *
- * THE SETTINGS READ IS SKIPPED WHEN THE MODULE IS OFF, which is the state every
+ * `wideningEnabled` is the `memberGuests` module flag, which MG2 turns into the
+ * real switch it always claimed to be. It is passed to
+ * `resolveLinkedBookingMembersWithBoundary`'s `memberGuestWideningEnabled`,
+ * which defaults to `false` so a caller that forgets keeps MG1's refusal.
+ *
+ * WHY THE CLUB'S TIMEZONE LIVES ONLY ON THE ENABLED MEMBER. The consent expiry
+ * clamp needs the club's PERSISTED zone (`INV-CONFIG-002`) to turn a lodge night
+ * into the instant it begins, and it is now a REQUIRED argument so no caller can
+ * silently get the container's zone instead. But the zone is another
+ * `ClubTimeSettings` read, and the module-off branch below exists precisely to
+ * spend no query at all — so putting `timeZone` on a single flat interface would
+ * have forced one of two bad answers: a query on the hot path of every booking
+ * create, quote and guest add for every club that never turns this on, or an
+ * inert placeholder zone, which is the environment fallback wearing a different
+ * name. The union gives the third answer: the zone EXISTS only in the state that
+ * can consume it, `planMemberGuestConsentWrites` narrows to that state by its
+ * own early return, and a caller that has not enabled widening cannot even spell
+ * a call that would need one.
+ */
+export type MemberGuestAddPolicy =
+  | (MemberGuestAddPolicyValues & { wideningEnabled: false })
+  | (MemberGuestAddPolicyValues & {
+      wideningEnabled: true;
+      /**
+       * The club's persisted timezone, read ONCE for this add and threaded into
+       * the expiry clamp. See `loadMemberGuestAddPolicy` for why it is resolved
+       * here and not where it is used.
+       */
+      timeZone: ClubTimeZone;
+    });
+
+/**
+ * Read the module flag, the policy singleton and the club's timezone for one
+ * request.
+ *
+ * THE SETTINGS READS ARE SKIPPED WHEN THE MODULE IS OFF, which is the state every
  * club ships in (D-2). With no widening there is no cross-family guest, so there
- * is no consent row to write and neither policy value can be consulted; issuing
- * the query anyway would put a second round trip on the hot path of every booking
- * create, quote and guest add on every club that never turns this on. The
- * defaults returned in that case are inert, not "assumed": nothing reads them
- * unless `wideningEnabled` is true.
+ * is no consent row to write and none of the policy values can be consulted;
+ * issuing the queries anyway would put two more round trips on the hot path of
+ * every booking create, quote and guest add on every club that never turns this
+ * on. The defaults returned in that case are inert, not "assumed": nothing reads
+ * them unless `wideningEnabled` is true, and the union above means the zone is
+ * not even present to be read.
+ *
+ * THE ZONE IS RESOLVED HERE BECAUSE THIS IS ALREADY THE PLACE THAT MUST RUN
+ * BEFORE THE TRANSACTION (#3123). The ordering rule at the top of this file —
+ * enforced by `member-guest-add-call-sites.test.ts` — says this function is
+ * called before the caller opens its transaction and that
+ * `planMemberGuestConsentWrites` is pure. Hanging the zone off the value that
+ * rule already governs means `INV-LOCK-004` holds by construction: there is no
+ * arrangement of the eight call sites in which the `clubTimeSettings` query can
+ * end up under the global booking lock or a per-lodge capacity key. It also
+ * means not one of those call sites changed to get the zone — they already
+ * thread `policy`.
+ *
+ * THE RUNTIME READER, NOT `clubTime()`, and the choice is measured rather than
+ * stylistic (`docs/CLUB_TIME_KERNEL.md` -> "Where the zone comes from"). This
+ * module is imported by `booking-request.ts` and `booking-request-quotes.ts`,
+ * which `src/instrumentation.node.ts` reaches through the cron chain, and
+ * `@/lib/club-time/server`'s `import "server-only"` is a bare throw outside the
+ * `react-server` condition — at import, before the job runs. The cost is one
+ * uncached `clubTimeSettings.findUnique` per add on clubs that have the module
+ * on, which is the same trade `member-guest-consent-service.ts` already makes on
+ * the sweep side.
  */
 export async function loadMemberGuestAddPolicy(): Promise<MemberGuestAddPolicy> {
   const wideningEnabled = await isEffectiveModuleEnabled(MEMBER_GUEST_MODULE_KEY);
@@ -71,11 +122,15 @@ export async function loadMemberGuestAddPolicy(): Promise<MemberGuestAddPolicy> 
     return { wideningEnabled: false, approvalRequired: true, pendingHoldExpiryDays: 0 };
   }
 
-  const settings = await loadMemberGuestSettings();
+  const [settings, timeZone] = await Promise.all([
+    loadMemberGuestSettings(),
+    readClubTimeZoneOutsideRequest(),
+  ]);
   return {
     wideningEnabled: true,
     approvalRequired: settings.approvalRequired,
     pendingHoldExpiryDays: settings.pendingHoldExpiryDays,
+    timeZone,
   };
 }
 
@@ -211,6 +266,10 @@ export function planMemberGuestConsentWrites<Guest extends GuestWithMemberId>(pa
         now,
         pendingHoldExpiryDays: policy.pendingHoldExpiryDays,
         bookingCheckIn,
+        // Narrowed to the widening-enabled member by the early return above, so
+        // the club's persisted zone is present here by construction and no
+        // default can creep back in (#3123).
+        timeZone: policy.timeZone,
       }),
     });
 

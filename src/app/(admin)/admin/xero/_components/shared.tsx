@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 import { buildXeroContactUrl } from "@/lib/xero-links"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { parseInstant, type BoundClubTime } from "@/lib/club-time"
 import { formatRedactedJson } from "@/lib/redact-sensitive-json"
 import { cn } from "@/lib/utils"
 import { CHIP_TONE_CLASSES, type SemanticTone } from "@/lib/chip-tones"
@@ -296,19 +296,25 @@ export function formatJson(value: unknown) {
 
 // #2256: bare toLocaleString() rendered the cache stamps in the admin's own
 // browser locale and zone ("4/16/2026, 11:30 AM"). Xero cache freshness is
-// judged against the club's clock, so pin both to the app locale/time zone —
-// and guard the parse, because Intl throws a RangeError on an invalid Date and
-// this label renders inside the Xero settings panel.
-function formatCacheStamp(value: string) {
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return "unknown"
-  return formatNZDateTime(parsed)
+// judged against the club's clock — which since CT-4 (#2870) means the
+// PERSISTED `ClubTimeSettings.timeZone` the caller binds, not `APP_TIME_ZONE`
+// and never the viewer's (INV-CONFIG-002). These stamps are real INSTANTS.
+//
+// The parse is still guarded, because this label renders inside the Xero
+// settings panel and a bad stamp must not blank it. `parseInstant` is stricter
+// than the `new Date()` it replaces: a string with no Z and no offset names a
+// wall-clock reading in whichever zone happens to be reading it, so it is now
+// "unknown" rather than silently read in the host's zone.
+function formatCacheStamp(clubTime: BoundClubTime, value: string) {
+  const parsed = parseInstant(value)
+  if (parsed === null) return "unknown"
+  return clubTime.instantDateTime(parsed)
 }
 
-export function formatReferenceCacheLabel(label: string, cache: XeroReferenceCacheMeta | null) {
+export function formatReferenceCacheLabel(clubTime: BoundClubTime, label: string, cache: XeroReferenceCacheMeta | null) {
   if (!cache) return `${label}: no cache metadata yet`
   const sourceLabel = cache.source === "database" ? "shared cache" : cache.source === "memory" ? "memory cache" : "live Xero"
-  return `${label}: ${sourceLabel}, refreshed ${formatCacheStamp(cache.lastRefreshedAt)}, expires ${formatCacheStamp(cache.expiresAt)}`
+  return `${label}: ${sourceLabel}, refreshed ${formatCacheStamp(clubTime, cache.lastRefreshedAt)}, expires ${formatCacheStamp(clubTime, cache.expiresAt)}`
 }
 
 export const ACCOUNT_MAPPING_KEYS: AccountMappingKey[] = [

@@ -1,5 +1,12 @@
 import { FinanceSnapshotType } from "@prisma/client";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import {
+  dateOnlyInstantOf,
+  formatClubDayMonth,
+  parseInstant,
+  requireCalendarDate,
+  type BoundClubTime,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { buildThemeSubstrate } from "@/lib/theme/theme-substrate";
 import {
   DEFAULT_CLUB_THEME_VALUES,
@@ -18,11 +25,11 @@ import {
   financeDashboardDateRangeDayCount,
   financeDashboardMonthCount,
   financeDashboardViewUsesLodgeScope,
-  financeDashboardWindowDetail,
   resolveFinanceDashboardSelection,
   resolveFinanceDashboardView,
   type FinanceDashboardSelection,
 } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardWindowDetail } from "@/lib/finance-dashboard-labels";
 import {
   formatDollarsDisplay,
   formatFinanceNumber as formatNumber,
@@ -58,19 +65,21 @@ import {
   buildFinanceSyncHealth,
   type FinanceSyncHealthTone,
 } from "@/lib/finance-sync-health";
-import { formatNZDateTime } from "@/lib/nzst-date";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 
 // Compact day+month export label ("14 Jun"), deliberately year-less: it labels
-// rows already scoped to one range, and widening it to the shared
-// `formatNZDate` medium form would change an exported report column.
-const EXPORT_SHORT_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-});
+// rows already scoped to one range, and widening it to the shared medium form
+// would change an exported report column. That bag is the kernel's `dayMonth`
+// shape (F3, #3079), so the local formatter this file kept is gone.
+//
+// CT-4 (#2870): THIS ALSO CORRECTS THE DAY. Every value reaching it is a
+// `yyyy-MM-dd` metric key minted by `buildIsoDateRange`, i.e. a CALENDAR DATE,
+// which takes no zone — and the local formatter was still pinned to
+// `APP_TIME_ZONE`. That projection cancelled only because New Zealand is east of
+// Greenwich; for a club west of it every trend point on the finance dashboard,
+// and every exported row label, named the PREVIOUS day (INV-DATE-019).
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type FinanceDashboardViewModel = Pick<
@@ -231,12 +240,26 @@ function formatSignedCents(value: number) {
   return `${value > 0 ? "+" : "-"}${formatCents(Math.abs(value))}`;
 }
 
-function formatDateTime(value: string | Date) {
-  return formatNZDateTime(new Date(value));
+/**
+ * A real INSTANT — a sync run's completion stamp, or the moment this page model
+ * was built — in the club's PERSISTED zone (#3123, `INV-CONFIG-002`).
+ *
+ * It used to go through `formatNZDateTime`, i.e. through `APP_TIME_ZONE`, so for
+ * a club west of Greenwich the finance page could say its figures were last
+ * synced on the wrong day. Unlike `formatShortDate` below — which renders a
+ * `yyyy-MM-dd` CALENDAR key and rightly takes no zone — this one holds a moment,
+ * which has no civil date until a zone is chosen.
+ *
+ * The binding is threaded from `buildFinanceDashboardPageModel`, which resolves
+ * it once per render pass; see the note there.
+ */
+function formatDateTime(club: BoundClubTime, value: string | Date) {
+  const instant = parseInstant(value);
+  return instant === null ? "Unavailable" : club.instantDateTime(instant);
 }
 
 function formatShortDate(dateOnly: string) {
-  return EXPORT_SHORT_DATE.format(new Date(`${dateOnly}T00:00:00.000Z`));
+  return formatClubDayMonth(requireCalendarDate(dateOnly));
 }
 
 function cardRows(cards: FinanceDashboardKpiCard[]) {
@@ -286,7 +309,7 @@ async function loadSeasons(lodgeId: string | null, labelWithLodge: boolean) {
   }));
 }
 
-async function buildSyncStatus(): Promise<{
+async function buildSyncStatus(club: BoundClubTime): Promise<{
   status: FinanceDashboardSyncStatus;
   warnings: string[];
 }> {
@@ -326,7 +349,7 @@ async function buildSyncStatus(): Promise<{
                 ? "Running"
                 : "Sync failed",
         tone,
-        detail: `${latest.snapshotCount} snapshots, ${latest.totalRowCount} rows. ${formatDateTime(completedOrStarted)}.`,
+        detail: `${latest.snapshotCount} snapshots, ${latest.totalRowCount} rows. ${formatDateTime(club, completedOrStarted)}.`,
         lastSyncedAt: completedOrStarted,
       },
       warnings:
@@ -1187,21 +1210,24 @@ async function buildPricingSensitivityDashboard(
   };
 }
 
-async function loadLatestBankBalancesSnapshot() {
+async function loadLatestBankBalancesSnapshot(club: BoundClubTime) {
   const snapshots = await listFinanceSnapshots({
     snapshotType: FinanceSnapshotType.BANK_BALANCES,
     scope: DEFAULT_FINANCE_SNAPSHOT_SCOPE,
     limit: 1,
   });
-  return snapshots[0] ? parseCashSnapshot(snapshots[0]) : null;
+  return snapshots[0] ? parseCashSnapshot(club, snapshots[0]) : null;
 }
 
-async function buildCashDashboard(selection: FinanceDashboardSelection) {
+async function buildCashDashboard(
+  club: BoundClubTime,
+  selection: FinanceDashboardSelection
+) {
   const [series, latestSnapshot] = await Promise.all([
     buildFinanceMonthlyBalanceSeries(selection.primary, {
       currentMonth: selection.currentMonth,
     }),
-    loadLatestBankBalancesSnapshot(),
+    loadLatestBankBalancesSnapshot(club),
   ]);
   const monthPoints = series.points.filter((point) => point.hasData);
   const averageMonthEndCents =
@@ -1580,6 +1606,28 @@ export async function buildFinanceDashboardPageModel(input: {
   member: FinanceAccessMember;
   searchParams?: SearchParams;
 }): Promise<FinanceDashboardPageModel> {
+  /*
+    THE CLUB'S ZONE, RESOLVED ONCE FOR THE WHOLE PAGE (#3123; INV-CONFIG-002).
+
+    This is the finance dashboard's single zone boundary, and everything below
+    is handed the binding rather than reaching for one of its own.
+    `clubTime()` is `cache()`-wrapped, so the persisted row is read once per
+    render pass no matter how many builders ask.
+
+    IT ALSO SUPPLIES `today`. `finance-dashboard-ranges.ts` is on the browser
+    graph and may not read a zone at all, so the day that picks the reporting
+    month and the financial-year bucket is resolved here and threaded in — one
+    value, from one authority, instead of three `getTodayDateOnly()` reads of
+    the container's clock.
+
+    THE READER IS THE `server-only` ONE, and that was checked rather than
+    assumed: `cli-server-only-reach-census.test.ts` walks the real static import
+    graph from every `tsx` entrypoint and reports no operator script reaching
+    this module. `server-only` throws at import outside the react-server
+    condition, so a CLI edge here would break `npm run` scripts that no route
+    test covers.
+  */
+  const club = await clubTime();
   const activeLodges = await prisma.lodge.findMany({
     where: { active: true },
     select: { id: true, name: true },
@@ -1620,11 +1668,12 @@ export async function buildFinanceDashboardPageModel(input: {
   // it, exactly as the occupancy and pricing reads below do.
   const [seasons, sync, financialYearEndMonth] = await Promise.all([
     loadSeasons(seasonLodgeId, seasonLodgeId === null && selectableLodges.length > 1),
-    buildSyncStatus(),
+    buildSyncStatus(club),
     refreshFinancialYearConfig(),
   ]);
   const selection = resolveFinanceDashboardSelection({
     searchParams: input.searchParams,
+    today: dateOnlyInstantOf(club.today()),
     seasons,
     financialYearEndMonth,
   });
@@ -1651,7 +1700,7 @@ export async function buildFinanceDashboardPageModel(input: {
   } else if (selection.view === "pricing-sensitivity") {
     viewModel = await buildPricingSensitivityDashboard(selection, selectedLodgeId);
   } else if (selection.view === "cash") {
-    viewModel = await buildCashDashboard(selection);
+    viewModel = await buildCashDashboard(club, selection);
   } else if (selection.view === "working-capital") {
     viewModel = await buildBalanceOrWorkingCapitalDashboard({
       selection,
@@ -1667,7 +1716,7 @@ export async function buildFinanceDashboardPageModel(input: {
   }
 
   return {
-    generatedOn: formatDateTime(new Date()),
+    generatedOn: formatDateTime(club, new Date()),
     isManager: hasFinanceManagerAccess(input.member),
     selection,
     ratios,

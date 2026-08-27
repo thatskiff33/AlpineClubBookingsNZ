@@ -18,7 +18,7 @@ import {
   type AuditTimelineResponse,
 } from "@/lib/audit-query";
 import { auditCategoryBadgeClass } from "@/lib/audit-category-badges";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 type AuditTimelineProps = {
   endpoint: string;
@@ -29,13 +29,20 @@ type AuditTimelineProps = {
   categoryOptions?: ReadonlyArray<{ value: string; label: string }>;
 };
 
-function formatDateTime(value: string) {
-  // Club time (#2264). The audit trail is read against the club's own clock —
-  // the hand-rolled bag below pinned only the locale, so an officer reading the
-  // timeline from overseas saw every entry shifted into their own zone. The
-  // shared helper renders the same shape ("16 Apr 2026, 10:30 am") with the
-  // zone pinned too.
-  return formatNZDateTime(new Date(value));
+/**
+ * The club's own clock, for a trail read against the club's own day.
+ *
+ * The hand-rolled bag this replaced pinned only the LOCALE, so an officer
+ * reading the timeline from overseas saw every entry shifted into their zone
+ * (#2264). The stamp is a real INSTANT, so it projects through the club's PERSISTED
+ * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. Same
+ * shape as before - only the zone's AUTHORITY moved, from the environment to
+ * the club's recorded setting. A hook because that setting reaches the browser
+ * as data through `ClubTimeProvider`, so it is not a module constant any more.
+ */
+function useAuditTimestampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDateTime(new Date(value));
 }
 
 function getCategoryLabel(category: string) {
@@ -85,6 +92,7 @@ export function AuditTimeline({
   showAdminEntityLinks = false,
   categoryOptions = AUDIT_TIMELINE_CATEGORY_OPTIONS,
 }: AuditTimelineProps) {
+  const formatDateTime = useAuditTimestampFormatter();
   const [entries, setEntries] = useState<AuditTimelineEntry[]>([]);
   const [category, setCategory] = useState("all");
   const [page, setPage] = useState(1);

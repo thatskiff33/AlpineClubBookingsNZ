@@ -152,6 +152,12 @@ function authHeaders(apiKey: string): HeadersInit {
   };
 }
 
+/**
+ * Sharing carries image bytes, so it gets its own, longer ceiling: the ordinary
+ * timeout is sized for small JSON calls and would abort a legitimate upload.
+ */
+const SHARE_TIMEOUT_MS = 60_000;
+
 /** Longest remote-supplied error text we will carry into a message or audit row. */
 const MAX_REMOTE_ERROR_CHARS = 200;
 
@@ -179,6 +185,249 @@ async function readError(res: Response): Promise<string> {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Headers for a multipart request.
+ *
+ * Content-Type is deliberately ABSENT: `fetch` sets it from the FormData
+ * together with the boundary, and setting it by hand produces a body the
+ * server cannot parse because the boundary does not match.
+ */
+function multipartAuthHeaders(apiKey: string): HeadersInit {
+  return {
+    Accept: "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+}
+
+/** One image to send with a shared post. */
+export interface SharedPostImage {
+  /** This club's own publicId, so the server can rewrite the body's URLs. */
+  publicId: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+const sharedPostResultSchema = z.object({
+  id: z.string().min(1),
+  images: z.number().int().nonnegative().optional(),
+  baseUrl: z.string().optional(),
+});
+export type SharedPostResult = z.infer<typeof sharedPostResultSchema>;
+
+/**
+ * Share one board post with the network.
+ *
+ * The images are sent in the same ORDER as `image_ids`, which is the contract
+ * the server uses to rewrite the body's image URLs onto its own copies. Send
+ * them out of order and every picture in the post ends up attached to the
+ * wrong paragraph.
+ *
+ * Author identity is whatever the caller passes, and the server cannot verify
+ * any of it — it trusts this club's API key. That is exactly why the route
+ * that calls this takes the author from the session and never from the
+ * request body.
+ */
+export async function shareClubPost(input: {
+  authorUserId: string;
+  authorName: string;
+  content: string;
+  bodyHtml: string | null;
+  images: SharedPostImage[];
+}): Promise<SharedPostResult> {
+  const { baseUrl, apiKey } = await resolveConnection();
+
+  const form = new FormData();
+  form.append("author_user_id", input.authorUserId);
+  form.append("author_name", input.authorName);
+  // authorEmail is deliberately NOT sent. The server holds it only for
+  // moderation and never serialises it, but a club that does not need to send
+  // a member's address should not send one.
+  form.append("content", input.content);
+  if (input.bodyHtml) form.append("body_html", input.bodyHtml);
+  if (input.images.length > 0) {
+    form.append("image_ids", input.images.map((i) => i.publicId).join(","));
+    for (const image of input.images) {
+      form.append(
+        "images",
+        new Blob([new Uint8Array(image.bytes)], { type: image.mimeType }),
+        `${image.publicId}.webp`,
+      );
+    }
+  }
+
+  const res = await fetch(`${baseUrl}/api/v1/posts`, {
+    method: "POST",
+    cache: "no-store",
+    headers: multipartAuthHeaders(apiKey),
+    body: form,
+    signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return sharedPostResultSchema.parse(await res.json());
+}
+
+/**
+ * Withdraw a previously shared post from the network.
+ *
+ * Idempotent by design: a 404 means the server has already forgotten it, which
+ * is the state the caller wanted, so it is a success rather than an error. A
+ * withdrawal that reported failure on a second attempt would leave the local
+ * row stuck claiming to be shared forever.
+ */
+export async function withdrawClubPost(serverPostId: string): Promise<void> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const res = await fetch(
+    `${baseUrl}/api/v1/posts/${encodeURIComponent(serverPostId)}`,
+    {
+      method: "DELETE",
+      cache: "no-store",
+      headers: authHeaders(apiKey),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  );
+  if (res.status === 404) return;
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+}
+
+/**
+ * One post as the central server serialises it. Note what is absent: no
+ * author identifiers and no email — the server never sends another club's
+ * member identity, only the display name.
+ */
+const syncPostSchema = z.object({
+  id: z.string().min(1).max(64),
+  club: z.object({
+    id: z.string().min(1),
+    name: z.string().min(1).max(200),
+    code: z.string().min(1).max(40),
+  }),
+  authorName: z.string().min(1).max(200),
+  content: z.string().max(4000),
+  bodyHtml: z.string().max(20_000).nullable().optional(),
+  images: z
+    .array(
+      z.object({
+        url: z.string().min(1).max(2000),
+        width: z.number().int().nullable().optional(),
+        height: z.number().int().nullable().optional(),
+      }),
+    )
+    .max(12)
+    .default([]),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type SyncPost = z.infer<typeof syncPostSchema>;
+
+const syncChangeSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("visible"), post: syncPostSchema }),
+  z.object({
+    state: z.literal("removed"),
+    id: z.string().min(1).max(64),
+    reason: z.enum(["hidden", "removed"]),
+  }),
+]);
+
+const syncEnvelopeSchema = z.object({
+  changes: z.array(syncChangeSchema).max(200),
+  cursor: z
+    .object({ since: z.string().min(1), sinceId: z.string().min(1) })
+    .nullable()
+    .optional(),
+  hasMore: z.boolean().default(false),
+});
+export type SyncEnvelope = z.infer<typeof syncEnvelopeSchema>;
+
+/**
+ * Pull one page of the shared-post mirror cursor.
+ *
+ * `since`/`sinceId` are the server's own cursor handed back from the previous
+ * page — opaque here on purpose. Omitting them asks for a FULL sync, which the
+ * server answers with visible posts only and no tombstone backlog.
+ */
+export async function pullSharedPostSync(cursor: {
+  since?: string | null;
+  sinceId?: string | null;
+}): Promise<SyncEnvelope> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const url = new URL(`${baseUrl}/api/v1/feed/sync`);
+  if (cursor.since) {
+    url.searchParams.set("since", cursor.since);
+    if (cursor.sinceId) url.searchParams.set("sinceId", cursor.sinceId);
+  }
+  const res = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return syncEnvelopeSchema.parse(await res.json());
+}
+
+/**
+ * Fetch one mirrored image's bytes from the central server.
+ *
+ * The URL comes out of a sync page this client just validated, but it is still
+ * pinned to the configured base URL rather than fetched as given: a compromised
+ * or misbehaving server must not be able to point this install's sync pass at
+ * an arbitrary third host.
+ */
+export async function fetchSharedPostImage(
+  imageUrl: string,
+): Promise<Uint8Array | null> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const base = new URL(baseUrl);
+  let target: URL;
+  try {
+    target = new URL(imageUrl, baseUrl);
+  } catch {
+    return null;
+  }
+  if (target.origin !== base.origin) return null;
+  if (!/^\/api\/images\/posts\/[0-9a-f]{32}(\.webp)?$/.test(target.pathname)) {
+    return null;
+  }
+
+  const res = await fetch(target, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(SHARE_TIMEOUT_MS),
+  });
+  if (!res.ok) return null;
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+const pushTargetResultSchema = z.object({
+  url: z.string(),
+  secretVersion: z.number().int().positive(),
+  secret: z.string().min(32),
+});
+export type PushTargetResult = z.infer<typeof pushTargetResultSchema>;
+
+/**
+ * Tell the central server where to push shared posts for this install.
+ *
+ * Returns the signing secret the webhook must verify pushes with. The caller
+ * stores it in the encrypted credential store — it is a secret exactly like
+ * the API key beside it, and it never belongs in a plain settings row.
+ */
+export async function registerPushTarget(
+  callbackUrl: string,
+): Promise<PushTargetResult> {
+  const { baseUrl, apiKey } = await resolveConnection();
+  const res = await fetch(`${baseUrl}/api/v1/push-target`, {
+    method: "PUT",
+    cache: "no-store",
+    headers: authHeaders(apiKey),
+    body: JSON.stringify({ url: callbackUrl }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ServerNzApiError(res.status, await readError(res));
+  return pushTargetResultSchema.parse(await res.json());
 }
 
 /** Upload the club's Other Clubs entries to the central server. */

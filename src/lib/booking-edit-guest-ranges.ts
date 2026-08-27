@@ -7,10 +7,14 @@ import {
 } from "@/lib/pricing";
 import {
   addDaysDateOnly,
-  formatDateOnlyForTimeZone,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  requireStoredCalendarDay,
+  type CalendarDate,
+} from "@/lib/club-time";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   expandStayEnvelopeToNightKeys,
   getExplicitGuestBedNightKeys,
@@ -241,9 +245,28 @@ function minDate(a: Date, b: Date): Date {
   return a < b ? a : b;
 }
 
-/** The NZ date-only key of a date-only value, the scheme every night set uses. */
-function dateOnlyKey(value: Date): string {
-  return formatDateOnlyForTimeZone(value);
+/**
+ * The lodge-night key of a stored calendar day - the scheme every night set uses.
+ *
+ * DECODES, DOES NOT PROJECT (#3107, INV-DATE-013). The keys this is compared
+ * against come from `getExplicitGuestBedNightKeys`, whose `BookingGuestNight`
+ * rows were never projected, so behind Greenwich a night's price never matched
+ * the night it was the price OF and that night silently repriced at today's rate
+ * - the failure `storedNightPricesByKey` below warns about under INV-DATE-020.
+ *
+ * A second copy of `booking-guest-stay-ranges.ts`'s own derivation, kept only
+ * because that one is module-private behind bodies its contract test freezes
+ * byte-for-byte. The two key the same night sets and must move together.
+ */
+function dateOnlyKey(value: Date): CalendarDate {
+  return calendarDateOfDateOnlyInstant(
+    requireStoredCalendarDay(value, {
+      subject: "A lodge-night key",
+      instead:
+        "Pass the stored calendar day the night is, or resolve a real timestamp's club " +
+        "day with clubCalendarDateOf first and pass that.",
+    })
+  );
 }
 
 /**
@@ -677,10 +700,10 @@ function composeProposedNightPrices(args: {
 export function buildInProgressGuestRangePlan(
   input: BuildInProgressGuestRangePlanInput
 ): BookingEditGuestRangePlan {
-  const editableFrom = normalizeDateOnlyForTimeZone(input.editableFrom);
-  const bookingCheckIn = normalizeDateOnlyForTimeZone(input.booking.checkIn);
-  const bookingCheckOut = normalizeDateOnlyForTimeZone(input.booking.checkOut);
-  const newCheckOut = normalizeDateOnlyForTimeZone(input.newCheckOut);
+  const editableFrom = storedDateOnly(input.editableFrom);
+  const bookingCheckIn = storedDateOnly(input.booking.checkIn);
+  const bookingCheckOut = storedDateOnly(input.booking.checkOut);
+  const newCheckOut = storedDateOnly(input.newCheckOut);
   const addGuests = input.addGuests ?? [];
   const removeSet = new Set(input.removeGuestIds ?? []);
 
@@ -713,8 +736,8 @@ export function buildInProgressGuestRangePlan(
   // two pricing passes below are party-wide and this loop must therefore finish
   // before either of them runs.
   const existingNightPlans = input.booking.guests.map((guest) => {
-    const stayStart = normalizeDateOnlyForTimeZone(guest.stayStart ?? bookingCheckIn);
-    const stayEnd = normalizeDateOnlyForTimeZone(guest.stayEnd ?? bookingCheckOut);
+    const stayStart = storedDateOnly(guest.stayStart ?? bookingCheckIn);
+    const stayEnd = storedDateOnly(guest.stayEnd ?? bookingCheckOut);
     // #2736: the nights this guest actually holds today. The explicit
     // `BookingGuestNight` set wins; the half-open envelope is the fallback for a
     // guest carrying no night rows at all (a legacy row, or a booking converted

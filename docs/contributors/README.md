@@ -46,8 +46,9 @@ in. Cite rules by id, never by line number.
   [public content](../invariants/public-content.md),
   [analytics and privacy](../invariants/analytics-and-privacy.md),
   [integrations](../invariants/integrations.md),
-  [operations](../invariants/operations.md), and
-  [product configuration](../invariants/product-configuration.md).
+  [operations](../invariants/operations.md),
+  [product configuration](../invariants/product-configuration.md), and
+  [single source of truth](../invariants/single-source-of-truth.md).
 - [`../invariants/SCHEME.md`](../invariants/SCHEME.md) — how invariant ids are
   allocated and what an entry must contain.
 - [`../invariants/_FOLLOW_UPS.md`](../invariants/_FOLLOW_UPS.md) — invariant work
@@ -55,6 +56,10 @@ in. Cite rules by id, never by line number.
 - [`../STATE_MACHINES.md`](../STATE_MACHINES.md) — every status lifecycle:
   booking, payment, membership, waitlist, bed allocation, email retry, Xero
   outbox, cron recovery, sign-in, and two dozen more.
+- [`../CLUB_TIME_KERNEL.md`](../CLUB_TIME_KERNEL.md) — the one place dates and
+  times turn into each other: the calendar-date / instant / club-local-scheduled
+  distinction, where the club's zone comes from, and why a wall time may not
+  exist or may exist twice.
 - [`../CAPACITY_MODEL.md`](../CAPACITY_MODEL.md) — how each lodge's bookable
   capacity is decided in every configuration.
 - [`../CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md) — the

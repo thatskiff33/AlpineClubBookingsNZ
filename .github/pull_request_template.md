@@ -69,6 +69,18 @@
 - Relevant open/last-10 PR numbers, counterpart writers/tests, and compatibility evidence:
 - Provider calls inside a transaction (write `None`, or justify the bounded exception from `docs/CONCURRENCY_AND_LOCKING.md`):
 
+## Single Source Of Truth
+
+<!-- INV-SSOT. Not a checkbox: name the fact, and where it is DEFINED. A second
+     FORM of one fact is fine; a second DEFINITION is the defect. Write `N/A`
+     only when this change defines no constant, helper, formatter, type,
+     validation rule or config value that a second place could need. -->
+
+- New or moved definitions, and the one module each now lives in:
+- If anything was copied rather than imported, or a guard was added instead of
+  making the wrong thing unrepresentable — which structural option was rejected
+  and why:
+
 ## Payment Or Accounting Impact
 
 -

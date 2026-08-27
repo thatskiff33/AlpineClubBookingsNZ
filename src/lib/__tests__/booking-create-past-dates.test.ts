@@ -109,22 +109,38 @@ import {
   createConfirmedBooking,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — `createConfirmedBooking` is transaction-aware, so its
+// caller resolves the CLUB's day and threads it in. Pinned to the frozen clock's
+// club day, which is what the service used to read for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
+
+/**
+ * The club's zone, named rather than left to `getTodayDateOnly`'s `APP_TIME_ZONE`
+ * default, which #3123 deletes. `createConfirmedBooking` resolves its own "today"
+ * through `readClubTimeZoneOutsideRequest()`; prisma is mocked here with no
+ * `clubTimeSettings` delegate, so that read fails soft to the environment seed
+ * and then to `Pacific/Auckland`. Naming it keeps this file's fixtures anchored
+ * to the same day the service is measuring from.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 // Relative dates so the scenarios never rot with the wall clock. The plain
 // on-behalf / email tests use a future window; the retroactive scenarios use a
 // past window, because the service applies the retroactive semantics (capacity
 // warn-and-confirm) only when the resolved envelope starts in the past.
-const checkIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const checkOut = addDaysDateOnly(getTodayDateOnly(), 32);
-const pastCheckIn = addDaysDateOnly(getTodayDateOnly(), -10);
-const pastCheckOut = addDaysDateOnly(getTodayDateOnly(), -8);
+const checkIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const checkOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 32);
+const pastCheckIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -10);
+const pastCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -8);
 
 function seasonWithRate(rateCents: number) {
   return [
     {
       id: "season-1",
-      startDate: addDaysDateOnly(getTodayDateOnly(), -400),
-      endDate: addDaysDateOnly(getTodayDateOnly(), 60),
+      startDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -400),
+      endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 60),
       // Membership-type-keyed rates (#1930, E4): both FULL and NON_MEMBER
       // priced at the same rate here, matching the old member/non-member pair.
       membershipTypeRates: [
@@ -218,6 +234,7 @@ function baseInput(
     shouldBePending: hasNonMembers,
     holdDays: 7,
     lodgeId: "lodge-1",
+    todayAtClub: FIXTURE_CLUB_DAY,
     ...overrides,
   };
 }

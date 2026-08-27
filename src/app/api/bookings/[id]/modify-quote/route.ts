@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { overCapacityNights } from "@/lib/over-capacity-confirmation";
+import { buildShiftPreviewResponse } from "@/lib/booking-shift-preview";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
@@ -57,8 +57,11 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
-import { z } from "zod";
-import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
+import {
+  modifyQuoteSchema,
+  OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
+  type NormalizedAddGuest,
+} from "@/lib/booking-modify-quote-request";
 import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
@@ -70,7 +73,6 @@ import {
   loadMemberGuestAddPolicy,
   markCrossFamilyGuestsOnBooking,
   markCrossFamilyMemberGuests,
-  type MemberGuestConsentGuestFields,
 } from "@/lib/member-guest-add-policy";
 import { isOperationallyPresentConsent } from "@/lib/member-guest-consent";
 import {
@@ -87,7 +89,6 @@ import {
   buildPaidUpAdultRefusalBody,
   evaluateNonMemberPricingRequirements,
 } from "@/lib/subscription-lockout-enforcement";
-import { nameField } from "@/lib/zod-helpers";
 import { BookingGuestStayRangeValidationError } from "@/lib/booking-guest-stay-range-input";
 import {
   resolveModificationStayRanges,
@@ -100,6 +101,8 @@ import {
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
+import { clubTime } from "@/lib/club-time/server";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   calculateModificationSettlementOptions,
   GUEST_MEMBER_LINK_IN_PROGRESS_MESSAGE,
@@ -116,14 +119,9 @@ import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
 } from "@/lib/booking-edit-guest-ranges";
-import {
-  addDaysDateOnly,
-  eachDateOnlyInRange,
-  formatDateOnly,
-  normalizeDateOnlyForTimeZone,
-  parseDateOnly,
-} from "@/lib/date-only";
-import { getSeasonYear } from "@/lib/utils";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import {
   findBookingMemberNightConflicts,
@@ -131,119 +129,6 @@ import {
 } from "@/lib/booking-member-night-conflicts";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import logger from "@/lib/logger";
-
-const modifyQuoteSchema = z.object({
-  checkIn: z.string().optional(),
-  checkOut: z.string().optional(),
-  addGuests: z
-    .array(
-      z.object({
-        firstName: nameField(),
-        lastName: nameField(),
-        ageTier: bookableAgeTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
-      })
-    )
-    .optional(),
-  removeGuestIds: z.array(z.string()).optional(),
-  guestStayRanges: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-        nights: z.array(z.string()).max(370).optional(),
-      })
-    )
-    .optional(),
-  guestUpdates: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        firstName: nameField(),
-        lastName: nameField(),
-      })
-    )
-    .optional(),
-  // #2337: mirror of the apply route's placeholder→member link so the preview
-  // shows the same re-rate delta the save will settle. Gated identically.
-  linkGuestToMember: z
-    .array(
-      z.object({
-        guestId: z.string().min(1),
-        memberId: z.string().min(1),
-      })
-    )
-    .max(60)
-    .optional(),
-  // Other Lodges epic: mirror of the apply route's reciprocal other-club rate
-  // election, so the preview prices the tick exactly as the save will charge it.
-  // Both fields are an END STATE, never a delta — see booking-other-lodge-rate.ts.
-  otherLodgeId: z.string().min(1).nullable().optional(),
-  otherLodgeMemberGuestIds: z.array(z.string().min(1)).max(200).optional(),
-  promoCode: z.string().optional(),
-  // #2266 (MED-4): beneficiaries for guest-targeted promo codes, mirroring the
-  // apply route — EXISTING guests bind by bookingGuestId (a stale id refuses
-  // loudly instead of re-pointing the discount), and positional indexes exist
-  // only for TO-BE-ADDED guests within this request, relative to addGuests.
-  promoGuestIds: z.array(z.string().min(1)).max(200).optional(),
-  promoAddedGuestIndexes: z.array(z.number().int().min(0)).max(200).optional(),
-  removePromoCode: z.boolean().optional(),
-  // #2266: the member's credit election, mirroring the create quote/create
-  // routes. The preview never moves money — the apply route stores the election
-  // on the booking (Booking.creditElectionCents, #2265) and the pay step
-  // consumes it — so the preview only has to keep the request price-preserving
-  // when credit is the ONLY change.
-  applyCreditCents: z.number().int().min(0).max(100_000_000).optional(),
-  // Admin-only date override (issue #1668). The preview mirrors apply exactly.
-  adminOverride: z.boolean().optional(),
-  pricingMode: z.enum(["shift", "recalculate"]).optional(),
-  confirmOverCapacity: z.boolean().optional(),
-  // Admin-only (#1746): mirror of the apply route's partner-sharer flags so
-  // the preview reflects the #1745 reserved-slot outcome.
-  partnerSharedGuests: z
-    .array(
-      z.object({
-        memberId: z.string().min(1),
-        partnerMemberId: z.string().min(1),
-      }),
-    )
-    .max(10)
-    .optional(),
-});
-
-const OVERRIDE_DATE_ONLY_QUOTE_FIELDS = [
-  "addGuests",
-  "removeGuestIds",
-  "guestStayRanges",
-  "guestUpdates",
-  // #2337: a placeholder→member link is a guest change, never a date override.
-  "linkGuestToMember",
-  // The other-lodge rate election re-rates guests, so it is a guest change too.
-  "otherLodgeId",
-  "otherLodgeMemberGuestIds",
-  "promoCode",
-  "promoGuestIds",
-  "promoAddedGuestIndexes",
-  "removePromoCode",
-  // #1746: partner-shared flags ride guest changes, never a date override.
-  "partnerSharedGuests",
-] as const;
-
-type NormalizedAddGuest = MemberGuestConsentGuestFields & {
-  firstName: string;
-  lastName: string;
-  ageTier: AgeTier;
-  isMember: boolean;
-  memberId?: string;
-  stayStart?: string | null;
-  stayEnd?: string | null;
-  nights?: ReadonlyArray<string> | null;
-};
 
 type PromoRedemptionWithTargets = {
   promoCode: {
@@ -557,12 +442,21 @@ export async function POST(
     );
   }
 
+  // #3123 — the CLUB's day, from its persisted zone (`INV-CONFIG-002`),
+  // resolved ONCE for this whole quote. Five decisions below read it: the edit
+  // policy here, the late-notice change fee's two `daysUntilDate` operands, the
+  // promotion's validity window, and the reduction refund's settlement tier.
+  // They are the same question, so they must not be able to answer it
+  // differently — a quote whose fee said one day and whose refund tier said
+  // another would be internally inconsistent across club midnight.
+  const todayAtClub = (await clubTime()).today();
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride,
+    today: dateOnlyInstantOf(todayAtClub),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(
@@ -586,6 +480,9 @@ export async function POST(
       );
     }
     return buildShiftPreviewResponse({
+      // The quote's one club day, so the shift preview's person-night guard
+      // answers on the same day as everything above it.
+      todayAtClub,
       booking,
       bookingId,
       actorMemberId: session.user.id,
@@ -763,9 +660,9 @@ export async function POST(
   // the open: the read is cached but can reach Xero for the organisation's
   // accounting year when the Xero module is on, and — the reason the hoist is a
   // net improvement rather than a cost — it reseeds the financial-year cache
-  // BEFORE the `getSeasonYear(booking.checkIn)` calls below, so a cold process at
-  // a club with a non-March year end no longer judges the season against the
-  // March default.
+  // BEFORE the `seasonYearOfStoredDate(booking.checkIn)` calls below, so a cold
+  // process at a club with a non-March year end no longer judges the season
+  // against the March default.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
 
   let otherLodgeElection: OtherLodgeRateElection;
@@ -791,7 +688,7 @@ export async function POST(
     const otherLodgeEligibleGuestIds =
       isAdmin && requestCarriesOtherLodgeElection(otherLodgeInput)
         ? await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-            seasonYear: getSeasonYear(booking.checkIn),
+            seasonYear: seasonYearOfStoredDate(booking.checkIn),
             guests: booking.guests,
           })
         : new Set<string>();
@@ -998,12 +895,12 @@ export async function POST(
   const finalRequestedCheckOut = envelopeRanges.ranges.checkOut;
 
   const isInProgressEdit = editPolicy.mode === "in-progress";
-  const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
+  const bookingCheckIn = storedDateOnly(booking.checkIn);
   const editableFrom = editPolicy.editableFrom;
 
   if (isInProgressEdit) {
     if (
-      formatDateOnly(normalizeDateOnlyForTimeZone(finalRequestedCheckIn)) !==
+      formatDateOnly(storedDateOnly(finalRequestedCheckIn)) !==
         formatDateOnly(bookingCheckIn)
     ) {
       return NextResponse.json(
@@ -1011,7 +908,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    if (editableFrom && normalizeDateOnlyForTimeZone(finalRequestedCheckOut) < editableFrom) {
+    if (editableFrom && storedDateOnly(finalRequestedCheckOut) < editableFrom) {
       return NextResponse.json(
         { error: "NZ today and earlier are locked for self-service changes" },
         { status: 400 }
@@ -1046,9 +943,12 @@ export async function POST(
         { status: 400 }
       );
     }
+    // TRANSCRIBED, not imported: `booking-date-modification-frame-parity.test.ts`
+    // → `previewRefusesSelfServiceWindow` copies this gate, so nothing here can
+    // fail that file. Change this and update the oracle in the same commit (#3088).
   } else if (
     !isAdmin &&
-    normalizeDateOnlyForTimeZone(finalRequestedCheckIn) <= editPolicy.today
+    storedDateOnly(finalRequestedCheckIn) <= editPolicy.today
   ) {
     return NextResponse.json(
       { error: "NZ today and earlier are locked for self-service changes" },
@@ -1213,7 +1113,7 @@ export async function POST(
   if (partyThrottled) return partyThrottled;
 
   const totalGuestCount = guestsForPricing.length;
-  const seasonYear = getSeasonYear(newCheckIn);
+  const seasonYear = seasonYearOfStoredDate(newCheckIn);
 
   const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
   const lodgeCapacity = await getLodgeCapacity(bookingLodgeId);
@@ -1241,6 +1141,9 @@ export async function POST(
       checkOut: newCheckOut,
       guests: guestsForPricing,
       excludeBookingId: booking.id,
+      // The one club day this quote resolved above — the same value the edit
+      // policy, the change fee and the settlement tier read (`INV-LOCK-004`).
+      today: dateOnlyInstantOf(todayAtClub),
     });
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
@@ -1748,10 +1651,10 @@ export async function POST(
   const newNights = getStayNights(newCheckIn, newCheckOut).length;
   const datesChanged = targetDatesChanged;
   const guestRangesChanged = proposedRemainingGuests.some((entry) => {
-    const currentStayStart = normalizeDateOnlyForTimeZone(
+    const currentStayStart = storedDateOnly(
       entry.guest.stayStart ?? booking.checkIn
     );
-    const currentStayEnd = normalizeDateOnlyForTimeZone(
+    const currentStayEnd = storedDateOnly(
       entry.guest.stayEnd ?? booking.checkOut
     );
     return (
@@ -1776,8 +1679,8 @@ export async function POST(
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
-      stayStart: normalizeDateOnlyForTimeZone(g.stayStart ?? booking.checkIn),
-      stayEnd: normalizeDateOnlyForTimeZone(g.stayEnd ?? booking.checkOut),
+      stayStart: storedDateOnly(g.stayStart ?? booking.checkIn),
+      stayEnd: storedDateOnly(g.stayEnd ?? booking.checkOut),
     }));
     const newRemainingForPricing = proposedRemainingGuests.map((entry) => ({
       ageTier: entry.guest.ageTier as AgeTier,
@@ -1839,11 +1742,12 @@ export async function POST(
     !isInProgressEdit &&
     booking.status !== "DRAFT"
   ) {
-    const now = new Date();
     const policy = await loadCancellationPolicy(booking.checkIn, bookingLodgeId);
     const feeResult = calculateChangeFee({
-      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),
-      daysUntilNewCheckIn: daysUntilDate(newCheckIn, now),
+      // #3123 — one club day for both operands, so the two day-counts cannot
+      // straddle club midnight and quote a fee neither tier justifies.
+      daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, todayAtClub),
+      daysUntilNewCheckIn: daysUntilDate(newCheckIn, todayAtClub),
       originalFinalPriceCents: booking.finalPriceCents,
       policyRules: policy,
     });
@@ -1991,7 +1895,7 @@ export async function POST(
       totalPriceCents: newTotalPriceCents,
       memberId: booking.memberId,
       guests: quoteGuestNightRates,
-    }, bookingId, bookingLodgeId, {
+    }, todayAtClub, bookingId, bookingLodgeId, {
       selectedGuestIndexes: quoteSelectedGuestIndexes,
     });
 
@@ -2043,6 +1947,7 @@ export async function POST(
         // Same rule as `applyPromoCodeChanges`' reprice branch, so the preview
         // and the save cannot tell different stories (#2390).
         capOverflow: "coverExisting",
+        todayAtClub,
       },
     );
 
@@ -2090,6 +1995,8 @@ export async function POST(
   const settlementOptions = await calculateModificationSettlementOptions({
     booking,
     netChargeCents,
+    db: prisma, // advisory quote: no transaction, no lock held
+    todayAtClub,
   });
 
   return NextResponse.json({
@@ -2141,191 +2048,6 @@ export async function POST(
             date: formatDateOnly(n.date),
             availableBeds: n.availableBeds,
           })),
-        }),
-  });
-}
-
-/**
- * Shift-mode admin override preview (issue #1668): a pure-translation quote that
- * must match {@link adminShiftBookingDates} exactly for the same input. Every
- * money field echoes the stored booking; the only thing that can vary is
- * whether the shifted nights are over capacity, which the UI surfaces as an
- * explicit confirm rather than a hard error.
- */
-async function buildShiftPreviewResponse({
-  booking,
-  bookingId,
-  actorMemberId,
-  actorRole,
-  newCheckInStr,
-  newCheckOutStr,
-}: {
-  booking: {
-    memberId: string;
-    status: string;
-    checkIn: Date;
-    checkOut: Date;
-    lodgeId: string | null;
-    totalPriceCents: number;
-    discountCents: number;
-    promoAdjustmentCents: number;
-    finalPriceCents: number;
-    guests: Array<{
-      memberId?: string | null;
-      stayStart: Date;
-      stayEnd: Date;
-      nights: Array<{ stayDate: Date }>;
-    }>;
-  };
-  bookingId: string;
-  actorMemberId: string;
-  actorRole: "ADMIN" | "USER";
-  newCheckInStr?: string;
-  newCheckOutStr?: string;
-}): Promise<NextResponse> {
-  const oldCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-  const oldCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
-  const originalNightCount = eachDateOnlyInRange(oldCheckIn, oldCheckOut).length;
-
-  const providedCheckIn = newCheckInStr ? parseDateOnly(newCheckInStr) : null;
-  const providedCheckOut = newCheckOutStr ? parseDateOnly(newCheckOutStr) : null;
-  if (
-    (providedCheckIn && Number.isNaN(providedCheckIn.getTime())) ||
-    (providedCheckOut && Number.isNaN(providedCheckOut.getTime()))
-  ) {
-    return NextResponse.json({ error: "Invalid booking dates" }, { status: 400 });
-  }
-
-  let newCheckIn: Date;
-  let newCheckOut: Date;
-  if (providedCheckIn && providedCheckOut) {
-    newCheckIn = providedCheckIn;
-    newCheckOut = providedCheckOut;
-  } else if (providedCheckIn) {
-    newCheckIn = providedCheckIn;
-    newCheckOut = addDaysDateOnly(providedCheckIn, originalNightCount);
-  } else if (providedCheckOut) {
-    newCheckOut = providedCheckOut;
-    newCheckIn = addDaysDateOnly(providedCheckOut, -originalNightCount);
-  } else {
-    return NextResponse.json(
-      { error: "Provide a new check-in or check-out date" },
-      { status: 400 },
-    );
-  }
-
-  if (newCheckOut <= newCheckIn) {
-    return NextResponse.json(
-      { error: "Check-out must be after check-in" },
-      { status: 400 },
-    );
-  }
-  const newNightCount = eachDateOnlyInRange(newCheckIn, newCheckOut).length;
-  if (newNightCount !== originalNightCount) {
-    return NextResponse.json(
-      {
-        error:
-          'Shift dates only moves the stay without changing its length — use "Recalculate price" to change the number of nights',
-      },
-      { status: 400 },
-    );
-  }
-
-  // Whole-day delta between two UTC-midnight date-only values (DST-safe).
-  const MS_PER_DAY = 24 * 60 * 60 * 1000;
-  const deltaDays = Math.round(
-    (newCheckIn.getTime() - oldCheckIn.getTime()) / MS_PER_DAY,
-  );
-
-  const translatedRanges = booking.guests.map((guest) => ({
-    memberId: guest.memberId ?? null,
-    stayStart: addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayStart),
-      deltaDays,
-    ),
-    stayEnd: addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayEnd),
-      deltaDays,
-    ),
-    nights: guest.nights.map((night) =>
-      addDaysDateOnly(normalizeDateOnlyForTimeZone(night.stayDate), deltaDays),
-    ),
-  }));
-
-  // C1 (privacy re-review of MG3 #2308, LOW-3). This is the file's SECOND
-  // person-night guard call and the source contract now checks every one of
-  // them, not just the first. Today it is unreachable except under
-  // `adminOverride`, so `skipAuthorization` is always true here and the call
-  // returns without a query — but "the only member-facing caller is the one
-  // above" is a property of today's gating, not of this function, and the whole
-  // point of C1 was that an unmarked party is a silent read-out. Marking every
-  // caller uniformly costs nothing and cannot be forgotten if the shift preview
-  // is ever opened up.
-  const translatedRangesForGuard = await markCrossFamilyGuestsOnBooking(
-    prisma,
-    booking.memberId,
-    translatedRanges,
-    { skipAuthorization: actorRole === "ADMIN", bookingId },
-  );
-
-  // Member-night conflicts hard-block the shift the same way apply does, so the
-  // preview never shows a clean $0 quote for a move that would 409 on save.
-  const memberNightConflicts = await findBookingMemberNightConflicts(prisma, {
-    actorMemberId,
-    actorRole,
-    checkIn: newCheckIn,
-    checkOut: newCheckOut,
-    guests: translatedRangesForGuard,
-    excludeBookingId: bookingId,
-  });
-  if (memberNightConflicts.length > 0) {
-    return NextResponse.json(
-      getBookingMemberNightConflictResponse(memberNightConflicts),
-      { status: 409 },
-    );
-  }
-
-  const bookingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(prisma));
-  // Non-lifecycle statuses hold no capacity, so a shift cannot overbook — skip
-  // the check exactly like adminShiftBookingDates does so preview matches apply.
-  const capacity = usesActiveBookingEditLifecycle(booking.status)
-    ? await checkCapacityForGuestRanges(
-        bookingLodgeId,
-        newCheckIn,
-        newCheckOut,
-        translatedRanges,
-        bookingId,
-      )
-    : { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] };
-
-  return NextResponse.json({
-    newTotalPriceCents: booking.totalPriceCents,
-    newDiscountCents: booking.discountCents,
-    newPromoAdjustmentCents: booking.promoAdjustmentCents,
-    newFinalPriceCents: booking.finalPriceCents,
-    priceDiffCents: 0,
-    changeFeeCents: 0,
-    netChargeCents: 0,
-    settlementOptions: null,
-    capacityAvailable: capacity.available,
-    minimumStayValid: true,
-    minimumStayViolations: [],
-    exceptionReview: { violations: [], capacityMode: null },
-    promoStillValid: true,
-    // An admin date SHIFT holds every price as it stands, so no cap is re-run.
-    promoCoverage: null,
-    promoValidation: null,
-    itemizedChanges: [
-      {
-        label: `Dates shifted by ${Math.abs(deltaDays)} night(s) — price unchanged`,
-        amountCents: 0,
-      },
-    ],
-    ...(capacity.available
-      ? {}
-      : {
-          overCapacityConfirmRequired: true,
-          nightDetails: overCapacityNights(capacity),
         }),
   });
 }

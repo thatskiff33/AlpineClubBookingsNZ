@@ -14,21 +14,21 @@ const NO_BARE_TO_LOCALE_DATE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleDateString']",
   message:
-    "INV-DATE-015: Use formatNZDate/formatNZDateTime/formatNZLongDate/formatNZWeekdayDate/formatNZMonthYear from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264).",
+    "INV-DATE-015: Render through @/lib/club-time (CT-2, #2990). Holding a lodge night, a birthday or any other CALENDAR DAY? formatClubDate / formatClubLongDate / formatClubWeekdayDate / formatClubMonthYear, which take no timezone because a calendar day has none. Holding a real INSTANT such as createdAt? formatClubInstantDate / formatClubInstantDateTime and their siblings, with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleDateString renders in the viewer's zone and locale (#2256, #2264). There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 const NO_BARE_TO_LOCALE_TIME_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleTimeString']",
   message:
-    "INV-DATE-015: Use formatNZTime/formatNZDateTime from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264).",
+    "INV-DATE-015: Use formatClubInstantTime / formatClubInstantDateTime from @/lib/club-time (CT-2, #2990), with the club zone from clubTime() (@/lib/club-time/server) on the server or received as data on the client. A bare toLocaleTimeString renders in the viewer's zone and locale (#2256, #2264). There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 const NO_BARE_TO_LOCALE_STRING = {
   selector:
     "CallExpression > MemberExpression.callee[property.name='toLocaleString']",
   message:
-    "INV-DATE-015: Use formatNZDateTime/formatNZDate from @/lib/nzst-date, or a module-level Intl.DateTimeFormat pinned to APP_LOCALE + APP_TIME_ZONE. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason.",
+    "INV-DATE-015: Use formatClubInstantDateTime / formatClubInstantDate from @/lib/club-time (CT-2, #2990) for an instant, or formatClubDate for a calendar day, which takes no timezone at all. A bare toLocaleString on a Date renders in the viewer's zone and locale (#2256, #2264). Formatting a NUMBER? Add the file to the Number-formatting block in this config with a one-line reason. There is no second seam: #3123 deleted @/lib/nzst-date, so the kernel is the only one — do not build another.",
 };
 
 // #2289 — the two shapes of raw SQL that can lie about their own result.
@@ -402,8 +402,11 @@ const RAW_SQL_RESTRICTIONS = [
 // LINT rule rather than a style note is what the duplication hides.
 //
 // The truncation is only correct for a DATE-ONLY receiver. A `@db.Date` column
-// is pinned to UTC midnight as the ENCODING of an NZ calendar day, so reading
-// the UTC day back returns the day it encodes (INV-DATE-010). A bare `DateTime`
+// is pinned to UTC midnight as the ENCODING of a CLUB calendar day and not as a
+// moment (INV-DATE-010), so reading the UTC day back returns the day it encodes
+// — INV-DATE-019's first exact boundary, over the columns INV-DATE-026
+// establishes as calendar days; those are the citation for a decode, and
+// INV-DATE-010 is not (#3080). A bare `DateTime`
 // is a real instant, and New Zealand runs 12-13 hours ahead of UTC, so its UTC
 // day is the PREVIOUS NZ day for roughly the first half of every NZ day — which
 // is how a Xero invoice due date and a finance export both landed a day early
@@ -463,10 +466,10 @@ const RAW_SQL_RESTRICTIONS = [
 // a template literal — which was live in three files, and which no arm of this
 // rule could see until it was added.
 const DATE_TRUNCATION_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Use formatDateOnly / formatMonthOnly from @/lib/date-only for a DATE-ONLY value (a `@db.Date` column, whose UTC midnight IS the NZ calendar day — INV-DATE-010) — and formatDateOnlyForTimeZone for a real instant such as `createdAt`, whose UTC day is the PREVIOUS New Zealand day all morning (#2697). Asking for today? todayDateOnlyForTimeZone() / getTodayDateOnly().";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). New code goes to @/lib/club-time (CT-2, #2990): clubCalendarDateOf(instant, zone) for a real INSTANT such as `createdAt`, whose UTC day is the PREVIOUS club day all morning (#2697); calendarDateOfDateOnlyInstant(value) for a `@db.Date` column, whose UTC midnight IS the encoding of a club calendar day (INV-DATE-010); clubToday(zone) for today. The @/lib/date-only equivalents (formatDateOnly / formatMonthOnly / formatDateOnlyForTimeZone / getTodayDateOnly) are the compatibility adapters CT-6 retires.";
 
 const DATE_SPLIT_MESSAGE =
-  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? formatDateOnly (a date-only value — INV-DATE-010) or formatDateOnlyForTimeZone (a real instant) from @/lib/date-only. Holding a value already serialised to a string? dateOnlyFromIsoString.";
+  "INV-DATE-019: Do not hand-write an ISO date truncation (#2684). Holding a Date? @/lib/club-time (CT-2, #2990): calendarDateOfDateOnlyInstant for a `@db.Date` value (INV-DATE-010) or clubCalendarDateOf(instant, zone) for a real instant. Holding a value already serialised to a string? parseCalendarDate, or dateOnlyFromIsoString from the @/lib/date-only adapter.";
 
 // The ISO producers, spelled both ways a member access can reach them:
 // `d.toISOString()` reads `callee.property.name`, `d["toISOString"]()` reads
@@ -633,10 +636,318 @@ const NO_UNZONED_INTL_DATE_TIME_FORMAT = {
   selector:
     'NewExpression[callee.object.name="Intl"][callee.property.name="DateTimeFormat"]:not(:has(Property[key.name="timeZone"]))',
   message:
-    "INV-DATE-015: An Intl.DateTimeFormat with no `timeZone` renders in the VIEWER's zone, which is the whole defect the toLocaleDateString ban exists for (#2264) — and `en-CA` numeric is `yyyy-MM-dd`, so an unpinned one is a date-only encoding taken from the reader's calendar rather than the club's. Pass `timeZone: APP_TIME_ZONE` from @/config/operational, or use the helpers in @/lib/nzst-date. A formatter that really must follow the reader's clock passes `timeZone: undefined` explicitly.",
+    "INV-DATE-015: An Intl.DateTimeFormat with no `timeZone` renders in the VIEWER's zone, which is the whole defect the toLocaleDateString ban exists for (#2264) — and `en-CA` numeric is `yyyy-MM-dd`, so an unpinned one is a date-only encoding taken from the reader's calendar rather than the club's. Since CT-2 (#2990) no call site should be building one at all: use a named house shape from @/lib/club-time, which owns the only formatter factory in the tree and memoises it by zone. A formatter that really must follow the reader's clock passes `timeZone: undefined` explicitly.",
 };
 
 const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
+
+// ---------------------------------------------------------------------------
+// CT-6 (#2991) — the two recurrence paths the epic left mechanically open.
+// ---------------------------------------------------------------------------
+//
+// The three arms above cover the RENDERING escapes (`toLocale*`, an unzoned
+// `Intl.DateTimeFormat`) and the date-only ENCODING escapes. Two classes were
+// still guarded by nothing at all, and each is the shape a whole CT-4 group was
+// spent removing:
+//
+//   * reading a `Date` back through its HOST clock face — `getFullYear()`,
+//     `getMonth()`, `getDate()` — which answers in the container's zone rather
+//     than the club's, so west of Greenwich a stored lodge night reads a day
+//     early. `#3082` (a boundary birthday selecting the wrong price band) and
+//     `#3100` (a stay expander that did not terminate) were both this;
+//   * taking the ENVIRONMENT's zone as civil-time authority, either by reading
+//     `process.env.TZ` directly or by importing `APP_TIME_ZONE`. Since CT-1
+//     (#2989) the club's zone is the persisted `ClubTimeSettings.timeZone`
+//     (`INV-CONFIG-002`); `TZ` seeds that row at setup and has no further say.
+//
+// Both are expressed as `no-restricted-syntax` arms rather than as
+// `no-restricted-imports`, deliberately. Flat config REPLACES a rule's options
+// rather than merging them, and `src/lib/xero-*.ts` already sets
+// `no-restricted-imports` for its own facade rule — so an import-based guard
+// here would be silently lifted for exactly the Xero modules that date
+// financial documents. Everything mandatory lives in ONE array, which is the
+// architecture the fold below already insists on.
+
+const HOST_CLOCK_FACE_READERS =
+  "^(getFullYear|getMonth|getDate|getDay|getHours|getMinutes|getSeconds)$";
+const HOST_CLOCK_FACE_WRITERS =
+  "^(setFullYear|setMonth|setDate|setHours|setMinutes|setSeconds)$";
+
+const HOST_CLOCK_FACE_MESSAGE =
+  "INV-DATE-014 / INV-CONFIG-002: This reads or writes a Date through the HOST's clock face, so it answers in whatever zone the container happens to run in (CT-6, #2991). A `@db.Date` lodge night is UTC midnight, and west of Greenwich `.getDate()` on one returns the PREVIOUS day — that is #3082 (a boundary birthday priced a year young) and #3100 (a stay expander that never terminated). Calendar arithmetic on a stay day: addDaysDateOnly / addMonthsDateOnly / eachDateOnlyInRange / countNightsDateOnly from @/lib/date-only, which are UTC-based and zone-free. A civil date or time from a real instant: clubCalendarDateOf(instant, zone) or a house shape from @/lib/club-time. A DURATION: subtract milliseconds from the instant, which is what `setDate(getDate() - n)` was approximating and gets wrong by an hour across DST. The getUTC* readers are untouched — they name their frame.";
+
+// Both spellings a member access can reach these through, matching the
+// encoding arm above: `d.getDate()` reads `property.name`, `d["getDate"]()`
+// reads `property.value`. The computed form is the documented escape from every
+// syntactic rule in this file, so a new rule should close it on the way in
+// rather than record it as a known limitation.
+const NO_HOST_CLOCK_FACE = [
+  `CallExpression > MemberExpression.callee[property.name=/${HOST_CLOCK_FACE_READERS}/]`,
+  `CallExpression > MemberExpression.callee[property.value=/${HOST_CLOCK_FACE_READERS}/]`,
+  `CallExpression > MemberExpression.callee[property.name=/${HOST_CLOCK_FACE_WRITERS}/]`,
+  `CallExpression > MemberExpression.callee[property.value=/${HOST_CLOCK_FACE_WRITERS}/]`,
+].map((selector) => ({ selector, message: HOST_CLOCK_FACE_MESSAGE }));
+
+const ENVIRONMENT_ZONE_MESSAGE =
+  "INV-CONFIG-002: The environment's timezone is not the club's (CT-1, #2989; CT-6, #2991). `TZ` / `NEXT_PUBLIC_TZ` SEED the persisted `ClubTimeSettings.timeZone` row at setup and have no say afterwards, so a business or display decision taken from them follows whichever container the process happens to be in. Server component or route: clubTimeZone() / clubTime() from @/lib/club-time/server, which is request-scoped and memoised. A cron tick or a CLI, which `server-only` refuses: readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime. A client component: receive the zone as data through ClubTimeProvider — the browser never decides it. @/lib/date-only is the last compatibility adapter this issue retires, and it no longer DEFAULTS a zone: #3123 deleted its six `= APP_TIME_ZONE` defaults, so every helper there now demands one from its caller. The rendering adapter beside it, @/lib/nzst-date, is already deleted (#3123). Do not add a caller, and do not build a replacement.";
+
+// `process.env.TZ` and `process.env.NEXT_PUBLIC_TZ`, read anywhere but the two
+// modules whose job is to read them once.
+//
+// THREE SPELLINGS, because a syntactic rule that closes only the obvious one is
+// a rule with a documented way round it. The dotted form was all this arm
+// matched at first, and a review lens measured that `process.env["TZ"]` and
+// `const { TZ } = process.env` both walked straight past it — while the census
+// beside it looked for `APP_TIME_ZONE` and could not see them either, so for
+// those two spellings the "two instruments" claim was untrue. Both neighbouring
+// arms in this file already close their computed twin on principle
+// (`NO_HOST_CLOCK_FACE` has a `property.value` pair, `NO_ENVIRONMENT_ZONE_IMPORT`
+// an `imported.value` one); this now matches them. Live population is zero, so
+// this costs nothing today and is purely about what may be written next.
+const NO_ENVIRONMENT_ZONE_ENV_READ = [
+  // `process.env.TZ`
+  'MemberExpression[object.object.name="process"][object.property.name="env"][property.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  // `process.env["TZ"]`
+  'MemberExpression[object.object.name="process"][object.property.name="env"][property.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  // `const { TZ } = process.env`, and its quoted-key form
+  'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.name=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+  'VariableDeclarator[init.object.name="process"][init.property.name="env"] > ObjectPattern > Property[key.value=/^(TZ|NEXT_PUBLIC_TZ)$/]',
+].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+// Importing the environment zone by name. `@/config/operational` exports it as
+// a plain string, so nothing downstream of the import can tell it from a club
+// zone — which is how 133 call sites came to take it as a default without one
+// review noticing.
+const NO_ENVIRONMENT_ZONE_IMPORT = [
+  'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.name="APP_TIME_ZONE"]',
+  'ImportDeclaration[source.value="@/config/operational"] > ImportSpecifier[imported.value="APP_TIME_ZONE"]',
+].map((selector) => ({ selector, message: ENVIRONMENT_ZONE_MESSAGE }));
+
+const HOST_CLOCK_RESTRICTIONS = [...NO_HOST_CLOCK_FACE];
+
+const ENVIRONMENT_ZONE_RESTRICTIONS = [
+  ...NO_ENVIRONMENT_ZONE_ENV_READ,
+  ...NO_ENVIRONMENT_ZONE_IMPORT,
+];
+
+// ---------------------------------------------------------------------------
+// CT-6 (#2991) — the class no syntactic guard above can see.
+// ---------------------------------------------------------------------------
+//
+// The host-clock arm matches `.getDate()` where it is WRITTEN. `date-fns` does
+// the identical read inside `node_modules`, so a file that imports `format` or
+// `startOfMonth` has every one of that arm's defects and is clean under every
+// selector in this file. That is not a theory — measured on this runtime, with
+// one `@db.Date` lodge night stored at `2026-09-01T00:00:00.000Z`:
+//
+//   format(night, "yyyy-MM-dd")   UTC -> "2026-09-01"   Denver -> "2026-08-31"
+//   startOfMonth(night)           UTC -> 1 Sep 00:00Z   Denver -> 1 AUG 06:00Z
+//   addDays(26 Sep night, 1)      Auckland -> 2026-09-26T23:00:00.000Z, an hour
+//                                 short of UTC midnight, because it crossed the
+//                                 27 September daylight-saving transition
+//
+// So a stay day renders a day early west of Greenwich, a report bucket lands in
+// the wrong MONTH, and a `@db.Date` range bound built by adding a day falls on
+// the wrong side of a stored night on one weekend a year.
+//
+// Not every export is a hazard: `formatDistanceToNow` measures a DURATION and
+// `differenceInCalendarDays` between two UTC-midnight values shifts both ends
+// equally, so both are zone-independent here. The ban is on the MODULE anyway,
+// because which exports are safe is a judgement that belongs in a reviewed
+// allowlist entry rather than in a regular expression somebody widens later.
+
+//
+// SEVEN SPELLINGS, and the RE-EXPORT is the one that mattered most: a single
+// file writing `export { addDays } from "date-fns"` makes every downstream
+// importer clean under every selector in this file, so one line would have
+// re-opened the class wholesale. A review lens found four spellings walking
+// past the first three selectors; all four are closed here.
+//
+// WHAT IS STILL OPEN, said plainly rather than left to be discovered. A
+// dynamic import whose specifier is a VARIABLE — `const m = "date-fns";
+// await import(m)` — is not statically decidable and no selector can reach it,
+// and neither can a `require` assembled from a template. That is the same
+// residue every syntactic rule in this file carries; the census beside this one
+// is the second instrument, and `date-fns-tz` is deliberately not a dependency
+// so there is no sibling package to smuggle it in through.
+const NO_DATE_FNS = [
+  'ImportDeclaration[source.value="date-fns"]',
+  'ImportDeclaration[source.value=/^date-fns\\//]',
+  'CallExpression[callee.name="require"][arguments.0.value="date-fns"]',
+  'CallExpression[callee.name="require"][arguments.0.value=/^date-fns\\//]',
+  // `export { addDays } from "date-fns"` and `export * from "date-fns"`
+  'ExportNamedDeclaration[source.value="date-fns"]',
+  'ExportNamedDeclaration[source.value=/^date-fns\\//]',
+  'ExportAllDeclaration[source.value="date-fns"]',
+  'ExportAllDeclaration[source.value=/^date-fns\\//]',
+  // `await import("date-fns")`
+  'ImportExpression[source.value="date-fns"]',
+  'ImportExpression[source.value=/^date-fns\\//]',
+].map((selector) => ({
+  selector,
+  message:
+    "INV-DATE-014 / INV-CONFIG-002: `date-fns` reads and writes the HOST's clock face, so it carries every defect the host-clock ban above exists for while being invisible to it (CT-6, #2991). Measured on a `@db.Date` lodge night at UTC midnight: `format(night, \"yyyy-MM-dd\")` answers the PREVIOUS day west of Greenwich, `startOfMonth(night)` lands in the previous MONTH, and `addDays(night, 1)` returns an hour short of UTC midnight across a daylight-saving transition. Calendar arithmetic on stay days: addCalendarDays / addCalendarMonths / startOfCalendarMonth / eachCalendarDate / countClubNights from @/lib/club-time, which are zone-free. Rendering: formatClubDate for a calendar day, formatClubInstant* for a real instant. A relative DURATION (`formatDistanceToNow`) is genuinely zone-free — if that is all you need, say so on DATE_FNS_ADAPTERS rather than importing the module here.",
+}));
+
+const DATE_FNS_RESTRICTIONS = [...NO_DATE_FNS];
+
+/**
+ * The files still importing `date-fns`, each with what it uses and why it has
+ * not moved. A RATCHET, like `ENVIRONMENT_ZONE_ADAPTERS`: it only shrinks, and
+ * `club-time-boundary-guard.test.ts` refuses to let it grow.
+ *
+ * None of these is a new decision by CT-6. Two are the admin report
+ * bucket/date-series residual #2870's ledger already names; the rest are
+ * relative-duration hints and chart tick labels.
+ */
+const DATE_FNS_ADAPTER_FILES = [
+  "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+  "src/app/(admin)/admin/reports/page.tsx",
+  "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+  "src/components/admin/member-password-action-button.tsx",
+  "src/lib/admin-dataset-reset-state.ts",
+  "src/lib/admin-reports.ts",
+  "src/lib/cron-hut-leader-auto-assign.ts",
+];
+
+export const DATE_FNS_ADAPTERS = [
+  {
+    file: "src/app/(admin)/admin/members/_components/xero-groups-refresh-hint.tsx",
+    uses: "formatDistanceToNow",
+    reason:
+      "A relative DURATION (\"3 hours ago\") for a refresh hint, which is zone-independent: it is the gap between two instants and no civil date is derived from it.",
+  },
+  {
+    file: "src/components/admin/member-password-action-button.tsx",
+    uses: "formatDistanceToNow",
+    reason:
+      "The same relative-duration hint on a password action, zone-independent for the same reason.",
+  },
+  {
+    file: "src/app/(admin)/admin/reports/page.tsx",
+    uses: "format",
+    reason:
+      "The admin report date-series surface #2870's ledger carries as an open residual. Migrating it is a report-shape change, not a formatter swap, so it is scoped there rather than re-scoped here.",
+  },
+  {
+    file: "src/app/(admin)/admin/reports/_components/report-charts.tsx",
+    uses: "format",
+    reason:
+      "Chart tick labels for the same surface and the same residual; they must agree with the series that feeds them, so the two move together or not at all.",
+  },
+  {
+    file: "src/lib/admin-reports.ts",
+    uses: "addDays, addMonths, addWeeks, differenceInCalendarDays, endOfMonth, endOfWeek, format, isAfter, startOfMonth, startOfWeek",
+    reason:
+      "The report BUCKETING itself, and the largest single remaining escape hatch in the tree: ten host-local helpers deciding which week or month a booking falls in. #2870's ledger names it as the admin-report bucket/date-series residual. CT-6 measured it rather than moved it, because a bucket boundary change alters what every historical report says.",
+  },
+  {
+    file: "src/lib/admin-dataset-reset-state.ts",
+    uses: "endOfMonth, format, startOfMonth, subMonths",
+    reason:
+      "Month windows for the dataset-reset screen, sharing the report residual's shape and blocked on the same decision about bucket boundaries.",
+  },
+  {
+    file: "src/lib/cron-hut-leader-auto-assign.ts",
+    uses: "addDays, eachDayOfInterval",
+    reason:
+      "The lookahead window over which the job scans for uncovered nights. It reads a club `today` from the kernel and then steps it with host-local helpers, so the LAST day of a long lookahead can shift by one across a daylight-saving transition. Narrow and inside a cron, but real; it is the cheapest of the seven to move and the one to take next.",
+  },
+];
+
+/**
+ * The modules still allowed to name the ENVIRONMENT's zone, each with the
+ * reason it is not simply a defect. Exported so
+ * `club-time-boundary-census.test.ts` reads this record rather than keeping a
+ * copy that drifts out of step with the config that ships.
+ *
+ * THIS LIST IS A RATCHET AND IT ONLY SHRINKS. Two entries are structural — the
+ * environment has to be read somewhere for the setup wizard to offer it — and
+ * the rest are callers CT-6 measured and could not migrate without threading a
+ * club zone through a surface belonging to another issue. Each names what is
+ * blocking it. Adding a file here re-opens the class the guard exists to close,
+ * so the census test asserts the list has not grown.
+ *
+ * IT SHRANK AGAIN IN #3126, and by the route this list prefers. The last entry
+ * to leave, `src/lib/member-merge-field-kinds.ts`, was excused so a client
+ * component could keep a `= APP_TIME_ZONE` DEFAULT on its renderer — and the
+ * exemption written for a READ was quietly covering a default, which is a
+ * different and worse thing. Deleting the default (`INV-SSOT-003`) left the file
+ * naming the environment nowhere, so the entry had outlived its cause and went
+ * with it. The new `AUTHORITY_DEFAULT_RESTRICTIONS` arm is deliberately NOT
+ * droppable by any block, so no future entry here can cover a default again.
+ *
+ * IT HAD ALREADY SHRUNK ONCE BEFORE THAT, and how is worth recording:
+ * `src/lib/nzst-date.ts`
+ * was the rendering adapter and the last module that BOUND the environment zone
+ * at module load. #3123 did not migrate it — it DELETED it, once every
+ * production caller had moved to the kernel. An entry leaving this list by way
+ * of the file being deleted is the intended end state, not a special case, and
+ * `club-time-boundary-guard.test.ts` fails on an entry naming a file that no
+ * longer exists precisely so the two cannot drift apart.
+ *
+ * `src/lib/date-only.ts` IS NOT HERE, AND NO LONGER NEEDS TO BE ANYWHERE. It has
+ * a block of its own further down, which used to drop this group as well because
+ * six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`. #3123 removed
+ * those defaults and the import, so that block drops only the ENCODING group now
+ * and these arms reach the file like any other. Were it ever to need this group
+ * again it would still belong in its own block rather than on this list: listing
+ * it twice would give it two matching blocks, the later of which silently wins.
+ */
+const ENVIRONMENT_ZONE_ADAPTER_FILES = [
+  "src/config/operational.ts",
+  "src/lib/club-time-zone-env.ts",
+  "src/lib/ai-assistant-usage.ts",
+  "src/lib/ai-diagnostics-usage.ts",
+  "src/lib/induction-display.ts",
+];
+
+export const ENVIRONMENT_ZONE_ADAPTERS = [
+  {
+    file: "src/config/operational.ts",
+    reason:
+      "STRUCTURAL. The one read of `process.env.TZ` in the tree, and the definition of APP_TIME_ZONE itself. CT-1 (#2989) kept it as the SEED the setup wizard offers and the self-heal step backfills the persisted row from, so it has to exist somewhere.",
+  },
+  {
+    file: "src/lib/club-time-zone-env.ts",
+    reason:
+      "STRUCTURAL. CT-1's seed reader (#2989): exactly one module decides what the environment claims, and `client-server-boundary-census.test.ts` already keeps it out of the browser bundle.",
+  },
+  {
+    file: "src/lib/ai-assistant-usage.ts",
+    reason:
+      "An internal metering month key for the AI page-help budget, not a club-facing civil-time answer. Migrating it needs the club zone inside a module a client bundle reaches; tracked with the five below.",
+  },
+  {
+    file: "src/lib/ai-diagnostics-usage.ts",
+    reason:
+      "The same internal metering month key for the diagnostics budget, in the same shape and blocked on the same thing.",
+  },
+  {
+    file: "src/lib/induction-display.ts",
+    reason:
+      "A module-level formatter on a module deliberately split so CLIENT components can import it (its own header says so), so it cannot call `clubTimeZone()` — the zone has to arrive as data through ClubTimeProvider, which is a change to every caller rather than to this file.",
+  },
+];
+
+/**
+ * The three `toLocale*` DATE-RENDERING arms (#2256, #2264), as a NAMED array
+ * rather than three literals repeated in four blocks.
+ *
+ * A block lifts these by omitting them, which is invisible: nothing distinguishes
+ * "this block does not need the rendering arms" from "somebody dropped them".
+ * Named here, `DATE_GUARD_ARMS.rendering` lets `date-only-encoding-guard.test.ts`
+ * assert that a given path still resolves to all three — which is what pins
+ * `src/lib/date-only.ts` still carrying the DATE-rule exemption its own block
+ * grants it, and nothing else. It also pinned `src/lib/nzst-date.ts` losing its
+ * exemption in CT-2 (#2990) — a removal no test could see before — until #3123
+ * deleted that file and the pin with it.
+ */
+const DATE_RENDERING_RESTRICTIONS = [
+  NO_BARE_TO_LOCALE_DATE_STRING,
+  NO_BARE_TO_LOCALE_TIME_STRING,
+  NO_BARE_TO_LOCALE_STRING,
+];
 
 /**
  * The date arm families as bare selector strings, for
@@ -648,9 +959,223 @@ const ZONED_FORMATTER_RESTRICTIONS = [NO_UNZONED_INTL_DATE_TIME_FORMAT];
  * from HERE rather than from a copy, because a copy passes happily while the
  * config that ships has dropped the arm.
  */
+/**
+ * The CT-6 (#2991) arm families, as bare selector strings, for
+ * `club-time-boundary-guard.test.ts` — the same mirror `DATE_GUARD_ARMS`
+ * provides for the #2684 families.
+ *
+ * Read from HERE rather than from a copy in the suite: a copy passes happily
+ * while the config that ships has dropped the arm, which is the exact failure
+ * the roster audit below exists to catch.
+ */
+export const CLUB_TIME_GUARD_ARMS = {
+  hostClock: HOST_CLOCK_RESTRICTIONS.map((entry) => entry.selector),
+  environmentZone: ENVIRONMENT_ZONE_RESTRICTIONS.map((entry) => entry.selector),
+  dateFns: DATE_FNS_RESTRICTIONS.map((entry) => entry.selector),
+};
+
 export const DATE_GUARD_ARMS = {
   encoding: DATE_ONLY_ENCODING_RESTRICTIONS.map((entry) => entry.selector),
   zonedFormatter: ZONED_FORMATTER_RESTRICTIONS.map((entry) => entry.selector),
+  rendering: DATE_RENDERING_RESTRICTIONS.map((entry) => entry.selector),
+};
+
+// ---------------------------------------------------------------------------
+// INV-SSOT-003 (#3126) — no default on a parameter that resolves a CLUB
+// authority.
+// ---------------------------------------------------------------------------
+//
+// A parameter default answers for every caller that did not pass one, and it
+// answers SILENTLY. When the value is a club authority with a second source,
+// the default decides which source wins for the whole tree — and it is never
+// the club's. `getTodayDateOnly(timeZone = APP_TIME_ZONE)` was one line; it took
+// 81 call sites across 52 files with it, and policing them needed a hand-built
+// census that counts call sites by walking parentheses and pins five exact
+// numbers. EVERY BIT OF THAT MACHINERY EXISTED BECAUSE THE DEFAULT EXISTED.
+//
+// WHY THIS IS A SEPARATE ARM FROM `NO_ENVIRONMENT_ZONE_*` ABOVE, which already
+// bans naming the environment's zone at all. That group is LIFTED for the files
+// on `ENVIRONMENT_ZONE_ADAPTER_FILES`, because an adapter has a reason to read
+// the environment — and a lifted group lifts the default with it. That is not a
+// theory either: `src/lib/date-only.ts` held its six `= APP_TIME_ZONE` defaults
+// legally for months inside a block of its own, and
+// `src/lib/member-merge-field-kinds.ts` held a seventh on the shared adapter
+// block until #3126 deleted it. THIS ARM IS ON `ALWAYS_RESTRICTED_IN_SRC` AND NO
+// BLOCK LIFTS IT. Reading the environment's zone is a reviewed exception;
+// handing it to callers as a default is not, in any file.
+//
+// WHICH NAMES ARE ON THE LIST. `INV-SSOT-003` names them, and this array is that
+// rule's implementation rather than a second opinion about it: the
+// `@/config/operational` exports naming a club-facing authority —
+// `APP_TIME_ZONE` and `APP_LOCALE` — plus the environment variables behind the
+// zone, `TZ` and `NEXT_PUBLIC_TZ`.
+//
+// The zone is the measured case. The club's civil time is the
+// `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989), and
+// `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` are the ENVIRONMENT's claim, which
+// seeds that row at setup and has no say afterwards — two sources, and the
+// default silently picked the wrong one.
+//
+// THE LOCALE IS ON THE LIST AHEAD OF ITS SECOND SOURCE, and that is worth saying
+// out loud rather than leaving a reader to infer a criterion the list does not
+// satisfy. There is no persisted club locale in `schema.prisma` today, so
+// nothing yet competes with `APP_LOCALE`, and its live default population is
+// zero. It is banned anyway because it is the same KIND of value — how this club
+// answers a display question — and listing it while the population is zero costs
+// nothing, where adding it after a club-locale setting ships would cost a
+// migration and a census of whatever had been written in the meantime. That is
+// the cheap direction to be wrong in.
+//
+// WHAT IS DELIBERATELY NOT BANNED, because stating the boundary is half of this
+// arm's value:
+//
+//   * `APP_CURRENCY` and `APP_STRIPE_CURRENCY`. `src/lib/stripe.ts` carries two
+//     live `currency = APP_STRIPE_CURRENCY` parameter defaults, on
+//     `chargePaymentMethod` and `createPaymentIntent`, and they are CORRECT
+//     rather than tolerated. THE REASON IS COST, NOT KIND, and it is worth
+//     saying precisely because an earlier draft of this comment claimed the
+//     currency was single-sourced today and it is not: two admin display
+//     formatters hardcode `currency: "NZD"` rather than reading `APP_CURRENCY`,
+//     and `schema.prisma` gives `PaymentTransaction.currency` a `"nzd"` column
+//     default. Those are a separate, pre-existing defect that this arm does not
+//     address and is not the right instrument for. What IS true, and is what
+//     the exclusion rests on: no persisted club-currency SETTING competes with
+//     `APP_CURRENCY`, so there is no wrong-source-of-two to pick — and every one
+//     of the eight live call sites, in eight distinct modules, relies on the
+//     default rather than passing a currency, so deleting it would spread the
+//     `@/config/operational` import to eight more modules without touching
+//     either hardcoded formatter. That is strictly worse for single source of
+//     truth than leaving the read in the one boundary that owns the Stripe wire
+//     format. THE DAY A PERSISTED CLUB-CURRENCY SETTING EXISTS, both names join
+//     the list above and `stripe.ts` becomes a real violation. That sentence is
+//     the ratchet; without it the exclusion rots into a permanent hole. Being a
+//     cost argument rather than a kind argument — the currency is as club-facing
+//     as the locale — it is the one exclusion here a reader should expect to be
+//     revisited.
+//   * `process.env.<anything else>` as a default, which `INV-SSOT-003`'s prose
+//     describes more broadly than this arm implements. MEASURED, rather than
+//     assumed, and re-measured for #3126's review because the first measurement
+//     was wrong: there are SEVEN live instances in this tree, not the three an
+//     earlier draft of this comment named. SIX default the whole environment as
+//     an injection seam — `src/lib/admin-cron-health.ts` twice,
+//     `src/lib/email-delivery.ts`, `src/lib/environment-role-declaration.ts`,
+//     `src/lib/ignored-email-env.ts` and `src/lib/xero-config.ts` — and ONE
+//     defaults a single variable, `isValidCronSecret(expected =
+//     process.env.CRON_SECRET)` in `src/lib/cron-auth.ts`. The conclusion is
+//     unchanged and in fact stronger: a seam that takes `process.env` so a test
+//     can pass a fake is not a default picking the wrong one of two sources, so
+//     a broad ban would be seven false positives out of seven matches. One
+//     nuance rather than a blanket claim of no second source:
+//     `environment-role-declaration.ts` is governed by `INV-CONFIG-003`, under
+//     which the DATABASE may force the safer environment role — a second source
+//     by this invariant's own definition, though what it defaults is the seam
+//     and not the role. A guard that is wrong every time it fires trains its
+//     reader to switch it off, and #3126's own risk note says the one live
+//     hazard here is an arm too broad to live with. So the environment half of
+//     the arm is scoped to the variables behind the zone. Widening it later is a
+//     decision with seven named call sites attached, which is the shape a
+//     decision should have.
+//   * A default that CALLS a club authority resolver — `= await clubTimeZone()`,
+//     `= readClubTimeZoneOutsideRequest()`. Those return the CLUB's answer, so
+//     they are not this defect at all. Population zero; recorded so a later
+//     reader knows it was considered rather than missed.
+//   * A `??` or `||` fallback in a function BODY — `const tz = opts.tz ??
+//     APP_TIME_ZONE`. Said plainly as a known limit: it is the same hazard
+//     written differently, and it is out of scope because banning it would reach
+//     a large legitimate population at genuine boundaries. The second instrument
+//     is `ssot-authority-default-guard.test.ts`, which censuses the source
+//     directly.
+const CLUB_AUTHORITY_DEFAULT_NAMES = "^(APP_TIME_ZONE|APP_LOCALE)$";
+const CLUB_AUTHORITY_DEFAULT_ENV = "^(TZ|NEXT_PUBLIC_TZ)$";
+
+const AUTHORITY_DEFAULT_MESSAGE =
+  "INV-SSOT-003: This parameter DEFAULTS to a club authority, so it answers for every caller that did not pass one — and it answers from the environment rather than from the club. The club's civil time is the persisted `ClubTimeSettings.timeZone` row (`INV-CONFIG-002`, CT-1 #2989); `APP_TIME_ZONE`, `APP_LOCALE`, `TZ` and `NEXT_PUBLIC_TZ` are the ENVIRONMENT's claim, which seeds that row at setup and has no say afterwards. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. That is a worked precedent rather than a proposal — `getTodayDateOnly(timeZone = APP_TIME_ZONE)` cost a hand-counted census of every call site that left the zone unstated, ratcheted down lane by lane, until #3123 deleted the six `= APP_TIME_ZONE` defaults from @/lib/date-only and turned the whole class into a compile error. Those figures are recorded in exactly one place, `club-time-escape-hatch-census.test.ts`, and a number restated in prose is a number that drifts. Then pass the club's zone in: clubTimeZone() / clubTime() from @/lib/club-time/server in a server component or route, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime in a cron tick or a CLI, and ClubTimeProvider data in a client component, which never decides it.";
+
+// `AssignmentPattern` is the default in EVERY position it can be written, which
+// is why the arm anchors on it rather than on a function's parameter list: a
+// plain parameter default (`f(tz = APP_TIME_ZONE)`), an options-object property
+// default (`f({ tz = APP_TIME_ZONE })` — the shape this codebase actually
+// writes), an array-destructuring default and a destructured default inside a
+// body are one node type and one defect.
+//
+// TWO FORMS PER SHAPE, AND THE PAIRING IS THE WHOLE DESIGN.
+//
+// The first arm of each pair is a FIELD anchor — `> Identifier.right`, which
+// matches only when the authority IS the default. The second is a DESCENDANT of
+// the field — `> .right Identifier`, where `> .right` selects whatever node
+// occupies the `right` field whatever its type, and the descendant combinator
+// then finds the authority anywhere beneath it.
+//
+// The pair cannot double-report, and that is a property of the descendant
+// combinator rather than of the node types involved: `A B` in esquery EXCLUDES
+// self, so when the authority is the field itself only the first arm matches,
+// and when it is wrapped only the second can. That matters because
+// `f({ tz = APP_TIME_ZONE } = {})` nests an inner `AssignmentPattern` inside an
+// outer one, and #2685 already paid for reporting one node three times at one
+// line:column. The outer pattern's `right` is the `{}`, which contains nothing;
+// the inner pattern's `right` is the authority itself. One report. Measured, and
+// asserted for every spelling in `ssot-authority-default-guard.test.ts`.
+//
+// WHY NOT ENUMERATE THE WRAPPERS. The arm used to name `LogicalExpression` and
+// `ConditionalExpression` explicitly, and six spellings walked past it:
+// `= APP_TIME_ZONE as string`, `= process.env.TZ!`, `= APP_TIME_ZONE satisfies
+// string`, `` = `${APP_TIME_ZONE}` ``, `= String(APP_TIME_ZONE)` and
+// `= (0, APP_TIME_ZONE)`. The `as` and `!` spellings are not exotic — they are
+// what the TYPE SYSTEM forces. `process.env.TZ` is `string | undefined`, so on
+// the `timeZone: string` parameter this codebase writes everywhere the defect
+// CANNOT be spelled `= process.env.TZ` at all; of the three spellings that
+// compile, the enumerated arm closed one. Enumeration is whack-a-mole and the
+// next TypeScript expression node re-opens it, so the wrapper list is gone and
+// `> .right` closes the class instead.
+//
+// WHAT THIS ARM STILL CANNOT SEE, and where it is covered instead. A
+// `no-restricted-syntax` selector has no symbol table, so an authority renamed
+// on the way in — `import { APP_TIME_ZONE as CLUB_ZONE }`, `const { TZ } =
+// process.env`, `const env = process.env` — is invisible to it, and the group
+// that would otherwise catch such a read is LIFTED in exactly the files most
+// likely to write one. That half is the second instrument's:
+// `ssot-authority-default-guard.test.ts` resolves those bindings from the source
+// and censuses `src/`, `scripts/` and `prisma/` for them. The same file states
+// the two spellings neither instrument closes. So do not answer a new
+// indirection by adding a selector here — a selector cannot resolve a name.
+const NO_CLUB_AUTHORITY_DEFAULT = [
+  // `f(tz = APP_TIME_ZONE)` — the authority IS the default.
+  `AssignmentPattern > Identifier.right[name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // The same name anywhere inside a wrapped default: `as`, `satisfies`, `!`, a
+  // template, a call, a sequence, `??`, a ternary, or anything TypeScript adds
+  // next. It also covers `f(tz = operational.APP_TIME_ZONE)` and
+  // `f(tz = ns?.APP_TIME_ZONE)` without a member-specific arm, because the
+  // property of a non-computed member expression is itself an `Identifier` node
+  // — which is why no `[property.name=...]` arm is listed here. Adding one back
+  // would report those twice.
+  `AssignmentPattern > .right Identifier[name=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // `f(tz = operational["APP_TIME_ZONE"])`, whose property is a Literal rather
+  // than an Identifier, so the pair above cannot see it. Computed access is the
+  // documented escape from every syntactic rule in this file and is closed on
+  // the way in rather than recorded as a known limitation.
+  `AssignmentPattern > MemberExpression.right[property.value=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  `AssignmentPattern > .right MemberExpression[property.value=/${CLUB_AUTHORITY_DEFAULT_NAMES}/]`,
+  // `f(tz = process.env.TZ)` and `f(tz = process.env["TZ"])`, plus every wrapped
+  // spelling of each. Anchored on `.env.<VAR>` rather than on the receiver being
+  // literally `process`, so `globalThis.process.env.TZ` is closed too.
+  `AssignmentPattern > MemberExpression.right[object.property.name="env"][property.name=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  `AssignmentPattern > .right MemberExpression[object.property.name="env"][property.name=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  `AssignmentPattern > MemberExpression.right[object.property.name="env"][property.value=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+  `AssignmentPattern > .right MemberExpression[object.property.name="env"][property.value=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
+].map((selector) => ({ selector, message: AUTHORITY_DEFAULT_MESSAGE }));
+
+const AUTHORITY_DEFAULT_RESTRICTIONS = [...NO_CLUB_AUTHORITY_DEFAULT];
+
+/**
+ * The `INV-SSOT-003` arm family as bare selector strings, for
+ * `ssot-authority-default-guard.test.ts` — the same mirror `DATE_GUARD_ARMS` and
+ * `CLUB_TIME_GUARD_ARMS` provide for their own families.
+ *
+ * Read from HERE rather than from a copy in the suite: a copy passes happily
+ * while the config that ships has dropped the arm.
+ */
+export const SSOT_GUARD_ARMS = {
+  authorityDefault: AUTHORITY_DEFAULT_RESTRICTIONS.map((entry) => entry.selector),
 };
 
 // ---------------------------------------------------------------------------
@@ -680,7 +1205,7 @@ export const DATE_GUARD_ARMS = {
 // ONE mandatory array, THREE named groups inside it, and no block that spells
 // out a list of its own.
 //
-// ADDING A GUARD: put its restrictions in a named array beside the four below
+// ADDING A GUARD: put its restrictions in a named array beside the others below
 // and add that array here. That is the only edit needed — every block picks it
 // up, INCLUDING the `scripts/` and `prisma/` blocks, and BOTH
 // `date-only-encoding-guard.test.ts` and `money-cents-guard.test.ts` read this
@@ -699,7 +1224,11 @@ const ALWAYS_RESTRICTED_IN_SRC = [
   ...RAW_SQL_RESTRICTIONS,
   ...DATE_ONLY_ENCODING_RESTRICTIONS,
   ...ZONED_FORMATTER_RESTRICTIONS,
+  ...HOST_CLOCK_RESTRICTIONS,
+  ...ENVIRONMENT_ZONE_RESTRICTIONS,
+  ...DATE_FNS_RESTRICTIONS,
   ...MONEY_CENTS_RESTRICTIONS,
+  ...AUTHORITY_DEFAULT_RESTRICTIONS,
 ];
 
 /**
@@ -713,9 +1242,21 @@ const ALWAYS_RESTRICTED_IN_SRC = [
 export const SRC_RESTRICTION_EXEMPTIONS = [
   {
     files: ["src/lib/date-only.ts"],
-    omits: DATE_ONLY_ENCODING_RESTRICTIONS,
+    omits: [...DATE_ONLY_ENCODING_RESTRICTIONS],
     reason:
-      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere.",
+      "The canonical home for the date-only encoding (#2684): the rule exists to make every OTHER file call these helpers instead of hand-writing the truncation, and the helpers have to write it somewhere. It carried the ENVIRONMENT-ZONE group too until #3123, because six of its helpers defaulted their `timeZone` to `APP_TIME_ZONE`; those defaults and the import are gone, every caller passes a zone, and the exemption went with them. An exemption is deleted when its cause is, not when somebody next happens to read the block.",
+  },
+  {
+    files: DATE_FNS_ADAPTER_FILES,
+    omits: DATE_FNS_RESTRICTIONS,
+    reason:
+      "The seven files still importing `date-fns`, measured by CT-6 (#2991). Two are relative-duration hints that are genuinely zone-free; the rest are the admin report bucket/date-series residual #2870 already carries. Each entry on `DATE_FNS_ADAPTERS` above names what it uses and what is blocking it, and the list is a ratchet.",
+  },
+  {
+    files: ENVIRONMENT_ZONE_ADAPTER_FILES,
+    omits: ENVIRONMENT_ZONE_RESTRICTIONS,
+    reason:
+      "The two structural readers of the environment's zone, plus the callers CT-6 (#2991) could not migrate without threading a club zone through a surface belonging to another issue. Entries leave this list BOTH ways and #3123 did each: it DELETED `src/lib/nzst-date.ts` once its last production caller had moved, and it MIGRATED `src/lib/member-guest-consent-labels.ts` and `src/lib/member-guest-delegate-page.ts` by threading the club's persisted zone through them. #3126 then took `src/lib/member-merge-field-kinds.ts` off by deleting the `= APP_TIME_ZONE` DEFAULT the exemption had been covering (`INV-SSOT-003`) — an exemption written for a READ should never have excused a default, and `AUTHORITY_DEFAULT_RESTRICTIONS` is on the mandatory set precisely so no entry here can excuse one again. Migration is the intended way off this list; deletion is the terminus for a module with nothing left to do. No count is stated here on purpose — the length is asserted in exactly one place, `club-time-boundary-guard.test.ts`, and a number restated in prose is a number that drifts. Every entry carries its own reason on `ENVIRONMENT_ZONE_ADAPTERS` above, and the list is a ratchet the census test refuses to let grow.",
   },
   {
     files: ["prisma/**/*.{ts,tsx}"],
@@ -886,10 +1427,12 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #2264 — every rendered date and time must go through the NZ-pinned
-    // helpers in `src/lib/nzst-date.ts` (`formatNZDate`, `formatNZDateTime`,
+    // #2264 — every rendered date and time must go through the club's ONE
+    // rendering seam, `@/lib/club-time` (CT-2, #2990). The six NZ-pinned helpers
+    // in `src/lib/nzst-date.ts` (`formatNZDate`, `formatNZDateTime`,
     // `formatNZLongDate`, `formatNZTime`, `formatNZMonthYear`,
-    // `formatNZWeekdayDate`). A bare `toLocaleDateString()` /
+    // `formatNZWeekdayDate`) were that seam until CT-2 made them delegate to the
+    // kernel and #3123 deleted the file. A bare `toLocaleDateString()` /
     // `toLocaleTimeString()` / `toLocaleString()` renders in the VIEWER's time
     // zone and locale, so an admin abroad saw a different lodge night than the
     // one stored, and the lobby clock showed the wrong time on a TV whose
@@ -919,8 +1462,9 @@ const eslintConfig = defineConfig([
     // a new one should be read as a site that was never classified.
     //
     // Documented exclusions (each has its own block below):
-    //   * `src/lib/nzst-date.ts`, `src/lib/date-only.ts` — the helpers
-    //     themselves, the sanctioned home for raw date formatting.
+    //   * `src/lib/date-only.ts` — the helper module itself, the sanctioned home
+    //     for the date-only encoding. `src/lib/nzst-date.ts` sat beside it until
+    //     CT-2 (#2990) took its exemption away and #3123 deleted the file.
     //   * `src/lib/email-templates/chores.ts` — `formatChoreRosterDate`
     //     (#2256): the chore-roster long-weekday subject line and body must stay
     //     byte-identical, and the helper is shared with `src/lib/email/chores.ts`.
@@ -943,10 +1487,39 @@ const eslintConfig = defineConfig([
     //     an `off` block for `e2e/**`.
     files: ["src/**/*.{ts,tsx}"],
     rules: {
-      "no-restricted-syntax": srcRestrictedSyntax(
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
+      "no-restricted-syntax": srcRestrictedSyntax(...DATE_RENDERING_RESTRICTIONS),
+    },
+  },
+  {
+    // CT-6 (#2991) — the files still importing `date-fns`. Reasons are on
+    // `DATE_FNS_ADAPTERS` above. The rendering arms are re-stated for the same
+    // reason as the block below: flat config replaces, it does not merge.
+    files: DATE_FNS_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        DATE_FNS_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
+      ),
+    },
+  },
+  {
+    // CT-6 (#2991) — the files allowed to name the ENVIRONMENT's zone. The
+    // reason for each is on `ENVIRONMENT_ZONE_ADAPTERS` above, where the census
+    // test can read it; only the group is dropped here.
+    //
+    // The DATE_RENDERING arms are re-stated rather than inherited, because flat
+    // config REPLACES a rule's options: a block that merely dropped one group
+    // would take the three rendering arms down with it, silently, for every file
+    // named here. That is not hypothetical — it is what CT-2 (#2990) deliberately
+    // undid for `nzst-date.ts` by taking its rendering exemption away, on the
+    // file that WAS the club's rendering seam (#3123 has since deleted it). This
+    // is the failure the fold above exists to prevent, arriving through a new
+    // block rather than through a merge.
+    files: ENVIRONMENT_ZONE_ADAPTER_FILES,
+    rules: {
+      "no-restricted-syntax": srcRestrictedSyntaxWithout(
+        ENVIRONMENT_ZONE_RESTRICTIONS,
+        ...DATE_RENDERING_RESTRICTIONS,
       ),
     },
   },
@@ -1003,14 +1576,25 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // The rendering helper, and the one documented format exclusion.
+    // The one documented format exclusion left.
     // Flat config replaces a rule's whole option list rather than merging it, so
     // this block re-states the mandatory restrictions (#2289, #2684) instead of
-    // switching `no-restricted-syntax` off outright: neither file contains raw
-    // SQL or a hand-written date truncation, and the exemption they need is from
-    // the toLocale* DATE-RENDERING rules only. Same reasoning in the
+    // switching `no-restricted-syntax` off outright: the file contains no raw
+    // SQL and no hand-written date truncation, and the exemption it needs is
+    // from the toLocale* DATE-RENDERING rules only. Same reasoning in the
     // Number-formatting block below.
-    files: ["src/lib/nzst-date.ts", "src/lib/email-templates/chores.ts"],
+    //
+    // `src/lib/nzst-date.ts` USED TO BE LISTED HERE, was taken off in CT-2
+    // (#2990), and no longer exists at all: #3123 deleted it. It held the six
+    // frozen `Intl.DateTimeFormat` constants the club's rendering seam was built
+    // from, then delegated every one of them to `@/lib/club-time` and so needed
+    // no exemption. Recorded because the sequence is the rule: an adapter loses
+    // its exemption when it stops formatting, and is deleted when its last
+    // caller moves — it is never left exempt "for now". The census in
+    // `src/lib/club-time/__tests__/club-time-kernel-census.test.ts` is the other
+    // half: it refuses an `Intl.DateTimeFormat` in the remaining adapter, and
+    // refuses the deleted file coming back.
+    files: ["src/lib/email-templates/chores.ts"],
     rules: {
       "no-restricted-syntax": srcRestrictedSyntax(),
     },
@@ -1020,18 +1604,27 @@ const eslintConfig = defineConfig([
     // restrictions, because it is the sanctioned home for the truncation: the
     // rule exists to make every other file call `formatDateOnly` instead of
     // writing `toISOString().slice(0, 10)`, and that helper has to write it
-    // somewhere. It is exempt from the toLocale* rules for the same reason
-    // (it formats with a pinned `Intl.DateTimeFormat`), and still carries the
-    // raw-SQL restrictions, which have nothing to do with either.
+    // somewhere. It still carries the raw-SQL and money restrictions, which have
+    // nothing to do with that.
+    //
+    // IT USED TO DROP THE ENVIRONMENT-ZONE GROUP TOO, and #3123 took that back.
+    // Six helpers here defaulted their `timeZone` parameter to `APP_TIME_ZONE`;
+    // once every caller passed a zone the defaults and the import went, and the
+    // exemption had nothing left to excuse. A lifted guard outlives its cause in
+    // SILENCE — no assertion fails on the day the last violation leaves the file
+    // — which is why `club-time-boundary-guard.test.ts` now re-reads every file
+    // this config excuses from that group, not only the ones named on
+    // `ENVIRONMENT_ZONE_ADAPTERS`, and fails on one whose code no longer names
+    // the environment zone.
     //
     // This is the only entry `date-only-encoding-guard.test.ts` accepts on its
     // exemption list. A second file added here is a site that was never
     // classified, not a file that needs an exemption.
     files: ["src/lib/date-only.ts"],
     rules: {
-      // Drops ONE named group. Every other guard — the raw-SQL restrictions and
-      // the money restrictions today, anything added later — stays on this file
-      // automatically.
+      // Drops ONE named group. Every other guard — the raw-SQL restrictions, the
+      // money restrictions and the environment-zone arms today, anything added
+      // later — stays on this file automatically.
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         DATE_ONLY_ENCODING_RESTRICTIONS,
       ),
@@ -1087,9 +1680,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         MONEY_CENTS_RESTRICTIONS,
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
+        ...DATE_RENDERING_RESTRICTIONS,
         ...MONEY_MODULE_RESTRICTIONS,
       ),
     },
@@ -1103,9 +1694,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": srcRestrictedSyntaxWithout(
         MONEY_CENTS_RESTRICTIONS,
-        NO_BARE_TO_LOCALE_DATE_STRING,
-        NO_BARE_TO_LOCALE_TIME_STRING,
-        NO_BARE_TO_LOCALE_STRING,
+        ...DATE_RENDERING_RESTRICTIONS,
       ),
     },
   },
@@ -1132,6 +1721,15 @@ const eslintConfig = defineConfig([
     // to be reported by `.semgrep/rules/**`; linting it would report the same
     // faults a second time, in a tool that cannot express why they are there.
     ".semgrep/**",
+    // #3078: local scratch space, not source. `.gitignore` already declares
+    // `/.artifacts/` non-source, so nothing here is ever committed or built,
+    // and `docs/agents/SCOPED_CONTEXT.md` describes it as ignored, local,
+    // bounded context. Linting it made an interrupted agent's half-written
+    // mutation harness the only "error" in an unrelated lane's `npm run lint`
+    // — a wrong signal at the exact moment the next agent is reconstructing
+    // state. The ignore is the whole directory rather than today's harness
+    // extension, so the next harness cannot bring the problem back.
+    ".artifacts/**",
   ]),
 ]);
 

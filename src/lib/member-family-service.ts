@@ -11,7 +11,9 @@ import {
   buildParentLinks,
 } from "@/lib/member-parent-links";
 import type { BookingGuestProfileAction } from "@/lib/booking-guests";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubCalendarDateOf, type ClubTimeZone } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { formatDateOnly } from "@/lib/date-only";
 
 type JsonRouteResult = {
   body: unknown;
@@ -224,14 +226,19 @@ function toDateInputValue(value: Date | string | null | undefined) {
  * date-only column, so reading it with `toDateInputValue` above showed the
  * previous day for roughly the first half of every New Zealand day: a member
  * who confirmed their details at 9am read "Details last confirmed by ... on"
- * yesterday's date. `formatDateOnlyForTimeZone` is the one canonical
- * derivation (`src/lib/date-only.ts`); this wrapper only handles the
- * null/invalid cases the payload allows.
+ * yesterday's date.
+ *
+ * The zone is the club's PERSISTED one, passed in rather than looked up here
+ * (#3123, `INV-CONFIG-002`): this used to read `APP_TIME_ZONE` through
+ * `formatDateOnlyForTimeZone`, which is the container's claim about where the
+ * club is. `getMemberFamily` resolves it once and threads it, so one response
+ * cannot render two rows from two different zones. This wrapper only handles
+ * the null/invalid cases the payload allows.
  */
-function toClubCalendarDay(value: Date | string | null | undefined) {
+function toClubCalendarDay(value: Date | string | null | undefined, zone: ClubTimeZone) {
   if (!value) return null;
   const instant = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(instant.getTime()) ? null : formatDateOnlyForTimeZone(instant);
+  return Number.isNaN(instant.getTime()) ? null : clubCalendarDateOf(instant, zone);
 }
 
 function getFamilyMemberAction(params: {
@@ -307,6 +314,10 @@ function serializeProfileStatus(status: MemberProfileCompletenessResult) {
 }
 
 export async function getMemberFamily(memberId: string): Promise<JsonRouteResult> {
+  // ONE read of the club's persisted timezone for the whole response (#3123).
+  // `clubTimeZone()` rather than the CLI-safe reader: nothing outside a React
+  // request reaches this module, so the request-scoped memo is free.
+  const zone = await clubTimeZone();
   const self = await prisma.member.findUnique({
     where: { id: memberId },
     select: FAMILY_MEMBER_PROFILE_SELECT,
@@ -564,7 +575,7 @@ export async function getMemberFamily(memberId: string): Promise<JsonRouteResult
     if (!name) return null;
     // #2839: `detailsConfirmedAt` is an instant, so the day shown is the CLUB's
     // calendar day, never the UTC one (`INV-DATE-019`).
-    return { name, at: toClubCalendarDay(member.detailsConfirmedAt) };
+    return { name, at: toClubCalendarDay(member.detailsConfirmedAt, zone) };
   }
 
   function addMember(member: FamilyMemberRecord, relationship: FamilyMemberRelationship) {

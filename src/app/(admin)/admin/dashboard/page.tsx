@@ -44,12 +44,15 @@ import {
   UPCOMING_CHECK_IN_BOOKING_STATUSES,
 } from "@/lib/booking-status";
 import {
-  addDaysDateOnly,
-  endOfDateOnlyForTimeZone,
-  formatDateOnly,
-  getTodayDateOnly,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  addCalendarDays,
+  calendarDateFromParts,
+  calendarDateOfDateOnlyInstant,
+  calendarDateParts,
+  dateOnlyInstantOf,
+  daysInCalendarMonth,
+  formatClubDayMonth,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { countRosterDaysNeedingChores } from "@/lib/roster-status";
 import { countGuestsAwaitingBed } from "@/lib/bed-allocation-board";
 import {
@@ -66,29 +69,42 @@ import {
   buildUnsettledAdditionalStaysHref,
   buildUnsettledAdditionalUpcomingStaysWhere,
 } from "@/lib/unpaid-finished-stays";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
-// #2264: deliberately not one of the shared `nzst-date` helpers — the upcoming
-// check-ins list renders its date range in a fixed-width column, so it stays
-// compact (day + short month, no year).
-const COMPACT_DAY_MONTH = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "numeric",
-  month: "short",
-});
+// #2264: the upcoming check-ins list renders its date range in a fixed-width
+// column, so it stays compact — day plus short month, no year. F3 (#3079)
+// declared that bag as the kernel's `dayMonth` shape, which is what the local
+// formatter here has become.
+//
+// CT-4 (#2870): `checkIn` and `checkOut` are CALENDAR DATES — `@db.Date` columns
+// Prisma hands back as UTC midnight — and a calendar date has no timezone, so the
+// shape takes none. Reading them through APP_TIME_ZONE was a projection that
+// named the night before for any club behind UTC (INV-DATE-019).
 
 async function getStats() {
-  const today = getTodayDateOnly();
-  const todayKey = formatDateOnly(today);
-  const monthPrefix = todayKey.slice(0, 8);
-  const startOfMonth = startOfDateOnlyForTimeZone(`${monthPrefix}01`);
-  const monthEndDay = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)
-  ).getUTCDate();
-  const endOfMonth = endOfDateOnlyForTimeZone(
-    `${monthPrefix}${String(monthEndDay).padStart(2, "0")}`
+  // CT-4 (#2870): every derivation below now starts from the club's PERSISTED
+  // timezone rather than `APP_TIME_ZONE` (INV-CONFIG-002), and the month bounds
+  // are calendar arithmetic on a `CalendarDate` rather than string slicing plus
+  // `Date.UTC(y, m + 1, 0)`. The values handed to Prisma are unchanged in kind:
+  // `today` and `sevenDaysFromNow` are `@db.Date` date-only bounds, and the
+  // month pair are real instants bracketing the club's civil month.
+  const club = await clubTime();
+  const todayKey = club.today();
+  const today = dateOnlyInstantOf(todayKey);
+  const { year, month } = calendarDateParts(todayKey);
+  const startOfMonth = club.startOfDay(calendarDateFromParts(year, month, 1));
+  // Inclusive end — the millisecond before the next club day begins — because
+  // these bound an `lte` filter. The kernel offers only the half-open
+  // `endOfDayExclusive`; an `endOfClubDayInclusive` helper is reported on #2870
+  // as wanted in `src/lib`, where three other lanes have written this same
+  // `getTime() - 1`.
+  const endOfMonth = new Date(
+    club
+      .endOfDayExclusive(
+        calendarDateFromParts(year, month, daysInCalendarMonth(year, month)),
+      )
+      .getTime() - 1,
   );
-  const sevenDaysFromNow = addDaysDateOnly(today, 7);
+  const sevenDaysFromNow = dateOnlyInstantOf(addCalendarDays(todayKey, 7));
 
   const [
     totalMembers,
@@ -208,7 +224,18 @@ async function getStats() {
     prisma.bookingChangeRequest.count({
       where: { status: "REQUESTED" },
     }),
-    getUnassignedHutLeaderDates({ scope: { kind: "all" } }),
+    // `today` IS STILL PASSED, and the reason changed with #3123 —
+    // `getUnassignedHutLeaderDates` no longer falls back to `getTodayDateOnly()`
+    // and `APP_TIME_ZONE`, so this is no longer the difference between the
+    // container's day and the club's. What it is now is the difference between
+    // ONE reading of the club's day and TWO. The two officer cards either side
+    // of this one (roster, bed allocation) are windowed from `today` above; let
+    // the coverage card resolve its own and a request that crosses club midnight
+    // between the two reads paints one card a day ahead of its neighbours, which
+    // is the same defect CT-4 (#2870) found here wearing a different cause. It
+    // also saves the extra settings read the fallback would perform
+    // (INV-CONFIG-002).
+    getUnassignedHutLeaderDates({ scope: { kind: "all" }, today }),
     // Whether this club is multi-lodge, for the ADR-002 Presentation Rule below.
     // Keyed on the CLUB, not on how many lodges happen to be uncovered (#2917
     // review): a two-lodge club whose gaps all sit at one lodge must still be
@@ -720,9 +747,13 @@ export default async function AdminDashboardPage() {
                         {booking.member.firstName} {booking.member.lastName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {COMPACT_DAY_MONTH.format(new Date(booking.checkIn))}
+                        {formatClubDayMonth(
+                          calendarDateOfDateOnlyInstant(booking.checkIn),
+                        )}
                         {" — "}
-                        {COMPACT_DAY_MONTH.format(new Date(booking.checkOut))}
+                        {formatClubDayMonth(
+                          calendarDateOfDateOnlyInstant(booking.checkOut),
+                        )}
                         {" · "}
                         {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""}
                       </p>

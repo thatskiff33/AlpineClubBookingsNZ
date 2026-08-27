@@ -23,8 +23,11 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action"
-import { dateOnlyFromIsoString, parseDateOnly } from "@/lib/date-only"
-import { formatNZDate } from "@/lib/nzst-date"
+import { dateOnlyFromIsoString } from "@/lib/date-only"
+import {
+  calendarDateOfSerialisedDbDateOrNull,
+  formatClubDate,
+} from "@/lib/club-time"
 import { DAY_LABELS, type MinStayPolicy } from "./types"
 
 /**
@@ -33,12 +36,17 @@ import { DAY_LABELS, type MinStayPolicy } from "./types"
  * UTC midnight, so the calendar day is taken from the string and handed over as
  * UTC midnight rather than parsed in the viewer's own zone — a local parse
  * slides the day for anyone at UTC+13/+14. The NaN guard keeps a malformed
- * value from throwing out of `Intl` and taking the whole panel down.
- * Deliberately the twin of `formatPeriodDate` in `booking-periods-section`.
+ * value from throwing and taking the whole panel down.
+ * Deliberately the twin of `formatPeriodDate` in `booking-period-draft`. *
+ * CT-4 (#2870), epic #2988: the value is a CALENDAR DAY and now takes no
+ * timezone at all. The kernel's calendar-date formatter pins UTC over the
+ * UTC-midnight encoding, so the projection is provably the identity - where the
+ * zoned formatter this replaces was the identity only for a club east of
+ * Greenwich, and a day early for any club west of it.
  */
 function formatPolicyDate(value: string): string {
-  const parsed = parseDateOnly(dateOnlyFromIsoString(value))
-  return Number.isNaN(parsed.getTime()) ? value : formatNZDate(parsed)
+  const day = calendarDateOfSerialisedDbDateOrNull(value)
+  return day === null ? value : formatClubDate(day)
 }
 
 /**

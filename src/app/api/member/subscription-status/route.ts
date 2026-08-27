@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   requiresPaidSubscriptionForMemberForBooking,
   resolveMembershipTypePolicyForMember,
@@ -20,7 +21,7 @@ export async function GET() {
     return inactiveResponse;
   }
 
-  const seasonYear = getSeasonYear(new Date());
+  const seasonYear = clubSeasonYear(await clubTimeZone());
   const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
 
   const subscriptionSelect = {

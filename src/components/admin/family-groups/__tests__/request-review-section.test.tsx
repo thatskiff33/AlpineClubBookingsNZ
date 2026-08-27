@@ -1,6 +1,19 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+// `render` FROM THE SHARED HARNESS, not from Testing Library: since CT-4
+// (#2870) the section reads the club's persisted zone from
+// `ClubTimeProvider` and hands it to each card, and `useClubTime()` throws
+// when no provider is mounted. The zone itself is not what this file is
+// about — the card is stubbed out below — so the harness default is right
+// here; `request-review-card-club-time.test.tsx` is where the zone is the
+// subject and picks a divergent one.
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   FamilyGroupRequest,
@@ -18,6 +31,9 @@ vi.mock("@/components/admin/family-groups/request-review-card", () => ({
     const rid = props.request.id;
     return (
       <div data-testid={`card-${rid}`}>
+        {/* The club zone the section handed this card, echoed so the
+            section's ONE provider read is observable (CT-4, #2870). */}
+        <div data-testid={`zone-${rid}`}>{props.clubTime.zone}</div>
         <div data-testid={`selection-${rid}`}>{props.requestSelection ?? ""}</div>
         <div data-testid={`error-${rid}`}>{props.requestError ?? ""}</div>
         <div data-testid={`feedback-${rid}`}>{props.requestSearchMessage ?? ""}</div>
@@ -57,6 +73,9 @@ vi.mock("@/components/admin/family-groups/request-review-card", () => ({
 }));
 
 import { FamilyGroupRequestReviewSection } from "@/components/admin/family-groups/request-review-section";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { CLUB_TIME_ZONE_FALLBACK } from "@/lib/club-time-zone";
 
 const REQUESTER = {
   id: "parent-1",
@@ -670,5 +689,87 @@ describe("FamilyGroupRequestReviewSection - notify choice dialog (#1789)", () =>
     const body = fetchBody(fetchMock);
     expect(body).toEqual({ requestId: "req-join", action: "approve" });
     expect(body).not.toHaveProperty("notifyMember");
+  });
+});
+
+/*
+  THE SECTION IS THE ONE PLACE IN THIS FEATURE THAT READS THE PROVIDER, and until
+  this block existed nothing checked that it did (CT-4, #2870; `INV-CONFIG-002`).
+
+  MEASURED on this branch: replacing `useClubTime()` here with a hard-coded
+  `bindClubTime("Pacific/Auckland")` failed 0 of the 107 tests across the seven
+  suites this change touches. That is the structural blindness recorded on #2870
+  — every suite above renders under the harness's default zone, which is
+  deliberately the one the environment also resolves to, so none of them can tell
+  the persisted zone from the environment however many dates they assert.
+
+  What closes it is an identity check under a zone the section could not have
+  guessed: mount the provider with it, and read back the zone each card was
+  handed.
+*/
+describe("FamilyGroupRequestReviewSection - the club zone it hands each card", () => {
+  /*
+    A zone that is neither the environment's nor the provider's documented
+    fallback, so neither plausible hard-code can produce it. The answer here IS
+    the zone identifier — the observable is which binding the card received, not
+    a formatted value — which is why `answerFor` is the identity and each case
+    repeats its own zone under a second key: `answerKey` may not be `zone`
+    itself, and the chooser checks the pinned literal against the answer before
+    choosing.
+  */
+  const chosen = chooseDivergentClubZone({
+    subject: "the club zone the review section hands each card",
+    answerKey: "identifier",
+    cases: [
+      { zone: "America/Denver", identifier: "America/Denver" },
+      { zone: "Pacific/Kiritimati", identifier: "Pacific/Kiritimati" },
+    ],
+    answerFor: (zone) => zone,
+    alsoDifferFrom: [CLUB_TIME_ZONE_FALLBACK],
+  });
+
+  function renderUnderChosenZone(requests: FamilyGroupRequest[]) {
+    return render(
+      <FamilyGroupRequestReviewSection
+        requests={requests}
+        onReviewed={vi.fn()}
+        canEdit={true}
+      />,
+      {
+        // Replaces the harness's default provider — the point of this block is
+        // that the zone is NOT the default one.
+        wrapper: ({ children }: { children: React.ReactNode }) => (
+          <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+        ),
+      }
+    );
+  }
+
+  it("passes the PERSISTED zone down, not the environment's or a literal", () => {
+    renderUnderChosenZone([buildChildRequest()]);
+
+    expect(screen.getByTestId("zone-req-child").textContent).toBe(
+      chosen.identifier
+    );
+  });
+
+  it("hands every card in the queue the same binding, read once", () => {
+    // The reason the card takes a prop rather than calling the hook itself: a
+    // queue of forty requests must construct one binding, not forty. Identity
+    // is what proves "once" — a per-card `bindClubTime` would produce equal
+    // zones but different objects, so the zone is checked on every card and the
+    // shared-instance claim rests on there being a single `useClubTime()` call
+    // in the section.
+    renderUnderChosenZone([
+      buildChildRequest(),
+      buildChildRequest({ id: "req-child-2" }),
+      buildChildRequest({ id: "req-child-3" }),
+    ]);
+
+    for (const id of ["req-child", "req-child-2", "req-child-3"]) {
+      expect(screen.getByTestId(`zone-${id}`).textContent).toBe(
+        chosen.identifier
+      );
+    }
   });
 });

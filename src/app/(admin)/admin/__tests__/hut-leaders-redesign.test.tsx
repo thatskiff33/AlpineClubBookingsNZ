@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { settleLodgeScopedPage } from "@/lib/__tests__/helpers/lodge-scope-settle";
+import type { ReactNode } from "react";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 // Capture the props the page passes to the (mocked) calendar so we can assert on
 // the computed overlay, and drive selection / month-change from the test.
@@ -320,5 +324,73 @@ describe("hut leaders redesign — calendar-painted 3-step flow", () => {
     expect(
       screen.getByRole("button", { name: /load july 2099/i }),
     ).toBeInTheDocument();
+  });
+});
+
+
+/**
+ * THE DISCRIMINATING ONE (CT-4, #2870).
+ *
+ * Every render above uses the default `CLUB_TIME_TEST_ZONE`, deliberately equal
+ * to `APP_TIME_ZONE`, so a coverage block's Active/Past chip reads the same
+ * whether the page consulted its provider or the environment.
+ *
+ * That chip is the officer's answer to "is anybody covering the lodge right
+ * now?". A block that flips to Past a day early reads as an uncovered night on
+ * a night somebody is in fact rostered — and the check is a bare string compare
+ * against the club's today, so the whole of it turns on which zone supplied
+ * that string.
+ */
+describe("hut leaders — Active/Past comes from the club's day (CT-4, #2870)", () => {
+  const dayIn = (zone: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      // An independent oracle rather than the kernel under test.
+    }).format(new Date());
+
+  it("still reads Active on the block's last night when the club's day has not rolled over", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "day",
+      cases: [
+        // -6: still 30 June, so a block ending 30 June is ACTIVE.
+        { zone: "America/Denver", day: "2026-06-30", status: "Active" },
+        // +14: already 1 July, so the same block is PAST.
+        { zone: "Pacific/Kiritimati", day: "2026-07-01", status: "Past" },
+      ],
+      answerFor: dayIn,
+      // NOT `["UTC"]` — see the chooser's note on "today" assertions.
+    });
+    const environmentDay = dayIn(APP_TIME_ZONE);
+    // Hand-derived from the block below, not recomputed by the page.
+    const environmentStatus = "2026-06-30" < environmentDay ? "Past" : "Active";
+    expect(chosen.status).not.toBe(environmentStatus);
+
+    stubFetch({
+      assignments: [
+        {
+          id: "a1",
+          memberId: "m9",
+          memberName: "Bob Jones",
+          memberEmail: "bob@test.com",
+          startDate: "2026-06-28",
+          endDate: "2026-06-30",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const HutLeadersPage = (await import("@/app/(admin)/admin/hut-leaders/page")).default;
+    render(<HutLeadersPage />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    });
+    await settleLodgeScopedPage("/api/admin/hut-leaders?lodgeId=");
+
+    expect(await screen.findByText(chosen.status)).toBeInTheDocument();
+    expect(screen.queryByText(environmentStatus)).toBeNull();
   });
 });

@@ -2,8 +2,9 @@ import { BookingStatus, type Prisma, type PrismaClient } from "@prisma/client";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
-  normalizeDateOnlyForTimeZone,
+  parseDateOnly,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
   isGuestActiveOnNight,
   type GuestStayRange,
@@ -179,8 +180,8 @@ function requestedNightsByMember(
   checkIn: Date,
   checkOut: Date,
 ) {
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const end = storedDateOnly(checkOut);
   const nights = eachDateOnlyInRange(start, end);
   const byMember = new Map<string, Set<string>>();
 
@@ -207,6 +208,7 @@ export async function findBookingMemberNightConflicts(
     checkOut,
     guests,
     excludeBookingId,
+    today,
   }: {
     actorMemberId: string;
     actorRole: string;
@@ -214,10 +216,44 @@ export async function findBookingMemberNightConflicts(
     checkOut: Date;
     guests: readonly ConflictGuestInput[];
     excludeBookingId?: string;
+    /**
+     * The CLUB's today, as the UTC-midnight `Date` a Prisma `@db.Date` column
+     * round-trips through (`INV-DATE-026`) — resolved by the caller BEFORE it
+     * opened its transaction, and REQUIRED with no default.
+     *
+     * WHY IT IS A PARAMETER AND NOT A READ (`INV-LOCK-004`). This function is
+     * the authoritative person-night guard, reached from nine writers that are
+     * all mid-transaction when they call it: each holds
+     * `pg_advisory_xact_lock(1)`, the per-lodge capacity key from
+     * `acquireLodgeCapacityLock`, and — through
+     * `assertNoBookingMemberNightConflicts` — one transaction-scoped advisory
+     * lock per member-linked guest. A `clubTimeSettings.findUnique` here runs on
+     * the MODULE-level client, not the `db` this function was handed, so it
+     * needs a SECOND pooled connection while all of that is held. With the pool
+     * at N and N concurrent booking creates in flight, every transaction holds
+     * one connection and waits for another that only a commit can free: all N
+     * hit `pool_timeout` (P2024) at once. The zone reader is fail-soft — it
+     * swallows the error, falls back to the environment seed and warns at most
+     * once per minute per process — so the visible symptom is not an outage but
+     * the WRONG club day silently reaching `evaluateGuestSelfRemoval` below,
+     * with the log going quiet after the first minute.
+     *
+     * Even uncontended it would put a database round trip inside the locked
+     * span on every booking create, date modification, guest add, request
+     * approval and quote conversion, lengthening the global lock(1) hold for a
+     * value the caller already had.
+     *
+     * `INV-CONFIG-002` decides where the caller gets it: the club's PERSISTED
+     * `ClubTimeSettings.timeZone`, never `APP_TIME_ZONE`. The source contract
+     * `lock-bound-club-zone-outside-transaction.test.ts` holds both halves —
+     * that every caller still reads the persisted zone, and that none of them
+     * reads it inside a transaction span.
+     */
+    today: Date;
   },
 ): Promise<BookingMemberNightConflict[]> {
-  const start = normalizeDateOnlyForTimeZone(checkIn);
-  const end = normalizeDateOnlyForTimeZone(checkOut);
+  const start = storedDateOnly(checkIn);
+  const end = storedDateOnly(checkOut);
   const requested = requestedNightsByMember(guests, start, end);
   const memberIds = [...requested.keys()];
   if (memberIds.length === 0) return [];
@@ -231,7 +267,6 @@ export async function findBookingMemberNightConflicts(
       .map((guest) => guest.memberId as string),
   );
 
-  const today = normalizeDateOnlyForTimeZone(new Date());
   const existingGuests = await db.bookingGuest.findMany({
     where: {
       memberId: { in: memberIds },
@@ -276,12 +311,14 @@ export async function findBookingMemberNightConflicts(
       checkIn: guest.booking.checkIn,
       checkOut: guest.booking.checkOut,
     };
+    // #3107: `parseDateOnly`, not `normalizeDateOnlyForTimeZone`. `night` is
+    // already a `yyyy-mm-dd` key, and `bookingRange` above is the existing
+    // booking's raw `@db.Date` columns - so projecting the night through the
+    // environment zone compared a day-early night against a true-calendar
+    // envelope, and behind Greenwich a member was told the wrong nights clashed
+    // (INV-DATE-013).
     const conflictingNights = [...requestedNights].filter((night) =>
-      isGuestActiveOnNight(
-        guest,
-        normalizeDateOnlyForTimeZone(new Date(`${night}T00:00:00.000Z`)),
-        bookingRange,
-      ),
+      isGuestActiveOnNight(guest, parseDateOnly(night), bookingRange),
     );
     if (conflictingNights.length === 0) continue;
 
@@ -380,6 +417,12 @@ export async function assertNoBookingMemberNightConflicts(
   // lock-capable client (never the case for the authoritative callers, which
   // pass the transaction client), the guard still reads — this only adds the
   // cross-lodge serialisation, it never weakens the existing check.
+  //
+  // `input.today` is the CLUB's day, resolved by the caller before it opened
+  // this transaction and threaded in (`INV-LOCK-004`). Every writer that reaches
+  // this function is inside a transaction holding at least the locks above, so
+  // there is no "before the transaction" available from in here — see the
+  // parameter's docblock on `findBookingMemberNightConflicts`.
   if (hasExecuteRaw(db)) {
     await lockBookingMemberNights(db, input.guests);
   }

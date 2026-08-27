@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
@@ -22,7 +23,7 @@ export interface CompleteBookingsResult {
  * night, and the whole check-out day, is behind us.
  */
 export async function completeBookings(): Promise<CompleteBookingsResult> {
-  const today = getTodayDateOnly();
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
 
   const candidates = await prisma.booking.findMany({
     where: { status: BookingStatus.PAID, checkOut: { lt: today } },

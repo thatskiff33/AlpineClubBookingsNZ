@@ -87,9 +87,6 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
   settleHostingCoverageAfterCommit: vi.fn(async () => undefined),
 }));
 
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
   getAuditEmailDomain: vi.fn((email?: string | null) =>

@@ -1,12 +1,41 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   SELF_REMOVABLE_GUEST_BOOKING_STATUSES,
 } from "@/lib/booking-guest-self-removal";
-import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
+import type { ClubTimeZone } from "@/lib/club-time";
 import {
   classifyMemberGuestConsent,
   type MemberGuestConsentColumns,
 } from "@/lib/member-guest-consent";
+import { formatConsentShortDate } from "@/lib/member-guest-consent-labels";
+
+/*
+  THE LABEL SHAPES LIVE NEXT DOOR, AND THIS FILE STILL PUBLISHES THEM.
+
+  `member-guest-consent-labels.ts` holds the date, name and count labels that
+  used to sit below this module's `// Date labels ---` divider. They moved in the
+  CT-4 group E fix round (#2870) because the club-time correction to two of them,
+  plus the explanation it has to carry, took this module over its 700-line budget
+  for the first time — which the file-size ratchet refuses to allowance, and
+  rightly (`size-allowances.d/README.md`).
+
+  THE RE-EXPORT IS DELIBERATE, NOT A SHIM LEFT BEHIND. Six files import these by
+  name from here, and one of them — `src/app/(admin)/admin/bookings/page.tsx` —
+  is being edited right now by the sibling admin lane (#3067). Re-pointing its
+  import to buy back a line count in a file it does not touch would hand two open
+  pull requests a conflict over a file neither of them needed to share. The
+  consent surfaces keep ONE public import surface; the labels keep their own home
+  with room for their reasoning.
+*/
+export {
+  describeConsentNightsCount,
+  formatConsentFullDate,
+  formatConsentGuestName,
+  formatConsentNightsLabel,
+  formatConsentShortDate,
+  formatConsentStayLabel,
+  formatConsentWeekdayDate,
+} from "@/lib/member-guest-consent-labels";
 
 /**
  * The member-visible consent surfaces' shared brain ("+ Add Member Guest",
@@ -30,32 +59,6 @@ import {
  * comes back. Predicting it by guessing from "has a captured payment" would
  * hide the action from members the server would in fact allow.
  */
-
-// #2264 — the three consent-surface date shapes stay hand-pinned rather than
-// moving to the shared `nzst-date` helpers: they are locked to the signed-off
-// #2307 mockup pack (a year-less badge date, and two comma-stripped weekday
-// forms), so their rendered strings must not drift. Both the locale and the
-// club timezone are pinned here exactly as the call sites already pinned them.
-const CONSENT_SHORT_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  day: "numeric",
-  month: "short",
-  timeZone: APP_TIME_ZONE,
-});
-
-const CONSENT_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: APP_TIME_ZONE,
-});
-
-const CONSENT_FULL_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: APP_TIME_ZONE,
-});
 
 /** The four decline refusals the page can know about before the click. */
 export type PredictableConsentDeclineBlocker =
@@ -86,7 +89,11 @@ export function predictConsentDeclineRefusal(params: {
   bookingCheckIn: Date;
   bookingGuestCount: number;
   isQuotePriced: boolean;
-  /** Today as an NZ lodge date. Callers meaning "now" pass `getTodayDateOnly()`. */
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding. A caller meaning
+   * "now" reads it from the club's PERSISTED timezone — `clubTodayDateOnlyInstant()`
+   * on a request — never from the container's (#3123, INV-CONFIG-002).
+   */
   today: Date;
 }): PredictableConsentDeclineBlocker | null {
   const {
@@ -100,7 +107,13 @@ export function predictConsentDeclineRefusal(params: {
   if (!SELF_REMOVABLE_GUEST_BOOKING_STATUSES.has(bookingStatus)) {
     return "BOOKING_STATUS";
   }
-  if (normalizeDateOnlyForTimeZone(bookingCheckIn) <= today) {
+  // `bookingCheckIn` is a stored `@db.Date` lodge night
+  // (`prisma/schema.prisma:1662`) and a calendar day takes no timezone, so it is
+  // DECODED rather than projected. This module is on the CLIENT graph — three
+  // components import `describeMemberGuestConsentBadge` from it — and that is
+  // exactly why the temporal kind had to be settled before the zone: the correct
+  // fix needs no zone plumbing into the browser at all (#3123, INV-DATE-026).
+  if (storedDateOnly(bookingCheckIn) <= today) {
     return "STAY_NOT_FUTURE";
   }
   if (bookingGuestCount <= 1) {
@@ -355,34 +368,65 @@ export type MemberGuestConsentBadgeAudience = "MEMBER" | "ADMIN" | "WIZARD";
  * audience only — see `describeMemberGuestConsentBadgeForWizard` below for the
  * full eight-state mapping and for why naming the target is safe where naming
  * the responder is not.
+ *
+ * THE PARAMETERS ARE A UNION ON THE AUDIENCE, AND THAT IS WHERE THE CLUB'S ZONE
+ * SITS (#3123). The MEMBER and ADMIN badges stamp a real instant —
+ * `consentExpiresAt` on a pending row, `consentRespondedAt` on a confirmed one —
+ * which has no civil day until a zone is chosen, and that zone is the club's
+ * PERSISTED setting (`INV-CONFIG-002`), never the container's and never the
+ * browser's. So those two audiences REQUIRE it. The WIZARD badge renders no date
+ * at all (its eight strings are names and verbs), so demanding a zone from it
+ * would be ceremony — and, more to the point, all three of its callers are
+ * `"use client"` components that would have had to reach for `useClubTime()` to
+ * satisfy a parameter they never read. Splitting on the audience is what made
+ * this a two-page change instead of a five-component one, and it stays honest:
+ * the day a wizard badge gains a date, the type demands the zone.
  */
-export function describeMemberGuestConsentBadge(params: {
-  guest: { memberId: string | null } & MemberGuestConsentColumns;
-  audience: MemberGuestConsentBadgeAudience;
-  responderName?: string | null;
-  targetFirstName?: string | null;
-}): MemberGuestConsentBadge | null {
-  const { guest, audience, responderName, targetFirstName } = params;
+export function describeMemberGuestConsentBadge(
+  params:
+    | {
+        guest: { memberId: string | null } & MemberGuestConsentColumns;
+        audience: Extract<MemberGuestConsentBadgeAudience, "WIZARD">;
+        targetFirstName?: string | null;
+      }
+    | {
+        // Written as an EXCLUSION rather than as `"MEMBER" | "ADMIN"` so a
+        // fourth audience lands on the arm that REQUIRES the club's zone until
+        // somebody deliberately moves it, rather than on the one that renders
+        // dates without asking for one.
+        guest: { memberId: string | null } & MemberGuestConsentColumns;
+        audience: Exclude<MemberGuestConsentBadgeAudience, "WIZARD">;
+        responderName?: string | null;
+        /** The club's persisted timezone — these two audiences stamp instants. */
+        timeZone: ClubTimeZone;
+      },
+): MemberGuestConsentBadge | null {
+  const { guest, audience } = params;
   const forClub = audience === "ADMIN";
 
   if (guest.consentStatus === null) return null;
 
   const subState = classifyMemberGuestConsent(guest, guest.memberId);
 
-  if (audience === "WIZARD") {
+  if (params.audience === "WIZARD") {
     return describeMemberGuestConsentBadgeForWizard(
       guest.consentStatus,
       subState,
-      targetFirstName ?? null,
+      params.targetFirstName ?? null,
     );
   }
+
+  // Past the WIZARD return, `params` is narrowed to the audiences that stamp an
+  // instant, so the club's zone and the responder name are both present by
+  // construction rather than by convention (#3123).
+  const { responderName, timeZone } = params;
 
   switch (guest.consentStatus) {
     case "PENDING":
       return {
         tone: "pending",
         label: guest.consentExpiresAt
-          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt)}`
+          ? `Waiting for consent · expires ${formatConsentShortDate(guest.consentExpiresAt, timeZone)}`
           : "Waiting for consent",
       };
     case "CONFIRMED":
@@ -402,14 +446,14 @@ export function describeMemberGuestConsentBadge(params: {
         return {
           tone: "ok",
           label: guest.consentRespondedAt
-            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt)}`
+            ? `Consented by ${responderName}, ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`
             : `Consented by ${responderName}`,
         };
       }
       if (forClub && guest.consentRespondedAt) {
         return {
           tone: "ok",
-          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt)}`,
+          label: `Consented ${formatConsentShortDate(guest.consentRespondedAt, timeZone)}`,
         };
       }
       return { tone: "ok", label: "Consented" };
@@ -604,92 +648,4 @@ export function describeMemberGuestPendingHeading(
   if (names.length === 1) return `${names[0]} hasn't answered yet`;
   if (names.length === 2) return `${names[0]} and ${names[1]} haven't answered yet`;
   return `${names.length} guests haven't answered yet`;
-}
-
-// ---------------------------------------------------------------------------
-// Date labels — NZ lodge dates, in the shapes the mockups draw
-// ---------------------------------------------------------------------------
-
-/**
- * "Tama Kaur" — or "Tama Kaur (age 9)" for a guest the club treats as a child.
- *
- * A guest row is allowed to carry an EMPTY last name: a member with one name, a
- * row an admin left half-filled, a legacy import. The delegate page used to
- * build the whole string — age suffix and all — and trim the result, and
- * `.trim()` only tidies the ENDS, so such a row rendered as "Tama  (age 9)":
- * two spaces, in a page heading. The name is therefore composed and tidied
- * FIRST, and only then does the age go on the end. Collapsing the whitespace
- * run rather than trimming it also covers a surname that is blank instead of
- * empty. It lives here beside the other label shapes so both consent pages
- * compose a name the same way.
- *
- * The age is shown only for a minor: it is there so the person answering knows
- * a child is being put on a booking, and an adult's age is nobody's business.
- */
-export function formatConsentGuestName(guest: {
-  firstName: string;
-  lastName: string;
-  ageYears: number | null;
-}): string {
-  const fullName = `${guest.firstName} ${guest.lastName}`.replace(/\s+/g, " ").trim();
-  return guest.ageYears !== null && guest.ageYears < 18
-    ? `${fullName} (age ${guest.ageYears})`
-    : fullName;
-}
-
-/** "7 Aug" — the badge / inline-sentence shape. */
-export function formatConsentShortDate(date: Date): string {
-  return CONSENT_SHORT_DATE.format(date);
-}
-
-/** "Sat 8 Aug" — one night in a nights list, or the lapse sentence's deadline.
- * en-NZ renders "Sat, 8 Aug"; the comma is stripped because the signed-off
- * mockups write the bare "Sat 8 Aug" shape throughout. */
-export function formatConsentWeekdayDate(date: Date): string {
-  return CONSENT_WEEKDAY_DATE.format(date).replace(/,/g, "");
-}
-
-/** "Fri 7 Aug 2026" — the facts-table shape (comma stripped, as above). */
-export function formatConsentFullDate(date: Date): string {
-  return CONSENT_FULL_DATE.format(date).replace(/,/g, "");
-}
-
-/** "Sat 8 Aug – Mon 10 Aug 2026 (2 nights)" — the facts-table stay row. */
-export function formatConsentStayLabel(checkIn: Date, checkOut: Date): string {
-  const nights = Math.max(
-    1,
-    Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000),
-  );
-  return (
-    `${formatConsentWeekdayDate(checkIn)} – ${formatConsentFullDate(checkOut)} ` +
-    `(${nights} night${nights === 1 ? "" : "s"})`
-  );
-}
-
-/** "Sat 8 Aug, Sun 9 Aug" — the guest's own nights row. */
-export function formatConsentNightsLabel(nights: readonly Date[]): string {
-  return nights.map((night) => formatConsentWeekdayDate(night)).join(", ");
-}
-
-const NIGHT_COUNT_WORDS = [
-  "no",
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-  "ten",
-] as const;
-
-/** "two nights" — the intro sentence's count, in words as the mockup writes it. */
-export function describeConsentNightsCount(count: number): string {
-  const word =
-    count >= 0 && count < NIGHT_COUNT_WORDS.length
-      ? NIGHT_COUNT_WORDS[count]
-      : String(count);
-  return `${word} night${count === 1 ? "" : "s"}`;
 }

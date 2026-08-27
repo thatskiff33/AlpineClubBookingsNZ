@@ -74,13 +74,26 @@ import {
   formatDateOnly,
   getTodayDateOnly,
 } from "@/lib/date-only";
+import { requireCalendarDate } from "@/lib/club-time";
 
-// Relative to the real clock: `getBookingEditPolicy` compares against NZ today,
-// so a hardcoded calendar date would rot out of the future-edit window.
-const storedCheckIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const storedCheckOut = addDaysDateOnly(getTodayDateOnly(), 33);
-const shortCheckIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const shortCheckOut = addDaysDateOnly(getTodayDateOnly(), 31);
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
+
+/**
+ * The club's zone, named rather than taken from a helper default (#3123).
+ * `getBookingEditPolicy` compares these fixtures against the club's own
+ * today, so they stay relative to it: a hardcoded calendar date would rot
+ * out of the future-edit window.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
+const storedCheckIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const storedCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 33);
+const shortCheckIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const shortCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 31);
 
 /** Proves how far a call got: everything after the minimum-stay guard. */
 const GUEST_PLAN_SENTINEL = new Error("reached-the-guest-plan");
@@ -169,6 +182,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
     });
 
     const operation = modifyBookingBatch({
+      todayAtClub: FIXTURE_CLUB_DAY,
       bookingId: "booking-1",
       actor: { id: "member-1", role: "USER" },
       input: {
@@ -208,12 +222,13 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
   it("lets a member's compliant date edit continue past the guard", async () => {
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {
           checkIn: formatDateOnly(storedCheckIn),
           // A real move: one night longer than the stored envelope.
-          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 34)),
+          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34)),
         },
         ipAddress: "127.0.0.1",
       }),
@@ -233,11 +248,12 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
     // docs/CONCURRENCY_AND_LOCKING.md.
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {
           checkIn: formatDateOnly(storedCheckIn),
-          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 34)),
+          checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34)),
         },
         ipAddress: "127.0.0.1",
       }),
@@ -255,6 +271,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         // A different actor id: the admin-on-behalf shape.
         actor: { id: "admin-9", role: "ADMIN" },
@@ -277,6 +294,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "admin-9", role: "ADMIN" },
         input: {
@@ -306,6 +324,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {
@@ -326,6 +345,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: { applyCreditCents: 0 },
@@ -349,6 +369,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {
@@ -394,6 +415,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {
@@ -415,7 +437,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
   it("still blocks the moment a guest-stay-range payload WIDENS the envelope", async () => {
     // The mirror of the case above: the same field, but the resolved envelope
     // now covers a night the stored booking did not, so the policy applies.
-    const widerCheckOut = addDaysDateOnly(getTodayDateOnly(), 34);
+    const widerCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34);
     h.bookingFindUnique.mockReset();
     h.bookingFindUnique.mockResolvedValueOnce({ lodgeId: LODGE_B }).mockResolvedValueOnce({
       ...loadedBooking(),
@@ -437,6 +459,7 @@ describe("modifyBookingBatch minimum-stay enforcement (#2363)", () => {
 
     await expect(
       modifyBookingBatch({
+        todayAtClub: FIXTURE_CLUB_DAY,
         bookingId: "booking-1",
         actor: { id: "member-1", role: "USER" },
         input: {

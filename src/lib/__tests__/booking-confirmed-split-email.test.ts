@@ -23,6 +23,15 @@ vi.mock("@/lib/booking-confirmation-credit", () => ({
     .mockResolvedValue({ amountCents: 0, settlementMethod: "card" }),
 }));
 
+// Fork #35: authority stubbed to "unauthorized" so no calendar material
+// enters these renders; the calendar path has its own dedicated suite
+// (booking-confirmed-calendar-authority.test.ts).
+vi.mock("@/lib/booking-email-authority", () => ({
+  resolveBookingEmailLink: vi
+    .fn()
+    .mockResolvedValue({ authority: "unauthorized", bookingUrl: null }),
+}));
+
 vi.mock("@/lib/email-message-settings", () => ({
   EMAIL_DEFAULT_LODGE_NAME: "Example Club Lodge",
   // Search key the email `<title>` bakes (C6 #1985); required alongside

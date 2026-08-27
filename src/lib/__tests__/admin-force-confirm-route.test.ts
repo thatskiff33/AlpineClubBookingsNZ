@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => {
     // Split-parent describe helper reads the provisional non-member child via
     // prisma.booking.findFirst; default null = not a split parent.
     prismaBookingFindFirst: vi.fn().mockResolvedValue(null),
+    clubTimeSettingsFindUnique: vi.fn(),
     loggerError: vi.fn(),
   };
 });
@@ -51,6 +52,12 @@ vi.mock("@/lib/prisma", () => ({
     booking: {
       findFirst: mocks.prismaBookingFindFirst,
     },
+    // CT-4 (#2870): the finished-stay cut-off is the club's calendar day, read
+    // from `ClubTimeSettings`. Without this delegate
+    // `loadPersistedClubTimeSettings()` returns null — it is fail-soft by design
+    // — and the route falls back to the container's `TZ` in silence, so a suite
+    // that omits it cannot tell the two authorities apart.
+    clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     $transaction: mocks.transaction,
   },
 }));
@@ -100,7 +107,16 @@ vi.mock("@/lib/adult-member-hosting-coverage-drain", () => ({
 }));
 
 import { POST } from "@/app/api/admin/bookings/[id]/force-confirm/route";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+
+/**
+ * The zone this suite PERSISTS, named once (#3123). The relative fixtures
+ * below follow the club's own day, which is the authority the route reads;
+ * the one case that persists `America/Denver` writes its own absolute stay
+ * dates rather than deriving them.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
 
 function forceConfirmRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/admin/bookings/booking-1/force-confirm", {
@@ -112,6 +128,15 @@ function forceConfirmRequest(body: Record<string, unknown>) {
       "user-agent": "vitest",
     },
     body: JSON.stringify(body),
+  });
+}
+
+/** Persist a club timezone for the route's `clubTime()` read to resolve. */
+function persistClubZone(timeZone: string) {
+  mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date(0),
   });
 }
 
@@ -186,6 +211,7 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     mocks.checkCapacityForGuestRanges.mockResolvedValue(overbookedCapacity());
     mocks.requiresAdultSupervisionReview.mockReturnValue(false);
     mocks.reconcileBedAllocationsForBooking.mockResolvedValue(undefined);
+    persistClubZone(CLUB_ZONE);
   });
 
   it("reports overbook dates without committing when override is not explicit", async () => {
@@ -350,8 +376,8 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
     ) {
       return {
         ...waitlistBooking(),
-        checkIn: addDaysDateOnly(getTodayDateOnly(), days.checkIn),
-        checkOut: addDaysDateOnly(getTodayDateOnly(), days.checkOut),
+        checkIn: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), days.checkIn),
+        checkOut: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), days.checkOut),
         ...overrides,
       };
     }
@@ -439,6 +465,59 @@ describe("POST /api/admin/bookings/[id]/force-confirm", () => {
       expect(body).toMatchObject({
         status: "PAID",
         unpaidFinishedStay: false,
+      });
+    });
+
+    /*
+      CT-4 (#2870), epic #2988 — WHICH "today" the flag is measured against.
+
+      The cases above derive their fixtures from the club's own day
+      (`CLUB_ZONE`, persisted in `beforeEach`) rather than from a helper
+      default (#3123), so a boundary case like "checks out today" follows the
+      authority the route reads. While that zone and the environment agree they
+      still cannot tell the two apart, which is what this case is for. It
+      pins an absolute check-out and persists a club zone the environment
+      disagrees with, so the answer is attributable.
+
+      The frozen clock is 2026-07-01T00:00:00Z: midday on 1 July in New Zealand
+      and still the evening of 30 JUNE in Denver. A stay checking out on 1 July
+      is therefore FINISHED for the environment and STILL RUNNING for the club —
+      and the flag decides whether an officer is told they just created an
+      unpaid finished stay, and whether the audit trail says so.
+    */
+    it("measures the finished-stay cut-off against the PERSISTED club day", async () => {
+      persistClubZone("America/Denver");
+
+      // The premise, as an answer rather than a zone identifier: two different
+      // zone names can still name the same day, and then this proves nothing.
+      expect(
+        getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+        "INV-CONFIG-002: the environment authority now names the same day as " +
+          "the persisted club zone, so this flag cannot tell the two apart.",
+      ).not.toBe("2026-06-30T00:00:00.000Z");
+
+      mocks.tx.booking.findUnique.mockResolvedValue({
+        ...waitlistBooking(),
+        checkIn: new Date("2026-06-29T00:00:00.000Z"),
+        checkOut: new Date("2026-07-01T00:00:00.000Z"),
+      });
+
+      const response = await POST(forceConfirmRequest({}), routeParams());
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      // 1 July is still ahead of the club's 30 June, so nothing finished.
+      // Against the environment's 1 July this would have come back `true`.
+      expect(body).toMatchObject({
+        status: "PAYMENT_PENDING",
+        unpaidFinishedStay: false,
+      });
+      expect(mocks.tx.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            createdUnpaidFinishedStay: false,
+          }),
+        }),
       });
     });
 

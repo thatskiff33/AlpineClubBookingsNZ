@@ -5,16 +5,51 @@ import { OverCapacityConfirmationRequiredError } from "@/lib/over-capacity-confi
 // is mocked below, so pull it from the types module it originates in; test dates
 // and assertions derive from it so they can never drift from the enforced value.
 import { RETROACTIVE_BOOKING_MAX_LOOKBACK_DAYS as MAX_LOOKBACK_DAYS } from "@/lib/booking-create-types";
-import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-} from "@/lib/date-only";
+import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf, requireClubTimeZone } from "@/lib/club-time";
+import { APP_TIME_ZONE } from "@/config/operational";
+
+/*
+  CT-4 (#2870): every date in this suite is relative to the CLUB's calendar day,
+  taken from the persisted `ClubTimeSettings` row the prisma mock below serves —
+  not from `APP_TIME_ZONE`, which this file pins to a DIFFERENT zone on purpose.
+
+  Before CT-4 the route derived "today" from `getTodayDateOnly()`, i.e. the
+  container's `TZ`, and this suite used the same helper as its oracle. The two
+  agreed by construction, so the suite could not have failed however wrong the
+  authority was. Under the frozen clock the persisted zone's day is 30 June and
+  the environment's is 1 July, so every relative fixture below now moves if the
+  route reads the wrong one — and the exact-lookback-boundary case turns that
+  one-day difference into a 400.
+*/
+/*
+  Hoisted so the prisma mock factory below can name it too. `vi.mock` factories
+  hoist above every plain `const`, so the persisted zone used to be written out
+  twice — here and as a literal in the mock — and only this one was pinned by the
+  premise. One declaration, both call sites.
+*/
+const { PERSISTED_CLUB_ZONE } = vi.hoisted(() => ({
+  PERSISTED_CLUB_ZONE: "America/Denver",
+}));
+
+function getTodayDateOnly() {
+  return dateOnlyInstantOf(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE)));
+}
 
 // Route-level gating test for retroactive create (#1695). The booking-create
 // service is a spy so we can assert what the route threads and inject its
 // structured errors; every pre-service helper is stubbed to pass through so the
 // request reaches the past-date / lock-date guards deterministically.
+// Deliberately NOT the persisted zone: the point of this file is that they can
+// differ and the route must follow the persisted one. Inlined because `vi.mock`
+// hoists above every const here.
+vi.mock("@/config/operational", () => ({
+  APP_CURRENCY: "NZD",
+  APP_STRIPE_CURRENCY: "nzd",
+  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_LOCALE: "en-NZ",
+}));
+
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
@@ -75,6 +110,17 @@ vi.mock("@/lib/prisma", () => ({
     // #2364: an on-behalf create evaluates the hosting policy over the submitted
     // party before the transaction. No rows configured, so it never trips.
     adultMemberHostingPolicy: { findMany: vi.fn().mockResolvedValue([]) },
+    // The club's persisted timezone. NOT optional on this mock: `getClubTimeZone`
+    // degrades silently to the environment when the delegate is missing, so
+    // leaving it off would put the route back on `APP_TIME_ZONE` with nothing
+    // failing.
+    clubTimeSettings: {
+      findUnique: vi.fn().mockResolvedValue({
+        timeZone: PERSISTED_CLUB_ZONE,
+        updatedByMemberId: null,
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    },
   },
 }));
 vi.mock("@/lib/booking-guests", () => ({
@@ -151,7 +197,6 @@ vi.mock("@/lib/policies/booking-route-decisions", () => ({
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),
 }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: () => 2026 }));
 vi.mock("@/lib/internet-banking-settings", () => ({
   checkInternetBankingLeadTime: () => ({ allowed: true }),
   loadInternetBankingPaymentSettings: vi.fn().mockResolvedValue({}),
@@ -264,6 +309,26 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("CT-4 (#2870): the past-date gate runs on the club's day", () => {
+  it("PREMISE: the persisted zone and APP_TIME_ZONE disagree about today", () => {
+    /*
+      The ANSWERS must differ, not merely the identifiers — `America/Chicago` is
+      a different string from `America/Denver` and gives the same day, so a guard
+      written that way would pass while every fixture in this file quietly went
+      back to agreeing with the environment.
+
+      The exact-lookback-boundary case below is what turns that disagreement into
+      a failure: a check-in exactly MAX_LOOKBACK_DAYS before the CLUB's day is one
+      day further back than MAX_LOOKBACK_DAYS before the ENVIRONMENT's, so a route
+      that still reads `APP_TIME_ZONE` refuses it with a 400.
+    */
+    expect(APP_TIME_ZONE).toBe("Pacific/Auckland");
+    expect(clubToday(requireClubTimeZone("Pacific/Auckland"))).toBe("2026-07-01");
+    expect(clubToday(requireClubTimeZone(PERSISTED_CLUB_ZONE))).toBe("2026-06-30");
+    expect(formatDateOnly(getTodayDateOnly())).toBe("2026-06-30");
+  });
 });
 
 describe("POST /api/bookings retroactive create gating (#1695)", () => {

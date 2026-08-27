@@ -280,6 +280,48 @@ describe("guest stay expansion census (#2628)", () => {
     expect(canonical).not.toContain("key <= endKey;");
   });
 
+  it("and its STEP is calendar arithmetic, by a literal one day (#3100)", () => {
+    /*
+      THE ONE GUARD WHOSE FAILURE MODE IS NOT A FAST RED. The case above pins the
+      loop's COMPARISON; nothing pinned its STEP, and #3100 was a broken step:
+      `shiftDateOnlyKey` round-tripped the key through an instant and read it back
+      through the environment zone, so for a club behind Greenwich the projection
+      ate the shift and the step returned its own argument. A loop whose step is
+      the identity never reaches `endKey`.
+
+      A regression here therefore does not fail, it exhausts the heap: measured in
+      a bare node process, the loop pushes one identical string until V8 aborts
+      with `FATAL ERROR: Reached heap limit` (exit 134) -- seconds at a 256 MB cap,
+      minutes at the default one, and on CI a slow worker crash rather than an
+      assertion. That is what this case is for. It is source text, so it cannot
+      hang, and it fails in milliseconds.
+
+      Anchored to the definition rather than to a byte count: a fixed-size slice
+      of a file stops covering its own subject the first time somebody writes a
+      paragraph above it, so the marker is asserted before it is used.
+    */
+    const canonical = readRepoFile("src/lib/booking-guest-stay-ranges.ts");
+    const marker = "function shiftDateOnlyKey(";
+    expect(canonical, "the step helper was renamed; re-point this pin").toContain(marker);
+    const body = canonical.slice(canonical.indexOf(marker));
+    const NEWLINE_BRACE = String.fromCharCode(10) + "}";
+    const definition = body.slice(0, body.indexOf(NEWLINE_BRACE));
+
+    // Whole-day civil arithmetic on the key, with no `Date` and no zone.
+    expect(definition).toContain("addCalendarDays(");
+    expect(definition).toContain("requireCalendarDate(");
+    // The two spellings #3100 forbids: a millisecond step, and any zone reader.
+    expect(definition).not.toContain("MS_PER_DAY");
+    expect(definition).not.toContain("60 * 60 * 1000");
+    expect(definition).not.toContain("formatDateOnlyForTimeZone");
+
+    // And the expander steps by a LITERAL one. `addCalendarDays(d, 0)` is a
+    // fixpoint by design (`club-time/__tests__/calendar-date.test.ts` pins it),
+    // so the termination proof holds because of this literal and not because of
+    // the helper -- parameterise the step and the hang comes back unguarded.
+    expect(canonical).toContain("key = shiftDateOnlyKey(key, 1)");
+  });
+
   it("keeps the two deliberate NON-callers of the canonical guest expander", () => {
     // Both feed bed allocation, and both mean something narrower than
     // `getGuestBedNightKeys`. Routing either at it would change behaviour, so

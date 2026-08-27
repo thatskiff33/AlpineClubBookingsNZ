@@ -2,7 +2,9 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { formatCents, getSeasonYear } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import {
   ProfileDetailsCard,
   ProfileDetailsPageActions,
@@ -47,7 +49,7 @@ import { hasAdminAccess } from "@/lib/access-roles";
 import { getFirstAccessibleAdminHref } from "@/lib/admin-permissions";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 import { formatDateOnly } from "@/lib/date-only";
 
 function singleSearchParam(value?: string | string[]) {
@@ -138,7 +140,17 @@ export default async function ProfilePage({
   const googleError = singleSearchParam(params.googleError);
   const returnTo = getSafeInternalReturnPath(params.returnTo);
 
-  const currentSeasonYear = getSeasonYear(new Date());
+  // `createdAt` and `passwordChangedAt` are real INSTANTS, so the civil day each
+  // reads as comes from the club's PERSISTED timezone rather than the
+  // container's (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
+
+  // The season the CLUB is in, from that same persisted zone. This line used to
+  // carry a comment saying it deliberately stayed on the host's clock because no
+  // call site could fix itself — which was true of the helper it called, and is
+  // the reason the fix had to be a new zone-aware function rather than a better
+  // argument (CT-4 group F1, #2870).
+  const currentSeasonYear = clubSeasonYear(club.zone);
 
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
@@ -229,7 +241,6 @@ export default async function ProfilePage({
   const subscriptionStatus = subscriptionRequired
     ? (currentSub?.status ?? null)
     : "NOT_REQUIRED";
-  const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
   const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
   const memberFieldsFlags = await loadMemberFieldsFlags();
@@ -365,13 +376,13 @@ export default async function ProfilePage({
             <div className="flex justify-between">
               <span className="text-muted-foreground">Member Since</span>
               <span className="font-medium">
-                {formatNZDate(new Date(member.createdAt))}
+                {club.instantDate(member.createdAt)}
               </span>
             </div>
             <Separator />
             <div className="flex justify-between items-center">
               <span className="text-muted-foreground">
-                Subscription ({seasonLabel})
+                Subscription {seasonSelectLabel(currentSeasonYear)}
               </span>
               <Badge
                 className={subscriptionStatusClass(
@@ -400,7 +411,7 @@ export default async function ProfilePage({
                 {member.passwordChangedAt ? (
                   <p className="text-xs text-muted-foreground mt-0.5">
                     Last changed{" "}
-                    {formatNZDate(new Date(member.passwordChangedAt))}
+                    {club.instantDate(member.passwordChangedAt)}
                   </p>
                 ) : (
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -463,7 +474,7 @@ export default async function ProfilePage({
           ) : (
             <div className="divide-y">
               {subscriptionHistory.map((sub) => {
-                const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
+                const label = seasonSelectLabel(sub.seasonYear);
                 const isCurrent = sub.seasonYear === currentSeasonYear;
                 return (
                   <div

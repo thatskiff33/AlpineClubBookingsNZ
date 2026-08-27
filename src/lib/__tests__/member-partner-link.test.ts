@@ -740,10 +740,22 @@ describe("removeOwnPartnerLink", () => {
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
       db: prisma,
+      // #3123: the club's day, resolved before the transaction opened.
+      today: expect.any(Date),
     });
     expect(mockAcquireFuturePartnerSharedAllocationLocks).toHaveBeenCalledWith(
       prisma,
       ["member-a", "member-b"],
+      expect.any(Date),
+    );
+    // ONE day for the whole transaction: the lodge set that is LOCKED and the
+    // rows the sweep JUDGES must be derived from the same club day, or a
+    // dissolve straddling club midnight locks one set and sweeps another.
+    expect(
+      mockAcquireFuturePartnerSharedAllocationLocks.mock.calls[0]?.[2],
+    ).toEqual(
+      vi.mocked(sweepFuturePartnerSharedAllocationsWithLocksHeld).mock.calls[0]?.[0]
+        .today,
     );
     const acquireOrder =
       mockAcquireFuturePartnerSharedAllocationLocks.mock.invocationCallOrder[0];
@@ -1102,6 +1114,8 @@ describe("adminRemovePartnerLink", () => {
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
       db: prisma,
+      // #3123: the club's day, resolved before the transaction opened.
+      today: expect.any(Date),
     });
     expect(sendAdminPartnerShareSweptAlert).toHaveBeenCalledWith(
       expect.objectContaining({

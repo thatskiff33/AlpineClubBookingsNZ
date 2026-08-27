@@ -2,7 +2,9 @@ import bcrypt from "bcryptjs";
 import { createHmac, randomInt, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "./prisma";
-import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "./date-only";
+import { addDaysDateOnly, formatDateOnly } from "./date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { getAuthSecret } from "./runtime-config";
 
 export const HUT_LEADER_PIN_SESSION_COOKIE = "tac_hut_leader_pin_session";
@@ -151,9 +153,25 @@ export async function hashHutLeaderPin(pin: string): Promise<string> {
   return bcrypt.hash(pin, HUT_LEADER_PIN_BCRYPT_ROUNDS);
 }
 
+/**
+ * Find the hut-leader assignment a kiosk PIN currently unlocks.
+ *
+ * `date` is REQUIRED (#3123) and is the day the credential window is judged
+ * against (`startDate <= date + 1`, `endDate >= date`). It used to default to
+ * the ENVIRONMENT's day, which is a security decision taken from the wrong
+ * clock: a club configured behind its container's zone either admitted a PIN
+ * whose assignment had ended or locked out a hut leader whose assignment had
+ * begun. Two things made the default worse than usual here — the caller reached
+ * past it POSITIONALLY (`findActiveHutLeaderAssignmentByPin(pin, undefined,
+ * kioskLodgeId)`) purely to supply the lodge, so the environment's day was being
+ * chosen by accident rather than on purpose; and this module is reachable from
+ * `src/instrumentation.node.ts`, so it cannot import the `server-only` binding
+ * and could not have resolved the club's zone here even if that were wanted.
+ * The caller resolves the club's day and passes it in.
+ */
 export async function findActiveHutLeaderAssignmentByPin(
   pin: string,
-  date = getTodayDateOnly(),
+  date: Date,
   kioskLodgeId?: string
 ) {
   const nextDay = addDaysDateOnly(date, 1);
@@ -205,11 +223,18 @@ export async function findActiveHutLeaderAssignmentByPin(
  * leader can read the instructions BEFORE their stay. Returns the matched
  * assignment (carrying lodgeId) or null; never reveals whether the id or the
  * PIN was the mismatch.
+ *
+ * `date` is REQUIRED (#3123), for the same reason as
+ * {@link findActiveHutLeaderAssignmentByPin}: it decides a credential window,
+ * and defaulting it read the environment's day rather than the club's persisted
+ * one. `endDate` is a stored `@db.Date` calendar day and takes no zone at all;
+ * this is the other side of that comparison and must arrive on the same
+ * UTC-midnight frame (`INV-DATE-026`).
  */
 export async function verifyHutLeaderPinForAssignment(
   assignmentId: string,
   pin: string,
-  date = getTodayDateOnly()
+  date: Date
 ) {
   const assignment = await prisma.hutLeaderAssignment.findFirst({
     where: {
@@ -344,8 +369,15 @@ export async function hasAnyActiveLodgePinSession(
 ): Promise<boolean> {
   const cookieStore = await cookies();
   const rawCookieValue = cookieStore.get(HUT_LEADER_PIN_SESSION_COOKIE)?.value ?? null;
+  // The club's own day decides whether a PIN session is still inside its
+  // assignment window, so it must come from the club's persisted zone rather
+  // than the container's (#3123). The runtime reader, not the request-scoped
+  // binding: this module is reachable from `src/instrumentation.node.ts`
+  // through general-cron-runner -> cron-quote-expiry-reminders ->
+  // booking-request-quotes -> school-booking-request, and
+  // `@/lib/club-time/server` is `server-only`, which throws on that graph.
   const session = await getActiveLodgePinSessionForDate(
-    getTodayDateOnly(),
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest())),
     rawCookieValue,
     sessionUserId
   );

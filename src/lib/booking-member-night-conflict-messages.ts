@@ -28,15 +28,26 @@
  * can act on, so it is opt-in via `canChooseDifferentDates` and the
  * server-built message stays flow-neutral.
  *
+ * A LODGE NIGHT TAKES NO TIMEZONE (CT-4, #2870, group F4b; `INV-DATE-019`).
+ * `conflictingNights` are the `YYYY-MM-DD` keys `findBookingMemberNightConflicts`
+ * puts on the wire — calendar days, not instants — so they are rendered with
+ * `formatClubDate`, which takes a `CalendarDate` and no zone at all. This used to
+ * be `formatNZDate(parseDateOnly(night))`, and that pairing is a PROJECTION
+ * however it reads: `parseDateOnly` pins the key at UTC midnight and
+ * `formatNZDate` then re-reads that instant through `APP_TIME_ZONE` — the
+ * identity for a club ahead of Greenwich, the PREVIOUS DAY for one behind it. So
+ * a Denver club told the member the wrong nights were in conflict, naming dates
+ * they had never picked, in the one message whose entire job is to say which
+ * nights are the problem. Pinned on both the environment and the host axis in
+ * `__tests__/booking-member-night-conflict-message-frame.test.ts`.
+ *
  * No Prisma import: the booking wizard renders this copy in the browser bundle.
- * `@/lib/date-only` and `@/lib/nzst-date` import only `@/config/operational`,
- * so both are client-safe — several client components already import them, and
- * `admin-booking-calendar.tsx` does exactly this `formatNZDate(parseDateOnly())`
- * pairing in the browser.
+ * The `@/lib/club-time` barrel is isomorphic by construction — no `server-only`,
+ * no Prisma, no environment read of the zone — and `client-server-boundary-census.test.ts`
+ * (`INV-OPS-013`) is the guard that keeps it that way.
  */
 
-import { parseDateOnly } from "@/lib/date-only";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 
 export type BookingMemberNightConflictCopyInput = {
   memberName: string;
@@ -70,13 +81,19 @@ export type BookingMemberNightConflictCopyOptions = {
   canChooseDifferentDates?: boolean;
 };
 
-// Date-only lodge nights are plain "YYYY-MM-DD" strings. `parseDateOnly` pins
-// them to UTC midnight and `formatNZDate` renders them in the club time zone,
-// so the night never shifts with the reader's browser time zone AND it follows
-// the app's configured locale rather than a hardcoded English month table.
+// A night key names a calendar day, so it renders as that day in every zone and
+// on every host. `formatClubDate` is the house medium shape ("11 Jun 2026") and
+// still follows `APP_LOCALE` rather than a hardcoded English month table.
+//
+// A key naming no real day is shown VERBATIM rather than guessed at.
+// `parseCalendarDate` never rolls — `2026-02-30` is null, not 2 March — so a
+// malformed key from a future producer reads as what arrived instead of as a
+// plausible wrong night. That is the same fail-open the previous NaN check gave
+// this function, deliberately preserved: this is display copy on a 409, and
+// throwing here would replace a refusal the member can act on with a 500.
 function formatNight(night: string): string {
-  const parsed = parseDateOnly(night);
-  return Number.isNaN(parsed.getTime()) ? night : formatNZDate(parsed);
+  const day = parseCalendarDate(night);
+  return day === null ? night : formatClubDate(day);
 }
 
 function joinWithAnd(items: string[]): string {

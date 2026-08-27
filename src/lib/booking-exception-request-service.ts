@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { addDaysDateOnly, parseDateOnly, formatDateOnly } from "@/lib/date-only";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { normalizeGuestStayRange } from "@/lib/booking-guest-stay-range-input";
 import { getStayNights } from "@/lib/policies/pricing";
 import { validateMinimumStay } from "@/lib/booking-policies";
@@ -1314,10 +1315,16 @@ export async function createModificationExceptionRequest(
   // live request nobody has decided, which is a member-visible change this issue
   // never asked for. NULL is exactly "no capacity is at stake here", so the
   // reaper leaves it in the officer queue until a human decides it.
+  //
+  // #3123 — the club's PERSISTED zone, not the environment's, decides when the
+  // first held night begins. Resolved here, in the request path, and passed in:
+  // the expiry rule stays a pure function of its inputs, which is what lets the
+  // reaper re-derive the identical deadline for a row that never got one.
   const holdExpiresAt = reservesBeds
     ? computePolicyExceptionHoldExpiry({
         createdAt: new Date(),
         firstHeldNight: firstReservedNight(reservationFootprint),
+        zone: await clubTimeZone(),
       })
     : null;
 

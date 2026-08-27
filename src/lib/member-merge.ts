@@ -48,6 +48,7 @@ import {
 import { sendAdminPartnerShareSweptAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { acquireMemberPartnerLinkLocks } from "@/lib/member-partner-lock";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -150,7 +151,7 @@ function spec(
 }
 
 /**
- * The authoritative classification of all 80 Member FK-owning relations. The
+ * The authoritative classification of every Member FK-owning relation. The
  * DMMF/schema completeness test (member-merge-dmmf.test.ts) fails CI if the
  * schema grows a Member relation that is missing here (or if a key here no
  * longer exists in the schema), so a new relation cannot silently escape merge
@@ -381,6 +382,26 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   spec("NoticeReadReceipt", "member", "memberId", "resolve", {
     note: "@@unique(noticeId,memberId); keep master's receipt on collision",
   }),
+
+  // --- Club message board (#2993, epic #2992) ---
+  // Authorship: nullable SetNull, no member unique -- the surviving person keeps
+  // their posts, mirroring Notice.createdBy above. The denormalised authorName
+  // on the row is deliberately NOT rewritten: it is what the board displayed at
+  // the time, and a merge is not a licence to restate who said something.
+  spec("ClubPost", "author", "authorMemberId", "move"),
+  // Reports: @@unique(postId,reporterMemberId), so if BOTH members reported the
+  // same post a naive move collides. Keep the master's report and drop the
+  // loser's, via the generic keyed resolver.
+  //
+  // ClubPost.reportCount is a cached count of non-dismissed reports, recomputed
+  // on report and dismissal rather than incremented. Dropping a duplicate here
+  // does not trigger that recompute, so a post can sit one report over its true
+  // distinct-reporter count until the next report or dismissal touches it. That
+  // is a moderation signal reading slightly high on an already-visible post, not
+  // a gate anyone passes through, and an admin can unhide.
+  spec("ClubPostReport", "reporter", "reporterMemberId", "resolve", {
+    note: "@@unique(postId,reporterMemberId); keep master's report on collision",
+  }),
 ];
 
 /**
@@ -429,6 +450,17 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   "FamilyGroupJoinRequest.reviewedBy",
   "DeletionRequest.reviewedBy",
   "MembershipSubscriptionBillingSettings.updatedByMemberId",
+  // Epic #2992: who uploaded a board image. A bare scalar with no @relation,
+  // for the same reasons MediaImage.uploadedByMemberId is one -- it is the
+  // audit answer to "who put this here", which a merge must not rewrite, and
+  // an unclaimed upload has no post to be attributed through instead.
+  "ClubPostImage.uploadedByMemberId",
+  // #2999: the club message board's settings-audit column -- who last changed
+  // the retention window. Identical in kind to the billing-settings column above
+  // and MemberGuestSettings.updatedByMemberId below: a bare scalar with no
+  // @relation, kept pointing at the loser as the immutable answer to "who set
+  // this", which is the person who set it, not whoever absorbed their record.
+  "ClubPostSettings.updatedByMemberId",
   "MembershipSubscriptionChargeCoverage.memberId",
   "AuditLog.actorMemberId",
   "AuditLog.subjectMemberId",
@@ -2106,6 +2138,7 @@ const GENERIC_KEYED_RESOLVERS: readonly {
   { spec: "MemberInductionAssignedSigner.member", delegate: "memberInductionAssignedSigner", memberColumn: "memberId", keys: [["inductionId"]] },
   { spec: "NotificationPreference.member", delegate: "notificationPreference", memberColumn: "memberId", keys: [[]] },
   { spec: "NoticeReadReceipt.member", delegate: "noticeReadReceipt", memberColumn: "memberId", keys: [["noticeId"]] },
+  { spec: "ClubPostReport.reporter", delegate: "clubPostReport", memberColumn: "reporterMemberId", keys: [["postId"]] },
 ];
 
 /**
@@ -2367,6 +2400,18 @@ export async function executeMemberMerge(params: {
   let sweptShares: SweptPartnerSharedAllocation[] = [];
   let sweptShareMasterName = "";
 
+  // #3123 / INV-LOCK-004 — ONE club day for the whole merge, resolved before
+  // the transaction opens. Merge runs on a 120s budget holding every affected
+  // lodge capacity key and a `Member … FOR UPDATE`; resolving the club's
+  // persisted timezone from inside it would be a `clubTimeSettings.findUnique`
+  // taking a second pooled connection for that entire window. One value also
+  // keeps the four consumers coherent: the lodge derivation that decides what
+  // is LOCKED, the sweep that decides what is REMOVED, and the hosting plan
+  // that is built and then rebuilt under the participant locks and compared
+  // for equality — a plan and a re-plan on two different club days would 409 a
+  // merge that nothing was wrong with.
+  const clubTodayForMerge = await clubTodayDateOnlyInstant();
+
   const result = await client.$transaction(async (tx) => {
     // Policy reconciliation enumerates bookings and inserts required queue rows
     // under this key. Take it before lifecycle locks and hold it through every
@@ -2435,6 +2480,7 @@ export async function executeMemberMerge(params: {
     const partnerShareLodgeIds = await acquireMemberMergePartnerSharedLodgeLocks(
       tx,
       [masterId, loserId],
+      clubTodayForMerge,
     );
 
     // Dual advisory lock in sorted id order (deadlock-free) on the shared
@@ -2591,6 +2637,7 @@ export async function executeMemberMerge(params: {
       {
         masterId,
         capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+        today: clubTodayForMerge,
       },
       tx,
     );
@@ -2611,6 +2658,9 @@ export async function executeMemberMerge(params: {
         {
           masterId,
           capturedLoserOwnedBookingIds: loserOwnedBookingIds,
+          // The SAME club day as the plan above; the two are compared by
+          // fingerprint and a differing day would 409 a sound merge (#3123).
+          today: clubTodayForMerge,
         },
         tx,
       );
@@ -2755,6 +2805,9 @@ export async function executeMemberMerge(params: {
         lockedLodgeIds: partnerShareLodgeIds,
         reason: "members_merged",
         db: tx,
+        // The same day the lodge prefix above was derived from, so the set
+        // that was LOCKED and the rows that are JUDGED cannot disagree.
+        today: clubTodayForMerge,
       });
     } catch (sweepError) {
       if (sweepError instanceof UnlockedPartnerShareLodgeError) {

@@ -259,6 +259,22 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
     ],
   },
   {
+    // Club message board (#2994, epic #2992). The module is the only switch:
+    // with it off the member board, its API and the dashboard card all go, and
+    // the API re-checks the flag itself as well so the gate does not live only
+    // in middleware.
+    //
+    // Only the member surfaces are listed here. The admin moderation screens
+    // arrive in a later child and add their own prefixes to this same rule.
+    flag: "commsPortal",
+    prefixes: [
+      "/message-board",
+      "/api/club-posts",
+      "/admin/message-board",
+      "/api/admin/club-posts",
+    ],
+  },
+  {
     // Alpine Central Server (ServerNZ). Admin -> Modules is the master switch,
     // and for THIS module that is load-bearing rather than tidy: the feature
     // uploads club and booking-officer contact details to a third party which

@@ -1,11 +1,9 @@
 import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
-import { APP_TIME_ZONE } from "@/config/operational";
 import {
-  addDaysDateOnly,
-  formatDateOnly,
-  formatDateOnlyForTimeZone,
-  parseDateOnly,
-} from "../date-only";
+  calendarDateOfDateOnlyInstant,
+  dateOnlyInstantOf,
+} from "@/lib/club-time";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
 import {
   countActiveGuestsForNight,
   type GuestNightInput,
@@ -156,21 +154,114 @@ export interface CalculatePromoDiscountOptions {
   remainingFreeNightsByMemberId?: Record<string, number>;
 }
 
-function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
-  // Shared per-timezone-cached formatter (#1146): pricing normalizes dates
-  // once per (guest, night), so a fresh Intl.DateTimeFormat per call
-  // dominated quote and edit repricing time.
-  return formatDateOnlyForTimeZone(date, timeZone);
-}
+/** The exact span of a UTC day. Unix time has no leap seconds. */
+const MS_PER_DAY = 86_400_000;
 
+/**
+ * The stored calendar day a booking date carries, re-encoded as the date-only
+ * value the rest of this engine compares and iterates.
+ *
+ * ## THE CONTRACT: EVERY INPUT IS A CALENDAR DAY, NEVER AN INSTANT
+ *
+ * Every value that reaches here is a lodge calendar day held as the UTC-midnight
+ * `Date` a `@db.Date` column round-trips through: `Booking.checkIn`/`checkOut`
+ * and `BookingRequest.checkIn`/`checkOut` (`INV-DATE-013`),
+ * `BookingGuest.stayStart`/`stayEnd` (`INV-DATE-012`),
+ * `BookingGuestNight.stayDate`, `Season.startDate`/`endDate`, and the
+ * `parseDateOnly` products the routes build from a `yyyy-MM-dd` night key. There
+ * is no `createdAt`, no `Date.now()`, and no club-local wall time on any path
+ * into this function — the whole-tree census is in #2870's group-F2 pull
+ * request. A caller that acquires a real instant must derive its club calendar
+ * day at its own boundary (`clubCalendarDateOf`, `INV-DATE-019`) and hand the
+ * day in; widening this helper to guess which kind it was handed is precisely
+ * how the two defects below become one function.
+ *
+ * **AND THE CONTRACT IS ENFORCED, not merely censused.** A census measures the
+ * tree on one day; this one is load-bearing, so the guard below REFUSES any value
+ * carrying a UTC time of day. Refusing is not the guessing ruled out above: this
+ * function never decides which kind it was handed, it declines to answer for
+ * anything that is not the one kind it accepts. Without it a caller passing
+ * `booking.createdAt` is silently FLOORED to its UTC day — the kernel's own
+ * `calendarDateOfDateOnlyInstant` docblock says "hand it a real `DateTime` and
+ * you get that column's UTC day, which is the `INV-DATE-019` defect", and it
+ * truncates rather than complaining. Under the projection this replaced, that
+ * same input was accidentally RIGHT for an NZ club, so removing the projection
+ * removed a safety net; this guard is what puts one back.
+ * `date-only-encoding-guard.test.ts` cannot cover this site — it classifies by
+ * Prisma field access read from `schema.prisma`, and the receiver here is a bare
+ * parameter.
+ *
+ * ## WHAT THIS USED TO DO, AND WHY IT WAS A LIVE DEFECT (CT-4, #2870, finding 5)
+ *
+ * It read the value through `APP_TIME_ZONE` — the CONTAINER's zone, not even the
+ * club's persisted one (`INV-CONFIG-002`). A `@db.Date` value is a calendar day
+ * ENCODED at UTC midnight, and `INV-DATE-010` says that pinning "is an internal
+ * encoding of the calendar date and nothing more", so projecting it through a
+ * zone treats an encoding as a moment. For a club behind Greenwich that moved the day:
+ * the stored `2026-07-04T00:00:00.000Z` came back as `2026-07-03`. Measured, not
+ * inferred — `America/Denver` shifts it.
+ *
+ * Reading it in UTC instead is blessed BY NAME, and by a different id than an
+ * earlier draft of this docblock claimed. `INV-DATE-019`'s first exact boundary:
+ * "Truncating an existing `@db.Date` value the same way is fine — those are
+ * already pinned to UTC midnight and encode a calendar day, not an instant. It is
+ * not fine for a `DateTime` column." That sentence is also why the contract above
+ * has to hold, and `INV-DATE-026` is why these columns qualify as calendar days
+ * at all. Do NOT cite `INV-DATE-010` for the decode: its closing clause names
+ * those two ids as that authority, and what it forbids is deriving a rule from
+ * one of these values read as a MOMENT — not a licence to project. This
+ * docblock, two test files and the kernel's own `dateOnlyInstantOf` comment had
+ * each attributed the inverse to it (#3076, #3080).
+ *
+ * Because `getStayNights` is built on this, the whole per-night surface moved
+ * with it: the policy-exception proposal's `envelopeNights` froze a party
+ * starting the night before the stay did, so the officer reviewed those nights,
+ * `recheckCapacity` asserted beds on those nights, and
+ * `proposalGuestToCreateInput` executed them (`INV-EXCEPT-016`/`INV-EXCEPT-017`)
+ * — while the season lookup priced them and `getMinimumStayViolations` read
+ * their weekday. It did not deadlock approval only because the freeze and the
+ * replay both came through here and therefore stayed wrong together.
+ *
+ * `dateOnlyInstantOf(calendarDateOfDateOnlyInstant(...))` is the kernel's
+ * decode-then-re-encode pair and reads the value in UTC by definition. For a
+ * well-formed `@db.Date` value it is the identity, which is why a club at or
+ * ahead of Greenwich sees no change at all. That expression is also the entire
+ * body of the `storedDateOnly` helper cloned in six other files
+ * (`booking-exception-approval.ts`, `booking-modification-stay-ranges.ts`,
+ * `booking-edit-policy.ts` and the change-requests, exception-requests and
+ * modify-quote routes), so this function is a seventh instance of it wearing two
+ * pre-guards and a different name. Named here because #2870's F3 hoist will
+ * search for the spelling `storedDateOnly`, which this one does not carry, and
+ * whatever the hoist becomes has to keep the guards (#2870 comment 3).
+ *
+ * IT ALSO RETIRES #1146's PERFORMANCE CARVE-OUT. That issue added a zone-keyed
+ * formatter memo here because pricing normalises once per (guest, night) and
+ * constructing an `Intl.DateTimeFormat` per call dominated quote and edit
+ * repricing. The decode reads `getUTCFullYear`/`Month`/`Date`, so this path now
+ * builds no formatter at all and the memo it needed is gone with it.
+ */
 function normalizeBookingDate(date: Date): Date {
-  const normalized = parseDateOnly(getDateOnlyStringForTimeZone(date));
-
-  if (Number.isNaN(normalized.getTime())) {
-    throw new Error(`Invalid booking date: ${date.toISOString()}`);
+  // Ahead of the decode, so the message is reachable: the kernel refuses an
+  // unrepresentable value first, and `toISOString()` on an Invalid Date throws
+  // `RangeError: Invalid time value` rather than formatting one.
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid booking date: Invalid Date");
   }
 
-  return normalized;
+  // The contract above, enforced. Every legal producer of an input here — a
+  // `@db.Date` round-trip, `parseDateOnly`, `addDaysDateOnly`, `dateOnlyFromParts`,
+  // `dateOnlyInstantOf`, `normalizeDateOnlyForTimeZone` — lands on an exact
+  // multiple of a day; a real instant does not. Unix time has no leap seconds, so
+  // the modulus is exact, and it builds no formatter and reads no field.
+  if (date.getTime() % MS_PER_DAY !== 0) {
+    throw new Error(
+      "Booking dates are calendar days encoded at UTC midnight, not instants: " +
+        `got ${date.toISOString()}. Derive the club calendar day at the caller's ` +
+        "own boundary and pass the day in (INV-DATE-019).",
+    );
+  }
+
+  return dateOnlyInstantOf(calendarDateOfDateOnlyInstant(date));
 }
 
 function getBookingDateKey(date: Date): string {

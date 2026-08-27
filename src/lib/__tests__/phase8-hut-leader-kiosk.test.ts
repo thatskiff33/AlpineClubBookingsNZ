@@ -172,7 +172,10 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     );
     const result = await findActiveHutLeaderAssignmentByPin(
       "123456",
-      undefined,
+      // #3123 - the club's day is a REQUIRED argument now. It was `undefined`
+      // here purely to reach the third parameter past a positional default, so
+      // the environment's day was being chosen by accident.
+      new Date("2026-07-01T00:00:00.000Z"),
       "kiosk-lodge"
     );
 
@@ -211,7 +214,10 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     );
     const result = await findActiveHutLeaderAssignmentByPin(
       "123456",
-      undefined,
+      // #3123 - the club's day is a REQUIRED argument now. It was `undefined`
+      // here purely to reach the third parameter past a positional default, so
+      // the environment's day was being chosen by accident.
+      new Date("2026-07-01T00:00:00.000Z"),
       "kiosk-lodge"
     );
 

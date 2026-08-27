@@ -3,7 +3,6 @@ import {
   addMonthsDateOnly,
   dateOnlyFromParts,
   formatDateOnly,
-  getTodayDateOnly,
 } from "@/lib/date-only";
 
 export const CUSTOM_DATE_RANGE_KEY = "custom";
@@ -171,18 +170,44 @@ export const reportsDateRangePresets: readonly DateRangePreset[] = [
   lastYearPreset,
 ];
 
+/**
+ * THE `today` ARGUMENT IS REQUIRED, AND ITS DEFAULT WAS DELETED (#3123).
+ *
+ * Every preset here is relative to a day — "This Month", "Next 90 Days" — and
+ * the default used to be `getTodayDateOnly()`, which reads `APP_TIME_ZONE`. This
+ * module is only ever reached from the BROWSER (`date-range-controls.tsx` is its
+ * one caller and is `"use client"`), so that constant was `NEXT_PUBLIC_TZ` as it
+ * stood when the bundle was built — not the club's persisted zone, and not even
+ * the container's. Neither reader can be imported here: `@/lib/club-time/server`
+ * is a bare throw in the browser and `club-time-zone-runtime` pulls Prisma. So
+ * the day has to arrive as data, and the default was deleted rather than
+ * policed so that no future caller can silently reacquire the environment's
+ * answer.
+ *
+ * The encoding is the `@db.Date` UTC-midnight `Date` the presets already work
+ * in — `dateOnlyInstantOf(useClubTime().today())` at the call site — so the
+ * arithmetic below is unchanged.
+ */
 export function getDateRangeForPreset(
   preset: DateRangePreset,
-  today = getTodayDateOnly()
+  today: Date
 ): DateRangeValues {
   return preset.getRange(today);
 }
 
+/**
+ * Which preset label describes an already-chosen from/to pair. `today` is
+ * required for the same reason as above, and note this one is a DISPLAY
+ * heuristic: it decides which name the dropdown shows, not which range is
+ * applied. It is still wrong to answer it from the browser's build-time zone,
+ * because a user whose club has rolled over to a new month would see "Custom"
+ * where the label should read "This Month".
+ */
 export function findMatchingDateRangePreset(
   from: string,
   to: string,
   presets: readonly DateRangePreset[],
-  today = getTodayDateOnly()
+  today: Date
 ): string | null {
   const match = presets.find((preset) => {
     const range = getDateRangeForPreset(preset, today);

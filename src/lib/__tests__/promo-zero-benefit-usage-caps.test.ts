@@ -16,11 +16,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import {
-  BENEFICIAL_PROMO_ALLOCATION_FILTER,
   calculatePromoDiscountForGuestRates,
   deletePromoRedemptionAndAdjustCount,
   getAssignedPromoCodeSummariesForMember,
-  isBeneficialPromoAllocation,
   lockPromoCodeRowsForUpdate,
   redeemPromoCode,
   replacePromoRedemptionAllocations,
@@ -29,7 +27,19 @@ import {
   type PromoApplicationSubject,
   type PromoBeneficiaryAllocation,
 } from "../promo";
+import {
+  BENEFICIAL_PROMO_ALLOCATION_FILTER,
+  isBeneficialPromoAllocation,
+} from "../promo-usage-counts";
 import type { PromoCodeInput } from "../pricing";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 // #2299: a promo application that delivered NO benefit must not consume any of
 // the three usage caps (uses per member, total redemptions, unique members).
@@ -734,6 +744,9 @@ describe("usage-cap counts ignore historical zero-benefit rows", () => {
         totalPriceCents: 10000,
         guests: [{ memberId: "member-1", isMember: true, perNightRates: [5000, 5000] }],
       }
+    ,
+      null,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -763,6 +776,9 @@ describe("usage-cap counts ignore historical zero-benefit rows", () => {
         totalPriceCents: 10000,
         guests: [{ memberId: "member-1", isMember: true, perNightRates: [5000, 5000] }],
       }
+    ,
+      null,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBe("You have already used this promo code");
@@ -783,6 +799,9 @@ describe("usage-cap counts ignore historical zero-benefit rows", () => {
         totalPriceCents: 10000,
         guests: [{ memberId: "member-1", isMember: true, perNightRates: [5000, 5000] }],
       }
+    ,
+      null,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     const findManyCalls = vi.mocked(prisma.promoRedemptionAllocation.findMany).mock.calls;
@@ -804,7 +823,10 @@ describe("usage-cap counts ignore historical zero-benefit rows", () => {
       memberId: "member-1",
       totalPriceCents: 10000,
       guests: [{ memberId: "member-1", isMember: true, perNightRates: [5000, 5000] }],
-    });
+    },
+      null,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
+    );
 
     expect(vi.mocked(prisma.promoRedemptionAllocation.aggregate)).toHaveBeenCalledWith({
       where: { promoCodeId: "promo-1", memberId: "member-1" },

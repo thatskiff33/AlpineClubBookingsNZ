@@ -78,8 +78,27 @@ import {
 import { getLodgePartnerSharedCapacityStatus } from "@/lib/lodge-capacity";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
 import { parseDateOnly } from "@/lib/date-only";
+import { requireCalendarDate } from "@/lib/club-time";
 import { prisma } from "@/lib/prisma";
 
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
+
+/**
+ * #3123 — the same 1 July the instant above encodes, as the CALENDAR DAY
+ * `parseBedAllocationDateRange` now requires. The board's default window used to
+ * come from the container's environment timezone; it is a required argument now,
+ * resolved by each route before it opens a transaction (`INV-LOCK-004`). Every
+ * call below names its own `from`, so no assertion here depends on this value —
+ * which is exactly why it is safe to state once.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
 function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
@@ -117,7 +136,7 @@ describe("admin bed allocation", () => {
       parseBedAllocationDateRange({
         from: "2026-07-01",
         to: "2026-07-08",
-      }),
+      }, CLUB_DAY),
     ).toMatchObject({
       fromDate: "2026-07-01",
       toDate: "2026-07-08",
@@ -127,14 +146,14 @@ describe("admin bed allocation", () => {
       parseBedAllocationDateRange({
         from: "2026-07-08",
         to: "2026-07-01",
-      }),
+      }, CLUB_DAY),
     ).toThrow(BedAllocationAdminError);
 
     expect(() =>
       parseBedAllocationDateRange({
         from: "2026-07-01",
         to: "2026-08-15",
-      }),
+      }, CLUB_DAY),
     ).toThrow(
       `Date range cannot exceed ${MAX_BED_ALLOCATION_RANGE_NIGHTS} nights`,
     );
@@ -391,6 +410,7 @@ describe("admin bed allocation", () => {
 
     await expect(
       updateBedAllocationBed({
+        today: CLUB_TODAY_DATE_ONLY,
         id: "bed-1",
         active: false,
         db: db as never,
@@ -414,7 +434,12 @@ describe("admin bed allocation", () => {
       hutLeaderAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
-    await updateBedAllocationBed({ id: "bed-1", active: false, db: db as never });
+    await updateBedAllocationBed({
+      id: "bed-1",
+      active: false,
+      db: db as never,
+      today: CLUB_TODAY_DATE_ONLY,
+    });
 
     expect(findMany.mock.calls[0][0].where).toEqual({
       bedId: "bed-1",
@@ -1827,6 +1852,7 @@ describe("bed type + bunk pairing (#1675)", () => {
     });
 
     await updateBedAllocationBed({
+      today: CLUB_TODAY_DATE_ONLY,
       id: "bed-1",
       bedType: "BUNK_BOTTOM",
       bunkGroup: "Bunk A",
@@ -1861,6 +1887,7 @@ describe("bed type + bunk pairing (#1675)", () => {
 
     await expect(
       updateBedAllocationBed({
+        today: CLUB_TODAY_DATE_ONLY,
         id: "bed-1",
         bunkGroup: "Bunk A",
         db: db as never,
@@ -1881,6 +1908,7 @@ describe("bed type + bunk pairing (#1675)", () => {
     });
 
     await updateBedAllocationBed({
+      today: CLUB_TODAY_DATE_ONLY,
       id: "bed-1",
       bunkGroup: "   ",
       db: db as never,
@@ -1908,6 +1936,7 @@ describe("bed type + bunk pairing (#1675)", () => {
     });
 
     await updateBedAllocationBed({
+      today: CLUB_TODAY_DATE_ONLY,
       id: "bed-1",
       bedType: "BUNK_BOTTOM",
       db: db as never,
@@ -1941,7 +1970,12 @@ describe("bed type + bunk pairing (#1675)", () => {
     });
 
     await expect(
-      updateBedAllocationBed({ id: "bed-1", bedType: "SINGLE", db: db as never }),
+      updateBedAllocationBed({
+        id: "bed-1",
+        bedType: "SINGLE",
+        db: db as never,
+        today: CLUB_TODAY_DATE_ONLY,
+      }),
     ).rejects.toThrow("shared (two-occupant)");
     expect(update).not.toHaveBeenCalled();
   });
@@ -1951,7 +1985,12 @@ describe("bed type + bunk pairing (#1675)", () => {
       existingBed: { roomId: "room-1", bedType: "DOUBLE", bunkGroup: null },
     });
 
-    await updateBedAllocationBed({ id: "bed-1", bedType: "SINGLE", db: db as never });
+    await updateBedAllocationBed({
+      id: "bed-1",
+      bedType: "SINGLE",
+      db: db as never,
+      today: CLUB_TODAY_DATE_ONLY,
+    });
 
     expect(update).toHaveBeenCalledWith({
       where: { id: "bed-1" },
@@ -2399,7 +2438,7 @@ describe("bed allocation board lodge scope (ADR-003)", () => {
   const range = parseBedAllocationDateRange({
     from: "2026-07-01",
     to: "2026-07-08",
-  });
+  }, CLUB_DAY);
 
   it("scopes rooms, bookings, and allocations strictly to the lodge", async () => {
     const { db, bookingFindMany, allocationFindMany, roomFindMany } =
@@ -2506,7 +2545,7 @@ describe("getBedAllocationDashboard school-group threading (#1768)", () => {
     const range = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-02",
-    });
+    }, CLUB_DAY);
     const room = (id: string, sortOrder: number) => ({
       id,
       name: `Room ${id}`,
@@ -2604,7 +2643,7 @@ describe("getBedAllocationDashboard school-group threading (#1768)", () => {
     const range = parseBedAllocationDateRange({
       from: "2026-07-02",
       to: "2026-07-03",
-    });
+    }, CLUB_DAY);
     const room = (id: string, sortOrder: number) => ({
       id,
       name: `Room ${id}`,
@@ -2723,7 +2762,7 @@ describe("getBedAllocationDashboard school-group threading (#1768)", () => {
     const range = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-02",
-    });
+    }, CLUB_DAY);
     const room = (id: string, sortOrder: number) => ({
       id,
       name: `Room ${id}`,
@@ -3458,7 +3497,7 @@ describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", ()
     const range = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-05",
-    });
+    }, CLUB_DAY);
     const held = bookingRow({
       id: "held",
       wholeLodgeHold: true,
@@ -3527,7 +3566,7 @@ describe("getBedAllocationDashboard exclusive whole-lodge holds (#119/#120)", ()
     const range = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-05",
-    });
+    }, CLUB_DAY);
     const ordinary = bookingRow({
       id: "solo",
       guests: [guest("solo-g1", "solo")],
@@ -3589,7 +3628,7 @@ describe("bed allocation board member-guest consent exclusion (D-12, #2307)", ()
     };
   }
 
-  const range = parseBedAllocationDateRange({ from: "2026-07-01", to: "2026-07-08" });
+  const range = parseBedAllocationDateRange({ from: "2026-07-01", to: "2026-07-08" }, CLUB_DAY);
 
   it("excludes unconsented guests from the board's booking load", async () => {
     const { db, bookingFindMany } = dashboardDb();
@@ -3917,7 +3956,7 @@ describe("approveBedAllocations — booking selector (#2252)", () => {
     const approvalRange = parseBedAllocationDateRange({
       from: "2026-07-01",
       to: "2026-07-08",
-    });
+    }, CLUB_DAY);
 
     await approveBedAllocations({
       approvedByMemberId: "admin-1",

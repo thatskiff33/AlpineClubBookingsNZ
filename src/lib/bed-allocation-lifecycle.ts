@@ -8,23 +8,25 @@ import {
 } from "@/lib/bed-allocation";
 import { createAuditLog } from "@/lib/audit";
 import { reportBedAllocationInvariantViolation } from "@/lib/bed-allocation-diagnostics";
+import {
+  dropRowsOnCustodianHeldBedNights,
+  dropRowsOnOccupiedBedNights,
+  dropRowsOnWholeLodgeHeldNights,
+} from "@/lib/bed-allocation-write-rechecks";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
 } from "@/lib/date-only";
 import { isEffectiveModuleEnabled } from "@/lib/admin-modules";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import {
-  custodianHeldBedNightKeys,
   custodianOccupiedBedNightsForPlanner,
   findCustodianBedHolds,
 } from "@/lib/custodian-occupancy";
 import { mayShareDoubleBedWith } from "@/lib/double-bed-sharing";
 import {
-  buildWholeLodgeHeldNightPredicate,
   findBlockingWholeLodgeHolds,
   wholeLodgeHoldOccupiedBedNightsForPlanner,
 } from "@/lib/exclusive-hold-occupancy";
@@ -413,211 +415,6 @@ async function resolveLodgeIdsForRooms(
   return [
     ...new Set(rooms.map((room) => room.lodgeId).filter((id): id is string => Boolean(id))),
   ].sort();
-}
-
-/**
- * Drop any payload row that would land on a custodian-held bed-night (#2286
- * review M1).
- *
- * Called immediately before a `createMany`, on the SAME client that performs
- * it. The planner is already fed the holds as never-evictable unknown
- * occupants, but that read is not the write: no unique index and no database
- * constraint stands behind the custodian exclusion, so a hold that commits
- * between the plan and the write would otherwise be silently written over. This
- * is the write-time half, and it is what makes the DOMAIN_INVARIANTS claim
- * ("every placing write re-checks the live holds immediately before writing")
- * true for the lifecycle planner rather than only for `runAutoBedAllocation`.
- */
-/**
- * Drop any payload row that would land on a bed-night the database still shows
- * as occupied (#2656).
- *
- * `createMany({ skipDuplicates: true })` is NOT a safety mechanism here. On a
- * shared DOUBLE (#1701) it silently swallows a row that collides with a
- * surviving PRIMARY — the guest-night is then neither placed nor reported — and
- * it does not collide at all when the survivor is the SECOND occupant, so the
- * row is created and an unrelated person is written into a double beside
- * someone else's partner, with no `MemberPartnerLink`. The corrected planner
- * never drafts either row; this is the write-layer proof of that rather than a
- * reliance on the unique index to notice.
- *
- * Runs BEFORE the displacements are applied (#2669 review F1). It can, because
- * the caller's exclusion set names the SOURCE bed of every planned
- * displacement, so a bed the plan is about to free already reads as free here
- * without depending on the write having happened. Anything still occupied,
- * after that exclusion, is a genuine disagreement
- * between the plan and the database (a concurrent writer, or a planner
- * regression), and refusing the row leaves the guest-night in the
- * awaiting-allocation queue for the next reconcile — the same posture as the
- * custodian and whole-lodge re-filters.
- */
-async function dropRowsOnOccupiedBedNights<
-  TRow extends { bedId: string; stayDate: Date },
->(
-  db: BedAllocationLifecycleDb,
-  rows: TRow[],
-  context: {
-    bookingId: string;
-    /**
-     * The occupant slots this apply has already vacated, keyed
-     * `sourceBedId:bookingGuestId:stayDate` — the bed each displaced row was on
-     * BEFORE the displacement ran.
-     *
-     * The source bed has to be part of the key (#2669 review). This read runs
-     * after the displacements on the same client, so a DELETEd row is already
-     * gone and this exclusion is only belt-and-braces for it; but a MOVEd row
-     * still exists, at its NEW bed. Keyed by guest-night alone the exclusion
-     * would strike that row out too, and the MOVE's DESTINATION bed-night would
-     * read as free — admitting a payload row onto an occupied bed, which is the
-     * one outcome this whole function exists to prevent. Keyed by source bed the
-     * exclusion only ever forgives an occupant found where it used to be.
-     */
-    vacatedOccupantSlots?: Set<string>;
-  },
-): Promise<TRow[]> {
-  if (rows.length === 0) return rows;
-
-  const occupants = await db.bedAllocation.findMany({
-    where: {
-      OR: rows.map((row) => ({ bedId: row.bedId, stayDate: row.stayDate })),
-    },
-    select: { bedId: true, stayDate: true, bookingGuestId: true },
-  });
-  if (occupants.length === 0) return rows;
-
-  const vacated = context.vacatedOccupantSlots;
-  const takenKeys = new Set(
-    occupants
-      .filter(
-        (occupant) =>
-          !vacated?.has(
-            `${occupant.bedId}:${occupant.bookingGuestId}:${formatDateOnly(occupant.stayDate)}`,
-          ),
-      )
-      .map(
-        (occupant) => `${occupant.bedId}:${formatDateOnly(occupant.stayDate)}`,
-      ),
-  );
-  const writable = rows.filter(
-    (row) => !takenKeys.has(`${row.bedId}:${formatDateOnly(row.stayDate)}`),
-  );
-  if (writable.length < rows.length) {
-    logger.error(
-      {
-        bookingId: context.bookingId,
-        droppedCount: rows.length - writable.length,
-        issue: 2656,
-      },
-      "Bed allocation write-time re-check dropped rows targeting bed-nights that are still occupied — the plan and the database disagree",
-    );
-  }
-  return writable;
-}
-
-async function dropRowsOnCustodianHeldBedNights<
-  TRow extends { bedId: string; stayDate: Date },
->(
-  db: BedAllocationLifecycleDb,
-  rows: TRow[],
-  context: { lodgeId?: string; bookingId: string },
-): Promise<TRow[]> {
-  if (rows.length === 0) return rows;
-
-  const stayDates = rows.map((row) => row.stayDate);
-  const from = stayDates.reduce((a, b) => (a < b ? a : b));
-  const latest = stayDates.reduce((a, b) => (a > b ? a : b));
-  const toExclusive = addDaysDateOnly(latest, 1);
-
-  const heldKeys = custodianHeldBedNightKeys(
-    await findCustodianBedHolds({
-      lodgeId: context.lodgeId,
-      from,
-      toExclusive,
-      db,
-    }),
-    eachDateOnlyInRange(from, toExclusive),
-  );
-  if (heldKeys.size === 0) return rows;
-
-  const writable = rows.filter(
-    (row) => !heldKeys.has(`${row.bedId}:${formatDateOnly(row.stayDate)}`),
-  );
-  if (writable.length < rows.length) {
-    logger.info(
-      {
-        bookingId: context.bookingId,
-        lodgeId: context.lodgeId ?? null,
-        droppedCount: rows.length - writable.length,
-      },
-      "Bed allocation write-time re-check dropped rows targeting custodian-held bed-nights",
-    );
-  }
-  return writable;
-}
-
-/**
- * Drop any payload row that would land on a whole-lodge-held night (#2317).
- *
- * The exact mirror of the custodian re-filter above, and it exists for the same
- * reason: the planner IS fed the hold as blocking unattributed occupancy, but
- * that read happened several queries earlier and this reconcile is routinely
- * called post-commit and unlocked. Nothing in the database stops a row landing
- * on a held bed-night, so a hold that commits between the plan and the write
- * would otherwise be written straight over.
- *
- * `dropAllocationRowsForUnallocatableBookings` does NOT cover this: it asks
- * whether the booking we are placing became unallocatable, and a hold set on a
- * DIFFERENT booking leaves ours perfectly allocatable while taking every bed it
- * was about to occupy.
- *
- * A row whose room has no resolved lodge is treated as held by ANY hold
- * (null-tolerant matching), which is the conservative direction.
- */
-async function dropRowsOnWholeLodgeHeldNights<
-  TRow extends { roomId: string; stayDate: Date },
->(
-  db: BedAllocationLifecycleDb,
-  rows: TRow[],
-  context: {
-    lodgeId?: string;
-    bookingId: string;
-    roomLodgeIdById: ReadonlyMap<string, string>;
-  },
-): Promise<TRow[]> {
-  if (rows.length === 0) return rows;
-
-  const stayDates = rows.map((row) => row.stayDate);
-  const from = stayDates.reduce((a, b) => (a < b ? a : b));
-  const latest = stayDates.reduce((a, b) => (a > b ? a : b));
-  const toExclusive = addDaysDateOnly(latest, 1);
-
-  const isWholeLodgeHeld = buildWholeLodgeHeldNightPredicate(
-    await findBlockingWholeLodgeHolds({
-      lodgeId: context.lodgeId,
-      from,
-      toExclusive,
-      db,
-    }),
-  );
-
-  const writable = rows.filter(
-    (row) =>
-      !isWholeLodgeHeld(
-        context.lodgeId ?? context.roomLodgeIdById.get(row.roomId) ?? null,
-        formatDateOnly(row.stayDate),
-      ),
-  );
-  if (writable.length < rows.length) {
-    logger.info(
-      {
-        bookingId: context.bookingId,
-        lodgeId: context.lodgeId ?? null,
-        droppedCount: rows.length - writable.length,
-      },
-      "Bed allocation write-time re-check dropped rows targeting whole-lodge-held nights",
-    );
-  }
-  return writable;
 }
 
 function normalizeRange(
@@ -1947,14 +1744,20 @@ async function recordPartnerShareSweepAudits(
  * an unshared future placement. It cannot MISS the lodge of a shared bed-night
  * whose counterpart belongs to another booking, because both occupants sit on
  * the same bed, hence in the same room and the same lodge.
+ *
+ * `today` is the club's day as the UTC-midnight `@db.Date` encoding
+ * (`INV-DATE-026`), handed down from the caller that resolved it OUTSIDE its
+ * transaction (#3123, `INV-LOCK-004`). This runs on a transaction client with
+ * the global cohort key already held, so it resolves nothing itself.
  */
 async function futurePartnerShareAllocationLodgeIds(
   tx: Prisma.TransactionClient,
   uniqueMemberIds: string[],
+  today: Date,
 ): Promise<string[]> {
   const allocationLodges = await tx.bedAllocation.findMany({
     where: {
-      stayDate: { gte: getTodayDateOnly() },
+      stayDate: { gte: today },
       bookingGuest: { memberId: { in: uniqueMemberIds } },
     },
     select: { room: { select: { lodgeId: true } } },
@@ -2160,17 +1963,29 @@ async function assertPartnerShareLodgeCoverageWithLocksHeld(
  * for why, and `docs/CONCURRENCY_AND_LOCKING.md` for the composed orders.
  * Neither may take the lodge tier after a member-lifecycle key: these helpers
  * are what keep every caller on the documented global -> lodge -> member order.
+ *
+ * `today` bounds the "future allocations" read that derives the lodge set. It
+ * is the club's day, resolved by the caller BEFORE it opened this transaction
+ * and passed in as a value (#3123, `INV-LOCK-004`): the global cohort key is
+ * taken on the first line below, so resolving the club's persisted timezone
+ * from here would take a second pooled connection under
+ * `pg_advisory_xact_lock(1)`. Pass the SAME value to the sweep that follows,
+ * or the lock prefix and the sweep can be derived from two different days
+ * across club midnight.
  */
 export async function acquireFuturePartnerSharedAllocationLocks(
   tx: Prisma.TransactionClient,
   memberIds: readonly string[],
+  today: Date,
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
   const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
   if (uniqueMemberIds.length === 0) return;
 
   const lodgeIds = [
-    ...new Set(await futurePartnerShareAllocationLodgeIds(tx, uniqueMemberIds)),
+    ...new Set(
+      await futurePartnerShareAllocationLodgeIds(tx, uniqueMemberIds, today),
+    ),
   ].sort();
   for (const lodgeId of lodgeIds) {
     await acquireLodgeCapacityLock(tx, lodgeId);
@@ -2202,8 +2017,12 @@ export async function acquireFuturePartnerSharedAllocationLocks(
  * to covering the cohort for the rows this sweep judges — without serialising
  * the club.
  *
- * Immutable pre-lock keys: `memberIds` come from the request. Everything the
- * set is derived FROM is re-read under the locks by the sweep itself.
+ * Immutable pre-lock keys: `memberIds` come from the request, and `today` is
+ * the club's day resolved by the caller BEFORE this transaction opened (#3123,
+ * `INV-LOCK-004`) — merge runs on a 120s budget holding every affected lodge
+ * key, so resolving the club's persisted timezone from in here is exactly the
+ * second-connection hazard the locking guide forbids. Everything else the set
+ * is derived FROM is re-read under the locks by the sweep itself.
  *
  * Call it BEFORE any member-lifecycle key, exactly like its sibling; the
  * documented order is lodge -> member and merge's own hosting policy-set key
@@ -2221,6 +2040,7 @@ export async function acquireFuturePartnerSharedAllocationLocks(
 export async function acquireMemberMergePartnerSharedLodgeLocks(
   tx: Prisma.TransactionClient,
   memberIds: readonly string[],
+  today: Date,
 ): Promise<string[]> {
   const uniqueMemberIds = [...new Set(memberIds.filter(Boolean))];
   if (uniqueMemberIds.length === 0) return [];
@@ -2229,6 +2049,7 @@ export async function acquireMemberMergePartnerSharedLodgeLocks(
   const allocationLodgeIds = await futurePartnerShareAllocationLodgeIds(
     tx,
     uniqueMemberIds,
+    today,
   );
   const guestNightLodgeIds = await partnerShareGuestRowLodgeIds(
     tx,
@@ -2256,16 +2077,25 @@ export async function acquireMemberMergePartnerSharedLodgeLocks(
  * the second occupant is removed while the primary keeps the bed.
  *
  * Returns the removed rows so the caller can alert admins after the enclosing
- * transaction commits; external calls remain outside the transaction.
+ * transaction commits; external calls remain outside the transaction — and
+ * `today` is how that promise survives #3123. It is the club's day as the
+ * UTC-midnight `@db.Date` encoding (`INV-DATE-026`), resolved by the caller
+ * BEFORE it opened this transaction and passed in as a value, because reading
+ * the club's persisted timezone is itself a `clubTimeSettings.findUnique` and
+ * this function runs under the global cohort key and every affected lodge key
+ * (`INV-LOCK-004`). Required, never defaulted: the default is what let this
+ * take the container's timezone rather than the club's (`INV-CONFIG-002`).
+ * Give it the same value the lock prefix above was derived from.
  */
 export async function sweepFuturePartnerSharedAllocationsWithLocksHeld(params: {
   memberId: string;
   partnerMemberId?: string;
   reason: PartnerSharedSweepReason;
   db: BedAllocationLifecycleDb;
+  today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
   const db = params.db;
-  const today = getTodayDateOnly();
+  const today = params.today;
   const scopeIds = params.partnerMemberId
     ? [params.memberId, params.partnerMemberId]
     : [params.memberId];
@@ -2495,18 +2325,27 @@ type MergeSweepAllocationRow = Prisma.BedAllocationGetPayload<{
  *    guest-row derivation cannot see.
  *
  * Either one throws {@link UnlockedPartnerShareLodgeError} and writes nothing.
+ *
+ * `today` is the club's day as the UTC-midnight `@db.Date` encoding
+ * (`INV-DATE-026`), resolved by the caller BEFORE this transaction opened and
+ * passed in (#3123, `INV-LOCK-004`). Merge reaches here after a
+ * `Member ... FOR UPDATE` and while holding every affected lodge capacity key,
+ * and the very next call is a coverage PROOF — an extra pooled connection
+ * taken here is precisely what that fence exists to stop. Hand it the same
+ * value `acquireMemberMergePartnerSharedLodgeLocks` was given.
  */
 export async function sweepUnbackedFutureSharedDoublesWithLocksHeld(params: {
   memberIds: readonly string[];
   lockedLodgeIds: readonly string[];
   reason: PartnerSharedSweepReason;
   db: BedAllocationLifecycleDb;
+  today: Date;
 }): Promise<SweptPartnerSharedAllocation[]> {
   const db = params.db;
   const scopeIds = [...new Set(params.memberIds.filter(Boolean))];
   if (scopeIds.length === 0) return [];
   const lockedLodgeIds = new Set(params.lockedLodgeIds);
-  const today = getTodayDateOnly();
+  const today = params.today;
 
   // #2672 — the coverage proof, before anything else and before the early
   // return on "no candidates". The hazard this closes is a lodge that holds no

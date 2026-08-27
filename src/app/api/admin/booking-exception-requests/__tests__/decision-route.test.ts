@@ -79,6 +79,7 @@ vi.mock("@/lib/booking-exception-approval", async (importOriginal) => {
 });
 
 import { GET, PATCH } from "@/app/api/admin/booking-exception-requests/[id]/route";
+import { POLICY_DRIFT_MESSAGE } from "@/lib/booking-exception-execution";
 import {
   computeProposalHash,
   freezePolicyExceptionEvidence,
@@ -716,7 +717,9 @@ describe("PATCH — approve", () => {
   it("surfaces policy drift with the rules that moved", async () => {
     mocks.approve.mockResolvedValue({
       outcome: "policyDrift",
-      message: "The booking policies have changed since this request was reviewed.",
+      // The real constant, so this stops naming a sentence the engine no longer
+      // sends (#3089).
+      message: POLICY_DRIFT_MESSAGE,
       changedReviewed: [{ reasonCode: "MINIMUM_STAY", policyId: "pol-1" }],
       newViolations: [],
     });

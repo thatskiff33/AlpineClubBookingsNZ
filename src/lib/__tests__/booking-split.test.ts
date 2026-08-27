@@ -119,6 +119,12 @@ import {
   DuplicateStayConflictError,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — `createConfirmedBooking` is transaction-aware, so its
+// caller resolves the CLUB's day and threads it in. Pinned to the frozen clock's
+// club day, which is what the service used to read for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
 
 const checkIn = new Date("2026-09-10T00:00:00.000Z");
 const checkOut = new Date("2026-09-12T00:00:00.000Z");
@@ -217,6 +223,7 @@ function baseInput(
     shouldBePending: hasNonMembers,
     holdDays: 7,
     lodgeId: "lodge-1",
+    todayAtClub: FIXTURE_CLUB_DAY,
     ...overrides,
   };
 }

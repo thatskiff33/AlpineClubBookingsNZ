@@ -1164,7 +1164,8 @@ describe("member archive lifecycle actions", () => {
     expect(hostingMocks.fanout).toHaveBeenCalledTimes(1);
     const call = hostingMocks.fanout.mock.calls[0];
     expect(call?.[0]).toBe("member-1");
-    const context = call?.[2];
+    expect(call?.[2]).toBeInstanceOf(Date);
+    const context = call?.[3];
     expect(context).toMatchObject({
       cause: "SYSTEM_CHANGE",
       actorMemberId: "admin-2",

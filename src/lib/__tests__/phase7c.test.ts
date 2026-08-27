@@ -42,6 +42,9 @@ vi.mock("@/lib/audit", () => ({
 // Mock auth
 // ---------------------------------------------------------------------------
 
+/** The club's zone, named rather than taken from a helper default (#3123). */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -313,7 +316,7 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
   it("denies unauthenticated roster reads for today before returning chore assignments", async () => {
     mockAuth.mockResolvedValue(null);
     const { formatDateOnly, getTodayDateOnly } = await import("@/lib/date-only");
-    const today = formatDateOnly(getTodayDateOnly());
+    const today = formatDateOnly(getTodayDateOnly(CLUB_ZONE));
 
     const { GET } = await import("@/app/api/lodge/roster/[date]/route");
     const req = new Request(`http://localhost/api/lodge/roster/${today}`) as any;
@@ -757,7 +760,7 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
   it("denies unauthenticated guest list reads for today before returning PII", async () => {
     mockAuth.mockResolvedValue(null);
     const { formatDateOnly, getTodayDateOnly } = await import("@/lib/date-only");
-    const today = formatDateOnly(getTodayDateOnly());
+    const today = formatDateOnly(getTodayDateOnly(CLUB_ZONE));
 
     const { GET } = await import("@/app/api/lodge/guests/[date]/route");
     const req = new Request(`http://localhost/api/lodge/guests/${today}`) as any;

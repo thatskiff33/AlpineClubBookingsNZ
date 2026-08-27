@@ -172,8 +172,8 @@ const SETTLED_DECISION_CLAIMS = [
   // cries wolf on true citations gets exempted, and then it is worth nothing.
   // Re-dating is still caught: the claim-shaped patterns below carry no date.
   // `[^.|]` so a match cannot span a Markdown table cell or a sentence end.
-  /#277[34][^.|]{0,80}owner\s+decisions?\s+(?:10\s+and\s+)?11/i,
-  /owner\s+decisions?\s+(?:10\s+and\s+)?11[^.|]{0,80}#277[34]/i,
+  /#277[34][^.|]{0,80}owner\s+decisions?\s+(?:10\s+and\s+)?11\b/i,
+  /owner\s+decisions?\s+(?:10\s+and\s+)?11\b[^.|]{0,80}#277[34]/i,
   // The claims, independent of any date, because re-dating the same sentence is the
   // obvious way round a date-only guard. Each of these is a sentence this branch
   // actually shipped.

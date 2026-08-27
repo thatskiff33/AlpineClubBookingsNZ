@@ -2,7 +2,7 @@
  * Help for the "Rates & Policies" admin section: what a stay costs, who may
  * book it, and the promotions that change either.
  *
- * Section per the sidebar's `navSections`. Seasons sit here too — they are
+ * Section per the sidebar's `buildAdminNavSections`. Seasons sit here too — they are
  * reached from Fees rather than from a menu entry of their own, and what they
  * configure is the rate calendar.
  */

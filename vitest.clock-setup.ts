@@ -11,9 +11,13 @@
 // That ordering has already mattered once. The first cut of this work installed
 // the freeze in a root `beforeAll`, which runs only after every module in the
 // file's graph has been evaluated, so module-level date constants still captured
-// the real clock: `src/components/admin-sidebar.tsx:123` builds its
+// the real clock: `src/components/admin-sidebar.tsx` USED TO build its
 // unpaid-finished-stays deep link from today's date at import time, and the
-// sidebar test then failed comparing it against a frozen "today".
+// sidebar test then failed comparing it against a frozen "today". That
+// particular constant is gone — #3123 moved it into the render, because a value
+// evaluated once per bundle load was stale for the life of the browser tab — but
+// the hole it demonstrated is a property of module evaluation order, not of that
+// one file, so the ordering below still carries the whole design.
 //
 // Why any of this exists, which instant, and how to opt out:
 // `src/lib/__tests__/helpers/clock.ts` and `docs/TESTING.md`.

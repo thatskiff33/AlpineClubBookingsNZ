@@ -4,17 +4,13 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, AlertTriangle, Mountain, Lock } from "lucide-react";
 import { useClubIdentity } from "@/components/club-identity-provider";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { formatClubLongWeekdayDate, requireCalendarDate } from "@/lib/club-time";
 
-// Not one of the shared helpers: the chore sheet names the DAY OF THE WEEK in
-// full ("Wednesday, 15 April 2026"), matching the chore-roster email subject.
-const LONG_WEEKDAY_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
+// The chore sheet names the DAY OF THE WEEK in full ("Wednesday, 15 April
+// 2026"), matching the chore-roster email subject. A CALENDAR DAY, SO NO
+// TIMEZONE AT ALL (CT-4, #2870): the kernel's `longWeekdayDate` shape is that
+// exact bag, pinned to `UTC` over the UTC-midnight encoding, which is provably
+// the identity for every club.
 
 interface Assignment {
   id: string;
@@ -86,11 +82,10 @@ export default function GuestChorePage() {
 
   if (!data) return null;
 
-  // Date-only chore night: parse at UTC midnight so the club-time formatter
-  // cannot roll it back a day for a viewer outside New Zealand.
-  const formattedDate = LONG_WEEKDAY_DATE.format(
-    new Date(data.date + "T00:00:00Z"),
-  );
+  // A date-only chore night. `requireCalendarDate` rather than
+  // `parseCalendarDate`: `data.date` is the `@db.Date` day this page was fetched
+  // for, and there is no sensible fallback heading to show in its place.
+  const formattedDate = formatClubLongWeekdayDate(requireCalendarDate(data.date));
 
   const groups: Record<string, Assignment[]> = { MORNING: [], EVENING: [], ANYTIME: [] };
   for (const a of data.assignments) {

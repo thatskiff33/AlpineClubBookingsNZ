@@ -28,8 +28,8 @@ const NONMEMBER_TYPE = "type-nonmember";
 function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
     seasonId: "summer-2026",
-    startDate: new Date(2026, 10, 1),
-    endDate: new Date(2027, 2, 31),
+    startDate: new Date("2026-11-01"),
+    endDate: new Date("2027-03-31"),
     type: "SUMMER",
     rates: [
       { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },

@@ -44,6 +44,14 @@ import {
   validatePromoCodeRules,
   type PromoApplicationSubject,
 } from "../promo";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 const ANN = "member-ann";
 const BOB = "member-bob";
@@ -215,7 +223,7 @@ describe("validatePromoCodeRules stops refusing once the set has been trimmed", 
 
   it("still refuses a fresh application on a full code", () => {
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 1,
         requestedNewUniqueMemberCount: 1,
         uniqueMembersUsed: 1,
@@ -229,7 +237,7 @@ describe("validatePromoCodeRules stops refusing once the set has been trimmed", 
     // decided who is covered, so refusing here could only take the discount off
     // somebody who already had it.
     expect(
-      validatePromoCodeRules(SUBJECT, booking, new Date(), {
+      validatePromoCodeRules(SUBJECT, booking, CLUB_TODAY_FOR_TEST, {
         requestedRedemptionCount: 1,
         requestedNewUniqueMemberCount: 1,
         uniqueMembersUsed: 1,
@@ -244,7 +252,7 @@ describe("validatePromoCodeRules stops refusing once the set has been trimmed", 
       validatePromoCodeRules(
         { ...SUBJECT, active: false },
         booking,
-        new Date(),
+        CLUB_TODAY_FOR_TEST,
         { capsResolvedByBeneficiaryTrim: true }
       )
     ).toBe("This promo code is no longer active");
@@ -374,7 +382,8 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       promoSubject(),
       BOOKING_DETAILS,
       ASSIGNED,
-      { excludeBookingId: "booking-1", db: db as never }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, excludeBookingId: "booking-1", db: db as never }
     );
 
     // Two slots, one held by this booking: 1 - 1 + 3 = 3 > 2.
@@ -391,6 +400,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -419,6 +429,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -439,6 +450,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -466,6 +478,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -490,6 +503,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -510,6 +524,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -535,7 +550,8 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       promoSubject({ maxRedemptionsTotal: null }),
       BOOKING_DETAILS,
       ASSIGNED,
-      { db: db as never, capOverflow: "coverExisting" }
+      {
+      todayAtClub: CLUB_TODAY_FOR_TEST, db: db as never, capOverflow: "coverExisting" }
     );
 
     expect(
@@ -554,6 +570,7 @@ describe("validateAndCalculatePromoDiscount — partial coverage on a reprice", 
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -617,6 +634,7 @@ describe("a protected member cannot be cut by maxGuestsPerBooking", () => {
       ANN_CHEAP_CAL_EXPENSIVE,
       [ANN, CAL],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -645,6 +663,7 @@ describe("a protected member cannot be cut by maxGuestsPerBooking", () => {
       ANN_CHEAP_CAL_EXPENSIVE,
       [ANN, CAL],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -669,6 +688,7 @@ describe("a protected member cannot be cut by maxGuestsPerBooking", () => {
       ANN_CHEAP_CAL_EXPENSIVE,
       [ANN, CAL],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -705,6 +725,7 @@ describe("a newcomer who has personally used the code up is NAMED, not just drop
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -744,6 +765,7 @@ describe("a newcomer who has personally used the code up is NAMED, not just drop
       BOOKING_DETAILS,
       ASSIGNED,
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -793,6 +815,7 @@ describe("a protected member's free nights survive a lowered lifetime cap", () =
       ANN_ONLY,
       [ANN],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -820,6 +843,7 @@ describe("a protected member's free nights survive a lowered lifetime cap", () =
       ANN_ONLY,
       [ANN],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -851,6 +875,7 @@ describe("a protected member's free nights survive a lowered lifetime cap", () =
       },
       [ANN, BOB],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         excludeBookingId: "booking-1",
         db: db as never,
         capOverflow: "coverExisting",
@@ -1114,6 +1139,7 @@ describe("path 1 — batch modification reprice (booking-modify-plan)", () => {
     promoRedemption: typeof STORED_REDEMPTION = STORED_REDEMPTION
   ) {
     return applyPromoCodeChanges(tx as unknown as ApplyArgs[0], {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
       booking: {
         memberId: ANN,
         lodgeId: "lodge-1",
@@ -1188,6 +1214,7 @@ describe("path 4 — guest removal reprice (booking-guest-removal-service)", () 
 
   function run(tx: ReturnType<typeof makeRepriceTx>["tx"]) {
     return recalculateBookingPromo({
+      todayAtClub: CLUB_TODAY_FOR_TEST,
       tx: tx as unknown as RemovalArgs["tx"],
       bookingId: "booking-1",
       booking: {
@@ -1234,6 +1261,7 @@ describe("the price a partial promotion produces reaches every surface unchanged
     const promo = await applyPromoCodeChanges(
       tx as unknown as Parameters<typeof applyPromoCodeChanges>[0],
       {
+      todayAtClub: CLUB_TODAY_FOR_TEST,
         booking: {
           memberId: ANN,
           lodgeId: "lodge-1",

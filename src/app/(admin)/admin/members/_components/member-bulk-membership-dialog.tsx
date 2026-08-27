@@ -21,6 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { useClubTime } from "@/components/club-time-provider"
+import { calendarDateParts } from "@/lib/club-time"
 
 // Keep in lockstep with the route schema (`ids.max(100)`): bulk membership
 // changes are capped so one run stays a bounded, sequential set of saves.
@@ -161,7 +163,12 @@ export function MemberBulkMembershipDialog({
   onComplete,
   onError,
 }: MemberBulkMembershipDialogProps) {
-  const currentYear = new Date().getFullYear()
+  // The CLUB's calendar year, not the operator's browser year — an admin in
+  // London on 1 January must seed the same fallback as one at the lodge
+  // (CT-4, #2870; INV-CONFIG-002). This is only a placeholder until the
+  // membership-types load supplies the server-resolved season year.
+  const clubTime = useClubTime()
+  const currentYear = calendarDateParts(clubTime.today()).year
   const [types, setTypes] = useState<MembershipTypeOption[]>([])
   const [membershipTypeId, setMembershipTypeId] = useState<string>("")
   // Server-resolved (config-driven) current season year; a calendar-year fallback

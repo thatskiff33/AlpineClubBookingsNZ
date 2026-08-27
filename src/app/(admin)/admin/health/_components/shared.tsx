@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { AlertTriangle, CheckCircle, XCircle } from "lucide-react";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
+import { parseInstant, type BoundClubTime, type ClubTimeZone } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 export function StatusBadge({ status }: { status: string }) {
@@ -59,20 +60,46 @@ export function formatUptime(seconds: number) {
 
 // #2264: deliberately not `formatNZDateTime` — the health dashboard packs many
 // timestamps into narrow rows, so it drops the year and keeps 2-digit fields.
-const HEALTH_DAY_MONTH_TIME = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+//
+// CT-4 (#2870) changed WHICH zone, not the shape. `APP_TIME_ZONE` is the
+// environment's answer; the club's civil-time authority is the persisted
+// `ClubTimeSettings.timeZone` (INV-CONFIG-002), which reaches a `"use client"`
+// file only as data — so the formatter can no longer be a module constant and
+// is memoised per zone instead. The kernel owns the only formatter factory in
+// the tree and would be the right home for this, but `{day, month, hour,
+// minute}` is not one of its house shapes and `src/lib` is a different lane's
+// (reported on #2870 with the other missing shapes).
+//
+// Every value passed here is a real INSTANT — a cron run, a bounce, an
+// escalation — never a calendar day.
+const HEALTH_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
-export function formatDate(dateStr: string) {
-  return HEALTH_DAY_MONTH_TIME.format(new Date(dateStr));
+function healthFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
+  const cached = HEALTH_FORMATTERS.get(zone);
+  if (cached) return cached;
+  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+    timeZone: zone,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  HEALTH_FORMATTERS.set(zone, created);
+  return created;
 }
 
-export function formatOptionalDate(dateStr: string | null) {
-  return dateStr ? formatDate(dateStr) : "Not recorded";
+export function formatDate(clubTime: BoundClubTime, dateStr: string) {
+  // Guarded, unlike the `new Date()` this replaces: a health payload is read
+  // from a live system and a row with an unparseable stamp must not blank the
+  // dashboard. An offset-less ISO string is refused rather than read in the
+  // host's zone, which is the defect class this epic closes.
+  const instant = parseInstant(dateStr);
+  if (instant === null) return "unknown";
+  return healthFormatter(clubTime.zone).format(instant);
+}
+
+export function formatOptionalDate(clubTime: BoundClubTime, dateStr: string | null) {
+  return dateStr ? formatDate(clubTime, dateStr) : "Not recorded";
 }
 
 export function CronError({ error }: { error: string }) {

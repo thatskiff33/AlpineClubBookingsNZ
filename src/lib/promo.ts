@@ -1,25 +1,49 @@
-import { Prisma, PromoCodeType, type FixedNightlyMode } from "@prisma/client";
+import { PromoCodeType, type FixedNightlyMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   calculatePromoDiscount,
-  selectPromoDiscountGuests,
   type PromoCodeInput,
   type PromoDiscountAllocation,
   type PromoDiscountGuest,
   type PromoDiscountResult,
 } from "@/lib/pricing";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import {
+  clubCalendarDateOf,
+  type CalendarDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   getWorkPartyNightWindowForPromo,
   restrictPerNightRatesToWindow,
 } from "@/lib/work-party";
 import { ApiError } from "@/lib/api-error";
+import {
+  assignmentRequiresAssignedBooker,
+  assignmentRequiresGuestSelection,
+  filterGuestsByIndexes,
+  getPromoBeneficiaryMemberIds,
+  hasAssignedMembers,
+  normalizeSelectedGuestIndexes,
+  scopedAssignmentMemberIds,
+  scopeGuestsForAssignedMembers,
+  selectablePromoGuestIndexes,
+} from "@/lib/promo-guest-scope";
+import {
+  BENEFICIAL_PROMO_ALLOCATION_FILTER,
+  getBookingBeneficiaryFreeNights,
+  getExistingBeneficiaryMemberIds,
+  getPromoBeneficiaryUsage,
+  getUniqueMemberRedemptionCount,
+  isBeneficialPromoAllocation,
+  type PromoUsageClient,
+} from "@/lib/promo-usage-counts";
 
 export const PROMO_LODGE_RESTRICTION_MESSAGE =
   "This promo code cannot be used at this lodge.";
 
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
 
 export interface PromoValidationResult {
   valid: boolean;
@@ -166,190 +190,52 @@ export interface PromoApplicationResult {
   capCoverage?: PromoCapCoverage;
 }
 
-function hasAssignedMembers(assignedMemberIds: string[] | null | undefined) {
-  return Boolean(assignedMemberIds && assignedMemberIds.length > 0);
-}
-
-function assignedMembersOnlyOwnNights(
-  promoCode: { assignedMembersOnlyOwnNights?: boolean | null }
-) {
-  return promoCode.assignedMembersOnlyOwnNights ?? true;
-}
-
 /**
- * A fixed-nightly "group" promo prices the whole booking at the configured
- * nightly rate. When assigned to members it stays group-scoped: every eligible
- * guest-night is repriced (members and non-members), the booker is the
- * beneficiary of record, and the booker must be one of the assigned members.
- * It does not scope the discount to the assigned members' own nights, nor ask
- * the booker to pick guests.
+ * THE ONLY WAY A STORED CALENDAR DAY BECOMES A COMPARISON KEY HERE (#3123).
  *
- * Gated on assignedMembersOnlyOwnNights === false so an admin can still choose
- * own-night scoping for a fixed-nightly code. member-guests-only fixed-nightly
- * codes are excluded (they always scope to assigned member guests).
+ * Every promo date this file compares is a `@db.Date` column — `validFrom`,
+ * `validUntil`, `bookingStartFrom`, `bookingStartUntil`
+ * (`prisma/schema.prisma:2955-2958`) and the booking's own `checkIn` (`:1662`).
+ * All of them are calendar days encoded as UTC midnight, and a calendar day
+ * takes no zone at all (`INV-DATE-019`'s first exact boundary, with
+ * `INV-DATE-026`).
+ *
+ * WHY THIS FUNCTION IS THE RULE RATHER THAN A CONVENIENCE. Until #3123 the
+ * booking-date window read one side of its own comparison through this
+ * zone-free helper and the OTHER side — the check-in — through a helper that
+ * projected it into `APP_TIME_ZONE`. Two frames in one comparison, so for any
+ * club behind Greenwich the check-in key was a day early: a booking starting on
+ * the promotion's first valid day was refused, and one starting on the excluded
+ * upper bound was allowed. Both sides now come from here, which is what makes
+ * that class of drift unrepresentable rather than merely fixed.
  */
-function isFixedNightlyGroupPromo(promoCode: {
-  type?: PromoCodeType | string | null;
-  memberGuestsOnly?: boolean | null;
-  assignedMembersOnlyOwnNights?: boolean | null;
-}) {
-  return (
-    promoCode.type === "FIXED_NIGHTLY_PRICE" &&
-    !promoCode.memberGuestsOnly &&
-    !assignedMembersOnlyOwnNights(promoCode)
-  );
-}
-
-function scopedAssignmentMemberIds(
-  promoCode: { assignedMembersOnlyOwnNights?: boolean | null },
-  assignedMemberIds: string[] | null | undefined
-) {
-  return assignedMembersOnlyOwnNights(promoCode) ? assignedMemberIds : null;
-}
-
-function assignmentRequiresGuestSelection(
-  promoCode: {
-    type?: PromoCodeType | string | null;
-    memberGuestsOnly?: boolean | null;
-    assignedMembersOnlyOwnNights?: boolean | null;
-  },
-  assignedMemberIds: string[] | null | undefined
-) {
-  // Group fixed-nightly codes price every eligible guest automatically, so the
-  // booker never picks guests even though own-night scoping is off.
-  if (isFixedNightlyGroupPromo(promoCode)) return false;
-  return hasAssignedMembers(assignedMemberIds) && !assignedMembersOnlyOwnNights(promoCode);
-}
-
-/**
- * Whether the booker must be one of the assigned members. True for the two
- * non-own-night assignment modes: "booker picks guests" (per-guest selection)
- * and "group" fixed-nightly pricing. Own-night scoping leaves this false so any
- * booker can use the code as long as an assigned member is staying.
- */
-function assignmentRequiresAssignedBooker(
-  promoCode: {
-    type?: PromoCodeType | string | null;
-    memberGuestsOnly?: boolean | null;
-    assignedMembersOnlyOwnNights?: boolean | null;
-  },
-  assignedMemberIds: string[] | null | undefined
-) {
-  if (!hasAssignedMembers(assignedMemberIds)) return false;
-  return (
-    assignmentRequiresGuestSelection(promoCode, assignedMemberIds) ||
-    isFixedNightlyGroupPromo(promoCode)
-  );
-}
-
-function storedPromoDateKey(value: Date | null | undefined) {
+function storedPromoDateKey(value: Date): string;
+function storedPromoDateKey(value: Date | null | undefined): string | null;
+function storedPromoDateKey(value: Date | null | undefined): string | null {
   return value ? formatDateOnly(value) : null;
 }
 
-function nzDateKey(value: Date) {
-  return formatDateOnlyForTimeZone(value);
-}
-
-function scopeGuestsForAssignedMembers(
-  guests: PromoDiscountGuest[],
-  assignedMemberIds: string[] | null | undefined
-) {
-  if (!hasAssignedMembers(assignedMemberIds)) return guests;
-
-  const assigned = new Set(assignedMemberIds);
-  return guests.filter((guest) => Boolean(guest.memberId && assigned.has(guest.memberId)));
-}
-
-function selectablePromoGuestIndexes(
-  promo: { memberGuestsOnly?: boolean | null },
-  guests: PromoDiscountGuest[]
-) {
-  return guests
-    .map((guest, index) => ({ guest, index }))
-    .filter(({ guest }) => guest.perNightRates.length > 0)
-    .filter(({ guest }) => !promo.memberGuestsOnly || guest.isMember)
-    .map(({ index }) => index);
-}
-
-function normalizeSelectedGuestIndexes(
-  selectedGuestIndexes: number[] | undefined,
-  guestCount: number
-): { indexes: number[]; error?: string } {
-  if (!selectedGuestIndexes) {
-    return { indexes: [] };
-  }
-
-  const indexes: number[] = [];
-  const seen = new Set<number>();
-  for (const index of selectedGuestIndexes) {
-    if (!Number.isInteger(index) || index < 0 || index >= guestCount) {
-      return { indexes: [], error: "Selected promo guest is not on this booking" };
-    }
-    if (!seen.has(index)) {
-      seen.add(index);
-      indexes.push(index);
-    }
-  }
-  indexes.sort((a, b) => a - b);
-  return { indexes };
-}
-
-function filterGuestsByIndexes(guests: PromoDiscountGuest[], indexes: number[]) {
-  return indexes.map((index) => guests[index]).filter(Boolean);
-}
-
 /**
- * Did this allocation actually give the member something? (#2299, owner
- * decision 1: "any price effect".) A money-off discount, a price change in
- * either direction, or a subsidised night all count as a benefit; an
- * application that moved none of the three delivered nothing.
+ * The club's calendar day right now, as the same `yyyy-MM-dd` key
+ * {@link storedPromoDateKey} produces — for the ONE comparison here whose left
+ * side is a real instant rather than a stored day.
  *
- * A price-RAISING fixed-nightly application counts as a use, because the
- * member's price genuinely changed — the rejected alternative was to count
- * price reductions only.
+ * A validity window (`validFrom` / `validUntil`) asks "is the promotion live
+ * today", and "today" has no answer until a zone is chosen. `INV-CONFIG-002`
+ * says which one: the club's PERSISTED `ClubTimeSettings.timeZone`, never the
+ * container's. `nzDateKey` used to answer it from `APP_TIME_ZONE`, which is the
+ * container's claim and is what #3123 exists to retire.
  *
- * LOCKSTEP: this predicate, `BENEFICIAL_PROMO_ALLOCATION_FILTER` below, and the
- * `DELETE` predicate in
- * `prisma/migrations/20260731140000_repair_zero_benefit_promo_allocations`
- * are the same rule expressed three times (TypeScript, Prisma, SQL). Change one
- * and you must change all three, or the repair migration will delete rows the
- * runtime counts, or leave rows it does not.
+ * The zone arrives as a parameter rather than being read here because this
+ * module is reached by a `tsx` CLI (`booking-create.ts` from the second-lodge
+ * seed) and by `src/instrumentation.node.ts` (`draft-booking-cleanup.ts`), so
+ * `@/lib/club-time/server` cannot be imported into it; and because the caller
+ * must resolve the zone OUTSIDE any transaction it holds. See
+ * `getAssignedPromoCodeSummariesForMember`.
  */
-export function isBeneficialPromoAllocation(allocation: {
-  discountCents: number;
-  priceAdjustmentCents: number;
-  freeNightsUsed: number;
-}): boolean {
-  return (
-    allocation.discountCents > 0 ||
-    allocation.priceAdjustmentCents !== 0 ||
-    allocation.freeNightsUsed > 0
-  );
+function clubDateKey(value: Date, zone: ClubTimeZone) {
+  return clubCalendarDateOf(value, zone);
 }
-
-/**
- * The same "did the member actually get something" test, expressed as a Prisma
- * filter over stored allocation rows. Applied defensively to every cap count so
- * a historical all-zero row written before #2299 (or by an old colour during a
- * blue/green drain) stops consuming a member's slot immediately, without
- * waiting for the repair migration to run.
- *
- * SPREAD IT — and only into a `where` that has no `OR` of its own. An object
- * literal cannot hold two `OR` keys, so the later one silently wins and one of
- * the two conditions vanishes without a type error. All six current call sites
- * spread it into a plain AND-of-scalars filter, which is safe; a future caller
- * that needs its own `OR` must nest both under `AND: [...]` instead.
- *
- * Kept in lockstep with `isBeneficialPromoAllocation` and the repair
- * migration's `DELETE` predicate — see the note on that function.
- */
-export const BENEFICIAL_PROMO_ALLOCATION_FILTER = {
-  OR: [
-    { discountCents: { gt: 0 } },
-    { priceAdjustmentCents: { not: 0 } },
-    { freeNightsUsed: { gt: 0 } },
-  ],
-} satisfies Prisma.PromoRedemptionAllocationWhereInput;
 
 /**
  * Build the allocation rows to persist for a redemption.
@@ -451,62 +337,13 @@ export function calculatePromoDiscountForGuestRates(
   };
 }
 
-function selectPromoBeneficiaryGuests(
-  promo: PromoCodeInput,
-  guests: PromoDiscountGuest[],
-  protectedMemberIds?: ReadonlySet<string> | null
-) {
-  const selectedGuests = selectPromoDiscountGuests(promo, guests, protectedMemberIds);
-  if (promo.type !== "FIXED_NIGHTLY_PRICE") {
-    return selectedGuests;
-  }
-
-  const fixedNightlyPriceCents = promo.fixedNightlyPriceCents ?? 0;
-  if (fixedNightlyPriceCents <= 0) return [];
-
-  if ((promo.fixedNightlyMode ?? "CAP_ONLY") === "CAP_ONLY") {
-    return selectedGuests.filter(({ guest }) =>
-      guest.perNightRates.some((rate) => rate > fixedNightlyPriceCents)
-    );
-  }
-
-  return selectedGuests.filter(({ guest }) => guest.perNightRates.length > 0);
-}
-
-/**
- * Who a promotion would benefit on this booking.
- *
- * `protectedMemberIds` (#2390) keeps a member who already holds the discount on
- * the booking being repriced ahead of the `maxGuestsPerBooking` cut, so an
- * expensive newly-added guest cannot take their slot. See
- * `selectPromoDiscountGuests`.
- */
-function getPromoBeneficiaryMemberIds(
-  promo: PromoCodeInput,
-  bookingMemberId: string,
-  guests: PromoDiscountGuest[],
-  assignedMemberIds: string[] | null = null,
-  protectedMemberIds?: ReadonlySet<string> | null
-): string[] {
-  const scopedGuests = scopeGuestsForAssignedMembers(guests, assignedMemberIds);
-  const selectedGuests = selectPromoBeneficiaryGuests(promo, scopedGuests, protectedMemberIds);
-  if (selectedGuests.length === 0) return [];
-
-  if (!hasAssignedMembers(assignedMemberIds)) {
-    return [bookingMemberId];
-  }
-
-  return [...new Set(
-    selectedGuests
-      .map(({ guest }) => guest.memberId)
-      .filter((memberId): memberId is string => Boolean(memberId))
-  )];
-}
-
 /**
  * Whether to write a `PromoRedemption` row for this application.
  *
- * Deliberately WIDER than the benefit test above: a promo that had eligible
+ * Deliberately WIDER than the benefit test — `isBeneficialPromoAllocation` in
+ * `@/lib/promo-usage-counts`, which said "above" until #3128 moved it there,
+ * and whose own docblock carries the narrower rule this one is contrasted
+ * with: a promo that had eligible
  * guests but delivered nothing still records its redemption, because that row
  * is the audit and reporting trail an operator needs to see that a code is
  * misconfigured (#2299, owner decision 3). What changed is that such a
@@ -521,173 +358,6 @@ export function shouldPersistPromoRedemption(result: PromoDiscountResult | null 
         result.freeNightsUsed > 0 ||
         result.eligibleGuestCount > 0)
   );
-}
-
-/**
- * Get the total number of free nights a member has already consumed
- * from a specific promo code across all their redemptions.
- *
- * Deliberately NOT benefit-filtered: this sum is already benefit-proportional
- * (a zero-benefit row contributes zero nights), and summing every row is the
- * fail-safe direction — it can never miss a night a member really claimed.
- */
-async function getMemberFreeNightsUsed(
-  promoCodeId: string,
-  memberId: string,
-  excludeBookingId?: string,
-  db: PromoUsageClient = prisma
-): Promise<number> {
-  const where: {
-    promoCodeId: string;
-    memberId: string;
-    bookingId?: { not: string };
-  } = { promoCodeId, memberId };
-  if (excludeBookingId) {
-    where.bookingId = { not: excludeBookingId };
-  }
-
-  const result = await db.promoRedemptionAllocation.aggregate({
-    where,
-    _sum: { freeNightsUsed: true },
-  });
-
-  return result._sum.freeNightsUsed ?? 0;
-}
-
-/**
- * Count distinct members who have BENEFITED from this promo code.
- * Excludes a specific booking id when updating an existing booking.
- */
-async function getUniqueMemberRedemptionCount(
-  promoCodeId: string,
-  excludeBookingId?: string,
-  db: PromoUsageClient = prisma
-): Promise<number> {
-  const where: Prisma.PromoRedemptionAllocationWhereInput = {
-    promoCodeId,
-    ...BENEFICIAL_PROMO_ALLOCATION_FILTER,
-  };
-  if (excludeBookingId) {
-    where.bookingId = { not: excludeBookingId };
-  }
-  const rows = await db.promoRedemptionAllocation.findMany({
-    where,
-    select: { memberId: true },
-    distinct: ["memberId"],
-  });
-  return rows.length;
-}
-
-/**
- * How many times this member has already BENEFITED from this promo code — the
- * denominator of the uses-per-member cap. A zero-benefit application never
- * counts (#2299), so a member who applied a code that did nothing for them can
- * still use it later.
- */
-async function getMemberPromoRedemptionCount(
-  promoCodeId: string,
-  memberId: string,
-  excludeBookingId?: string,
-  db: PromoUsageClient = prisma
-): Promise<number> {
-  const where: Prisma.PromoRedemptionAllocationWhereInput = {
-    promoCodeId,
-    memberId,
-    ...BENEFICIAL_PROMO_ALLOCATION_FILTER,
-  };
-  if (excludeBookingId) {
-    where.bookingId = { not: excludeBookingId };
-  }
-
-  return db.promoRedemptionAllocation.count({ where });
-}
-
-async function getPromoBeneficiaryUsage(
-  promoCodeId: string,
-  memberIds: string[],
-  excludeBookingId: string | undefined,
-  db: PromoUsageClient
-) {
-  const usage: Record<string, { redemptionCount: number; freeNightsUsed: number }> = {};
-  await Promise.all(
-    [...new Set(memberIds)].map(async (memberId) => {
-      const [redemptionCount, freeNightsUsed] = await Promise.all([
-        getMemberPromoRedemptionCount(promoCodeId, memberId, excludeBookingId, db),
-        getMemberFreeNightsUsed(promoCodeId, memberId, excludeBookingId, db),
-      ]);
-      usage[memberId] = { redemptionCount, freeNightsUsed };
-    })
-  );
-  return usage;
-}
-
-async function getExistingBeneficiaryMemberIds(
-  promoCodeId: string,
-  memberIds: string[],
-  excludeBookingId: string | undefined,
-  db: PromoUsageClient
-): Promise<Set<string>> {
-  const uniqueMemberIds = [...new Set(memberIds)];
-  if (uniqueMemberIds.length === 0) return new Set();
-
-  const where: Prisma.PromoRedemptionAllocationWhereInput = {
-    promoCodeId,
-    memberId: { in: uniqueMemberIds },
-    ...BENEFICIAL_PROMO_ALLOCATION_FILTER,
-  };
-  if (excludeBookingId) {
-    where.bookingId = { not: excludeBookingId };
-  }
-
-  const rows = await db.promoRedemptionAllocation.findMany({
-    where,
-    select: { memberId: true },
-    distinct: ["memberId"],
-  });
-  return new Set(rows.map((row) => row.memberId));
-}
-
-/**
- * The members who are ALREADY benefiting from this promotion **on this booking**
- * (#2390) — the people an edit must never take the discount away from.
- *
- * Read from the allocation rows, which since #2299 mean "this member actually
- * got something", and benefit-filtered again defensively so a legacy all-zero
- * row cannot buy someone protection they never had.
- *
- * MUST be read before the reprice writes anything. Every reprice path calls it
- * during validation, which is before `replacePromoRedemptionAllocations`
- * touches the redemption — so the `PromoRedemption_sync_allocation_*` triggers
- * (20260527120000_add_promo_redemption_allocations) have not fired yet and
- * cannot conjure a transient row into this answer. Reading it after the
- * redemption write would let the trigger's booker row grant protection.
- *
- * Returns free nights as well as identity, because a FREE_NIGHTS promotion's
- * `lifetimeFreeNightsCap` is a budget rather than a slot: protecting the
- * member's place in the beneficiary list is not enough if the budget arithmetic
- * then awards them nothing. See `remainingFreeNightsByMemberId` below.
- */
-async function getBookingBeneficiaryFreeNights(
-  promoCodeId: string,
-  bookingId: string,
-  db: PromoUsageClient
-): Promise<Map<string, number>> {
-  const rows = await db.promoRedemptionAllocation.findMany({
-    where: {
-      promoCodeId,
-      bookingId,
-      ...BENEFICIAL_PROMO_ALLOCATION_FILTER,
-    },
-    select: { memberId: true, freeNightsUsed: true },
-  });
-  const freeNightsByMemberId = new Map<string, number>();
-  for (const row of rows) {
-    freeNightsByMemberId.set(
-      row.memberId,
-      (freeNightsByMemberId.get(row.memberId) ?? 0) + (row.freeNightsUsed ?? 0)
-    );
-  }
-  return freeNightsByMemberId;
 }
 
 /**
@@ -848,6 +518,19 @@ export async function getAssignedPromoCodeSummariesForMember(
   memberId: string,
   now: Date = new Date()
 ): Promise<AssignedPromoCodeSummary[]> {
+  /**
+   * Resolved ONCE, here, and threaded into every row below (#3123). This is the
+   * boundary: the reader is asynchronous, this function is, and the status
+   * helper it feeds is not. Doing it per row would ask the same question of the
+   * database once per assignment and could answer differently across club
+   * midnight, so one member's list would report two different todays.
+   *
+   * `readClubTimeZoneOutsideRequest` rather than `clubTime()` because this
+   * module is reached by a `tsx` CLI and by `src/instrumentation.node.ts`, and
+   * `@/lib/club-time/server` is a bare throw outside the `react-server`
+   * condition. This call is outside every transaction — nothing here opens one.
+   */
+  const clubZone = await readClubTimeZoneOutsideRequest();
   const assignments = await prisma.promoCodeAssignment.findMany({
     where: { memberId, promoCode: { internal: false } },
     include: {
@@ -874,7 +557,12 @@ export async function getAssignedPromoCodeSummariesForMember(
       (sum, allocation) => sum + allocation.freeNightsUsed,
       0
     );
-    const statusReason = getAssignedPromoCodeStatusReason(promoCode, freeNightsUsed, now);
+    const statusReason = getAssignedPromoCodeStatusReason(
+      promoCode,
+      freeNightsUsed,
+      now,
+      clubZone
+    );
 
     return {
       id: promoCode.id,
@@ -922,11 +610,19 @@ function getAssignedPromoCodeStatusReason(
     allocations: Array<{ id: string; freeNightsUsed: number }>;
   },
   freeNightsUsed: number,
-  now: Date
+  now: Date,
+  /**
+   * The club's persisted timezone, resolved ONCE by the async caller and
+   * threaded in (#3123). Required rather than defaulted: this function is
+   * synchronous and cannot read the setting, and a default would put the
+   * container's zone back in the one place this parameter exists to remove it
+   * from.
+   */
+  clubZone: ClubTimeZone
 ) {
   if (!promoCode.active) return "Inactive";
   if (promoCode.archivedAt) return "Archived";
-  const currentDateKey = nzDateKey(now);
+  const currentDateKey = clubDateKey(now, clubZone);
   const validFromKey = storedPromoDateKey(promoCode.validFrom);
   const validUntilKey = storedPromoDateKey(promoCode.validUntil);
   if (validFromKey && currentDateKey < validFromKey) return "Not valid yet";
@@ -1036,11 +732,41 @@ export interface PromoRuleCounts {
 /**
  * Validate promo code rules (pure logic, separated for testing).
  * Returns error message string if invalid, null if valid.
+ *
+ * ## `todayAtClub` is REQUIRED, and that is what closed the last
+ * environment-zone read in this file (#3123)
+ *
+ * This function is SYNCHRONOUS, PURE and TRANSACTION-BOUND, which is the whole
+ * problem: it cannot resolve the club's timezone itself, and its async boundary
+ * `validateAndCalculatePromoDiscount` is called from inside an open interactive
+ * transaction by four of its callers — `booking-create-promo.ts`,
+ * `booking-date-modification-service.ts`, `booking-guest-removal-service.ts`
+ * and `api/bookings/[id]/guests/route.ts`. `INV-LOCK-004` names the club
+ * timezone as one of only two reads that cannot take a transaction client, so a
+ * read down here would have taken a second pooled connection under
+ * `pg_advisory_xact_lock(1)` and the per-lodge capacity key AND escaped the
+ * transaction's own client — the four-way mistake
+ * `diagnostics/tools/packs/booking-evidence.ts` records, and the reason
+ * `booking-create.ts` says in as many words "Read outside every transaction."
+ *
+ * So the day is resolved by whichever caller owns the transaction, before it
+ * opens it, and threaded in. It used to be `now: Date = new Date()`, projected
+ * through `APP_TIME_ZONE`, so a promotion's start and end were judged in the
+ * CONTAINER's day rather than the club's (`INV-CONFIG-002`) — wrong by up to one
+ * day at each edge of the validity window for any deployment whose configured
+ * zone differs from its container's, on a comparison that decides whether a
+ * member gets a discount.
+ *
+ * It is a `CalendarDate` rather than an instant because a validity window asks
+ * "is the promotion live today" and an instant has no calendar day until a zone
+ * is chosen. Taking a `Date` is what forced the choice down here in the first
+ * place; the type now makes that unrepresentable, and puts BOTH sides of every
+ * comparison below on a zone-free calendar day.
  */
 export function validatePromoCodeRules(
   promoCode: PromoRuleSubject | null,
   bookingDetails: { memberId: string; bookingCheckIn?: Date },
-  now: Date = new Date(),
+  todayAtClub: CalendarDate,
   counts: PromoRuleCounts = {},
   assignedMemberIds: string[] | null = null,
   lodgeId: string | null = null
@@ -1061,7 +787,14 @@ export function validatePromoCodeRules(
     return PROMO_LODGE_RESTRICTION_MESSAGE;
   }
 
-  const currentDateKey = nzDateKey(now);
+  // BOTH SIDES OF THIS COMPARISON ARE ZONE-FREE CALENDAR DAYS (#3123).
+  // `validFrom` / `validUntil` are `@db.Date` columns
+  // (`prisma/schema.prisma:2955-2956`) read through `storedPromoDateKey`, and
+  // `todayAtClub` is the club's own day, already resolved by the caller. Until
+  // #3123 this side was `formatDateOnlyForTimeZone(now)` — the container's
+  // projection of an instant — which is a second frame in a one-frame
+  // comparison.
+  const currentDateKey: string = todayAtClub;
   const validFromKey = storedPromoDateKey(promoCode.validFrom);
   const validUntilKey = storedPromoDateKey(promoCode.validUntil);
   if (validFromKey && currentDateKey < validFromKey) {
@@ -1073,7 +806,14 @@ export function validatePromoCodeRules(
   }
 
   if (bookingDetails.bookingCheckIn) {
-    const checkInKey = nzDateKey(bookingDetails.bookingCheckIn);
+    // BOTH SIDES OF THIS COMPARISON COME FROM ONE HELPER, and until #3123 they
+    // did not. `Booking.checkIn` is `@db.Date` (`prisma/schema.prisma:1662`), as
+    // are the two window columns, so all three are calendar days and none of
+    // them takes a zone. Projecting the check-in through `APP_TIME_ZONE` made
+    // the key a day early for every club behind Greenwich, which refused a
+    // booking on the promotion's first valid day and admitted one on the
+    // excluded upper bound.
+    const checkInKey = storedPromoDateKey(bookingDetails.bookingCheckIn);
     const bookingStartFromKey = storedPromoDateKey(promoCode.bookingStartFrom);
     const bookingStartUntilKey = storedPromoDateKey(promoCode.bookingStartUntil);
     if (bookingStartFromKey && checkInKey < bookingStartFromKey) {
@@ -1177,6 +917,16 @@ export function validatePromoCodeRules(
   return null;
 }
 
+/**
+ * `options` is REQUIRED because `options.todayAtClub` is (#3123).
+ *
+ * Four of this function's callers invoke it with `{ db: tx }` from inside an
+ * open interactive transaction, so the club's day cannot be resolved here or
+ * below — `INV-LOCK-004`, and the full reasoning is on
+ * {@link validatePromoCodeRules}. Making the whole options object required is
+ * what makes the typechecker enumerate every call site rather than letting one
+ * silently keep the container's answer.
+ */
 export async function validateAndCalculatePromoDiscount(
   promoCode: PromoApplicationSubject | null,
   bookingDetails: BookingDetailsForPromo,
@@ -1184,7 +934,12 @@ export async function validateAndCalculatePromoDiscount(
   options: {
     excludeBookingId?: string;
     db?: PromoUsageClient;
-    now?: Date;
+    /**
+     * The club's own calendar day (`INV-CONFIG-002`), resolved by this caller
+     * BEFORE it opened any transaction. Feeds the promotion's validity window
+     * in {@link validatePromoCodeRules}.
+     */
+    todayAtClub: CalendarDate;
     selectedGuestIndexes?: number[];
     // The booking's/quote's lodge. Required to enforce an optional per-lodge
     // promo restriction (PromoCodeLodge junction, ADR-001 resolved question
@@ -1207,7 +962,7 @@ export async function validateAndCalculatePromoDiscount(
      *   not, at the moment of the edit.
      */
     capOverflow?: "reject" | "coverExisting";
-  } = {}
+  }
 ): Promise<PromoApplicationResult> {
   if (!promoCode) {
     return {
@@ -1526,7 +1281,7 @@ export async function validateAndCalculatePromoDiscount(
   const validationError = validatePromoCodeRules(
     promoCode,
     bookingDetails,
-    options.now ?? new Date(),
+    options.todayAtClub,
     {
       memberRedemptionCount: assignedScoped ? undefined : bookerUsage.redemptionCount,
       memberFreeNightsUsed: assignedScoped ? undefined : bookerUsage.freeNightsUsed,
@@ -1641,6 +1396,16 @@ export async function validateAndCalculatePromoDiscount(
 export async function validatePromoCodeFull(
   code: string,
   bookingDetails: BookingDetailsForPromo,
+  /**
+   * The club's own calendar day (#3123), resolved by the caller.
+   *
+   * THIRD AND REQUIRED, ahead of the two optional positionals it now precedes,
+   * so the typechecker enumerates every call site instead of letting one keep
+   * the container's day. That is the shape #2870 used for
+   * `enqueueHostingCoverageReevaluationForMember`'s `today`, and the reasoning
+   * is on {@link validatePromoCodeRules}.
+   */
+  todayAtClub: CalendarDate,
   excludeBookingId?: string,
   lodgeId?: string | null,
   // #2266: guest-targeted codes (assigned + not-own-nights-only) need the
@@ -1677,6 +1442,7 @@ export async function validatePromoCodeFull(
       excludeBookingId,
       lodgeId,
       selectedGuestIndexes: options?.selectedGuestIndexes,
+      todayAtClub,
     }
   );
 

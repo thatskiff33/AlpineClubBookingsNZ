@@ -1489,8 +1489,8 @@ export async function syncGroupSettlementForPaidInvoice(invoice: Invoice) {
         memberName: settlementDetail
           ? `${settlementDetail.groupBooking.organiserMember.firstName} ${settlementDetail.groupBooking.organiserMember.lastName}`
           : "Unknown group organiser",
-        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? new Date(),
-        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? new Date(),
+        checkIn: settlementDetail?.groupBooking.organiserBooking.checkIn ?? null,
+        checkOut: settlementDetail?.groupBooking.organiserBooking.checkOut ?? null,
         amountCents: settlementDetail?.amountCents ?? 0,
         errorMessage:
           applied.outcome === "cancelled"

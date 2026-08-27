@@ -1,5 +1,3 @@
-### Accessibility
-
 - Card titles can now carry real heading semantics. `CardTitle` gained an opt-in
   `headingLevel` prop, so a card that is a page's section says so and appears in a screen
   reader's heading list — one of the two main ways an assistive-technology user navigates a

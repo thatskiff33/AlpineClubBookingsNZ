@@ -8,7 +8,8 @@ import {
 } from "@/lib/additional-payment-chase";
 import { createAuditLog } from "@/lib/audit";
 import { readBookingNoEmails } from "@/lib/booking-email-suppression";
-import { normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { sendAdditionalPaymentReminderEmail } from "@/lib/email";
 import type { EmailSendOutcome } from "@/lib/email/core";
 import logger from "@/lib/logger";
@@ -194,9 +195,21 @@ export async function resendAdditionalPaymentEmail(params: {
     does, and for the same reason: the member has now been told inside the
     window and a second copy has nothing to add.
   */
+  // `now` is a real instant, so it has no calendar day until one is supplied:
+  // it is projected through the club's PERSISTED timezone and encoded back to
+  // the UTC-midnight shape the `@db.Date` `checkIn` / `checkOut` it is compared
+  // against round-trip through (#3123, INV-CONFIG-002). This used to read the
+  // container's zone. `cron-additional-payment-reminders.ts` builds `today` for
+  // this same function from the same persisted zone, and the two MUST agree —
+  // if they did not, the manual send and the automatic one would disagree about
+  // which reminder is due. `clubTimeZone()` rather than the CLI-safe reader
+  // because nothing outside a React request reaches this module, so the memo is
+  // free; the cron takes the runtime reader for its own instrumentation reason,
+  // and both read the same row.
+  const clubZone = await clubTimeZone();
   const standsInFor = resolveAdditionalPaymentChase({
     now,
-    today: normalizeDateOnlyForTimeZone(now),
+    today: dateOnlyInstantOf(clubCalendarDateOf(now, clubZone)),
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     episodeStartedAt,

@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { ACTIVE_BOOKING_STATUSES } from "@/lib/booking-status";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type {
   MembershipCancellationBlocker,
   MembershipCancellationBookingBlocker,
@@ -74,7 +74,7 @@ async function loadBookingBlockersByMemberId(
     MembershipCancellationBookingBlocker[]
   >(uniqueMemberIds.map((memberId) => [memberId, []]));
 
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const [ownedBookings, guestAppearances] = await Promise.all([
     db.booking.findMany({
       where: {

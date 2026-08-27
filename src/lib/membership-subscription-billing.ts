@@ -17,8 +17,15 @@ import {
 import { DEFAULT_MEMBERSHIP_SUBSCRIPTION_BILLING_SETTINGS } from "@/config/club-settings-defaults";
 import { createAuditLog } from "@/lib/audit";
 import { getEffectiveMembershipAnnualFee, getFamilyBillingMode } from "@/lib/authoritative-fees";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  getSeasonStartMonth,
+  seasonYearOfStoredDate,
+} from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { seasonYearsLabel } from "@/lib/season-label";
 import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { prisma } from "@/lib/prisma";
 import { defaultMembershipTypeKeyForRole } from "@/lib/membership-types";
@@ -97,6 +104,12 @@ export type SubscriptionBillingPlanException = {
 export type SubscriptionBillingPreview = {
   seasonYear: number;
   decisionDate: string;
+  // The club's financial year-end month this preview's invoice-line descriptions
+  // were NAMED from (#3116). Frozen here for the same reason `decisionDate` is:
+  // the confirm path rebuilds the preview inside the transaction and compares
+  // `confirmationToken`, and the descriptions are part of that token — so confirm
+  // must replay the year-end the preview used rather than resolve a fresh one.
+  yearEndMonth: number;
   dueDays: number;
   scopeMemberIds: string[] | null;
   entries: SubscriptionBillingPlanEntry[];
@@ -228,19 +241,34 @@ export function calculateMembershipCharge(input: {
   };
 }
 
-// The historical single-line invoice description. A single-component fee (every
-// existing fee post-backfill) reproduces this EXACT text — including the
-// `(1 month)` vs `(N months)` pluralization — so a backfilled legacy charge
-// re-driven through the outbox mints a byte-identical line. Multi-component fees
-// append the component label to distinguish their lines.
+// The single-line invoice description. A single-component fee (every existing fee
+// post-backfill) reproduces this text — including the `(1 month)` vs `(N months)`
+// pluralization. Multi-component fees append the component label to distinguish
+// their lines.
+//
+// WHAT KEEPS AN EXISTING CHARGE'S LINE STABLE IS PERSISTENCE, NOT THIS LITERAL,
+// and the comment that stood here said otherwise (#3116). It claimed a frozen
+// string contract: a re-driven backfilled charge mints a byte-identical line
+// BECAUSE this text never changes. That is not the mechanism.
+// `MembershipSubscriptionChargeComponent.description` is a persisted column;
+// this function WRITES it at plan time and the mint READS THE STORED COLUMN BACK
+// (`xero-subscription-invoices.ts`, whose fallback branch is the one place that
+// re-derives at send time). So changing this derivation changes newly-planned
+// charges only.
+//
+// `yearEndMonth` IS REQUIRED and deliberately has no default, so an unstated
+// year-end is a compile error rather than a silently wrong invoice line - see
+// `season-label.ts` for why the default is wrong off a request path.
 export function buildComponentLineDescription(input: {
   membershipTypeName: string;
   seasonYear: number;
   coveredMonths: number;
   label: string;
   isSoleComponent: boolean;
+  yearEndMonth: number;
 }) {
-  const base = `${input.membershipTypeName} membership ${input.seasonYear}/${input.seasonYear + 1}`
+  const base = `${input.membershipTypeName} membership `
+    + `${seasonYearsLabel(input.seasonYear, input.yearEndMonth)}`
     + ` (${input.coveredMonths} month${input.coveredMonths === 1 ? "" : "s"})`;
   return input.isSoleComponent ? base : `${base} — ${input.label}`;
 }
@@ -272,9 +300,60 @@ export async function buildSubscriptionBillingPreview(input: {
   decisionDate?: Date;
   memberIds?: string[];
   store?: Prisma.TransactionClient | typeof prisma;
+  /**
+   * The club's financial year-end month, when the caller already holds it.
+   * Omitted, it is resolved here - correct for a request path, and REFUSED
+   * inside a transaction (see the guard below).
+   */
+  yearEndMonth?: number;
 }): Promise<SubscriptionBillingPreview> {
   const db = input.store ?? prisma;
-  const decisionDate = input.decisionDate ?? getTodayDateOnly();
+  // "Today" means the CLUB's calendar day, from its PERSISTED timezone, encoded
+  // as the UTC-midnight value every `decisionDate` comparison in this module
+  // reads with UTC getters (CT-4, #2870; INV-CONFIG-002). `getTodayDateOnly()`
+  // stood here and answered from `APP_TIME_ZONE` — the container's environment,
+  // which for a deployment that sets only `TZ` is not the club's zone at all.
+  // This value bounds a season and is written into immutable charges.
+  //
+  // THE DEFAULT IS REFUSED INSIDE A TRANSACTION, and that is a concurrency rule
+  // rather than tidiness. `getTodayDateOnly()` was pure; resolving the club's zone
+  // is a `ClubTimeSettings` read. Both in-module callers that pass `store` are
+  // inside `prisma.$transaction` holding `pg_advisory_xact_lock` on this season,
+  // and both already supply an explicit `decisionDate` — so today the read never
+  // happens under that lock. Refusing makes that an ENFORCED contract instead of a
+  // coincidence a future caller can break silently: a settings query under a
+  // held lock buys nothing and lengthens the hold (`booking-request.ts` records
+  // the same judgement in its own words), and the confirm path must in any case
+  // re-derive from the FROZEN preview's date rather than from a fresh "today".
+  if (input.store && !input.decisionDate) {
+    throw new SubscriptionBillingError(
+      "A preview built inside a transaction must be given its decision date. " +
+        "Defaulting it here would read the club's timezone from the database while " +
+        "this transaction holds the season's advisory lock, and a confirm must " +
+        "re-derive from the frozen preview's date rather than from a fresh today.",
+    );
+  }
+  // The same rule, for the same reason, one release later (#3116). Resolving the
+  // financial year-end reads settings and - with no admin override - CALLS XERO
+  // for the organisation's accounting year. Under a held `pg_advisory_xact_lock`
+  // that is a provider call inside a transaction, which this repository forbids
+  // outright. A transactional caller has a preview in hand and passes its frozen
+  // `yearEndMonth`.
+  if (input.store && input.yearEndMonth === undefined) {
+    throw new SubscriptionBillingError(
+      "A preview built inside a transaction must be given its financial year-end month. " +
+        "Resolving it here would read settings — and possibly call Xero — while this " +
+        "transaction holds the season's advisory lock, and a confirm must replay the " +
+        "frozen preview's year-end rather than resolve a fresh one.",
+    );
+  }
+  const decisionDate =
+    input.decisionDate ??
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  // Resolved, never defaulted from the `financial-year.ts` cache: this value is
+  // written into invoice-line text, and the cache is the March default on any
+  // process that did not seed it (#3116).
+  const yearEndMonth = input.yearEndMonth ?? (await refreshFinancialYearConfig());
   // Validate the date against the selected membership year before querying,
   // including an otherwise-empty preview.
   const bounds = seasonBounds(input.seasonYear);
@@ -962,6 +1041,7 @@ export async function buildSubscriptionBillingPreview(input: {
             coveredMonths: calculated.coveredMonths,
             label: component.label,
             isSoleComponent,
+            yearEndMonth,
           }),
           annualAmountCents: component.amountCents,
           chargedAmountCents: componentChargedCents(component.amountCents, component.prorate, calculated.coveredMonths),
@@ -1042,6 +1122,7 @@ export async function buildSubscriptionBillingPreview(input: {
   return {
     seasonYear: input.seasonYear,
     decisionDate: decisionDateOnly,
+    yearEndMonth,
     dueDays,
     scopeMemberIds,
     entries,
@@ -1129,12 +1210,19 @@ async function resolveSupersededExceptions(
 export async function reconcileSubscriptionBillingExceptions(input: {
   seasonYear: number;
   decisionDate: Date;
+  /**
+   * Resolved by the request path that calls this, because the preview it builds
+   * runs inside the season's advisory lock and must not resolve it there
+   * (#3116).
+   */
+  yearEndMonth: number;
 }): Promise<{ resolvedCount: number }> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-subscription-billing:${input.seasonYear}`}))`;
     const preview = await buildSubscriptionBillingPreview({
       seasonYear: input.seasonYear,
       decisionDate: input.decisionDate,
+      yearEndMonth: input.yearEndMonth,
       store: tx,
     });
     const result = await resolveSupersededExceptions(tx, {
@@ -1163,6 +1251,11 @@ export async function confirmSubscriptionBillingPreview(input: {
       seasonYear: input.preview.seasonYear,
       decisionDate: parseDateOnly(input.preview.decisionDate),
       memberIds: input.preview.scopeMemberIds ?? undefined,
+      // The year-end the preview was NAMED from, not a fresh resolve. The
+      // descriptions feed `confirmationToken`, so re-resolving here would turn a
+      // year-end change between preview and confirm into a token mismatch that
+      // reads as "someone else edited the plan" (#3116).
+      yearEndMonth: input.preview.yearEndMonth,
       store: tx,
     });
     if (preview.confirmationToken !== input.expectedConfirmationToken) {
@@ -1385,9 +1478,31 @@ export async function queueApprovedMembershipSubscriptionCharges(input: {
   approvedByMemberId: string;
   decisionDate?: Date;
 }) {
-  const decisionDate = input.decisionDate ?? getTodayDateOnly();
-  const { getSeasonYear } = await import("@/lib/utils");
-  const seasonYear = getSeasonYear(decisionDate);
+  // THE TRAP THIS LANE EXISTS FOR, and it looked like a one-line fix.
+  //
+  // Approving a membership application arrives here with NO decision date, so
+  // this default decides which season the member's FIRST subscription charge —
+  // and the Xero invoice queued from it — is written against. On the financial
+  // year boundary that is a whole SEASON YEAR, not a day, and the charge is
+  // immutable once created.
+  //
+  // Two things were wrong and only one of them was visible. `getTodayDateOnly()`
+  // answered from `APP_TIME_ZONE` (the container's environment) rather than the
+  // club's persisted zone; and the season was then derived by
+  // `getSeasonYear(decisionDate)`, which read this UTC-midnight encoding with
+  // HOST-LOCAL getters — so on any host behind Greenwich 1 April decoded as
+  // 31 March and the whole of that day was charged to the previous season.
+  //
+  // DO NOT "IMPROVE" THIS BY PASSING A BETTER `Date` INTO A HOST-LOCAL READER.
+  // Measured across a host x club matrix (#2870, group A): that gives zero wrong
+  // days for a host at or ahead of UTC and one ENTIRE wrong day for any host
+  // behind it, which took a self-consistent Denver deployment from right to
+  // wrong. The club's day is minted here and decoded as an encoding, in UTC, by
+  // `seasonYearOfStoredDate`.
+  const decisionDate =
+    input.decisionDate ??
+    dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
+  const seasonYear = seasonYearOfStoredDate(decisionDate);
   const preview = await buildSubscriptionBillingPreview({ seasonYear, decisionDate, memberIds: input.memberIds });
   const result = await confirmSubscriptionBillingPreview({
     preview,

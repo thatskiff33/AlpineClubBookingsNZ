@@ -41,6 +41,8 @@ import {
   resetXeroRateLimitStateForTests,
 } from "../xero"
 import { Invoice } from "xero-node"
+import { requireCalendarDate } from "@/lib/club-time"
+import { withTimeZone } from "@/lib/__tests__/helpers/timezone"
 
 beforeEach(() => {
   resetXeroRateLimitStateForTests()
@@ -120,7 +122,7 @@ describe("findSubscriptionInvoice", () => {
 
   it("finds a subscription invoice by account code 203", () => {
     const invoices = [makeInvoice()]
-    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
+    const result = findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-001")
   })
@@ -133,7 +135,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Payment", quantity: 1, unitAmount: 150 }],
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
+    const result = findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-002")
   })
@@ -144,7 +146,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Club Membership Fee 2026-2027", accountCode: "203", quantity: 1, unitAmount: 100 }],
       }),
     ]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).not.toBeNull()
   })
 
   it("matches 'annual member subscription' in reference", () => {
@@ -154,7 +156,7 @@ describe("findSubscriptionInvoice", () => {
         lineItems: [{ description: "Sub", quantity: 1, unitAmount: 100 }],
       }),
     ]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).not.toBeNull()
   })
 
   it("matches membership subscription wording in a line description", () => {
@@ -172,7 +174,7 @@ describe("findSubscriptionInvoice", () => {
       }),
     ]
 
-    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
+    const result = findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })
 
     expect(result).not.toBeNull()
     expect(result!.invoiceID).toBe("inv-003")
@@ -184,7 +186,7 @@ describe("findSubscriptionInvoice", () => {
         date: "2025-02-15", // Before April 2026
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
+    const result = findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })
     expect(result).toBeNull()
   })
 
@@ -195,32 +197,32 @@ describe("findSubscriptionInvoice", () => {
         reference: undefined,
       }),
     ]
-    const result = findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })
+    const result = findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })
     expect(result).toBeNull()
   })
 
   it("returns null for empty invoice list", () => {
-    expect(findSubscriptionInvoice([], 2026, { accountCode: "203" })).toBeNull()
+    expect(findSubscriptionInvoice([], 2026, { yearEndMonth: 3, accountCode: "203" })).toBeNull()
   })
 
   it("handles invoice without date", () => {
     const invoices = [makeInvoice({ date: undefined })]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).toBeNull()
   })
 
   it("matches invoices at season year boundaries (April 1)", () => {
     const invoices = [makeInvoice({ date: "2026-04-01" })]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).not.toBeNull()
   })
 
   it("matches invoices at season year boundaries (March 31)", () => {
     const invoices = [makeInvoice({ date: "2027-03-31" })]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).not.toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).not.toBeNull()
   })
 
   it("rejects invoices just outside season year (March 31 before)", () => {
     const invoices = [makeInvoice({ date: "2026-03-31" })]
-    expect(findSubscriptionInvoice(invoices, 2026, { accountCode: "203" })).toBeNull()
+    expect(findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203" })).toBeNull()
   })
 
   it("matches by configured item code even when the account code differs", () => {
@@ -234,6 +236,7 @@ describe("findSubscriptionInvoice", () => {
       }),
     ]
     const result = findSubscriptionInvoice(invoices, 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["SUBS"],
       primaryItemCode: "SUBS",
@@ -253,7 +256,7 @@ describe("findSubscriptionInvoice", () => {
       }),
     ]
     expect(
-      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: false })
+      findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203", textFallbackEnabled: false })
     ).toBeNull()
   })
 
@@ -266,10 +269,10 @@ describe("findSubscriptionInvoice", () => {
     ]
     // With the fallback on, the reference text matches; with it off it must not.
     expect(
-      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: true })
+      findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203", textFallbackEnabled: true })
     ).not.toBeNull()
     expect(
-      findSubscriptionInvoice(invoices, 2026, { accountCode: "203", textFallbackEnabled: false })
+      findSubscriptionInvoice(invoices, 2026, { yearEndMonth: 3, accountCode: "203", textFallbackEnabled: false })
     ).toBeNull()
   })
 
@@ -285,6 +288,7 @@ describe("findSubscriptionInvoice", () => {
       }),
     ]
     const result = findSubscriptionInvoice(invoices, 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["FULL-ADULT", "FULL-YOUTH", "SUBS"],
       primaryItemCode: "SUBS",
@@ -321,6 +325,7 @@ describe("findSubscriptionInvoice", () => {
     })
     // Order the earlier unpaid invoice first, as Xero might return it.
     const result = findSubscriptionInvoice([unpaidHut, paidSub], 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["FULL-ADULT", "SUBS"],
       primaryItemCode: "SUBS",
@@ -350,6 +355,7 @@ describe("findSubscriptionInvoice", () => {
       ],
     })
     const result = findSubscriptionInvoice([unionOnly, strong], 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["FULL-ADULT", "SUBS"],
       primaryItemCode: "SUBS",
@@ -382,6 +388,7 @@ describe("findSubscriptionInvoice", () => {
       ],
     })
     const result = findSubscriptionInvoice([paidUnionOnly, unpaidStrong], 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["FULL-ADULT", "SUBS"],
       primaryItemCode: "SUBS",
@@ -414,6 +421,7 @@ describe("findSubscriptionInvoice", () => {
       ],
     })
     const result = findSubscriptionInvoice([earlierUnpaid, laterPaid], 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       // Single-code set (only the flat primary) — look-through OFF.
       itemCodes: ["SUBS"],
@@ -430,6 +438,7 @@ describe("findSubscriptionInvoice", () => {
       makeInvoice({ invoiceID: "inv-only", status: Invoice.StatusEnum.AUTHORISED }),
     ]
     const result = findSubscriptionInvoice(invoices, 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["SUBS"],
       primaryItemCode: "SUBS",
@@ -453,6 +462,7 @@ describe("findSubscriptionInvoice", () => {
       ],
     })
     const result = findSubscriptionInvoice([hutOnly], 2026, {
+      yearEndMonth: 3,
       accountCode: "203",
       itemCodes: ["FULL-ADULT", "SUBS"],
       primaryItemCode: "SUBS",
@@ -531,15 +541,67 @@ describe("shouldBackfillMembershipStatus", () => {
 // ---------------------------------------------------------------------------
 
 describe("determineSubscriptionStatus", () => {
+  /**
+   * The CLUB's calendar day, supplied explicitly (CT-5, #2869). It used to be
+   * `new Date()` compared against a midnight whose meaning depended on the
+   * container's zone AND on which of the four Xero wire shapes arrived.
+   */
+  const CLUB_TODAY = requireCalendarDate("2026-07-01")
+
   it("returns PAID for paid invoices", () => {
     const invoice: Invoice = {
       status: Invoice.StatusEnum.PAID,
       fullyPaidOnDate: "2026-05-20",
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("PAID")
     expect(result.paidAt).toEqual(new Date("2026-05-20"))
+  })
+
+  // The same four-shape x three-zone sweep the due-date half gets below, and it
+  // is needed for the SAME reason (#2869 review). The case above pins
+  // `fullyPaidOnDate: "2026-05-20"`, where the calendar-date reading and the
+  // instant reading coincide exactly — so a mutant that swapped
+  // `xeroCalendarDateAsDateOnly` for `xeroInstant` survived it. For an
+  // offset-less `"2026-05-20T10:30:00"` the two differ by ten and a half hours,
+  // and that value is written to `MemberSubscription.paidAt`.
+  it.each([
+    ["a plain calendar date", "2026-05-20"],
+    ["an offset-less date-time", "2026-05-20T10:30:00"],
+    ["an offset-bearing instant", "2026-05-20T10:30:00Z"],
+    ["a Microsoft-JSON string", "/Date(1779235200000+0000)/"],
+  ])("reads paidAt as the club calendar day from %s on every host zone", (_label, fullyPaidOnDate) => {
+    const invoice = {
+      status: Invoice.StatusEnum.PAID,
+      fullyPaidOnDate,
+    } as unknown as Invoice
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      withTimeZone(hostZone, () => {
+        const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
+        expect(result.status, `${_label} read on ${hostZone}`).toBe("PAID")
+        // UTC midnight of the day Xero named — the date-only ENCODING every
+        // other calendar value in this system carries (INV-DATE-010), never the
+        // time of day the payload happened to include.
+        expect(result.paidAt, `${_label} read on ${hostZone}`).toEqual(
+          new Date("2026-05-20T00:00:00.000Z"),
+        )
+      })
+    }
+  })
+
+  // The SDK hands back a `Date` for a field it types as `string`; a date-only
+  // field's Microsoft-JSON encoding is UTC midnight, so its UTC day is the day.
+  it("reads paidAt from a fullyPaidOnDate the SDK already deserialised", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.PAID,
+      fullyPaidOnDate: new Date("2026-05-20T00:00:00.000Z"),
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).paidAt).toEqual(
+      new Date("2026-05-20T00:00:00.000Z"),
+    )
   })
 
   it("returns PAID with updatedDateUTC fallback when no fullyPaidOnDate", () => {
@@ -548,7 +610,7 @@ describe("determineSubscriptionStatus", () => {
       updatedDateUTC: "2026-05-20T10:30:00Z",
     } as unknown as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("PAID")
     expect(result.paidAt).toEqual(new Date("2026-05-20T10:30:00Z"))
   })
@@ -562,7 +624,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: futureDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
     expect(result.paidAt).toBeUndefined()
   })
@@ -575,7 +637,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: pastDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("OVERDUE")
   })
 
@@ -588,7 +650,7 @@ describe("determineSubscriptionStatus", () => {
       dueDate: futureDate.toISOString(),
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
   })
 
@@ -597,7 +659,7 @@ describe("determineSubscriptionStatus", () => {
       status: Invoice.StatusEnum.DRAFT,
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
   })
 
@@ -606,8 +668,74 @@ describe("determineSubscriptionStatus", () => {
       status: Invoice.StatusEnum.VOIDED,
     } as Invoice
 
-    const result = determineSubscriptionStatus(invoice)
+    const result = determineSubscriptionStatus(invoice, CLUB_TODAY)
     expect(result.status).toBe("UNPAID")
+  })
+
+  // CT-5 (#2869). Before this, "past due" was `new Date(invoice.dueDate) < new
+  // Date()`, so an invoice flipped to OVERDUE partway through the day it was
+  // due — at 12pm New Zealand for a Microsoft-JSON payload, and on the evening
+  // BEFORE on a host west of Greenwich.
+  it("is not overdue on the day it is due", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-07-01",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("UNPAID")
+  })
+
+  it("is overdue the day after it was due", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-06-30",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("OVERDUE")
+  })
+
+  // The four wire shapes Xero can send for ONE date-only field, each read under
+  // TWO host zones. Every cell must be the same answer: the club's calendar is
+  // the only calendar involved.
+  it.each([
+    ["a plain calendar date", "2026-07-01"],
+    ["an offset-less date-time", "2026-07-01T00:00:00"],
+    ["an offset-bearing instant", "2026-07-01T00:00:00Z"],
+    ["a Microsoft-JSON string", "/Date(1782864000000+0000)/"],
+  ])("reads a due date identically from %s on every host zone", (_label, dueDate) => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate,
+    } as unknown as Invoice
+
+    for (const hostZone of ["UTC", "America/Denver", "Pacific/Auckland"]) {
+      withTimeZone(hostZone, () => {
+        expect(
+          determineSubscriptionStatus(invoice, CLUB_TODAY).status,
+          `${_label} read on ${hostZone}`,
+        ).toBe("UNPAID")
+      })
+    }
+  })
+
+  // The SDK hands back a `Date` for a field it types as `string`; a date-only
+  // field's Microsoft-JSON encoding is UTC midnight, so its UTC day is the day.
+  it("reads a due date the SDK already deserialised into a Date", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: new Date("2026-06-30T00:00:00.000Z"),
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("OVERDUE")
+  })
+
+  it("treats an unreadable due date as not-yet-due rather than inventing a day", () => {
+    const invoice = {
+      status: Invoice.StatusEnum.AUTHORISED,
+      dueDate: "2026-02-30",
+    } as unknown as Invoice
+
+    expect(determineSubscriptionStatus(invoice, CLUB_TODAY).status).toBe("UNPAID")
   })
 })
 
@@ -715,11 +843,11 @@ describe("buildInvoiceLineItems", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Season year (re-test the imported getSeasonYear via the Xero context)
+// Season year (re-test the imported season derivation via the Xero context)
 // ---------------------------------------------------------------------------
 
 describe("Season year logic for membership", () => {
-  // The getSeasonYear function is already tested in pricing.test.ts,
+  // The season derivation is already tested in club-season-year.test.ts,
   // but we test the boundary logic here in the context of subscription matching.
 
   it("April 1 belongs to same calendar year's season", () => {

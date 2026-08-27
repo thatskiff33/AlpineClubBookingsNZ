@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MemberGuestDelegateConsentCard } from "@/components/member-guest-delegate-consent-card";
 import { auth } from "@/lib/auth";
+import type { ClubTimeZone } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import {
   describeConsentDeclineRefusal,
@@ -40,6 +42,17 @@ export default async function DelegateConsentPage({
   const { guestId } = await params;
   const session = await auth();
   if (!session) redirect("/login");
+
+  /*
+    #3123 — every date this page prints from a real instant is named in the
+    club's PERSISTED zone (`INV-CONFIG-002`), not the container's. Resolved ONCE
+    here and threaded down, so the "accepted on" line, the "declined on" line
+    and the "answer by" fact in the card below cannot disagree with each other.
+
+    The stay dates and the guest's nights DO NOT take it: they are `@db.Date`
+    lodge nights, which are calendar days and have no zone (`INV-DATE-010`).
+  */
+  const zone = await clubTimeZone();
 
   const state = await resolveDelegateConsentPageState({
     guestId,
@@ -97,12 +110,12 @@ export default async function DelegateConsentPage({
               {state.status === "CONFIRMED"
                 ? `${state.guestFirstName} is on the booking${
                     state.respondedAt
-                      ? ` — the request was accepted on ${formatConsentFullDate(state.respondedAt)}`
+                      ? ` — the request was accepted on ${formatConsentFullDate(state.respondedAt, zone)}`
                       : ""
                   }. Nothing more is needed.`
                 : `The request was declined${
                     state.respondedAt
-                      ? ` on ${formatConsentFullDate(state.respondedAt)}`
+                      ? ` on ${formatConsentFullDate(state.respondedAt, zone)}`
                       : ""
                   }, and ${state.guestFirstName} was not added.`}
             </p>
@@ -128,7 +141,7 @@ export default async function DelegateConsentPage({
           </CardContent>
         </Card>
       ) : (
-        <DelegateAskCard state={state} />
+        <DelegateAskCard state={state} zone={zone} />
       )}
     </div>
   );
@@ -136,11 +149,14 @@ export default async function DelegateConsentPage({
 
 async function DelegateAskCard({
   state,
+  zone,
 }: {
   state: Extract<
     Awaited<ReturnType<typeof resolveDelegateConsentPageState>>,
     { kind: "ASK" }
   >;
+  /** The club's persisted zone, resolved once by the page above (#3123). */
+  zone: ClubTimeZone;
 }) {
   const { facts } = state;
   // The booking's own lodge identity, the same source the emails use.
@@ -162,7 +178,9 @@ async function DelegateAskCard({
       stayLabel={formatConsentStayLabel(facts.checkIn, facts.checkOut)}
       nightsLabel={formatConsentNightsLabel(facts.guestNights)}
       answerByLabel={
-        facts.consentExpiresAt ? formatConsentFullDate(facts.consentExpiresAt) : "—"
+        facts.consentExpiresAt
+          ? formatConsentFullDate(facts.consentExpiresAt, zone)
+          : "—"
       }
       party={facts.party}
       refusalWarning={

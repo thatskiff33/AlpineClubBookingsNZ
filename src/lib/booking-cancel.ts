@@ -62,6 +62,8 @@ import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-cov
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
 // Statuses a booking may be cancelled from. Shared by the outer validation
 // guard and the tx1 single-flight re-check so the two can never drift (#1160).
@@ -420,6 +422,23 @@ async function performBookingCancellation(
   // the audit metadata — notifyMember is false only when an authorized admin
   // opted out, so every suppressed cancellation email stays auditable.
   const notifyAuditFields = notifyMember ? {} : { notifyMember: false };
+  // #3123 — the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+  // (`INV-CONFIG-002`), resolved ONCE here for the whole cancellation and read
+  // BEFORE any transaction below opens.
+  //
+  // Two decisions on this path need it and they must not be able to disagree:
+  // the started-stay gate below, which refuses a member's own cancellation, and
+  // the REFUND TIER inside the paid-path claim, which is `daysUntilDate`
+  // against the cancellation policy's day thresholds. `INV-LOCK-004` names the
+  // club timezone as one of only two reads that cannot take a transaction
+  // client, and that claim holds `pg_advisory_xact_lock(1)` — so this cannot be
+  // read where it is used.
+  //
+  // The runtime reader rather than the `server-only` binding: this module is
+  // reachable from `instrumentation.node.ts` through `general-cron-runner` ->
+  // `booking-request.ts`, and `club-time/server` is a bare throw outside the
+  // `react-server` condition.
+  const todayAtClub = clubToday(await readClubTimeZoneOutsideRequest());
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: { payment: true, member: true },
@@ -464,7 +483,13 @@ async function performBookingCancellation(
   if (
     enforceStartedStayBlock &&
     sessionUserRole !== "ADMIN" &&
-    bookingStayHasStarted(booking.checkIn)
+    bookingStayHasStarted(
+      booking.checkIn,
+      // #3123 — the CLUB's day, resolved once at the top of this function. This
+      // gate refuses a member's own cancellation, so a day early is a member
+      // told they cannot cancel a stay they are still entitled to cancel.
+      dateOnlyInstantOf(todayAtClub),
+    )
   ) {
     return {
       status: 400,
@@ -1367,8 +1392,12 @@ async function performBookingCancellation(
     const refundableBaseCents =
       Math.min(paidAmountCents, fresh.finalPriceCents + payment.changeFeeCents) -
       payment.changeFeeCents;
-    const days = daysUntilDate(fresh.checkIn);
-    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId);
+    // #3123 — THE REFUND TIER. The club's day, resolved before this
+    // transaction opened (`INV-LOCK-004`); it used to be the container's,
+    // projected out of `APP_TIME_ZONE`, which tiered every club behind
+    // Greenwich one day short of its own published cancellation policy.
+    const days = daysUntilDate(fresh.checkIn, todayAtClub);
+    const policy = await loadCancellationPolicy(fresh.checkIn, fresh.lodgeId, tx);
 
     // Idempotent-by-claim credit restore: only reached once per claim. The
     // applied-credit slice is now tiered by the SAME card tier as the card

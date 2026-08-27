@@ -36,6 +36,7 @@ description, so you can find the right file without opening more than one.
 | [`integrations.md`](invariants/integrations.md) | `INV-INT` | webhooks, cron idempotency, provider callbacks, Xero member grouping |
 | [`operations.md`](invariants/operations.md) | `INV-OPS`, `INV-LOCK` | raw SQL, advisory or row locking, which lock tier a writer takes, deployment, dropping a column, changing what a value already stored in a column means (an audit `category`, a status string) so the rows already written no longer match the code, what may be used as test input |
 | [`product-configuration.md`](invariants/product-configuration.md) | `INV-CONFIG` | adding a value or feature a club could answer differently, a new setting existing deployments will not have, or a default an upgrade must fall back to |
+| [`single-source-of-truth.md`](invariants/single-source-of-truth.md) | `INV-SSOT` | adding a constant, helper, formatter, type, validation rule or config value a second place will need; comparing two values; putting a default on a parameter that resolves an environment or configuration authority; or writing a guard, census or ratchet that claims to cross-check another one |
 
 Two supporting files sit beside them: the full id scheme in
 [`SCHEME.md`](invariants/SCHEME.md), and the imperfections found
@@ -135,15 +136,17 @@ number and prefix, and it is listed at the end of the table below.
 | `INV-DATE-007` | Departing lodge A and arriving at lodge B on one date is legal |
 | `INV-DATE-008` | Zero-night bookings expand to no nights and every route refuses them |
 | `INV-DATE-009` | Six areas sit deliberately outside the boundary and must not be aligned |
-| `INV-DATE-010` | `@db.Date` holds an NZ calendar date; UTC midnight is encoding, not meaning |
+| `INV-DATE-010` | `@db.Date` holds a club calendar date; UTC midnight is encoding, not meaning — and not the citation for a decode |
 | `INV-DATE-011` | Lodge bookings use NZ date-only nights, not arbitrary timestamps |
 | `INV-DATE-012` | `BookingGuest.stayStart`/`stayEnd` are date-only occupancy in the envelope |
 | `INV-DATE-013` | Compare date columns only against date-only values, never a raw clock |
 | `INV-DATE-024` | `Member.dateOfBirth` is a calendar day at UTC midnight; never a local-midnight parse, never an instant comparison |
+| `INV-DATE-025` | A club-local wall time may not exist or may exist twice; three probes resolve it, and noon is measurably never either |
+| `INV-DATE-026` | A calendar-day column is `@db.Date`, and a Prisma bound against one must be UTC midnight or it narrows to the previous day |
 | `INV-DATE-019` | Ask the club's calendar for "today", never the UTC clock |
 | `INV-DATE-014` | Client-side a lodge night is an NZ `yyyy-MM-dd` string, carried end to end |
-| `INV-DATE-015` | Rendering has one seam, `nzst-date.ts`; bare `toLocale*` is lint-blocked |
-| `INV-DATE-016` | `formatNZLongDate` is reserved for four named member-facing surfaces |
+| `INV-DATE-015` | Rendering has one seam, `@/lib/club-time`; bare `toLocale*`, an unzoned `Intl` formatter and `date-fns` are lint-blocked |
+| `INV-DATE-016` | The long spelled-out date shape is reserved for four named member-facing surfaces |
 | `INV-DATE-017` | Two check-out boundaries coexist: completion `<` today, queues `<=` today |
 | `INV-DATE-018` | Base Reports uses lodge nights, one positive cohort, cents-exact allocation |
 | `INV-CAP-001` | Capacity is per lodge; no path may sum beds across lodges |
@@ -489,6 +492,7 @@ Prefix `INV-EXCEPT`.
 | `INV-EXCEPT-019` | Never a false keep-pending, including once the post-commit phase has begun |
 | `INV-EXCEPT-020` | A kept-pending capacity conflict is always recorded, on either store |
 | `INV-EXCEPT-021` | The live proposal is verified by replaying the frozen delta, not by trust |
+| `INV-EXCEPT-035` | A refusal names only what was established, never a cause the engine cannot see |
 | `INV-EXCEPT-022` | One implementation computes what the delta produces, for all four surfaces |
 | `INV-EXCEPT-023` | Only the reviewed rules are overridden; ADMIN is never borrowed for guest authorisation |
 | `INV-EXCEPT-024` | An approved hosting exception is recorded as decided in the same transaction |
@@ -717,6 +721,7 @@ the row-locking rules it is the sibling of.
 | `INV-LOCK-001` | The scoped tier is the default; the global key is deliberate |
 | `INV-LOCK-002` | Global before per-lodge; one helper mints the per-lodge capacity key |
 | `INV-LOCK-003` | Every global-lock call site is registered, by site, with its own reason |
+| `INV-LOCK-004` | A read taken under a lock uses the caller's transaction client, never the module one |
 | `INV-OPS-014` | Never interpolate or concatenate into `$queryRawUnsafe` / `$executeRawUnsafe` |
 | `INV-OPS-013` | A `"use client"` module never imports server-only code at runtime |
 | `INV-OPS-002` | Production deployment must respect `docs/BLUE_GREEN_MIGRATION_POLICY.md` |
@@ -748,3 +753,21 @@ headings the index keeps verbatim.
 | `INV-CONFIG-003` | One explicit `APP_ENVIRONMENT_ROLE` declaration decides production versus non-production; nothing is inferred, the database may only force the safer state, a missing declaration is UNKNOWN rather than either, and a production deploy cannot proceed without it |
 | `INV-CONFIG-004` | Every application-controlled send passes ONE environment-aware boundary: confirmed production delivers, a confirmed copy suppresses terminally unless it has declared a capture mailbox, an unconfirmed role fails closed retryably, a live site in capture mode is refused, and all four are distinguishable from business suppression and from provider failure |
 | `INV-CONFIG-005` | Every application-managed Xero contact write consumes the canonical role: production is byte-identical, a confirmed copy replaces the address with one deterministic, idempotent, non-deliverable form kept separate from the placeholder domains, an existing or restored link must be proved contained before any document is raised against it, and an unconfirmed role writes nothing to Xero at all |
+
+## Single Source Of Truth
+
+A fact is defined once and read from that one place — what this repository
+already requires of documentation, required of code. Prefer making the wrong
+thing unrepresentable over policing it.
+File:
+[`invariants/single-source-of-truth.md`](invariants/single-source-of-truth.md).
+Prefix `INV-SSOT`. Added by #3126, out of the Club Time epic (#2988) where the
+cost of the missing rule was measured rather than argued; it is not one of the
+ten pre-split domain headings the index keeps verbatim.
+
+| ID | Covers |
+| --- | --- |
+| `INV-SSOT-001` | One canonical definition per concept: if you cannot change a fact in one place, that is the defect, and the structural remedy is preferred over the guard |
+| `INV-SSOT-002` | Both sides of a comparison are produced by the same helper — including a value and its own encoding, a writer and its reader, a key's mint and its parse |
+| `INV-SSOT-003` | An authority-bearing parameter carries no default; the lint arm guards the narrower club civil-time class, and every exclusion is judged, measured and stated rather than discovered |
+| `INV-SSOT-004` | Two instruments that claim independence must measure the same way, or they are one instrument and a rubber stamp; `stripComments` lives once |

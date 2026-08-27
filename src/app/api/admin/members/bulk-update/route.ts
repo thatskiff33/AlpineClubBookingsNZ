@@ -4,6 +4,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { reconcileEmailInheritanceForMemberChange } from "@/lib/member-email-inheritance";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -27,8 +28,9 @@ import {
   resolveEnforcedAgeTier,
 } from "@/lib/age-tier-enforcement";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { getTodayDateOnly } from "@/lib/date-only";
-import { getSeasonYear } from "@/lib/utils";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
+import { clubSeasonYear } from "@/lib/financial-year";
 import {
   AdminAccountGuardError,
   LAST_FULL_ADMIN_BULK_GUARD_MESSAGE,
@@ -319,7 +321,15 @@ export async function POST(req: NextRequest) {
       linkedGuestCount: number;
     }> = [];
     if (action === "set-role") {
-      const today = getTodayDateOnly();
+      // `Booking.checkIn` is `@db.Date`, so this "future booking" cut-off is a calendar
+      // day from the PERSISTED club timezone (CT-4, #2870), re-encoded to UTC midnight
+      // for the bound (INV-DATE-026).
+      const today = dateOnlyInstantOf((await clubTime()).today());
+      // ONE season for the whole batch, from the club's PERSISTED zone (CT-4,
+      // #2870). Read once outside the loop: an age tier decides a price band, so
+      // a bulk run must never be able to judge two members in two seasons.
+      const clubCurrentSeasonYear = clubSeasonYear((await clubTime()).zone);
+      const clubCurrentSeasonStart = getSeasonStartDate(clubCurrentSeasonYear);
       for (const { member, nextAccessRoles } of setRoleTargets) {
         const wasOrg = isOrganisationMember({
           accessRoleTokens: resolveAccessRoleTokens(member),
@@ -338,13 +348,10 @@ export async function POST(req: NextRequest) {
         const typeExemption = await loadMemberCurrentSeasonTypeExemption(
           prisma,
           member.id,
-          getSeasonYear(),
+          clubCurrentSeasonYear,
         );
         const dobDerivedTier = member.dateOfBirth
-          ? await computeAgeTier(
-              member.dateOfBirth,
-              getSeasonStartDate(getSeasonYear()),
-            )
+          ? await computeAgeTier(member.dateOfBirth, clubCurrentSeasonStart)
           : "ADULT";
         const resolved = resolveEnforcedAgeTier({
           isOrganisation: willBeOrg,
@@ -412,10 +419,20 @@ export async function POST(req: NextRequest) {
             })
             .map(({ member }) => member.id);
 
+    // #3123 / INV-LOCK-004 — ONE club day for the whole bulk transaction,
+    // resolved before it opens. Two reasons, and both matter here: reading the
+    // club's persisted timezone is a `clubTimeSettings.findUnique`, which
+    // inside this transaction would take a second pooled connection while the
+    // global cohort key, every affected lodge key and the member lifecycle
+    // keys are held; and a bulk action touching dozens of members must judge
+    // every one of them against the same day, which per-member reads
+    // straddling club midnight would not.
+    const clubTodayForBulk = await clubTodayDateOnlyInstant();
+
     // Perform update in transaction
     const result = await prisma.$transaction(async (tx) => {
       if (sweepLockMemberIds.length > 0) {
-        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds);
+        await acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds, clubTodayForBulk);
         await acquireMemberLifecycleLocks(tx, sweepLockMemberIds);
       }
       // Last-admin end-state guard (issue #1604): evaluate the whole set, not
@@ -447,10 +464,15 @@ export async function POST(req: NextRequest) {
       // the obligation commit together; never refuses the deactivation.
       if (action === "deactivate" || action === "reactivate") {
         for (const memberId of idsToUpdate) {
-          await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-            cause: "SYSTEM_CHANGE",
-            actorMemberId: currentUserId,
-          });
+          await enqueueHostingCoverageReevaluationForMember(
+            memberId,
+            tx,
+            clubTodayForBulk,
+            {
+              cause: "SYSTEM_CHANGE",
+              actorMemberId: currentUserId,
+            },
+          );
         }
       }
       if (action === "set-role") {
@@ -484,10 +506,15 @@ export async function POST(req: NextRequest) {
             },
           });
           if (reconciledAgeTier !== undefined) {
-            await enqueueHostingCoverageReevaluationForMember(member.id, tx, {
-              cause: "SYSTEM_CHANGE",
-              actorMemberId: currentUserId,
-            });
+            await enqueueHostingCoverageReevaluationForMember(
+              member.id,
+              tx,
+              clubTodayForBulk,
+              {
+                cause: "SYSTEM_CHANGE",
+                actorMemberId: currentUserId,
+              },
+            );
             // #2821: an age tier decides whether this member may be anybody's
             // contact of record (`isUsableEmailSource` requires ADULT), so an
             // ORG grant that forces N/A — or a revoke that restores a person
@@ -513,6 +540,7 @@ export async function POST(req: NextRequest) {
               memberId: member.id,
               reason: "member_age_tier_changed",
               db: tx,
+              today: clubTodayForBulk,
             });
             if (swept.length > 0) {
               sweptSharesByMember.push({
@@ -563,6 +591,7 @@ export async function POST(req: NextRequest) {
             memberId,
             reason: "member_deactivated",
             db: tx,
+            today: clubTodayForBulk,
           });
           if (swept.length > 0) {
             sweptSharesByMember.push({

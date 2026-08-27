@@ -63,10 +63,13 @@
  * before its body, so an install inside the main setup file would still be too
  * late for anything that file imports.
  *
- * That is not hypothetical: `src/components/admin-sidebar.tsx:123` computes
+ * That is not hypothetical: `src/components/admin-sidebar.tsx` used to compute
  * `UNPAID_FINISHED_STAYS_HREF` from today's date at import time, and a
  * hook-based freeze left the component on the real date while the test that
- * checked it saw the frozen one.
+ * checked it saw the frozen one. #3123 deleted that constant — it was also stale
+ * for the life of the browser tab, which is a defect in production and not only
+ * under test — so the example is now a postmortem rather than a live case. The
+ * hazard is not: any module-level date constant behaves the same way.
  *
  * ## Opting out
  *

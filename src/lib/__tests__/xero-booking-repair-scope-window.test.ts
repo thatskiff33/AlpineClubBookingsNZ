@@ -43,13 +43,17 @@
  *
  * ## Why the host time zone is pinned, and what each pin is worth
  *
- * `APP_TIME_ZONE` is `process.env.TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"`
- * and is read once at import (`src/config/operational.ts`), so assigning
- * `process.env.TZ` inside a test moves the HOST's zone — what `setHours` and
- * `new Date("...T00:00:00")` mean — while the CLUB's zone stays whatever it was
- * at import. `expectClubTimeZonePremise()` is what makes a host with `TZ`
- * already set say so out loud instead of arriving as a bare date mismatch
- * (docs/TESTING.md rule 6).
+ * The club's zone is MOCKED to `Pacific/Auckland` below and the HOST's zone is
+ * moved around it, which is what makes each pin mean something.
+ *
+ * That separation is new (CT-5, #2869) and it matters. The window used to be
+ * derived from `APP_TIME_ZONE` — `process.env.TZ || NEXT_PUBLIC_TZ ||
+ * "Pacific/Auckland"` — so assigning `process.env.TZ` in a test moved the club's
+ * zone as well as the host's, and the two could only be told apart because
+ * `APP_TIME_ZONE` is frozen at import while `setHours` is not. It is now the
+ * PERSISTED club timezone (`INV-CONFIG-002`), read through
+ * `readClubTimeZoneOutsideRequest`, and mocking that one function holds the club
+ * still while `withTimeZoneAsync` moves everything else.
  *
  * The fixed code has NO host-zone input left — `parseDateOnly` builds an
  * explicit `Z` instant and `startOfDateOnlyForTimeZone` takes the club zone
@@ -80,10 +84,19 @@
 import pg from "pg";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * The club's persisted timezone, held constant while the host's moves (CT-5,
+ * #2869). Without this the environment seed answers, and pinning `process.env.TZ`
+ * would move the club too — which is precisely the coupling this suite exists to
+ * prove has been broken.
+ */
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => "Pacific/Auckland"),
+}));
 
 import type { RepairDependencies } from "@/lib/xero-booking-repair-deps";
-import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
 import { loadAuditData } from "@/lib/xero-booking-repair-load";
 import { parseRepairScopeDay } from "@/lib/xero-booking-repair-utils";
 import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
@@ -208,7 +221,10 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  expectClubTimeZonePremise();
+  // No `expectClubTimeZonePremise()` any more: that guard exists for a suite
+  // whose club zone comes from `APP_TIME_ZONE`, and this one's comes from the
+  // mock above. Keeping it would assert something no assertion below depends on
+  // — which is how a premise guard turns into decoration (CT-5, #2869).
   captured.length = 0;
 });
 

@@ -165,7 +165,7 @@ describe("sanitizePageContentHtml", () => {
   it("collapses whitespace-only input to the empty string", () => {
     expect(sanitizePageContentHtml("   ")).toBe("");
     expect(sanitizePageContentHtml("\t\n ")).toBe("");
-    expect(sanitizePageContentHtml("\r\n")).toBe("");
+    expect(sanitizePageContentHtml("\f\r\n")).toBe("");
     expect(sanitizePageContentHtml("  <script>alert(1)</script>  ")).toBe("");
     expect(sanitizePageContentHtml("  <p>ok</p>  ")).toBe("<p>ok</p>");
     expect(sanitizePageContentHtml("<p>&nbsp;</p>")).not.toBe("");

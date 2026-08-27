@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import KioskPage from "../page";
+import { ClubTimeProvider } from "@/components/club-time-provider";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { captureHostTimeZone } from "@/lib/__tests__/helpers/timezone";
 import {
@@ -11,13 +12,26 @@ import {
   type KioskWeekDaySummary,
 } from "../_components/kiosk-week-view";
 
-// #2474 — the CLUB's zone is pinned here independently of the HOST's, because
-// `src/config/operational.ts` derives `APP_TIME_ZONE` from `process.env.TZ`.
-// Without this mock, moving the host zone below would drag the club along with
-// it and the rollover cases would assert nothing at all (docs/TESTING.md, "the
-// club zone follows process.env.TZ").
+/*
+  THE CLUB'S ZONE NOW ARRIVES THROUGH THE PROVIDER, AND THE ENVIRONMENT IS SET
+  SOMEWHERE ELSE ON PURPOSE (CT-4, #2870; INV-CONFIG-002).
+
+  Before CT-4 the kiosk read `APP_TIME_ZONE`, so this mock was the club's zone
+  and pinning it to `Pacific/Auckland` was what kept the rollover cases meaning
+  anything once the HOST zone moved. The page now takes the club's day from
+  `ClubTimeProvider` instead, and `renderKiosk` below supplies it — so the mock
+  is free to become a THIRD zone, and it should be. With three different zones
+  in play (club `Pacific/Auckland`, environment `America/Denver`, host `UTC`)
+  every date assertion in this file discriminates all three: an implementation
+  that read the environment, or the tablet's own clock, would name a different
+  night and go red.
+
+  `APP_LOCALE` still matters and is left alone — the kiosk header's long-weekday
+  formatter is a calendar-date shape with no house entry in the kernel, so it
+  stays local and is pinned to `UTC` over the UTC-midnight encoding.
+*/
 vi.mock("@/config/operational", () => ({
-  APP_TIME_ZONE: "Pacific/Auckland",
+  APP_TIME_ZONE: "America/Denver",
   APP_LOCALE: "en-NZ",
   APP_CURRENCY: "NZD",
   APP_STRIPE_CURRENCY: "nzd",
@@ -48,6 +62,17 @@ function buildWeekDays(start: string): KioskWeekDaySummary[] {
           date,
           accessible: false,
         }
+  );
+}
+
+/** The club this kiosk belongs to. Delivered the way the application does it. */
+const CLUB_ZONE = "Pacific/Auckland";
+
+function renderKiosk() {
+  return render(
+    <ClubTimeProvider zone={CLUB_ZONE}>
+      <KioskPage />
+    </ClubTimeProvider>,
   );
 }
 
@@ -98,7 +123,7 @@ describe("KioskPage week view", () => {
     });
     global.fetch = fetchMock as typeof fetch;
 
-    render(<KioskPage />);
+    renderKiosk();
 
     expect(await screen.findByRole("heading", { name: "Week View" })).toBeVisible();
     expect(servedWeekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -288,7 +313,7 @@ describe("KioskPage club-time dates (#2474)", () => {
     vi.setSystemTime(new Date("2026-08-02T13:00:00.000Z"));
     const { accessDates, weekStarts } = installKioskFetchMock();
 
-    render(<KioskPage />);
+    renderKiosk();
 
     expect(await screen.findByRole("heading", { name: "Week View" })).toBeVisible();
 
@@ -314,7 +339,7 @@ describe("KioskPage club-time dates (#2474)", () => {
     vi.setSystemTime(new Date("2026-07-30T13:00:00.000Z"));
     const { dayDates } = installKioskFetchMock();
 
-    render(<KioskPage />);
+    renderKiosk();
 
     expect(await screen.findByRole("heading", { name: "Week View" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Open Friday, 31 July" }));
@@ -372,7 +397,7 @@ describe("KioskPage club-time dates (#2474)", () => {
     vi.setSystemTime(new Date("2026-08-02T11:59:00.000Z"));
     const { accessDates, weekStarts } = installKioskFetchMock();
 
-    render(<KioskPage />);
+    renderKiosk();
     await settleKiosk();
 
     expect(screen.getByRole("heading", { name: "Week View" })).toBeVisible();
@@ -426,7 +451,7 @@ describe("KioskPage club-time dates (#2474)", () => {
     vi.setSystemTime(new Date("2026-08-02T11:59:00.000Z"));
     const { accessDates } = installKioskFetchMock();
 
-    render(<KioskPage />);
+    renderKiosk();
     await settleKiosk();
 
     // Drill into the club's CURRENT day, so only the view — not the night —
@@ -473,7 +498,7 @@ describe("KioskPage club-time dates (#2474)", () => {
     vi.setSystemTime(new Date("2026-08-02T11:59:00.000Z"));
     const { accessDates, weekStarts } = installKioskFetchMock();
 
-    render(<KioskPage />);
+    renderKiosk();
     await settleKiosk();
 
     fireEvent.click(screen.getByRole("button", { name: "Open Friday, 31 July" }));

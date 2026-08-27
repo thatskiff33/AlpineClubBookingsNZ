@@ -8,7 +8,7 @@ import {
   type WhakapapaTrail,
   type WhakapapaTrailArea,
 } from "@/lib/whakapapa-report";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * The upstream report's own "updated" stamp is an arbitrary string scraped from
@@ -16,10 +16,23 @@ import { formatNZDateTime } from "@/lib/nzst-date";
  * an invalid Date where `toLocaleString` merely returned "Invalid Date", so the
  * unparseable case falls back to the same "Unknown" the missing case uses
  * rather than taking the conditions panel down (#2264).
+ *
+ * IT IS THE CLUB'S PERSISTED ZONE, NOT THE VIEWER'S (CT-4, #2870;
+ * INV-CONFIG-002). A visitor reading the conditions from Sydney must see the
+ * same "last updated" as one reading them at the lodge, so the zone arrives as
+ * data through `ClubTimeProvider` - mounted by `website-chrome.tsx` for both
+ * public route groups, and by `skifield-whakapapa-embed.tsx` for the one page
+ * outside them. A hook rather than a plain function for exactly that reason: the
+ * zone is no longer a module constant.
  */
-function formatUpdatedStamp(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "Unknown" : formatNZDateTime(parsed);
+function useUpdatedStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string): string => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime())
+      ? "Unknown"
+      : clubTime.instantDateTime(parsed);
+  };
 }
 
 type ApiResponse = WhakapapaCurlData & { error?: string; stale?: boolean };
@@ -403,6 +416,7 @@ const EMPTY_DATA: WhakapapaCurlData = {
 };
 
 export function SkifieldWhakapapaWidget() {
+  const formatUpdatedStamp = useUpdatedStampFormatter();
   const [data, setData] = useState<WhakapapaCurlData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");

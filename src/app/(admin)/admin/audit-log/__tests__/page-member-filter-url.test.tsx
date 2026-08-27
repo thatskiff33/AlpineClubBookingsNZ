@@ -10,7 +10,7 @@
 // the authorized members lookup first, and from the audit rows already on screen
 // when that lookup cannot answer.
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { StrictMode, useLayoutEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditTimelineEntry } from "@/lib/audit-query";

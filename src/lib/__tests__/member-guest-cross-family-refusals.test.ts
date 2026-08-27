@@ -56,6 +56,13 @@ import { markCrossFamilyGuestsOnBooking } from "@/lib/member-guest-add-policy";
 import { findBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import { MEMBER_GUEST_CROSS_FAMILY_REFUSAL_MESSAGE } from "@/lib/member-guest-refusal";
 import { parseDateOnly } from "@/lib/date-only";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-07-01"));
 
 const BOOKER = "m-booker";
 const CHILD = "m-child";
@@ -213,6 +220,7 @@ function conflictDb(conflictMemberId: string) {
 describe("D-8 leak 2 — the person-night conflict", () => {
   it("refuses neutrally instead of returning a cross-family member's booked nights", async () => {
     const error = await findBookingMemberNightConflicts(conflictDb(OUTSIDER), {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: BOOKER,
       actorRole: "USER",
       checkIn: CHECK_IN,
@@ -251,6 +259,7 @@ describe("D-8 leak 2 — the person-night conflict", () => {
   // booker's own household), and the one below is the unmarked stranger.
   it("returns the ordinary detailed conflict for a guest inside the booker's family", async () => {
     const conflicts = await findBookingMemberNightConflicts(conflictDb(CHILD), {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: BOOKER,
       actorRole: "USER",
       checkIn: CHECK_IN,
@@ -286,6 +295,7 @@ describe("D-8 leak 2 — the person-night conflict", () => {
     expect(guests[0]).toMatchObject({ crossFamilyMemberGuest: true });
 
     const error = await findBookingMemberNightConflicts(conflictDb(OUTSIDER), {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: BOOKER,
       actorRole: "USER",
       checkIn: CHECK_IN,
@@ -313,6 +323,7 @@ describe("D-8 leak 2 — the person-night conflict", () => {
     expect(guests[0]).not.toHaveProperty("crossFamilyMemberGuest");
 
     const conflicts = await findBookingMemberNightConflicts(conflictDb(OUTSIDER), {
+      today: FIXTURE_CLUB_TODAY,
       actorMemberId: "m-admin",
       actorRole: "ADMIN",
       checkIn: CHECK_IN,
@@ -330,6 +341,7 @@ describe("D-8 leak 2 — the person-night conflict", () => {
         typeof findBookingMemberNightConflicts
       >[0],
       {
+        today: FIXTURE_CLUB_TODAY,
         actorMemberId: BOOKER,
         actorRole: "USER",
         checkIn: CHECK_IN,
@@ -423,6 +435,7 @@ describe("the three refusals are indistinguishable", () => {
     const fromNightConflict = await findBookingMemberNightConflicts(
       conflictDb(OUTSIDER),
       {
+        today: FIXTURE_CLUB_TODAY,
         actorMemberId: BOOKER,
         actorRole: "USER",
         checkIn: CHECK_IN,

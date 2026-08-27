@@ -126,7 +126,11 @@ describe("#2779 draft pick-up-and-pay card (INV-LOCKOUT-069/070)", () => {
   it("states the deletion deadline on the page that takes the money", () => {
     expect(source).toContain('data-testid="draft-expiry-notice"');
     expect(source).toContain("booking.draftExpiresAt ? (");
-    expect(source).toContain("formatNZDateTime(booking.draftExpiresAt)");
+    // A real INSTANT, so it renders in the club's PERSISTED timezone through the
+    // request's binding rather than through `APP_TIME_ZONE` (CT-4, #2870;
+    // INV-CONFIG-002). The deadline itself is unchanged; what moved is which
+    // clock decides what "9:00 pm" means for a club that is not New Zealand.
+    expect(source).toContain("club.instantDateTime(booking.draftExpiresAt)");
     // "removed", not "cancelled": the job deletes the row.
     expect(source).toMatch(/is removed and the booking will need to be made again/);
   });

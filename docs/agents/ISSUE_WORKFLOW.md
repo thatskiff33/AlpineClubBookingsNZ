@@ -253,6 +253,26 @@ runs the next epic.
   once, badly; this repository has twice shipped a *wrong* value out of a
   hand-resolved long-lived conflict (#2979's ceiling, and the `CHANGELOG.md`
   churn that #2452 ended).
+
+  `.github/workflows/epic-branch-sync.yml` does this for you at 06:20 UTC daily:
+  one long-lived `main` → `epic/**` pull request per live integration branch,
+  auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
+  human — which is the correct division. **A red sync pull request is the branch
+  telling you `main` and the epic no longer compose**, so read it rather than
+  re-running it. Resolve a conflict on the epic branch by hand
+  (`git merge origin/main`, resolve, commit, push), never by force-pushing a
+  shared branch and never by letting a merge tool pick a side unread.
+
+  The description that workflow writes carries a complete
+  `## Concurrency And Lock Impact` section, and says in its own words that the
+  workflow wrote it. That is not ceremony: the gate is the FIRST step of
+  `verify`, a sync diff always holds concurrency-sensitive paths, and while the
+  section was missing every sync pull request failed in under half a minute with
+  lint, typecheck, knip, the suite and the build all skipped — so the sync
+  measured nothing at all (#3142). What it does **not** cover is the one lock
+  question a merge really raises: `main` taking lock A then B while the epic
+  takes B then A. That belongs to the `epic/…` → `main` pull request, where a
+  person writes a real declaration over the epic's real diff.
 - **Every migration in the epic lands in ONE deploy.** So **no child may pair an
   expand with its own contract.** A contract half waits for a release *after* the
   epic merges, because `previous_expand_release` has to name something that has

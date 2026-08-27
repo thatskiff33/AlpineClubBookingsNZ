@@ -2,7 +2,7 @@
  * Help for the "Lodge Operations" admin section: hut leaders, rosters, chores,
  * work parties, the calendar, the kiosk and the lobby display.
  *
- * Section per the sidebar's `navSections`. Lockers and chores sit here too:
+ * Section per the sidebar's `buildAdminNavSections`. Lockers and chores sit here too:
  * both are lodge assets managed on the ground rather than menu entries.
  */
 import { entry, help, type HelpEntry } from "../types";

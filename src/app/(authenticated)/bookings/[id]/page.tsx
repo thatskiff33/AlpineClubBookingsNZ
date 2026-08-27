@@ -88,10 +88,12 @@ import {
 import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import { formatDateOnly } from "@/lib/date-only";
 import {
-  formatNZDate,
-  formatNZDateTime,
-  formatNZLongDate,
-} from "@/lib/nzst-date";
+  calendarDateOfDateOnlyInstant,
+  countClubNights,
+  dateOnlyInstantOf,
+  formatClubLongDate,
+} from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { getBookingProviderMismatches } from "@/lib/booking-provider-mismatches";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
@@ -127,9 +129,14 @@ import { loadMemberGuestSettings } from "@/lib/member-guest-settings";
 import { resolveMemberGuestNameSearchAccess } from "@/lib/member-guest-find";
 import { resolveOtherLodgeRateEligibleGuestIds } from "@/lib/membership-type-policy";
 import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import { getPublicOtherLodges } from "@/lib/booking-request";
-import { eachDateOnlyInRange, getTodayDateOnly } from "@/lib/date-only";
+// The two ZONE-FREE date-only helpers this page still needs: `formatDateOnly`
+// (imported above) is the canonical `@db.Date` encoder the #2684 census keys on
+// by name, and `eachDateOnlyInRange` is pure UTC calendar arithmetic feeding
+// `formatConsentNightsLabel`, which takes `Date[]`. Neither reads a timezone, so
+// neither is a second temporal authority; CT-6 (#2991) retires the module.
+import { eachDateOnlyInRange } from "@/lib/date-only";
 import {
   bookingManagementAuthorizationRole,
   hasAdminAreaAccess,
@@ -210,6 +217,28 @@ export default async function BookingDetailPage({
   // the member — matching the widened /api/bookings/[id]/modify authority. A
   // Full Admin already resolves to ADMIN; member / read-only viewers stay USER.
   const viewerAuthorizationRole = bookingManagementAuthorizationRole(session.user);
+  /*
+    THE CLUB'S OWN CLOCK, once, for the whole page (CT-4, #2870; INV-CONFIG-002).
+
+    Everything below that renders a real INSTANT — an audit stamp, a draft
+    expiry, an internet-banking hold, a deletion time — goes through this
+    binding, and so does the "today" the consent card is told. Both used to come
+    from `APP_TIME_ZONE`, so on a deployment whose container disagrees with the
+    club's recorded setting this page answered with the machine's day.
+
+    The stay dates DO NOT: `checkIn` and `checkOut` are `@db.Date` lodge nights,
+    which are calendar days and take no zone at all (INV-DATE-010).
+  */
+  const club = await clubTime();
+  // #3123 — the club's today, as the UTC-midnight instant a `@db.Date` bound
+  // round-trips through, derived from the SAME binding this page already holds.
+  // THE ONLY RESOLUTION OF THE CLUB'S DAY ON THIS PAGE: it is threaded into
+  // every question below — the started-stay test, the edit policy, the
+  // admin-override policy, the self-removal card and the consent card — so none
+  // of them can answer on a different day. Two of those cards used to take a
+  // second `club.today()` of their own, which across club midnight would have
+  // offered a member a self-removal control the very next check refused.
+  const clubTodayDateOnly = dateOnlyInstantOf(club.today());
 
   const booking = await prisma.booking.findUnique({
     where: { id },
@@ -428,6 +457,12 @@ export default async function BookingDetailPage({
     bookingStatus: booking.status,
     bookingCheckIn: booking.checkIn,
     guests: booking.guests,
+    // The club's today, resolved ONCE for this page above and threaded here
+    // rather than defaulted inside the predicate (#3123). It is the same binding
+    // the started-stay test and both edit policies take, and the consent card
+    // below takes it too — so no two answers on this page can straddle midnight
+    // and disagree about whether the stay has started.
+    today: clubTodayDateOnly,
   };
   const selfRemovalCandidate = resolveBookingSelfRemovalCard(selfRemovalInput);
   // The removal service also refuses a quote-priced booking
@@ -455,10 +490,12 @@ export default async function BookingDetailPage({
     bookingCheckIn: booking.checkIn,
     guests: booking.guests,
     selfRemovalCardPresent: Boolean(selfRemovalCard),
-    // The clock is read HERE, by name, and passed down: the card resolver and
+    // The day is stated HERE, by name, and passed down: the card resolver and
     // its refusal prediction are pure, so "today" is this page's fact to state
-    // rather than something a helper quietly looks up for itself.
-    today: getTodayDateOnly(),
+    // rather than something a helper quietly looks up for itself. Stating it is
+    // not the same as RESOLVING it — this is the page's one resolved value from
+    // above, not a second reading of the clock.
+    today: clubTodayDateOnly,
   };
   const consentCandidate = resolveBookingConsentCard({
     ...consentCardInput,
@@ -578,6 +615,9 @@ export default async function BookingDetailPage({
     },
   });
   const bookingNarrative = resolveBookingNarrative({
+    // The event stamps in the narrative are real instants and read in the
+    // club's zone; its stay dates are @db.Date lodge nights and do not (#3123).
+    club,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
@@ -599,9 +639,15 @@ export default async function BookingDetailPage({
     ),
   });
 
-  const nights = Math.ceil(
-    (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) /
-      (1000 * 60 * 60 * 24)
+  // Nights are CALENDAR arithmetic over the half-open `[checkIn, checkOut)`
+  // night range, never elapsed milliseconds divided by 24 hours: across a DST
+  // transition a night is 23 or 25 hours and that division is wrong (the kernel
+  // has a case where it returns 0 for a stay the calendar says is 1). Exact for
+  // the UTC-midnight encoding this replaces, so the value is unchanged here —
+  // what changes is that the wrong idiom is gone (INV-DATE-002, INV-DATE-003).
+  const nights = countClubNights(
+    calendarDateOfDateOnlyInstant(booking.checkIn),
+    calendarDateOfDateOnlyInstant(booking.checkOut),
   );
 
   const isDraft = booking.status === "DRAFT";
@@ -614,7 +660,7 @@ export default async function BookingDetailPage({
   // the button is honest and never 400s (same "no button that fails" pattern as
   // the view-only work). A Full Admin (isAdmin) keeps the button; they leave
   // early via edit/shrink otherwise.
-  const stayHasStarted = bookingStayHasStarted(booking.checkIn);
+  const stayHasStarted = bookingStayHasStarted(booking.checkIn, clubTodayDateOnly);
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) may cancel any
   // booking; the /api/bookings/[id]/cancel route authorizes bookings:edit and the
   // notes editor below is gated on this same predicate.
@@ -664,6 +710,7 @@ export default async function BookingDetailPage({
     role: viewerAuthorizationRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    today: clubTodayDateOnly,
   });
   // Issue #1313 (option A2): a Booking Officer (bookings:edit) resolves to ADMIN
   // in viewerAuthorizationRole above, so editPolicy is the admin-on-behalf policy
@@ -680,6 +727,7 @@ export default async function BookingDetailPage({
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
     adminOverride: true,
+    today: clubTodayDateOnly,
   });
   const canAdminOverride =
     viewerAuthorizationRole === "ADMIN" &&
@@ -867,13 +915,13 @@ export default async function BookingDetailPage({
    * #2978: the season the other-lodge eligibility fence is judged in — resolved
    * AUTHORITATIVELY rather than from whatever happened to warm the cache.
    *
-   * `getSeasonYear` reads the process-level financial-year cache in
+   * `seasonYearOfStoredDate` reads the process-level financial-year cache in
    * `financial-year.ts`, which serves the March default until a server path
    * seeds it. Every WRITE path reaches `refreshFinancialYearConfig` through
    * `resolveSubscriptionLockoutMode`; a page render does not, so on a cold
    * process a club with any other year-end month would have this page offer
    * ticks judged in one season while `modify-quote` — which reseeds before its
-   * own `getSeasonYear` — fences them in another. The officer would see a tick
+   * own season derivation — fences them in another. The officer would see a tick
    * box and be refused when they used it, which is exactly what acceptance
    * criterion 2 of #2978 exists to prevent. No money is at stake (pricing
    * re-checks eligibility itself), but `subscription-lockout-enforcement.ts` and
@@ -919,6 +967,12 @@ export default async function BookingDetailPage({
           responderName: g.consentRespondedByMemberId
             ? (consentResponderNameById.get(g.consentRespondedByMemberId) ?? null)
             : null,
+          // #3123 — the badge stamps `consentExpiresAt` / `consentRespondedAt`,
+          // which are real instants, so the day they fall on is the club's
+          // persisted zone's to name. Taken from the SAME binding this page
+          // already resolved for its stay-boundary questions, so one page cannot
+          // answer in two zones.
+          timeZone: club.zone,
         });
         // MG4 (#2309) adds the SUB-STATE beside the badge, because the edit
         // panel needs to tell "still being asked" from "the club put them
@@ -987,7 +1041,7 @@ export default async function BookingDetailPage({
           // booking, which the helper short-circuits.
           otherLodgeRateEligibleGuestIds: [
             ...(await resolveOtherLodgeRateEligibleGuestIds(prisma, {
-              seasonYear: getSeasonYear(booking.checkIn),
+              seasonYear: seasonYearOfStoredDate(booking.checkIn),
               guests: booking.guests,
             })),
           ],
@@ -1192,10 +1246,15 @@ export default async function BookingDetailPage({
     bookerFullName: `${booking.member.firstName} ${booking.member.lastName}`,
     // Member-facing: these two land in the booking messages and the emails
     // built from them, so they keep the long "16 April 2026" form the club has
-    // always sent (owner decision, #2264). Admin-side dates on this page use
-    // the medium `formatNZDate`.
-    checkIn: formatNZLongDate(booking.checkIn),
-    checkOut: formatNZLongDate(booking.checkOut),
+    // always sent (owner decision, #2264; INV-DATE-016).
+    //
+    // They are LODGE NIGHTS — `@db.Date` calendar days — so they take no zone:
+    // the kernel decodes the UTC-midnight encoding back to the day it encodes
+    // and formats it pinned to `UTC`, which is the identity for every club.
+    // `formatNZLongDate` projected them through `APP_TIME_ZONE`, so a club west
+    // of Greenwich put the night BEFORE the stay into the member's email.
+    checkIn: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkIn)),
+    checkOut: formatClubLongDate(calendarDateOfDateOnlyInstant(booking.checkOut)),
     guestCount: booking.guests.length,
     amountDue: formatCents(amountDueAfterCreditCents),
     amountPaid: booking.payment ? formatCents(booking.payment.amountCents) : "",
@@ -1215,7 +1274,7 @@ export default async function BookingDetailPage({
     paymentReference: internetBankingPayment?.reference ?? "",
     xeroInvoiceNumber: internetBankingPayment?.xeroInvoiceNumber ?? "",
     holdUntil: internetBankingPayment?.internetBankingHoldUntil
-      ? formatNZDateTime(internetBankingPayment.internetBankingHoldUntil)
+      ? club.instantDateTime(internetBankingPayment.internetBankingHoldUntil)
       : "",
     holdDays: "",
     minimumDaysBeforeCheckIn: "",
@@ -1559,7 +1618,7 @@ export default async function BookingDetailPage({
         <div className="rounded-md border border-danger-6 bg-danger-3 px-4 py-3 text-sm text-danger-11">
           <p className="font-medium">Deleted cancelled booking</p>
           <p>
-            Deleted {booking.deletedAt ? formatNZDateTime(booking.deletedAt) : ""}
+            Deleted {booking.deletedAt ? club.instantDateTime(booking.deletedAt) : ""}
             {booking.deletedBy
               ? ` by ${booking.deletedBy.firstName} ${booking.deletedBy.lastName}`
               : ""}
@@ -1714,12 +1773,12 @@ export default async function BookingDetailPage({
             nightsCountLabel={describeConsentNightsCount(viewerConsentNights.length)}
             answerByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentFullDate(consentCard.consentExpiresAt)
+                ? formatConsentFullDate(consentCard.consentExpiresAt, club.zone)
                 : "—"
             }
             lapseByLabel={
               consentCard.consentExpiresAt
-                ? formatConsentWeekdayDate(consentCard.consentExpiresAt)
+                ? formatConsentWeekdayDate(consentCard.consentExpiresAt, club.zone)
                 : "the deadline"
             }
             party={booking.guests.map((guest) => ({
@@ -1869,7 +1928,7 @@ export default async function BookingDetailPage({
                   </div>
                   <p className="mt-1 text-muted-foreground">
                     Submitted{" "}
-                    {formatNZDate(request.createdAt)}
+                    {club.instantDate(request.createdAt)}
                   </p>
                   {request.reason ? (
                     <p className="mt-2 text-muted-foreground">{request.reason}</p>
@@ -2044,7 +2103,7 @@ export default async function BookingDetailPage({
                 className="text-sm text-warning-11 mb-4"
                 data-testid="draft-expiry-notice"
               >
-                Pay by {formatNZDateTime(booking.draftExpiresAt)} or this draft
+                Pay by {club.instantDateTime(booking.draftExpiresAt)} or this draft
                 is removed and the booking will need to be made again.
               </p>
             ) : null}
@@ -2532,7 +2591,7 @@ export default async function BookingDetailPage({
                       {item.title}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      {formatNZDateTime(item.occurredAt)}
+                      {club.instantDateTime(item.occurredAt)}
                     </span>
                   </div>
                   {item.detail ? (

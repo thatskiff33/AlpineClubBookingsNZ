@@ -262,8 +262,26 @@ describe("the current-or-future bed night boundary", () => {
     expect(getEarliestCurrentBedNightDate(TODAY)).toEqual(parseDateOnly("2026-06-30"));
   });
 
-  it("defaults to the club's own today", () => {
-    expect(getEarliestCurrentBedNightDate()).toEqual(parseDateOnly("2026-06-30"));
+  it("has NO default — the club's day is supplied, never assumed (#3123)", () => {
+    /*
+      This case used to assert that the boundary "defaults to the club's own
+      today", and the name was the defect: the default was
+      `getTodayDateOnly()`, which reads the CONTAINER's timezone, not the club's
+      persisted one (`INV-CONFIG-002`). It passed because under test the two
+      agree. This module reaches the browser bundle, so it cannot read the club's
+      zone at all, and its one production caller is a bed-deactivation guard
+      running under the global cohort key and the per-lodge capacity key — where
+      `INV-LOCK-004` forbids the read outright. Deleting the default is the fix,
+      and this is what stops one being added back.
+    */
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), "src/lib/booking-guest-stay-ranges.ts"),
+      "utf8",
+    );
+    expect(source).toContain(
+      "export function getEarliestCurrentBedNightDate(today: Date): Date",
+    );
+    expect(source).not.toContain("getTodayDateOnly");
   });
 
   it("is the ONLY form of the boundary: no unused predicate rides beside it", () => {

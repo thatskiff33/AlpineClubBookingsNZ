@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { clubTime } from "@/lib/club-time/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { z } from "zod";
 
@@ -512,6 +513,16 @@ export async function PATCH(
   const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
     requestId: id,
     actorMemberId: session.user.id,
+    // #3123 review — the CLUB's day (`INV-CONFIG-002`), resolved HERE because
+    // this is the last position on the approve-and-execute path that is outside
+    // a transaction. `approveAndExecutePolicyExceptionRequest` opens one, takes
+    // `pg_advisory_xact_lock(1)` and the per-lodge capacity key, and then hands
+    // that transaction to `modifyBookingBatch` / `createConfirmedBooking` — so
+    // neither service can read the club's persisted zone for itself without
+    // taking a second pooled connection under both locks (`INV-LOCK-004`).
+    // One day for the whole approval, which is also what stops a change fee and
+    // a refund tier being priced on different days across club midnight.
+    todayAtClub: (await clubTime()).today(),
     ipAddress,
     adminNotes,
     internalNotes,

@@ -118,6 +118,13 @@ import {
 } from "@/lib/booking-exception-requests";
 import { buildModificationProposalParties } from "@/lib/booking-exception-request-service";
 import type { ConfirmedOverride } from "@/lib/booking-exception-execution";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
 
 const LODGE = "lodge-a";
 const OFFICER = "officer-1";
@@ -391,6 +398,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
   it("checks the FULL proposed party and EXCLUDES the live booking for a modification", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -414,6 +422,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
 
   it("excludes nothing for a new-booking proposal (there is no live booking)", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -429,6 +438,7 @@ describe("recheckCapacity — the #2525 handoff contract", () => {
       nightDetails: [],
     });
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -443,6 +453,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("passes when the stored delta still replays to the reviewed proposal", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -455,6 +466,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the live booking drifted since the request was made", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -480,6 +492,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the stored delta was tampered with", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -517,6 +530,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the request carries no replayable delta at all", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -539,6 +553,7 @@ describe("verifyLiveProposalIntegrity", () => {
   it("FAILS when the live booking has vanished", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -551,6 +566,7 @@ describe("verifyLiveProposalIntegrity", () => {
 
   it("passes a new-booking proposal through — it has no live base to drift", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -574,6 +590,7 @@ describe("executeApprovedProposal — modification", () => {
   ) {
     const snapshot = frozenModificationSnapshot();
     const { hooks, outcome } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -683,6 +700,7 @@ describe("executeApprovedProposal — modification", () => {
   it("refuses to execute without a verified delta (fails loudly, never silently)", async () => {
     const snapshot = frozenModificationSnapshot();
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -702,6 +720,7 @@ describe("executeApprovedProposal — modification", () => {
 describe("executeApprovedProposal — new booking", () => {
   function hooksFor(adminNotes?: string) {
     return buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -856,6 +875,7 @@ describe("executeApprovedProposal — new booking", () => {
 
   it("carries the member's own words as the review justification", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",
@@ -971,6 +991,7 @@ describe("executeApprovedProposal — new booking", () => {
 
   it("refuses to execute without resolved execution parameters", async () => {
     const { hooks } = buildPolicyExceptionApprovalHooks({
+      todayAtClub: FIXTURE_CLUB_DAY,
       requestId: "req-1",
       actorMemberId: OFFICER,
       ipAddress: "1.2.3.4",

@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   sendWithdrawn: vi.fn(),
   logAudit: vi.fn(),
   loggerError: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/email/member-guest", () => ({
@@ -43,7 +44,27 @@ vi.mock("@/lib/logger", () => ({
     error: h.loggerError,
   },
 }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+/*
+  #3123: THE `clubTimeSettings` DELEGATE IS NOT OPTIONAL ON THIS MOCK. The
+  dispatcher now resolves the CLUB's today once and threads it into every
+  self-removal fact set, and the zone reader is fail-soft on a missing delegate,
+  a throwing query and an absent row — every one of which degrades silently to
+  the environment. With `prisma: {}` the `today` assertion below would agree with
+  `APP_TIME_ZONE` and measure nothing.
+*/
+vi.mock("@/lib/prisma", () => ({
+  prisma: { clubTimeSettings: { findUnique: h.clubTimeSettingsFindUnique } },
+}));
+
+/**
+ * The persisted club zone, deliberately BEHIND Greenwich and deliberately not
+ * `Pacific/Auckland` (which is `APP_TIME_ZONE`'s own fallback, so a club on it
+ * cannot be told apart from the environment's claim). Under the frozen clock
+ * (`2026-07-01T00:00:00.000Z`) Denver is on 30 June where the environment reads
+ * 1 July.
+ */
+const CLUB_ZONE = "America/Denver";
+const CLUB_TODAY = new Date("2026-06-30T00:00:00.000Z");
 
 const BOOKING = "bk-1";
 const GUEST_ROW = "bg-1";
@@ -128,6 +149,11 @@ beforeEach(() => {
   h.sendConsentRequest.mockResolvedValue({ ok: true });
   h.sendAdded.mockResolvedValue({ ok: true });
   h.sendWithdrawn.mockResolvedValue({ ok: true });
+  h.clubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone: CLUB_ZONE,
+    updatedByMemberId: null,
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
 });
 
 describe("withdrawal recipient identity (#2362)", () => {
@@ -329,7 +355,48 @@ describe("the added notice", () => {
       // so the notice may honestly offer self-removal — the pipeline case that
       // cannot is pinned below.
       isQuotePriced: false,
+      // #3123: the seventh, and the club's own day rather than the container's.
+      // `evaluateGuestSelfRemoval` used to default it from `APP_TIME_ZONE`, so
+      // an email could offer (or withhold) self-removal a day out of step with
+      // the server that would have to honour it. Denver reads 30 June at the
+      // frozen instant where the environment reads 1 July.
+      today: CLUB_TODAY,
     });
+  });
+
+  it("resolves the club's day ONCE, from the persisted zone (#3123)", async () => {
+    await sendMemberGuestAddNotifications({
+      bookingId: BOOKING,
+      rows: [
+        { bookingGuestId: GUEST_ROW, targetMemberId: TARGET, notification: "ADDED_NOTICE" },
+      ],
+      actor: { kind: "MEMBER" },
+      db: db(),
+      delegateResolver: resolver(TARGET_WITH_LOGIN),
+    });
+
+    expect(h.clubTimeSettingsFindUnique).toHaveBeenCalledTimes(1);
+    expect(h.sendAdded.mock.calls[0][0].selfRemoval.today).toEqual(CLUB_TODAY);
+  });
+
+  it("MOVES with the persisted zone — kills a hard-coded club zone (#3123)", async () => {
+    h.clubTimeSettingsFindUnique.mockResolvedValue({
+      timeZone: "Pacific/Kiritimati", // UTC+14 — already 1 July
+      updatedByMemberId: null,
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await sendMemberGuestAddNotifications({
+      bookingId: BOOKING,
+      rows: [
+        { bookingGuestId: GUEST_ROW, targetMemberId: TARGET, notification: "ADDED_NOTICE" },
+      ],
+      actor: { kind: "MEMBER" },
+      db: db(),
+      delegateResolver: resolver(TARGET_WITH_LOGIN),
+    });
+    expect(h.sendAdded.mock.calls[0][0].selfRemoval.today).toEqual(
+      new Date("2026-07-01T00:00:00.000Z"),
+    );
   });
 
   it("tells the predicate the booking is quote priced, so the notice offers what the server would allow (D-14, MG4-D-b)", async () => {

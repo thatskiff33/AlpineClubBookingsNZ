@@ -206,7 +206,7 @@ stored exceptions.
 
 | Control | What it does | Default | Notes / constraints |
 | --- | --- | --- | --- |
-| Season Year / Status / Age Group / Xero Contact Group | Filter the member list | current season / all | Season year is April–March |
+| Season Year / Status / Age Group / Xero Contact Group | Filter the member list | current season / all | A season runs from the month after the financial year-end — April–March by default |
 | Reset | Restore list filters, sort, and page | all / default sort / page 1 | Keeps the selected Season Year; disabled at defaults |
 | Incremental Sync | Low-cost Xero paid-status refresh | — | Only checks linked members |
 | Repair Stale Linked Members | Broader backfill for stuck linked members | — | Slower; linked members only |

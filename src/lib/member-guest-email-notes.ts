@@ -3,8 +3,8 @@ import {
   type GuestSelfRemovalBlocker,
 } from "@/lib/booking-guest-self-removal";
 import { addDaysDateOnly } from "@/lib/date-only";
+import { emailCalendarDay, emailClubDate } from "@/lib/email-templates-club-time";
 import { escapeHtml } from "@/lib/email-templates/escape";
-import { formatNZDate } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
 
 /**
@@ -27,6 +27,18 @@ import { formatCents } from "@/lib/utils";
  * listing goes furthest: `buildMemberGuestPartyList` returns the flat text and
  * the HTML `<ul>` from a single pass over a single ordered array of names, and a
  * test asserts the two list the same names in the same order.
+ *
+ * DATES COME IN TWO KINDS AND ARE NOT RENDERED THE SAME WAY (#3123). A guest
+ * night (`BookingGuestNight.stayDate`) and a stay's `checkIn`/`checkOut`
+ * (`Booking.checkIn`/`checkOut`) are `@db.Date` calendar days, which have no
+ * timezone — they go through `emailCalendarDay`, which consults none and
+ * refuses a value carrying a time of day. A consent deadline
+ * (`BookingGuest.consentExpiresAt`, and the `new Date()` a lapse sweep falls
+ * back to) is a real moment with no calendar day of its own, so it is projected
+ * through the club's persisted zone by `emailClubDate`. Both come from
+ * `@/lib/email-templates-club-time` — the SAME two functions
+ * `email/member-guest.ts` renders these very values with, which is what keeps
+ * the two rendering paths above from disagreeing about a date as well as a word.
  */
 
 /** One person on the booking, as the party listing names them (MG2-D-a). */
@@ -111,10 +123,14 @@ export function buildMemberGuestPartyList(
  * nights the list stops being scannable and a contiguous run loses nothing by
  * being stated as its ends.
  *
- * Dates are formatted with `formatNZDate`, the codebase's single NZ date
- * formatter, so the label reads in the same medium NZ style ("8 Aug 2026") as
- * every other date in every other email — and as the registry's own date
- * sample, so an admin previewing an override sees the real shape.
+ * Dates are formatted with `emailCalendarDay`, the shared email seam for a
+ * STORED CALENDAR DAY, so the label reads in the same medium style
+ * ("8 Aug 2026") as every other date in every other email — and as the
+ * registry's own date sample, so an admin previewing an override sees the real
+ * shape. A guest night is `BookingGuestNight.stayDate`, a `@db.Date` column, so
+ * it takes no timezone at all; it used to go through `formatNZDate`, which
+ * projected the stored encoding through the container's zone and named the
+ * previous night for any club behind Greenwich (#3123).
  */
 export function composeGuestNightsLabel(nights: readonly Date[]): string {
   const ordered = Array.from(
@@ -132,10 +148,10 @@ export function composeGuestNightsLabel(nights: readonly Date[]): string {
   );
 
   if (count > 3 && contiguous) {
-    return `${formatNZDate(ordered[0])} to ${formatNZDate(ordered[count - 1])} ${suffix}`;
+    return `${emailCalendarDay(ordered[0])} to ${emailCalendarDay(ordered[count - 1])} ${suffix}`;
   }
 
-  return `${ordered.map((night) => formatNZDate(night)).join(", ")} ${suffix}`;
+  return `${ordered.map((night) => emailCalendarDay(night)).join(", ")} ${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +528,12 @@ export type MemberGuestRemovalFacts = {
   bookingCheckIn: Date;
   bookingGuestCount: number;
   isQuotePriced?: boolean;
-  today?: Date;
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding. REQUIRED — see
+   * `evaluateGuestSelfRemoval`, which used to default it from the container's
+   * timezone rather than the club's persisted one (#3123).
+   */
+  today: Date;
 };
 
 /**
@@ -679,7 +700,7 @@ export function composeMemberGuestConsentOutcome(params: {
   const { guest, lodgeName, checkIn, checkOut, outcome } = params;
   const guestName = `${guest.firstName} ${guest.lastName}`.trim();
   const guestFirstName = guest.firstName;
-  const stay = `${lodgeName}, ${formatNZDate(checkIn)} - ${formatNZDate(checkOut)}`;
+  const stay = `${lodgeName}, ${emailCalendarDay(checkIn)} - ${emailCalendarDay(checkOut)}`;
 
   switch (outcome.kind) {
     case "APPROVED":
@@ -707,14 +728,14 @@ export function composeMemberGuestConsentOutcome(params: {
       return {
         heading: `${guestName} did not answer in time`,
         sentence:
-          `your request to add ${guestName} lapsed on ${formatNZDate(outcome.expiredAt)} ` +
+          `your request to add ${guestName} lapsed on ${emailClubDate(outcome.expiredAt)} ` +
           `with no answer, and ${guestFirstName} has been taken off your booking at ${stay}.`,
         consequenceNote: composeRepricedConsequence(outcome.creditCents),
       };
     case "EXPIRED_STILL_ON_BOOKING":
       return {
         heading: `${guestName} did not answer in time`,
-        sentence: `your request to add ${guestName} lapsed on ${formatNZDate(outcome.expiredAt)} with no answer.`,
+        sentence: `your request to add ${guestName} lapsed on ${emailClubDate(outcome.expiredAt)} with no answer.`,
         consequenceNote:
           `${guestFirstName} is still on the booking, ` +
           `${STILL_ON_BOOKING_REASON_BY_BLOCKER[outcome.blocker]}. The club has been ` +
@@ -767,7 +788,7 @@ export function composeMemberGuestConsentAnswered(params: {
   const { target, responderName, lodgeName, checkIn, checkOut, answer } = params;
   const targetName = `${target.firstName} ${target.lastName}`.trim();
   const targetFirstName = target.firstName || targetName;
-  const stay = `${lodgeName}, ${formatNZDate(checkIn)} - ${formatNZDate(checkOut)}`;
+  const stay = `${lodgeName}, ${emailCalendarDay(checkIn)} - ${emailCalendarDay(checkOut)}`;
   const heading = `${responderName} answered for ${targetName}`;
 
   switch (answer.kind) {
