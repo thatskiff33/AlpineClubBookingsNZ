@@ -1270,6 +1270,35 @@ describe("review finding source/schema contracts", () => {
     );
   });
 
+  it("executes the ManualRefundTask money constraints against a real PostgreSQL in CI (#3030)", () => {
+    // These are CHECK constraints and a unique index, so a mocked Prisma client
+    // can say nothing about them: the mock accepts every row it is handed. The
+    // suite offers the bad rows to a real Postgres and reads back the SQLSTATE
+    // and the constraint name - and it describe.skip's itself without the env
+    // var, so the step going missing would silently un-test the constraint that
+    // stops one booking edit raising two financial-review tasks.
+    const workflow = readRepoFile(".github/workflows/ci.yml");
+    expect(workflow).toContain(
+      "MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:"
+    );
+    expect(workflow).toContain(
+      "npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
+    );
+    const suite = readRepoFile(
+      "src/lib/__tests__/manual-refund-task-constraints.test.ts"
+    );
+    expect(suite).toContain(
+      "process.env.MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL"
+    );
+    // It must apply the SHIPPED migration files rather than a hand-copied CREATE.
+    expect(suite).toContain(
+      "20260903010000_manual_refund_task_edit_review_occurrence_key_required/migration.sql"
+    );
+    expect(suite).toContain(
+      "ManualRefundTask_edit_review_occurrence_key_present"
+    );
+  });
+
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {
     const source = readRepoFile("src/lib/cron-age-up.ts");
 
