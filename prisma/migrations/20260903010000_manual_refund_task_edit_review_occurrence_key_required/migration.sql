@@ -1,0 +1,76 @@
+-- #3030 (epic #2797): an EDIT_FINANCIAL_REVIEW task must carry its occurrence key.
+--
+-- WHY THIS IS A CONSTRAINT AND NOT A CODE RULE. 20260819130000 added
+-- "ManualRefundTask_occurrenceKey_key", a UNIQUE index, and that index is the
+-- fence that stops one unpriceable booking edit raising two review tasks. But
+-- PostgreSQL exempts NULL from a unique index -- deliberately, and that
+-- exemption is load-bearing here, because every pre-#2797 row and every
+-- legacy-kind writer leaves the column NULL. The consequence is that a writer
+-- which simply OMITS "occurrenceKey" is not rejected: it silently opts out of
+-- the fence, and two replays of one edit then produce two OPEN tasks for one
+-- adjustment, which two operators can hand back twice. This makes that
+-- unrepresentable for the one kind whose whole idempotency depends on it,
+-- instead of policing it in review.
+--
+-- EXPAND-ONLY, and additive. One statement, ADD CONSTRAINT ... CHECK. No column,
+-- type, index or constraint is dropped or renamed; nothing is read, rewritten,
+-- inserted or deleted. There is no UPDATE, no INSERT, no DELETE, no
+-- data-modifying CTE and no DO block anywhere in this file, so every existing
+-- ManualRefundTask row is byte-identical afterwards and
+-- scripts/check-data-migration-verification.sh classifies it as shape-only and
+-- demands no fixture. NO SESSION CLOCK: there is no DML at all, so the #1627 DML
+-- gate is satisfied.
+--
+-- MATCHES NEITHER GUARD PATTERN. "ManualRefundTask" is not in
+-- HOT_TABLE_SQL_REGEX, and ADD CONSTRAINT ... CHECK matches neither
+-- BREAKING_SQL_REGEX nor DESTRUCTIVE_REMOVAL_SQL_REGEX (no DROP, no RENAME, no
+-- ALTER COLUMN ... TYPE, no SET NOT NULL). Its ledger row is therefore the
+-- record of the analysis rather than a coverage requirement.
+--
+-- VALIDATED, NOT "NOT VALID", and that is the opposite choice from the two
+-- BookingGuest/BookingGuestNight checks in 20260819130000 -- for a reason, not by
+-- inconsistency. Those two police a population that a damaged deployment might
+-- genuinely hold, where blocking a deploy or silently rewriting a row would both
+-- be wrong. This one polices a population that is provably EMPTY: the
+-- 'EDIT_FINANCIAL_REVIEW' enum value was registered by 20260819130000 and no
+-- released code has ever written a row of that kind (before this epic, `grep` for
+-- the value across src/ found only comments), so the validating scan cannot fail.
+-- Validating also means the constraint is true of the whole table rather than
+-- only of future writes, which is what lets a reader trust it. If the scan ever
+-- DOES fail on some deployment, that failure is information worth stopping for:
+-- it means a row of this kind exists that no writer in this codebase created.
+--
+-- LOCK IMPACT: ADD CONSTRAINT with validation takes ACCESS EXCLUSIVE on
+-- "ManualRefundTask" for the duration of one sequential scan. That table is the
+-- club's hand-back work queue -- tens of rows, not millions, and 20260819130000
+-- already recorded it as "small and cold" when it validated three checks on it in
+-- one migration. No Booking, Payment, Member, capacity, credit, subscription or
+-- provider table is read, locked or altered. Run in the normal deploy window and
+-- let the deploy guard stop on lock timeout.
+--
+-- OLD-CODE COMPATIBLE. The draining colour cannot violate this constraint,
+-- because it has no code path that writes kind = 'EDIT_FINANCIAL_REVIEW' at all:
+-- the three writers it does have (booking-cancel.ts and the two in
+-- deleted-booking-modification-payment.ts) each set one of the three legacy
+-- kinds, for which "kind" <> 'EDIT_FINANCIAL_REVIEW' is TRUE and the check passes
+-- regardless of "occurrenceKey". A row with kind IS NULL passes too: the
+-- comparison evaluates to NULL and a CHECK accepts anything that is not FALSE,
+-- which is exactly what keeps every pre-#2797 row legal. The old colour also
+-- never SELECTs "occurrenceKey", so nothing it reads changes shape.
+--
+-- REVERSE: DROP CONSTRAINT "ManualRefundTask_edit_review_occurrence_key_present".
+-- Nothing is lost by it -- no data is created or destroyed here -- so no
+-- rollback.sql is required (this row is not `windowed`).
+--
+-- IDEMPOTENT: PostgreSQL has no ADD CONSTRAINT ... IF NOT EXISTS, so a replay
+-- raises 42710. That matches every ADD CONSTRAINT already in this directory and
+-- is the correct behaviour for Prisma, which records each migration in
+-- _prisma_migrations and never re-applies one.
+--
+-- TIMESTAMP COORDINATION: 20260903010000 sorts strictly above 20260902050000,
+-- the highest prefix found across origin/main, every other remote branch, every
+-- local branch and every registered worktree at the time of writing. RE-VERIFY
+-- BEFORE MERGE and renumber if anything has landed at or above it -- a migration
+-- inserted BENEATH one already applied fails `migrate dev`'s linear-history
+-- strictness, the trap 20260813010000 and 20260820020000 both recorded.
+ALTER TABLE "ManualRefundTask" ADD CONSTRAINT "ManualRefundTask_edit_review_occurrence_key_present" CHECK ("kind" <> 'EDIT_FINANCIAL_REVIEW' OR "occurrenceKey" IS NOT NULL);

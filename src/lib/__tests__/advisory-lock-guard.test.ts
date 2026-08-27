@@ -530,6 +530,13 @@ const GLOBAL_LOCK_SITE_REGISTRY: readonly RegisteredGlobalLockSite[] = [
     invariant: "INV-LOCK-001",
   },
   {
+    site: "raiseEditFinancialReviewTask#1",
+    tier: "GLOBAL",
+    reason:
+      "#3030 (epic #2797): raising the OPEN EDIT_FINANCIAL_REVIEW task is a find-then-create on the occurrence key, which is not atomic on its own — two replays of one unpriceable booking edit would each find no row and each write one, and two operators would then hand the same adjustment back twice. Same key and same cohort as the two raisers above, and nothing else: it joins no capacity or member-credit tier. Taken INSIDE the caller's transaction and re-entrant, so #3032's booking-edit path (which already holds lock(1) before the per-lodge key) pays nothing for it, and INV-LOCK-002's global-before-per-lodge order cannot be violated by re-taking the first tier. The unique index on occurrenceKey is belt-and-braces behind this key rather than the primary fence, because a unique violation aborts the surrounding transaction and so cannot be recovered from in place.",
+    invariant: "INV-LOCK-001",
+  },
+  {
     site: "settleGroupBookingOnOrganiserCancel#1",
     tier: "GLOBAL",
     reason:

@@ -2784,6 +2784,14 @@ model ManualRefundTask {
   /// and DISMISSED. Unique where present; NULL for every row that predates the
   /// column (Postgres permits many NULLs under a unique index), and NULL for the
   /// legacy kinds, which carry their own idempotency in their writers.
+  ///
+  /// #3030: minted in exactly ONE place, `editFinancialReviewOccurrenceKey` in
+  /// `src/lib/edit-financial-review.ts`, which is also where the definition of
+  /// "the same structural edit" is written down and tested. Because NULL is
+  /// exempt from the unique index above, an EDIT_FINANCIAL_REVIEW row that
+  /// omitted the key would silently opt OUT of the duplicate fence — so the
+  /// `ManualRefundTask_edit_review_occurrence_key_present` CHECK constraint
+  /// (migration 20260903010000) makes that unrepresentable for that kind alone.
   occurrenceKey String?
   /// #2797 (owner decision D3): the evidence an admin needs to price the
   /// adjustment fairly, captured at raise time because the rows it describes are
