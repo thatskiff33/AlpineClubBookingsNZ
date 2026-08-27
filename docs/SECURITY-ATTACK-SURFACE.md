@@ -3329,13 +3329,76 @@ at `0a09fdbe9`. The issue's own tables list **15**; the API returns **17** — t
 | 38, 37, 36 | `js/bad-code-sanitization` (medium) | `measurement/**/self-test.mjs` | False positive — dev harness, not in the runtime image |
 | 43, 42 | `acb-unsafe-raw-sql` (Semgrep) | already `nosemgrep`-suppressed call sites | False positive, already suppressed — **a GitHub SARIF-ingest defect, fixed** |
 
-The dismissals themselves are an owner action: the machine account cannot write
-code-scanning dispositions. The reasoning for each is below, and it is what
-should be pasted into the dismissal.
+That table is a **historical measurement**, kept as it was read. Alert numbers in
+it have since moved — 29 became 49 and then 52; 35, 34, 33, 32, 43 and 42 now
+read as `fixed`; and a fresh instance of the test-double pattern arrived as 48.
+The disposition record below is the current one, and the **rule plus location**
+is what identifies a finding across both.
+
+**The dismissals were NOT an owner action, and the claim that they were is what
+kept this backlog open for nine days.** This paragraph previously said the
+machine account could not write code-scanning dispositions, and #2841 and #2959
+both closed with their first acceptance criterion undone on that basis. It is
+wrong. Probed on 28 August 2026 with a deliberately invalid update, the API
+returns `422 Invalid request` — a body-validation failure, reached only *after*
+the permission check — and not `403 Forbidden`. All eleven then-open alerts were
+dismissed from that account minutes later. An untested assumption about
+permissions is worth one API call before it becomes a documented blocker.
+
+### Disposition, and why alert numbers cannot anchor this record
+
+**All eleven open alerts were dismissed on 28 August 2026**, each carrying a
+short reason that points back here. The Security tab is now empty, and that is
+the point of the exercise: an empty tab means the next alert to appear is
+visibly new, and someone reads it.
+
+| Rule | Location | Dismissal reason | Basis |
+| --- | --- | --- | --- |
+| `js/request-forgery` | `src/lib/whakapapa-report.server.ts` | false positive | Allowlist barrier, below |
+| `js/path-injection` | `image-manager/images/route.ts` (×2) | false positive | "Image Manager path containment", below |
+| `js/insufficient-password-hash` | `src/lib/mirotalk-token.ts` | false positive | "MiroTalk meeting tokens", below |
+| `js/insufficient-password-hash`, `js/weak-cryptographic-algorithm` | `mirotalk-token.test.ts` (×2) | used in tests | Same protocol reason, in the round-trip test |
+| `js/incomplete-multi-character-sanitization` | `booking-requests-noindex.test.ts`, `website-page-header-fallback-render.test.tsx` | used in tests | `vi.mock` doubles, "Test-file and harness alerts" below |
+| `js/bad-code-sanitization` | `measurement/**/self-test.mjs` (×3) | used in tests | Harness, never in the runtime image |
+
+**Two of those were never triaged by #2841, because they did not exist yet**, and
+both were verified from scratch on 28 August:
+
+- **`js/incomplete-multi-character-sanitization` in
+  `src/lib/__tests__/website-page-header-fallback-render.test.tsx`** (raised 19
+  August, as alert 48). The same `html.replace(/<[^>]*>/g, "")` inside a
+  `vi.mock` factory as the two rows above it. Re-checked rather than assumed: the
+  real `pageContentHtmlToPlainText` strips tags with `sanitize-html` and
+  `allowedTags: []` — a parser, not a regex.
+- **`js/request-forgery` in `src/lib/whakapapa-report.server.ts`** (raised 27
+  August as alert 52, a **critical**). This is alert 29 for the third time. Fork
+  work landing the `/api/report` trails fallback moved the `fetch` into the
+  per-hop redirect loop, so CodeQL closed the old alert and opened a new one at
+  the new line. The barrier is intact and was re-verified end to end: both
+  callers pass a `validateWhakapapaSourceUrl` result (https-only, no embedded
+  credentials, `host === entry || host.endsWith("." + entry)`), the new API URL
+  is `new URL(<constant relative path>, sourceUrl)` so the origin cannot change,
+  and `redirect: "manual"` still re-validates every hop.
+
+**The lesson, which is the durable part.** A CodeQL alert number identifies a
+*location*, not a finding. Move the code and the alert is closed as `fixed` and
+re-raised under a new number, unchanged in substance. So a triage record keyed to
+alert numbers decays without anyone editing it — this page said "Alert 29" while
+the live alert was 52 — and worse, **the re-raised alert looks new**. That is how
+a critical sat unread for a day in August: it was indistinguishable from seven
+alerts everyone had already learned to scroll past.
+
+Two habits follow. Cite a finding by **rule plus file** and treat the number as a
+timestamp, the same way this repository cites `INV-` ids instead of line numbers.
+And **dismiss what you have triaged**, because the tab is a signal only while it
+is empty — the same false-negative-by-habituation that #2959 identified in the
+Semgrep pipeline, one layer up.
 
 ### The Critical, and the real thing underneath it
 
-Alert 29 says a user-controlled value reaches a `fetch` target. It does not. The
+Alert 29 — re-raised since as 49 and then, on 27 August 2026, as the critical 52,
+each time the surrounding code moved — says a user-controlled value reaches a
+`fetch` target. It does not. The
 Whakapapa report URL passes `validateWhakapapaSourceUrl` — https-only, no
 embedded credentials, and `host === entry || host.endsWith("." + entry)` against
 the configured host allowlist — at write time, again when the config row is
@@ -3462,8 +3525,10 @@ unsuppressed again, so the alert returns.
 
 ### Test-file and harness alerts
 
-- **40, 39 — incomplete multi-character sanitization.** Both are
-  `html.replace(/<[^>]*>/g, "")` inside a `vi.mock` factory. The real
+- **40, 39 and 48 — incomplete multi-character sanitization.** All three are
+  `html.replace(/<[^>]*>/g, "")` inside a `vi.mock` factory (48 is the same
+  pattern in `website-page-header-fallback-render.test.tsx`, raised after this
+  triage was written and verified on the same basis). The real
   `pageContentHtmlToPlainText` uses `sanitize-html` with `allowedTags: []`. Test
   doubles, no production path. Keeping the doubles crude is deliberate: a test
   that reimplements the sanitiser proves nothing about the sanitiser.
