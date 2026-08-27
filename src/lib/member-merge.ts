@@ -50,7 +50,7 @@ import {
   diffFieldMergePatches,
   mergeMemberFields,
   type FieldMergeRow,
-} from "@/lib/member-merge-fields";
+} from "@/lib/member-merge-field-rules";
 
 /**
  * E11 (#1937) — additive, master-wins member profile merge.
@@ -80,20 +80,30 @@ import {
  * NO Xero API calls anywhere in this module — the loser's Xero contact is left
  * for manual clean-up (surfaced as a preview warning).
  *
- * WHAT IS NOT IN HERE (#3128). The declarative half was split out when this file
- * was the largest in the repository at 3,814 lines.
+ * WHAT IS NOT IN HERE (#3128). The declarative half was split out when this was
+ * the largest production file in the repository. (Four test files are larger.)
  * `member-merge-relations.ts` holds the table classifying every
  * Member-referencing relation into a bucket; `member-merge-snapshot-columns.ts`
  * the scalar columns captured in the loser's snapshot;
  * `member-merge-schema-coverage.ts` the DMMF and `schema.prisma` checks that
  * fail CI when either list falls behind the schema; and
- * `member-merge-fields.ts` the master-wins scalar field merge.
+ * `member-merge-field-rules.ts` the master-wins scalar field merge.
  *
- * ALL FOUR ARE LEAVES. This file imports from them; none of them imports
- * anything back from here, and none of them reads the database, opens a
- * transaction or takes a lock. That is the property that made them separable,
- * and it is the property to preserve: if one of them ever needs something from
- * this file, the seam was wrong rather than the import.
+ * ALL FOUR ARE LEAVES: none of them imports anything from here, and none reads
+ * the database, opens a transaction or takes a lock. That is the property that
+ * made them separable, and it is the property to preserve — if one of them ever
+ * needs something from this file, the seam was wrong rather than the import.
+ *
+ * THIS FILE IMPORTS ONLY TWO OF THEM, and the other two are worth being honest
+ * about. `member-merge-relations.ts` and `member-merge-field-rules.ts` are read
+ * here. `member-merge-snapshot-columns.ts` and `member-merge-schema-coverage.ts`
+ * have NO production consumer at all: their only reader is
+ * `member-merge-dmmf.test.ts`. That was already true when they lived inside this
+ * file as exports nothing here used — the split did not create it, it made it
+ * visible. They stay in `src/lib/` rather than moving under `__tests__` because
+ * the snapshot column list is a statement about what a merge preserves, which is
+ * a product decision a test happens to enforce, not a test fixture. Do not read
+ * "the engine depends on all four", because it depends on two.
  */
 
 export type MergeDbClient = Prisma.TransactionClient | typeof prisma;

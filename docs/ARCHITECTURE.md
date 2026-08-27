@@ -1960,7 +1960,8 @@ member-owned flows — including member whole-lodge approval — remain enforced
 An admin booking for somebody else may supply an explicit reason, which records
 an attributable APPROVED review; `/admin/book` renders that reason panel for
 confirm and save-as-draft. `adultMemberHostingReviewedById` is a real `SetNull`
-relation to `Member` with a `member-merge-relations.ts` spec, so that attribution survives
+relation to `Member` with a `member-merge-relations.ts` spec, so that
+attribution survives
 a merge and does not dangle after deletion. Once an accepted booking loses
 same-owner cover, a separate urgent incident opens without changing
 `Booking.status` and resolves automatically when cover returns.

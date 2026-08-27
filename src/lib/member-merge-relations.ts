@@ -27,7 +27,9 @@
  * they carry no FK, so they are neither moved nor cascaded — they keep the
  * loser's id by design as immutable history (mirrors the delete path, which
  * also leaves these dangling). They are NOT relations, so they never appear in
- * the DMMF/schema relation walk and are documented, not classified, below.
+ * the DMMF/schema relation walk and are documented, not classified, in
+ * `member-merge-snapshot-columns.ts`. (That said "below" until #3128 split this
+ * table out; the list is a sibling module now, not further down this file.)
  */
 export type MemberMergeBucket = "move" | "resolve" | "cascade";
 
@@ -226,7 +228,9 @@ export const MEMBER_MERGE_RELATION_SPECS: readonly MemberMergeRelationSpec[] = [
   // (The QR path stores memberId: null, so those rows have nothing to move.)
   // The "who acted on the report" columns — resolvedById, photoDeletedById — and
   // the QR-token / settings admin-action columns are FK-less scalars left as
-  // immutable history in MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS below.
+  // immutable history in MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS, which #3128 moved
+  // to `member-merge-snapshot-columns.ts`. If you are here adding an actor column
+  // to one of these models, that sibling module is where it goes.
   spec("MaintenanceReport", "member", "memberId", "move"),
   spec("HutLeaderAssignment", "member", "memberId", "move"),
   spec("MemberLodgeAccess", "member", "memberId", "resolve", {

@@ -1620,14 +1620,6 @@ and is hard-deleted at the end. The merge is **additive and master-wins**:
 
 ### INV-LIFE-078
 
-- **Where these lists live.** Since #3128 the merge's declarative half sits
-  beside the engine rather than inside it: `member-merge-relations.ts` holds
-  `MEMBER_MERGE_RELATION_SPECS`, `member-merge-snapshot-columns.ts` holds
-  `MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS`, `member-merge-schema-coverage.ts`
-  holds the DMMF and `schema.prisma` checks that keep both honest, and
-  `member-merge-fields.ts` holds the scalar field-merge rules. All four are
-  leaves: `member-merge.ts` imports what it needs from them and none of them
-  imports it back. The rules below are unchanged by that move.
 - **Relation buckets.** Every Member-referencing relation is classified into
   exactly one bucket by `MEMBER_MERGE_RELATION_SPECS`, enforced complete by a
   DMMF/schema test that fails CI if a new relation is added unclassified:

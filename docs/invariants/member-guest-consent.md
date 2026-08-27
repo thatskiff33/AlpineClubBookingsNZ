@@ -144,7 +144,8 @@ because both are surprising and neither should be discovered by a member:
 ## INV-GUEST-012
 
 - **A merged-away member's guest rows keep their consent.** `BookingGuest.member`
-  is classified `move` in `src/lib/member-merge-relations.ts`, so merging A into B
+  is classified `move` in `src/lib/member-merge-relations.ts`, so merging A
+  into B
   re-points A's guest rows — consent columns included — onto B.
   `consentRespondedByMemberId` is an FK-less snapshot and keeps the id of
   whoever actually answered at the time, even after that member is merged away.

@@ -8,7 +8,7 @@ import {
   MemberMergeError,
   type MemberMergePreviewCore,
 } from "@/lib/member-merge";
-import { mergeMemberFields } from "@/lib/member-merge-fields";
+import { mergeMemberFields } from "@/lib/member-merge-field-rules";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import { BookingRequestStatus, type MemberGuestConsentStatus } from "@prisma/client";
 import { claimAlreadyConvertedBookingRequest } from "@/lib/booking-request-shared";

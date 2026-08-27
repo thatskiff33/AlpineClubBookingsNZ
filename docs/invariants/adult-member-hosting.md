@@ -144,7 +144,8 @@ the door can do.
   satisfy is a permanent block, so the contract test pins that every such code
   the create route can return has a client that branches on it.
 - **The reviewer is a real foreign key.** `adultMemberHostingReviewedById`
-  carries a `SetNull` relation to `Member` and a `member-merge-relations.ts` spec, like
+  carries a `SetNull` relation to `Member` and a `member-merge-relations.ts`
+  spec, like
   every other actor-attribution column on `Booking`. Member merge repoints it and
   member deletion nulls it; a bare id would be invisible to the DMMF
   completeness guard and D-R4's "who let this through" would rot into a dangling

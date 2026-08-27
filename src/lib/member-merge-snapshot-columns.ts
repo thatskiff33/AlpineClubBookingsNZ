@@ -36,7 +36,10 @@
  * prove complete. Read a gap there as a documentation gap, never as evidence
  * that no such column exists: adding one is a review responsibility, and the
  * only mechanical backstop is that an FK-less column cannot land in a
- * move/resolve bucket by accident (the completeness test above).
+ * move/resolve bucket by accident (the completeness test over
+ * `MEMBER_MERGE_RELATION_SPECS`, which #3128 moved to
+ * `member-merge-relations.ts` — this said "above" while the two lists shared a
+ * file).
  *
  * Layout: the FIRST block is that hand-kept remainder (bespoke names plus the
  * entries that predate the detector); the SECOND is the detectable set.
@@ -89,7 +92,8 @@ export const MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS: readonly string[] = [
   //     column, identical in kind to MembershipSubscriptionBillingSettings'.
   //
   // SEPARATE, AND NOT COVERED BY THIS LIST: BookingGuest.member is a real
-  // relation and is already classified `move` above, so merging A into B
+  // relation and is already classified `move` in `member-merge-relations.ts`
+  // (it said "above" until #3128 split the two apart), so merging A into B
   // re-points A's guest rows onto B — INCLUDING their consent columns, so B
   // inherits the consent A gave. That is the accepted consequence of the
   // existing `move` classification; it is unreachable in this release (every

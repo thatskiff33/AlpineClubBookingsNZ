@@ -9,7 +9,7 @@ import {
   planPartnerLinkMerge,
   type PartnerLinkRow,
 } from "@/lib/member-merge";
-import { diffFieldMergePatches, mergeMemberFields } from "@/lib/member-merge-fields";
+import { diffFieldMergePatches, mergeMemberFields } from "@/lib/member-merge-field-rules";
 import { MEMBER_MERGE_RELATION_SPECS } from "@/lib/member-merge-relations";
 import { MEMBER_MERGE_SNAPSHOT_SCALAR_COLUMNS } from "@/lib/member-merge-snapshot-columns";
 

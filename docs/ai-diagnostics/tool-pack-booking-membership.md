@@ -830,7 +830,8 @@ model reads as "there is no problem" — is the failure mode the whole
 - **There is no member number in this platform.** #2376 asks for a member-number
   search. No `memberNumber` or `membershipNumber` column exists anywhere in the
   schema; a search of the whole tree finds one incidental comment in
-  `member-merge.ts` and no column. `Member` carries a cuid `id`, an `email` and a
+  `member-merge-schema-coverage.ts` and no column. `Member` carries a cuid `id`, an
+  `email` and a
   `xeroContactId`, and those are the identifiers it has. So the search **cannot be
   built**, and a member who quotes "their membership number" is quoting something
   else — most likely a Xero contact number or an invoice number, which are finance

@@ -15,7 +15,8 @@ import {
   MERGE_FIELD_VALUE_KINDS,
   type MergeFieldValueKind,
 } from "@/lib/member-merge-field-kinds";
-import { mergeMemberFields, UNCONDITIONALLY_MERGED_FIELDS } from "@/lib/member-merge-fields";
+import { mergeMemberFields, UNCONDITIONALLY_MERGED_FIELDS } from "@/lib/member-merge-field-rules";
+import { mergeFamilySource } from "@/lib/__tests__/support/member-merge-family";
 
 /**
  * The member-merge comparison screen dates each value by what the field MEANS,
@@ -244,12 +245,7 @@ describe("#2860 every merged field is classified, and only merged fields are", (
     // rather than as an exhaustive-looking test asserting nothing. A path is a
     // guess about where code lives; a glob over the family is not, and this
     // file has now been split twice.
-    const dir = path.join(process.cwd(), "src", "lib");
-    const source = fs
-      .readdirSync(dir)
-      .filter((name) => /^member-merge.*\.ts$/.test(name))
-      .map((name) => fs.readFileSync(path.join(dir, name), "utf8"))
-      .join("\n");
+    const source = mergeFamilySource();
     const derived = [
       ...source.matchAll(/fieldMergeRow\(\s*"([A-Za-z0-9_]+)"/g),
     ].map((match) => match[1]!);
