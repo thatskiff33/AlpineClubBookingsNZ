@@ -356,6 +356,37 @@ describe("membership subscription billing", () => {
       ).rejects.toThrow(/must be given its decision date/);
     });
 
+    it("refuses to resolve the year-end inside a transaction, where it could call Xero under the season lock (#3116)", async () => {
+      // Resolving the financial year-end reads MembershipLockoutSettings and,
+      // with no admin override, CALLS XERO for the organisation's accounting
+      // year. Under a held `pg_advisory_xact_lock` that is a provider call
+      // inside a transaction, which this repository forbids outright. A
+      // transactional caller has a preview in hand and passes its frozen value.
+      //
+      // The decision date is supplied here so this asserts the year-end guard
+      // specifically, rather than passing for the decision-date reason above.
+      await expect(
+        buildSubscriptionBillingPreview({
+          seasonYear: 2026,
+          decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+          store: billingTransactionClient() as never,
+        }),
+      ).rejects.toThrow(/must be given its financial year-end month/);
+    });
+
+    it("accepts an explicit year-end inside a transaction and names the season from it (#3116)", async () => {
+      // The other side of the guard: given the value, a transactional preview
+      // builds - and the description follows the year-end it was handed, not the
+      // process cache.
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-04-01T00:00:00.000Z"),
+        yearEndMonth: 12,
+        store: billingTransactionClient() as never,
+      });
+      expect(preview.yearEndMonth).toBe(12);
+    });
+
     it("still honours an explicit decision date", async () => {
       mocks.clubTimeSettings.findUnique.mockResolvedValue({
         timeZone: "America/Denver",
@@ -982,16 +1013,36 @@ describe("membership subscription billing", () => {
     });
   });
 
-  describe("component line description (#1932, E6)", () => {
-    it("reproduces the exact legacy single-line text with pluralization for a sole component", () => {
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 1, label: "Annual membership fee", isSoleComponent: true }))
-        .toBe("Full membership 2026/2027 (1 month)");
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true }))
-        .toBe("Full membership 2026/2027 (12 months)");
+  describe("component line description (#1932, E6; season naming #3116)", () => {
+    it("names the season from the club's year-end, with pluralization, for a sole component", () => {
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 1, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (1 month)");
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (12 months)");
     });
     it("appends the label for a multi-component line", () => {
-      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 9, label: "Work party fee", isSoleComponent: false }))
-        .toBe("Full membership 2026/2027 (9 months) — Work party fee");
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 9, label: "Work party fee", isSoleComponent: false, yearEndMonth: 3 }))
+        .toBe("Full membership 2026 - 2027 (9 months) — Work party fee");
+    });
+
+    // #3116: the defect this function had. A December year-end makes the season
+    // start in January and end in the SAME calendar year, so naming it as two
+    // calendar years contradicted the season year printed beside it on the
+    // invoice. Before this change the text below read "2026/2027".
+    it("names a single-calendar-year season with one year, for a December year-end", () => {
+      expect(buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 12 }))
+        .toBe("Full membership 2026 (12 months)");
+    });
+
+    // The year-end is threaded, not read from the process cache. If this function
+    // ever went back to defaulting it, this case would answer from whatever
+    // `financial-year.ts` happened to hold and would stop discriminating.
+    it("follows the year-end it is given rather than any ambient default", () => {
+      const june = buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 6 });
+      const december = buildComponentLineDescription({ membershipTypeName: "Full", seasonYear: 2026, coveredMonths: 12, label: "Annual membership fee", isSoleComponent: true, yearEndMonth: 12 });
+      expect(june).toBe("Full membership 2026 - 2027 (12 months)");
+      expect(december).toBe("Full membership 2026 (12 months)");
+      expect(june).not.toBe(december);
     });
   });
 

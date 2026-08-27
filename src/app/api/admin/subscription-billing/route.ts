@@ -16,6 +16,7 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { seasonYearOfStoredDate } from "@/lib/financial-year";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
 import { enqueueMembershipSubscriptionChargeOperation } from "@/lib/xero-subscription-invoices";
 
 const querySchema = z.object({
@@ -269,7 +270,11 @@ export async function POST(request: Request) {
       const seasonYear = parsed.data.seasonYear;
       // Reconcile stale persisted exceptions FIRST (the only mutation), then load
       // the refreshed view so the response reflects the auto-resolved rows.
-      const reconciled = await reconcileSubscriptionBillingExceptions({ seasonYear, decisionDate });
+      // Resolved out here, not inside the reconcile transaction: with no admin
+      // override this reads the organisation's accounting year from Xero, and a
+      // provider call under the season's advisory lock is forbidden (#3116).
+      const yearEndMonth = await refreshFinancialYearConfig();
+      const reconciled = await reconcileSubscriptionBillingExceptions({ seasonYear, decisionDate, yearEndMonth });
       if (reconciled.resolvedCount > 0) {
         await createAuditLog({
           action: "membership-subscription-billing.reconcile",

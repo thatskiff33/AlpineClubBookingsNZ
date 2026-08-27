@@ -9,28 +9,44 @@
  * and the season year IS the calendar year.
  *
  * The owner's decision on #3103 moved FIVE of those sites (four files, because
- * the member profile page inlined it twice) onto the shared derivation and left
- * the rest alone. This file pins both halves of that decision, because both
- * halves are load-bearing and neither is discoverable from the diff.
+ * the member profile page inlined it twice) onto the shared derivation and held
+ * back four more. **#3116 finished the job: all of them are adopted now**, and
+ * the exclusion list this file used to carry is empty.
  *
- * ## Why the exclusions are pinned as well as the adoptions
+ * ## What the four held-back sites were, and why holding them back ended
  *
- * Four of the nineteen render the label into money and provider text: two Xero
- * invoice-line descriptions, a credit-note description, and a `server-only`
- * activity label. `buildComponentLineDescription` in
- * `membership-subscription-billing.ts` states a frozen-string contract in its own
- * comment and `membership-subscription-billing.test.ts` pins the exact bytes: a
- * single-component fee reproduces that text, so a backfilled legacy charge
- * re-driven through the outbox mints a BYTE-IDENTICAL invoice line. Unify it and
- * a re-driven charge stops doing that, and reconciliation sees a mismatch
- * nothing explains.
+ * They rendered the label into money and provider text: two Xero invoice-line
+ * descriptions, a credit-note description, and a `server-only` activity label.
+ * The stated reason for holding them was a frozen-string contract on
+ * `buildComponentLineDescription` - a single-component fee reproduces that text,
+ * so a backfilled legacy charge re-driven through the outbox was said to mint a
+ * BYTE-IDENTICAL invoice line, which unifying would break.
  *
- * Those four are also the sites where the template is ALREADY latently wrong,
- * because they run on the server where the year-end genuinely is available. The
- * frozen-string contract and the correct label are therefore in direct tension,
- * and nothing resolves it - so this test's job is to make a future sweep of them
- * a deliberate act that has to come here and read why, rather than a tidy-up
- * that looks like de-duplication and lands as a reconciliation defect.
+ * **That reasoning was wrong about its own mechanism, and #3116 measured it.**
+ * `MembershipSubscriptionChargeComponent.description` is a persisted column: the
+ * planner WRITES it and the mint READS IT BACK. Byte-identity for an existing
+ * charge comes from persistence, not from the deriving code, so changing the
+ * derivation changes newly-planned charges only. Nor does any matcher read the
+ * text - reconciliation finds the invoice by its immutable `Reference`, and the
+ * snapshot comparison is handed amount, account code and item code with the
+ * description destructured away.
+ *
+ * The four were also the sites where the template was ALREADY wrong, because
+ * they run on the server where the year-end genuinely is available: a
+ * December-year-end club got a two-calendar-year name for a season that sits
+ * inside one. Holding them back preserved a wrong label to protect a property
+ * that something else was providing.
+ *
+ * ## What replaced the pin
+ *
+ * The hazard #3116 actually found is not de-duplication, it is the DEFAULT.
+ * `seasonYearsLabel` defaults its year-end to the `financial-year.ts` process
+ * cache, which no background worker seeds - so adopting the shared derivation
+ * while taking that default would have reworded every existing club's invoices
+ * AND still rendered the wrong season for the club the change was for. Every one
+ * of these four now takes the year-end explicitly, and
+ * `buildComponentLineDescription` REQUIRES it, so an unstated year-end is a
+ * compile error rather than a silently wrong invoice line.
  *
  * ## The regex is self-checked, because a source scan that matches nothing is
  * indistinguishable from a source scan that passes
@@ -45,6 +61,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { stripComments } from "./support/strip-comments";
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 
@@ -82,6 +100,12 @@ const ADOPTED = [
   "src/app/(admin)/admin/members/[id]/_components/member-summary-strip.tsx",
   "src/app/(admin)/admin/members/[id]/_components/member-subscription-history-table.tsx",
   "src/lib/admin-member-detail-helpers.ts",
+  // The four money and provider sites, adopted by #3116. See this file's
+  // docblock for why they were held back and what changed.
+  "src/lib/membership-subscription-billing.ts",
+  "src/lib/xero-subscription-invoices.ts",
+  "src/lib/membership-cancellation-xero.ts",
+  "src/lib/xero-record-activity.ts",
 ];
 
 /**
@@ -110,33 +134,20 @@ function sourceFilesUnder(relativeDir: string): string[] {
   return found;
 }
 
-/**
- * The four money and provider sites the decision explicitly excluded. Each entry
- * carries the reason, so a failure prints why rather than only what.
- */
-const HELD_BACK: ReadonlyArray<readonly [string, string]> = [
-  [
-    "src/lib/membership-subscription-billing.ts",
-    "Xero invoice line; states a byte-identical frozen-string contract for a re-driven backfilled charge",
-  ],
-  [
-    "src/lib/xero-subscription-invoices.ts",
-    "Xero invoice line description",
-  ],
-  [
-    "src/lib/membership-cancellation-xero.ts",
-    "Xero credit-note description",
-  ],
-  [
-    "src/lib/xero-record-activity.ts",
-    "server-only activity label written alongside provider records",
-  ],
-];
-
 function read(relative: string): string {
   // Fail closed on a rename: an unreadable path must throw here rather than
   // let a moved file read as "no template found, therefore adopted".
-  return readFileSync(path.join(REPO_ROOT, relative), "utf8");
+  //
+  // COMMENTS ARE STRIPPED BEFORE MATCHING, and that is not cosmetic. This
+  // repository documents each defect at the site where it was removed, so the
+  // files that were cleaned MOST are the ones whose comments most often quote
+  // the very text the scan is looking for - `membership-subscription-billing.ts`
+  // now explains what its invoice line used to say and why it changed. Matching
+  // raw source would read that explanation as an unadopted site and fail a file
+  // precisely because it was documented well. One shared `stripComments`, never
+  // a local reimplementation, so this scanner and every other one measure the
+  // same way.
+  return stripComments(readFileSync(path.join(REPO_ROOT, relative), "utf8"));
 }
 
 describe("the two-calendar-year season name (#3103)", () => {
@@ -178,15 +189,15 @@ describe("the surfaces that adopted the shared derivation (#3103)", () => {
   });
 });
 
-describe("the money and provider sites the decision held back (#3103)", () => {
-  it.each(HELD_BACK)(
-    "%s still writes the historical name (%s)",
-    (relative, _reason) => {
-      // Unifying any of these breaks reconciliation. Read this file's docblock
-      // before changing the expectation: it needs its own decision, not a sweep.
-      expect(read(relative)).toMatch(TWO_CALENDAR_YEAR_NAME);
-    },
-  );
+describe("comment text cannot make an adopted file read as unadopted (#3116)", () => {
+  it("strips a comment quoting the historical name before matching", () => {
+    const documented = [
+      "// It used to read `${seasonYear}/${seasonYear + 1}`, which assumed two years.",
+      "const label = seasonYearsLabel(seasonYear, yearEndMonth);",
+    ].join(String.fromCharCode(10));
+    expect(documented).toMatch(TWO_CALENDAR_YEAR_NAME);
+    expect(stripComments(documented)).not.toMatch(TWO_CALENDAR_YEAR_NAME);
+  });
 });
 
 describe("the admin member detail screen names a season exactly one way (#3103)", () => {

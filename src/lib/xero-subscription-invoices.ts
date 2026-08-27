@@ -30,6 +30,8 @@ import {
   sendXeroInvoiceEmail,
 } from "@/lib/xero-invoice-email";
 import { providerAmountToCents } from "@/lib/money-provider-amount";
+import { refreshFinancialYearConfig } from "@/lib/financial-year-server";
+import { seasonYearsLabel } from "@/lib/season-label";
 
 /**
  * A Xero invoice's total in integer cents, or `null` when it cannot be read.
@@ -302,9 +304,18 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
   }
 
   // One invoice line per frozen component snapshot (#1932, E6), in stable order.
-  // The synthetic fallback reproduces the identical historical single line for
-  // any invoiceable charge minted before the component backfill — the exact same
-  // derivation the backfill used — so there is one line shape forever.
+  //
+  // THE FALLBACK IS THE ONE PLACE IN THIS FLOW THAT DERIVES TEXT AT SEND TIME.
+  // Every other line reads `component.description`, a persisted column written at
+  // plan time, so those stay byte-identical to what Xero holds whatever the
+  // deriving code now says. This branch is taken only by a pre-backfill charge
+  // carrying no component rows.
+  //
+  // The season follows the club's own year-end, resolved and passed because this
+  // runs on the outbox worker where the cache is never seeded (#3116;
+  // `season-label.ts` has the reasoning). Nothing matches on this text:
+  // reconciliation finds the invoice by its immutable `Reference` and
+  // `subscriptionInvoiceMatchesSnapshot` compares amount, account and item code.
   const componentLines = charge.components.length > 0
     ? charge.components.map((component) => ({
         amountCents: component.chargedAmountCents,
@@ -316,7 +327,7 @@ export async function createXeroMembershipSubscriptionInvoice(input: {
         amountCents: charge.chargedAmountCents,
         accountCode,
         itemCode: charge.xeroItemCode,
-        description: `${charge.membershipTypeName} membership ${charge.seasonYear}/${charge.seasonYear + 1} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
+        description: `${charge.membershipTypeName} membership ${seasonYearsLabel(charge.seasonYear, await refreshFinancialYearConfig())} (${charge.coveredMonths} month${charge.coveredMonths === 1 ? "" : "s"})`,
       }];
 
   let invoiceId = charge.xeroInvoiceId;
