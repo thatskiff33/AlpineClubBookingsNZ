@@ -11,6 +11,7 @@ import {
   type PolicyExceptionReasonCode,
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
+import { stableStringify } from "@/lib/stable-json";
 
 /**
  * The durable member-request + admin-decision workflow that sits ON TOP of the
@@ -392,28 +393,6 @@ export function canonicalizeProposalSnapshot(
     base: canonicalizeProposalParty(snapshot.base),
     proposed: canonicalizeProposalParty(snapshot.proposed),
   };
-}
-
-/**
- * Deterministic JSON with recursively sorted object keys. `JSON.stringify` alone
- * is insertion-ordered, so two objects with the same fields in a different order
- * would hash differently; this removes that as a source of false drift.
- */
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value));
-}
-
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
-      out[key] = sortKeysDeep(record[key]);
-    }
-    return out;
-  }
-  return value;
 }
 
 /**
