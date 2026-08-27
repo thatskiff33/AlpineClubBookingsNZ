@@ -3,9 +3,10 @@
  *
  * `booking-date-modification-service.ts` holds both apply-path halves of the
  * booking-modification date window — `modifyBookingDates` and
- * `adminShiftBookingDates`. Their preview twins live in
- * `src/app/api/bookings/[id]/modify-quote/route.ts`: the `editPolicy.today`
- * gate in `POST`, and `buildShiftPreviewResponse`.
+ * `adminShiftBookingDates`. Their preview twins are the `editPolicy.today` gate
+ * in `src/app/api/bookings/[id]/modify-quote/route.ts`'s `POST`, and
+ * `buildShiftPreviewResponse` in `src/lib/booking-shift-preview.ts` — which
+ * #3128 split verbatim out of that same route.
  *
  * Group B (#3056) corrected the preview side onto `storedDateOnly` and left
  * three apply-path mirrors reading the same `@db.Date` lodge nights through
@@ -24,9 +25,9 @@
  * with one assertion over the pair. Nothing here asserts an absolute date that
  * a reader could satisfy by moving both sides together.
  *
- * The oracles transcribe the quote route rather than importing it, for the
- * reason F4b's parity test gives: importing the route drags its whole module
- * graph in and proves nothing about the text that actually ships there.
+ * The oracles transcribe the preview rather than importing it, for the reason
+ * F4b's parity test gives: importing it drags its whole module graph in and
+ * proves nothing about the text that actually ships there.
  *
  * ## WHAT MAKES THESE CASES DISCRIMINATING
  *

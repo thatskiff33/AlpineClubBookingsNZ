@@ -93,11 +93,13 @@ const CALENDAR_DAY_STRING = "1985-06-15";
 // assertions become decidable.
 const ZONE_BEHIND_UTC = "America/New_York";
 /**
- * The club's own zone, named rather than left to `formatDateOnlyForTimeZone`'s
- * `APP_TIME_ZONE` default, which #3123 deletes. It is New Zealand because that
- * is this file's premise, and `expectClubTimeZonePremise()` below asserts the
- * environment still agrees — so this constant cannot drift out of step and leave
- * the divergence cases measuring nothing.
+ * The club's own zone, named rather than left to a default: `date-only.ts` lost
+ * its `= APP_TIME_ZONE` defaults in #3123 and `formatMergeFieldValue` lost its
+ * own in #3126 (`INV-SSOT-003`), so every call in this file names a zone and
+ * nothing here can be answered by the environment. It is New Zealand because
+ * that is this file's premise, and `expectClubTimeZonePremise()` below asserts
+ * the environment still agrees — so this constant cannot drift out of step and
+ * leave the divergence cases measuring nothing.
  */
 const CLUB_ZONE = "Pacific/Auckland";
 
@@ -479,7 +481,7 @@ describe.each(CLUB_DAY_CASES)(
     const rendered = (field: string) => {
       const row = rowsByField().get(field);
       if (!row) throw new Error(`the merge emitted no ${field} row`);
-      return formatMergeFieldValue(row.result, row.kind);
+      return formatMergeFieldValue(row.result, row.kind, CLUB_ZONE);
     };
 
     it("dates the duplicate's photo on the club's calendar day, not the UTC day", () => {
@@ -509,7 +511,7 @@ describe.each(CLUB_DAY_CASES)(
         const row = overTheWire.find((r) => r.field === field);
         if (!row) throw new Error(`the merge emitted no ${field} row`);
         expect(typeof row.result).toBe("string");
-        return formatMergeFieldValue(row.result, row.kind);
+        return formatMergeFieldValue(row.result, row.kind, CLUB_ZONE);
       };
 
       expect(display("photoUpdatedAt")).toBe(clubDay);
@@ -559,20 +561,30 @@ describe.each(CLUB_DAY_CASES)(
 
 describe("#2860 the non-date cells are untouched", () => {
   it("renders blanks, booleans and plain values as before", () => {
-    expect(formatMergeFieldValue(null, "plain")).toBe("—");
-    expect(formatMergeFieldValue(undefined, "calendarDay")).toBe("—");
-    expect(formatMergeFieldValue("", "instant")).toBe("—");
-    expect(formatMergeFieldValue(true, "plain")).toBe("Yes");
-    expect(formatMergeFieldValue(false, "plain")).toBe("No");
-    expect(formatMergeFieldValue("Engineer", "plain")).toBe("Engineer");
-    expect(formatMergeFieldValue("MR", "plain")).toBe("MR");
+    // The zone is REQUIRED since #3126 and unused on every branch below, so a
+    // zone BEHIND UTC is passed deliberately: if one of these branches ever
+    // starts consulting it, the value moves and the assertion fails. Passing
+    // the club's own zone here would hide that.
+    expect(formatMergeFieldValue(null, "plain", ZONE_BEHIND_UTC)).toBe("—");
+    expect(formatMergeFieldValue(undefined, "calendarDay", ZONE_BEHIND_UTC)).toBe(
+      "—",
+    );
+    expect(formatMergeFieldValue("", "instant", ZONE_BEHIND_UTC)).toBe("—");
+    expect(formatMergeFieldValue(true, "plain", ZONE_BEHIND_UTC)).toBe("Yes");
+    expect(formatMergeFieldValue(false, "plain", ZONE_BEHIND_UTC)).toBe("No");
+    expect(formatMergeFieldValue("Engineer", "plain", ZONE_BEHIND_UTC)).toBe(
+      "Engineer",
+    );
+    expect(formatMergeFieldValue("MR", "plain", ZONE_BEHIND_UTC)).toBe("MR");
   });
 
   it("shows an unparsable date-kinded value rather than a made-up day", () => {
-    expect(formatMergeFieldValue("not a date", "instant")).toBe("not a date");
-    expect(formatMergeFieldValue(new Date(NaN), "calendarDay")).toBe(
-      "Invalid Date",
-    );
+    expect(
+      formatMergeFieldValue("not a date", "instant", ZONE_BEHIND_UTC),
+    ).toBe("not a date");
+    expect(
+      formatMergeFieldValue(new Date(NaN), "calendarDay", ZONE_BEHIND_UTC),
+    ).toBe("Invalid Date");
   });
 
   it("shows the raw value for a kind it does not recognise, rather than truncating it", () => {
@@ -585,7 +597,10 @@ describe("#2860 the non-date cells are untouched", () => {
     const futureKind = "zonedDay" as unknown as MergeFieldValueKind;
     const value = new Date("2026-06-14T12:00:00.000Z");
 
-    const rendered = formatMergeFieldValue(value, futureKind);
+    // The CLUB's zone, not a zone behind UTC: the third assertion below is that
+    // the value is not the club-zone READING of the instant, and it only says
+    // anything while the zone passed in is the one that reading would use.
+    const rendered = formatMergeFieldValue(value, futureKind, CLUB_ZONE);
     expect(rendered).toBe(String(value));
     // Specifically NOT the UTC truncation, which is the silent-day-early defect.
     expect(rendered).not.toBe("2026-06-14");
