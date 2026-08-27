@@ -80,6 +80,25 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ENFORCED here, not just advertised (#3091 review 3): the response's
+  // `maxImagesPerPost` was advisory data the client could ignore, and the
+  // create path used to truncate the claim list silently — leaving images 7+
+  // unclaimed, served after moderation removed the post, and swept out from
+  // under a live one. A member's UNCLAIMED uploads are the pool a new post
+  // can draw on, so the cap applies there; claimed images belong to posts
+  // already validated, and abandoned uploads age out via the orphan sweep.
+  const unclaimed = await prisma.clubPostImage.count({
+    where: { uploadedByMemberId: memberId, postId: null },
+  });
+  if (unclaimed >= MAX_POST_IMAGES) {
+    return NextResponse.json(
+      {
+        error: `A post can carry at most ${MAX_POST_IMAGES} images — that many are already waiting. Post them, or remove some from the draft, before adding more.`,
+      },
+      { status: 400 },
+    );
+  }
+
   const bytes = new Uint8Array(await file.arrayBuffer());
 
   try {

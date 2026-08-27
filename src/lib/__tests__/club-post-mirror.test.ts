@@ -307,4 +307,107 @@ describe("runMirrorSync", () => {
     );
     expect(release).toBeDefined();
   });
+
+  // #3091 review 2: one bad change must not wedge the mirror permanently.
+  it("records a first failure as poison and aborts the pass without advancing the cursor", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+    mocks.postCreate.mockRejectedValue(new Error("value too long"));
+
+    await expect(runMirrorSync(NOW)).rejects.toThrow("value too long");
+
+    const poison = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsPoisonChangeId === "srv-1",
+    );
+    expect(poison).toBeDefined();
+    expect(poison?.[0].data.commsPoisonCount).toBe(1);
+    const advanced = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsCursorSince !== undefined,
+    );
+    expect(advanced).toBeUndefined();
+  });
+
+  it("steps OVER a change that has failed three consecutive passes, and the feed continues", async () => {
+    mocks.settingsFindUnique.mockResolvedValue({
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsPoisonChangeId: "srv-1",
+      commsPoisonCount: 2,
+    });
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([visiblePost(), visiblePost({ id: "srv-2" })]),
+    );
+    // The poison change still fails; the one behind it is fine.
+    mocks.postCreate
+      .mockRejectedValueOnce(new Error("value too long"))
+      .mockResolvedValue({});
+
+    const result = await runMirrorSync(NOW);
+
+    // srv-1 skipped, srv-2 applied, cursor advanced, poison cleared.
+    expect(result.upserted).toBe(1);
+    const cleared = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsPoisonChangeId === null,
+    );
+    expect(cleared).toBeDefined();
+    const advanced = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsCursorSince !== undefined,
+    );
+    expect(advanced).toBeDefined();
+  });
+
+  it("forgets recorded poison when the change applies cleanly on retry", async () => {
+    mocks.settingsFindUnique.mockResolvedValue({
+      commsCursorSince: null,
+      commsCursorSinceId: null,
+      commsPoisonChangeId: "srv-1",
+      commsPoisonCount: 1,
+    });
+    mocks.pullSharedPostSync.mockResolvedValue(envelope([visiblePost()]));
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    const cleared = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsPoisonChangeId === null,
+    );
+    expect(cleared).toBeDefined();
+  });
+
+  // #3091 review 2a: sanitising GROWS a body, so the cap is measured on what
+  // the column stores. Anchors gain target/rel — a wire-legal body can come
+  // out over 20,000 and would fail the insert AFTER rows are written.
+  it("mirrors an over-long sanitised body as plain text rather than wedging", async () => {
+    const anchors = Array.from(
+      { length: 420 },
+      (unused, i) => `<a href="https://example.org/${i}">x</a>`,
+    ).join(" ");
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([visiblePost({ bodyHtml: anchors })]),
+    );
+
+    const result = await runMirrorSync(NOW);
+
+    expect(result.upserted).toBe(1);
+    expect(mocks.postCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ bodyHtml: null }),
+      }),
+    );
+  });
+
+  // #3091 review 2b: the wire schema only requires a non-empty string, and
+  // Prisma throws on an Invalid Date — a poison change by another route.
+  it("skips a post whose createdAt does not parse, loudly, without wedging", async () => {
+    mocks.pullSharedPostSync.mockResolvedValue(
+      envelope([visiblePost({ createdAt: "not a date" })]),
+    );
+
+    await runMirrorSync(NOW);
+
+    expect(mocks.postCreate).not.toHaveBeenCalled();
+    const advanced = mocks.settingsUpdate.mock.calls.find(
+      ([args]) => args.data.commsCursorSince !== undefined,
+    );
+    expect(advanced).toBeDefined();
+  });
 });

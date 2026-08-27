@@ -102,6 +102,22 @@ export async function listClubPostsForAdmin(options: {
   return rows.map(serialize);
 }
 
+/**
+ * Removed posts whose network copy the central server has not yet confirmed
+ * taken down (#3091 review 1). The moderation screen names this count: the
+ * admin was told "removed", and until this is zero that is only true locally.
+ */
+export function countPendingWithdrawals(): Promise<number> {
+  return prisma.clubPost.count({
+    where: {
+      removedAt: { not: null },
+      serverPostId: { not: null },
+      originClubCode: null,
+      withdrawnAt: null,
+    },
+  });
+}
+
 export class ClubPostNotFoundError extends Error {
   constructor() {
     super("That post no longer exists.");
@@ -258,10 +274,21 @@ export async function removeClubPost(postId: string): Promise<void> {
   if (post.serverPostId && post.originClubCode === null) {
     try {
       await withdrawClubPost(post.serverPostId);
+      // CONFIRMED down everywhere (#3091 review 1). Without this stamp the
+      // row reads as withdrawal-pending forever and the sweep re-withdraws a
+      // copy that is already gone (harmless — the server 404s — but noisy).
+      await prisma.clubPost.update({
+        where: { id: postId },
+        data: { withdrawnAt: new Date() },
+      });
     } catch (error) {
+      // NOT fatal, and NOT forgotten (#3091 review 1): the local removal
+      // stands, `withdrawnAt` stays null, and that combination is exactly
+      // what `retryPendingWithdrawals` sweeps every general-cron cycle and
+      // what the moderation screen names until the server confirms.
       logger.error(
         { postId, serverPostId: post.serverPostId, err: error },
-        "Removed a shared club post locally but could not withdraw it from the central server",
+        "Removed a shared club post locally but could not withdraw it from the central server; the withdrawal sweep will retry",
       );
     }
   }

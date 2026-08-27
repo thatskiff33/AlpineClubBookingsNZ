@@ -125,6 +125,36 @@ export interface CleanupOutcome {
  * Safe to call concurrently: exactly one caller does the work and the rest
  * report `busy`, so the admin screen's button cannot race the scheduled cron.
  */
+/**
+ * Delete uploads nobody ever attached to a post (#3091 review 4). A member
+ * who picks an image and then abandons the composer leaves one behind, and
+ * without this they accumulate on the mount forever. An hour's grace so an
+ * upload that is still being composed is never swept out from under its
+ * author.
+ *
+ * Runs UNCONDITIONALLY, claim or no claim: "how long do we keep posts" and
+ * "clean up uploads nobody ever used" are independent policies, and gating
+ * this behind a non-zero retention window — the shipped default is 0 —
+ * made it unreachable on every install that never chose one. Safe without
+ * the single-flight claim because every step is idempotent: the rows are
+ * deleted by id and `deletePostImage` never throws on a file already gone,
+ * so two overlapping passes merely waste a query.
+ */
+async function sweepOrphanImages(now: Date): Promise<void> {
+  const abandonedBefore = new Date(now.getTime() - 60 * 60 * 1000);
+  const orphans = await prisma.clubPostImage.findMany({
+    where: { postId: null, createdAt: { lt: abandonedBefore } },
+    select: { id: true, storageKey: true },
+  });
+  if (orphans.length === 0) return;
+  await prisma.clubPostImage.deleteMany({
+    where: { id: { in: orphans.map((o) => o.id) } },
+  });
+  for (const orphan of orphans) {
+    await deletePostImage(orphan.storageKey);
+  }
+}
+
 export async function runClubPostCleanup(
   now: Date = new Date(),
 ): Promise<CleanupOutcome> {
@@ -139,7 +169,12 @@ export async function runClubPostCleanup(
   // `busy` forever on an install that had never saved a setting. It cannot
   // happen: a non-zero window can only come from `saveClubPostRetention`, which
   // upserts, so a cutoff existing implies the row does too.
-  if (!cutoff) return { skipped: "disabled", deleted: 0 };
+  if (!cutoff) {
+    // Retention off is NOT cleanup off (#3091 review 4): the orphan sweep
+    // guards the mount, not member content, and it runs either way.
+    await sweepOrphanImages(now);
+    return { skipped: "disabled", deleted: 0 };
+  }
 
   const staleBefore = new Date(now.getTime() - STALE_CLEANUP_CLAIM_MS);
 
@@ -181,23 +216,7 @@ export async function runClubPostCleanup(
       await deletePostImage(image.storageKey);
     }
 
-    // Uploads nobody ever attached to a post. A member who picks an image and
-    // then abandons the composer leaves one behind, and without this they
-    // accumulate on the mount forever. An hour's grace so an upload that is
-    // still being composed is never swept out from under its author.
-    const abandonedBefore = new Date(now.getTime() - 60 * 60 * 1000);
-    const orphans = await prisma.clubPostImage.findMany({
-      where: { postId: null, createdAt: { lt: abandonedBefore } },
-      select: { id: true, storageKey: true },
-    });
-    if (orphans.length > 0) {
-      await prisma.clubPostImage.deleteMany({
-        where: { id: { in: orphans.map((o) => o.id) } },
-      });
-      for (const orphan of orphans) {
-        await deletePostImage(orphan.storageKey);
-      }
-    }
+    await sweepOrphanImages(now);
 
     await prisma.clubPostSettings.update({
       where: { id: CLUB_POST_SETTINGS_ID },

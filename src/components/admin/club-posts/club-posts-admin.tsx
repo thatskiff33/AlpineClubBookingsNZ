@@ -33,10 +33,13 @@ export function ClubPostsAdmin({
   posts,
   tab,
   query,
+  pendingWithdrawals,
 }: {
   posts: AdminClubPost[];
   tab: AdminPostTab;
   query: string;
+  /** Removed posts whose network takedown is not yet confirmed (#3091 r1). */
+  pendingWithdrawals: number;
 }) {
   const club = useClubTime();
 
@@ -107,6 +110,18 @@ export function ClubPostsAdmin({
       {error ? (
         <Alert variant="error" className="mb-4">
           {error}
+        </Alert>
+      ) : null}
+
+      {pendingWithdrawals > 0 ? (
+        // #3091 review 1: a removal the central server has not confirmed is
+        // only removed LOCALLY — other clubs may still see it. Named here so
+        // the admin who clicked Remove is not left believing it is gone
+        // everywhere; the retry runs automatically each cron cycle.
+        <Alert variant="warning" className="mb-4">
+          {pendingWithdrawals === 1
+            ? "1 removed post is still being taken down from the shared network — other clubs may see it until the central server confirms. Retrying automatically."
+            : `${pendingWithdrawals} removed posts are still being taken down from the shared network — other clubs may see them until the central server confirms. Retrying automatically.`}
         </Alert>
       ) : null}
 

@@ -252,6 +252,15 @@ export function ClubPostEditor({
 
   const insertImage = useCallback(
     async (file: File) => {
+      // Client half of the six-image cap (#3091 review 3). The server
+      // enforces it on upload and again on post; this stops the seventh
+      // click before an upload round-trip, with the reason in words.
+      const imagesInDraft =
+        editorRef.current?.querySelectorAll("img").length ?? 0;
+      if (imagesInDraft >= 6) {
+        onImageError?.("A post can carry at most 6 images.");
+        return;
+      }
       setUploading(true);
       try {
         const body = new FormData();

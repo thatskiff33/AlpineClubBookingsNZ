@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
+  count: vi.fn(),
+  withdrawClubPost: vi.fn(),
   imageFindMany: vi.fn(),
   imageDeleteMany: vi.fn(),
   transaction: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.findUnique,
       findMany: mocks.findMany,
       update: mocks.update,
+      count: mocks.count,
     },
     clubPostImage: {
       findMany: mocks.imageFindMany,
@@ -42,11 +45,16 @@ vi.mock("@/lib/post-image-storage", () => ({
   deletePostImage: mocks.deletePostImage,
 }));
 
+vi.mock("@/lib/servernz-api", () => ({
+  withdrawClubPost: mocks.withdrawClubPost,
+}));
+
 import { listClubPostsForMember } from "@/lib/club-posts";
 import {
   ClubPostAlreadyRemovedError,
   ClubPostNotFoundError,
   ClubPostNotEditableError,
+  countPendingWithdrawals,
   editClubPostContent,
   listClubPostsForAdmin,
   parseAdminPostTab,
@@ -127,6 +135,73 @@ describe("removal", () => {
     await expect(removeClubPost("nope")).rejects.toBeInstanceOf(
       ClubPostNotFoundError,
     );
+  });
+
+  // #3091 review 1: a takedown of a SHARED post must be confirmed, retried,
+  // and visible while outstanding — not fire-and-forget.
+  it("stamps withdrawnAt when the central server confirms the takedown", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      removedAt: null,
+      serverPostId: "server-9",
+      originClubCode: null,
+    });
+    mocks.withdrawClubPost.mockResolvedValue(undefined);
+
+    await removeClubPost("post-1");
+
+    expect(mocks.withdrawClubPost).toHaveBeenCalledWith("server-9");
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "post-1" },
+        data: { withdrawnAt: expect.any(Date) },
+      }),
+    );
+  });
+
+  it("leaves the removal standing and withdrawnAt unset when the withdrawal fails", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      removedAt: null,
+      serverPostId: "server-9",
+      originClubCode: null,
+    });
+    mocks.withdrawClubPost.mockRejectedValue(new Error("server down"));
+
+    // NOT fatal: the local removal is what the admin asked for.
+    await expect(removeClubPost("post-1")).resolves.toBeUndefined();
+
+    const stamped = mocks.update.mock.calls.find(
+      ([args]) => args.data.withdrawnAt !== undefined,
+    );
+    expect(stamped).toBeUndefined();
+  });
+
+  it("never withdraws a MIRROR — the network copy belongs to its origin club", async () => {
+    mocks.findUnique.mockResolvedValue({
+      id: "post-1",
+      removedAt: null,
+      serverPostId: "server-9",
+      originClubCode: "RUAPEHU",
+    });
+
+    await removeClubPost("post-1");
+
+    expect(mocks.withdrawClubPost).not.toHaveBeenCalled();
+  });
+
+  it("counts removals whose network takedown is still outstanding", async () => {
+    mocks.count.mockResolvedValue(2);
+
+    await expect(countPendingWithdrawals()).resolves.toBe(2);
+    expect(mocks.count).toHaveBeenCalledWith({
+      where: {
+        removedAt: { not: null },
+        serverPostId: { not: null },
+        originClubCode: null,
+        withdrawnAt: null,
+      },
+    });
   });
 });
 

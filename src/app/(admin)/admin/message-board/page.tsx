@@ -7,6 +7,7 @@ import {
   loadClubPostSettings,
 } from "@/lib/club-post-retention";
 import {
+  countPendingWithdrawals,
   listClubPostsForAdmin,
   parseAdminPostTab,
 } from "@/lib/club-posts-admin";
@@ -51,9 +52,10 @@ export default async function AdminMessageBoardPage({
   const tab = parseAdminPostTab(params.tab);
   const q = params.q?.trim() || undefined;
 
-  const [posts, settings] = await Promise.all([
+  const [posts, settings, pendingWithdrawals] = await Promise.all([
     listClubPostsForAdmin({ tab, q }),
     loadClubPostSettings(),
+    countPendingWithdrawals(),
   ]);
   const beyondRetention = await countPostsBeyondRetention(
     settings.retentionDays,
@@ -77,7 +79,12 @@ export default async function AdminMessageBoardPage({
         lastCleanupDeleted={settings.lastCleanupDeleted}
       />
 
-      <ClubPostsAdmin posts={posts} tab={tab} query={q ?? ""} />
+      <ClubPostsAdmin
+        posts={posts}
+        tab={tab}
+        query={q ?? ""}
+        pendingWithdrawals={pendingWithdrawals}
+      />
     </div>
   );
 }

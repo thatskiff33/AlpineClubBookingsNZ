@@ -176,6 +176,35 @@ describe("content rules at the door", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a post naming more than six images with 400, not a silent truncation (#3091 r3)", async () => {
+    const imgs = Array.from(
+      { length: 7 },
+      (unused, i) =>
+        `<img src="/api/club-posts/images/${i.toString(16).padStart(32, "0")}" alt="" />`,
+    ).join("");
+    const res = await POST(
+      post({ content: "seven pictures", bodyHtml: `<p>seven pictures</p>${imgs}` }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("at most 6 images");
+    expect(mocks.clubPostCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body whose SANITISED form exceeds the column with 400, not an opaque 500 (#3091 r6)", async () => {
+    // Sanitising grows anchors (target/rel appended), so markup inside the
+    // client cap can come out over the column's 20,000.
+    const anchors = Array.from(
+      { length: 450 },
+      (unused, i) => `<a href="https://example.org/${i}">x</a>`,
+    ).join(" ");
+    const res = await POST(post({ content: "links", bodyHtml: `<p>${anchors}</p>` }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("formatting");
+    expect(mocks.clubPostCreate).not.toHaveBeenCalled();
+  });
+
   it("rejects a body that is not JSON", async () => {
     const bad = new Request("https://club.test/api/club-posts", {
       method: "POST",

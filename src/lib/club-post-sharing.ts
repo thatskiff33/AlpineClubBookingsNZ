@@ -3,7 +3,7 @@ import "server-only";
 import logger from "@/lib/logger";
 import { readPostImage } from "@/lib/post-image-storage";
 import { prisma } from "@/lib/prisma";
-import { ServerNzApiError, shareClubPost } from "@/lib/servernz-api";
+import { ServerNzApiError, shareClubPost, withdrawClubPost } from "@/lib/servernz-api";
 
 /**
  * Sending a board post to the central server (epic #2992).
@@ -18,8 +18,19 @@ import { ServerNzApiError, shareClubPost } from "@/lib/servernz-api";
  * `sharedAt` therefore means "the server took it", never "we tried".
  */
 
-/** Most attempts before a post stops being retried automatically. */
+/**
+ * Most attempts before a post stops being retried automatically (#3091
+ * review 5). At the cap the request is CLEARED with the reason recorded on
+ * `shareError`, so a permanently failing share ends as an explained failure
+ * on the member's post rather than an eternal retry.
+ */
 export const MAX_SHARE_ATTEMPTS = 8;
+
+/**
+ * Posts per sweep pass. Separate from the attempt cap above — the two were
+ * one constant once, which made the cap a page size that capped nothing.
+ */
+export const SHARE_SWEEP_PAGE_SIZE = 8;
 
 export type ShareOutcome =
   | { status: "shared"; serverPostId: string }
@@ -62,6 +73,7 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
       content: true,
       bodyHtml: true,
       shareRequestedAt: true,
+      shareAttempts: true,
       sharedAt: true,
       serverPostId: true,
       removedAt: true,
@@ -130,23 +142,32 @@ export async function shareOnePost(postId: string): Promise<ShareOutcome> {
 
     return { status: "shared", serverPostId: result.id };
   } catch (error) {
-    const retryable = isRetryable(error);
+    const attempts = post.shareAttempts + 1;
+    // Retryable by ERROR KIND and still under the cap. A refusal that will
+    // never succeed stops at once; a transient failure stops at the cap
+    // (#3091 review 5) — either way the request is cleared and the reason is
+    // on the row, so the member is told plainly rather than left watching a
+    // post that never goes anywhere.
+    const retryable = isRetryable(error) && attempts < MAX_SHARE_ATTEMPTS;
     const message =
       error instanceof Error ? error.message : "The central server refused it.";
+    const recorded = (
+      isRetryable(error) && !retryable
+        ? `Gave up after ${MAX_SHARE_ATTEMPTS} attempts: ${message}`
+        : message
+    ).slice(0, 300);
 
     await prisma.clubPost.update({
       where: { id: post.id },
       data: {
-        shareError: message.slice(0, 300),
-        // A refusal that will never succeed stops being pending, so the retry
-        // pass does not carry it forever and the member is told plainly rather
-        // than left watching a post that never goes anywhere.
+        shareError: recorded,
+        shareAttempts: attempts,
         ...(retryable ? {} : { shareRequestedAt: null }),
       },
     });
 
     logger.warn(
-      { postId: post.id, retryable, err: error },
+      { postId: post.id, retryable, attempts, err: error },
       "Sharing a club post to the central server failed",
     );
     return { status: "failed", error: message, retryable };
@@ -157,6 +178,61 @@ export interface ShareSweepResult {
   attempted: number;
   shared: number;
   failed: number;
+  /** The takedown half (#3091 review 1): withdrawals retried this pass. */
+  withdrawalsAttempted: number;
+  withdrawalsConfirmed: number;
+  withdrawalsFailed: number;
+}
+
+/** Withdrawals retried per pass — bounded for the same reason the shares are. */
+export const WITHDRAWAL_SWEEP_PAGE_SIZE = 8;
+
+/**
+ * Retry every takedown the central server has not yet confirmed (#3091
+ * review 1). `removeClubPost` withdraws inline and stamps `withdrawnAt` on
+ * success; when that inline call fails — server unreachable, mid-deploy, a
+ * 5xx — the post is removed locally but its network copy is still on every
+ * other club's board, and NOTHING else would ever try again. This sweep is
+ * the retry: rows with `removedAt` set, a `serverPostId`, no origin club
+ * (the withdrawal is own-club only) and no `withdrawnAt` are exactly the
+ * removals whose network copy may still be live. `withdrawClubPost` treats a
+ * 404 as success, so a copy the server already dropped confirms cleanly.
+ */
+export async function retryPendingWithdrawals(): Promise<{
+  attempted: number;
+  confirmed: number;
+  failed: number;
+}> {
+  const pending = await prisma.clubPost.findMany({
+    where: {
+      removedAt: { not: null },
+      serverPostId: { not: null },
+      originClubCode: null,
+      withdrawnAt: null,
+    },
+    orderBy: { removedAt: "asc" },
+    take: WITHDRAWAL_SWEEP_PAGE_SIZE,
+    select: { id: true, serverPostId: true },
+  });
+
+  const result = { attempted: pending.length, confirmed: 0, failed: 0 };
+  for (const post of pending) {
+    try {
+      await withdrawClubPost(post.serverPostId as string);
+      await prisma.clubPost.update({
+        where: { id: post.id },
+        data: { withdrawnAt: new Date() },
+      });
+      result.confirmed += 1;
+    } catch (error) {
+      result.failed += 1;
+      logger.warn(
+        { postId: post.id, serverPostId: post.serverPostId, err: error },
+        "Retrying a club post withdrawal failed; the network copy may still be visible",
+      );
+    }
+  }
+  return result;
 }
 
 /**
@@ -174,8 +250,12 @@ export async function retryPendingShares(
       sharedAt: null,
       removedAt: null,
     },
-    orderBy: { shareRequestedAt: "asc" },
-    take: MAX_SHARE_ATTEMPTS,
+    // Fewest attempts FIRST (#3091 review 5): a page of stuck posts selected
+    // oldest-first would be re-selected every pass and starve every newer
+    // share behind it. Ordering by attempts rotates the stuck ones to the
+    // back until the cap retires them; age breaks ties.
+    orderBy: [{ shareAttempts: "asc" }, { shareRequestedAt: "asc" }],
+    take: SHARE_SWEEP_PAGE_SIZE,
     select: { id: true },
   });
 
@@ -183,6 +263,9 @@ export async function retryPendingShares(
     attempted: pending.length,
     shared: 0,
     failed: 0,
+    withdrawalsAttempted: 0,
+    withdrawalsConfirmed: 0,
+    withdrawalsFailed: 0,
   };
 
   for (const post of pending) {
@@ -190,6 +273,13 @@ export async function retryPendingShares(
     if (outcome.status === "shared") result.shared += 1;
     else if (outcome.status === "failed") result.failed += 1;
   }
+
+  // The takedown half rides the same cycle: a removal must come down
+  // everywhere with the same persistence a share goes up with.
+  const withdrawals = await retryPendingWithdrawals();
+  result.withdrawalsAttempted = withdrawals.attempted;
+  result.withdrawalsConfirmed = withdrawals.confirmed;
+  result.withdrawalsFailed = withdrawals.failed;
 
   return result;
 }

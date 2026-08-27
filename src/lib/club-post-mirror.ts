@@ -167,8 +167,34 @@ async function upsertMirror(post: SyncPost): Promise<void> {
       ) || null;
   }
 
+  // The SANITISED length is what the column stores, and sanitisation GROWS a
+  // body (every anchor gains target/rel attributes), so a wire body inside
+  // the 20,000 cap can come out over it — and an over-long value fails the
+  // insert AFTER rows are written and BEFORE the cursor advances (#3091
+  // review 2a; the serverPostId schema comment records the identical trap).
+  // Formatting is decoration; the words are the post. Degrade to plain text
+  // rather than wedge the sync.
+  if (bodyHtml && bodyHtml.length > 20_000) {
+    logger.warn(
+      { serverPostId: post.id, length: bodyHtml.length },
+      "Mirrored post body exceeds the column cap after sanitising; mirroring as plain text",
+    );
+    bodyHtml = null;
+  }
+
   const content = post.content.slice(0, 4000);
   const postedAt = new Date(post.createdAt);
+  // The wire schema only requires a non-empty string (#3091 review 2b), and
+  // Prisma throws on an Invalid Date — which would be a poison change. A post
+  // with an unreadable timestamp is not worth wedging the sync over: skip it,
+  // loudly. It re-arrives whenever the server fixes its serialisation.
+  if (!Number.isFinite(postedAt.getTime())) {
+    logger.error(
+      { serverPostId: post.id, createdAt: post.createdAt },
+      "Mirrored post carries an unreadable createdAt; skipping it",
+    );
+    return;
+  }
 
   if (existing) {
     // Replace images wholesale: the server's list is authoritative for a
@@ -332,8 +358,15 @@ export async function runMirrorSync(
 
     let cursor = await prisma.serverNzSettings.findUnique({
       where: { id: "default" },
-      select: { commsCursorSince: true, commsCursorSinceId: true },
+      select: {
+        commsCursorSince: true,
+        commsCursorSinceId: true,
+        commsPoisonChangeId: true,
+        commsPoisonCount: true,
+      },
     });
+    let poisonId = cursor?.commsPoisonChangeId ?? null;
+    let poisonCount = cursor?.commsPoisonCount ?? 0;
 
     for (let page = 0; page < MAX_PAGES_PER_PASS; page++) {
       const envelope = await pullSharedPostSync({
@@ -343,11 +376,58 @@ export async function runMirrorSync(
       result.pages += 1;
 
       for (const change of envelope.changes) {
-        if (change.state === "visible") {
-          await upsertMirror(change.post);
-          result.upserted += 1;
-        } else {
-          if (await applyRemoval(change.id)) result.removed += 1;
+        const changeKey = change.state === "visible" ? change.post.id : change.id;
+        try {
+          if (change.state === "visible") {
+            await upsertMirror(change.post);
+            result.upserted += 1;
+          } else {
+            if (await applyRemoval(change.id)) result.removed += 1;
+          }
+        } catch (error) {
+          // PER-CHANGE ISOLATION (#3091 review 2). A throw here used to
+          // escape the page loop before the cursor advanced, so the next
+          // pass pulled the same page, hit the same change, and threw again
+          // — not "converges on replay" but permanently stuck, and quietly,
+          // because the cron runner records the failure and carries on.
+          //
+          // Consecutive failures of the SAME change are counted on the
+          // cursor row. Twice it aborts the pass so a transient cause (a
+          // deploy, a database blip) gets its retries; the third pass steps
+          // OVER it so one bad row cannot wedge every later change forever.
+          if (poisonId === changeKey && poisonCount >= 2) {
+            logger.error(
+              { changeKey, failures: poisonCount + 1, err: error },
+              "Skipping a poison mirror-sync change after repeated failures; the rest of the feed continues",
+            );
+            poisonId = null;
+            poisonCount = 0;
+            await prisma.serverNzSettings.update({
+              where: { id: "default" },
+              data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
+            });
+            continue;
+          }
+          poisonCount = poisonId === changeKey ? poisonCount + 1 : 1;
+          poisonId = changeKey;
+          await prisma.serverNzSettings.update({
+            where: { id: "default" },
+            data: {
+              commsPoisonChangeId: changeKey.slice(0, 64),
+              commsPoisonCount: poisonCount,
+            },
+          });
+          throw error;
+        }
+        if (poisonId === changeKey) {
+          // The previously failing change applied cleanly — a transient
+          // cause after all. Forget it before it can be blamed again.
+          poisonId = null;
+          poisonCount = 0;
+          await prisma.serverNzSettings.update({
+            where: { id: "default" },
+            data: { commsPoisonChangeId: null, commsPoisonCount: 0 },
+          });
         }
       }
 
@@ -365,6 +445,8 @@ export async function runMirrorSync(
         cursor = {
           commsCursorSince: envelope.cursor.since,
           commsCursorSinceId: envelope.cursor.sinceId,
+          commsPoisonChangeId: poisonId,
+          commsPoisonCount: poisonCount,
         };
       }
 

@@ -105,6 +105,9 @@ describe("general cron runner", () => {
           attempted: 0,
           shared: 0,
           failed: 0,
+          withdrawalsAttempted: 0,
+          withdrawalsConfirmed: 0,
+          withdrawalsFailed: 0,
         })),
         runMirrorSync: vi.fn(async () => ({
           skipped: "not-configured" as const,
@@ -375,6 +378,9 @@ describe("general cron runner", () => {
             attempted: 0,
             shared: 0,
             failed: 0,
+            withdrawalsAttempted: 0,
+            withdrawalsConfirmed: 0,
+            withdrawalsFailed: 0,
           })),
           runMirrorSync: vi.fn(async () => ({
             skipped: "not-configured" as const,

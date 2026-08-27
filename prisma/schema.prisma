@@ -4597,6 +4597,15 @@ model ServerNzSettings {
   // drive the same writer.
   commsSyncStartedAt DateTime?
   commsLastSyncAt    DateTime?
+  // Poison-change tracking for the mirror ingest (#3091 review 2). A change
+  // that throws stops the pass BEFORE the cursor advances, so the same change
+  // is retried next pass; these record which change is failing and how many
+  // consecutive passes it has failed. At the third failure the ingest steps
+  // OVER it (logged as an error) so one bad row from the central server
+  // cannot wedge every club's mirror sync permanently. Cleared whenever a
+  // pass applies its page cleanly.
+  commsPoisonChangeId String?  @db.VarChar(64)
+  commsPoisonCount    Int      @default(0)
 
   updatedByMemberId String?
   createdAt         DateTime @default(now())
@@ -5038,8 +5047,21 @@ model ClubPost {
   // Why the last attempt failed, for the member and the admin screen. Cleared
   // on success. Bounded because it can carry the remote's own error text.
   shareError       String?   @db.VarChar(300)
+  // How many times the share has been attempted and failed (#3091 review 5).
+  // MAX_SHARE_ATTEMPTS in club-post-sharing.ts is the cap: at the cap the
+  // request is cleared with the reason on shareError, so eight permanently
+  // failing posts cannot occupy the sweep's page forever — and the sweep
+  // selects fewest-attempts-first, so a stuck head cannot starve newer posts.
+  shareAttempts    Int       @default(0)
   sharedAt         DateTime?
   serverPostId     String?   @unique @db.VarChar(64)
+  // The central server CONFIRMED the takedown of this club's own shared post
+  // (#3091 review 1). Null with removedAt set and serverPostId present means
+  // the network copy may still be visible to other clubs: the withdrawal
+  // sweep retries it each cycle and the moderation screen names it until this
+  // is stamped. Only ever set on posts this club authored (originClubCode
+  // null) — removing a MIRROR is a local act with nothing to withdraw.
+  withdrawnAt      DateTime?
   // Taken from the authenticated session at compose time, never from a form
   // field. The central server cannot verify author identity — it trusts this
   // club's API key — so that trust is only warranted if the value is a real

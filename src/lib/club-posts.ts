@@ -248,6 +248,30 @@ export async function createClubPost(input: {
     bodyHtml ? clubPostHtmlToText(bodyHtml) : input.content,
   );
 
+  // The SANITISED length is what the column stores, and sanitising GROWS a
+  // body (every anchor gains target/rel attributes), so markup inside the
+  // client's cap can come out over the column's (#3091 review 6). Without
+  // this the insert fails and the route's catch reports an opaque 500; with
+  // it the member is told what to change.
+  if (bodyHtml && bodyHtml.length > 20_000) {
+    throw new ClubPostValidationError(
+      "That post carries too much formatting to save. Shorten it, or remove some links or formatting, and try again.",
+    );
+  }
+
+  // ENFORCED, not advisory (#3091 review 3). Truncating the claim list
+  // silently would leave images 7+ unclaimed: still served to any signed-in
+  // member after the post is hidden or removed (moderation deletes
+  // `where: { postId }`), and — with retention on — deleted out from under
+  // the live post by the orphan sweep an hour later, breaking it. Rejecting
+  // is the only shape where the stored post is the post the member wrote.
+  const imageIds = bodyHtml ? clubPostImageIds(bodyHtml) : [];
+  if (imageIds.length > MAX_CLUB_POST_IMAGES) {
+    throw new ClubPostValidationError(
+      `A post can carry at most ${MAX_CLUB_POST_IMAGES} images. Remove ${imageIds.length - MAX_CLUB_POST_IMAGES} and try again.`,
+    );
+  }
+
   const post = await prisma.clubPost.create({
     data: {
       authorMemberId: input.authorMemberId,
@@ -268,11 +292,11 @@ export async function createClubPost(input: {
   // unclaimed uploads: without that, a body could name another member's
   // publicId and steal an image off a post it does not own — the ids are
   // unguessable, but "hard to guess" is not an authorisation check.
-  const imageIds = bodyHtml ? clubPostImageIds(bodyHtml) : [];
   if (imageIds.length > 0) {
     await prisma.clubPostImage.updateMany({
       where: {
-        publicId: { in: imageIds.slice(0, MAX_CLUB_POST_IMAGES) },
+        // Validated against MAX_CLUB_POST_IMAGES above, so no silent slice.
+        publicId: { in: imageIds },
         postId: null,
         uploadedByMemberId: input.authorMemberId,
       },

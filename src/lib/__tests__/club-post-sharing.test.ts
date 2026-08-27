@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
     FakeApiError,
     findUnique: vi.fn(),
     findMany: vi.fn(),
+    withdrawClubPost: vi.fn(),
     update: vi.fn(),
     shareClubPost: vi.fn(),
     readPostImage: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/servernz-api", () => ({
   ServerNzApiError: mocks.FakeApiError,
   shareClubPost: mocks.shareClubPost,
+  withdrawClubPost: mocks.withdrawClubPost,
 }));
 
 vi.mock("@/lib/post-image-storage", () => ({
@@ -63,6 +65,7 @@ function post(overrides: Record<string, unknown> = {}) {
     content: "Chains needed above the second cattle stop.",
     bodyHtml: null,
     shareRequestedAt: REQUESTED,
+    shareAttempts: 0,
     sharedAt: null,
     serverPostId: null,
     removedAt: null,
@@ -204,7 +207,10 @@ describe("retryPendingShares", () => {
   });
 
   it("counts what it managed and what it did not", async () => {
-    mocks.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
+    mocks.findMany
+      .mockResolvedValueOnce([{ id: "p1" }, { id: "p2" }])
+      // The withdrawal half of the same pass finds nothing outstanding.
+      .mockResolvedValueOnce([]);
     mocks.findUnique
       .mockResolvedValueOnce(post({ id: "p1" }))
       .mockResolvedValueOnce(post({ id: "p2" }));
@@ -214,6 +220,71 @@ describe("retryPendingShares", () => {
 
     const result = await retryPendingShares(REQUESTED);
 
-    expect(result).toEqual({ attempted: 2, shared: 1, failed: 1 });
+    expect(result).toEqual({
+      attempted: 2,
+      shared: 1,
+      failed: 1,
+      withdrawalsAttempted: 0,
+      withdrawalsConfirmed: 0,
+      withdrawalsFailed: 0,
+    });
+  });
+
+  it("selects fewest-attempts-first so stuck posts cannot starve newer ones (#3091 r5)", async () => {
+    mocks.findMany.mockResolvedValue([]);
+
+    await retryPendingShares(REQUESTED);
+
+    expect(mocks.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [{ shareAttempts: "asc" }, { shareRequestedAt: "asc" }],
+      }),
+    );
+  });
+
+  it("gives up at the attempt cap with the reason on the row (#3091 r5)", async () => {
+    mocks.findUnique.mockResolvedValue(post({ shareAttempts: 7 }));
+    mocks.shareClubPost.mockRejectedValue(new FakeApiError(503, "unavailable"));
+
+    const outcome = await shareOnePost("post-1");
+
+    expect(outcome).toMatchObject({ status: "failed", retryable: false });
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          shareAttempts: 8,
+          shareRequestedAt: null,
+          shareError: expect.stringContaining("Gave up after 8 attempts"),
+        }),
+      }),
+    );
+  });
+
+  it("retries the takedown of a removed shared post and stamps the confirmation (#3091 r1)", async () => {
+    mocks.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: "p9", serverPostId: "server-9" },
+        { id: "p10", serverPostId: "server-10" },
+      ]);
+    mocks.withdrawClubPost
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new FakeApiError(503, "unavailable"));
+
+    const result = await retryPendingShares(REQUESTED);
+
+    expect(result).toMatchObject({
+      withdrawalsAttempted: 2,
+      withdrawalsConfirmed: 1,
+      withdrawalsFailed: 1,
+    });
+    expect(mocks.withdrawClubPost).toHaveBeenCalledWith("server-9");
+    // The confirmed one is stamped; the failed one is left for the next pass.
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "p9" },
+        data: { withdrawnAt: expect.any(Date) },
+      }),
+    );
   });
 });

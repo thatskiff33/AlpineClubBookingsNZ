@@ -16,7 +16,7 @@ written to their own ceilings, and the member composer was deliberately NOT
 folded into the 2,500-line admin `page-content-panel.tsx`.
 
 file: src/lib/member-merge.ts
-lines: 3793
+lines: 3814
 reason: two relation specs, one generic-resolver row and two snapshot-column
   entries, each landing in the authoritative list its own kind lives in
   (upstream's own additions to this file merge alongside). The contract of
@@ -26,7 +26,7 @@ reason: two relation specs, one generic-resolver row and two snapshot-column
   file trustworthy.
 
 file: src/app/(authenticated)/dashboard/page.tsx
-lines: 956
+lines: 984
 reason: two module-gated tiles in the dashboard grid, the same shape as the
   five already inline beside them (card, lead line, full-width button), plus
   the message-board feed card's move below the booking lists and its 7-day
@@ -51,7 +51,7 @@ reason: `commsPortal` joins the travelling module flags, with the reasoning
   above.
 
 file: src/lib/admin-cron-health.ts
-lines: 832
+lines: 874
 reason: three job definitions in the list `getAdminCronJobDefinitions`
   returns — retention, share retry and mirror sync. The cron-recording
   contract test asserts every job that records a run appears in this exact
@@ -60,7 +60,7 @@ reason: three job definitions in the list `getAdminCronJobDefinitions`
   one signal an operator gets that the covering poll has stopped.
 
 file: src/components/admin-sidebar.tsx
-lines: 1115
+lines: 1176
 reason: one navigation entry in the membership section plus its icon import
   (upstream's own sidebar additions merge alongside). This file is the
   sidebar; a row of it cannot live anywhere else.

@@ -133,6 +133,30 @@ describe("the cleanup pass", () => {
     expect(mocks.settingsUpdateMany).not.toHaveBeenCalled();
   });
 
+  it("sweeps abandoned uploads even when retention is off (#3091 review 4)", async () => {
+    // "How long do we keep posts" and "clean up uploads nobody ever used"
+    // are independent policies. Gating the orphan sweep behind a non-zero
+    // window — 0 is the shipped default — made it unreachable on every
+    // install that never chose one, which is exactly the accumulate-forever
+    // outcome its own comment says it prevents.
+    mocks.settingsFindUnique.mockResolvedValue(settings(0));
+    mocks.imageFindMany.mockResolvedValue([
+      { id: "img-9", storageKey: "posts/2025/01/abandoned.webp" },
+    ]);
+
+    const outcome = await runClubPostCleanup(NOW);
+
+    expect(outcome.skipped).toBe("disabled");
+    expect(mocks.imageDeleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["img-9"] } },
+    });
+    expect(mocks.deletePostImage).toHaveBeenCalledWith(
+      "posts/2025/01/abandoned.webp",
+    );
+    // Member posts stay untouched — this is mount hygiene, not retention.
+    expect(mocks.postDeleteMany).not.toHaveBeenCalled();
+  });
+
   it("deletes strictly older than the cutoff, so the boundary is KEPT", async () => {
     await runClubPostCleanup(NOW);
 
