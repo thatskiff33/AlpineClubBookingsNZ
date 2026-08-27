@@ -141,6 +141,14 @@ import {
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
 import { SELF_REMOVABLE_GUEST_BOOKING_STATUSES } from "@/lib/booking-guest-self-removal";
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
   fenceHostingPolicyFindMany,
   fenceMemberFindMany,
@@ -432,6 +440,7 @@ async function remove(
   },
 ) {
   return removeBookingGuestInTransaction({
+    today: CLUB_TODAY_DATE_ONLY,
     tx: tx as never,
     bookingId: BOOKING,
     guestId: params.guestId,
@@ -788,5 +797,90 @@ describe("a consent removal runs the SELF-REMOVAL gate set (D-14)", () => {
     // which is the point: the sweep never issues a card refund.
     expect(result.refundAmountCents).toBe(0);
     expect(result.priceDiffCents).toBeLessThan(0);
+  });
+});
+
+/**
+ * #3123 — the self-removal window, and why BOTH sides of it moved at once.
+ *
+ * `removeBookingGuestInTransaction` decides whether a member may take
+ * themselves off somebody else's booking with one comparison:
+ *
+ *     storedDateOnly(booking.checkIn) > today
+ *
+ * Before this migration it was
+ * `normalizeDateOnlyForTimeZone(booking.checkIn) > getTodayDateOnly()` — two
+ * different legacy helpers, both defaulting their zone to `APP_TIME_ZONE`, on
+ * one line. A1 and A2 both flagged it as the #3107 shape: for a club behind
+ * Greenwich the two projections CANCEL, so moving one side alone turns a
+ * working path into a broken one. They moved together.
+ *
+ * The two sides are now different KINDS, which is the whole point.
+ * `booking.checkIn` is a `@db.Date`, a stored calendar day, so it is decoded
+ * zone-free (`storedDateOnly`, `INV-DATE-026`) — sweeping it onto the club zone
+ * would have been the mistake #3113 exists to correct. `today` is a real
+ * question about the club's clock and is answered OUTSIDE this transaction by
+ * the caller (`INV-LOCK-004`), because this one holds the per-lodge capacity
+ * key.
+ *
+ * WHAT THIS BLOCK CAN AND CANNOT SEE. It discriminates the RIGHT operand
+ * exactly: the old code ignored any supplied day and read `APP_TIME_ZONE`,
+ * which under this file's unmocked environment is `Pacific/Auckland` and
+ * therefore 2026-07-01 at the frozen instant. The LEFT operand's old projection
+ * is invisible here, because Auckland is AHEAD of Greenwich and a UTC-midnight
+ * `@db.Date` projects onto itself there — that is precisely the "two errors
+ * cancel" property that made this pair dangerous. What covers the left side is
+ * structural and mechanical: `lock-bound-club-zone-outside-transaction.test.ts`
+ * fails if `normalizeDateOnlyForTimeZone(` or any club-zone reader reappears in
+ * this module at all, so the operand has no zone available to be wrong about.
+ */
+describe("the self-removal window is judged on the day the caller supplies (#3123)", () => {
+  const CLUB_DAY = new Date("2026-06-30T00:00:00.000Z");
+  const ENVIRONMENT_DAY = new Date("2026-07-01T00:00:00.000Z");
+  /** A stored lodge night: `@db.Date`, so UTC midnight and no zone at all. */
+  const CHECK_IN_1_JULY = new Date("2026-07-01T00:00:00.000Z");
+  const CHECK_OUT_3_JULY = new Date("2026-07-03T00:00:00.000Z");
+
+  function futureStayBooking() {
+    const base = makeBooking({ targetConsent: "CONFIRMED" });
+    return {
+      ...base,
+      checkIn: CHECK_IN_1_JULY,
+      checkOut: CHECK_OUT_3_JULY,
+    };
+  }
+
+  async function selfRemove(today: Date) {
+    const booking = futureStayBooking();
+    const tx = makeTx(booking as ReturnType<typeof makeBooking>);
+    return removeBookingGuestInTransaction({
+      today,
+      tx: tx as never,
+      bookingId: BOOKING,
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      actorRole: "MEMBER",
+    });
+  }
+
+  it("lets a member off a stay that is still future ON THE CLUB'S DAY", async () => {
+    // The club is on 30 June; the stay starts on 1 July, so it is future and the
+    // member may leave. The container says it is already 1 July, which makes the
+    // same stay "today" and refuses them — a member locked out of a booking they
+    // are entitled to leave, one whole day early, on every deployment behind
+    // Greenwich.
+    await expect(selfRemove(CLUB_DAY)).resolves.toMatchObject({
+      priceDiffCents: expect.any(Number),
+    });
+  });
+
+  it("refuses once the club's day has caught the stay up", async () => {
+    // The boundary itself, from the other side: same booking, same guest, only
+    // the supplied day moves. A `today` the function ignored could not do this.
+    await expect(selfRemove(ENVIRONMENT_DAY)).rejects.toMatchObject({
+      message:
+        "Only future booking guests can remove themselves from another member's booking",
+      status: 400,
+    });
   });
 });

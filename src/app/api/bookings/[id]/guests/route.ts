@@ -84,6 +84,8 @@ import {
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTime } from "@/lib/club-time/server";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   assertBookingNotQuotePriced,
   lockedNightPricesForGuest,
@@ -103,7 +105,7 @@ import {
   buildSameOwnerCoverageRefusalBody,
   hostingCoverageOverrideSchema,
 } from "@/lib/adult-member-hosting-same-owner";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   authorizationRoleFromAccessRoles,
   hasAdminAccess,
@@ -272,6 +274,21 @@ export async function POST(
   // out and only the decision stays in.
   const subscriptionLockoutMode = await resolveSubscriptionLockoutMode();
 
+  // #3123 — and the club's day, read HERE for exactly the same reason: the edit
+  // policy below runs after `acquireLodgeCapacityLock` and under the global
+  // cohort key, and resolving the club's persisted zone in there would be a
+  // `clubTimeSettings.findUnique` taking a second pooled connection while those
+  // locks are held (`INV-LOCK-004`). `getBookingEditPolicy` is a pure synchronous
+  // classifier and now takes the day as a value.
+  //
+  // ONE day answers three questions on this path, and they must agree: the edit
+  // policy's gate, and — inside the transaction — the promotion's validity
+  // window (`validateAndCalculatePromoDiscount`) and the reduction refund's
+  // settlement tier. Two reads could disagree across club midnight and let an
+  // add-guest edit be admitted under one day and priced under another.
+  const todayAtClub = (await clubTime()).today();
+  const clubTodayDateOnly = dateOnlyInstantOf(todayAtClub);
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
@@ -333,6 +350,7 @@ export async function POST(
         role: actorRole,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
+        today: clubTodayDateOnly,
       });
       if (!editPolicy.canModify) {
         throw new ApiError(
@@ -414,9 +432,12 @@ export async function POST(
         checkOut: booking.checkOut,
         guests: normalizedNewGuests,
         excludeBookingId: bookingId,
+        // Resolved above, before this transaction opened (`INV-LOCK-004`) — the
+        // same club day the edit policy and the removal window already read.
+        today: clubTodayDateOnly,
       });
 
-      const seasonYear = getSeasonYear(booking.checkIn);
+      const seasonYear = seasonYearOfStoredDate(booking.checkIn);
       await assertMembershipTypeBookingAllowed(tx, {
         ownerMemberId: booking.memberId,
         guests: [
@@ -695,6 +716,9 @@ export async function POST(
             // Everyone already benefiting keeps the discount; the new arrivals
             // are priced normally and named in the response.
             capOverflow: "coverExisting",
+            // #3123 — resolved above, before this transaction opened
+            // (`INV-LOCK-004`).
+            todayAtClub,
           }
         );
 
@@ -741,10 +765,7 @@ export async function POST(
         hasNonMembers &&
         (booking.status === "PENDING" || booking.status === "PAYMENT_PENDING")
       ) {
-        const holdPolicy = await getNonMemberHoldPolicy(
-          booking.checkIn,
-          booking.lodgeId,
-        );
+        const holdPolicy = await getNonMemberHoldPolicy(booking.checkIn, booking.lodgeId, tx);
         const holdDecision = calculateBookingHoldDecision({
           hasNonMembers,
           checkIn: booking.checkIn,

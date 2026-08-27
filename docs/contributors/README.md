@@ -55,6 +55,10 @@ in. Cite rules by id, never by line number.
 - [`../STATE_MACHINES.md`](../STATE_MACHINES.md) — every status lifecycle:
   booking, payment, membership, waitlist, bed allocation, email retry, Xero
   outbox, cron recovery, sign-in, and two dozen more.
+- [`../CLUB_TIME_KERNEL.md`](../CLUB_TIME_KERNEL.md) — the one place dates and
+  times turn into each other: the calendar-date / instant / club-local-scheduled
+  distinction, where the club's zone comes from, and why a wall time may not
+  exist or may exist twice.
 - [`../CAPACITY_MODEL.md`](../CAPACITY_MODEL.md) — how each lodge's bookable
   capacity is decided in every configuration.
 - [`../CONCURRENCY_AND_LOCKING.md`](../CONCURRENCY_AND_LOCKING.md) — the

@@ -23,8 +23,10 @@ import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
  *   human judge which record is more recent, where `photoUpdatedAt` is a recency
  *   signal by construction (`INV-DATE-019`).
  * - `dateOfBirth`, `joinedDate` and `lifeMemberDate` are CALENDAR DAYS — their
- *   writers mean to pin them to UTC midnight, and for a value stored that way
- *   the same truncation is exactly right (`INV-DATE-010`). Reading one through
+ *   writers mean to pin them to UTC midnight as an encoding and not a moment
+ *   (`INV-DATE-010`), and for a value stored that way the same truncation is
+ *   exactly right (`INV-DATE-019`'s first exact boundary, with `INV-DATE-026`;
+ *   those are the citation for a decode, not 010 — #3080). Reading one through
  *   the club-zone formatter would happen to agree in New Zealand — UTC midnight
  *   is midday NZ, still the same day — and be wrong by a day for any club
  *   sitting behind UTC.
@@ -41,21 +43,28 @@ import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
  * renderer is told which one it holds. The classification below is proved from
  * `prisma/schema.prisma` plus every write path, never from the field name.
  *
- * NONE of the merged Member date columns is `@db.Date` — they are all bare
- * `DateTime?`. The column type therefore settles nothing on this screen and the
- * writers are what decide, which is why each row below cites one.
+ * SINCE #2872 THE SCHEMA AGREES, AND THAT IS WORTH NOTING. All three calendar
+ * days below are now `DateTime? @db.Date`: the database holds them as a `date`
+ * with no time in it, so the column type settles what the writers used to have
+ * to prove on their own. The writer evidence stays on each row anyway, because
+ * it is what the migration was decided on and because a column type cannot tell
+ * you that `parseXeroCompanyNumberDate` once stored some rows a day early. The
+ * two instants below stay bare `DateTime`, which is the whole distinction this
+ * module exists to render.
  *
- * THIS IS NOT A SECOND OPINION ON THOSE COLUMNS. #2684's guard already keeps a
+ * THIS IS NOT A SECOND OPINION ON THOSE COLUMNS. #2684's guard keeps the
  * reviewed record of which bare-`DateTime` columns hold a calendar day
  * (`DATE_ONLY_IN_DATETIME_COLUMN`, in
  * `src/lib/__tests__/support/date-only-reviewed-fields.ts`), and all three of
- * the calendar days below were on it before #2860. The guard cannot reach this
- * screen — its scanner classifies a site by the field name written in the
- * argument, and here the values arrive as `unknown` with the field as a runtime
- * string — so the judgement has to be restated where the renderer can act on
- * it. `member-merge-field-kinds.test.ts` binds the two lists together: a
- * `calendarDay` here that is absent from that record, or an `instant` here that
- * appears on it, fails. Neither list can move without the other.
+ * the calendar days below were on it from #2860 until #2872 narrowed the
+ * columns and emptied it. The guard cannot reach this screen — its scanner
+ * classifies a site by the field name written in the argument, and here the
+ * values arrive as `unknown` with the field as a runtime string — so the
+ * judgement has to be restated where the renderer can act on it.
+ * `member-merge-field-kinds.test.ts` binds this list to BOTH that reviewed
+ * record and the schema's own `@db.Date` columns: a `calendarDay` here that
+ * neither settles, or an `instant` here that either one does, fails. None of the
+ * three can move without the others.
  */
 export type MergeFieldValueKind = "calendarDay" | "instant" | "plain";
 
@@ -72,7 +81,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // --- FILL_IF_BLANK_FIELDS ------------------------------------------------
   title: "plain", // `Title?` enum (schema.prisma:510)
   gender: "plain", // `Gender?` enum (schema.prisma:513)
-  // `DateTime?` (schema.prisma:514) but a calendar day in every writer: the
+  // `DateTime? @db.Date` (schema.prisma:514) since #2872, and a calendar day in
+  // every writer before that: the
   // admin services validate `^\d{4}-\d{2}-\d{2}$` and hand it to `new Date`,
   // which is UTC midnight (admin-member-detail-service.ts:1197,
   // admin-members-service.ts:1432); the member-facing routes call
@@ -88,7 +98,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // what is stored, and #2859 fixes what is stored.
   dateOfBirth: "calendarDay",
   occupation: "plain", // `String?` (schema.prisma:517)
-  // `DateTime?` (schema.prisma:573). Same calendar-day writers as `joinedDate`:
+  // `DateTime? @db.Date` (schema.prisma:573) since #2872. Same calendar-day
+  // writers as `joinedDate`:
   // `^\d{4}-\d{2}-\d{2}$` -> `new Date` (admin-members-service.ts:1465,
   // admin-member-detail-service.ts:1173) and `parseDateOnly` on import. It is
   // never stamped from a clock, and no other writer exists in src/, scripts/ or
@@ -135,7 +146,8 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // completion side effect (induction.ts:147), whose `completedAt` is
   // `new Date()` (induction.ts:222,284). A true instant.
   hutLeaderEligibleAt: "instant",
-  // `DateTime?` (schema.prisma:570). Admin-editable through a date input,
+  // `DateTime? @db.Date` (schema.prisma:570) since #2872. Admin-editable through
+  // a date input,
   // validated `^\d{4}-\d{2}-\d{2}$` and parsed to UTC midnight
   // (admin-member-detail-service.ts:1161, admin-members-service.ts:1458);
   // `parseDateOnly` on CSV import; and on the Xero backfill it is the first
@@ -145,14 +157,29 @@ export const MERGE_FIELD_VALUE_KINDS: Readonly<
   // On that last path, be precise about WHAT makes it safe, because "it is a
   // Xero date-only field" is a claim about Xero and the risk is in the PARSE.
   // `getContactFirstInvoiceDate` does `new Date(invoices[0].date)`
-  // (xero-contacts.ts:1282). That lands on UTC midnight because the SDK hands
-  // back a value carrying an explicit UTC offset — Xero's `/Date(…+0000)/` wire
-  // form — and `new Date` honours the offset. An offset-less
-  // `yyyy-MM-dd HH:mm:ss` string would instead parse as SERVER-LOCAL midnight,
-  // which is the identical hazard `parseXeroCompanyNumberDate` already realises
-  // on `dateOfBirth`. Whether that can happen here is **#2869**; either way the
-  // KIND is unaffected, because a wrongly-parsed start date is still a calendar
-  // day and is still fixed at the write.
+  // (xero-contacts.ts). The hazard being ruled out is the one
+  // `parseXeroCompanyNumberDate` already realised on `dateOfBirth`: an
+  // offset-less `yyyy-MM-dd HH:mm:ss` string parses as SERVER-LOCAL midnight,
+  // which east of UTC is the previous UTC day. Neither shape this value can
+  // take is that one, and the SDK's own types settle it:
+  //
+  //   * `Invoice.date` is typed `string` and documented "Date invoice was issued
+  //     - YYYY-MM-DD" (node_modules/xero-node/.../accounting/invoice.d.ts). A
+  //     bare `yyyy-MM-dd` takes ECMAScript's DATE-ONLY branch, which is UTC:
+  //     `new Date("2019-03-04")` is `2019-03-04T00:00:00.000Z`.
+  //   * If a tenant returns the Microsoft `/Date(1551657600000+0000)/` wire form
+  //     instead, that string never reaches `new Date` at all — xero-node's
+  //     `ObjectSerializer.deserialize` intercepts any `string`-typed field
+  //     beginning `/Date(` and converts it to a `Date` at that exact epoch
+  //     (accounting/models.js, `deserializeDateFormats`), which for a Xero date
+  //     field is UTC midnight. `new Date(aDate)` then clones it.
+  //
+  // Measured, because the obvious reading is wrong: `new Date("/Date(1551657600000+0000)/")`
+  // is an Invalid Date, so an earlier version of this note — which said the SDK
+  // hands back that wire form and `new Date` honours its offset — described a
+  // path that would have produced `NaN`, not a correct day. The conclusion
+  // survives; the reason did not. This no longer defers to #2869: the SDK's
+  // types and serialiser answer it here.
   joinedDate: "calendarDay",
 };
 
@@ -187,7 +214,8 @@ function toInstant(value: unknown): Date | null {
  * - `instant` reads the club's calendar day (`formatDateOnlyForTimeZone`,
  *   `INV-DATE-019`), which is correct in every zone.
  * - `calendarDay` reads the UTC-midnight encoding by truncation
- *   (`formatDateOnly`, `INV-DATE-010`), which is also correct in every zone —
+ *   (`formatDateOnly`, `INV-DATE-019`'s first exact boundary with
+ *   `INV-DATE-026`), which is also correct in every zone —
  *   and deliberately NOT routed through the club-zone formatter, which would
  *   agree in New Zealand and be a day wrong for a club behind UTC.
  *
@@ -195,14 +223,30 @@ function toInstant(value: unknown): Date | null {
  * `Date`s; both are accepted, and both take the same branch, so the two cannot
  * drift apart.
  *
- * `timeZone` follows the same convention as every helper in `date-only.ts`: it
- * defaults to the club's zone and production never passes it. It exists so the
- * two branches are DECIDABLE. New Zealand sits ahead of UTC, where truncation
- * and the club-zone formatter agree on a calendar day, so a test run only in the
- * club's own zone cannot fail the mutation that routes calendar days through the
- * club-zone formatter. Passing a zone behind UTC is what separates them — and it
- * is passed here rather than set via `TZ`, which would move `APP_TIME_ZONE`
- * itself (docs/TESTING.md rule 6).
+ * `timeZone` IS PASSED IN PRODUCTION, and the default is a fallback rather than
+ * the convention. The merge comparison screen
+ * (`src/app/(admin)/admin/members/[id]/merge/page.tsx`) hands all three of its
+ * columns the club's persisted zone. The `= APP_TIME_ZONE` default behind them is
+ * the ENVIRONMENT's zone, which is not the club's, and it survives only because
+ * this is a client component and the zone has to arrive as data — which is
+ * exactly the reason this module sits on `ENVIRONMENT_ZONE_ADAPTERS` in
+ * `eslint.config.mjs` with an entry saying so.
+ *
+ * THIS PARAGRAPH USED TO CLAIM the parameter "follows the same convention as
+ * every helper in `date-only.ts`: it defaults to the club's zone and production
+ * never passes it". Every part of that was wrong, and worth recording rather
+ * than quietly overwriting: those helpers have no zone defaults left at all
+ * (#3123 deleted the last six), `APP_TIME_ZONE` is the environment's answer and
+ * not the club's, and production passes this argument at every call site. A
+ * convention cited from ANOTHER module is the shape nothing checks — the other
+ * module changes, and the citation reads exactly as it always did.
+ *
+ * The parameter exists so the two branches are DECIDABLE. New Zealand sits ahead
+ * of UTC, where truncation and the club-zone formatter agree on a calendar day,
+ * so a test run only in the club's own zone cannot fail the mutation that routes
+ * calendar days through the club-zone formatter. Passing a zone behind UTC is
+ * what separates them — and it is passed rather than set via `TZ`, which would
+ * move `APP_TIME_ZONE` itself (docs/TESTING.md rule 6).
  *
  * EVERY BRANCH IS NAMED, INCLUDING THE IMPOSSIBLE ONE. `kind` is a closed union
  * to TypeScript and an arbitrary string at runtime: this is a client component,

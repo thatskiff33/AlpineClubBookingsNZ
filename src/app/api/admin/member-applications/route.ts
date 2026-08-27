@@ -4,7 +4,7 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { NOMINATION_AUTOMATIC_REMINDER_LIMIT } from "@/lib/nomination-token-policy";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
@@ -132,13 +132,23 @@ export async function GET(req: NextRequest) {
       applicantFirstName: application.applicantFirstName,
       applicantLastName: application.applicantLastName,
       applicantEmail: application.applicantEmail,
-      // NZ date-only (YYYY-MM-DD), not a full ISO datetime: the approval
-      // panel feeds this straight into the joining-fee preview endpoint,
-      // whose schema is strictly date-only (#1931 item 15). Formatting in the
-      // club time zone (rather than .toISOString().slice(0, 10)) is robust to
-      // a DOB stored as either UTC midnight or NZ midnight.
+      // Date-only (YYYY-MM-DD), not a full ISO datetime: the approval panel
+      // feeds this straight into the joining-fee preview endpoint, whose
+      // schema is strictly date-only (#1931 item 15).
+      //
+      // TRUNCATION, NOT THE CLUB-ZONE FORMATTER, AND THE TWO ARE NOT
+      // INTERCHANGEABLE (#2872; INV-DATE-019's first exact boundary, with
+      // INV-DATE-026 — not INV-DATE-010, which rules that the value is an
+      // encoding rather than a moment and is not the citation for a decode;
+      // #3080). `applicantDateOfBirth` is
+      // `@db.Date`: it holds a CALENDAR DAY, encoded as UTC midnight, and
+      // `formatDateOnly` reads back exactly the day that was stored from any
+      // zone on earth. `formatDateOnlyForTimeZone` — which this used to call —
+      // projects the value into the club's zone first. That happens to agree in
+      // New Zealand, which sits AHEAD of UTC, and reads back the PREVIOUS day
+      // for any club behind it. A birthday takes no timezone.
       applicantDateOfBirth: application.applicantDateOfBirth
-        ? formatDateOnlyForTimeZone(application.applicantDateOfBirth)
+        ? formatDateOnly(application.applicantDateOfBirth)
         : null,
       applicantPhone: application.applicantPhone,
       applicantAddress: parseApplicationAddress(application.applicantAddress),

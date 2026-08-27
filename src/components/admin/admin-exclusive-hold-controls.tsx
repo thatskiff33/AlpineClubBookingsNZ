@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/confirm-dialog";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /** Admin-only summary of a booking that overlaps this hold (issue #119). */
 export interface ExclusiveHoldConflict {
@@ -97,6 +97,20 @@ interface AdminExclusiveHoldControlsProps {
  * empty-lodge precondition (decision 1) — it is allowed over existing
  * overlapping bookings, which the officer resolves manually.
  */
+/**
+ * When the whole-lodge hold was placed.
+ *
+ * A real INSTANT, projected through the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. `instantDate` keeps the
+ * medium "16 Apr 2026" shape this line has always shown; only the zone's
+ * AUTHORITY moved. The zone reaches this browser as data through
+ * `ClubTimeProvider` - never from the viewer's own clock.
+ */
+function useHoldStampFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
+}
+
 export function AdminExclusiveHoldControls({
   bookingId,
   wholeLodgeHold,
@@ -105,6 +119,7 @@ export function AdminExclusiveHoldControls({
   holdsCapacity,
   conflicts = [],
 }: AdminExclusiveHoldControlsProps) {
+  const formatHoldStamp = useHoldStampFormatter();
   const router = useRouter();
   // Set/clear writes /api/admin/bookings/[id]/exclusive-hold (bookings area).
   // A view-only bookings admin sees the controls disabled (#1997).
@@ -215,7 +230,7 @@ export function AdminExclusiveHoldControls({
             The whole lodge is reserved for this group
             {heldByName ? ` by ${heldByName}` : ""}
             {wholeLodgeHoldAt
-              ? ` since ${formatNZDate(new Date(wholeLodgeHoldAt))}`
+              ? ` since ${formatHoldStamp(wholeLodgeHoldAt)}`
               : ""}
             . New admissions are blocked on these nights.
           </p>

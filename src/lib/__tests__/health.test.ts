@@ -297,6 +297,11 @@ describe("GET /api/admin/runtime-status", () => {
     expect(data).toEqual({
       cronEnabled: true,
       role: "cron-leader",
+      // CT-5 (#2869): the zone THIS process registered its scheduled jobs
+      // against. `null` here because a test process registers none — which is
+      // the same answer a web slot gives, and is why the admin health route
+      // treats it as "unknown" rather than as agreement.
+      clubTimeZone: null,
       environmentRole: "production",
     });
   });
@@ -351,8 +356,45 @@ describe("GET /api/deploy/runtime-status", () => {
     expect(data).toEqual({
       cronEnabled: false,
       role: "web-green",
+      // CT-5 (#2869): the cron leader reports the zone it pinned at boot here,
+      // so a web slot can describe the jobs in the zone they actually run on.
+      clubTimeZone: null,
       environmentRole: "production",
     });
+  });
+
+  it("reports the zone the scheduler pinned at boot, when this process is it", async () => {
+    // The channel the admin health page reads across containers. A cron leader
+    // that has registered its jobs answers with the zone they run on, so the
+    // page can say plainly when a timezone change is still awaiting a restart.
+    const { publishCronRuntimeZone, __resetCronRuntimeZoneForTests } =
+      await import("@/lib/cron-runtime-zone");
+    publishCronRuntimeZone("Pacific/Chatham");
+    try {
+      const { response, data } = await callDeployRuntimeStatusEndpoint({
+        envOverrides: {
+          APP_RUNTIME_ROLE: "cron-leader",
+          CRON_ENABLED: "true",
+          CRON_SECRET: "deploy-secret",
+          // Declared explicitly rather than inherited: #3071 added
+          // `environmentRole` to this exact-shape response, and a `toEqual`
+          // that leaned on the ambient process env would pass or fail by
+          // accident of the machine (ENV-SAFETY 1, #3034).
+          APP_ENVIRONMENT_ROLE: "production",
+        },
+        headers: { "x-cron-secret": "deploy-secret" },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data).toEqual({
+        cronEnabled: true,
+        role: "cron-leader",
+        clubTimeZone: "Pacific/Chatham",
+        environmentRole: "production",
+      });
+    } finally {
+      __resetCronRuntimeZoneForTests();
+    }
   });
 
   /*

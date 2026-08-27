@@ -295,7 +295,8 @@ from the screen a Booking Officer trusts.
 | Whether the age-tier rule requires a subscription | `getAgeTierSettingsStrict` (the pack's reader, threaded into the rules) | `age-tier.ts` |
 | Whether a member qualifies as the adult-member host | `participantQualifiesAsHost` | `policies/adult-member-hosting.ts` |
 | The status of the member's newest induction | `getInductionStatusForMember` | `induction.ts` |
-| Which membership SEASON a calendar date falls in | `getSeasonYear` | `utils.ts` |
+| Which membership SEASON a stored calendar day falls in | `seasonYearOfStoredDate` | `financial-year.ts` |
+| Which membership SEASON the club is in NOW | `clubSeasonYear` | `financial-year.ts` |
 | Whether a guest counts as operationally present | `OPERATIONALLY_PRESENT_GUEST_WHERE` | `member-guest-consent.ts` |
 | What a combination of consent columns means | `MEMBER_GUEST_CONSENT_SUB_STATES` | `member-guest-consent.ts` |
 | The eight-character booking reference | `formatBookingReference` | `booking-reference.ts` |
@@ -923,13 +924,14 @@ model reads as "there is no problem" — is the failure mode the whole
   `cancellation_request` — were each verified at a write site recording a
   membership-domain category.
 
-- **`Member."joinedDate"` and `"lifeMemberDate"` are not date-only columns.** Both
-  are naive `DateTime` timestamps, not the `@db.Date` lodge nights the rest of this
-  pack handles. The day reported is therefore the **UTC calendar day of a stored
-  instant**, and it can differ by one from the New Zealand day an admin screen
-  renders. Both are reported as calendar days because that is what they mean to an
-  officer, and `member_diagnostic_summary`'s scope line states plainly that they
-  are days taken from stored timestamps rather than lodge nights.
+- **`Member."joinedDate"` and `"lifeMemberDate"` are `@db.Date` columns**, as of
+  #2872, and so are `"dateOfBirth"` and the application and family-request dates
+  of birth beside them. Before that they were naive `DateTime` timestamps and the
+  day this pack reported was the UTC calendar day of a stored instant, which
+  could differ by one from the day an admin screen rendered. That gap is closed:
+  the column now holds a day, and the day it holds is the day reported. The pack
+  needed no query change, because `dateOnly()` is `to_char(col, 'YYYY-MM-DD')`,
+  which reads identically on a `date` and on a `timestamp` and converts no zone.
 
 Four further limits are worth stating in the same breath, because each is a place
 a model could otherwise narrate an absence as an answer:
@@ -1030,9 +1032,10 @@ The property holds by construction rather than by care, in four places:
   shipping a full ISO instant into a field a model would read as a moment and
   narrate with a time the booking does not have.
 
-The exception is stated rather than hidden: `Member."joinedDate"` and
-`"lifeMemberDate"` are naive timestamps, so their reported day is a UTC calendar
-day — see "What this pack cannot answer" above.
+There is no longer an exception to state here: since #2872
+`Member."joinedDate"` and `"lifeMemberDate"` are `@db.Date` columns holding a
+calendar day, so the day reported is the day stored — see "What this pack cannot
+answer" above for what that changed.
 
 ## Blockers and eligibility codes, in priority order
 
@@ -1357,12 +1360,25 @@ back — worth saying out loud, because an officer expecting an explicit type wi
 not find one.
 
 **The season year is not the calendar year, and `member_eligibility_state` reads
-the platform's own derivation of it.** `getSeasonYear` (`utils.ts`) is the one
-definition, shared by roughly forty call sites including the admin member detail
-screen this entry mirrors: a season starts on the first of the month **after** the
-club's financial year-end, which is April for the NZ 31-March convention and is
+the platform's own derivation of it.** That derivation lives in
+`financial-year.ts` and is **two functions, divided by temporal kind** since CT-4
+group F1 (#2870): `clubSeasonYear(zone, clock?)` for "which season is the club in
+now", which needs the club's persisted timezone, and `seasonYearOfStoredDate(value)`
+for a stored `@db.Date` calendar day, which takes no timezone at all. Both go
+through one rule: a season starts on the first of the month **after** the club's
+financial year-end, which is April for the NZ 31-March convention and is
 club-configurable through `financialYearEndMonth`. So from 1 January until the
 season starts, the season year is the **previous** calendar year.
+
+They replaced a single `getSeasonYear(date)` in `utils.ts` that read its argument's
+**host-local** month, so it answered from the container rather than the club — and
+because it read the argument that way, no call site could correct itself. **This
+pack's own answer depended on where it ran**, and its two entries were asking one
+question two different ways: `booking_block_state` about a booking's stored
+check-in, `member_eligibility_state` about "now". Those are different temporal
+kinds, which is what forced the host-local read; they are now
+`resolveStoredNightSeasonYear` and `resolveStoredClubSeasonYear`, sharing one strict
+stored year-end resolution so the two entries still cannot disagree.
 
 This entry computed it as the calendar year until #2679's review, which was right
 for nine months of every year and wrong for the other three — and the three did not
@@ -1384,8 +1400,8 @@ the boundary, including a club on a December year-end.
 
 #### The season comes from stored state, never from the process cache
 
-`getSeasonYear` is the platform's one derivation, and it reads the year-end month
-**cached in the process** by `refreshFinancialYearConfig()`. Three product paths
+The shared derivation defaults its year-end month to the value **cached in the
+process** by `refreshFinancialYearConfig()`. Three product paths
 call that — the membership-lockout settings write, the finance dashboard page and
 the subscription-eligibility gate — and **no diagnostics path does**. So a
 diagnostics read that let the rules derive their own season was reading, on a cold
@@ -1395,8 +1411,9 @@ by the wrong `(memberId, seasonYear)` and report a settled member as unfinancial
 an unfinancial member as settled, depending on which side of the real season start
 the nights fall.
 
-Both entries therefore resolve the season themselves, through one helper, from
-`getStoredFinancialYearResolution`:
+Both entries therefore resolve the season themselves, from
+`getStoredFinancialYearResolution` — through one shared year-end resolution and a
+function per temporal kind:
 
 - a stored override is authoritative;
 - March is authoritative only when persisted state proves no Xero tenant is
@@ -1405,6 +1422,15 @@ Both entries therefore resolve the season themselves, through one helper, from
   the message names the remedy (set the override in membership settings), because
   this pack calls no provider and will not guess;
 - a rejected settings read propagates rather than becoming an observed default.
+
+The club's **timezone** half of `member_eligibility_state`'s answer comes from
+stored state the same way and through the same transaction (#2870): the entry reads
+`ClubTimeSettings` with the `tx` its seam opened, so the read stays inside
+`SET TRANSACTION READ ONLY`, the snapshot and the 5s statement timeout, and it
+**refuses** rather than falling back when no usable zone is stored. A default there
+would report a member's subscription state for a season that is not the club's, with
+an observed-at stamp that makes it look freshly measured — the same reasoning that
+makes an unresolvable year-end month `evidence_unavailable`.
 
 The resolved season is then **passed into** the canonical evaluators — a new
 optional `seasonYear` on `evaluatePersistedBookingNonHostingPolicyViolations`,

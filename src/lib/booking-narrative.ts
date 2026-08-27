@@ -5,18 +5,43 @@
  *
  * Given a booking and its durable BookingEvents (plus, on the payment-link
  * page, the link's own expiry/used/revoked state), it returns a state and a
- * rich, plain-language sentence with real amounts and NZT dates, and a concrete
- * self-service next step — never a generic "contact the booking officer"
- * fallback.
+ * rich, plain-language sentence with real amounts and club-time dates, and a
+ * concrete self-service next step — never a generic "contact the booking
+ * officer" fallback.
  *
  * This module is pure: it reads only the facts handed to it (no database, no
- * `now()` it cannot override) so it is trivially testable and produces the same
- * wording wherever it runs. Money is formatted with `formatCents`, dates with
- * `formatNZDate` (NZT), never raw UTC.
+ * `now()` it cannot override, and no timezone it reads for itself) so it is
+ * trivially testable and produces the same wording wherever it runs. That
+ * purity is load-bearing rather than stylistic: `payment-link.ts` is one of the
+ * two callers and is reachable from `src/instrumentation.node.ts`, so
+ * `server-only` — which is what reading the persisted zone here would drag in —
+ * would kill it at import.
+ *
+ * ## Two kinds of date, in the same sentence (#3123)
+ *
+ * Money is formatted with `formatCents`. Dates come in two kinds and the file
+ * treats them differently on purpose:
+ *
+ * - A **lodge night** (`checkIn` / `checkOut`) is a stored `@db.Date` calendar
+ *   day. 1 August 2026 is 1 August everywhere on earth, so it takes **no zone
+ *   at all** — `storedNight` decodes the encoding and renders it zone-free, and
+ *   `dateRange` therefore has no `club` argument. That absence is the point.
+ * - An **event stamp** (`BookingEvent.occurredAt`) is a real moment with no
+ *   calendar day of its own, so it is projected through the club's persisted
+ *   zone via `club.instantDate`. It used to go through `formatNZDate`, which
+ *   read the container's `APP_TIME_ZONE`: for a club behind Greenwich that told
+ *   a member the wrong day about their own payment.
+ *
+ * The binding arrives as data on the input (`club`), supplied by the caller.
  */
 import { BookingEventType } from "@prisma/client";
 import { formatCents } from "@/lib/utils";
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  requireStoredCalendarDay,
+  type BoundClubTime,
+} from "@/lib/club-time";
 import type {
   CancellationEventSnapshot,
   BumpEventSnapshot,
@@ -73,6 +98,13 @@ interface NarrativeLinkState {
 export interface ResolveBookingNarrativeInput {
   booking: NarrativeBooking;
   events: NarrativeEvent[];
+  /**
+   * The club's persisted timezone, bound. Supplied by the caller because this
+   * module is pure — see the file header. Every real instant this resolver
+   * renders (payment, cancellation, settlement, release stamps) is read in it;
+   * the lodge nights are calendar days and are not.
+   */
+  club: BoundClubTime;
   /** The payment link's own state, when resolving for `/pay/[token]`. */
   link?: NarrativeLinkState | null;
   now?: Date;
@@ -95,8 +127,31 @@ function sortedByOccurredAt(events: NarrativeEvent[]): NarrativeEvent[] {
   );
 }
 
+/**
+ * One lodge night, rendered from its stored `@db.Date` encoding — **zone-free**.
+ *
+ * `requireStoredCalendarDay` is what makes a mis-wired real timestamp throw here
+ * instead of rendering a plausible wrong night: for a club east of Greenwich a
+ * `createdAt` flooded through this path would be silently right for most of the
+ * day and silently wrong for the rest, which is the hardest kind of wrong to
+ * notice. Same composition as `emailCalendarDay`, deliberately.
+ */
+function storedNight(value: Date): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "A booking narrative's lodge night",
+        instead:
+          "A real timestamp rendered as a bare day is a projection: use club.instantDate, " +
+          "which reads it in the club's persisted zone.",
+      }),
+    ),
+  );
+}
+
+/** The stay window. Takes no `club` binding, because a calendar day has no zone. */
 function dateRange(booking: NarrativeBooking): string {
-  return `${formatNZDate(booking.checkIn)} to ${formatNZDate(booking.checkOut)}`;
+  return `${storedNight(booking.checkIn)} to ${storedNight(booking.checkOut)}`;
 }
 
 function asCancellationSnapshot(
@@ -117,7 +172,8 @@ function asBumpSnapshot(value: unknown): BumpEventSnapshot | null {
 
 function buildPaidNarrative(
   booking: NarrativeBooking,
-  events: NarrativeEvent[]
+  events: NarrativeEvent[],
+  club: BoundClubTime
 ): BookingNarrative {
   const paidEvent =
     events.find(
@@ -130,7 +186,7 @@ function buildPaidNarrative(
     return {
       state: "paid",
       headline: "Payment received",
-      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents)} on ${formatNZDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
+      message: `Thanks ${booking.firstName} — we've received your payment of ${formatCents(amountCents)} on ${club.instantDate(paidEvent.occurredAt)}. Your stay from ${range} is confirmed.`,
       nextStep:
         "Nothing more to do — we'll see you at the lodge. You can view the full booking details any time from your bookings page.",
     };
@@ -149,7 +205,8 @@ function buildCancelledPostPaymentNarrative(
   booking: NarrativeBooking,
   paidEvent: NarrativeEvent,
   cancelEvent: NarrativeEvent | undefined,
-  settlementEvent: NarrativeEvent | undefined
+  settlementEvent: NarrativeEvent | undefined,
+  club: BoundClubTime
 ): BookingNarrative {
   const snapshot = asCancellationSnapshot(cancelEvent?.snapshot);
   const paidAmountCents = paidEvent.amountCents ?? snapshot?.paidAmountCents ?? 0;
@@ -159,15 +216,15 @@ function buildCancelledPostPaymentNarrative(
     snapshot?.retainedAmountCents ??
     Math.max(paidAmountCents - settledAmountCents, 0);
 
-  const paidOn = formatNZDate(paidEvent.occurredAt);
+  const paidOn = club.instantDate(paidEvent.occurredAt);
   const cancelOn = cancelEvent
-    ? formatNZDate(cancelEvent.occurredAt)
+    ? club.instantDate(cancelEvent.occurredAt)
     : paidOn;
   const opening = `You cancelled this booking on ${cancelOn} after paying ${formatCents(paidAmountCents)} on ${paidOn}.`;
 
   let settlementClause: string;
   if (settledAmountCents > 0 && settlementEvent) {
-    const settledOn = formatNZDate(settlementEvent.occurredAt);
+    const settledOn = club.instantDate(settlementEvent.occurredAt);
     const verb =
       settlementEvent.type === BookingEventType.CREDITED
         ? "added to your account credit"
@@ -200,7 +257,8 @@ function buildCancelledPostPaymentNarrative(
 
 function buildCancelledNarrative(
   booking: NarrativeBooking,
-  events: NarrativeEvent[]
+  events: NarrativeEvent[],
+  club: BoundClubTime
 ): BookingNarrative {
   // A booking held for admin review that was rejected is cancelled via the
   // shared cancel flow; surface it as "declined" with the admin's reason.
@@ -236,7 +294,7 @@ function buildCancelledNarrative(
     const bump = asBumpSnapshot(bumpEvent?.snapshot);
     const releasedAt = bumpEvent?.occurredAt ?? cancelEvent?.occurredAt;
     const releasedClause = releasedAt
-      ? ` on ${formatNZDate(releasedAt)}`
+      ? ` on ${club.instantDate(releasedAt)}`
       : "";
     const message = bump?.flagged
       ? `These dates filled up before your guests could be confirmed. Because you asked us to only hold the booking if your whole party could come, it was released${releasedClause}. No payment was taken.`
@@ -270,11 +328,14 @@ function buildCancelledNarrative(
       booking,
       paidEvent,
       cancelEvent,
-      settlementEvent
+      settlementEvent,
+      club
     );
   }
 
-  const cancelOn = cancelEvent ? formatNZDate(cancelEvent.occurredAt) : null;
+  const cancelOn = cancelEvent
+    ? club.instantDate(cancelEvent.occurredAt)
+    : null;
   return {
     state: "cancelled_pre_payment",
     headline: "Booking cancelled",
@@ -326,6 +387,7 @@ function buildPayableNarrative(
 export function resolveBookingNarrative({
   booking,
   events,
+  club,
   link,
   now = new Date(),
 }: ResolveBookingNarrativeInput): BookingNarrative {
@@ -333,16 +395,16 @@ export function resolveBookingNarrative({
   const status = booking.status;
 
   if (status === "PAID" || status === "COMPLETED") {
-    return buildPaidNarrative(booking, ordered);
+    return buildPaidNarrative(booking, ordered, club);
   }
 
   if (status === "CANCELLED" || status === "BUMPED") {
-    return buildCancelledNarrative(booking, ordered);
+    return buildCancelledNarrative(booking, ordered, club);
   }
 
   if (status === "AWAITING_REVIEW") {
     if (booking.adminReviewStatus === "REJECTED") {
-      return buildCancelledNarrative(booking, ordered);
+      return buildCancelledNarrative(booking, ordered, club);
     }
     return {
       state: "under_review",

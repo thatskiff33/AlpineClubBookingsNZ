@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
-import { formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { lodgeNullTolerantScope } from "./lodges";
 import { acquireLodgeCapacityLock } from "./lodge-capacity-lock";
 import { findHutLeaderOverlapRefusal } from "./hut-leader-overlap-guard";
@@ -43,7 +45,7 @@ export async function autoAssignHutLeaders(): Promise<{
   }
 
   const lookAheadDays = await loadHutLeaderLookaheadDays();
-  const today = getTodayDateOnly();
+  const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
   const endDate = addDays(today, lookAheadDays);
   const days = eachDayOfInterval({ start: today, end: endDate });
 
@@ -84,9 +86,6 @@ export async function autoAssignHutLeaders(): Promise<{
       // Find distinct adult members with PAID bookings for this date at this
       // lodge. Scoped, so the "exactly one adult member" test below counts the
       // people actually at THIS lodge rather than pooling every lodge's guests.
-      const nextDay = new Date(day);
-      nextDay.setDate(nextDay.getDate() + 1);
-
       const bookingsForDate = await prisma.booking.findMany({
         where: {
           status: "PAID",

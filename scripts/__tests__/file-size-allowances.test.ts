@@ -143,15 +143,42 @@ describe("readSizeAllowances", () => {
     );
   });
 
-  it("refuses two allowances for one file, because ambiguity is how the ledger shipped a wrong ceiling", () => {
+  it("refuses two entries for one file in ONE allowance file, because ambiguity is how the ledger shipped a wrong ceiling", () => {
     const root = newTree({
-      "2980-a.md": "file: src/lib/a.ts\nlines: 1200\nreason: the first branch's view of this file's length.\n",
-      "2981-b.md": "file: src/lib/a.ts\nlines: 1300\nreason: the second branch's view of this file's length.\n",
+      "2980-a.md":
+        "file: src/lib/a.ts\nlines: 1200\nreason: the first entry's view of this file's length.\n" +
+        "file: src/lib/a.ts\nlines: 1300\nreason: the second entry's view of this file's length.\n",
     });
     const { problems } = readSizeAllowances(root);
     expect(problems.map((p) => p.problem).join("\n")).toContain(
       "already has an allowance in",
     );
+  });
+
+  it("does NOT refuse two allowance FILES naming one file, because only the diff knows which are live", () => {
+    /*
+      The reader sees the whole directory, merged declarations included, and a
+      merged allowance is inert — `evaluateComputedRatchet` applies one only when
+      its own file is in the change's diff. Refusing the pair here contradicted
+      that and blocked the SECOND pull request ever to grow a file, with an error
+      naming a path the author did not have in their diff.
+
+      So "one file, one allowance" is asked where liveness is known. The
+      same-change case is still refused, end to end, in
+      `file-size-budget.test.ts` → "two allowances for one file in the SAME
+      change still fail"; this asserts only that the READER no longer pre-empts
+      that judgement.
+    */
+    const root = newTree({
+      "2870-merged.md": "file: src/lib/a.ts\nlines: 1200\nreason: a declaration that merged a month ago.\n",
+      "2981-new.md": "file: src/lib/a.ts\nlines: 1300\nreason: this change's own view of the same file.\n",
+    });
+    const { allowances, problems } = readSizeAllowances(root);
+    expect(problems).toEqual([]);
+    expect(allowances.map((a) => `${a.source} ${a.file} ${a.lines}`)).toEqual([
+      `${ALLOWANCE_DIR}/2870-merged.md src/lib/a.ts 1200`,
+      `${ALLOWANCE_DIR}/2981-new.md src/lib/a.ts 1300`,
+    ]);
   });
 
   it("refuses a field that appears before any file, rather than guessing which file it meant", () => {

@@ -1,6 +1,8 @@
 "use client";
 
-import { formatNZInstantOrRaw } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import type { BoundClubTime } from "@/lib/club-time";
+import { formatPayloadInstantDateTimeOrRaw } from "@/lib/payload-instant";
 
 /**
  * What a copy has done to the club's Xero contacts, on `/admin/environment`
@@ -104,7 +106,10 @@ type Props = {
  * IT NAMES NO EMAIL ADDRESS, and cannot: the payload carries counts, instants,
  * member names and Xero contact ids.
  */
-export function describeXeroContainment(state: Props): {
+export function describeXeroContainment(
+  club: BoundClubTime,
+  state: Props,
+): {
   headline: string;
   detail: string;
 } {
@@ -138,10 +143,10 @@ export function describeXeroContainment(state: Props): {
     };
   }
   const lastChecked = containment.mostRecentAt
-    ? ` Last checked ${formatNZInstantOrRaw(containment.mostRecentAt)}.`
+    ? ` Last checked ${formatPayloadInstantDateTimeOrRaw(club, containment.mostRecentAt)}.`
     : "";
   const since = containment.firstContainedAt
-    ? ` The first was ${formatNZInstantOrRaw(containment.firstContainedAt)}.`
+    ? ` The first was ${formatPayloadInstantDateTimeOrRaw(club, containment.firstContainedAt)}.`
     : "";
   const contacts = `${containment.containedContacts} Xero contact${containment.containedContacts === 1 ? "" : "s"}`;
   if (containment.rewrittenContacts > 0) {
@@ -152,7 +157,7 @@ export function describeXeroContainment(state: Props): {
       June to whenever the copy last ran anything at all.
     */
     const lastRewritten = containment.lastRewrittenAt
-      ? ` The most recent was ${formatNZInstantOrRaw(containment.lastRewrittenAt)}.`
+      ? ` The most recent was ${formatPayloadInstantDateTimeOrRaw(club, containment.lastRewrittenAt)}.`
       : "";
     return {
       headline: `${containment.rewrittenContacts} real email address${containment.rewrittenContacts === 1 ? "" : "es"} replaced on ${contacts}`,
@@ -202,8 +207,18 @@ export function xeroContainmentRepairSteps(): string[] {
  * live site.
  */
 export function EnvironmentXeroContainment(props: Props) {
+  /*
+    THE CLUB'S PERSISTED ZONE, NOT THE OPERATOR'S BROWSER (#3123, INV-CONFIG-002).
+    Every stamp on this block is a real INSTANT — when a contact was last
+    checked, when its address was replaced — so it has no civil date until a
+    zone is chosen, and the only right answer is the club's configured one.
+    `useClubTime` reads it from `ClubTimeProvider`, mounted by
+    `(admin)/layout.tsx`; the hook throws rather than guessing if it is missing.
+    Called before the early return so the hook order is unconditional.
+  */
+  const club = useClubTime();
   if (props.role !== "NON_PRODUCTION" && props.role !== "UNKNOWN") return null;
-  const described = describeXeroContainment(props);
+  const described = describeXeroContainment(club, props);
   const containment = props.containment;
   const listed = containment.available ? containment.rewritten : [];
   return (
@@ -256,7 +271,7 @@ export function EnvironmentXeroContainment(props: Props) {
                   " — no member on this installation points at this contact any more"
                 )}
                 {contact.rewrittenAt
-                  ? ` — replaced ${formatNZInstantOrRaw(contact.rewrittenAt)}`
+                  ? ` — replaced ${formatPayloadInstantDateTimeOrRaw(club, contact.rewrittenAt)}`
                   : null}
               </li>
             ))}

@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
 
-import { formatDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  requireStoredCalendarDay,
+} from "@/lib/club-time";
 import logger from "@/lib/logger";
 
 type LinkageDb = Pick<Prisma.TransactionClient, "bookingChangeRequest">;
@@ -93,9 +96,27 @@ export async function linkModificationToOutstandingChangeRequest(
   },
 ): Promise<string | null> {
   try {
+    // The applied dates are stored `@db.Date` lodge nights (`Booking.checkIn` /
+    // `checkOut`, `prisma/schema.prisma:1662-1663`), and the values they are
+    // matched against are the `yyyy-MM-dd` strings the member submitted. A
+    // calendar day takes no timezone at all, so the day is DECODED from the
+    // column's UTC-midnight encoding rather than projected through one: a
+    // projection reads the previous day for any club behind Greenwich and would
+    // silently stop an approved date request from ever linking (#3123,
+    // INV-DATE-026).
     const applied = {
-      checkIn: formatDateOnly(normalizeDateOnlyForTimeZone(appliedCheckIn)),
-      checkOut: formatDateOnly(normalizeDateOnlyForTimeZone(appliedCheckOut)),
+      checkIn: calendarDateOfDateOnlyInstant(
+        requireStoredCalendarDay(appliedCheckIn, {
+          subject: "The applied check-in",
+          instead: "Pass the booking's stored @db.Date checkIn.",
+        }),
+      ),
+      checkOut: calendarDateOfDateOnlyInstant(
+        requireStoredCalendarDay(appliedCheckOut, {
+          subject: "The applied check-out",
+          instead: "Pass the booking's stored @db.Date checkOut.",
+        }),
+      ),
     };
 
     const candidates = await db.bookingChangeRequest.findMany({

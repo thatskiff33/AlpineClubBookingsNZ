@@ -5,14 +5,11 @@ import {
   waitlistPlaceRestoredTemplate,
 } from "@/lib/email-templates/waitlist";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import {
-  formatNZDate,
-  formatNZDateTime,
-} from "../nzst-date";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { sendEmail } from "./core";
 import { bookingOwnerEmailContext } from "@/lib/booking-email-contract";
 import { renderEmailHtml } from "@/lib/email-theme";
+import { emailCalendarDay, emailClubDateTime } from "@/lib/email-templates-club-time";
 
 // ---- Waitlist emails ----
 
@@ -46,8 +43,8 @@ export async function sendWaitlistConfirmationEmail(
     templateName: "waitlist-confirmation",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount,
       position,
     },
@@ -106,12 +103,12 @@ export async function sendWaitlistOfferEmail(
     templateName: "waitlist-offer",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       guestCount,
       // The price the member pays on confirmation (repriced at offer time, #1035).
       price: formatMoneyCents(priceCents),
-      expiresAt: formatNZDateTime(expiresAt),
+      expiresAt: emailClubDateTime(expiresAt),
       bookingId,
       ...(crossLodgeOffer
         ? { offeredLodgeName: crossLodgeOffer.lodgeName }
@@ -147,8 +144,8 @@ export async function sendWaitlistOfferExpiredEmail(
     templateName: "waitlist-offer-expired",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       position,
     },
     lodgeId,
@@ -188,8 +185,8 @@ export async function sendWaitlistPlaceRestoredEmail(
     templateName: "waitlist-place-restored",
     templateData: {
       firstName,
-      checkIn: formatNZDate(checkIn),
-      checkOut: formatNZDate(checkOut),
+      checkIn: emailCalendarDay(checkIn),
+      checkOut: emailCalendarDay(checkOut),
       position,
     },
     lodgeId,

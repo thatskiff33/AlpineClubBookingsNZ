@@ -46,7 +46,7 @@ import {
   AdminViewOnlySectionBanner,
   ViewOnlyActionButton,
 } from "@/components/admin/view-only-action";
-import { formatNZDate } from "@/lib/nzst-date";
+import { formatClubDate, parseCalendarDate } from "@/lib/club-time";
 
 type ApiBanner = {
   id: string;
@@ -102,16 +102,23 @@ const GROUPS = [
   },
 ] as const;
 
-// Format a YYYY-MM-DD date-only value for display, e.g. "5 Jul 2026".
+/**
+ * A banner's display window is a CALENDAR DAY, e.g. "5 Jul 2026", and takes no
+ * timezone at all (CT-4, #2870; INV-DATE-010).
+ *
+ * THE COMMENT THIS REPLACES SAID THE QUIET PART: "the value is pinned to UTC
+ * midnight, and NZ is UTC+12/+13, so reading it back in club time lands on the
+ * same calendar day". That reasoning holds only while the club is east of
+ * Greenwich. The kernel's calendar-date formatter pins UTC over the same
+ * encoding, which is the identity for EVERY club, so the rendered string is
+ * unchanged here and correct for a club the old argument did not cover.
+ */
 function formatDateOnly(value: string): string {
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) {
+  const day = parseCalendarDate(value);
+  if (day === null) {
     return value;
   }
-  // The value is already pinned to UTC midnight above, and NZ is UTC+12/+13, so
-  // reading it back in club time lands on the same calendar day — the rendered
-  // string is unchanged by the move to the shared helper (#2264).
-  return formatNZDate(parsed);
+  return formatClubDate(day);
 }
 
 function excerpt(message: string, maxLength = 160): string {

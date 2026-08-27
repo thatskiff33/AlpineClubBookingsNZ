@@ -3,9 +3,12 @@ import { prisma } from "./prisma";
 import {
   computeAgeTierWithSettings,
   getAgeTierSettings,
-  getSeasonStartDate,
+  getSeasonStartCalendarDate,
 } from "./age-tier";
-import { getSeasonYear } from "./utils";
+import { dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "./club-time-zone-runtime";
+import { clubSeasonYear } from "./financial-year";
+import { dateOfBirthPrefilterBoundForMinAge } from "./date-of-birth-prefilter";
 import {
   sendAgeUpInvitationEmail,
   sendAgeUpParentEmailHandoffEmail,
@@ -306,8 +309,12 @@ export async function checkAgeUpMembers(): Promise<{
   skipped: number;
   failed: number;
 }> {
-  const seasonYear = getSeasonYear();
-  const seasonStart = getSeasonStartDate(seasonYear);
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
+  // ONE season-start calendar day for the prefilter AND the authority (#3082).
+  // The bound below and `computeAgeTierWithSettings` further down used to read
+  // two different frames off the same value; they now read the same day.
+  const seasonStartDay = getSeasonStartCalendarDate(seasonYear);
+  const seasonStart = dateOnlyInstantOf(seasonStartDay);
   const ageTierSettings = await getAgeTierSettings();
   const adultAgeTierSetting = ageTierSettings.find(
     (setting) => setting.tier === "ADULT"
@@ -316,34 +323,17 @@ export async function checkAgeUpMembers(): Promise<{
   const targetAgeTierMinAge = adultAgeTierSetting?.minAge ?? 18;
 
   // Find non-login members whose DOB puts them in the ADULT tier on season start.
-  // We compute the cutoff DOB from the configured ADULT minimum age.
-  const cutoffDate = new Date(seasonStart);
-  cutoffDate.setFullYear(cutoffDate.getFullYear() - targetAgeTierMinAge);
-
-  // #2859: this comparison is instant-against-instant, and the two sides are
-  // encoded differently. `cutoffDate` derives from `getSeasonStartDate`, which
-  // is `new Date(year, month, 1)` — LOCAL midnight, so `(D-1)T11:00Z` or
-  // `(D-1)T12:00Z` under the `TZ=Pacific/Auckland` pin. A stored date of birth
-  // is a date-only value at UTC MIDNIGHT (INV-DATE-024). A member born on
-  // exactly the season-start anniversary therefore sits a few hours AFTER the
-  // cutoff instant and was filtered out here, one season late for their own
-  // age-up — the same off-by-one INV-DATE-013 names, on the one boundary where
-  // it decides a tier.
-  //
-  // This is not a defect #2859 introduced, and it is not rare: it was already
-  // reachable for EVERY correctly stored date of birth, which on the live site
-  // is 365 of the 375 members who hold one. (An earlier census reported the
-  // reverse — 364 wrong, 10 right — from a query that applied `AT TIME ZONE` to
-  // this naive column and read it back through the session zone; it is
-  // retracted. The ten rows #2859's migration repairs are re-encoded into this
-  // same correct shape, so they join the exposure rather than create it.)
-  //
-  // So the prefilter is widened to the END of the cutoff calendar day. Widening
-  // is the safe direction: this query only proposes candidates, and
-  // `computeAgeTierWithSettings` below is the authority that promotes or skips
-  // each one.
-  const cutoffWindowEnd = new Date(cutoffDate);
-  cutoffWindowEnd.setDate(cutoffWindowEnd.getDate() + 1);
+  // The bound comes from the configured ADULT minimum age and is EXACT since
+  // #3082 — it admits precisely the members whose age reaches that minimum, not a
+  // widened superset, because the bound and the authority below now read one
+  // calendar frame. `dateOfBirthPrefilterBoundForMinAge` carries the whole
+  // derivation and the three off-by-ones (#2859, #2872, #3082) that shaped it,
+  // including why `computeAgeTierWithSettings` below — not this query — remains
+  // the authority on who is actually promoted.
+  const cutoffWindowEnd = dateOfBirthPrefilterBoundForMinAge(
+    seasonStartDay,
+    targetAgeTierMinAge,
+  );
 
   const candidates = await prisma.member.findMany({
     where: {

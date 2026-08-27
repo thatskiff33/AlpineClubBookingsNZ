@@ -1,6 +1,12 @@
 import "server-only";
 
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  formatClubInstantDate,
+  type ClubTimeZone,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { applyXeroOrgShortCode, buildXeroObjectUrl } from "@/lib/xero-links";
@@ -24,9 +30,24 @@ interface XeroRecordScope {
   backLink: XeroRecordBackLink | null
 }
 
-function formatDisplayDate(value: Date | string): string {
-  const date = value instanceof Date ? value : new Date(value);
-  return formatNZDate(date);
+/**
+ * A `@db.Date` lodge night as its own calendar day. NO ZONE, deliberately: a
+ * calendar day is never timezone-converted (CT-5, #2869; INV-DATE-010).
+ */
+function formatStayDate(value: Date | string): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(value instanceof Date ? value : new Date(value)),
+  );
+}
+
+/**
+ * A real INSTANT as the club calendar day it fell on. The zone is required and
+ * comes from the persisted club setting — one formatter for two different
+ * concepts is how a `submittedAt` came to be rendered by the same helper as a
+ * lodge night (INV-DATE-019).
+ */
+function formatInstantDate(value: Date, zone: ClubTimeZone): string {
+  return formatClubInstantDate(value, zone);
 }
 
 function formatStatusLabel(value: string): string {
@@ -170,7 +191,7 @@ async function getPaymentScope(localId: string): Promise<XeroRecordScope | null>
   const relatedBooking = createRecordReference(
     "Booking",
     payment.booking.id,
-    `Booking ${formatDisplayDate(payment.booking.checkIn)} - ${formatDisplayDate(payment.booking.checkOut)}`,
+    `Booking ${formatStayDate(payment.booking.checkIn)} - ${formatStayDate(payment.booking.checkOut)}`,
     "Booking"
   );
 
@@ -222,7 +243,7 @@ async function getBookingScope(localId: string): Promise<XeroRecordScope | null>
   const rootRecord = createRecordReference(
     "Booking",
     booking.id,
-    `${booking.member.firstName} ${booking.member.lastName} (${formatDisplayDate(booking.checkIn)} - ${formatDisplayDate(booking.checkOut)})`,
+    `${booking.member.firstName} ${booking.member.lastName} (${formatStayDate(booking.checkIn)} - ${formatStayDate(booking.checkOut)})`,
     "Booking"
   );
   const scopeRecords = [rootRecord];
@@ -312,7 +333,7 @@ async function getBookingModificationScope(localId: string): Promise<XeroRecordS
     createRecordReference(
       "Booking",
       modification.booking.id,
-      `Booking ${formatDisplayDate(modification.booking.checkIn)} - ${formatDisplayDate(modification.booking.checkOut)}`,
+      `Booking ${formatStayDate(modification.booking.checkIn)} - ${formatStayDate(modification.booking.checkOut)}`,
       "Booking"
     ),
   ];
@@ -415,7 +436,7 @@ async function getMembershipCancellationRequestScope(localId: string): Promise<X
   const rootRecord = createRecordReference(
     "MembershipCancellationRequest",
     request.id,
-    `Membership cancellation ${formatDisplayDate(request.submittedAt)} (${formatStatusLabel(request.status)})`,
+    `Membership cancellation ${formatInstantDate(request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(request.status)})`,
     "Membership Cancellation Request",
   );
   const participantRecords = request.participants.map((participant) =>
@@ -483,7 +504,7 @@ async function getMembershipCancellationParticipantScope(localId: string): Promi
   const requestRecord = createRecordReference(
     "MembershipCancellationRequest",
     participant.request.id,
-    `Membership cancellation ${formatDisplayDate(participant.request.submittedAt)} (${formatStatusLabel(participant.request.status)})`,
+    `Membership cancellation ${formatInstantDate(participant.request.submittedAt, await readClubTimeZoneOutsideRequest())} (${formatStatusLabel(participant.request.status)})`,
     "Membership Cancellation Request",
   );
   const relatedMember = createRecordReference(

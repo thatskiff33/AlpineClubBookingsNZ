@@ -93,8 +93,8 @@ import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
 
 /**
  * `copyBookingToDraft` refuses a target check-in that is already in the past,
- * comparing it against `getTodayDateOnly()` — the NZ calendar date, read from
- * the real clock. Every case below copies onto 2026-09-10, so left on the real
+ * comparing it against `clubTodayDateOnlyInstant()` — the club's calendar date,
+ * read from the clock. Every case below copies onto 2026-09-10, so left on the real
  * clock the whole suite would have started failing on 11 September 2026 (#2401):
  * the refusal is correct production behaviour, it is the FIXTURE that goes stale,
  * and the failure would have looked like a copy regression rather than a test
@@ -107,17 +107,29 @@ import { classifyMemberGuestConsent } from "@/lib/member-guest-consent";
  *
  * Only `Date` is faked, so real timers still run and awaited promises resolve
  * normally. 2026-07-01T00:00:00Z reads as 1 July in NZ (12:00 NZST) and in UTC
- * alike — but `APP_TIME_ZONE` falls back to `process.env.TZ`, so on a runner
- * with TZ set to a negative-offset zone the club-zone "today" under this pin is
- * 2026-06-30. Any date the assertions compare against "today" is therefore
- * DERIVED through the club timezone below rather than hardcoded, so the suite
- * holds regardless of the runner's TZ.
+ * alike.
  */
 const FIXED_NOW = new Date("2026-07-01T00:00:00.000Z"); // NZ 2026-07-01 12:00
 
+/*
+ * The zone the boundary dates below are derived in (#3123).
+ *
+ * `copyBookingToDraft` compares the target check-in against
+ * `clubTodayDateOnlyInstant()` (`admin-booking-copy.ts:58`), the club's PERSISTED
+ * zone. This suite mocks no `ClubTimeSettings` row, so that resolver falls back
+ * to `APP_TIME_ZONE` — `Pacific/Auckland` under test, and the same day this
+ * constant names. Naming it means the fixture no longer moves with the runner's
+ * `TZ`; it does mean the suite assumes the environment has not been forced to
+ * some other zone, which is `docs/TESTING.md` rule 6 and is assumed tree-wide.
+ *
+ * `Atlantic/Azores` — where this derivation is NOT the identity — is covered by
+ * the sibling `admin-booking-copy-stored-day.test.ts`.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 // Club-zone boundary dates under the pin, derived the way production derives
-// "today" (`getTodayDateOnly` = `formatDateOnlyForTimeZone(now)`).
-const TODAY = formatDateOnlyForTimeZone(FIXED_NOW);
+// "today": the club's calendar day for the pinned instant.
+const TODAY = formatDateOnlyForTimeZone(FIXED_NOW, CLUB_ZONE);
 const YESTERDAY = formatDateOnly(addDaysDateOnly(parseDateOnly(TODAY), -1));
 const TODAY_PLUS_3 = formatDateOnly(addDaysDateOnly(parseDateOnly(TODAY), 3));
 

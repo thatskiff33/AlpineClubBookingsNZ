@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
+import type { FinanceSyncDatasetContext } from "@/lib/finance-sync-service";
+import { captureHostTimeZone } from "./helpers/timezone";
 
 const ACCREC = "ACCREC" as never;
 const ACCPAY = "ACCPAY" as never;
@@ -58,12 +60,42 @@ import {
 } from "@/lib/finance-sync-xero-datasets";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
 
+/**
+ * The club's own zone, pinned (CT-5, #2869).
+ *
+ * Every dataset dates its snapshot with `context.clubTimeZone`, so a fixture
+ * that omits the field hands `undefined` to `Intl.DateTimeFormat`, which
+ * silently falls back to the HOST's zone. The fixture used to do exactly that:
+ * the expectations below read `2026-04-20` on this repository's own machines
+ * (whose OS zone is Pacific/Auckland) and `2026-04-19` on CI (UTC), because the
+ * value was never pinned at all. `context as never` at each call site is what
+ * kept `tsc` quiet about the missing field.
+ */
+const CLUB_TIME_ZONE =
+  "Pacific/Auckland" as FinanceSyncDatasetContext["clubTimeZone"];
+
+/**
+ * A host zone deliberately on the OTHER side of the day boundary from the club.
+ *
+ * `startedAt` below is 22:15 UTC, which is already the 20th in Auckland and
+ * still the 19th in Denver. Pinning the host to Denver for this whole file
+ * means the expected `2026-04-20` can ONLY have come from
+ * {@link CLUB_TIME_ZONE}: if the club pin is ever dropped again, the fallback
+ * answers `2026-04-19` and these tests fail on every machine, not just on CI.
+ */
+const HOSTILE_HOST_TIME_ZONE = "America/Denver";
+
+const hostTimeZone = captureHostTimeZone();
+
 function createFinanceSyncContext() {
   return {
     runId: "run-1",
     workflow: "daily-finance-sync",
     trigger: "SCHEDULED" as const,
+    // 22:15 UTC on the 19th is 10:15 on the 20th in Auckland: the club's
+    // calendar day, not the container's.
     startedAt: new Date("2026-04-19T22:15:00.000Z"),
+    clubTimeZone: CLUB_TIME_ZONE,
     xeroTenantId: "tenant-123",
     xero: {
       accountingApi: {
@@ -134,6 +166,14 @@ function createReport(overrides?: {
 }
 
 describe("finance-sync-datasets", () => {
+  beforeAll(() => {
+    process.env.TZ = HOSTILE_HOST_TIME_ZONE;
+  });
+
+  afterAll(() => {
+    hostTimeZone.restore();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());

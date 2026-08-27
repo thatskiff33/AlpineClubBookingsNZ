@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { sanitizePageContentHtml } from "@/lib/page-content-html";
 import { resolveTextTokens } from "@/lib/page-content-embeds";
 import { hasAdminAccess, type AccessRoleInput } from "@/lib/access-roles";
@@ -47,7 +47,7 @@ export type LodgeInstructionDocument = {
 async function hasCurrentOrUpcomingHutLeaderAssignment(
   memberId: string,
 ): Promise<boolean> {
-  const today = getTodayDateOnly();
+  const today = await clubTodayDateOnlyInstant();
   const count = await prisma.hutLeaderAssignment.count({
     where: {
       memberId,

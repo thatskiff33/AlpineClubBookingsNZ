@@ -343,7 +343,7 @@ describe("bed allocation lock topology", () => {
       "    if (\n      existing.active !== updated.active",
     );
     expectInOrder(transaction, [
-      "acquireFuturePartnerSharedAllocationLocks(tx, [id])",
+      "acquireFuturePartnerSharedAllocationLocks(tx, [id], clubTodayDateOnly)",
       "acquireMemberLifecycleLocks(tx, [id])",
       "const updatedMember = await tx.member.update",
       "sweepFuturePartnerSharedAllocationsWithLocksHeld",
@@ -358,7 +358,7 @@ describe("bed allocation lock topology", () => {
       "    for (const { memberId, reason, swept } of sweptSharesByMember)",
     );
     expectInOrder(transaction, [
-      "acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds)",
+      "acquireFuturePartnerSharedAllocationLocks(tx, sweepLockMemberIds, clubTodayForBulk)",
       "acquireMemberLifecycleLocks(tx, sweepLockMemberIds)",
       "await tx.member.updateMany",
       "sweepFuturePartnerSharedAllocationsWithLocksHeld",

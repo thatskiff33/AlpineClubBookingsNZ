@@ -122,6 +122,18 @@ import { getSanitizedLodgeInstructions } from "@/lib/lodge-instructions";
 import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import { hutLeaderAssignmentTemplate } from "@/lib/email-templates/chores";
 
+/*
+ * The zone the assignment fixtures below are built in (#3123). The route derives
+ * its own "today" from `clubTodayDateOnlyInstant()`, i.e. the persisted
+ * `ClubTimeSettings` row; this suite's prisma mock serves none, so that resolver
+ * falls back to `APP_TIME_ZONE`, which is `Pacific/Auckland` under test. The
+ * fixtures have to be built in the SAME zone the route reads or an assignment
+ * ending "today" lands on the wrong side of the `endDate >= today` bound. This
+ * suite is not about zone authority — `club-time-zone-settings` has the suites
+ * that are — so it names the agreeing zone rather than a divergent one.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const memberSession = { user: { id: "member-1", role: "MEMBER", accessRoles: [{ role: "USER" }] } };
 const adminSession = { user: { id: "admin-1", role: "ADMIN", accessRoles: [{ role: "ADMIN" }] } };
 
@@ -195,7 +207,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
 
   it("allows a member with a current assignment", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly(CLUB_ZONE) }]);
 
     const response = await readerGET(readerRequest());
     expect(response.status).toBe(200);
@@ -210,7 +222,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
   it("allows a member with an upcoming assignment", async () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([
-      { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(), 14) },
+      { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 14) },
     ]);
 
     const response = await readerGET(readerRequest());
@@ -220,7 +232,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
   it("denies a member whose only assignment has expired", async () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([
-      { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(), -1) },
+      { memberId: "member-1", endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), -1) },
     ]);
 
     const response = await readerGET(readerRequest());
@@ -231,7 +243,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
   it("does not grant access from another member's assignment", async () => {
     mocks.auth.mockResolvedValue(memberSession);
     useAssignments([
-      { memberId: "member-2", endDate: addDaysDateOnly(getTodayDateOnly(), 14) },
+      { memberId: "member-2", endDate: addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 14) },
     ]);
 
     const response = await readerGET(readerRequest());
@@ -249,7 +261,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
 
   it("scopes the documents to the member's sole assignment lodge", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly(CLUB_ZONE) }]);
     mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
       { lodgeId: "lodge-2" },
       { lodgeId: "lodge-2" },
@@ -266,7 +278,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
 
   it("falls back to the club-wide documents when assignments span lodges", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly(CLUB_ZONE) }]);
     mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
       { lodgeId: "lodge-2" },
       { lodgeId: "lodge-3" },
@@ -296,7 +308,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
   it("M4: denies a hut leader requesting a lodge they are not assigned to", async () => {
     mocks.auth.mockResolvedValue(memberSession);
     // Gate passes (a current assignment exists) but it is for lodge-A only.
-    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly(CLUB_ZONE) }]);
     mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
       { lodgeId: "lodge-A" },
     ]);
@@ -309,7 +321,7 @@ describe("GET /api/lodge-instructions (reader access control)", () => {
 
   it("M4: allows a hut leader requesting their own assignment lodge", async () => {
     mocks.auth.mockResolvedValue(memberSession);
-    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly() }]);
+    useAssignments([{ memberId: "member-1", endDate: getTodayDateOnly(CLUB_ZONE) }]);
     mocks.hutLeaderAssignmentFindMany.mockResolvedValue([
       { lodgeId: "lodge-A" },
     ]);

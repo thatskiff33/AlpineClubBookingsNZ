@@ -1,6 +1,12 @@
 import { type Invoice } from "xero-node";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  getFinancialYearEndMonth,
+  seasonYearOfCalendarDate,
+} from "@/lib/financial-year";
+import { xeroCalendarDate } from "@/lib/xero-provider-dates";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero-api-client";
 import {
@@ -30,9 +36,23 @@ function buildSkippedInvoiceReconciliation(
   };
 }
 
-function buildSeasonYearFromInvoice(invoice: Invoice): number {
-  const invoiceDate = invoice.date ? new Date(invoice.date) : new Date();
-  return Number.isNaN(invoiceDate.getTime()) ? getSeasonYear(new Date()) : getSeasonYear(invoiceDate);
+/**
+ * The membership season a Xero invoice belongs to, from its CALENDAR DATE.
+ *
+ * `Invoice.date` is a calendar day. The retired `getSeasonYear` decided from
+ * `date.getMonth()`/`getFullYear()` — the HOST's calendar components — so the old
+ * `new Date(invoice.date)` made the season boundary move with the container's
+ * timezone as well as with the wire shape Xero happened to send (#2869). Both
+ * halves are now explicit: the day is classified at the Xero boundary, and the
+ * season is derived from that day's own parts by the shared calendar-date rule.
+ *
+ * When Xero sends no date at all the fallback is the CLUB's today, not the UTC
+ * clock's (`INV-DATE-019`).
+ */
+async function buildSeasonYearFromInvoice(invoice: Invoice): Promise<number> {
+  const zone = await readClubTimeZoneOutsideRequest();
+  const invoiceDate = xeroCalendarDate(invoice.date) ?? clubToday(zone);
+  return seasonYearOfCalendarDate(invoiceDate, getFinancialYearEndMonth());
 }
 
 export async function reconcileXeroInvoice(
@@ -158,7 +178,7 @@ export async function reconcileXeroInvoice(
         linkedSubscriptionIds
       );
 
-  const seasonYear = buildSeasonYearFromInvoice(invoice);
+  const seasonYear = await buildSeasonYearFromInvoice(invoice);
   // Member-less inbound gate (#2109 FIX-3): the reconciler sees ONE invoice at a
   // time and cannot run prefer-paid selection, so it treats an invoice as a
   // subscription ONLY on a STRONG match (account code, the flat primary/fallback

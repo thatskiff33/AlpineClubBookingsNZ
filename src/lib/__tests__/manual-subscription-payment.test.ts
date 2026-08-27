@@ -125,7 +125,7 @@ describe("applyManualSubscriptionPayment (#1944)", () => {
     );
     expect(
       hostingMock.enqueueHostingCoverageReevaluationForMember,
-    ).toHaveBeenCalledWith("m-1", tx, {
+    ).toHaveBeenCalledWith("m-1", tx, expect.any(Date), {
       cause: "SYSTEM_CHANGE",
       actorMemberId: "admin-1",
     });
@@ -224,7 +224,7 @@ describe("applyManualSubscriptionPayment (#1944)", () => {
     );
     expect(
       hostingMock.enqueueHostingCoverageReevaluationForMember,
-    ).toHaveBeenCalledWith("m-1", tx, {
+    ).toHaveBeenCalledWith("m-1", tx, expect.any(Date), {
       cause: "SYSTEM_CHANGE",
       actorMemberId: "admin-1",
     });

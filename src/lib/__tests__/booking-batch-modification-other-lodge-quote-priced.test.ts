@@ -78,9 +78,28 @@ vi.mock("@/lib/logger", () => ({
 import { modifyBookingBatch } from "@/lib/booking-batch-modification-service";
 import { QUOTE_PRICED_EDIT_BLOCK_MESSAGE } from "@/lib/booking-modify";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { requireCalendarDate } from "@/lib/club-time";
 
-const storedCheckIn = addDaysDateOnly(getTodayDateOnly(), 30);
-const storedCheckOut = addDaysDateOnly(getTodayDateOnly(), 33);
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_DAY = requireCalendarDate("2026-07-01");
+
+/*
+ * The zone every relative fixture below is built in (#3123).
+ * `modifyBookingBatch` takes its own day from `(await clubTime()).today()`, the
+ * persisted `ClubTimeSettings` zone; this suite's prisma mock serves no such
+ * row, so that resolver falls back to `APP_TIME_ZONE` — `Pacific/Auckland`
+ * under test. The fixtures must be built in the same zone the service reads, or
+ * a stored window meant to sit 30 nights ahead of the service's today no longer
+ * does. Zone AUTHORITY is not what this suite tests, so it names the agreeing
+ * zone.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
+const storedCheckIn = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 30);
+const storedCheckOut = addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 33);
 const LODGE = "lodge-1";
 const GUEST_PLAN_SENTINEL = new Error("reached-the-guest-plan");
 
@@ -148,6 +167,7 @@ const election = {
 
 async function save(input: Record<string, unknown>, role: "ADMIN" | "MEMBER" = "ADMIN") {
   return modifyBookingBatch({
+    todayAtClub: FIXTURE_CLUB_DAY,
     bookingId: "booking-1",
     // A MEMBER actor is the booking's own owner, so the ownership guard upstream
     // does not refuse first and the quote-priced block is genuinely what answers.
@@ -178,7 +198,7 @@ describe("modifyBookingBatch: the other-lodge election on a negotiated booking",
   it.each([
     [
       "a date change",
-      { checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 34)) },
+      { checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34)) },
     ],
     [
       "an added guest",
@@ -222,7 +242,7 @@ describe("modifyBookingBatch: the other-lodge election on a negotiated booking",
     // The exemption is additive: a request that mentions the rate not at all is
     // refused exactly as it was.
     await expect(
-      save({ checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(), 34)) }),
+      save({ checkOut: formatDateOnly(addDaysDateOnly(getTodayDateOnly(CLUB_ZONE), 34)) }),
     ).rejects.toThrow(QUOTE_PRICED_EDIT_BLOCK_MESSAGE);
   });
 });

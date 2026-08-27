@@ -19,7 +19,11 @@ import {
   readHostingCoverageOverridePrompt,
   type HostingCoverageOverridePromptData,
 } from "@/lib/hosting-coverage-override-client";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfSerialisedDbDateOrNull,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-requests";
 import type { PolicyExceptionReasonCode } from "@/lib/booking-policy-exceptions";
 import { HostingCoverageOverridePrompt } from "@/components/hosting-coverage-override-prompt";
@@ -178,8 +182,16 @@ function statusBadgeClass(status: string) {
   return "border-border bg-muted text-muted-foreground";
 }
 
+/**
+ * The proposed lodge nights as the calendar days they ARE - no timezone, because
+ * a calendar day has none (CT-4, #2870; INV-DATE-010). `@db.Date` reaches the
+ * browser as UTC midnight, and the kernel's calendar-date formatter pins UTC over
+ * that encoding, so the projection is the identity. What this replaces read the
+ * day through a zone: correct east of Greenwich, a day early west of it.
+ */
 function formatDate(value: string | null) {
-  return value ? formatNZDate(new Date(value)) : "—";
+  const day = calendarDateOfSerialisedDbDateOrNull(value);
+  return day ? formatClubDate(day) : "—";
 }
 
 export interface PolicyExceptionRequestsPanelProps {
@@ -193,6 +205,13 @@ export function PolicyExceptionRequestsPanel({
   showHeading = false,
   canEdit = true,
 }: PolicyExceptionRequestsPanelProps) {
+  /**
+   * Every timestamp below is a real INSTANT projected into the club's PERSISTED
+   * timezone (CT-4, #2870; INV-CONFIG-002) rather than the container's `TZ`. The
+   * zone reaches this browser as data through `ClubTimeProvider`; it is never
+   * read from the viewer's own clock.
+   */
+  const clubTime = useClubTime();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [filter, setFilter] = useState<StatusFilter>("REQUESTED");
   const [loadedFilter, setLoadedFilter] = useState<StatusFilter | null>(null);
@@ -585,7 +604,7 @@ export function PolicyExceptionRequestsPanel({
                           {item.source === "NEW_BOOKING"
                             ? "New booking"
                             : "Change to an existing booking"}{" "}
-                          · asked {age} ({formatNZDateTime(new Date(item.createdAt))})
+                          · asked {age} ({clubTime.instantDateTime(new Date(item.createdAt))})
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -750,7 +769,7 @@ export function PolicyExceptionRequestsPanel({
                         Last approval attempt was kept pending:{" "}
                         {item.lastConflictReason}
                         {item.lastConflictAt
-                          ? ` (${formatNZDateTime(new Date(item.lastConflictAt))})`
+                          ? ` (${clubTime.instantDateTime(new Date(item.lastConflictAt))})`
                           : ""}
                       </p>
                     ) : null}
@@ -973,7 +992,7 @@ export function PolicyExceptionRequestsPanel({
                       <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
                         {item.status.charAt(0) + item.status.slice(1).toLowerCase()}
                         {item.reviewedAt
-                          ? ` on ${formatNZDateTime(new Date(item.reviewedAt))}`
+                          ? ` on ${clubTime.instantDateTime(new Date(item.reviewedAt))}`
                           : ""}
                         {item.reviewedBy
                           ? ` by ${item.reviewedBy.firstName} ${item.reviewedBy.lastName}`

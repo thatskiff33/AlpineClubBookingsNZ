@@ -9,13 +9,13 @@
  */
 import { Prisma, type LodgeRoom } from "@prisma/client";
 import { clubConfig } from "@/config/club";
-import { getTodayDateOnly } from "@/lib/date-only";
 import {
   getLodgePartnerSharedCapacityStatus,
   type LodgePartnerSharedCapacityStatus,
 } from "@/lib/lodge-capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   findAnyCustodianHoldsForBeds,
   findFutureCustodianHoldsForBed,
@@ -304,6 +304,11 @@ export async function updateBedAllocationRoom(input: {
   active?: boolean;
   notes?: string | null;
 }) {
+  // #3123 / INV-LOCK-004 — the club's day is resolved HERE, before the
+  // transaction opens. Resolving it is a `clubTimeSettings.findUnique`, and
+  // inside the transaction below that would take a second pooled connection
+  // while the global cohort key and the per-lodge capacity key are held.
+  const today = await clubTodayDateOnlyInstant();
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     const roomKey = await tx.lodgeRoom.findUnique({
@@ -316,7 +321,7 @@ export async function updateBedAllocationRoom(input: {
     if (roomKey.lodgeId) {
       await acquireLodgeCapacityLock(tx, roomKey.lodgeId);
     }
-    return updateBedAllocationRoomWithLocksHeld({ ...input, db: tx });
+    return updateBedAllocationRoomWithLocksHeld({ ...input, db: tx, today });
   });
 }
 
@@ -328,6 +333,15 @@ export async function updateBedAllocationRoomWithLocksHeld(input: {
   active?: boolean;
   notes?: string | null;
   db: BedAllocationDb;
+  /**
+   * The club's today, as the UTC-midnight `@db.Date` encoding
+   * (`INV-DATE-026`), resolved by the caller BEFORE it opened the transaction
+   * this runs inside (#3123, `INV-LOCK-004`). Required and never defaulted: a
+   * default is what let this read the container's timezone instead of the
+   * club's persisted one (`INV-CONFIG-002`), and a required parameter puts the
+   * resolution where the locks are not.
+   */
+  today: Date;
 }) {
   const db = input.db;
 
@@ -341,7 +355,7 @@ export async function updateBedAllocationRoomWithLocksHeld(input: {
       where: { roomId: input.id },
       select: { id: true },
     });
-    const today = getTodayDateOnly();
+    const today = input.today;
     for (const bed of beds) {
       const holds = await findFutureCustodianHoldsForBed({
         bedId: bed.id,

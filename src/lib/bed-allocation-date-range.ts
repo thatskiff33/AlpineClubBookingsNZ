@@ -12,10 +12,10 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import type { CalendarDate } from "@/lib/club-time";
 import { BedAllocationAdminError } from "@/lib/bed-allocation-admin-contract";
 
 export const MAX_BED_ALLOCATION_RANGE_NIGHTS = 31;
@@ -27,11 +27,34 @@ export interface BedAllocationDateRange {
   toDate: string;
 }
 
-export function parseBedAllocationDateRange(input: {
-  from?: string | null;
-  to?: string | null;
-}): BedAllocationDateRange {
-  const fromDate = input.from || formatDateOnly(getTodayDateOnly());
+/**
+ * Parse the board's `from`/`to` pair, defaulting the window to the seven nights
+ * starting at the club's own day.
+ *
+ * `clubToday` IS REQUIRED, and that is the whole point (#3123, `INV-CONFIG-002`).
+ * It used to be a missing-parameter default read from the container's
+ * environment timezone, so a club behind Greenwich opened its bed board on
+ * yesterday. There is deliberately no default to police: the club's day is a
+ * database read, this function is synchronous and pure, and the two callers that
+ * matter feed its product straight into a transaction that holds
+ * `pg_advisory_xact_lock(1)` plus every affected lodge capacity key
+ * (`bed-allocation-approval.ts`, `bed-allocation-auto-allocate.ts`). Making this
+ * function `async` so it could resolve the day itself would put a
+ * `ClubTimeSettings` query on that path — and a later caller could then take it
+ * from inside the locked span, which is what `INV-LOCK-004` forbids. The routes
+ * resolve one day before they call anything and pass it in.
+ *
+ * A `CalendarDate` rather than a `string` because a lodge night has no timezone
+ * and no time of day: the brand is what makes an INSTANT unrepresentable here.
+ */
+export function parseBedAllocationDateRange(
+  input: {
+    from?: string | null;
+    to?: string | null;
+  },
+  clubToday: CalendarDate,
+): BedAllocationDateRange {
+  const fromDate = input.from || clubToday;
   if (!isDateOnlyString(fromDate)) {
     throw new BedAllocationAdminError("Invalid from date", 400);
   }

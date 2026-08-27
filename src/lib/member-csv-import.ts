@@ -1,4 +1,4 @@
-import { formatDateOnly, todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 import {
   GENDER_OPTIONS,
   TITLE_OPTIONS,
@@ -612,13 +612,20 @@ export function createDefaultMemberImportDateFormatMapping(): MemberImportDateFo
  * date in the future is never legitimate. The import mirrors that rule: an
  * imported cancelled date may be today or earlier (a historical/legacy
  * cancellation being brought across), never a future date. Both operands are
- * NZ date-only (`yyyy-MM-dd`) strings, so a lexical comparison is a correct
- * calendar comparison. `today` defaults to the club time zone; the server
- * re-runs this check authoritatively (the browser may sit in another zone).
+ * date-only (`yyyy-MM-dd`) strings, so a lexical comparison is a correct
+ * calendar comparison.
+ *
+ * `today` IS REQUIRED (#3123). It used to default to
+ * `todayDateOnlyForTimeZone()`, which answers from the CONTAINER's timezone
+ * rather than the club's persisted one (`INV-CONFIG-002`) — and this module
+ * cannot read the setting for itself at all, because it is in the BROWSER
+ * bundle (`member-import-dialog.tsx` is `"use client"`). So the day has to
+ * arrive as data: the dialog passes `useClubTime().today()`, the route passes
+ * `club.today()`, and the server's answer remains the authoritative one.
  */
 export function isMemberImportCancelledDateInFuture(
   normalizedDateOnly: string,
-  today: string = todayDateOnlyForTimeZone(),
+  today: string,
 ): boolean {
   return Boolean(normalizedDateOnly) && normalizedDateOnly > today;
 }
@@ -839,6 +846,14 @@ function getColumnContext(
 export function buildMemberImportPreview(
   csv: MemberImportCsvData,
   mapping: MemberImportColumnMapping,
+  /**
+   * The club's today, as a `yyyy-MM-dd` calendar date. REQUIRED, and third so
+   * that the typechecker enumerates every call site rather than leaving the
+   * ones that forgot it silently green (#3123). This module runs in the browser
+   * as well as on the server, so it can read no timezone of its own: the dialog
+   * supplies `useClubTime().today()`.
+   */
+  todayAtClub: string,
   dateFormats: Partial<MemberImportDateFormatMapping> = {},
 ): MemberImportPreview {
   const resolvedDateFormats: MemberImportDateFormatMapping = {
@@ -1003,7 +1018,7 @@ export function buildMemberImportPreview(
     const normalizedCancelledDate = normalizedDateValues.cancelledDate;
     if (
       normalizedCancelledDate &&
-      isMemberImportCancelledDateInFuture(normalizedCancelledDate)
+      isMemberImportCancelledDateInFuture(normalizedCancelledDate, todayAtClub)
     ) {
       errors.push(
         `Cancelled Date${getColumnContext(sourceColumnLabels, "cancelledDate")} cannot be in the future`,

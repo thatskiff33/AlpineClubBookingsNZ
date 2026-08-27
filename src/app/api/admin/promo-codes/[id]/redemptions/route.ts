@@ -2,12 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import {
-  endOfDateOnlyForTimeZone,
-  formatDateOnly,
-  isDateOnlyString,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { endOfClubDayInclusive, requireCalendarDate, startOfClubDay } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { formatDateOnly, isDateOnlyString } from "@/lib/date-only";
 import type { Prisma } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import {
@@ -94,6 +91,20 @@ export async function GET(
     );
   }
 
+  // `9999-12-31` passes `isDateOnlyString` — it IS a real day — but it has no day
+  // AFTER it, and the half-open club-day end below is the next day's start. So
+  // `addCalendarDays` throws a `RangeError` there, from outside any `try`, and the
+  // request dies as an unhandled rejection instead of an answer. That URL really gets
+  // typed (`/admin/audit-log?to=9999-12-31`; see `src/lib/club-time/calendar-date.ts`),
+  // so refuse it the same way `reports/route.ts` does: a window whose end has no
+  // successor is a bad request, not a server fault.
+  if (to && to >= "9999-12-31") {
+    return NextResponse.json(
+      { error: "to must be earlier than 9999-12-31" },
+      { status: 400 }
+    );
+  }
+
   // The redemptions report intentionally covers archived AND internal
   // (work-party) codes — unlike the promo CRUD routes, which hide internal
   // codes. Only a genuinely missing code is a 404.
@@ -113,9 +124,15 @@ export async function GET(
   }
 
   // Redeemed-date range in club time: gte start-of-`from`, lte end-of-`to`.
+  // `PromoRedemption.createdAt` is a real instant, so these edges are civil-day
+  // boundaries in the PERSISTED club timezone (CT-4, #2870; INV-CONFIG-002), not the
+  // container's. `from`/`to` already passed `isDateOnlyString` above, so the brand
+  // cannot be refused here. The end keeps the INCLUSIVE last millisecond the `lte`
+  // filter has always used, through the kernel's own named inclusive bound.
+  const zone = await clubTimeZone();
   const createdAtFilter: Prisma.DateTimeFilter = {};
-  if (from) createdAtFilter.gte = startOfDateOnlyForTimeZone(from);
-  if (to) createdAtFilter.lte = endOfDateOnlyForTimeZone(to);
+  if (from) createdAtFilter.gte = startOfClubDay(requireCalendarDate(from), zone);
+  if (to) createdAtFilter.lte = endOfClubDayInclusive(requireCalendarDate(to), zone);
 
   const filteredWhere: Prisma.PromoRedemptionWhereInput = {
     promoCodeId: id,

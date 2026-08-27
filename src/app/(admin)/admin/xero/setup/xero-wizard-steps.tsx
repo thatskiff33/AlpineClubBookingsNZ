@@ -10,7 +10,8 @@ import { CopyField } from "@/components/admin/integration-wizard";
 import type { WizardStepHelpers } from "@/components/admin/integration-wizard";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { ADMIN_FULL_ADMIN_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDate, formatNZTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, requireInstant, type BoundClubTime } from "@/lib/club-time";
 import { ConnectionStatusPanel } from "../_components/connection-status-panel";
 import { useXeroConnection } from "../_hooks/use-xero-connection";
 import type {
@@ -21,10 +22,12 @@ import type {
 const CREDENTIALS_ENDPOINT = "/api/admin/integrations/credentials";
 const CONNECT_RETURN = "/admin/xero/setup";
 
-function formatSetAt(setAt: string | null): string {
+// A credential's "set at" is a real INSTANT, shown in the club's persisted zone
+// rather than the viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+function formatSetAt(clubTime: BoundClubTime, setAt: string | null): string {
   if (!setAt) return "";
-  const date = new Date(setAt);
-  return Number.isNaN(date.getTime()) ? "" : formatNZDate(date);
+  const instant = parseInstant(setAt);
+  return instant === null ? "" : clubTime.instantDate(instant);
 }
 
 function LegacyEnvWarning({ vars }: { vars: string[] }) {
@@ -113,6 +116,7 @@ export function CredentialsStep({
   context: XeroWizardContext;
   helpers: WizardStepHelpers;
 }) {
+  const clubTime = useClubTime();
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [saving, setSaving] = useState(false);
@@ -198,7 +202,7 @@ export function CredentialsStep({
             {context.credentials.client_id.set ? (
               <span className="text-success-11">
                 Set ✓{" "}
-                {formatSetAt(context.credentials.client_id.setAt)}
+                {formatSetAt(clubTime, context.credentials.client_id.setAt)}
               </span>
             ) : (
               <span className="text-muted-foreground">Not set</span>
@@ -227,7 +231,7 @@ export function CredentialsStep({
             {context.credentials.client_secret.set ? (
               <span className="text-success-11">
                 Set ✓{" "}
-                {formatSetAt(context.credentials.client_secret.setAt)}
+                {formatSetAt(clubTime, context.credentials.client_secret.setAt)}
               </span>
             ) : (
               <span className="text-muted-foreground">Not set</span>
@@ -320,9 +324,11 @@ function describeWait(seconds: number): string {
  * wording cannot change for hours. The count is what guarantees a change; the
  * time is what makes it useful.
  */
-function describeChecks(attempts: number, at: number | null): string | null {
+function describeChecks(clubTime: BoundClubTime, attempts: number, at: number | null): string | null {
   if (at === null || attempts < 1) return null;
-  const time = formatNZTime(new Date(at));
+  // `at` is epoch milliseconds — a real INSTANT — so the club's persisted zone
+  // decides which wall-clock time an operator reads (CT-4, #2870).
+  const time = clubTime.instantTime(requireInstant(at));
   return attempts === 1
     ? `Checked once, at ${time}.`
     : `Checked ${attempts} times, most recently at ${time}.`;
@@ -437,6 +443,7 @@ export function ConnectStep({
   // OAuth callback redirects back with. Before #2394 this step called the hook
   // and never rendered either, so a refused authorisation came back to a wizard
   // that simply said "Not Connected" with no hint of what Xero had objected to.
+  const clubTime = useClubTime();
   const { status, handleDisconnect, error: connectionError } =
     useXeroConnection();
 
@@ -452,7 +459,7 @@ export function ConnectStep({
     ? describeOrgReadError(context.orgError)
     : null;
   const orgChecks = orgFailure
-    ? describeChecks(context.orgErrorAttempts, context.orgErrorAt)
+    ? describeChecks(clubTime, context.orgErrorAttempts, context.orgErrorAt)
     : null;
 
   // The other half of the focus story (F3). Keeping Try again enabled means it

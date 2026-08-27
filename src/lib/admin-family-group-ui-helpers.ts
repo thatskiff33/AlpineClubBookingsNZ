@@ -1,5 +1,11 @@
 import { CHIP_TONE_CLASSES } from "@/lib/chip-tones";
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  parseCalendarDate,
+  parseInstant,
+  type BoundClubTime,
+} from "@/lib/club-time";
 
 export interface MemberOption {
   id: string;
@@ -166,19 +172,72 @@ export function normalizeFamilyEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
-// #2256: this used to call bare `toLocaleDateString()` — no locale, no time
-// zone — so every family-group date (request "Requested" stamps, dates of
-// birth, group "Created") rendered in whatever the *viewer's browser* was set
-// to: "4/16/2026" for a US-locale admin, "16.04.2026" for a German one, and a
-// day early for anyone whose machine sat behind New Zealand. It now renders the
-// club's calendar date in the app's standard "16 Apr 2026" form for everyone.
-export function formatFamilyGroupDate(value: string | null | undefined) {
+/*
+ * ONE HELPER BECAME TWO, and the split is the point (CT-4, #2870).
+ *
+ * #2256: `formatFamilyGroupDate` used to call bare `toLocaleDateString()` — no
+ * locale, no time zone — so every family-group date (request "Requested"
+ * stamps, dates of birth, group "Created") rendered in whatever the *viewer's
+ * browser* was set to: "4/16/2026" for a US-locale admin, "16.04.2026" for a
+ * German one, and a day early for anyone whose machine sat behind New Zealand.
+ * That fix pinned `APP_TIME_ZONE` for all of them.
+ *
+ * NARROW, DECLARED `src/lib` EXCEPTION on this branch, because the surfaces
+ * this feeds are two different temporal kinds and the branch moved only one
+ * side of each:
+ *
+ * - `childDateOfBirth` / `requestedDateOfBirth` are `@db.Date` CALENDAR DAYS.
+ *   `INV-DATE-019`: a calendar day has no timezone and projecting one through a
+ *   zone behind UTC names the day before. The member-detail dependants card and
+ *   the member-applications approval screen both decode these correctly now, so
+ *   leaving the review card projecting them showed one child's date of birth as
+ *   31 Dec on the screen that approves them and 1 Jan on the card that lists
+ *   them afterwards. A date of birth on a boundary decides an age tier, and an
+ *   age tier decides a price band.
+ * - a request's `createdAt` is a real INSTANT and has no civil date until a
+ *   zone is chosen. That zone is the club's PERSISTED one (`INV-CONFIG-002`),
+ *   which a browser receives as data through `ClubTimeProvider`. The
+ *   family-groups page beside this card already reads the group's own
+ *   `createdAt` that way, so one screen was showing two "created" stamps under
+ *   two different authorities.
+ *
+ * Both keep the "Not provided" placeholder and the never-throw contract: these
+ * values arrive over `fetch` with no runtime schema check and render inside a
+ * request card, where a `RangeError` reaches the nearest error boundary and
+ * blanks the reviewer's whole queue.
+ */
+
+/**
+ * A `@db.Date` calendar day — a date of birth — in the house medium shape,
+ * with NO ZONE APPLIED.
+ *
+ * Accepts both spellings such a column reaches the browser in: Prisma's
+ * UTC-midnight ISO instant and a bare `yyyy-MM-dd`. The bare form is tried
+ * first because it is unambiguous; the instant branch then reads the
+ * UTC-midnight encoding in UTC, which is the identity for every club rather
+ * than a projection.
+ */
+export function formatFamilyGroupCalendarDay(value: string | null | undefined) {
   if (!value) return "Not provided";
-  const parsed = new Date(value);
-  // Intl throws RangeError on an invalid Date; a malformed API value must not
-  // take down the whole request-review card.
-  if (Number.isNaN(parsed.getTime())) return "Not provided";
-  return formatNZDate(parsed);
+  const bare = parseCalendarDate(value);
+  if (bare !== null) return formatClubDate(bare);
+  const instant = parseInstant(value);
+  if (instant === null) return "Not provided";
+  return formatClubDate(calendarDateOfDateOnlyInstant(instant));
+}
+
+/**
+ * A real instant — a request's "Requested" stamp — in the house medium shape,
+ * read in the club's persisted zone.
+ */
+export function formatFamilyGroupInstantDate(
+  clubTime: BoundClubTime,
+  value: string | null | undefined,
+) {
+  if (!value) return "Not provided";
+  const instant = parseInstant(value);
+  if (instant === null) return "Not provided";
+  return clubTime.instantDate(instant);
 }
 
 export function getMemberName(member: Pick<MemberOption, "firstName" | "lastName">) {

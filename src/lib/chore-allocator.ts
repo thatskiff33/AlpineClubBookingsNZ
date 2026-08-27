@@ -6,6 +6,10 @@
  */
 
 import { AgeTier, AgeRestriction } from "@prisma/client";
+import {
+  calendarDateOfDateOnlyInstant,
+  calendarDayOfWeek,
+} from "@/lib/club-time";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // ---------------------------------------------------------------------------
@@ -219,13 +223,14 @@ export function filterChoresByFrequency(
   currentDate: Date
 ): ChoreTemplateInput[] {
   // #2478: `currentDate` is a date-only roster night (UTC midnight), so its
-  // weekday must be read with the UTC getter. `getDay()` reads the SERVER's
-  // wall clock: on any host behind UTC, UTC midnight is still the PREVIOUS
-  // evening locally, and every SPECIFIC_DAYS chore would then be filtered
-  // against the wrong weekday. Reading it in UTC keeps one calendar-day
-  // contract from the URL through the query to the roster.
-  const currentDayOfWeek =
-    currentDate.getUTCDay() === 0 ? 7 : currentDate.getUTCDay(); // ISO: 1=Mon, 7=Sun
+  // weekday is the weekday of the DAY it encodes and nothing else. `getDay()`
+  // would read the SERVER's wall clock: on any host behind UTC, UTC midnight is
+  // still the previous evening locally, and every SPECIFIC_DAYS chore would then
+  // be filtered against the wrong weekday. The kernel decodes the day and answers
+  // from its calendar text, so neither getter is written here at all (CT-4,
+  // #2870).
+  const weekday = calendarDayOfWeek(calendarDateOfDateOnlyInstant(currentDate));
+  const currentDayOfWeek = weekday === 0 ? 7 : weekday; // ISO: 1=Mon, 7=Sun
 
   return chores.filter((chore) => {
     const mode = chore.frequencyMode ?? "DAILY";

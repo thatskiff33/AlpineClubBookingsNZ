@@ -40,7 +40,8 @@ import {
 } from "@/lib/member-parent-links";
 import { checkNominatorEligibility } from "@/lib/nominator-eligibility";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { clubSeasonYear } from "@/lib/financial-year";
 import { queueApprovedMembershipSubscriptionCharges } from "@/lib/membership-subscription-billing";
 import { MEMBER_LEVEL_ROLE_VALUES } from "@/lib/member-roles";
 import {
@@ -79,6 +80,12 @@ import {
   getNominationTokenExpiryDate,
 } from "@/lib/nomination-token-policy";
 import { formatDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
+import {
+  applicationDateOfBirthDay,
+  dependentSubject,
+  unreadableDateOfBirthRefusal,
+} from "@/lib/member-application-date-of-birth";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -316,16 +323,41 @@ export function parseApplicationFamilyMembers(raw: unknown): ApplicationFamilyMe
   }));
 }
 
-async function computeTier(dateOfBirth?: string | null) {
+/**
+ * `seasonStart` is passed in, and that is a CONCURRENCY requirement rather than a
+ * style (#2870, correctness review).
+ *
+ * Both callers are inside `approveMemberApplication`'s transaction, which holds
+ * `pg_advisory_xact_lock('member-application:<id>')` plus one
+ * `member-lifecycle:<memberId>` lock per MAP target — and the second caller is
+ * inside a `for` loop over the family members. Resolving the club's zone here
+ * would put an UNCACHED `ClubTimeSettings` read, on the global client and so a
+ * second pool connection, under those locks once per person. `booking-request.ts`
+ * records the judgement in its own words: a settings query under them buys
+ * nothing.
+ *
+ * It also removes a straddle. `approveMemberApplication` ALREADY resolves the
+ * club's season before opening the transaction and derives `mappingSeasonStart`
+ * from it, so a self-resolving `computeTier` meant the MAP path and the all-CREATE
+ * path could answer from two different seasons in one approval — the shape this
+ * lane closed on the admin member page and the bulk role change.
+ */
+async function computeTier(
+  dateOfBirth: CalendarDate | null,
+  seasonStart: Date,
+) {
   if (!dateOfBirth) {
     return AgeTier.ADULT;
   }
 
-  return computeAgeTier(new Date(dateOfBirth), getSeasonStartDate(getSeasonYear()));
+  // `dateOnlyInstantOf`, not `new Date(dateOfBirth)`: the argument is a validated
+  // calendar day, and the encoder is the one spelling `computeAge`'s
+  // stored-calendar-day precondition accepts on every host (#3082).
+  return computeAgeTier(dateOnlyInstantOf(dateOfBirth), seasonStart);
 }
 
 async function verifyNominator(email: string): Promise<VerifiedNominator> {
-  const seasonYear = getSeasonYear();
+  const seasonYear = clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const normalizedEmail = cleanString(email).toLowerCase();
 
   const nominator = await prisma.member.findFirst({
@@ -593,6 +625,30 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
     });
   }
 
+  // A REAL DAY, not merely a date-shaped string (#3082 fix round). The route's
+  // own schema refuses this first; the check is repeated here because this is the
+  // library boundary and a caller that skips the route must not be able to store
+  // a value that later wedges its own approval. See
+  // {@link applicationDateOfBirthDay} for the whole reasoning, including why the
+  // READ schema stays loose.
+  const applicantDayOfBirth = applicationDateOfBirthDay(applicantDateOfBirth);
+  if (!applicantDayOfBirth) {
+    throw new MembershipApplicationError("Date of birth must be a real date", 422, {
+      applicantDateOfBirth: ["Date of birth must be a real date"],
+    });
+  }
+
+  const dependentDayErrors = familyMembers.flatMap((familyMember, index) =>
+    applicationDateOfBirthDay(familyMember.dateOfBirth)
+      ? []
+      : [`Dependent ${index + 1} date of birth must be a real date`],
+  );
+  if (dependentDayErrors.length > 0) {
+    throw new MembershipApplicationError(dependentDayErrors[0], 422, {
+      familyMembers: dependentDayErrors,
+    });
+  }
+
   if (nominator1Email === nominator2Email) {
     throw new MembershipApplicationError("Please provide two different nominators", 422, {
       nominator2Email: ["Please provide two different nominators"],
@@ -624,7 +680,10 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
         applicantFirstName,
         applicantLastName,
         applicantEmail,
-        applicantDateOfBirth: applicantDateOfBirth ? new Date(applicantDateOfBirth) : null,
+        // `dateOnlyInstantOf` of the VALIDATED day, not `new Date(rawString)`:
+        // the raw form rolled `1990-02-31` to 3 March and made `0000-05-05` a
+        // year-0 value that no `CalendarDate` reader can decode (#3082).
+        applicantDateOfBirth: dateOnlyInstantOf(applicantDayOfBirth),
         applicantPhone,
         applicantAddress,
         familyMembers,
@@ -1370,7 +1429,14 @@ export async function approveMemberApplication(
     );
   }
 
-  const seasonYear = getSeasonYear();
+  // ONE read of the club's persisted zone for this whole approval, taken BEFORE
+  // the transaction opens. The season year and, since #3123, the joining fee's
+  // schedule day both come from it — two answers from one read, and necessarily
+  // the same day, rather than two independent reads that an approval straddling
+  // club midnight could answer differently.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const seasonYear = clubSeasonYear(clubZone);
+  const joiningFeeAsOf = dateOnlyInstantOf(clubToday(clubZone));
   const preFamilyMembers = parseApplicationFamilyMembers(application.familyMembers);
   const resolution = resolvePersonDecisions(preFamilyMembers.length, personDecisions);
   if (!resolution.ok) {
@@ -1434,8 +1500,41 @@ export async function approveMemberApplication(
       );
     }
 
+    // The applicant's own stored day, decoded once and refused if it names none.
+    // `applicantDateOfBirth` IS a `@db.Date` column, so this is not the
+    // `familyMembers` JSON hole — what it catches is a year outside the
+    // `CalendarDate` range, which `createMemberApplication` could once write from
+    // `new Date("0000-05-05")`. Left unguarded that value throws a `RangeError`
+    // out of `computeAge` inside this transaction and the route answers a bare
+    // 500 (#3082 fix round).
+    const applicantDayOfBirth = applicationDateOfBirthDay(
+      formatDateOnly(lockedApplication.applicantDateOfBirth),
+    );
+    if (!applicantDayOfBirth) {
+      throw new MembershipApplicationError(
+        unreadableDateOfBirthRefusal("The applicant"),
+        422
+      );
+    }
+
     const address = parseApplicationAddress(lockedApplication.applicantAddress);
     const familyMembers = parseApplicationFamilyMembers(lockedApplication.familyMembers);
+    // EVERY dependent's day, decoded in ONE pass before anything is written, and
+    // refused by name if any of them names no real day (#3082 fix round). Doing
+    // it here rather than inside the write loop below means the refusal is the
+    // same 422 with the same message on the mapping path and the all-CREATE path
+    // — the mapping recompute reports the same condition as a blocking 409, and
+    // two statuses for one cause is how an admin ends up chasing the wrong thing.
+    const dependentDaysOfBirth = familyMembers.map((familyMember, index) => {
+      const day = applicationDateOfBirthDay(familyMember.dateOfBirth);
+      if (!day) {
+        throw new MembershipApplicationError(
+          unreadableDateOfBirthRefusal(dependentSubject(familyMember, index)),
+          422
+        );
+      }
+      return { day, instant: dateOnlyInstantOf(day) };
+    });
     const applicantPhone = parseApplicantPhone(lockedApplication.applicantPhone);
     // E10 (#1936): when any person is mapped, age tiers are computed from
     // AgeTierSetting rows read via `tx` (bypassing the 5-minute process cache)
@@ -1452,9 +1551,7 @@ export async function approveMemberApplication(
           mappingSeasonStart,
           mappingAgeTierSettings
         )
-      : await computeTier(
-          formatDateOnly(lockedApplication.applicantDateOfBirth)
-        );
+      : await computeTier(applicantDayOfBirth, mappingSeasonStart);
     // The application form captures the booking-gate profile details, so
     // approval counts as initial confirmation for the applicant and dependents.
     const profileConfirmedAt = new Date();
@@ -1749,13 +1846,17 @@ export async function approveMemberApplication(
     for (let index = 0; index < familyMembers.length; index += 1) {
       const familyMember = familyMembers[index];
       const familyDecision = decisions[index + 1].decision;
+      // The day decoded once above, so the tier and the stored date can never
+      // come from two readings of one string.
+      const { day: dependentDayOfBirth, instant: dependentDateOfBirth } =
+        dependentDaysOfBirth[index];
       const dependentAgeTier = mappingAgeTierSettings
         ? computeAgeTierWithSettings(
-            new Date(familyMember.dateOfBirth),
+            dependentDateOfBirth,
             mappingSeasonStart,
             mappingAgeTierSettings
           )
-        : await computeTier(familyMember.dateOfBirth);
+        : await computeTier(dependentDayOfBirth, mappingSeasonStart);
 
       if (familyDecision.mode === "MAP") {
         const outcome = outcomeByRef.get(`family:${index}`);
@@ -1769,7 +1870,7 @@ export async function approveMemberApplication(
         const dependentUpdate: Prisma.MemberUncheckedUpdateInput = {
           firstName: familyMember.firstName,
           lastName: familyMember.lastName,
-          dateOfBirth: new Date(familyMember.dateOfBirth),
+          dateOfBirth: dependentDateOfBirth,
           ageTier: dependentAgeTier,
           phoneCountryCode: applicantPhone.phoneCountryCode,
           phoneAreaCode: applicantPhone.phoneAreaCode,
@@ -1949,7 +2050,7 @@ export async function approveMemberApplication(
           emailVerified: true,
           firstName: familyMember.firstName,
           lastName: familyMember.lastName,
-          dateOfBirth: new Date(familyMember.dateOfBirth),
+          dateOfBirth: dependentDateOfBirth,
           role: "USER",
           ageTier: dependentAgeTier,
           active: true,
@@ -2040,8 +2141,24 @@ export async function approveMemberApplication(
           createdByMemberId: string;
           amountCents?: number;
           description?: string;
+          seasonYear: number;
+          asOf: Date;
         } = {
           createdByMemberId: adminMemberId,
+          // The season resolved BEFORE this transaction opened. Required by the
+          // enqueue whenever a transaction client is supplied, because the
+          // joining-fee chain below it (`getEntranceFeeContext` ->
+          // `resolveMemberJoiningFeeClassification`) would otherwise read the
+          // club's zone from the database while this transaction holds the
+          // application and member-lifecycle locks — and that season selects the
+          // `JoiningFee` schedule row whose `amountCents` lands on an IMMUTABLE
+          // entrance-fee invoice (#2870, correctness review).
+          seasonYear,
+          // #3123 — and the joining fee's schedule day, from the SAME
+          // pre-transaction read for the same reason: `getEffectiveJoiningFee`
+          // used to default it from the environment's zone, which picks the
+          // wrong schedule row for a club behind its container.
+          asOf: joiningFeeAsOf,
         };
         if (entranceFeeDecision.amountCents) {
           entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;

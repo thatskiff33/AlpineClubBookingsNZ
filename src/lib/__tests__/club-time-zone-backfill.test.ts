@@ -272,10 +272,28 @@ describe("prisma/seed.ts club-timezone block", () => {
     "utf8",
   );
   const blockStart = seedSource.indexOf("const clubTimeZoneBackfill");
-  const block = seedSource.slice(blockStart, blockStart + 1400);
+  /*
+    END-ANCHORED, NOT LENGTH-ANCHORED (#2870 group F1).
+
+    This used to slice a fixed 1400 characters from `blockStart`. That silently
+    stopped covering the block the moment the seed grew — CT-4's season-year work
+    added the club-season derivation here, which pushed the `/admin/club-time`
+    link 2224 characters out, and the assertion below then failed for a reason
+    that had nothing to do with the contract it exists to check. A window sized
+    by a magic number is a guard that expires without saying so.
+
+    The block ends where the next concern begins, so it now tracks the section
+    rather than a byte count. `blockEnd` is asserted below: if that marker ever
+    moves, this fails and names the reason instead of quietly re-widening.
+  */
+  const blockEnd = seedSource.indexOf("// DB-only lodge capacity parity", blockStart);
+  const block = seedSource.slice(blockStart, blockEnd);
 
   it("defers to the shared decision instead of re-deriving one", () => {
     expect(blockStart).toBeGreaterThan(-1);
+    // The end marker, so a moved section fails here rather than shrinking the
+    // window the other assertions rely on.
+    expect(blockEnd).toBeGreaterThan(blockStart);
     expect(seedSource).toContain(
       'import { decideClubTimeZoneBackfill } from "../src/lib/config-self-heal-steps"',
     );

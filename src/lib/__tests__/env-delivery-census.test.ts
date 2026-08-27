@@ -480,6 +480,47 @@ type ComposeRender = {
   >;
 };
 
+/**
+ * The per-test budget for the `it()` blocks that render a stack (#3083).
+ *
+ * Vitest's default is 5000 ms, which was never chosen for a test that LAUNCHES A
+ * PROCESS. It reddened `verify` on #3081 with
+ * `Error: Test timed out in 5000ms` at this file, while the same suite passed on
+ * #3077 and #3079 minutes earlier at the same base and #3081 touches no compose
+ * file, no env file and nothing else this census reads. A false red on a
+ * deployment-safety gate is worse than a slow one: it teaches its reader to wave
+ * the gate through.
+ *
+ * Measured rather than picked, on a 20-core Windows host with Compose v5.3.1:
+ *
+ * | scenario                          | slowest single render |
+ * | --------------------------------- | --------------------- |
+ * | idle, 7 runs x 3 combinations     | 204 ms                |
+ * | 24 renders at once                | 530 ms                |
+ * | 72 renders at once                | 2104 ms               |
+ *
+ * So the work itself is ~200 ms and CONTENTION is the whole variable — which is
+ * exactly what a 4-core CI runner executing the rest of the suite in parallel
+ * supplies, and why CI has already been seen past 5000 ms while the worst local
+ * contention reached 2104 ms. 30 s is ~147x the idle render, ~14x the worst
+ * contended one measured, and >=6x the budget that actually blew on CI, while
+ * still failing a genuinely hung `docker compose` in half a minute instead of
+ * hanging the job.
+ *
+ * A HANG-CATCHER, NOT A PASS MARK — the same footing as
+ * `./helpers/migration-gate-timeouts.ts`, which budgets the bash gate suites at
+ * 60 s for the same fork-cost reason. On CI these finish in well under a second,
+ * so this number never decides a pull request; if one ever burns 30 s, something
+ * is genuinely wrong and the test SHOULD fail.
+ *
+ * DELIBERATELY PER-TEST. The global `testTimeout` stays at its 5 s default: it is
+ * what catches a hung test everywhere else in this suite, and widening it for
+ * six subprocess tests would blunt it for thousands of others — `vitest.setup.ts`
+ * also states that 5,000 ms and calibrates the 4,000 ms RTL window against it.
+ * The two GUARD B cases that do not shell out keep the default too.
+ */
+const COMPOSE_RENDER_TIMEOUT_MS = 30_000;
+
 function renderCompose(files: string[], envFile: string): ComposeRender {
   const result = spawnSync(
     "docker",
@@ -579,7 +620,7 @@ describe("GUARD B: the rendered compose environment (INV-CONFIG-004)", () => {
           "holds mail back with no error. Add the name to the " +
           "x-app-environment anchor in docker-compose.yml (INV-CONFIG-004).",
       ).toEqual([]);
-    });
+    }, COMPOSE_RENDER_TIMEOUT_MS);
 
     it(`resolves exactly one transport flag and a legal role: ${label}`, () => {
       const render = renderCompose(files, envFile);
@@ -627,7 +668,7 @@ describe("GUARD B: the rendered compose environment (INV-CONFIG-004)", () => {
           "copy then treats as an ordinary suppression — silently, with no error " +
           "(INV-CONFIG-004).",
       ).toEqual([]);
-    });
+    }, COMPOSE_RENDER_TIMEOUT_MS);
   }
 
   it("cleans up its fixture", () => {

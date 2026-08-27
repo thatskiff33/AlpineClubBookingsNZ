@@ -6,8 +6,47 @@ import {
 } from "@/lib/nomination";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { isCalendarDate } from "@/lib/club-time";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
+
+/**
+ * A DATE OF BIRTH THAT NAMES A REAL DAY, not merely one shaped like a date
+ * (#3082 fix round).
+ *
+ * This endpoint is UNAUTHENTICATED — rate-limited and nothing else — and both
+ * fields it validates end up feeding an age tier, which selects a price band.
+ * The bare `/^\d{4}-\d{2}-\d{2}$/` this replaces is a SHAPE check: it accepts
+ * `1990-13-01`, `1990-06-32`, `1990-00-15` and `0000-05-05`, and it accepts
+ * `1990-02-31`, which `new Date` then silently rolls to 3 March. The dependents
+ * land in a `Json` column, so PostgreSQL never sees them either.
+ *
+ * `nominations/[token]/page.tsx` names this gap in its own docblock and says
+ * tightening the write paths "is deliberately NOT done here" because reading a
+ * value must not be able to take a page down whatever was written. That is still
+ * the rule for the READERS — `isoDateSchema` in `nomination.ts` stays loose, and
+ * so does that page — and this is the other half it was waiting for: refuse the
+ * value where it ARRIVES, once, so no reader has to cope with it and no
+ * membership approval can be wedged by it.
+ *
+ * `isCalendarDate` is the kernel's own predicate, so "a real day" means exactly
+ * what it means everywhere else in this codebase: four-digit year from 0001,
+ * month 1-12, and a day that exists in that month.
+ */
+const calendarDayOfBirth = (label: string) =>
+  z.string().superRefine((value, context) => {
+    // ONE ISSUE, NOT TWO. A `.regex(...).refine(...)` pair reports both messages
+    // for `"01/02/1990"`, which is noise in a field-level form error: the shape
+    // is the only thing wrong with it and the caller is told twice.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      context.addIssue({ code: "custom", message: `${label} must be YYYY-MM-DD` });
+      return;
+    }
+    if (!isCalendarDate(value)) {
+      context.addIssue({ code: "custom", message: `${label} must be a real date` });
+    }
+  });
+
 const cleanedString = (label: string, maxLength: number) =>
   z
     .string()
@@ -19,7 +58,7 @@ const applicationSchema = z.object({
   applicantFirstName: cleanedString("First name", 100),
   applicantLastName: cleanedString("Last name", 100),
   applicantEmail: z.string().email("Invalid email address").transform((value) => value.trim()),
-  applicantDateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD"),
+  applicantDateOfBirth: calendarDayOfBirth("Date of birth"),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(20).optional().nullable(),
@@ -41,9 +80,7 @@ const applicationSchema = z.object({
       z.object({
         firstName: cleanedString("Dependent first name", 100),
         lastName: cleanedString("Dependent last name", 100),
-        dateOfBirth: z
-          .string()
-          .regex(/^\d{4}-\d{2}-\d{2}$/, "Dependent date of birth must be YYYY-MM-DD"),
+        dateOfBirth: calendarDayOfBirth("Dependent date of birth"),
       })
     )
     .max(10, "Please contact the club if you need to add more than 10 dependents")

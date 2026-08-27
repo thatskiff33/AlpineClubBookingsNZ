@@ -2,6 +2,11 @@ import { prisma } from "./prisma";
 import logger from "./logger";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
 
+const MILLISECONDS_PER_DAY = 86_400_000;
+
+/** How long a WebhookLog row is kept before the prune removes it (OBS-08). */
+const WEBHOOK_LOG_RETENTION_DAYS = 30;
+
 /**
  * OBS-08: Record a webhook invocation for monitoring.
  */
@@ -77,8 +82,11 @@ export async function getWebhookStats(hours = 24) {
  * OBS-08: Prune webhook logs older than 30 days.
  */
 export async function pruneWebhookLogs() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 30);
+  // A retention window is a DURATION measured in milliseconds, not a walk back
+  // through the host's clock face (INV-DATE-014, CT-6 #2991).
+  const cutoff = new Date(
+    Date.now() - WEBHOOK_LOG_RETENTION_DAYS * MILLISECONDS_PER_DAY
+  );
   const { count } = await prisma.webhookLog.deleteMany({
     where: { createdAt: { lt: cutoff } },
   });

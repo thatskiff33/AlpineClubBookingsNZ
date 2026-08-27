@@ -136,6 +136,14 @@ import {
   getLodgeCapacityStatus,
 } from "@/lib/lodge-capacity";
 import { getVisibleAdminNavSections } from "@/components/admin-sidebar";
+import { requireCalendarDate } from "@/lib/club-time";
+
+/**
+ * #3123 — the club's day, first and REQUIRED on the nav exports. Nothing in this
+ * file asserts on the one dated href, so a single fixed day serves every call.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
+
 import { LodgeSelect } from "@/components/lodge-select";
 import AdminLodgesPage from "@/app/(admin)/admin/lodges/page";
 
@@ -218,6 +226,7 @@ describe("legacy install: module-settings load path tolerates the stale row", ()
 describe("legacy install: admin sidebar shows the single Lodges entry", () => {
   it("renders exactly one Lodges entry, with the scattered lodge editors retired into the hub", () => {
     const sections = getVisibleAdminNavSections(
+      CLUB_DAY,
       LEGACY_FEATURE_FLAGS,
       undefined,
       true,

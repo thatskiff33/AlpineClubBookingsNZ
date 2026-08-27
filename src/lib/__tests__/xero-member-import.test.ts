@@ -22,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
   sendPasswordResetEmail: vi.fn(),
   issueActionToken: vi.fn(() => ({ token: "tok", tokenHash: "hash" })),
-  getSeasonYear: vi.fn(() => 2026),
   computeAgeTier: vi.fn(async () => "YOUTH"),
   buildStructuredAuditLogCreateArgs: vi.fn((event: unknown) => ({ data: event })),
   getXeroSyncCursor: vi.fn(async () => ({ lastSuccessfulSyncAt: new Date("2026-04-01T00:00:00Z") })),
@@ -40,7 +39,6 @@ vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/logger", () => ({ default: mocks.logger }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetEmail: mocks.sendPasswordResetEmail }));
 vi.mock("@/lib/action-tokens", () => ({ issueActionToken: mocks.issueActionToken }));
-vi.mock("@/lib/utils", () => ({ getSeasonYear: mocks.getSeasonYear }));
 vi.mock("@/lib/age-tier", () => ({ computeAgeTier: mocks.computeAgeTier }));
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
@@ -113,7 +111,6 @@ const ADMIN_ID = "admin_1";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getSeasonYear.mockReturnValue(2026);
   mocks.computeAgeTier.mockResolvedValue("YOUTH");
   mocks.parseXeroContactDateOfBirth.mockReturnValue(null);
   mocks.getXeroSyncCursor.mockResolvedValue({

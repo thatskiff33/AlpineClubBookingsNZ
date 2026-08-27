@@ -6,7 +6,8 @@ import {
 } from "@/components/admin/view-only-action"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Trash2 } from "lucide-react"
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import { cn } from "@/lib/utils"
 import type {
   MemberDeleteEligibility,
@@ -48,6 +49,10 @@ export function MemberDeletionCard({
   className,
   ancestorRendersViewOnlyBanner = false,
 }: MemberDeletionCardProps) {
+  // `requestedAt` is a real INSTANT — when the request row was written — so it
+  // has no civil date until a zone is chosen, and that zone is the club's
+  // persisted one (`INV-CONFIG-002`), not the reviewing admin's browser.
+  const clubTime = useClubTime()
   const deleteBlockers = deleteEligibility.blockers
 
   return (
@@ -76,7 +81,7 @@ export function MemberDeletionCard({
           <div className="rounded-md border border-warning-6 bg-warning-3 p-3 text-sm text-warning-11">
             <div className="font-medium">Delete request pending second-admin review</div>
             <div className="mt-1">
-              Requested {formatMemberDateNz(pendingDeleteRequest.requestedAt)} by{" "}
+              Requested {formatPayloadInstantDate(clubTime, pendingDeleteRequest.requestedAt)} by{" "}
               {pendingDeleteRequest.requestedBy?.name ?? "Unknown admin"}
             </div>
             <div className="mt-2 text-warning-11">{pendingDeleteRequest.reason}</div>
@@ -136,7 +141,7 @@ export function MemberDeletionCard({
                 <div key={request.id} className="p-3 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="font-medium text-foreground">{deleteStatusLabel[request.status]}</div>
-                    <div className="text-xs text-muted-foreground">{formatMemberDateNz(request.requestedAt)}</div>
+                    <div className="text-xs text-muted-foreground">{formatPayloadInstantDate(clubTime, request.requestedAt)}</div>
                   </div>
                   <div className="mt-1 text-muted-foreground">{request.reason}</div>
                   {request.reviewNote && (

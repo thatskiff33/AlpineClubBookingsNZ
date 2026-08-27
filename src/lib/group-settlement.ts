@@ -33,6 +33,8 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import {
   cancelPaymentIntentIfCancellable,
   createPaymentIntent,
@@ -409,6 +411,11 @@ async function createGroupSettlementInvoice(
   const leadTime = checkInternetBankingLeadTime({
     checkIn,
     settings: internetBankingSettings,
+    // #3123 — the club's PERSISTED zone, read here and OUTSIDE the settlement
+    // transaction this function's caller opens. The runtime reader rather than
+    // the `server-only` binding: this module is instrumentation-reachable
+    // (`xero-inbound/invoice.ts` -> `invoice-paid-effects.ts` -> here).
+    today: dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest())),
   });
   if (!leadTime.allowed) {
     throw new GroupBookingError(

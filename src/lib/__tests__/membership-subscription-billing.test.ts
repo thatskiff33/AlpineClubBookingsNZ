@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   settings: { findUnique: vi.fn() },
@@ -19,6 +19,19 @@ const mocks = vi.hoisted(() => ({
   // mocked export), so the resolver's item code is supplied here.
   feeComponents: { findMany: vi.fn() },
   accountMapping: { findUnique: vi.fn() },
+  // CT-4 group F1 (#2870): the default decision date is now the CLUB's calendar
+  // day, read from this row. Present so the suite can set a zone the environment
+  // does NOT hold and see the difference.
+  clubTimeSettings: { findUnique: vi.fn() },
+  // The approval path (`queueApprovedMembershipSubscriptionCharges`) writes
+  // through a transaction; with no members in scope the only writers it reaches
+  // are the exception ones.
+  billingExceptions: { updateMany: vi.fn(), upsert: vi.fn() },
+  // `INV-LOCK-001`: the confirm step takes a global advisory lock inside its
+  // transaction, so the double has to answer the raw call.
+  executeRaw: vi.fn(),
+  audit: vi.fn(),
+  enqueueChargeOperation: vi.fn(),
   effectiveFee: vi.fn(),
   familyMode: vi.fn(),
   mapping: vi.fn(),
@@ -51,19 +64,68 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupSeasonInvoiceMarker: mocks.familyMarkers,
     membershipAnnualFeeComponent: mocks.feeComponents,
     xeroAccountMapping: mocks.accountMapping,
+    clubTimeSettings: mocks.clubTimeSettings,
+    membershipBillingException: mocks.billingExceptions,
+    $transaction: (
+      run: (tx: unknown) => unknown,
+    ) => run(billingTransactionClient()),
   },
 }));
+
+vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+vi.mock("@/lib/xero-subscription-invoices", () => ({
+  enqueueMembershipSubscriptionChargeOperation: mocks.enqueueChargeOperation,
+}));
+
+/**
+ * The delegates the confirm step reaches inside its transaction when NO member is
+ * in scope. Deliberately narrow: a wider double would let a future change write
+ * somewhere this suite is not watching and still pass.
+ */
+function billingTransactionClient() {
+  return {
+    $executeRaw: mocks.executeRaw,
+    membershipBillingException: mocks.billingExceptions,
+    membershipSubscriptionChargeCoverage: mocks.coverage,
+    memberSubscription: mocks.subscriptions,
+    membershipSubscriptionCharge: mocks.charges,
+    member: mocks.members,
+    membershipType: mocks.membershipTypes,
+    familyGroupMember: mocks.familyGroupMembers,
+    familyGroupSeasonInvoiceMarker: mocks.familyMarkers,
+    membershipAnnualFeeComponent: mocks.feeComponents,
+    membershipSubscriptionBillingSettings: mocks.settings,
+    xeroAccountMapping: mocks.accountMapping,
+  };
+}
 
 import {
   buildComponentLineDescription,
   buildSubscriptionBillingPreview,
   calculateMembershipCharge,
+  queueApprovedMembershipSubscriptionCharges,
 } from "@/lib/membership-subscription-billing";
+import { withTimeZoneAsync } from "@/lib/__tests__/helpers/timezone";
 import { getSubscriptionItemCodes } from "@/lib/xero-mappings";
 import {
   __setFinancialYearEndMonthForTesting,
   DEFAULT_FINANCIAL_YEAR_END_MONTH,
 } from "@/lib/financial-year";
+
+/**
+ * A stored `@db.Date` date of birth: the calendar day, at UTC midnight
+ * (INV-DATE-024).
+ *
+ * THESE FIXTURES USED TO BE `new Date(2016, 3, 1)`, host-local midnight — the
+ * spelling INV-DATE-024 names as forbidden for this column, and one that means a
+ * DIFFERENT day for a run on a UTC container and a run on this repository's own
+ * `Pacific/Auckland` pin. `computeAge`'s stored-day guard now refuses it (#3082),
+ * which is how thirteen of them were found: they had been passing on CI and
+ * describing an age-tier price boundary with a value no writer produces.
+ */
+function storedDateOfBirth(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
 
 function fee(overrides: Record<string, unknown> = {}) {
   return {
@@ -160,7 +222,152 @@ describe("membership subscription billing", () => {
     mocks.effectiveFee.mockResolvedValue(fee());
     mocks.familyMode.mockResolvedValue("BILL_FAMILY_VIA_BILLING_MEMBER");
     mocks.mapping.mockResolvedValue({ code: "203", itemCode: "SUB", codeExplicitlyConfigured: true });
+    mocks.clubTimeSettings.findUnique.mockResolvedValue(null);
+    mocks.billingExceptions.updateMany.mockResolvedValue({ count: 0 });
+    mocks.billingExceptions.upsert.mockResolvedValue({});
+    mocks.executeRaw.mockResolvedValue(0);
+    mocks.audit.mockResolvedValue(undefined);
+    mocks.enqueueChargeOperation.mockResolvedValue(undefined);
     __setFinancialYearEndMonthForTesting(DEFAULT_FINANCIAL_YEAR_END_MONTH);
+  });
+
+  /**
+   * THE DEFAULT DECISION DATE IS THE CLUB'S DAY, NOT THE ENVIRONMENT'S.
+   *
+   * This is the money half of CT-4 group F1 (#2870). With no explicit decision
+   * date this value bounds the season a subscription charge — and the Xero invoice
+   * queued from it — is written against, and the charge is immutable once created.
+   * It used to come from `getTodayDateOnly()`, i.e. from `APP_TIME_ZONE`, which is
+   * the container's environment and not the club's persisted zone. A deployment
+   * that sets only `TZ` had the two disagree by up to a day.
+   *
+   * THE ASSERTION IS DISCRIMINATING BY CONSTRUCTION, which is the thing this epic
+   * keeps failing to achieve elsewhere. `APP_TIME_ZONE` resolves to
+   * `Pacific/Auckland` under test, so the fixture persists `America/Denver` — a
+   * zone the environment does NOT hold — and at the frozen instant
+   * (2026-07-01T00:00:00Z) the two zones are on DIFFERENT calendar days: Auckland
+   * is on 1 July, Denver still on 30 June. Any implementation that reads the
+   * environment, the host, or the UTC clock answers 2026-07-01 and fails.
+   */
+  describe("the default decision date", () => {
+    // One block below pins its own instant to put the club's day on a season edge;
+    // the root hook re-freezes the DEFAULT rather than a suite's pin, so hand it
+    // back explicitly (`AGENTS.md`).
+    afterEach(() => {
+      vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    });
+
+    it("is the club's own calendar day, from the persisted zone", async () => {
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "America/Denver",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026 });
+
+      expect(preview.decisionDate).toBe("2026-06-30");
+    });
+
+    it("moves with the persisted zone rather than staying on the environment's day", async () => {
+      // The same instant, a club east of Greenwich: now the club really is on
+      // 1 July. Pinning both halves is what stops the assertion above passing for
+      // a wrong reason — a hard-coded "yesterday" would fail here.
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "Pacific/Auckland",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026 });
+
+      expect(preview.decisionDate).toBe("2026-07-01");
+    });
+
+    /**
+     * THE HIGHEST-CONSEQUENCE LINE IN THIS LANE, and it needs TWO axes moved at
+     * once to be testable at all.
+     *
+     * Approving a membership application reaches
+     * `queueApprovedMembershipSubscriptionCharges` with no decision date, and the
+     * season it derives is written into an IMMUTABLE subscription charge and the
+     * Xero invoice queued from it. Two different mistakes produce a wrong season
+     * there, and a fixture that moves only one axis is blind to the other.
+     *
+     * AXIS 1, THE ZONE. Reading `APP_TIME_ZONE` instead of the club's persisted
+     * setting. The first version of this test persisted `Pacific/Auckland`, which
+     * is exactly what `APP_TIME_ZONE` resolves to under vitest with no `TZ` — so
+     * persisted, environment and a hard-coded `"Pacific/Auckland"` were the same
+     * string. Measured by a review lens: swapping the read for the environment
+     * zone, and swapping it for that literal, each SURVIVED all tests. The club
+     * zone here is therefore `Pacific/Kiritimati` (UTC+14), which the environment
+     * does not hold.
+     *
+     * AXIS 2, THE HOST. Once the decision date is minted as the club's own day at
+     * UTC midnight, a host-LOCAL read of it gives the same answer on any host at or
+     * east of Greenwich — including the CI runner, which resolves `UTC`. That is
+     * the class owner decision 3 (#2870) recorded as uncatchable without moving the
+     * host, so `process.env.TZ` is pinned behind Greenwich.
+     *
+     * ONE INSTANT COVERS BOTH. At 11:00Z on 30 June, with a June year-end:
+     *   - the club (UTC+14) is on 1 July — the FIRST day of season 2026;
+     *   - `APP_TIME_ZONE` (UTC+12) is still on 30 June — season 2025;
+     *   - UTC is on 30 June — season 2025;
+     *   - and a Denver host reading the minted `2026-07-01T00:00:00Z` with local
+     *     getters sees 30 June — season 2025.
+     * So every one of the four wrong implementations answers 2025 and the correct
+     * one answers 2026.
+     *
+     * The kill is loud rather than subtle: 2025 fails
+     * `buildSubscriptionBillingPreview`'s own bounds check, so the approval throws
+     * `Decision date must fall within membership year 2025.` instead of billing
+     * quietly against the wrong year.
+     */
+    it("bills an approval in the club's season — not the environment's, the host's, or UTC's", async () => {
+      __setFinancialYearEndMonthForTesting(6);
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "Pacific/Kiritimati",
+      });
+      vi.setSystemTime(new Date("2026-06-30T11:00:00.000Z"));
+
+      await withTimeZoneAsync("America/Denver", async () => {
+        const result = await queueApprovedMembershipSubscriptionCharges({
+          memberIds: [],
+          approvedByMemberId: "admin-1",
+        });
+        expect(result.chargeIds).toEqual([]);
+      });
+
+      // The season the preview was actually built for: 2026, the year the club's
+      // own 1 July belongs to under a June year-end.
+      expect(mocks.billingExceptions.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ seasonYear: 2026 }),
+        }),
+      );
+    });
+
+    it("refuses to default it inside a transaction, where the zone read would sit under the season lock", async () => {
+      // The zone is a database read; `getTodayDateOnly()` was pure. Both
+      // in-module callers that pass `store` hold `pg_advisory_xact_lock` on the
+      // season and both already supply the date, so this refusal turns a
+      // coincidence into a contract rather than changing any live behaviour.
+      await expect(
+        buildSubscriptionBillingPreview({
+          seasonYear: 2026,
+          store: billingTransactionClient() as never,
+        }),
+      ).rejects.toThrow(/must be given its decision date/);
+    });
+
+    it("still honours an explicit decision date", async () => {
+      mocks.clubTimeSettings.findUnique.mockResolvedValue({
+        timeZone: "America/Denver",
+      });
+
+      const preview = await buildSubscriptionBillingPreview({
+        seasonYear: 2026,
+        decisionDate: new Date("2026-05-15T00:00:00.000Z"),
+      });
+
+      expect(preview.decisionDate).toBe("2026-05-15");
+    });
   });
 
   // #2109 FIX-4d closed loop: drive the REAL billing line-builder for a type +
@@ -1251,10 +1458,10 @@ describe("membership subscription billing", () => {
     it("charges a Youth-at-season-start and skips a Child-at-season-start (owner boundary: 01 Apr vs 31 Mar 10th birthday)", async () => {
       mocks.members.findMany.mockResolvedValue([
         // Turns 10 on 01 Apr -> Youth for the whole 2026 season -> required.
-        ageTierMember("youth-01apr", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth-01apr", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
         // Turns 10 on 31 Mar (2027, mid-season) -> still a Child at 1 Apr 2026
         // season start -> exempt all season.
-        ageTierMember("child-31mar", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child-31mar", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1274,7 +1481,7 @@ describe("membership subscription billing", () => {
       vi.setSystemTime(new Date("2026-12-01T00:00:00.000Z"));
       try {
         mocks.members.findMany.mockResolvedValue([
-          ageTierMember("late-birthday", { dateOfBirth: new Date(2016, 4, 1) }), // 01 May 2016 -> 9 at 1 Apr 2026
+          ageTierMember("late-birthday", { dateOfBirth: storedDateOfBirth("2016-05-01") }), // 01 May 2016 -> 9 at 1 Apr 2026
         ]);
         const preview = await buildSubscriptionBillingPreview({
           seasonYear: 2026,
@@ -1303,7 +1510,7 @@ describe("membership subscription billing", () => {
 
     it("a liable Youth mints the SAME charge a REQUIRED type would — key and amount byte-unchanged", async () => {
       mocks.members.findMany.mockResolvedValue([
-        ageTierMember("youth", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
       ]);
       const ageTierPreview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1311,7 +1518,7 @@ describe("membership subscription billing", () => {
       });
       mocks.members.findMany.mockResolvedValue([
         member("youth", {
-          dateOfBirth: new Date(2016, 3, 1),
+          dateOfBirth: storedDateOfBirth("2016-04-01"),
           ageTier: "YOUTH",
           seasonalMembershipAssignments: [{
             membershipType: { id: "type-full", key: "FULL", name: "Full", subscriptionBehavior: "REQUIRED", annualFees: [fee()] },
@@ -1329,7 +1536,7 @@ describe("membership subscription billing", () => {
 
     it("does not resolve a Xero mapping when the only members are tier-exempt (no invoice entries)", async () => {
       mocks.members.findMany.mockResolvedValue([
-        ageTierMember("child", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1344,7 +1551,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(fee({ billingBasis: "PER_FAMILY", prorationRule: "NONE" }));
       mocks.members.findMany.mockResolvedValue([
         member("child-in-family", {
-          dateOfBirth: new Date(2017, 2, 31),
+          dateOfBirth: storedDateOfBirth("2017-03-31"),
           ageTier: "CHILD",
           familyGroupMemberships: [familyMembership()],
           seasonalMembershipAssignments: [{
@@ -1378,7 +1585,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
         // Child at 1 Apr 2026 season start -> exempt; no fee resolves for CHILD.
-        ageTierMember("child-no-fee", { dateOfBirth: new Date(2017, 2, 31) }),
+        ageTierMember("child-no-fee", { dateOfBirth: storedDateOfBirth("2017-03-31") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1400,7 +1607,7 @@ describe("membership subscription billing", () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
         // Youth at season start -> liable; no fee resolves for YOUTH.
-        ageTierMember("youth-no-fee", { dateOfBirth: new Date(2016, 3, 1) }),
+        ageTierMember("youth-no-fee", { dateOfBirth: storedDateOfBirth("2016-04-01") }),
       ]);
       const preview = await buildSubscriptionBillingPreview({
         seasonYear: 2026,
@@ -1449,7 +1656,7 @@ describe("membership subscription billing", () => {
       tierPricedFees();
       mocks.members.findMany.mockResolvedValue([
         // Turns 10 on 01 Apr 2026 -> YOUTH at season start; stored tier still CHILD.
-        basedMember("drifted-up", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+        basedMember("drifted-up", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "CHILD" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       // Resolved by the season-start tier, never the stored CHILD tier.
@@ -1464,7 +1671,7 @@ describe("membership subscription billing", () => {
       mocks.members.findMany.mockResolvedValue([
         // At 1 Apr 2026 season start they were 10 -> YOUTH; the stored tier has
         // since aged up to ADULT. Billing 2026 must charge the YOUTH price.
-        basedMember("drifted-adult", { dateOfBirth: new Date(2016, 3, 1), ageTier: "ADULT" }),
+        basedMember("drifted-adult", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "ADULT" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
@@ -1474,7 +1681,7 @@ describe("membership subscription billing", () => {
     it("stored == season-start tier: resolves that tier unchanged (no regression)", async () => {
       tierPricedFees();
       mocks.members.findMany.mockResolvedValue([
-        basedMember("aligned-youth", { dateOfBirth: new Date(2016, 3, 1), ageTier: "YOUTH" }),
+        basedMember("aligned-youth", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "YOUTH" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(mocks.effectiveFee.mock.calls.every((c) => c[0].ageTier === "YOUTH")).toBe(true);
@@ -1497,7 +1704,7 @@ describe("membership subscription billing", () => {
     it("MISSING_FEE_SCHEDULE names the season-start tier actually used, not the stored tier", async () => {
       mocks.effectiveFee.mockResolvedValue(null);
       mocks.members.findMany.mockResolvedValue([
-        basedMember("no-youth-fee", { dateOfBirth: new Date(2016, 3, 1), ageTier: "CHILD" }),
+        basedMember("no-youth-fee", { dateOfBirth: storedDateOfBirth("2016-04-01"), ageTier: "CHILD" }),
       ]);
       const preview = await buildSubscriptionBillingPreview({ seasonYear: 2026, decisionDate: new Date("2026-04-01T00:00:00.000Z") });
       expect(preview.exceptions.map((r) => r.code)).toEqual(["MISSING_FEE_SCHEDULE"]);

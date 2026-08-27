@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { fetchJson } from "./api"
 import { BudgetStatusChip, budgetTone, SectionCard, toneFillClass, type ToggleSection } from "./shared"
 import type { XeroUsageSummary } from "./types"
@@ -18,6 +19,10 @@ export function UsagePanel({
   onToggle: ToggleSection
   refreshToken: number
 }) {
+  // Both stamps here are real INSTANTS — when Xero last rate-limited us, and
+  // when a call failed. They project through the club's persisted zone, never
+  // the viewer's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
   const [usage, setUsage] = useState<XeroUsageSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
@@ -66,7 +71,7 @@ export function UsagePanel({
                 <BudgetStatusChip status={usage.today.budgetStatus} />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Last rate limit: {usage.today.lastRateLimitAt ? formatNZDateTime(new Date(usage.today.lastRateLimitAt)) : "none"}
+                Last rate limit: {usage.today.lastRateLimitAt ? clubTime.instantDateTime(requireInstant(usage.today.lastRateLimitAt)) : "none"}
               </p>
             </div>
           </div>
@@ -92,7 +97,7 @@ export function UsagePanel({
                   <div key={failure.id} className="rounded-md bg-muted p-3 text-sm">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{failure.workflow ?? failure.operation}</span>
-                      <span className="text-xs text-muted-foreground">{formatNZDateTime(new Date(failure.createdAt))}</span>
+                      <span className="text-xs text-muted-foreground">{clubTime.instantDateTime(requireInstant(failure.createdAt))}</span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {failure.operation} - {failure.resourceType}

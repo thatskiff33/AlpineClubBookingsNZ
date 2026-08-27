@@ -17,7 +17,8 @@ import {
   type AncestorViewOnlyBannerProps,
 } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime, formatNZTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { useRestoreBuiltInBoards } from "../templates/restore-built-ins";
 import {
@@ -873,6 +874,8 @@ export function PairStep({
   // #2264 — the suggested screen name moves under the field. Parked inside the
   // box it read as a name already chosen, and it vanished on the first
   // keystroke; the interpolated lodge name is carried across unchanged.
+  // Pairing expiry and last-seen are real INSTANTS (CT-4, #2870).
+  const clubTime = useClubTime();
   const deviceNameHint = useFieldHint();
   const [deviceName, setDeviceName] = useState("");
   const [code, setCode] = useState("");
@@ -1265,8 +1268,8 @@ export function PairStep({
                 </Badge>
                 Waiting for the screen to claim it
                 {pending?.pairingArmedUntil
-                  ? ` — the code stops working at ${formatNZTime(
-                      new Date(pending.pairingArmedUntil),
+                  ? ` — the code stops working at ${clubTime.instantTime(
+                      requireInstant(pending.pairingArmedUntil),
                     )}`
                   : ""}
                 .
@@ -1298,7 +1301,7 @@ export function PairStep({
                     {device.name} — showing{" "}
                     {device.templateName ?? "the club default board"}
                     {device.lastSeenAt
-                      ? `, last seen ${formatNZDateTime(new Date(device.lastSeenAt))}`
+                      ? `, last seen ${clubTime.instantDateTime(requireInstant(device.lastSeenAt))}`
                       : ", not seen yet"}
                   </li>
                 ))}
@@ -1327,6 +1330,7 @@ export function PairStep({
 // ---------------------------------------------------------------------------
 
 export function DoneStep({ context, helpers }: StepProps) {
+  const clubTime = useClubTime();
   const live = liveDevicesForLodge(context);
   const seen = live.filter((device) => device.lastSeenAt !== null);
   const lodgeUnresolved = isLodgeUnresolved(context);
@@ -1361,7 +1365,7 @@ export function DoneStep({ context, helpers }: StepProps) {
               <li key={device.id}>
                 {device.name} — showing{" "}
                 {device.templateName ?? "the club default board"}, last seen{" "}
-                {formatNZDateTime(new Date(device.lastSeenAt as string))}
+                {clubTime.instantDateTime(requireInstant(device.lastSeenAt as string))}
               </li>
             ))}
           </ul>

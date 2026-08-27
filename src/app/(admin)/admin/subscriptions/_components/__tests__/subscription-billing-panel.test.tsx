@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
@@ -15,11 +18,52 @@ vi.mock("@/hooks/use-admin-area-edit-access", () => ({
 vi.mock("@/components/confirm-dialog", () => ({
   useConfirm: () => ({ confirm: mocks.confirm, confirmDialog: null }),
 }));
-vi.mock("@/lib/date-only", () => ({
-  todayDateOnlyForTimeZone: () => "2026-07-13",
-}));
 
 import { SubscriptionBillingPanel } from "@/app/(admin)/admin/subscriptions/_components/subscription-billing-panel";
+
+/**
+ * The club's day under the suite's default provider zone (`Pacific/Auckland`)
+ * and the frozen clock (`2026-07-01T00:00:00.000Z`, midday NZ).
+ *
+ * This suite used to `vi.mock("@/lib/date-only")` to pin the panel's default
+ * decision date. CT-4 (#2870) took the panel off that adapter — the default now
+ * comes from the club's PERSISTED timezone through `useClubTime` — so the mock
+ * was pinning a module the panel no longer reads. It is gone, and the zone the
+ * provider supplies is what decides.
+ *
+ * NOTE THAT THIS CONSTANT PROVES NOTHING ABOUT ZONE AUTHORITY on its own:
+ * `Pacific/Auckland` is also what `APP_TIME_ZONE` resolves to under test, so the
+ * migrated code and the code it replaced agree. The test below that renders
+ * under `America/Denver` is the one that can tell them apart.
+ */
+const CLUB_TODAY = "2026-07-01";
+
+/**
+ * The two candidate club zones for the zone-authority test at the bottom of this
+ * file, with the day each of them is on at the frozen instant.
+ *
+ * AT THIS INSTANT THERE ARE EXACTLY TWO CALENDAR DAYS ON EARTH, and that bounds
+ * what this test can do: one candidate for each of them, and the choice is
+ * whichever one the environment is NOT on. It also means `"UTC"` must not be
+ * added as a rival — with the environment on one day and UTC on the other, no
+ * candidate could contradict both and the chooser would refuse a correct tree.
+ *
+ * Two is a fact about THIS fixture, not about the world. The inhabited zone span
+ * is 25 hours, -11 (Pacific/Midway) to +14 (Pacific/Kiritimati), so at UTC hour
+ * 10 there are THREE calendar days at once. This fixture is at UTC hour 0. If
+ * you move it, re-derive the count before reusing the reasoning above — see
+ * `chooseDivergentClubZone` in `src/lib/__tests__/helpers/club-time-zone.ts`.
+ *
+ * Not needing that rival is a fact about the code, not a convenience: the only
+ * zone `clubToday` consults is the one it is handed, so "the panel read the
+ * machine's clock" is not a reachable mutation here. The reachable one is "the
+ * panel read `APP_TIME_ZONE`" — the adapter call this change removed — and the
+ * environment is exactly the rival that excludes it.
+ */
+const CLUB_TODAY_CANDIDATES = [
+  { zone: "America/Denver", today: "2026-06-30" }, // −6: still 30 June
+  { zone: "Pacific/Kiritimati", today: "2026-07-01" }, // +14: already 1 July
+];
 
 function payload(options: {
   decisionDate?: string;
@@ -217,7 +261,7 @@ describe("subscription billing panel", () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST")).toBe(true));
     const postCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
     expect(JSON.parse(String((postCall![1] as RequestInit).body))).toEqual({
-      action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: "2026-07-13",
+      action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: CLUB_TODAY,
     });
   });
 
@@ -230,6 +274,82 @@ describe("subscription billing panel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(0));
     expect(fetchMock.mock.calls.every(([, init]) => (init as RequestInit | undefined)?.method !== "POST")).toBe(true);
+  });
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * The default decision date is a BUSINESS DECISION derived from "today", and
+   * `INV-CONFIG-002` says which today: the club's, from the persisted
+   * `ClubTimeSettings.timeZone`. Everything else in this file renders under
+   * `Pacific/Auckland`, which is also what `APP_TIME_ZONE` resolves to under
+   * test — so those assertions cannot tell the persisted zone from the
+   * environment, and would pass just as happily against the code this change
+   * replaced.
+   *
+   * A club zone the environment is NOT on can. At the frozen instant
+   * `2026-07-01T00:00:00.000Z` a club six hours behind UTC is still on 30 JUNE
+   * while one fourteen hours ahead has reached 1 July, so the request below
+   * carries the chosen day only if the panel really asked the persisted zone.
+   *
+   * ## Why the zone is CHOSEN and not written down
+   *
+   * It used to be the literal `America/Denver`, and its premise compared two of
+   * this file's own constants — `DENVER_TODAY` against `CLUB_TODAY`. Two
+   * literals never disagree, so that premise could not fail, and MEASURED on
+   * this branch: with `TZ=America/Denver` the environment became Denver, this
+   * assertion stopped distinguishing the persisted zone from the environment,
+   * and NOTHING WENT RED. That is worse than the three sibling premises that at
+   * least failed loudly, because a silent pass is indistinguishable from a
+   * proof. `chooseDivergentClubZone` consults the environment, which is the
+   * whole difference.
+   */
+  it("seeds the decision date from the club's PERSISTED zone, not APP_TIME_ZONE", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "today",
+      cases: CLUB_TODAY_CANDIDATES,
+      // An INDEPENDENT oracle rather than `clubToday`, so a kernel-wide defect
+      // cannot satisfy both sides of the comparison at once. `en-CA` numeric is
+      // `yyyy-MM-dd`, which is the shape the panel puts on the wire.
+      answerFor: (zone) =>
+        new Intl.DateTimeFormat("en-CA", {
+          timeZone: zone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date()),
+    });
+    const environmentToday = new Intl.DateTimeFormat("en-CA", {
+      timeZone: APP_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    // Stated as a named assertion too, so a reader can see the expectation
+    // below is not vacuous without having to trust the helper.
+    expect(chosen.today).not.toBe(environmentToday);
+
+    mocks.canEdit.mockReturnValue(true);
+    const fetchMock = vi.mocked(fetch);
+    render(<SubscriptionBillingPanel seasonYear={2026} />, {
+      wrapper: ({ children }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    });
+    await screen.findByRole("button", { name: "Confirm and queue annual batch" });
+
+    const requested = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter((url) => url.includes("decisionDate="));
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((url) => url.includes(`decisionDate=${chosen.today}`))).toBe(true);
+    expect(requested.some((url) => url.includes(`decisionDate=${environmentToday}`))).toBe(false);
+
+    // And the operator sees the same day in the field they can change.
+    expect(
+      (screen.getByLabelText("Decision date") as HTMLInputElement).value,
+    ).toBe(chosen.today);
   });
 
   // #2161 (D2): mark a PER_FAMILY entry as already invoiced (with an optional note).

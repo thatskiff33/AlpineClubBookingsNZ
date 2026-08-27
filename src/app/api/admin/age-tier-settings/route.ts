@@ -5,7 +5,7 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { revalidatePublicPageContent } from "@/lib/public-content-revalidation";
 import {
   invalidateAgeTierCache,
@@ -153,19 +153,27 @@ export async function PUT(request: NextRequest) {
     }
   }
 
+  // `BookingGuest.stayEnd` is `@db.Date`, so the cut-off has to be a date-only value
+  // from the club's calendar (#2838; INV-DATE-013). The old `new Date()` +
+  // `setHours(0, 0, 0, 0)` was NZ-LOCAL midnight — the PREVIOUS UTC day under the
+  // `TZ=Pacific/Auckland` server pin — which the pg adapter narrows to D-1, so a guest
+  // whose stay ended YESTERDAY was still counted as live and could block a tier removal
+  // for an extra day. That erred towards refusing, never towards deleting a tier someone
+  // still classifies into, so it was a spurious block rather than an unsafe allow — but
+  // the cut-off is now the day it says it is. The day now comes from the PERSISTED club
+  // timezone (CT-4, #2870; INV-CONFIG-002), re-encoded to UTC midnight because that is
+  // the only bound shape a `@db.Date` column accepts. Resolved BEFORE the transaction
+  // opens, so a settings read never runs on a second connection inside a write tx —
+  // and only for a save that actually DROPS a tier, because an ordinary settings PUT
+  // never reaches the count and should not pay for the club-settings read.
+  const liveGuestCutOff =
+    removedTiers.length > 0 ? await clubTodayDateOnlyInstant() : null;
+
   try {
     await prisma.$transaction(async (tx) => {
-      if (removedTiers.length > 0) {
-        // `BookingGuest.stayEnd` is `@db.Date`, so the cut-off has to be a
-        // date-only value from the club's calendar (#2838; INV-DATE-013). The
-        // old `new Date()` + `setHours(0, 0, 0, 0)` was NZ-LOCAL midnight — the
-        // PREVIOUS UTC day under the `TZ=Pacific/Auckland` server pin — which the
-        // pg adapter narrows to D-1, so a guest whose stay ended YESTERDAY was
-        // still counted as live and could block a tier removal for an extra
-        // day. That erred towards refusing, never towards deleting a tier
-        // someone still classifies into, so it was a spurious block rather than
-        // an unsafe allow — but the cut-off is now the day it says it is.
-        const today = getTodayDateOnly();
+      // Non-null exactly when `removedTiers` is non-empty — the same test, one
+      // scope out, which is what resolved the cut-off in the first place.
+      if (liveGuestCutOff !== null) {
         const [activeMembers, archivedMembers, liveGuests] = await Promise.all([
           tx.member.count({
             where: { ageTier: { in: removedTiers }, archivedAt: null },
@@ -174,7 +182,7 @@ export async function PUT(request: NextRequest) {
             where: { ageTier: { in: removedTiers }, archivedAt: { not: null } },
           }),
           tx.bookingGuest.count({
-            where: { ageTier: { in: removedTiers }, stayEnd: { gte: today } },
+            where: { ageTier: { in: removedTiers }, stayEnd: { gte: liveGuestCutOff } },
           }),
         ]);
         if (activeMembers + archivedMembers > 0 || liveGuests > 0) {

@@ -1,11 +1,9 @@
 import { BookingRequestType, BookingStatus, Prisma } from "@prisma/client";
 import { logAudit } from "@/lib/audit";
 import { getBookingRequestSettings } from "@/lib/booking-request";
-import {
-  addDaysDateOnly,
-  countNightsDateOnly,
-  normalizeDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { clubCalendarDateOf, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { addDaysDateOnly, countNightsDateOnly } from "@/lib/date-only";
 import { sendWholeLodgeGuestNamesReminderEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { OPERATIONALLY_PRESENT_GUEST_WHERE } from "@/lib/member-guest-consent";
@@ -77,7 +75,7 @@ function candidatePlaceholderGuestWhere(): Prisma.BookingGuestWhereInput {
   };
 }
 
-/** Whole days from the NZ calendar date to the stay's (date-only) check-in. */
+/** Whole days from the club's calendar date to the stay's (date-only) check-in. */
 function daysUntilCheckIn(today: Date, checkIn: Date): number {
   return countNightsDateOnly(today, checkIn);
 }
@@ -132,13 +130,21 @@ export async function sendPlaceholderGuestNameReminders(
     return { scanned: 0, sent: 0, skipped: 0, failed: 0 };
   }
 
-  // `checkIn` is stored as @db.Date (the NZ calendar date at UTC midnight), so
-  // the window is derived from the NZ calendar date rather than the raw instant
-  // (F32, #1888). Unlike the school sweep this window INCLUDES the arrival day
-  // itself: a party that is still unnamed on the morning they travel is exactly
-  // who the final reminder is for, and sending it changes nothing about whether
-  // they may come.
-  const today = normalizeDateOnlyForTimeZone(now);
+  // `checkIn` is stored as @db.Date (a calendar date at UTC midnight), so the
+  // window is derived from a calendar date rather than the raw instant (F32,
+  // #1888). `now` IS an instant, so it is projected through the club's
+  // PERSISTED timezone — this used to read the container's (#3123,
+  // INV-CONFIG-002) — and encoded back to the UTC-midnight shape `@db.Date`
+  // round-trips. The CLI-safe runtime reader, because
+  // `src/instrumentation.node.ts` loads this module through
+  // `general-cron-runner` and `server-only` throws at import there.
+  //
+  // Unlike the school sweep this window INCLUDES the arrival day itself: a
+  // party that is still unnamed on the morning they travel is exactly who the
+  // final reminder is for, and sending it changes nothing about whether they
+  // may come.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+  const today = dateOnlyInstantOf(clubCalendarDateOf(now, clubZone));
   const windowEnd = addDaysDateOnly(today, leadDays);
 
   const requests = await prisma.bookingRequest.findMany({
@@ -310,10 +316,12 @@ export async function countBookingsWithUnnamedPlaceholderGuests(
   const leadDays = settings.attendeeConfirmationLeadDays;
   if (leadDays <= 0) return 0;
 
-  // Same @db.Date boundary as the sweep above (F32, #1888), and the same
+  // Same @db.Date boundary as the sweep above (F32, #1888; #3123), and the same
   // inclusive arrival day: a party still unnamed on the day they arrive is the
   // most urgent row on the board, not one that should silently drop off it.
-  const today = normalizeDateOnlyForTimeZone(now);
+  const today = dateOnlyInstantOf(
+    clubCalendarDateOf(now, await readClubTimeZoneOutsideRequest()),
+  );
   const bookings = await prisma.booking.findMany({
     where: {
       deletedAt: null,

@@ -9,7 +9,10 @@ import {
   type MembershipCancellationBlocker,
   type MembershipCancellationUnpaidInvoiceBlocker,
 } from "@/lib/membership-cancellation-blocker-messages";
-import { formatNZDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 
 /**
  * The panel a reviewer actually reads before pressing Approve (#2392). Until
@@ -148,11 +151,21 @@ describe("the cancellation review queue's blocker panel", () => {
         />,
       );
 
-      // Only the date formatting is the panel's own; every other character,
-      // including the separator between label and detail, comes from the server.
+      /*
+        Only the date formatting is the panel's own; every other character,
+        including the separator between label and detail, comes from the server.
+
+        THE ORACLE IS ZONE-FREE, and it used to be a projection. This built its
+        expectation with `formatNZDate(new Date(value))` from the retired
+        `nzst-date` adapter, which read the UTC-midnight encoding back through
+        `APP_TIME_ZONE`: the identity for a club east of Greenwich and the
+        PREVIOUS day for any club west of it. An invoice due date is a CALENDAR
+        DAY, so it takes no zone at all — which is what the panel itself does
+        (`formatDateOnly` in `membership-cancellation-blocker-notice.tsx`).
+      */
       expect(screen.getByRole("listitem").textContent).toBe(
         describeMembershipCancellationBlocker(blocker, {
-          formatDate: (value) => formatNZDate(new Date(value)),
+          formatDate: (value) => formatClubDate(calendarDateOfSerialisedDbDate(value)),
         }),
       );
     });

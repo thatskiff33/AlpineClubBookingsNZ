@@ -1,11 +1,27 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+} from "@/lib/__tests__/support/club-time-render";
 import { describe, expect, it, vi } from "vitest";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 
+/**
+ * #3123: this control now takes the club's day from `ClubTimeProvider`, and
+ * `useClubTime()` throws without one — deliberately, so a tree that forgot to
+ * mount it fails loudly. Rendering through `club-time-render` supplies the
+ * house default zone, which is what `APP_TIME_ZONE` also resolves to under test,
+ * so the two assertions below keep their exact previous meaning.
+ *
+ * THAT DEFAULT PROVES NOTHING ABOUT ZONE AUTHORITY, and this file does not claim
+ * to: it is about the label wiring and the select. The authority claim needs a
+ * zone the environment does NOT hold, and lives in
+ * `date-range-controls-club-time.test.tsx`.
+ */
 describe("DateRangeControls", () => {
   it("associates the shared Quick Range label with its select", () => {
     render(
@@ -29,8 +45,11 @@ describe("DateRangeControls", () => {
   });
 
   it("applies Next Month through the shared select", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-13T12:00:00Z"));
+    // The suite-wide frozen instant is 2026-07-01T00:00:00.000Z, which is 1 July
+    // in the club zone this renders under — so "Next Month" is August. It used
+    // to pin its own instant to reach the same assertion through the deleted
+    // environment default; the day now comes from the provider, so the frozen
+    // clock is enough and no local pin is needed.
     const onFromChange = vi.fn();
     const onToChange = vi.fn();
 
@@ -48,8 +67,7 @@ describe("DateRangeControls", () => {
       target: { value: "next_month" },
     });
 
-    expect(onFromChange).toHaveBeenCalledWith("2026-05-01");
-    expect(onToChange).toHaveBeenCalledWith("2026-05-31");
-    vi.useRealTimers();
+    expect(onFromChange).toHaveBeenCalledWith("2026-08-01");
+    expect(onToChange).toHaveBeenCalledWith("2026-08-31");
   });
 });

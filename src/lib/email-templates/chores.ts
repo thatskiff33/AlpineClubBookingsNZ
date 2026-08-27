@@ -16,11 +16,11 @@ import {
 } from "./layout";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
 import { emailPalette } from "@/lib/email-theme";
-import { formatNZDate } from "@/lib/nzst-date";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 /**
  * Chore-roster date: the deliberate long-weekday form ("Thursday, 16 April
- * 2026") the roster emails have always used, NOT the house `formatNZDate`
+ * 2026") the roster emails have always used, NOT the house `emailClubDate`
  * medium form. `date` is a lodge-night date-only string; parsing it with the
  * `T00:00:00` suffix pins it to local midnight, which round-trips back to the
  * same calendar date when formatted without a `timeZone` override. Do not
@@ -74,8 +74,8 @@ export function hutLeaderAssignmentTemplate(params: {
     ${heading(`${CLUB_HUT_LEADER_LABEL} Assignment`)}
     ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on " + CLUB_HUT_LEADER_LABEL.toLowerCase() + " duties for the lodge.")}
     ${infoTable([
-      { label: "Start date", value: formatNZDate(params.startDate) },
-      { label: "End date", value: formatNZDate(params.endDate) },
+      { label: "Start date", value: emailCalendarDay(params.startDate) },
+      { label: "End date", value: emailCalendarDay(params.endDate) },
       { label: "Kiosk PIN", value: `<strong style="font-size: 18px; letter-spacing: 2px;">${escapeHtml(params.pin)}</strong>` },
     ])}
     ${paragraph(`When you arrive, open the lodge kiosk and use this PIN to unlock ${CLUB_HUT_LEADER_LABEL.toLowerCase()} controls for arrivals, departures, and roster management.`)}

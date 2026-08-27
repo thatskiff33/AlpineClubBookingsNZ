@@ -49,7 +49,8 @@ import {
   type WhakapapaSourceConfig,
 } from "@/lib/whakapapa-report";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import {
   AdminForbiddenSaveNotice,
   AdminViewOnlySectionBanner,
@@ -98,12 +99,18 @@ function configToForm(config: WhakapapaSourceConfig | undefined) {
   return { sourceUrl: base.sourceUrl, overrides };
 }
 
-function formatDateTime(value: string | null | undefined) {
-  if (!value) {
+// Fetch, freeze and update stamps are real INSTANTS, shown in the club's
+// persisted zone rather than the viewer's (CT-4, #2870; INV-CONFIG-002).
+function formatDateTime(
+  clubTime: BoundClubTime,
+  value: string | null | undefined,
+) {
+  const instant = value ? parseInstant(value) : null;
+  if (instant === null) {
     return "Not set";
   }
 
-  return formatNZDateTime(new Date(value));
+  return clubTime.instantDateTime(instant);
 }
 
 function prettyJson(value: WhakapapaCurlData) {
@@ -111,6 +118,7 @@ function prettyJson(value: WhakapapaCurlData) {
 }
 
 export function MountainConditionsPanel() {
+  const clubTime = useClubTime();
   const canEdit = useAdminAreaEditAccess("content");
   const [forbidden, setForbidden] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -621,7 +629,7 @@ export function MountainConditionsPanel() {
                 <Badge variant="outline">Auto refresh active</Badge>
               )}
               <Badge variant="outline">
-                Last fetched: {formatDateTime(record?.fetchedAt)}
+                Last fetched: {formatDateTime(clubTime, record?.fetchedAt)}
               </Badge>
             </div>
           </div>
@@ -637,8 +645,8 @@ export function MountainConditionsPanel() {
 
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
             <div className="space-y-1">
-              <p>Frozen until: {formatDateTime(frozenUntil)}</p>
-              <p>Last updated in DB: {formatDateTime(record?.updatedAt)}</p>
+              <p>Frozen until: {formatDateTime(clubTime, frozenUntil)}</p>
+              <p>Last updated in DB: {formatDateTime(clubTime, record?.updatedAt)}</p>
             </div>
             <ViewOnlyActionButton
               canEdit={canEdit}

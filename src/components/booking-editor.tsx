@@ -8,23 +8,31 @@ import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
-import { formatNZDate } from "@/lib/nzst-date";
-import { parseDateOnly } from "@/lib/date-only";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  formatClubLongWeekdayDate,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
-// Not one of the shared `nzst-date` helpers (#2264): the two headline stay dates
-// are spelled out in full — long weekday, long month — because they are the
-// thing the member checks before agreeing to a change, and "Friday 12 June 2026"
-// is harder to misread than "Fri, 12 Jun 2026". Zone pinned to club time; the
-// values are NZ date-only lodge nights handed over at UTC midnight, so the
-// calendar day can no longer slide for a member browsing from overseas.
-const STAY_DATE_LONG = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
+/**
+ * The two headline stay dates, spelled out in full — long weekday, long month —
+ * because they are the thing the member checks before agreeing to a change, and
+ * "Friday 12 June 2026" is harder to misread than "Fri, 12 Jun 2026" (#2264).
+ *
+ * NO ZONE AT ALL, WHICH IS THE FIX (CT-4, #2870). `checkIn`/`checkOut` are
+ * `@db.Date` LODGE NIGHTS — calendar days, which have no timezone — so they are
+ * rendered by a calendar-date shape, which takes none. This file used to hold a
+ * local `Intl.DateTimeFormat` pinned to UTC over the UTC-midnight encoding, and
+ * before that one pinned to `APP_TIME_ZONE`, which was the identity only for a
+ * club east of Greenwich; west of it every member's stay dates printed a day
+ * early.
+ *
+ * IT IS ONE CALL NOW because CT-4's `src/lib` group added the missing shape:
+ * `HOUSE_SHAPES.longWeekdayDate` is the long weekday, long month AND the year,
+ * declared as one shape rather than composed from `longWeekdayDayMonth` plus the
+ * year — which is byte-identical for `en-NZ` and not safe for a configurable
+ * `APP_LOCALE`.
+ */
 
 interface Guest {
   id: string;
@@ -185,6 +193,13 @@ export function BookingEditor({
   // deadline (future-tense auto-confirm copy) from a lapsed one (awaiting
   // processing copy). Day-scale deadlines make a single snapshot sufficient.
   const [nowMs] = useState(() => Date.now());
+  /**
+   * `nonMemberHoldUntil` is a bare `DateTime` — a real INSTANT, not a lodge
+   * night — so the deadline below reads in the club's PERSISTED timezone (CT-4,
+   * #2870; INV-CONFIG-002). `nowMs` above stays a raw clock read on purpose: the
+   * lapsed test compares two instants, which needs no zone at all.
+   */
+  const clubTime = useClubTime();
   const nonMemberHoldLapsed = booking.nonMemberHoldUntil
     ? new Date(booking.nonMemberHoldUntil).getTime() <= nowMs
     : false;
@@ -249,13 +264,13 @@ export function BookingEditor({
             <div>
               <p className="text-sm text-muted-foreground">Check-in</p>
               <p className="font-medium">
-                {STAY_DATE_LONG.format(parseDateOnly(booking.checkIn))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkIn))}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Check-out</p>
               <p className="font-medium">
-                {STAY_DATE_LONG.format(parseDateOnly(booking.checkOut))}
+                {formatClubLongWeekdayDate(requireCalendarDate(booking.checkOut))}
               </p>
             </div>
             <div>
@@ -273,14 +288,14 @@ export function BookingEditor({
               {nonMemberHoldLapsed ? (
                 <>
                   This booking includes non-members. The hold period ended on{" "}
-                  {formatNZDate(new Date(booking.nonMemberHoldUntil))} and it is now
+                  {clubTime.instantDate(new Date(booking.nonMemberHoldUntil))} and it is now
                   awaiting confirmation, payment, or admin processing, subject to
                   availability. Members have priority.
                 </>
               ) : (
                 <>
                   This booking includes non-members. It will be auto-confirmed on{" "}
-                  {formatNZDate(new Date(booking.nonMemberHoldUntil))}, subject to
+                  {clubTime.instantDate(new Date(booking.nonMemberHoldUntil))}, subject to
                   availability. Members have priority.
                 </>
               )}

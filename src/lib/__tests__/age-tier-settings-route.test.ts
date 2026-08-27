@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { getTodayDateOnly } from "@/lib/date-only";
 
 // Route-level tests for PUT /api/admin/age-tier-settings (issue #2009 — the
 // age-tier SUBSET relaxation and the fail-closed tier-removal guard). The pure
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   logAudit: vi.fn(),
   revalidate: vi.fn(),
+  clubTimeSettingsFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({
@@ -36,6 +38,13 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: { count: mocks.memberCount },
     bookingGuest: { count: mocks.bookingGuestCount },
+    // CT-4 (#2870): the route resolves the live-guest cut-off from the club's
+    // PERSISTED timezone. Omit this delegate and
+    // `loadPersistedClubTimeSettings()` returns null -- by design, it is
+    // fail-soft in three separate places -- and the route falls back to the
+    // container's `TZ` in silence. The suite then agrees with itself about the
+    // wrong authority, which is exactly how this file used to pass.
+    clubTimeSettings: { findUnique: mocks.clubTimeSettingsFindUnique },
     $transaction: mocks.transaction,
   },
 }));
@@ -65,6 +74,15 @@ const ADULT = {
   familyGroupRequestCreateMemberAllowed: false,
   sortOrder: 1,
 };
+
+/** Persist a club timezone for the route's `clubTime()` read to resolve. */
+function persistClubZone(timeZone: string) {
+  mocks.clubTimeSettingsFindUnique.mockResolvedValue({
+    timeZone,
+    updatedByMemberId: null,
+    updatedAt: new Date(0),
+  });
+}
 
 function putRequest(settings: unknown[]) {
   return new NextRequest("http://localhost/api/admin/age-tier-settings", {
@@ -98,6 +116,7 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     mocks.ageTierDeleteMany.mockReturnValue({ __op: "delete" });
     mocks.memberCount.mockResolvedValue(0);
     mocks.bookingGuestCount.mockResolvedValue(0);
+    persistClubZone("Pacific/Auckland");
     // 1st findMany = existing tiers (removal guard); 2nd = the reloaded set.
     mocks.ageTierFindMany
       .mockResolvedValueOnce([{ tier: "CHILD" }, { tier: "ADULT" }])
@@ -227,8 +246,12 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     //
     // 01:30 on 2 July in New Zealand; 13:30 on 1 July in UTC; 23:30 on 1 July
     // in Brisbane.
+    //
+    // The club is PERSISTED as Pacific/Auckland here (the suite default), so
+    // this is the New Zealand answer read from the club's own setting rather
+    // than inherited from the container. The Denver case below is the one that
+    // proves WHICH of the two authorities was consulted.
     vi.setSystemTime(new Date("2026-07-01T13:30:00.000Z"));
-    expectClubTimeZonePremise();
 
     mocks.ageTierFindMany.mockReset();
     mocks.ageTierFindMany
@@ -247,6 +270,74 @@ describe("PUT /api/admin/age-tier-settings — subset save (#2009)", () => {
     // Postgres compares against is 2 July — the club's today.
     expect(where.stayEnd.gte.toISOString()).toBe("2026-07-02T00:00:00.000Z");
     expect(where.stayEnd.gte.toISOString().slice(0, 10)).toBe("2026-07-02");
+  });
+
+  /*
+    CT-4 (#2870), epic #2988 -- and the reason the case above is not enough on
+    its own.
+
+    Until this test existed, this file had no `clubTimeSettings` delegate at all.
+    `loadPersistedClubTimeSettings()` is deliberately fail-soft in three separate
+    places -- no delegate, a thrown query, a null row -- and every one of them
+    degrades quietly to the container's `TZ`. So the suite resolved the cut-off
+    from the ENVIRONMENT, asserted the Auckland answer, and passed; a change that
+    reverted the route to `getTodayDateOnly()` would have passed too. A guard
+    that cannot fail is not a guard.
+
+    Persisting a zone the environment disagrees with is what makes the answer
+    attributable. 13:30Z on 1 July is 07:30 the SAME morning in Denver and 01:30
+    the NEXT day in New Zealand, so the two authorities name different days and
+    the bound below says which one the route asked.
+  */
+  it("takes the cut-off from the PERSISTED club zone, not the container's (CT-4, #2870)", async () => {
+    vi.setSystemTime(new Date("2026-07-01T13:30:00.000Z"));
+    persistClubZone("America/Denver");
+
+    // The premise, measured as an ANSWER rather than as a zone identifier: two
+    // different names can still produce the same day (`America/Chicago` gives
+    // Denver's answer for every fixture in this file), and a name check would
+    // pass while this assertion went vacuous.
+    /*
+     * `APP_TIME_ZONE` PASSED ON PURPOSE (#3123). Everywhere else an explicit
+     * zone exists to get OFF the environment; here the environment IS the
+     * subject of the assertion — the line measures what the environment
+     * authority answers so it can prove the persisted zone answers differently.
+     * A literal zone name here would assert something about that name instead,
+     * and the premise would stop tracking the environment it is guarding.
+     */
+    expect(
+      getTodayDateOnly(APP_TIME_ZONE).toISOString(),
+      "INV-CONFIG-002: the environment authority now names the same day as the " +
+        "persisted club zone, so this bound cannot tell which of the two the " +
+        "route read. Pick a persisted zone the environment disagrees with.",
+    ).not.toBe("2026-07-01T00:00:00.000Z");
+
+    mocks.ageTierFindMany.mockReset();
+    mocks.ageTierFindMany
+      .mockResolvedValueOnce([{ tier: "INFANT" }, { tier: "CHILD" }, { tier: "ADULT" }])
+      .mockResolvedValueOnce([CHILD, ADULT]);
+
+    const res = await PUT(putRequest([CHILD, ADULT]));
+    expect(res.status).toBe(200);
+
+    const where = (
+      mocks.bookingGuestCount.mock.calls[0]?.[0] as {
+        where: { stayEnd: { gte: Date } };
+      }
+    ).where;
+    // 1 July in Denver, encoded as UTC midnight for the `@db.Date` bound. The
+    // environment would have said 2 July.
+    expect(where.stayEnd.gte.toISOString()).toBe("2026-07-01T00:00:00.000Z");
+  });
+
+  it("does not read the club's timezone at all when no tier is being removed", async () => {
+    // The cut-off only feeds the live-guest count, and that count only runs for
+    // a save that DROPS a tier. An ordinary settings PUT should not pay for a
+    // `ClubTimeSettings` round trip it will never use.
+    const res = await PUT(putRequest([CHILD, ADULT]));
+    expect(res.status).toBe(200);
+    expect(mocks.ageTierDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.clubTimeSettingsFindUnique).not.toHaveBeenCalled();
   });
 
   it("rejects a set missing ADULT (400)", async () => {

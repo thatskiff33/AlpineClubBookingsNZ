@@ -23,7 +23,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { KpiStatCard } from "@/components/finance/charts/kpi-stat-card";
 import { DatasetResetButton } from "@/components/admin/dataset-reset-button";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 
 // Charts load on demand (#1147): recharts is ~139kB gz, so the chart
 // components mount after the dashboard shell instead of blocking First Load
@@ -95,13 +95,25 @@ function buildCsv(model: FinanceDashboardPageModel) {
   return rows.map((row) => row.map(toCsvCell).join(",")).join("\n");
 }
 
-function downloadCsv(model: FinanceDashboardPageModel) {
+/**
+ * The exported file is stamped with the CLUB'S TODAY, not the viewer's and not
+ * the container's (CT-4, #2870; epic #2988; INV-CONFIG-002).
+ *
+ * `today` is passed in rather than read here because this is a module function,
+ * and the club's zone now reaches the browser as data through `ClubTimeProvider`
+ * — a hook cannot be called from outside a component. It used to be
+ * `todayDateOnlyForTimeZone()`, which reads `APP_TIME_ZONE`; the shape is
+ * unchanged and only the authority moved. It matters because two treasurers in
+ * two countries exporting the same figures must file them under the same club
+ * day, or the club's own records disagree with each other.
+ */
+function downloadCsv(model: FinanceDashboardPageModel, today: string) {
   const csv = buildCsv(model);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `finance-${model.selection.view}-${todayDateOnlyForTimeZone()}.csv`;
+  anchor.download = `finance-${model.selection.view}-${today}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -118,6 +130,7 @@ export function FinanceDashboardClient({
   currentSearch,
 }: FinanceDashboardClientProps) {
   const router = useRouter();
+  const clubTime = useClubTime();
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   // Ratios picks its range client-side; sync health has no time window.
@@ -137,12 +150,15 @@ export function FinanceDashboardClient({
     setGeneratingPdf(true);
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
+      // The club's persisted zone decides the cover date and the filename day
+      // (#3123); this component already holds the binding.
       await generateReportPDF(
         reportRef.current,
         {
           from: model.selection.primary.from,
           to: model.selection.primary.to,
         },
+        clubTime,
         {
           title: `Finance - ${model.selectionLabels.view}`,
         },
@@ -189,7 +205,7 @@ export function FinanceDashboardClient({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => downloadCsv(model)}
+                onClick={() => downloadCsv(model, clubTime.today())}
               >
                 <Download className="h-4 w-4" />
                 CSV

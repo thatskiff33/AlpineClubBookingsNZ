@@ -16,7 +16,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { AdminViewOnlyNotice } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { isFullAdmin } from "@/lib/access-roles";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
 import type { AiAssistantKeyState } from "@/lib/ai-assistant-config";
 import {
   MAX_BUDGET_CENTS,
@@ -136,6 +137,8 @@ function KeyCard({
   initialKeyState: AiAssistantKeyState;
   initialKeySetAt: string | null;
 }) {
+  // When the key was last set is a real INSTANT (CT-4, #2870).
+  const clubTime = useClubTime();
   const { data: session } = useSession();
   const canWrite = session?.user
     ? isFullAdmin({ accessRoles: session.user.accessRoles })
@@ -223,7 +226,7 @@ function KeyCard({
             API key{" "}
             {setAt ? (
               <span className="text-xs font-normal text-muted-foreground">
-                (last set {formatNZDateTime(new Date(setAt))})
+                (last set {clubTime.instantDateTime(requireInstant(setAt))})
               </span>
             ) : null}
           </Label>
@@ -400,6 +403,8 @@ function BudgetCard() {
 // ---------------------------------------------------------------------------
 
 function UsageCard() {
+  // Each failure's `createdAt` is a real INSTANT (CT-4, #2870).
+  const clubTime = useClubTime();
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -545,7 +550,7 @@ function UsageCard() {
                           {failure.surface}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {formatNZDateTime(new Date(failure.createdAt))}
+                          {clubTime.instantDateTime(requireInstant(failure.createdAt))}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">

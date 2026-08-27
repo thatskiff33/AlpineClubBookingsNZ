@@ -55,7 +55,8 @@ import {
   type FindOrCreateXeroContactOptions,
 } from "./xero-contacts";
 import { buildInvoiceLineItems } from "./xero-booking-invoices";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDatesFromColumnAndInstant } from "@/lib/xero-provider-dates";
 import { enqueueXeroGroupSettlementInvoiceVoidOperation } from "@/lib/xero-group-settlement-void-outbox";
 
 export interface CreateXeroGroupSettlementInvoiceOptions
@@ -334,21 +335,15 @@ export async function createXeroInvoiceForGroupSettlement(
     );
   }
 
-  // Two dates, two different kinds of value, so two different derivations.
-  //
-  // The ISSUE date is the organiser booking's check-in — a `@db.Date` lodge
-  // night, an abstract calendar day already pinned to UTC midnight, so
-  // truncating it reads back the day it encodes (INV-DATE-010).
-  //
-  // The DUE date is `GroupBookingSettlement.createdAt`, a `DateTime` — a real
-  // instant. Truncating an instant to its UTC day is the pattern INV-DATE-019
-  // forbids: New Zealand runs 12-13 hours ahead of UTC, so for roughly the first
-  // half of every club day the UTC day is still yesterday, and a settlement
-  // invoice raised at 09:00 NZ on 1 July carried a due date of 30 June (#2834).
-  const issueDate = formatDateOnly(
-    new Date(settlement.groupBooking.organiserBooking.checkIn)
+  // Two dates, two different kinds of value, so two different derivations. The
+  // whole reasoning — and the #2834 defect that a "simplification" here brings
+  // straight back — is the docblock on
+  // `xeroDocumentDatesFromColumnAndInstant`.
+  const { issueDate, dueDate } = xeroDocumentDatesFromColumnAndInstant(
+    new Date(settlement.groupBooking.organiserBooking.checkIn),
+    new Date(settlement.createdAt),
+    await readClubTimeZoneOutsideRequest(),
   );
-  const dueDate = formatDateOnlyForTimeZone(new Date(settlement.createdAt));
 
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,

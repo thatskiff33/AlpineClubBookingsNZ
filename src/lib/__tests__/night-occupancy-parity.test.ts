@@ -39,6 +39,16 @@ import { parseDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only
  * read as a per-night occupancy table.
  */
 
+/**
+ * The club's zone, named rather than left to `getTodayDateOnly`'s `APP_TIME_ZONE`
+ * default, which #3123 deletes. `checkCapacityWarnings` resolves its own "today"
+ * through `readClubTimeZoneOutsideRequest()`; prisma is mocked below with no
+ * `clubTimeSettings` delegate, so that read fails soft to the environment seed
+ * and then to `Pacific/Auckland`. The clock guard has to name the same zone the
+ * cron resolves, or it would report a clock shift that had not happened.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const LODGE = "lodge-a";
 const LODGE_CAPACITY = 5;
 
@@ -175,7 +185,7 @@ describe("#2681 the capacity-warnings cron and checkCapacity agree on occupancy"
     // `expected undefined to be 2`, which reads like a product bug. Fail here
     // instead, saying what actually happened.
     expect(
-      formatDateOnly(getTodayDateOnly()),
+      formatDateOnly(getTodayDateOnly(CLUB_ZONE)),
       "This suite pins literal fixture nights against the repo's default frozen clock. The clock has been shifted (TEST_CLOCK_OFFSET_DAYS / TEST_CLOCK_ISO?) — see docs/TESTING.md.",
     ).toBe("2026-07-01");
   });

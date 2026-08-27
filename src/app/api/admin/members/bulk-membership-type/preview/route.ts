@@ -4,6 +4,9 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSeasonalMembershipChangePreview } from "@/lib/seasonal-membership-assignments";
 import { requireAdmin } from "@/lib/session-guards";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { clubSeasonYear } from "@/lib/financial-year";
 
 // Preview divergence from the single-member flow (#2107, documented): archived
 // members are excluded and reported by id rather than previewed.
@@ -124,12 +127,26 @@ export async function POST(request: NextRequest) {
   let ageTierChangeCount = 0;
   let linkedGuestBlockCount = 0;
 
+  // ONE read of the club's current season for the whole batch (#2870): the
+  // preview judges each member's age tier against it, an age tier decides a price
+  // band, and a fifty-member preview must not be able to answer in two seasons.
+  // #3123 — and from the SAME single zone read, ONE club day for the whole
+  // batch. The preview's `now` used to default to the environment's day, one
+  // read per member, and it bounds every "still to come" booking query the
+  // preview reports. Both answers now come from one `clubTimeZone()`, which is
+  // React-cached for this request in any case.
+  const clubZone = await clubTimeZone();
+  const clubCurrentSeasonYear = clubSeasonYear(clubZone);
+  const clubTodayDateOnly = dateOnlyInstantOf(clubToday(clubZone));
+
   for (const id of previewableIds) {
     const result = await getSeasonalMembershipChangePreview({
       memberId: id,
       seasonYear,
       membershipTypeId,
       applyFrom: applyFrom ?? null,
+      now: clubTodayDateOnly,
+      clubCurrentSeasonYear,
     });
 
     const status = result.init?.status;

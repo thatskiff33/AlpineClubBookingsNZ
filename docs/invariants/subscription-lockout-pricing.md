@@ -192,9 +192,9 @@ contract migration backfilled out of its old boolean — with Xero still on, and
 request-path reseeder in the tree routes through
 `resolveSubscriptionLockoutMode` (the booking write paths, `findUnpaidMemberGuests`, the
 member notice builder). Gating the reseed on `mode !== "NO_BLOCK"` therefore left such a
-club with no request-path reseed at all: after a container restart `getSeasonYear` and
-`computeAgeTier` would resolve against the March default instead of the club's real
-year-end month, and the rate resolved for a booking can differ from the correct one. The
+club with no request-path reseed at all: after a container restart the shared season
+derivation and `computeAgeTier` would resolve against the March default instead of the
+club's real year-end month, and the rate resolved for a booking can differ from the correct one. The
 reseed runs before the mode is consulted, restoring the pre-#2543 condition.
 
 ### INV-LOCKOUT-012

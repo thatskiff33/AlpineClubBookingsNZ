@@ -1,5 +1,4 @@
 import type { AgeTier } from "@prisma/client";
-import { getSeasonYear } from "./utils";
 import {
   AGE_TIER_DEFAULTS,
   cloneAgeTierSettings,
@@ -14,6 +13,7 @@ export {
   // test seam
   computeAge,
   computeAgeTierWithSettings,
+  getSeasonStartCalendarDate,
   getSeasonStartDate,
   normalizeAgeTierSettings,
   validateAgeTierPartition,
@@ -163,21 +163,37 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
 }
 
 /**
- * Compute age tier for a date of birth.
+ * Compute age tier for a date of birth, against an explicit reference date.
  *
- * referenceDate defaults to April 1 of the current season year (the TAC
- * reference point for age classification). Reads boundaries from DB with a
- * 5-minute cache; falls back to hardcoded defaults if DB is unavailable.
+ * `referenceDate` IS REQUIRED, and that is a concurrency decision rather than a
+ * style one (#2870, correctness review). It used to default to the start of the
+ * club's current season, which meant resolving the club's PERSISTED timezone —
+ * an uncached `ClubTimeSettings` read on the global Prisma client — from
+ * whichever call site omitted it. Two of those turned out to be inside somebody
+ * else's transaction (`approveMemberApplication`, holding the application and
+ * member-lifecycle advisory locks) and one inside the Xero import's nested loops,
+ * where it ran per row.
+ *
+ * It also removed a straddle each time: every one of those callers ALREADY had
+ * the club's season in hand for something else, so a self-resolving default let
+ * one request judge an age tier — and therefore a price band — in a different
+ * season from the assignment it wrote.
+ *
+ * So the reference point arrives as a value. `getSeasonStartDate(seasonYear)` is
+ * what to pass, from a season the caller resolved once.
+ *
+ * Reads tier boundaries from the database with a 5-minute cache; falls back to
+ * the hard-coded defaults if the database is unavailable.
  */
 export async function computeAgeTier(
   dateOfBirth: Date,
-  referenceDate?: Date
+  referenceDate: Date
 ): Promise<AgeTier> {
-  const ref = referenceDate ?? getSeasonStartDate(getSeasonYear());
   const settings = await getAgeTierSettings();
-  return computeAgeTierWithSettings(dateOfBirth, ref, settings);
+  return computeAgeTierWithSettings(dateOfBirth, referenceDate, settings);
 }
 
-// test seam
-// Re-export from canonical location for backwards compatibility
-export { getSeasonYear as computeSeasonYear } from "./utils";
+// `computeSeasonYear` (an alias of the retired `getSeasonYear`) was re-exported
+// here for backwards compatibility and is gone with it (CT-4 group F1, #2870).
+// A caller asking "what season is it now" wants `clubSeasonYear(zone)` from
+// `@/lib/financial-year`, which needs the club's persisted zone.

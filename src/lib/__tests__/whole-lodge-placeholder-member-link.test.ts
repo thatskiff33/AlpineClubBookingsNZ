@@ -42,7 +42,14 @@ vi.mock("@/lib/booking-member-night-conflicts", () => ({
   assertNoBookingMemberNightConflicts: h.assertNoBookingMemberNightConflicts,
 }));
 
+import { dateOnlyInstantOf, requireCalendarDate, requireClubTimeZone } from "@/lib/club-time";
 import { prepareGuestPlan } from "@/lib/booking-modify-plan";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-07-01"));
 
 const NIGHT_1 = new Date("2026-08-10T00:00:00.000Z");
 const CHECK_IN = new Date("2026-08-10T00:00:00.000Z");
@@ -129,6 +136,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     );
 
     const plan = await prepareGuestPlan(tx, {
+      today: FIXTURE_CLUB_TODAY,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",
@@ -193,6 +201,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     );
 
     await prepareGuestPlan(tx, {
+      today: FIXTURE_CLUB_TODAY,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",
@@ -222,6 +231,7 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
     );
 
     const plan = await prepareGuestPlan(tx, {
+      today: FIXTURE_CLUB_TODAY,
       booking: wholeLodgeBooking() as never,
       role: "ADMIN",
       actorId: "admin-1",
@@ -234,6 +244,9 @@ describe("#2337: prepareGuestPlan threads a placeholder→member link into prici
         wideningEnabled: true,
         approvalRequired: true,
         pendingHoldExpiryDays: 7,
+        // #3123 — the consent expiry clamp takes the club's persisted zone as a
+        // required value, threaded on the policy the caller already resolved.
+        timeZone: requireClubTimeZone("America/Denver"),
       },
     });
 

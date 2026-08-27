@@ -1,5 +1,9 @@
 import { normalizeCancellationRule, type CancellationRuleLike } from "../cancellation-rules";
-import { normalizeDateOnlyForTimeZone } from "../date-only";
+import {
+  calendarDateOfDateOnlyInstant,
+  countClubNights,
+  type CalendarDate,
+} from "@/lib/club-time";
 
 export type CancellationRule = CancellationRuleLike;
 
@@ -137,22 +141,67 @@ export function calculateDualRefundAmounts(
 }
 
 /**
- * Days between `now` and `checkIn`, counted in NZ lodge days.
+ * Whole lodge days from the club's today to `checkIn` — the refund-tier
+ * boundary.
  *
- * Both operands are normalized to UTC-midnight of their NZ-local calendar date
- * (Pacific/Auckland via APP_TIME_ZONE), so the difference is a whole number of NZ
- * lodge days and the tier boundary falls at NZ-local midnight — matching the
- * member-visible "N days before check-in" countdown. UTC midnights are
- * DST-independent, so consecutive days are exactly 86_400_000 ms apart and the
- * result is already an integer; Math.floor is retained as a no-op safety that
- * preserves the deliberate "partial days do NOT reach a higher tier" intent
- * (documented above the previous implementation).
+ * BOTH OPERANDS ARE CALENDAR DAYS, AND NEITHER TAKES A TIMEZONE. That is the
+ * whole content of this function, and getting it wrong was a live off-by-one on
+ * money (#3123).
  *
- * Previously this used raw (checkIn - now) wall-clock ms, whose boundary sat at
- * UTC midnight of the check-in date minus N*24h — up to ~13h off NZ local time.
+ *  - `checkIn` is a stored `@db.Date` lodge night (`prisma/schema.prisma:1662`),
+ *    so it is DECODED from the column's UTC-midnight encoding
+ *    (`calendarDateOfDateOnlyInstant`, `INV-DATE-019`'s first exact boundary with
+ *    `INV-DATE-026`).
+ *  - `todayAtClub` is the club's own calendar day, resolved by the caller from
+ *    the persisted `ClubTimeSettings.timeZone` (`INV-CONFIG-002`).
+ *
+ * ## The two defects this signature removes
+ *
+ * It used to be `daysUntilDate(checkIn, now: Date = new Date())` and to project
+ * BOTH operands through `APP_TIME_ZONE`. Measured with the container on
+ * `America/Denver`, a stored check-in of 1 August against 30 June returned
+ * **31** where the answer is **32**: the projection moved the stored night back
+ * a day and the real instant not at all, so the errors did not cancel — they
+ * subtracted. Every club behind Greenwich was tiered one day short of its own
+ * published cancellation policy, which moves money. Decoding the stored day
+ * closed that half.
+ *
+ * The other half was the `now` operand, and it is closed by the TYPE. An instant
+ * has no calendar day until a zone is chosen, so accepting a `Date` here meant
+ * the function had to choose one, and the only zone a sync, pure,
+ * transaction-bound function can reach is the container's. `CalendarDate` makes
+ * an instant unrepresentable in this position: the caller must have already
+ * asked the club what day it is. The same remedy `member-age.ts` took for the
+ * other operand of the same class of comparison (#3082).
+ *
+ * ## Why it is a REQUIRED parameter and not an `await` in here
+ *
+ * `INV-LOCK-004` names the club timezone as one of only two reads that cannot
+ * take a transaction client. Ten call sites reach this function across seven
+ * money modules and four of them are inside an open interactive transaction
+ * holding `pg_advisory_xact_lock(1)` and the per-lodge capacity key
+ * (`INV-LOCK-001`, `INV-LOCK-002`) — `booking-cancel.ts`,
+ * `booking-date-modification-service.ts`, `booking-modify-plan.ts` and
+ * `booking-modify-settlement.ts`'s callers. A `clubTimeSettings.findUnique` in
+ * here would take a second pooled connection under those locks and escape the
+ * transaction's own client. Every caller therefore resolves ONE club day before
+ * it opens its transaction and threads it in. See
+ * `docs/CONCURRENCY_AND_LOCKING.md` -> "Which client reads the club's timezone".
+ *
+ * ## The arithmetic
+ *
+ * `countClubNights` is exact integer calendar arithmetic, so a DST transition
+ * inside the range cannot make the answer 30.958 days. The previous form divided
+ * elapsed milliseconds by 86_400_000, which was safe only because both operands
+ * were pinned to UTC midnight — `docs/CLUB_TIME_KERNEL.md` records what that
+ * arithmetic does the moment an operand becomes club-local, and #3100 is what it
+ * cost. The deliberate "partial days do NOT reach a higher tier" intent is
+ * preserved: neither operand carries a time of day at all now, so there are no
+ * partial days to floor.
  */
-export function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
-  const checkInDay = normalizeDateOnlyForTimeZone(checkIn);
-  const nowDay = normalizeDateOnlyForTimeZone(now);
-  return Math.floor((checkInDay.getTime() - nowDay.getTime()) / (1000 * 60 * 60 * 24));
+export function daysUntilDate(
+  checkIn: Date,
+  todayAtClub: CalendarDate,
+): number {
+  return countClubNights(todayAtClub, calendarDateOfDateOnlyInstant(checkIn));
 }

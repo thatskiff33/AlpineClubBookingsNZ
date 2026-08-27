@@ -18,6 +18,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { hasLodgeAccess } from "@/lib/access-roles";
 import { getStaffLodgeBinding } from "@/lib/lodge-access";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 
@@ -116,9 +117,14 @@ export async function POST(req: NextRequest) {
     binding.kind === "bound"
       ? binding.lodgeId
       : await getDefaultLodgeId(prisma);
+  // #3123 — the club's PERSISTED zone decides which day this PIN is judged
+  // against, not the container's. It used to be `undefined` here purely to
+  // reach `kioskLodgeId` past a positional default, so the environment's day
+  // was chosen by accident; the parameter is now required and this route
+  // supplies it.
   const assignment = await findActiveHutLeaderAssignmentByPin(
     parsed.data.pin,
-    undefined,
+    await clubTodayDateOnlyInstant(),
     kioskLodgeId,
   );
   if (!assignment) {

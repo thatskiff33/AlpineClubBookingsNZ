@@ -1,28 +1,66 @@
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import {
+  addCalendarDays,
+  calendarDayOfWeek,
+  calendarMonthOf,
+  clubCalendarDateOf,
+  clubWallTimeOf,
+  countClubNights,
+  endOfClubDayExclusive,
+  formatClubInstantTime,
+  formatClubLongWeekdayDate,
+  instantForClubWallTime,
+  parseCalendarDate,
+  parseInstant,
+  startOfCalendarMonth,
+  startOfClubDay,
+  type CalendarDate,
+  type ClubTimeZone,
+  type Instant,
+} from "@/lib/club-time";
 import type { CalendarEventDTO } from "@/lib/calendar-events";
-import { formatNZMonthYear, formatNZTime } from "@/lib/nzst-date";
 
 /**
- * Pure, client-safe date helpers for the month calendar. The grid arithmetic
- * (day keys, month grids, "is today") works in the browser's local time — for a
- * single-club NZ deployment that is the lodge's own timezone, so an event
- * created at "7pm" lands on the 7pm cell. The *display* formatters below
- * instead pin the club's locale and timezone (#2264), so an operator or a TV
- * browser sitting outside New Zealand still reads club time rather than its
- * own. No server-only imports may be added to this module (it is bundled to the
- * client).
+ * Pure, client-safe date helpers for the month calendar (CT-4, #2870).
+ *
+ * ## The two kinds, kept apart
+ *
+ * A month grid is made of CALENDAR DATES — 42 cells, each a day of the club's
+ * calendar, with no time of day and no timezone. A `CalendarEvent`'s `startsAt`
+ * is an INSTANT. So every function here either takes a {@link CalendarDate} and
+ * NO zone, or takes an instant and REQUIRES the club's zone; there is nothing in
+ * between, and that asymmetry is the domain rather than a style (see
+ * `club-time/types.ts`).
+ *
+ * ## What this replaces, and why the whole module had to move at once
+ *
+ * Until CT-4 the grid arithmetic (`startOfMonth`, `addMonths`, `dateKey`,
+ * `buildMonthGrid`, `monthGridRange`, `isToday`) ran on host-local `Date`
+ * component APIs, justified by "for a single-club NZ deployment the browser IS
+ * the lodge's timezone". It is not: a member reading the calendar from London saw
+ * a different grid, a different "today" and different day buckets from a member
+ * in Ohakune,
+ * and the display formatters beside it pinned `APP_TIME_ZONE` — the ENVIRONMENT's
+ * zone — rather than the club's persisted one (`INV-CONFIG-002`).
+ *
+ * The fix could not be applied one call site at a time. Handing a club-derived
+ * UTC-midnight `Date` to `getMonth()` makes a self-consistent behind-UTC
+ * deployment WORSE, not better — measured on this epic as a whole wrong day
+ * against zero wrong hours — so the helper contract and its four component
+ * callers changed together.
+ *
+ * ## `formatMonthTitle` was a live defect, not just an authority question
+ *
+ * It built `new Date(Date.UTC(year, month, 1))` and read it through an
+ * `APP_TIME_ZONE`-pinned formatter. That is the identity only for a club EAST of
+ * Greenwich: for `America/Denver` the encoding of 1 April 2026 reads back as
+ * 31 March, so the heading over an April grid said "March 2026". It is now
+ * `formatClubMonthYear` over the month's calendar date, which is the identity for
+ * every club.
+ *
+ * No server-only imports may be added to this module (it is bundled to the
+ * client). The club's zone reaches a component through `ClubTimeProvider`, never
+ * from the browser's own clock.
  */
-
-// Long weekday-bearing date, e.g. "Thursday, 16 April 2026". Deliberately
-// wordier than the shared `formatNZWeekdayDate` ("Thu, 16 Apr 2026") because
-// these are single-event headings, not scannable list rows.
-const CALENDAR_LONG_DATE = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-});
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -30,51 +68,52 @@ export function weekdayLabels(): string[] {
   return WEEKDAY_LABELS;
 }
 
-export function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-export function addMonths(date: Date, months: number): Date {
-  return new Date(date.getFullYear(), date.getMonth() + months, 1);
-}
-
-/** Local `YYYY-MM-DD` key for grouping events onto day cells. */
-export function dateKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+/** Whether a grid cell belongs to the month being displayed. */
+export function isSameCalendarMonth(
+  day: CalendarDate,
+  monthStart: CalendarDate,
+): boolean {
+  return calendarMonthOf(day) === calendarMonthOf(monthStart);
 }
 
 /**
- * The 6×7 grid of days covering the given month, weeks starting Monday. The
+ * The 6x7 grid of days covering `monthStart`'s month, weeks starting Monday. The
  * leading/trailing days spill into the previous/next month so every week is
  * full — the standard month-calendar layout.
  */
-export function buildMonthGrid(year: number, month: number): Date[] {
-  const first = new Date(year, month, 1);
-  // getDay(): 0=Sun..6=Sat. Convert to Monday-first offset (Mon=0..Sun=6).
-  const mondayOffset = (first.getDay() + 6) % 7;
-  const gridStart = new Date(year, month, 1 - mondayOffset);
-  return Array.from({ length: 42 }, (_, i) => {
-    return new Date(
-      gridStart.getFullYear(),
-      gridStart.getMonth(),
-      gridStart.getDate() + i,
-    );
-  });
+export function buildMonthGrid(monthStart: CalendarDate): CalendarDate[] {
+  const first = startOfCalendarMonth(monthStart);
+  // calendarDayOfWeek(): 0=Sun..6=Sat. Convert to Monday-first offset (Mon=0..Sun=6).
+  const mondayOffset = (calendarDayOfWeek(first) + 6) % 7;
+  const gridStart = addCalendarDays(first, -mondayOffset);
+  return Array.from({ length: 42 }, (_, i) => addCalendarDays(gridStart, i));
 }
 
-/** The inclusive [from, to] instants covering a month's full grid, for the API. */
-export function monthGridRange(year: number, month: number): {
-  from: Date;
-  to: Date;
-} {
-  const grid = buildMonthGrid(year, month);
-  const from = new Date(grid[0]);
-  from.setHours(0, 0, 0, 0);
-  const to = new Date(grid[grid.length - 1]);
-  to.setHours(23, 59, 59, 999);
+/**
+ * The inclusive `[from, to]` instants covering a month's full grid, for the
+ * events API's overlap query.
+ *
+ * Both ends are CLUB day boundaries. The pair this replaces was
+ * `setHours(0, 0, 0, 0)` / `setHours(23, 59, 59, 999)` on a host-local `Date`,
+ * so the window a member's browser asked for was their own day's, not the
+ * club's — up to a day of events missing from one edge of the grid and a day of
+ * extra events on the other.
+ *
+ * `to` is INCLUSIVE because that is what the route's `startsAt: { lte: to }`
+ * compares against. It is derived from the kernel's half-open
+ * `endOfClubDayExclusive` and stepped back one millisecond, which is the
+ * `getTime() - 1` idiom group A asked for as `endOfClubDayInclusive(date, zone)`
+ * and did not add; this is a fifth caller for it (#2870).
+ */
+export function monthGridRange(
+  monthStart: CalendarDate,
+  zone: ClubTimeZone,
+): { from: Instant; to: Instant } {
+  const grid = buildMonthGrid(monthStart);
+  const from = startOfClubDay(grid[0], zone);
+  const to = new Date(
+    endOfClubDayExclusive(grid[grid.length - 1], zone).getTime() - 1,
+  );
   return { from, to };
 }
 
@@ -87,19 +126,30 @@ export function monthGridRange(year: number, month: number): {
 const MAX_EVENT_SPAN_DAYS = 370;
 
 /**
- * Group events by their (local) day key. A multi-day / midnight-spanning event
- * — one whose `endsAt` falls on a later LOCAL calendar day than its `startsAt`
- * — is added to EVERY day it covers, from its start day through its end day
- * inclusive, so it renders on each of those cells. Events with no `endsAt`, an
- * invalid/earlier `endsAt`, or an `endsAt` on the same local day stay in a
- * single bucket.
+ * Group events by the CLUB calendar day they fall on. A multi-day /
+ * midnight-spanning event — one whose `endsAt` falls on a later club calendar
+ * day than its `startsAt` — is added to EVERY day it covers, from its start day
+ * through its end day inclusive, so it renders on each of those cells. Events
+ * with no `endsAt`, an invalid/earlier `endsAt`, or an `endsAt` on the same club
+ * day stay in a single bucket.
+ *
+ * The day an instant "is" depends entirely on the zone it is read in, which is
+ * why `zone` is required here and why it must be the club's persisted one: a
+ * 22:00 event read in a browser twelve hours away lands on the wrong cell, and
+ * used to.
+ *
+ * An event whose `startsAt` is not a parseable instant is DROPPED rather than
+ * bucketed. The host-local version keyed it under the literal string
+ * `"NaN-NaN-NaN"`, which no grid cell ever reads, so this changes nothing a
+ * screen can see and removes a garbage key from the map.
  */
 export function groupEventsByDay(
   events: CalendarEventDTO[],
-): Map<string, CalendarEventDTO[]> {
-  const byDay = new Map<string, CalendarEventDTO[]>();
+  zone: ClubTimeZone,
+): Map<CalendarDate, CalendarEventDTO[]> {
+  const byDay = new Map<CalendarDate, CalendarEventDTO[]>();
 
-  const addToDay = (key: string, event: CalendarEventDTO) => {
+  const addToDay = (key: CalendarDate, event: CalendarEventDTO) => {
     const bucket = byDay.get(key);
     if (bucket) {
       bucket.push(event);
@@ -109,36 +159,33 @@ export function groupEventsByDay(
   };
 
   for (const event of events) {
-    const start = new Date(event.startsAt);
-    const startKey = dateKey(start);
+    const start = parseInstant(event.startsAt);
+    if (start === null) continue;
+    const startKey = clubCalendarDateOf(start, zone);
 
-    // Single-bucket fast paths: no end, unparseable dates, or an end that does
-    // not reach a later local day than the start.
-    if (!event.endsAt || Number.isNaN(start.getTime())) {
+    // Single-bucket fast paths: no end, an unparseable end, or an end that does
+    // not reach a later club day than the start.
+    const end = event.endsAt ? parseInstant(event.endsAt) : null;
+    if (end === null) {
       addToDay(startKey, event);
       continue;
     }
-    const end = new Date(event.endsAt);
-    const endKey = dateKey(end);
-    if (Number.isNaN(end.getTime()) || endKey <= startKey) {
-      // `endKey <= startKey` (lexicographic on zero-padded YYYY-MM-DD works as
-      // date order) covers same-day and any end-before-start data.
+    const endKey = clubCalendarDateOf(end, zone);
+    if (endKey <= startKey) {
+      // `endKey <= startKey` (plain comparison on a four-digit-year `YYYY-MM-DD`
+      // IS chronological order) covers same-day and any end-before-start data.
       addToDay(startKey, event);
       continue;
     }
 
-    // Multi-day: walk local calendar days from the start day through the end
-    // day inclusive, capped so a pathological span can't run away.
-    const cursor = new Date(
-      start.getFullYear(),
-      start.getMonth(),
-      start.getDate(),
+    // Multi-day: walk club calendar days from the start day through the end day
+    // inclusive, capped so a pathological span can't run away.
+    const span = Math.min(
+      countClubNights(startKey, endKey),
+      MAX_EVENT_SPAN_DAYS,
     );
-    for (let i = 0; i <= MAX_EVENT_SPAN_DAYS; i++) {
-      const key = dateKey(cursor);
-      addToDay(key, event);
-      if (key === endKey) break;
-      cursor.setDate(cursor.getDate() + 1);
+    for (let i = 0; i <= span; i++) {
+      addToDay(addCalendarDays(startKey, i), event);
     }
   }
 
@@ -146,75 +193,208 @@ export function groupEventsByDay(
   for (const bucket of byDay.values()) {
     bucket.sort((a, b) => {
       if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
-      return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+      return (
+        (parseInstant(a.startsAt)?.getTime() ?? 0) -
+        (parseInstant(b.startsAt)?.getTime() ?? 0)
+      );
     });
   }
   return byDay;
 }
 
-export function isSameMonth(date: Date, year: number, month: number): boolean {
-  return date.getFullYear() === year && date.getMonth() === month;
-}
-
-export function isToday(date: Date): boolean {
-  return dateKey(date) === dateKey(new Date());
-}
-
-export function formatMonthTitle(year: number, month: number): string {
-  // UTC midnight, not local midnight: the label is a pure calendar month, and a
-  // local-midnight construction read back in club time would slip to the
-  // previous month for a viewer east of New Zealand.
-  return formatNZMonthYear(new Date(Date.UTC(year, month, 1)));
-}
-
-export function formatTime(iso: string): string {
-  return formatNZTime(new Date(iso));
+/** "2:30 pm" in CLUB time for a serialised instant; the raw value if malformed. */
+export function formatInstantTime(iso: string, zone: ClubTimeZone): string {
+  const instant = parseInstant(iso);
+  // The kernel's formatters throw a RangeError on an unusable value, and an
+  // unhandled throw in a client render blanks the screen behind an error
+  // boundary. Falling back to the raw text is the same judgement
+  // `describeRecurrence` makes for a malformed `until`.
+  return instant === null ? iso : formatClubInstantTime(instant, zone);
 }
 
 /** Short chip/list label for an event's time ("All day", "7:00 pm"). */
-export function formatEventTime(event: CalendarEventDTO): string {
+export function formatEventTime(
+  event: CalendarEventDTO,
+  zone: ClubTimeZone,
+): string {
   if (event.allDay) return "All day";
-  return formatTime(event.startsAt);
+  return formatInstantTime(event.startsAt, zone);
 }
 
-export function formatEventDateLong(event: CalendarEventDTO): string {
-  return CALENDAR_LONG_DATE.format(new Date(event.startsAt));
+/**
+ * "Thursday, 16 April 2026" for the club calendar day an event starts on.
+ *
+ * The instant is projected into the club's calendar ONCE, and the resulting
+ * calendar date is then formatted with no zone at all — rather than handing the
+ * instant to a zone-pinned display formatter, which is the same operation only
+ * while the pinned zone happens to be the club's.
+ */
+export function formatEventDateLong(
+  event: CalendarEventDTO,
+  zone: ClubTimeZone,
+): string {
+  const instant = parseInstant(event.startsAt);
+  if (instant === null) return event.startsAt;
+  return formatCalendarDateLong(clubCalendarDateOf(instant, zone));
+}
+
+/**
+ * "Thursday, 16 April 2026" for a calendar day. No zone: a day has none.
+ *
+ * Deliberately wordier than `formatClubWeekdayDate` ("Thu, 16 Apr 2026") because
+ * these are single-day/single-event headings rather than scannable list rows.
+ * F3 (#3079) declared this bag as the kernel's `longWeekdayDate` shape — the
+ * fourth caller was what earned it — so the local formatter this file carried is
+ * gone rather than composed from `longWeekdayDayMonth` plus the year, which is
+ * byte-identical for `en-NZ` and not safe for a configurable `APP_LOCALE`.
+ */
+function formatCalendarDateLong(date: CalendarDate): string {
+  return formatClubLongWeekdayDate(date);
 }
 
 /**
  * Long date label for a `YYYY-MM-DD` day key, used as the day-detail dialog
- * heading. Falls back to the raw key if it is malformed.
+ * heading and the per-cell screen-reader label. Falls back to the raw key if it
+ * is malformed — the key reaches here through React state typed `string | null`,
+ * and showing the stored text beats blanking the dialog.
  */
 export function formatDayKeyLong(dayKey: string): string {
-  const [y, m, d] = dayKey.split("-").map(Number);
-  if (!y || !m || !d) return dayKey;
-  // UTC midnight: `dayKey` is a date-only value, so a local-midnight parse read
-  // back in club time would render the previous day east of New Zealand.
-  return CALENDAR_LONG_DATE.format(new Date(Date.UTC(y, m - 1, d)));
+  const date = parseCalendarDate(dayKey);
+  return date === null ? dayKey : formatCalendarDateLong(date);
 }
 
-/** `<input type="date">` value (local YYYY-MM-DD) for an ISO instant. */
-export function toDateInputValue(iso: string): string {
-  return dateKey(new Date(iso));
+/**
+ * `<input type="date">` value for a serialised instant: the CLUB calendar day it
+ * falls on, never the viewer's.
+ */
+export function toDateInputValue(iso: string, zone: ClubTimeZone): string {
+  const instant = parseInstant(iso);
+  return instant === null ? "" : clubCalendarDateOf(instant, zone);
 }
 
-/** `<input type="time">` value (local HH:MM) for an ISO instant. */
-export function toTimeInputValue(iso: string): string {
-  const date = new Date(iso);
-  const h = String(date.getHours()).padStart(2, "0");
-  const m = String(date.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
+/**
+ * `<input type="time">` value (`HH:MM`) for a serialised instant: the CLUB
+ * wall-clock reading, so an admin in London editing a 7pm club meeting is shown
+ * 19:00 and does not silently move it by saving.
+ */
+export function toTimeInputValue(iso: string, zone: ClubTimeZone): string {
+  const instant = parseInstant(iso);
+  if (instant === null) return "";
+  const wall = clubWallTimeOf(instant, zone);
+  return `${String(wall.hour).padStart(2, "0")}:${String(wall.minute).padStart(2, "0")}`;
 }
 
-/** Build an ISO instant from local date + optional time inputs. */
+/**
+ * Build an ISO instant from the date + optional time inputs, read as CLUB wall
+ * time.
+ *
+ * This is the inverse of {@link toDateInputValue} / {@link toTimeInputValue} and
+ * the write half of the same defect: `new Date("2026-04-16T19:00")` is resolved
+ * by JavaScript in the HOST's zone, so an overseas admin creating a 7pm club
+ * event stored 7pm THEIR time. The club's zone and its DST rules decide the
+ * moment now, and a wall time the clocks jumped over resolves to the first
+ * instant that does exist rather than throwing inside a form submit.
+ *
+ * AN OMITTED **OR EMPTY** `timeValue` MEANS MIDNIGHT, which is stated because it
+ * was briefly not true. `""` is what an `<input type="time">` holds when it has
+ * been cleared, and "no time given" and "time cleared" are the same request; the
+ * version this replaced used `??`, so an empty string reached `split(":")` and
+ * the function returned `null`. The sole caller in this repository passes
+ * `startTime || "00:00"` and so never saw it, but this is exported and the guard
+ * was in a different file.
+ */
 export function isoFromDateTimeInputs(
   dateValue: string,
+  zone: ClubTimeZone,
   timeValue?: string,
 ): string | null {
-  if (!dateValue) return null;
-  const composed = timeValue ? `${dateValue}T${timeValue}` : `${dateValue}T00:00`;
-  const parsed = new Date(composed);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  const date = parseCalendarDate(dateValue);
+  if (date === null) return null;
+  const parsed = parseWallTime(timeValue);
+  if (parsed === null) return null;
+  return instantForClubWallTime(date, parsed, zone, GAP_TOLERANT).toISOString();
+}
+
+/** `HH:MM` as whole hours and minutes in range, or null. Empty means midnight. */
+function parseWallTime(
+  timeValue: string | undefined,
+): { hour: number; minute: number } | null {
+  const [hour, minute] = (timeValue || "00:00").split(":").map(Number);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+/**
+ * The DST policy both ends of an event share: a wall time the clocks jumped over
+ * resolves to the first instant that does exist, and the earlier of a repeated
+ * pair wins.
+ */
+const GAP_TOLERANT = {
+  skipped: "nextExistingInstant",
+  ambiguous: "earliest",
+} as const;
+
+/**
+ * The END instant of a timed event, given the date and the two wall times the
+ * officer typed.
+ *
+ * ## Why this is not just `isoFromDateTimeInputs` twice
+ *
+ * Because on one morning a year that produces a ZERO-LENGTH event, and it is a
+ * regression this subsystem's migration introduced rather than a limit it
+ * inherited. Every wall-clock reading inside a spring-forward gap resolves to
+ * the same instant — the moment the clocks jumped to — so `02:00`-`02:30` on
+ * 27 September 2026 in `Pacific/Auckland` resolves to `03:00` at BOTH ends.
+ * `resolveCalendarEventDates` refuses only an end BEFORE the start, so the row
+ * persists and the panel reads "3:00 am – 3:00 am". The host-local version this
+ * replaced stored thirty minutes, because JavaScript slid each end
+ * independently.
+ *
+ * ## What it does instead, and what it deliberately does NOT do
+ *
+ * The exact wall time is kept wherever it survives the transition. Only when the
+ * typed end is LATER than the typed start and the resolved end is not later than
+ * the resolved start — which is precisely the both-ends-in-one-gap case — is the
+ * end re-derived as the start plus the typed wall duration, restoring the
+ * thirty minutes the officer asked for.
+ *
+ * Deriving the end from the duration ALWAYS was the obvious fix and is worse.
+ * A `01:30`-`03:30` event on that same morning spans two hours of wall clock and
+ * one hour of real time; duration-first would store it ending at `04:30`, an
+ * hour after the officer typed `03:30`. Exact-first keeps `03:30` and gives up
+ * only the elapsed length, which is the right trade for a form whose two fields
+ * are wall times. So the repair is scoped to the degenerate case and nothing
+ * else moves.
+ *
+ * A deliberately zero-length event — the same time typed twice — is left alone,
+ * so this refuses nothing the officer asked for.
+ */
+export function isoEndFromDateTimeInputs(
+  dateValue: string,
+  zone: ClubTimeZone,
+  startTime: string | undefined,
+  endTime: string,
+): string | null {
+  const date = parseCalendarDate(dateValue);
+  if (date === null) return null;
+  const start = parseWallTime(startTime);
+  const end = parseWallTime(endTime);
+  if (start === null || end === null) return null;
+
+  const startInstant = instantForClubWallTime(date, start, zone, GAP_TOLERANT);
+  const endInstant = instantForClubWallTime(date, end, zone, GAP_TOLERANT);
+
+  const typedMinutes = (t: { hour: number; minute: number }) =>
+    t.hour * 60 + t.minute;
+  const typedEndIsLater = typedMinutes(end) > typedMinutes(start);
+  const resolvedEndIsLater = endInstant.getTime() > startInstant.getTime();
+  if (typedEndIsLater && !resolvedEndIsLater) {
+    const durationMs =
+      (typedMinutes(end) - typedMinutes(start)) * 60 * 1000;
+    return new Date(startInstant.getTime() + durationMs).toISOString();
+  }
+  return endInstant.toISOString();
 }
 
 /**

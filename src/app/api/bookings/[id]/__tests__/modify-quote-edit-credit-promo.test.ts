@@ -54,6 +54,14 @@ vi.mock("@/lib/prisma", () => ({
     season: { findMany: h.seasonFindMany },
     groupDiscountSetting: { findUnique: h.groupDiscountFindUnique },
     bookingRequest: { findFirst: h.bookingRequestFindFirst },
+    // #3123: the route resolves the CLUB's day before it quotes anything. The
+    // delegate is present rather than absent on purpose — `getClubTimeZone` is
+    // fail-soft on a missing one and degrades silently to the environment, so
+    // omitting it would mean this suite exercised a fallback while appearing to
+    // exercise the real read (A4's trap).
+    clubTimeSettings: {
+      findUnique: vi.fn().mockResolvedValue({ timeZone: "America/Denver" }),
+    },
   },
 }));
 vi.mock("@/lib/capacity", async (importOriginal) => {
@@ -363,9 +371,26 @@ describe("POST /api/bookings/[id]/modify-quote — promo guest targeting (#2266)
     expect(h.validatePromoCodeFull).toHaveBeenCalledTimes(1);
     const call = h.validatePromoCodeFull.mock.calls[0];
     expect(call[0]).toBe("MATES50");
-    expect(call[2]).toBe("b1"); // excludeBookingId: this booking
-    expect(call[3]).toBe("lodge-1");
-    expect(call[4]).toEqual({ selectedGuestIndexes: [0] });
+    // #3123 — the CLUB's calendar day, third and REQUIRED, ahead of the two
+    // optional positionals it now precedes. The route resolves ONE day for the
+    // whole quote and threads it here, into the change fee's `daysUntilDate`
+    // and into the reduction refund's settlement tier, so the three cannot
+    // disagree across club midnight.
+    //
+    // WHAT THIS LEG DOES AND DOES NOT PROVE, stated rather than implied. This
+    // suite pins its own instant (`NOW`, 2026-08-01T06:00:00Z) and under it the
+    // persisted `America/Denver` and the environment's Pacific/Auckland happen
+    // to agree on the day, so the value below cannot tell the two apart. It pins
+    // the ARGUMENT POSITION — which is what the positional insertion could get
+    // wrong and what `tsc` cannot see through a `vi.fn()`. WHICH zone the day
+    // came from is proven in
+    // `src/lib/__tests__/promo-validity-window-club-day.test.ts` and
+    // `src/app/api/bookings/[id]/cancel-preview/__tests__/club-time-authority.test.ts`,
+    // where the two zones deliberately disagree.
+    expect(call[2]).toBe("2026-08-01");
+    expect(call[3]).toBe("b1"); // excludeBookingId: this booking
+    expect(call[4]).toBe("lodge-1");
+    expect(call[5]).toEqual({ selectedGuestIndexes: [0] });
   });
 
   it("400s a stale promoGuestId (the concurrent-edit drift scenario) instead of re-pointing it", async () => {

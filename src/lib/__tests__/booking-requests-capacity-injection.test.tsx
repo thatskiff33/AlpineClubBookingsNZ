@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // R1 (#1982) regression pin, re-aimed at the mechanism that actually carries the

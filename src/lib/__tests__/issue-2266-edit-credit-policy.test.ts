@@ -154,6 +154,9 @@ describe("booking-edit policy — member drafts (#2266)", () => {
   const future = {
     checkIn: new Date("2999-01-10T00:00:00.000Z"),
     checkOut: new Date("2999-01-12T00:00:00.000Z"),
+    // #3123 - the club's day is now an input. Any real day is far behind these
+    // fixtures; the frozen clock's own day keeps the case exactly as it read.
+    today: new Date("2026-07-01T00:00:00.000Z"),
   };
 
   it("lets a member edit their own future-dated DRAFT (the Resume journey)", () => {

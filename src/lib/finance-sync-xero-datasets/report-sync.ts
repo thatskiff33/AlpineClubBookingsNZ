@@ -14,7 +14,7 @@ import {
 export async function syncFinanceProfitAndLossMonthlySnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const response = await withFinanceReportScopeError(
     "getReportProfitAndLoss",
     () =>
@@ -54,7 +54,7 @@ export async function syncFinanceProfitAndLossMonthlySnapshot(
 export async function syncFinanceBalanceSheetSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const response = await withFinanceReportScopeError(
     "getReportBalanceSheet",
     () =>
@@ -90,7 +90,7 @@ export async function syncFinanceBalanceSheetSnapshot(
 export async function syncFinanceBankBalancesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
-  const window = getFinanceReportWindow(context.startedAt);
+  const window = getFinanceReportWindow(context.startedAt, context.clubTimeZone);
   const response = await withFinanceReportScopeError(
     "getReportBankSummary",
     () =>

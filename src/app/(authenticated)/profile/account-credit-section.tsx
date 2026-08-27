@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { calendarDateOfSerialisedDbDate, formatClubDate } from "@/lib/club-time";
 
 interface SourceBooking {
   id: string;
@@ -41,17 +42,37 @@ function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-function formatDate(dateStr: string): string {
-  return formatNZDate(new Date(dateStr));
+/**
+ * When the credit was recorded — a real INSTANT, so it has no civil date until a
+ * zone is chosen (CT-4, #2870; epic #2988; INV-CONFIG-002).
+ *
+ * The zone is the club's PERSISTED setting, reaching this browser as data
+ * through `ClubTimeProvider`. It used to be `APP_TIME_ZONE`, the container's
+ * `TZ`. Same shape; only the authority moved.
+ */
+function useTransactionDateFormatter() {
+  const clubTime = useClubTime();
+  return (dateStr: string): string => clubTime.instantDate(new Date(dateStr));
 }
 
+/**
+ * The source booking's stay — two CALENDAR DAYS, which take no timezone at all.
+ *
+ * `checkIn`/`checkOut` are `@db.Date` lodge nights serialised to ISO, so the
+ * kernel reads the day out of the value's first ten characters and formats it
+ * pinned to `UTC`: provably the identity for every club, and
+ * deliberately NOT routed through the hook above. Sitting one line from a real
+ * instant is exactly where the two concepts get merged, which is the defect
+ * class this epic exists to end.
+ */
 function formatDateRange(checkIn: string, checkOut: string): string {
-  const inDate = formatNZDate(new Date(checkIn));
-  const outDate = formatNZDate(new Date(checkOut));
+  const inDate = formatClubDate(calendarDateOfSerialisedDbDate(checkIn));
+  const outDate = formatClubDate(calendarDateOfSerialisedDbDate(checkOut));
   return `${inDate} - ${outDate}`;
 }
 
 export function AccountCreditSection() {
+  const formatDate = useTransactionDateFormatter();
   const [data, setData] = useState<CreditData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);

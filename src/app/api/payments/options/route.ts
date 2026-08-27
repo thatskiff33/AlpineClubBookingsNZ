@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import {
   buildInternetBankingPaymentOptionState,
   loadInternetBankingPaymentSettings,
@@ -28,10 +29,15 @@ export async function GET(request: Request) {
     );
   }
 
-  const [modules, internetBankingSettings] = await Promise.all([
-    loadEffectiveModuleFlags(),
-    loadInternetBankingPaymentSettings(),
-  ]);
+  const [modules, internetBankingSettings, clubTodayDateOnly] =
+    await Promise.all([
+      loadEffectiveModuleFlags(),
+      loadInternetBankingPaymentSettings(),
+      // #3123 — the club's PERSISTED zone decides the Internet Banking cutoff
+      // day this route quotes back to the payer. React-cached for the request,
+      // so it costs nothing the render pass has not already paid.
+      clubTodayDateOnlyInstant(),
+    ]);
   const internetBankingEnabled =
     modules.xeroIntegration && modules.internetBankingPayments;
   const internetBanking = buildInternetBankingPaymentOptionState({
@@ -40,6 +46,7 @@ export async function GET(request: Request) {
     internetBankingPaymentsEnabled: modules.internetBankingPayments,
     settings: internetBankingSettings,
     checkIn: checkInParam ? parseDateOnly(checkInParam) : null,
+    today: clubTodayDateOnly,
   });
 
   return NextResponse.json({

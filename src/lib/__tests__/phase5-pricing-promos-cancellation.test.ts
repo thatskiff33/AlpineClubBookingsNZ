@@ -15,6 +15,13 @@ import {
   getRefundTier,
   type CancellationRule,
 } from "../cancellation";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the CLUB's calendar day, which `validatePromoCodeRules` now requires
+// instead of defaulting an instant through `APP_TIME_ZONE`. These cases are
+// about the BOOKING-DATE window rather than the validity window, so any day
+// inside the promotion's own validity does; the frozen clock's is used.
+const CLUB_TODAY = requireCalendarDate("2026-07-01");
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -35,8 +42,8 @@ function nonMemberGuest(ageTier: AgeTier) {
 function makeWinterSeason(): SeasonRateData {
   return {
     seasonId: "season-winter",
-    startDate: new Date(2026, 5, 1), // June 1
-    endDate: new Date(2026, 8, 30), // Sep 30
+    startDate: new Date("2026-06-01"), // June 1
+    endDate: new Date("2026-09-30"), // Sep 30
     type: "WINTER",
     rates: [
       { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 4500 },
@@ -52,8 +59,8 @@ function makeWinterSeason(): SeasonRateData {
 function makeSummerSeason(): SeasonRateData {
   return {
     seasonId: "season-summer",
-    startDate: new Date(2026, 10, 1), // Nov 1
-    endDate: new Date(2027, 2, 31), // Mar 31
+    startDate: new Date("2026-11-01"), // Nov 1
+    endDate: new Date("2027-03-31"), // Mar 31
     type: "SUMMER",
     rates: [
       { ageTier: "ADULT", membershipTypeId: MEMBER_TYPE, pricePerNightCents: 3500 },
@@ -81,28 +88,28 @@ const defaultGroupDiscount: GroupDiscountConfig = {
 describe("P5.1: Group booking discount", () => {
   describe("isGroupDiscountApplicable", () => {
     it("returns true when guest count meets threshold in summer", () => {
-      const summerNight = new Date(2026, 11, 15); // Dec 15
+      const summerNight = new Date("2026-12-15"); // Dec 15
       expect(
         isGroupDiscountApplicable(5, summerNight, allSeasons, defaultGroupDiscount)
       ).toBe(true);
     });
 
     it("returns false when guest count is below threshold", () => {
-      const summerNight = new Date(2026, 11, 15);
+      const summerNight = new Date("2026-12-15");
       expect(
         isGroupDiscountApplicable(4, summerNight, allSeasons, defaultGroupDiscount)
       ).toBe(false);
     });
 
     it("returns false for winter when summerOnly is enabled", () => {
-      const winterNight = new Date(2026, 6, 15); // Jul 15
+      const winterNight = new Date("2026-07-15"); // Jul 15
       expect(
         isGroupDiscountApplicable(5, winterNight, allSeasons, defaultGroupDiscount)
       ).toBe(false);
     });
 
     it("returns true for winter when summerOnly is disabled", () => {
-      const winterNight = new Date(2026, 6, 15);
+      const winterNight = new Date("2026-07-15");
       const config = { ...defaultGroupDiscount, summerOnly: false };
       expect(
         isGroupDiscountApplicable(5, winterNight, allSeasons, config)
@@ -110,7 +117,7 @@ describe("P5.1: Group booking discount", () => {
     });
 
     it("returns false when group discount is disabled", () => {
-      const summerNight = new Date(2026, 11, 15);
+      const summerNight = new Date("2026-12-15");
       const config = { ...defaultGroupDiscount, enabled: false };
       expect(
         isGroupDiscountApplicable(10, summerNight, allSeasons, config)
@@ -118,7 +125,7 @@ describe("P5.1: Group booking discount", () => {
     });
 
     it("returns false when no config provided", () => {
-      const summerNight = new Date(2026, 11, 15);
+      const summerNight = new Date("2026-12-15");
       expect(
         isGroupDiscountApplicable(5, summerNight, allSeasons, undefined)
       ).toBe(false);
@@ -129,8 +136,8 @@ describe("P5.1: Group booking discount", () => {
     it("returns true when at least one stay night qualifies", () => {
       expect(
         isGroupDiscountAppliedToStay(
-          new Date(2026, 11, 10),
-          new Date(2026, 11, 12),
+          new Date("2026-12-10"),
+          new Date("2026-12-12"),
           5,
           allSeasons,
           defaultGroupDiscount
@@ -141,8 +148,8 @@ describe("P5.1: Group booking discount", () => {
     it("returns false when no stay nights qualify", () => {
       expect(
         isGroupDiscountAppliedToStay(
-          new Date(2026, 6, 10),
-          new Date(2026, 6, 12),
+          new Date("2026-07-10"),
+          new Date("2026-07-12"),
           5,
           allSeasons,
           defaultGroupDiscount
@@ -153,8 +160,8 @@ describe("P5.1: Group booking discount", () => {
 
   describe("calculateBookingPrice with group discount", () => {
     it("charges member rates for all guests when group discount applies in summer", () => {
-      const checkIn = new Date(2026, 11, 10); // Dec 10 (summer)
-      const checkOut = new Date(2026, 11, 12); // Dec 12 (2 nights)
+      const checkIn = new Date("2026-12-10"); // Dec 10 (summer)
+      const checkOut = new Date("2026-12-12"); // Dec 12 (2 nights)
       const guests = [
         nonMemberGuest("ADULT"),
         nonMemberGuest("ADULT"),
@@ -176,8 +183,8 @@ describe("P5.1: Group booking discount", () => {
     });
 
     it("charges non-member rates when below group threshold", () => {
-      const checkIn = new Date(2026, 11, 10);
-      const checkOut = new Date(2026, 11, 11); // 1 night
+      const checkIn = new Date("2026-12-10");
+      const checkOut = new Date("2026-12-11"); // 1 night
       const guests = [
         nonMemberGuest("ADULT"),
         nonMemberGuest("ADULT"),
@@ -198,8 +205,8 @@ describe("P5.1: Group booking discount", () => {
     });
 
     it("does not apply group discount in winter when summerOnly", () => {
-      const checkIn = new Date(2026, 6, 10); // Jul 10 (winter)
-      const checkOut = new Date(2026, 6, 11); // 1 night
+      const checkIn = new Date("2026-07-10"); // Jul 10 (winter)
+      const checkOut = new Date("2026-07-11"); // 1 night
       const guests = Array(6).fill(nonMemberGuest("ADULT"));
 
       const result = calculateBookingPrice(
@@ -246,7 +253,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("allows booking check-in within gated date range", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-07-15") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-07-15") },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -254,7 +262,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("rejects booking check-in before bookingStartFrom", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-06-30") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-06-30") },
+      CLUB_TODAY
     );
     expect(result).toBe("This promo code is not valid for your booking dates");
   });
@@ -262,7 +271,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("rejects booking check-in on or after bookingStartUntil", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1", bookingCheckIn: new Date("2026-08-01") }
+      { memberId: "m1", bookingCheckIn: new Date("2026-08-01") },
+      CLUB_TODAY
     );
     expect(result).toBe("This promo code is not valid for your booking dates");
   });
@@ -275,7 +285,8 @@ describe("P5.3: Promo code booking date gating", () => {
     };
     const result = validatePromoCodeRules(
       promoNoGating,
-      { memberId: "m1", bookingCheckIn: new Date("2025-01-01") }
+      { memberId: "m1", bookingCheckIn: new Date("2025-01-01") },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -283,7 +294,8 @@ describe("P5.3: Promo code booking date gating", () => {
   it("allows any check-in when bookingCheckIn not provided", () => {
     const result = validatePromoCodeRules(
       basePromo,
-      { memberId: "m1" }
+      { memberId: "m1" },
+      CLUB_TODAY
     );
     expect(result).toBeNull();
   });
@@ -294,16 +306,18 @@ describe("P5.3: Promo code booking date gating", () => {
       bookingStartUntil: null,
     };
     expect(
-      validatePromoCodeRules(promoFromOnly, {
-        memberId: "m1",
-        bookingCheckIn: new Date("2026-07-15"),
-      })
+      validatePromoCodeRules(
+        promoFromOnly,
+        { memberId: "m1", bookingCheckIn: new Date("2026-07-15") },
+        CLUB_TODAY
+      )
     ).toBeNull();
     expect(
-      validatePromoCodeRules(promoFromOnly, {
-        memberId: "m1",
-        bookingCheckIn: new Date("2026-06-15"),
-      })
+      validatePromoCodeRules(
+        promoFromOnly,
+        { memberId: "m1", bookingCheckIn: new Date("2026-06-15") },
+        CLUB_TODAY
+      )
     ).toBe("This promo code is not valid for your booking dates");
   });
 });

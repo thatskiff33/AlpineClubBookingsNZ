@@ -1323,27 +1323,92 @@ describe("review finding source/schema contracts", () => {
     expect(source).not.toContain("/<[^>]*>/g");
   });
 
-  it("renders NZ-local expiry timestamps in email verification and email-change templates", () => {
+  it("renders the link expiry as a club-local timestamp in the email verification and email-change templates", () => {
     // #2689 moved both templates out of the monolith into the account family.
     // The slice end moved with them: `nominationRequestTemplate` is membership
     // business and now lives in another module, so the block that follows the
     // verification template here is the email-change one.
+    //
+    // WHAT THIS PINS, AND WHY IT IS NOT A FUNCTION NAME. The original finding
+    // was never about `formatNZDateTime` specifically: it was that a member is
+    // told WHEN their link dies, as a real timestamp in the club's own clock.
+    // A hardcoded countdown ("this link expires in 24 hours") is already wrong
+    // by the time the mail is read, and a raw `Date`/ISO instant is both
+    // unreadable and in the wrong zone. CT-5 (#2869) swapped the formatter for
+    // `emailClubDateTime`, which is the same guarantee sourced from the
+    // PERSISTED club zone instead of `process.env.TZ` — and the old assertion,
+    // which named one function, went red on a change that strictly improved the
+    // thing it was protecting. So assert the property instead, and read the
+    // acceptable formatter names out of the module's own import statement so
+    // the next rename moves them automatically.
     const source = readRepoFile("src/lib/email-templates/account.ts");
-    const verificationTemplateBlock = sliceFrom(
-      source,
-      "export function emailVerificationTemplate",
-      "export function emailChangeVerificationTemplate"
-    );
-    const emailChangeTemplateBlock = sliceFrom(
-      source,
-      "export function emailChangeVerificationTemplate",
-      "export function emailChangeNotificationTemplate"
-    );
 
-    expect(verificationTemplateBlock).toContain("formatNZDateTime");
-    expect(verificationTemplateBlock).not.toContain("This link expires in 24 hours");
-    expect(emailChangeTemplateBlock).toContain("formatNZDateTime");
-    expect(emailChangeTemplateBlock).not.toContain("This link expires in 1 hour");
+    const clubTimeImport =
+      /import\s*\{([^}]*)\}\s*from\s*"@\/lib\/email-templates-club-time"/.exec(
+        source
+      );
+    expect(
+      clubTimeImport,
+      "account.ts must take its date formatting from the club-time email helpers"
+    ).not.toBeNull();
+    const clubTimeFormatters = clubTimeImport![1]
+      .split(",")
+      .map((name) => name.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!)
+      .filter((name) => name.length > 0);
+    expect(clubTimeFormatters.length).toBeGreaterThan(0);
+
+    const templateBlocks = {
+      emailVerificationTemplate: sliceFrom(
+        source,
+        "export function emailVerificationTemplate",
+        "export function emailChangeVerificationTemplate"
+      ),
+      emailChangeVerificationTemplate: sliceFrom(
+        source,
+        "export function emailChangeVerificationTemplate",
+        "export function emailChangeNotificationTemplate"
+      ),
+    };
+
+    for (const [templateName, block] of Object.entries(templateBlocks)) {
+      // It takes the expiry it was handed...
+      expect(block, `${templateName} must render its expiresAt argument`).toContain(
+        "expiresAt"
+      );
+
+      // ...and renders it through a club-zone formatter. A plain string
+      // search rather than a composed regex: the formatter names are read
+      // out of the source file, so building a pattern from them would need
+      // escaping for no gain.
+      const rendersThroughClubTime = clubTimeFormatters.some(
+        (formatter) =>
+          block.includes(`${formatter}(expiresAt)`) ||
+          block.includes(`${formatter}(params.expiresAt)`)
+      );
+      expect(
+        rendersThroughClubTime,
+        `${templateName} must render expiresAt through one of: ${clubTimeFormatters.join(", ")}`
+      ).toBe(true);
+
+      // Never as a bare Date, and never as a host-zone or ISO rendering.
+      expect(block, `${templateName} interpolates expiresAt raw`).not.toMatch(
+        /\$\{\s*expiresAt\s*\}/
+      );
+      expect(
+        block,
+        `${templateName} renders expiresAt with a Date method instead of the club formatter`
+      ).not.toMatch(/expiresAt\s*\.\s*to[A-Za-z]*String\s*\(/);
+      expect(block, `${templateName} stringifies expiresAt`).not.toMatch(
+        /String\(\s*expiresAt\s*\)/
+      );
+
+      // And the member is not fobbed off with a fixed countdown instead of the
+      // real moment — the shape of the original defect, in any duration.
+      expect(
+        block,
+        `${templateName} states a hardcoded countdown instead of the expiry time`
+      ).not.toMatch(/expires\s+in\b/i);
+    }
   });
 
   it("surfaces email-change outcome query state on the profile page", () => {

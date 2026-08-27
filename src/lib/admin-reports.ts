@@ -23,7 +23,7 @@ import {
   getGuestStayStart,
   type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
-import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
 
 export type RevenueGranularity = "daily" | "weekly" | "monthly";
 
@@ -200,26 +200,44 @@ export function buildBookingTrendSeries(
   return Array.from(rows.values());
 }
 
-/** Count each overlapping BookingGuest row once, even on a multi-night stay. */
+/**
+ * Count each overlapping BookingGuest row once, even on a multi-night stay.
+ *
+ * EVERY KEY IN HERE IS A CALENDAR DAY AND NO ZONE TOUCHES ANY OF THEM (CT-4,
+ * #2870). `BookingGuest.stayStart`/`stayEnd` and `Booking.checkIn`/`checkOut`
+ * are `@db.Date`, and the route hands `rangeStart`/`rangeEnd` in the same
+ * encoding, so all four sides are UTC-midnight encodings of a day and not
+ * moments (INV-DATE-010), and `formatDateOnly` is the whole of the decoding —
+ * INV-DATE-019's first exact boundary with INV-DATE-026, which are the citation
+ * for a decode where INV-DATE-010 is not (#3080).
+ *
+ * BOTH SIDES USED TO BE ZONE-DEPENDENT, in two DIFFERENT zones, and that is the
+ * defect rather than a tidy-up. The guest keys went through
+ * `formatDateOnlyForTimeZone`, which projects the value into `APP_TIME_ZONE`;
+ * the range keys went through date-fns `format`, which reads the HOST's zone.
+ * Both are the identity for a zone at or ahead of UTC, so New Zealand never saw
+ * it. Measured for a club behind UTC: with the host at UTC and the club zone
+ * `America/Denver`, the guest keys slide back a day while the range keys do not,
+ * and a guest holding the last night of the window drops out of the count
+ * entirely. Making only the guest half zone-free would break the mirror image —
+ * a Denver HOST, where the range keys slide and the guest keys would not — so
+ * both halves move together or neither does.
+ */
 export function summarizeOverlappingGuests(
   bookings: RevenueBookingLike[],
   rangeStart: Date,
   rangeEnd: Date,
 ): ReportGuestSummary {
-  const selectedStartKey = toDateKey(toUtcDateOnly(rangeStart));
-  const selectedEndExclusiveKey = toDateKey(
+  const selectedStartKey = formatDateOnly(toUtcDateOnly(rangeStart));
+  const selectedEndExclusiveKey = formatDateOnly(
     addUtcDays(toUtcDateOnly(rangeEnd), 1),
   );
   const guests = new Map<string, ReportGuestLike>();
 
   for (const booking of bookings) {
     for (const guest of booking.guests) {
-      const guestStartKey = formatDateOnlyForTimeZone(
-        getGuestStayStart(guest, booking),
-      );
-      const guestEndKey = formatDateOnlyForTimeZone(
-        getGuestStayEnd(guest, booking),
-      );
+      const guestStartKey = formatDateOnly(getGuestStayStart(guest, booking));
+      const guestEndKey = formatDateOnly(getGuestStayEnd(guest, booking));
       if (
         guestStartKey < selectedEndExclusiveKey &&
         guestEndKey > selectedStartKey

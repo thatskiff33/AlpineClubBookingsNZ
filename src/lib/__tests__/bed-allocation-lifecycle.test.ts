@@ -16,6 +16,14 @@ import { acquireMemberLifecycleLocks } from "@/lib/member-lifecycle-lock";
 import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 import { eachDateOnlyInRange, parseDateOnly } from "@/lib/date-only";
 
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 const NORMALIZED_GUEST_NIGHTS = Symbol("normalizedGuestNights");
 
 describe("partner-share lock prefix", () => {
@@ -45,7 +53,7 @@ describe("partner-share lock prefix", () => {
       "member-2",
       "member-1",
       "member-2",
-    ]);
+    ], CLUB_TODAY_DATE_ONLY);
     await acquireMemberLifecycleLocks(tx, ["member-2", "member-1", "member-2"]);
 
     expect(findMany).toHaveBeenCalledWith(
@@ -126,7 +134,7 @@ describe("member-merge partner-share lodge prefix (#2595)", () => {
       "member-2",
       "member-1",
       "member-2",
-    ]);
+    ], CLUB_TODAY_DATE_ONLY);
     await acquireMemberLifecycleLocks(tx, ["member-2", "member-1"]);
 
     expect(locked).toEqual(["lodge-a", "lodge-m", "lodge-z"]);
@@ -178,7 +186,7 @@ describe("member-merge partner-share lodge prefix (#2595)", () => {
 
     const locked = await acquireMemberMergePartnerSharedLodgeLocks(tx, [
       "member-1",
-    ]);
+    ], CLUB_TODAY_DATE_ONLY);
 
     expect(locked).toEqual(["lodge-future-only"]);
     expect(events).toEqual([
@@ -192,7 +200,7 @@ describe("member-merge partner-share lodge prefix (#2595)", () => {
     const { tx, events, bedAllocationFindMany, bookingGuestFindMany } =
       makeMergeLockTx({ allocationLodgeIds: [], guestNightLodgeIds: [] });
 
-    expect(await acquireMemberMergePartnerSharedLodgeLocks(tx, [])).toEqual([]);
+    expect(await acquireMemberMergePartnerSharedLodgeLocks(tx, [], CLUB_TODAY_DATE_ONLY)).toEqual([]);
     expect(events).toEqual([]);
     expect(bedAllocationFindMany).not.toHaveBeenCalled();
     expect(bookingGuestFindMany).not.toHaveBeenCalled();
@@ -3359,6 +3367,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
     db.bedAllocation.deleteMany.mockResolvedValue({ count: 2 });
 
     const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberId: "member-a",
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
@@ -3464,6 +3473,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
     db.bedAllocation.deleteMany.mockResolvedValue({ count: 2 });
 
     const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberId: "member-m",
       reason: "member_deactivated",
       db: db as any,
@@ -3488,12 +3498,14 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
     const db = makeSweepDb();
 
     const first = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberId: "member-a",
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
       db: db as any,
     });
     const second = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberId: "member-a",
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
@@ -3523,6 +3535,7 @@ describe("sweepFuturePartnerSharedAllocationsWithLocksHeld (#1756)", () => {
       .mockResolvedValueOnce([]);
 
     const swept = await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberId: "member-a",
       partnerMemberId: "member-b",
       reason: "partner_link_dissolved",
@@ -3676,6 +3689,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     db.bedAllocation.deleteMany.mockResolvedValue({ count: 1 });
 
     const swept = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m", "member-loser"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3799,6 +3813,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     db.bedAllocation.deleteMany.mockResolvedValue({ count: 1 });
 
     const swept = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3846,6 +3861,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     db.bedAllocation.deleteMany.mockResolvedValue({ count: 1 });
 
     const swept = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3875,6 +3891,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
       .mockResolvedValueOnce([]);
 
     const swept = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3890,6 +3907,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     const db = makeSweepDb([]);
 
     const emptyScope = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: [],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3899,12 +3917,14 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
     expect(db.bedAllocation.findMany).not.toHaveBeenCalled();
 
     const first = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
       db: db as any,
     });
     const second = await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      today: CLUB_TODAY_DATE_ONLY,
       memberIds: ["member-m"],
       lockedLodgeIds: [SWEEP_LODGE_ID],
       reason: "members_merged",
@@ -3952,6 +3972,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
 
     await expect(
       sweepUnbackedFutureSharedDoublesWithLocksHeld({
+        today: CLUB_TODAY_DATE_ONLY,
         memberIds: ["member-m"],
         lockedLodgeIds: [SWEEP_LODGE_ID],
         reason: "members_merged",
@@ -3992,6 +4013,7 @@ describe("sweepUnbackedFutureSharedDoublesWithLocksHeld (#2595)", () => {
 
     await expect(
       sweepUnbackedFutureSharedDoublesWithLocksHeld({
+        today: CLUB_TODAY_DATE_ONLY,
         memberIds: ["member-m", "member-loser"],
         lockedLodgeIds: [SWEEP_LODGE_ID],
         reason: "members_merged",
@@ -4751,5 +4773,131 @@ describe("shared double invariants on the apply path (#2656)", () => {
       },
     ]);
     expect(result.createdCount).toBe(1);
+  });
+});
+
+/**
+ * #3123 — the partner-share writers judge "future" on the day the CALLER
+ * resolved, and resolve nothing themselves.
+ *
+ * All three sites run on a transaction client with locks already held: the two
+ * lock-prefix helpers take `pg_advisory_xact_lock(1)` and every affected lodge
+ * capacity key on their way in, and both sweeps are called after them (merge's
+ * after a `Member … FOR UPDATE` as well). `INV-LOCK-004` forbids resolving the
+ * club's timezone there — it is a `clubTimeSettings.findUnique`, so it would
+ * take a second pooled connection and hold it under those keys for the length
+ * of the query, which on the merge path is a 120-second window. So `today` is a
+ * REQUIRED parameter and the caller resolves it before opening its transaction.
+ *
+ * DISCRIMINATION. Every assertion below supplies 30 June and rejects 1 July.
+ * 1 July is what `getTodayDateOnly()` answers at the frozen instant under this
+ * file's unmocked environment (`APP_TIME_ZONE` falls back to
+ * `Pacific/Auckland`), so it is exactly the value the pre-migration code
+ * produced — a site that ignored its parameter and read the container's zone
+ * would pass a test that supplied 1 July, and fails these.
+ *
+ * Where the read HAPPENS, as opposed to which day it gives, is covered by
+ * `lock-bound-club-zone-outside-transaction.test.ts`, which fails if any
+ * club-zone reader reappears in this module or inside any caller's
+ * `$transaction` callback.
+ */
+describe("the partner-share writers take the day they are given (#3123)", () => {
+  /** Deliberately NOT the day the container's zone produces. */
+  const SUPPLIED_CLUB_DAY = new Date("2026-06-30T00:00:00.000Z");
+  const ENVIRONMENT_DAY = new Date("2026-07-01T00:00:00.000Z");
+  const LODGE = "lodge-locked";
+
+  function stayDateBound(findMany: ReturnType<typeof vi.fn>, nth = 0): Date {
+    const args = findMany.mock.calls[nth]?.[0] as {
+      where: { stayDate: { gte: Date } };
+    };
+    return args.where.stayDate.gte;
+  }
+
+  it("PREMISE: 30 June is not what the container's zone would have said", () => {
+    // Without this the suite would still pass if the supplied day happened to
+    // equal the environment's, which is the false green #3123 names by hand.
+    expect(SUPPLIED_CLUB_DAY.toISOString()).not.toBe(
+      ENVIRONMENT_DAY.toISOString(),
+    );
+    expect(ENVIRONMENT_DAY.toISOString()).toBe(
+      CLUB_TODAY_DATE_ONLY.toISOString(),
+    );
+  });
+
+  it("bounds the lock-prefix lodge derivation on the supplied day", async () => {
+    const findMany = vi.fn().mockResolvedValue([{ room: { lodgeId: LODGE } }]);
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
+      bedAllocation: { findMany },
+    } as any;
+
+    await acquireFuturePartnerSharedAllocationLocks(
+      tx,
+      ["member-a"],
+      SUPPLIED_CLUB_DAY,
+    );
+
+    // A day out here locks the WRONG set of lodges, which is worse than a
+    // wrong date in a query: the sweep that follows then judges bed inventory
+    // in a lodge nothing is serialising.
+    expect(stayDateBound(findMany).toISOString()).toBe(
+      SUPPLIED_CLUB_DAY.toISOString(),
+    );
+  });
+
+  it("bounds the #1756 sweep's candidate reads on the supplied day", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const db = {
+      bedAllocation: { findMany, deleteMany: vi.fn() },
+      memberPartnerLink: { findMany: vi.fn().mockResolvedValue([]) },
+      member: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog: { create: vi.fn() },
+    } as any;
+
+    await sweepFuturePartnerSharedAllocationsWithLocksHeld({
+      memberId: "member-a",
+      reason: "member_deactivated",
+      db,
+      today: SUPPLIED_CLUB_DAY,
+    });
+
+    // Both candidate reads — the second-occupant scan and the primary-side
+    // scan — share the one day, so the sweep cannot judge two halves of the
+    // same share against two different days.
+    expect(findMany.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (let call = 0; call < findMany.mock.calls.length; call += 1) {
+      expect(stayDateBound(findMany, call).toISOString()).toBe(
+        SUPPLIED_CLUB_DAY.toISOString(),
+      );
+    }
+  });
+
+  it("bounds the merge sweep's candidate reads on the supplied day", async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const db = {
+      bedAllocation: { findMany, deleteMany: vi.fn() },
+      bookingGuest: {
+        findMany: vi.fn().mockResolvedValue([{ booking: { lodgeId: LODGE } }]),
+      },
+      memberPartnerLink: { findMany: vi.fn().mockResolvedValue([]) },
+      member: { findMany: vi.fn().mockResolvedValue([]) },
+      auditLog: { create: vi.fn() },
+    } as any;
+
+    await sweepUnbackedFutureSharedDoublesWithLocksHeld({
+      memberIds: ["member-a", "member-b"],
+      lockedLodgeIds: [LODGE],
+      reason: "members_merged",
+      db,
+      today: SUPPLIED_CLUB_DAY,
+    });
+
+    expect(findMany.mock.calls.length).toBeGreaterThanOrEqual(1);
+    for (let call = 0; call < findMany.mock.calls.length; call += 1) {
+      expect(stayDateBound(findMany, call).toISOString()).toBe(
+        SUPPLIED_CLUB_DAY.toISOString(),
+      );
+    }
   });
 });

@@ -1,3 +1,5 @@
+import type { PrismaClient } from "@prisma/client";
+
 import { DEFAULT_BOOKING_DEFAULTS } from "@/config/club-settings-defaults";
 import { normalizeCancellationRule } from "./cancellation-rules";
 import { getDefaultLodgeId, resolvePolicyRowsForLodge } from "./lodges";
@@ -16,6 +18,36 @@ export type { CancellationRule } from "./policies/cancellation";
 
 type NonMemberHoldPolicySource = "period" | "default";
 
+/**
+ * The narrow client the three readers below need. A `Prisma.TransactionClient`
+ * satisfies it, which is the whole point of the `db` parameter they take.
+ *
+ * COMPOSITION RULE - `db`, and it is `INV-LOCK-004`. The same rule
+ * `validateMinimumStay` (`booking-policies.ts`) and
+ * `loadAdultMemberHostingPolicy` (`adult-member-hosting-review.ts`) carry, and
+ * binding here for the same reason: **a caller already inside
+ * `prisma.$transaction` MUST pass its own `tx`.** Reaching for the module-level client while the caller holds
+ * `pg_advisory_xact_lock(1)` and a per-lodge capacity lock checks out a SECOND
+ * pool connection underneath both, which is the pool-starvation shape the
+ * ordering rule at the top of `member-guest-add-policy.ts` exists to forbid:
+ * under load every connection can end up held by a transaction waiting for a
+ * connection. Passing `tx` also makes the read see the transaction's own
+ * snapshot rather than a second, later one - which matters here because every
+ * in-transaction caller feeds these readers a `checkIn` and `lodgeId` taken
+ * from a booking row it re-read AFTER the locks.
+ *
+ * Callers genuinely outside a transaction keep the default; that is the
+ * majority, and the module client is correct and cheapest there. See
+ * docs/CONCURRENCY_AND_LOCKING.md -> "Which client reads the cancellation and
+ * non-member-hold policy". `cancellation-policy-client-contract.test.ts` pins
+ * both halves off the real source, so a tenth in-transaction call site cannot
+ * quietly reintroduce the second connection.
+ */
+export type CancellationPolicyDb = Pick<
+  PrismaClient,
+  "bookingPeriod" | "bookingDefaults" | "cancellationPolicy" | "lodge"
+>;
+
 export type NonMemberHoldPolicy = {
   enabled: boolean;
   holdDays: number;
@@ -32,10 +64,11 @@ export type NonMemberHoldPolicy = {
  */
 async function getBookingPeriodForDate(
   checkIn: Date,
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  db: CancellationPolicyDb = prisma
 ) {
-  const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(prisma));
-  const allPeriods = await prisma.bookingPeriod.findMany({
+  const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(db));
+  const allPeriods = await db.bookingPeriod.findMany({
     where: {
       active: true,
       OR: [{ lodgeId: effectiveLodgeId }, { lodgeId: null }],
@@ -56,9 +89,10 @@ async function getBookingPeriodForDate(
  */
 export async function getNonMemberHoldPolicy(
   checkIn: Date,
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  db: CancellationPolicyDb = prisma
 ): Promise<NonMemberHoldPolicy> {
-  const period = await getBookingPeriodForDate(checkIn, lodgeId);
+  const period = await getBookingPeriodForDate(checkIn, lodgeId, db);
   if (period) {
     return {
       enabled: period.nonMemberHoldEnabled,
@@ -67,7 +101,7 @@ export async function getNonMemberHoldPolicy(
     };
   }
 
-  const defaults = await prisma.bookingDefaults.findUnique({
+  const defaults = await db.bookingDefaults.findUnique({
     where: { id: "default" },
   });
 
@@ -89,9 +123,10 @@ export async function getNonMemberHoldPolicy(
  */
 export async function getNonMemberHoldDays(
   checkIn: Date,
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  db: CancellationPolicyDb = prisma
 ): Promise<number> {
-  const policy = await getNonMemberHoldPolicy(checkIn, lodgeId);
+  const policy = await getNonMemberHoldPolicy(checkIn, lodgeId, db);
   return policy.holdDays;
 }
 
@@ -102,11 +137,12 @@ export async function getNonMemberHoldDays(
  */
 export async function loadCancellationPolicy(
   checkIn?: Date,
-  lodgeId?: string | null
+  lodgeId?: string | null,
+  db: CancellationPolicyDb = prisma
 ): Promise<CancellationRule[]> {
-  const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(prisma));
+  const effectiveLodgeId = lodgeId ?? (await getDefaultLodgeId(db));
   if (checkIn) {
-    const period = await getBookingPeriodForDate(checkIn, effectiveLodgeId);
+    const period = await getBookingPeriodForDate(checkIn, effectiveLodgeId, db);
     if (period) {
       const rawRules = period.cancellationRules as unknown as Array<{
         daysBeforeStay: number;
@@ -121,7 +157,7 @@ export async function loadCancellationPolicy(
     }
   }
 
-  const allRules = await prisma.cancellationPolicy.findMany({
+  const allRules = await db.cancellationPolicy.findMany({
     where: { OR: [{ lodgeId: effectiveLodgeId }, { lodgeId: null }] },
     orderBy: { daysBeforeStay: "desc" },
   });

@@ -4,13 +4,13 @@ import {
   FINANCE_DASHBOARD_VIEWS,
   financeDashboardMonthCount,
   financeDashboardViewUsesLodgeScope,
-  financeDashboardWindowDetail,
   financeDashboardWindowMonths,
   resolveComparisonFinanceRange,
   resolveFinanceDashboardSelection,
   resolveFinanceDashboardView,
   resolvePrimaryFinanceRange,
 } from "@/lib/finance-dashboard-ranges";
+import { financeDashboardWindowDetail } from "@/lib/finance-dashboard-labels";
 import { parseDateOnly } from "@/lib/date-only";
 
 // 6 July 2026: the in-progress month is July, last completed month is June.

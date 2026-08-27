@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/hooks/use-admin-area-edit-access", () => ({
@@ -31,6 +31,10 @@ vi.mock("@/components/admin/occupancy-calendar", () => ({
 }))
 
 import RosterPage from "@/app/(admin)/admin/roster/page"
+import type { ReactNode } from "react"
+import { ClubTimeProvider } from "@/components/club-time-provider"
+import { APP_TIME_ZONE } from "@/config/operational"
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone"
 
 function roster(date = "2026-07-01", guestName = "Aroha Guest") {
   const [firstName, lastName] = guestName.split(" ")
@@ -327,5 +331,57 @@ describe("admin roster page draft transitions", () => {
     await waitFor(() => expect(screen.getByText(
       "Recording the no-email choice could not be verified because the service could not be reached. No email send was requested, and existing links remain valid; check the audit log before recording the choice again.",
     )).toBeTruthy())
+  })
+
+  /**
+   * THE DISCRIMINATING ONE (CT-4, #2870).
+   *
+   * Every test above renders under the default `CLUB_TIME_TEST_ZONE`, which is
+   * deliberately the zone `APP_TIME_ZONE` also resolves to — so the provider read
+   * and the environment read this page used to do return the same day, and the
+   * whole file passes against either.
+   *
+   * The night the board opens on is not cosmetic: it is the roster an officer
+   * generates, edits and emails, so a day out sends the wrong night's chores to
+   * the wrong guests. The requested day travels in the request path, which is
+   * where it is read back here rather than off the rendered heading.
+   */
+  it("opens on the PERSISTED club zone's night, not the environment's", async () => {
+    const dayIn = (zone: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        // An independent oracle, not `clubToday`: reading the answer back through
+        // the kernel under test lets one defect satisfy both sides.
+      }).format(new Date())
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "day",
+      cases: [
+        { zone: "America/Denver", day: "2026-06-30" }, // -6: still 30 June
+        { zone: "Pacific/Kiritimati", day: "2026-07-01" }, // +14: already 1 July
+      ],
+      answerFor: dayIn,
+      // NOT `["UTC"]` — see the chooser's note on "today" assertions.
+    })
+    // `answerKey` makes the chooser verify each candidate's literal against its
+    // own zone, so `chosen.day` is provably not the environment's; the variable
+    // below is only for the negative assertion.
+    const environmentDay = dayIn(APP_TIME_ZONE)
+
+    const fetchMock = successfulFetch()
+    vi.stubGlobal("fetch", fetchMock)
+    render(<RosterPage />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    })
+    await waitFor(() => expect(getRosterCalls(fetchMock).length).toBeGreaterThan(0))
+
+    const requested = getRosterCalls(fetchMock).map(([url]) => String(url))
+    expect(requested.some((url) => url.includes(chosen.day))).toBe(true)
+    expect(requested.some((url) => url.includes(environmentDay))).toBe(false)
   })
 })
