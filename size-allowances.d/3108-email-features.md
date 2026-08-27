@@ -33,7 +33,7 @@ becomes HTML; the swap must sit exactly where escaping and sanitising happen
 or the security property it preserves cannot be reasoned about.
 
 file: src/app/api/admin/email-templates/route.ts
-lines: 657
+lines: 668
 reason: the bodyHtml field through the update schema, the sanitise-then-
 derive-text save rule, the derived-text 10k cap, the text-save-clears-rich-
 body shadowing guard, the formatting-only staleness comparison, and the
