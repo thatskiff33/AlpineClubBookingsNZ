@@ -484,8 +484,23 @@ const CENSUS_CEILING = {
    * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
    * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
    * neither consults a timezone.
+   *
+   * 216 -> 218 (#3128's fourth split): `adult-member-hosting-review.ts` was
+   * 3,051 lines, and two of the four blocks that came out of it took their
+   * existing `date-only` import with them -- the create-path evaluation into
+   * `adult-member-hosting-proposed.ts` and the merge fan-out plan into
+   * `adult-member-hosting-merge-coverage-plan.ts`. Both use only the zone-free
+   * exports (`eachDateOnlyInRange`, `formatDateOnly`), no call was added,
+   * removed or changed, and neither file resolves a timezone. Two importers
+   * where there was one, twice over.
+   *
+   * RE-MEASURE THIS AFTER EVERY REBASE, do not add the numbers up. Two sibling
+   * branches already raised this counter independently, rebased cleanly because
+   * git saw the identical edit on both sides, and left one of them asserting a
+   * number that was wrong with no warning anywhere. Running this file is the
+   * only thing that has ever caught it.
    */
-  dateOnlyImporters: 216,
+  dateOnlyImporters: 218,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *

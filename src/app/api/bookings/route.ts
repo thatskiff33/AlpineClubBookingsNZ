@@ -100,10 +100,8 @@ import { dateOnlyInstantOf } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
 import { resolveOptionalActiveLodgeId } from "@/lib/lodges";
 import { aggregatePolicyExceptionViolations } from "@/lib/booking-policy-exceptions";
-import {
-  buildAdultMemberHostingRefusalBody,
-  evaluateProposedAdultMemberHosting,
-} from "@/lib/adult-member-hosting-review";
+import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
+import { buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import {
   hasAccessRole,
   hasAdminAccess,

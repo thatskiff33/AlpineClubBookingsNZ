@@ -21,10 +21,7 @@ import {
   tryLockHostingCoverageOwners,
 } from "@/lib/adult-member-hosting-coverage-lock";
 import { lockAdultMemberHostingPolicySet } from "@/lib/adult-member-hosting-policy-set";
-import {
-  enqueueHostingCoverageReevaluation,
-  type HostingCoverageReevaluationInput,
-} from "@/lib/adult-member-hosting-coverage-queue";
+import { enqueueHostingCoverageReevaluation } from "@/lib/adult-member-hosting-coverage-queue";
 import {
   acquireHostingCoverageQueueParticipantProof,
   assertHostingCoverageQueueParticipantsLocked,
@@ -42,12 +39,16 @@ import {
   strandedCoverageReference,
   type StrandedCoverageBooking,
 } from "@/lib/adult-member-hosting-same-owner";
-import { ApiError } from "@/lib/api-error";
-import type {
-  AdultMemberHostingPolicyExceptionViolation,
-  AggregatedPolicyExceptions,
-} from "@/lib/booking-policy-exceptions";
-import { aggregatePolicyExceptionViolations } from "@/lib/booking-policy-exceptions";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
+import {
+  HostingSameOwnerSourceCeilingExceededError,
+  HostingSiblingCeilingExceededError,
+  SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
+  SAME_OWNER_COVERAGE_DEPENDENT_ORDER,
+  SAME_OWNER_COVERAGE_SOURCE_LIMIT,
+  warnIfCoverageDependentCeilingBound,
+} from "@/lib/adult-member-hosting-coverage-ceilings";
+import type { AdultMemberHostingPolicyExceptionViolation } from "@/lib/booking-policy-exceptions";
 import {
   ACTIVE_BOOKING_STATUSES,
   isHostingCoverageSourceBookingStatus,
@@ -94,6 +95,15 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
  * it twice, or from a path that changed nothing, is a no-op that writes nothing.
  * That is deliberate — it means a new call site can be added anywhere without
  * having to reason about what the previous one did.
+ *
+ * WHAT IS NOT IN HERE (#3128, which took this file from 3,051 lines to 2,585).
+ * `adult-member-hosting-refusal.ts` holds the 409 and the member-facing body;
+ * `adult-member-hosting-coverage-ceilings.ts` the bounded-read limits and their
+ * two errors; `adult-member-hosting-proposed.ts` the create path's preflight
+ * over a party that does not exist yet; and
+ * `adult-member-hosting-merge-coverage-plan.ts` the fan-out plan member merge
+ * builds twice and compares. All four import this module and none of them is
+ * imported back by it, which is the property that made them separable.
  *
  * WHICH ENTRY POINT TO CALL. `reconcileAdultMemberHostingReview` answers for ONE
  * booking id. That is not enough for a mutator, because `loadSiblingHosts` makes
@@ -391,74 +401,6 @@ async function loadSiblingHosts(
 }
 
 /**
- * A hard ceiling on how many same-owner source bookings one evaluation reads
- * (#2576 §10: "use suitable indexes and bounded result limits").
- *
- * Generous rather than tight, because it is a guard and not a policy: a member
- * with more than this many CONFIRMED-or-PAID bookings at ONE lodge overlapping ONE
- * stay is a data problem, not a club member. Twenty-five is far beyond anything the
- * split-booking and family shapes produce (a #738 split pair is two), and the read
- * is already narrowed to one owner, one lodge and one date window before the limit
- * applies.
- *
- * FAILING SAFE MEANS FAILING TOWARDS THE RULE: if the ceiling ever truncated, fewer
- * hosts are seen, so a night reads as uncovered and the booking is flagged or
- * refused rather than quietly allowed.
- */
-const SAME_OWNER_COVERAGE_SOURCE_LIMIT = 25;
-
-/**
- * The ceiling on the DEPENDENT reads, which needs its own name because the
- * safe-failure argument above INVERTS for them.
- *
- * A truncated SOURCE read sees fewer hosts, so it errs towards flagging. A
- * truncated DEPENDENT read misses a booking entirely: it is neither refused under
- * `BLOCK` nor escalated, and the drain silently skips it — the failure direction is
- * "a stranded booking nobody hears about". Same number, opposite meaning, so it is a
- * separate constant that cannot be tuned by somebody reasoning about the other one.
- *
- * A DETERMINISTIC ORDER AND A WARNING WHEN IT BINDS. `take` with no `orderBy` leaves
- * Postgres free to return any 25 of the matching rows, so an over-limit account
- * could refuse a change on one request and allow it on the next. Ordering by
- * `checkIn` then `id` makes the truncation reproducible, and
- * `warnIfCoverageDependentCeilingBound` makes it visible — reaching 26 active
- * same-owner bookings at ONE lodge over ONE overlapping window is a data problem
- * rather than a member, and it must not be a silent one.
- */
-const SAME_OWNER_COVERAGE_DEPENDENT_LIMIT = 25;
-
-/** Deterministic truncation for both dependent reads. */
-const SAME_OWNER_COVERAGE_DEPENDENT_ORDER = [
-  { checkIn: "asc" },
-  { id: "asc" },
-] as const satisfies readonly Prisma.BookingOrderByWithRelationInput[];
-
-/**
- * Say so when a bounded dependent read filled its ceiling.
- *
- * Not an error: the read is still correct for everything it returned, and throwing
- * would turn a data anomaly into a failed member request. But a truncation here can
- * hide a stranded booking, so it must reach the logs with enough context
- * (owner, lodge) for an operator to find the account.
- */
-function warnIfCoverageDependentCeilingBound(
-  where: { memberId: string; lodgeId: string },
-  returned: number,
-  read: string,
-): void {
-  if (returned < SAME_OWNER_COVERAGE_DEPENDENT_LIMIT) return;
-  logger.warn(
-    {
-      memberId: where.memberId,
-      lodgeId: where.lodgeId,
-      limit: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
-      read,
-    },
-    "Same-owner hosting coverage dependent read hit its ceiling; a dependent booking may not have been evaluated",
-  );
-}
-
-/**
  * The qualifying-adult-member candidates attending ANOTHER eligible booking on the
  * SAME account, at the same lodge, over nights that overlap this stay (#2576 §1
  * to §4).
@@ -490,7 +432,7 @@ function warnIfCoverageDependentCeilingBound(
  * here as well would put one person in the participant list twice and would make
  * the same-booking half of the rule reachable through the same-owner half.
  */
-async function loadSameBookingOwnerHosts(
+export async function loadSameBookingOwnerHosts(
   booking: Pick<
     LoadedHostingBooking,
     "id" | "memberId" | "lodgeId" | "checkIn" | "checkOut"
@@ -559,43 +501,6 @@ async function loadSameBookingOwnerHosts(
         hostScope: "SAME_BOOKING_OWNER" as const,
       })),
     );
-}
-
-/**
- * Raised when an evidence caller's sibling ceiling binds.
- *
- * A NAMED ERROR rather than a truncated list, because the two readings are
- * different answers: a short list says "these are the hosts", and this says "I
- * cannot tell you". Only a caller that passed a ceiling can see it.
- */
-export class HostingSiblingCeilingExceededError extends Error {
-  constructor(ceiling: number) {
-    super(
-      `Adult-member hosting evidence: more than ${ceiling} sibling bookings could cover these nights; refusing an inconclusive answer`,
-    );
-    this.name = "HostingSiblingCeilingExceededError";
-  }
-}
-
-/**
- * The same refusal for the OTHER host population, and a separate class rather than
- * a shared one.
- *
- * The two populations are different questions with different remedies: a bound
- * sibling read means a #738 split family has grown implausibly wide, and a bound
- * same-owner read means one member holds more than the ceiling of active bookings
- * at ONE lodge overlapping ONE stay. An operator handed "I cannot tell you" needs to
- * know which, and a single message naming both would name the wrong one half the
- * time. It is the same reason the writer keeps `SAME_OWNER_COVERAGE_SOURCE_LIMIT`
- * and `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` apart at the same number.
- */
-export class HostingSameOwnerSourceCeilingExceededError extends Error {
-  constructor(ceiling: number) {
-    super(
-      `Adult-member hosting evidence: more than ${ceiling} same-owner bookings at this lodge could cover these nights; refusing an inconclusive answer`,
-    );
-    this.name = "HostingSameOwnerSourceCeilingExceededError";
-  }
 }
 
 /**
@@ -884,7 +789,7 @@ export async function isHostingCoverageSourceBookingTerminal(
  * opted in. It also runs only once the policy has already resolved to
  * ADMIN_REVIEW_REQUIRED, so a club with hosting off pays nothing either.
  */
-async function withSubscriptionSettlement(
+export async function withSubscriptionSettlement(
   participants: HostingParticipant[],
   db: SubscriptionLockoutDb,
   seasonYear: number,
@@ -1569,147 +1474,11 @@ export async function recordAdultMemberHostingReviewDecision(
 }
 
 /**
- * Evaluate a party that is not persisted yet (the create path).
- *
- * Create has to know BEFORE the transaction whether the rule will trip, because
- * that decides whether a member must supply a justification and whether an admin
- * booking on somebody's behalf must supply an explicit reason. It cannot read
- * guest rows, so it evaluates the submitted party, resolving each member-linked
- * guest against the live Member row.
- *
- * The result is used ONLY for those two decisions. The snapshot that gets stored
- * is always the one the reconciler derives from the persisted rows afterwards,
- * so `guestRef` values in a stored snapshot are always real `BookingGuest` ids
- * and two snapshots of the same booking are always comparable.
- */
-export async function evaluateProposedAdultMemberHosting(
-  db: Pick<
-    PrismaClient,
-    // #2543 adds the subscription/membership-type reads the host bridge needs.
-    | "member"
-    | "booking"
-    | "adultMemberHostingPolicy"
-    | "lodge"
-    | "memberSubscription"
-    | "seasonalMembershipAssignment"
-    | "membershipType"
-  >,
-  input: {
-    /** The authoritative prospective Booking.memberId. */
-    bookingOwnerMemberId?: string | null;
-    lodgeId: string;
-    checkIn: Date;
-    checkOut: Date;
-    guests: ReadonlyArray<{
-      firstName: string;
-      lastName: string;
-      memberId?: string | null;
-      stayStart?: Date | null;
-      stayEnd?: Date | null;
-      nights?: ReadonlyArray<string | Date | { stayDate: string | Date }> | null;
-    }>;
-  },
-): Promise<AdultMemberHostingPolicyExceptionViolation | null> {
-  const resolved = await loadAdultMemberHostingPolicy(input.lodgeId, db);
-  if (!hostingModeIsActive(resolved.mode)) return null;
-
-  const memberIds = [
-    ...new Set(
-      input.guests
-        .map((guest) => guest.memberId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0),
-    ),
-  ];
-  const members = memberIds.length
-    ? await db.member.findMany({
-        where: { id: { in: memberIds } },
-        select: {
-          id: true,
-          ageTier: true,
-          active: true,
-          cancelledAt: true,
-          archivedAt: true,
-        },
-      })
-    : [];
-  const memberById = new Map(members.map((member) => [member.id, member]));
-
-  // The proposed row does not exist yet, but SAME_BOOKING_OWNER is still a live
-  // relationship: another eligible booking under the prospective Booking.memberId
-  // may cover these exact lodge-nights. This is a preflight answer only; the
-  // persisted reconciler repeats the read under the owner lock inside the create
-  // transaction before it commits.
-  const sameOwnerHosts =
-    resolved.hostScopes.sameBookingOwner && input.bookingOwnerMemberId
-      ? await loadSameBookingOwnerHosts(
-          {
-            id: "__proposed_booking__",
-            memberId: input.bookingOwnerMemberId,
-            lodgeId: input.lodgeId,
-            checkIn: input.checkIn,
-            checkOut: input.checkOut,
-          },
-          db,
-          [],
-        )
-      : [];
-
-  const participants: HostingParticipant[] = [
-    ...input.guests.map((guest, index) => ({
-      guestRef: `guest:${index}`,
-      guestName: `${guest.firstName} ${guest.lastName}`.trim(),
-      member: guest.memberId ? memberById.get(guest.memberId) ?? null : null,
-      nights: proposedGuestNights(guest, input.checkIn, input.checkOut),
-    })),
-    ...sameOwnerHosts,
-  ];
-
-  return evaluateAdultMemberHostingWithPolicy(
-    // #2543 — the same bridge the persisted path applies, so a proposed party
-    // and the booking it becomes cannot disagree about who may host.
-    await withSubscriptionSettlement(
-      participants,
-      db,
-      seasonYearOfStoredDate(input.checkIn),
-    ),
-    resolved,
-  );
-}
-
-function proposedGuestNights(
-  guest: {
-    stayStart?: Date | null;
-    stayEnd?: Date | null;
-    nights?: ReadonlyArray<string | Date | { stayDate: string | Date }> | null;
-  },
-  checkIn: Date,
-  checkOut: Date,
-): string[] {
-  if (guest.nights && guest.nights.length > 0) {
-    return guest.nights.map((entry) => {
-      if (typeof entry === "string") return entry.slice(0, 10);
-      if (entry instanceof Date) return formatDateOnly(entry);
-      const stayDate = entry.stayDate;
-      return typeof stayDate === "string"
-        ? stayDate.slice(0, 10)
-        : formatDateOnly(stayDate);
-    });
-  }
-  const start = guest.stayStart ?? checkIn;
-  const endExclusive = guest.stayEnd ?? checkOut;
-  // A zero- or negative-width range yields no nights rather than throwing; the
-  // booking's own date validation owns that refusal.
-  if (endExclusive <= start) return [];
-  return eachDateOnlyInRange(start, endExclusive).map(formatDateOnly);
-}
-
-
-/**
  * The columns the dependent-coverage machinery needs off a booking, without the
  * guest tree. Deliberately narrow: this read runs on booking write paths and only
  * ever decides WHICH bookings to look at.
  */
-type CoverageOwnerFacts = {
+export type CoverageOwnerFacts = {
   id: string;
   memberId: string;
   lodgeId: string;
@@ -1729,7 +1498,7 @@ type CoverageOwnerFactsWithOutcome = CoverageOwnerFacts & {
   adultMemberHostingReviewStatus: AdminReviewStatus | null;
 };
 
-function sourceParticipant(
+export function sourceParticipant(
   booking: Pick<CoverageOwnerFacts, "id" | "memberId" | "lodgeId">,
 ): HostingCoverageSourceParticipant {
   return {
@@ -2288,127 +2057,6 @@ export async function loadHostingCoverageMemberFanoutCandidates(
   })) as CoverageOwnerFacts[];
 }
 
-export type MemberMergeHostingCoveragePlan = Readonly<{
-  items: readonly HostingCoverageReevaluationInput[];
-  sources: readonly HostingCoverageSourceParticipant[];
-  coverageOwnerIds: readonly string[];
-}>;
-
-/**
- * Plan the merge's exact actorless SYSTEM_CHANGE fan-out after relation moves.
- * The policy-set lock held by merge keeps the ENFORCED decisions stable while
- * the Member participant rows are acquired and this plan is re-read.
- */
-export async function buildMemberMergeHostingCoveragePlan(
-  params: {
-    masterId: string;
-    capturedLoserOwnedBookingIds: readonly string[];
-    /**
-     * The club's today (#3123), resolved by merge BEFORE it opened its
-     * transaction (`INV-LOCK-004`). Merge builds this plan and then REBUILDS
-     * it after acquiring participant locks, comparing the two; both passes
-     * must be judged against the same club day.
-     */
-    today: Date;
-  },
-  db: AdultMemberHostingReviewDb,
-): Promise<MemberMergeHostingCoveragePlan> {
-  const [attended, movedOwnerBookings] = await Promise.all([
-    loadHostingCoverageMemberFanoutCandidates(params.masterId, db, params.today),
-    params.capturedLoserOwnedBookingIds.length > 0
-      ? (db.booking.findMany({
-          where: { id: { in: [...params.capturedLoserOwnedBookingIds] } },
-          orderBy: { id: "asc" },
-          select: {
-            id: true,
-            memberId: true,
-            lodgeId: true,
-            checkIn: true,
-            checkOut: true,
-          },
-        }) as Promise<CoverageOwnerFacts[]>)
-      : Promise.resolve([]),
-  ]);
-  const candidatesById = new Map<string, CoverageOwnerFacts>();
-  for (const booking of [...attended, ...movedOwnerBookings]) {
-    candidatesById.set(booking.id, booking);
-  }
-  const candidates = [...candidatesById.values()].sort((a, b) =>
-    a.id.localeCompare(b.id),
-  );
-  const policyByLodge = new Map<string, ResolvedAdultMemberHostingPolicy>();
-  for (const booking of candidates) {
-    if (!policyByLodge.has(booking.lodgeId)) {
-      const policy = await loadAdultMemberHostingPolicy(booking.lodgeId, db);
-      policyByLodge.set(booking.lodgeId, policy);
-    }
-  }
-  const included = candidates.filter(
-    (booking) => policyByLodge.get(booking.lodgeId)?.mode === "ENFORCED",
-  );
-  const items = included.map((booking) => ({
-    memberId: booking.memberId,
-    lodgeId: booking.lodgeId,
-    nights: eachDateOnlyInRange(booking.checkIn, booking.checkOut).map(
-      formatDateOnly,
-    ),
-    cause: "SYSTEM_CHANGE" as const,
-    sourceBookingId: booking.id,
-    actorMemberId: null,
-    reason: null,
-  }));
-  const sourcesByBooking = new Map<string, HostingCoverageSourceParticipant>();
-  for (const booking of included) {
-    sourcesByBooking.set(booking.id, sourceParticipant(booking));
-  }
-  return Object.freeze({
-    items: Object.freeze(items.map((item) => Object.freeze(item))),
-    sources: Object.freeze(
-      [...sourcesByBooking.values()].sort((a, b) =>
-        a.bookingId.localeCompare(b.bookingId),
-      ),
-    ),
-    coverageOwnerIds: Object.freeze(
-      [...new Set(
-        included
-          .filter(
-            (booking) =>
-              policyByLodge.get(booking.lodgeId)?.hostScopes.sameBookingOwner ===
-              true,
-          )
-          .map((booking) => booking.memberId),
-      )].sort(),
-    ),
-  });
-}
-
-export function memberMergeHostingCoveragePlanFingerprint(
-  plan: MemberMergeHostingCoveragePlan,
-): string {
-  return JSON.stringify(
-    plan.items.map((item) => ({
-      memberId: item.memberId,
-      lodgeId: item.lodgeId,
-      nights: [...item.nights],
-      cause: item.cause,
-      sourceBookingId: item.sourceBookingId ?? null,
-    })),
-  ) + JSON.stringify(plan.coverageOwnerIds);
-}
-
-export async function enqueueMemberMergeHostingCoveragePlan(
-  plan: MemberMergeHostingCoveragePlan,
-  proof: HostingCoverageQueueParticipantProof,
-  db: AdultMemberHostingReviewDb,
-): Promise<number> {
-  let queued = 0;
-  for (const item of plan.items) {
-    assertHostingCoverageQueueParticipantsLocked(proof, item);
-    if (await enqueueHostingCoverageReevaluation(item, proof, db)) queued += 1;
-  }
-  return queued;
-}
-
 /**
  * Record the re-evaluation a change to ONE PERSON's standing implies (#2576 §8).
  *
@@ -2944,108 +2592,4 @@ export async function reconcileSameOwnerCoverageIncident(
     },
     db,
   );
-}
-
-/**
- * The refusal the ENFORCED consequence raises (#2569 §1).
- *
- * DELIBERATELY THE SAME SHAPE AS `PaidUpAdultMemberRequiredError` (#2543/#2560),
- * down to the status code and the reasoning behind it: 409, not 403. A 403 says
- * "you may not do this"; this booking IS permitted, by a Booking Officer, through
- * the #2365 exception-request workflow — the state of the party is what conflicts.
- * It also keeps `ADULT_MEMBER_HOSTING_REQUIRED` out of the
- * `HARD_STOP_BOOKING_FAILURE_CODES` family, which is exactly the set of refusals
- * that may NOT enter exception review.
- *
- * NOT A SECOND REFUSAL PATH. The violation it carries is the same frozen
- * `AdultMemberHostingPolicyExceptionViolation` the review mode records, produced
- * by the same evaluator, aggregated by the same `aggregatePolicyExceptionViolations`
- * and re-derived server-side by `collectProposalPolicyViolations` when the member
- * walks through the exception door. Nothing about the officer queue, the frozen
- * snapshot or the override machinery is forked for the enforced mode — only
- * whether the booking is allowed to exist while it waits.
- *
- * WHY IT IS AN ApiError. It is thrown from inside the mutation transactions that
- * every booking write path already runs, so the throw rolls the non-compliant
- * write back — which is what "do not confirm a non-compliant booking" means in
- * practice — and every route that already handles `ApiError` answers 409 with the
- * message rather than a 500. Routes that want to hand the member the exception
- * door as well add a typed branch and return `buildAdultMemberHostingRefusalBody`.
- */
-export class AdultMemberHostingRequiredError extends ApiError {
-  readonly code = "ADULT_MEMBER_HOSTING_REQUIRED";
-  readonly violation: AdultMemberHostingPolicyExceptionViolation;
-  readonly exceptionReview: AggregatedPolicyExceptions;
-
-  constructor(violation: AdultMemberHostingPolicyExceptionViolation) {
-    super(violation.message, 409);
-    this.name = "AdultMemberHostingRequiredError";
-    this.violation = violation;
-    this.exceptionReview = aggregatePolicyExceptionViolations([violation]);
-  }
-}
-
-/**
- * Strip the identities of the adult members whose stays cover each night.
- *
- * REQUIRED, NOT DEFENSIVE (#2576 §11). A member-facing body has no business
- * carrying member ids under any scope: `memberIds` is an internal identity the
- * frozen snapshot keeps in full for validation and audit, and the member-facing
- * answer says only that adult-member cover is or is not present. Under
- * `SAME_BOOKING_OWNER` the covering stay is on the member's OWN account, so the
- * privacy stake is lower than the removed lodge-wide scope's was — but the rule is
- * applied to EVERY scope rather than only where it bites, because a redaction that
- * fires under one setting is a redaction nobody tests.
- *
- * The night list and the per-night scope list are kept: "this night is covered,
- * by an adult member on this booking" is the advice §17 asks for, and neither
- * field names a person.
- */
-function withheldHostIdentities(
-  violation: AdultMemberHostingPolicyExceptionViolation,
-): AdultMemberHostingPolicyExceptionViolation {
-  return {
-    ...violation,
-    requirements: {
-      ...violation.requirements,
-      qualifyingHostsByNight: violation.requirements.qualifyingHostsByNight.map(
-        (night) => ({
-          night: night.night,
-          memberIds: [],
-          ...(night.coveredByScopes
-            ? { coveredByScopes: night.coveredByScopes }
-            : {}),
-        }),
-      ),
-    },
-  };
-}
-
-/**
- * The member-facing body for an ENFORCED hosting refusal.
- *
- * Mirrors `buildPaidUpAdultRefusalBody` (#2543) so the two refusals a party can
- * trip at once are described the same way, and so a client can rely on
- * `exceptionReview.capacityMode` to know whether asking for an override keeps the
- * beds. Host identities are withheld — see `withheldHostIdentities`.
- *
- * `exceptionRequestPath` states where the member goes next rather than leaving the
- * client to know: "you were refused but you may ask" is useless advice if the
- * caller cannot find the door. For a NEW booking that door reserves nothing — the
- * request holds no beds and capacity is checked again at approval (#2569 §1) —
- * which is what `exceptionReview.capacityMode` reports honestly.
- */
-export function buildAdultMemberHostingRefusalBody(
-  violation: AdultMemberHostingPolicyExceptionViolation,
-) {
-  const redacted = withheldHostIdentities(violation);
-  const exceptionReview = aggregatePolicyExceptionViolations([redacted]);
-  return {
-    error: redacted.message,
-    code: "ADULT_MEMBER_HOSTING_REQUIRED" as const,
-    details: redacted.message,
-    violations: exceptionReview.violations,
-    exceptionReview,
-    exceptionRequestPath: "/api/bookings/exception-requests",
-  };
 }

@@ -1938,6 +1938,18 @@ approvals, and the verified non-member group joiner. A hazard clears the moment
 current facts cover every night, and reopens only when the uncovered set or the
 policy revision materially differs.
 
+Four things that are NOT that live beside it, split out in #3128 when the engine
+reached 3,051 lines. `adult-member-hosting-refusal.ts` turns an already-decided
+violation into the 409 a route throws and the body a member is shown.
+`adult-member-hosting-coverage-ceilings.ts` holds the bounded-read limits and the
+two "I cannot tell you" errors, kept together because the two limits sit at the
+same number for opposite reasons. `adult-member-hosting-proposed.ts` evaluates a
+party that is not persisted yet, which is the create path's preflight and the one
+hosting entry point whose input is a submitted party rather than rows.
+`adult-member-hosting-merge-coverage-plan.ts` builds the fan-out plan member merge
+compares against itself under participant locks. Each imports the engine; none of
+them is imported back by it.
+
 Because the split child borrows its parent's rows, the dependency runs both ways,
 so mutation paths call `reconcileAdultMemberHostingReviewWithSiblings`: it
 reconciles the mutated booking and then the live same-member siblings the borrow
