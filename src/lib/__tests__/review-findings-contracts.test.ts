@@ -532,6 +532,11 @@ describe("review finding source/schema contracts", () => {
     // they ask the guard anything, because a member reads their answer.
     const mustMark = new Set([
       "src/app/api/bookings/[id]/modify-quote/route.ts",
+      // The shift-mode preview, split out of that route verbatim (#3128). It is
+      // the SECOND guard call this block's comment below describes; the split
+      // gave it a file of its own and changed nothing about the mark-then-guard
+      // order inside it.
+      "src/lib/booking-shift-preview.ts",
       "src/lib/booking-modify-plan.ts",
       "src/lib/booking-date-modification-service.ts",
     ]);
