@@ -30,10 +30,7 @@ import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
-import {
-  AdultMemberHostingRequiredError,
-  buildAdultMemberHostingRefusalBody,
-} from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,

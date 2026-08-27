@@ -62,11 +62,10 @@ import {
   isHostingCoverageParticipantRetry,
 } from "@/lib/adult-member-hosting-queue-participants";
 import {
-  AdultMemberHostingRequiredError,
-  buildAdultMemberHostingRefusalBody,
-  evaluateProposedAdultMemberHosting,
   reconcileAdultMemberHostingReviewWithSiblings,
 } from "@/lib/adult-member-hosting-review";
+import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
+import { AdultMemberHostingRequiredError, buildAdultMemberHostingRefusalBody } from "@/lib/adult-member-hosting-refusal";
 import logger from "@/lib/logger";
 import {
   buildGuestCreateData,

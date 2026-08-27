@@ -102,9 +102,11 @@ vi.mock("@/lib/booking-create", async () => {
   );
   return { ...actual, createConfirmedBooking: mocks.createConfirmedBooking };
 });
-vi.mock("@/lib/adult-member-hosting-review", async (importOriginal) => {
+// #3128 moved `evaluateProposedAdultMemberHosting` to its own module; the
+// partial mock follows it there so it still intercepts.
+vi.mock("@/lib/adult-member-hosting-proposed", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/lib/adult-member-hosting-review")>();
+    await importOriginal<typeof import("@/lib/adult-member-hosting-proposed")>();
   return {
     ...actual,
     evaluateProposedAdultMemberHosting:

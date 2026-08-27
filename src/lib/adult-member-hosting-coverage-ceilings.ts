@@ -1,0 +1,118 @@
+/**
+ * The bounded-read ceilings the hosting-coverage reads apply, and what happens
+ * when one binds.
+ *
+ * Split verbatim out of `adult-member-hosting-review.ts` (#3128). The two
+ * limits sit at the same number for OPPOSITE reasons and the docblocks below
+ * are the whole point of keeping them together: a truncated source read errs
+ * towards the rule, a truncated dependent read hides a stranded booking. The
+ * engine imports this module; this module imports nothing back from it.
+ */
+import { Prisma } from "@prisma/client";
+
+import logger from "@/lib/logger";
+
+/**
+ * A hard ceiling on how many same-owner source bookings one evaluation reads
+ * (#2576 §10: "use suitable indexes and bounded result limits").
+ *
+ * Generous rather than tight, because it is a guard and not a policy: a member
+ * with more than this many CONFIRMED-or-PAID bookings at ONE lodge overlapping ONE
+ * stay is a data problem, not a club member. Twenty-five is far beyond anything the
+ * split-booking and family shapes produce (a #738 split pair is two), and the read
+ * is already narrowed to one owner, one lodge and one date window before the limit
+ * applies.
+ *
+ * FAILING SAFE MEANS FAILING TOWARDS THE RULE: if the ceiling ever truncated, fewer
+ * hosts are seen, so a night reads as uncovered and the booking is flagged or
+ * refused rather than quietly allowed.
+ */
+export const SAME_OWNER_COVERAGE_SOURCE_LIMIT = 25;
+
+/**
+ * The ceiling on the DEPENDENT reads, which needs its own name because the
+ * safe-failure argument above INVERTS for them.
+ *
+ * A truncated SOURCE read sees fewer hosts, so it errs towards flagging. A
+ * truncated DEPENDENT read misses a booking entirely: it is neither refused under
+ * `BLOCK` nor escalated, and the drain silently skips it — the failure direction is
+ * "a stranded booking nobody hears about". Same number, opposite meaning, so it is a
+ * separate constant that cannot be tuned by somebody reasoning about the other one.
+ *
+ * A DETERMINISTIC ORDER AND A WARNING WHEN IT BINDS. `take` with no `orderBy` leaves
+ * Postgres free to return any 25 of the matching rows, so an over-limit account
+ * could refuse a change on one request and allow it on the next. Ordering by
+ * `checkIn` then `id` makes the truncation reproducible, and
+ * `warnIfCoverageDependentCeilingBound` makes it visible — reaching 26 active
+ * same-owner bookings at ONE lodge over ONE overlapping window is a data problem
+ * rather than a member, and it must not be a silent one.
+ */
+export const SAME_OWNER_COVERAGE_DEPENDENT_LIMIT = 25;
+
+/** Deterministic truncation for both dependent reads. */
+export const SAME_OWNER_COVERAGE_DEPENDENT_ORDER = [
+  { checkIn: "asc" },
+  { id: "asc" },
+] as const satisfies readonly Prisma.BookingOrderByWithRelationInput[];
+
+/**
+ * Say so when a bounded dependent read filled its ceiling.
+ *
+ * Not an error: the read is still correct for everything it returned, and throwing
+ * would turn a data anomaly into a failed member request. But a truncation here can
+ * hide a stranded booking, so it must reach the logs with enough context
+ * (owner, lodge) for an operator to find the account.
+ */
+export function warnIfCoverageDependentCeilingBound(
+  where: { memberId: string; lodgeId: string },
+  returned: number,
+  read: string,
+): void {
+  if (returned < SAME_OWNER_COVERAGE_DEPENDENT_LIMIT) return;
+  logger.warn(
+    {
+      memberId: where.memberId,
+      lodgeId: where.lodgeId,
+      limit: SAME_OWNER_COVERAGE_DEPENDENT_LIMIT,
+      read,
+    },
+    "Same-owner hosting coverage dependent read hit its ceiling; a dependent booking may not have been evaluated",
+  );
+}
+
+/**
+ * Raised when an evidence caller's sibling ceiling binds.
+ *
+ * A NAMED ERROR rather than a truncated list, because the two readings are
+ * different answers: a short list says "these are the hosts", and this says "I
+ * cannot tell you". Only a caller that passed a ceiling can see it.
+ */
+export class HostingSiblingCeilingExceededError extends Error {
+  constructor(ceiling: number) {
+    super(
+      `Adult-member hosting evidence: more than ${ceiling} sibling bookings could cover these nights; refusing an inconclusive answer`,
+    );
+    this.name = "HostingSiblingCeilingExceededError";
+  }
+}
+
+/**
+ * The same refusal for the OTHER host population, and a separate class rather than
+ * a shared one.
+ *
+ * The two populations are different questions with different remedies: a bound
+ * sibling read means a #738 split family has grown implausibly wide, and a bound
+ * same-owner read means one member holds more than the ceiling of active bookings
+ * at ONE lodge overlapping ONE stay. An operator handed "I cannot tell you" needs to
+ * know which, and a single message naming both would name the wrong one half the
+ * time. It is the same reason the writer keeps `SAME_OWNER_COVERAGE_SOURCE_LIMIT`
+ * and `SAME_OWNER_COVERAGE_DEPENDENT_LIMIT` apart at the same number.
+ */
+export class HostingSameOwnerSourceCeilingExceededError extends Error {
+  constructor(ceiling: number) {
+    super(
+      `Adult-member hosting evidence: more than ${ceiling} same-owner bookings at this lodge could cover these nights; refusing an inconclusive answer`,
+    );
+    this.name = "HostingSameOwnerSourceCeilingExceededError";
+  }
+}
