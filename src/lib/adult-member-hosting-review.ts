@@ -96,14 +96,20 @@ import { seasonYearOfStoredDate } from "@/lib/financial-year";
  * That is deliberate — it means a new call site can be added anywhere without
  * having to reason about what the previous one did.
  *
- * WHAT IS NOT IN HERE (#3128, which took this file from 3,051 lines to 2,585).
- * `adult-member-hosting-refusal.ts` holds the 409 and the member-facing body;
- * `adult-member-hosting-coverage-ceilings.ts` the bounded-read limits and their
- * two errors; `adult-member-hosting-proposed.ts` the create path's preflight
- * over a party that does not exist yet; and
- * `adult-member-hosting-merge-coverage-plan.ts` the fan-out plan member merge
- * builds twice and compares. All four import this module and none of them is
- * imported back by it, which is the property that made them separable.
+ * WHAT IS NOT IN HERE (#3128). `adult-member-hosting-refusal.ts` holds the 409
+ * and the member-facing body; `adult-member-hosting-coverage-ceilings.ts` the
+ * bounded-read limits and their two errors;
+ * `adult-member-hosting-proposed.ts` the create path's preflight over a party
+ * that does not exist yet; and `adult-member-hosting-merge-coverage-plan.ts`
+ * the fan-out plan member merge builds twice and compares.
+ *
+ * The four are separable for two OPPOSITE reasons, and the direction matters if
+ * you are deciding whether an import is legal. Refusal and coverage-ceilings are
+ * leaves: they import nothing from here, and THIS file imports them. Proposed
+ * and merge-coverage-plan are the other way round: they import this file, and
+ * nothing here calls them. Either way the edge runs one way only, which is what
+ * makes the split safe — but do not read "the engine imports nothing from its
+ * split modules", because it imports two of them.
  *
  * WHICH ENTRY POINT TO CALL. `reconcileAdultMemberHostingReview` answers for ONE
  * booking id. That is not enough for a mutator, because `loadSiblingHosts` makes

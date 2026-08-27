@@ -466,6 +466,16 @@ const CENSUS_CEILING = {
    * which is zone-free UTC arithmetic and a strictly better state that
    * nonetheless adds an importer.
    *
+   * 213 -> 214 is a file SPLIT, and is the third way to join this list without
+   * changing anything (#3128). `bed-allocation-lifecycle.ts` was over its size
+   * budget; its three write-time re-filters moved verbatim into
+   * `bed-allocation-write-rechecks.ts`, taking with them the
+   * `addDaysDateOnly` / `eachDateOnlyInRange` / `formatDateOnly` import they
+   * already had. One importer became two importers of the same three zone-free
+   * helpers, with no call site added, removed or changed, and neither file
+   * resolves a timezone. That is the "human decision about which direction it
+   * moved and why" this docblock asks for.
+   *
    * So this one is a size-of-surface tracker, not a defect count, and it can
    * legitimately move in either direction. It is `toBe` like the rest, which
    * means a change here fails the suite and asks for a human decision about
@@ -480,27 +490,41 @@ const CENSUS_CEILING = {
    * call changed and no zone is consulted on either side of the seam.
    *
    * 214 -> 216 (#3108): the booking add-to-calendar feature adds two
-   * importers — `calendar-links.ts` and the `.ics` download route — both of
+   * importers -- `calendar-links.ts` and the `.ics` download route -- both of
    * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
    * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
    * neither consults a timezone.
    *
-   * 216 -> 218 (#3128's fourth split): `adult-member-hosting-review.ts` was
+   * 216 -> 217 since #3128's third split did the same thing as the first again:
+   * the three write-time re-filters moved verbatim out of
+   * `bed-allocation-lifecycle.ts` into `src/lib/bed-allocation-write-rechecks.ts`,
+   * taking `addDaysDateOnly`, `eachDateOnlyInRange` and `formatDateOnly` with
+   * them. Same shape, same reason, no call changed, no zone consulted.
+   *
+   * A WARNING FOR THE NEXT LANE THAT SPLITS A FILE, because this counter caught
+   * nobody and nearly shipped wrong -- twice. Two sibling branches each raised
+   * it 213 -> 214 independently and correctly. The first merged; the second
+   * REBASED CLEANLY, because git saw both sides making the identical edit and
+   * had no conflict to report -- leaving a branch that had added a 215th
+   * importer asserting 214, with a green rebase and no warning anywhere. This
+   * branch then sat at 215 while `main` moved to 216 underneath it. Only
+   * running this suite found either. If you bump this number on a branch,
+   * re-run this file after every rebase or merge onto a moved `main`: a clean
+   * merge is not evidence the count is still right, and neither is arithmetic.
+   *
+   * 217 -> 219 (#3128's fourth split): `adult-member-hosting-review.ts` was
    * 3,051 lines, and two of the four blocks that came out of it took their
    * existing `date-only` import with them -- the create-path evaluation into
    * `adult-member-hosting-proposed.ts` and the merge fan-out plan into
    * `adult-member-hosting-merge-coverage-plan.ts`. Both use only the zone-free
    * exports (`eachDateOnlyInRange`, `formatDateOnly`), no call was added,
    * removed or changed, and neither file resolves a timezone. Two importers
-   * where there was one, twice over.
-   *
-   * RE-MEASURE THIS AFTER EVERY REBASE, do not add the numbers up. Two sibling
-   * branches already raised this counter independently, rebased cleanly because
-   * git saw the identical edit on both sides, and left one of them asserting a
-   * number that was wrong with no warning anywhere. Running this file is the
-   * only thing that has ever caught it.
+   * where there was one, twice over -- and this branch is the third lane in a
+   * row to move this number, which is why the warning above is written the way
+   * it is. It sat at 218 against a base of 216 until `main` moved to 217
+   * underneath it; the value below was then re-measured, not re-added.
    */
-  dateOnlyImporters: 218,
+  dateOnlyImporters: 219,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
