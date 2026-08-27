@@ -126,6 +126,20 @@ describe("the epic-sync pull request description", () => {
     ).toThrow(/__UNKNOWN_PLACEHOLDER__/);
   });
 
+  it("does not mistake a branch name's own underscores for a placeholder", () => {
+    // The placeholder check reads the TEMPLATE, not the rendered body. Checking
+    // the body afterwards looks stricter and is wrong: git allows `__` in a
+    // branch name, so this epic would render cleanly and then be rejected as
+    // holding an unsubstituted placeholder — aborting its sync over the
+    // renderer's own output.
+    const branch = "epic/3021__LODGE__info";
+    const body = renderEpicSyncPrBody({ branch, runUrl: RUN_URL });
+    expect(body).toContain(branch);
+    expect(validateConcurrencyDeclaration(body, ["prisma/schema.prisma"])).toEqual({
+      outcome: "complete",
+    });
+  });
+
   it("reads the template the workflow actually runs", () => {
     expect(TEMPLATE_PATH.replaceAll("\\", "/")).toMatch(
       /\.github\/epic-branch-sync-pr-body\.md$/,

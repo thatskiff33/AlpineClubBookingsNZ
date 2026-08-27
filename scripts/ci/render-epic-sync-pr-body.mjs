@@ -37,8 +37,20 @@ export const TEMPLATE_PATH = path.join(HERE, "..", "..", ".github", "epic-branch
  */
 const LEADING_COMMENT = /^\s*<!--[\s\S]*?-->\s*/;
 
-/** Any placeholder shape at all, so an unsubstituted one cannot reach GitHub. */
+/**
+ * Any placeholder shape at all, checked against the TEMPLATE rather than
+ * against the rendered body. Checking afterwards reads as the stricter option
+ * and is actually wrong: a branch name may legally contain `__` (git allows it,
+ * and so does the branch pattern below), so an epic branch called
+ * `epic/3021__lodge__info` would substitute in cleanly and then be reported as
+ * an unsubstituted placeholder — aborting a sync over its own output. Checking
+ * the template asks the question that was actually meant: does this file hold a
+ * placeholder nobody taught the renderer to fill?
+ */
 const ANY_PLACEHOLDER = /__[A-Z][A-Z0-9_]*__/g;
+
+/** Every placeholder this renderer knows how to substitute. */
+const KNOWN_PLACEHOLDERS = new Set(["__BRANCH__", "__RUN_URL__"]);
 
 export function readTemplate() {
   return readFileSync(TEMPLATE_PATH, "utf8");
@@ -68,20 +80,19 @@ export function renderEpicSyncPrBody({ branch, runUrl, template = readTemplate()
     throw new Error(`renderEpicSyncPrBody: runUrl must be an https URL, got ${JSON.stringify(runUrl)}`);
   }
 
-  const body = template
-    .replace(LEADING_COMMENT, "")
-    .replaceAll("__BRANCH__", branch)
-    .replaceAll("__RUN_URL__", runUrl);
+  const withoutComment = template.replace(LEADING_COMMENT, "");
 
-  const leftover = body.match(ANY_PLACEHOLDER);
-  if (leftover) {
+  const unknown = [...new Set(withoutComment.match(ANY_PLACEHOLDER) ?? [])].filter(
+    (placeholder) => !KNOWN_PLACEHOLDERS.has(placeholder),
+  );
+  if (unknown.length > 0) {
     throw new Error(
-      `renderEpicSyncPrBody: template still holds unsubstituted placeholder(s): ${[...new Set(leftover)].join(", ")}. ` +
+      `renderEpicSyncPrBody: the template holds placeholder(s) this renderer cannot fill: ${unknown.join(", ")}. ` +
         "Add the substitution here, or remove the placeholder from .github/epic-branch-sync-pr-body.md.",
     );
   }
 
-  return body;
+  return withoutComment.replaceAll("__BRANCH__", branch).replaceAll("__RUN_URL__", runUrl);
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
