@@ -57,9 +57,7 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
-import {
-  selectedIndexesForStoredGuestTargets,
-} from "@/lib/promo-stored-guest-targets";
+import { selectedIndexesForStoredGuestTargets } from "@/lib/promo-stored-guest-targets";
 import {
   modifyQuoteSchema,
   OVERRIDE_DATE_ONLY_QUOTE_FIELDS,
