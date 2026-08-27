@@ -110,6 +110,18 @@ home for that explanation and is not repeated here.
   date-only value changes: what changes is how instants are *displayed* from now
   on and when club-local scheduled work fires. Lodge nights keep the calendar
   dates they already have.
+- **CT-6 (#2991) made the environment's silence mechanical, and counted what is
+  left.** Naming `process.env.TZ`, `NEXT_PUBLIC_TZ` or an `APP_TIME_ZONE` import
+  is a lint error under `src/**` outside a nine-file ratchet — two structural
+  (the config module and CT-1's seed reader), seven measured callers each naming
+  the issue that blocks them. Two matrices prove the rule holds rather than
+  merely being written down: `host-process-zone-matrix.test.ts` runs the club's
+  answers under six process zones spanning UTC-11 to UTC+14, and
+  `browser-viewer-zone-matrix.test.ts` renders member and admin surfaces under
+  six viewer zones. Each row proves its own premise as a CIVIL-TIME answer
+  first — the execution zone really moved — because comparing identifiers proves
+  only that a string was assigned. What no selector can express is counted by
+  `club-time-escape-hatch-census.test.ts`, whose numbers are ceilings.
 - Decided on #2989 (CT-1) under epic #2988. Those issues hold the narrative and
   the rejected alternatives; this entry holds only the rule. The date-domain
   consequences are `INV-DATE` — in particular the stay boundary in

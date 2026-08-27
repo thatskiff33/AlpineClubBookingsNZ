@@ -3,7 +3,7 @@
  * of the corpus behind it.
  *
  * #2689 split a 2,695-line file into one module per admin section, using the
- * sections the product already shows operators (`navSections` in
+ * sections the product already shows operators (`buildAdminNavSections` in
  * `admin-sidebar.tsx`) — with ONE addition: `admin/appearance-and-website.ts`.
  * `/admin/appearance` is an item inside Setup & Configuration, not a section of
  * its own, but folding its seven website pages back in would take

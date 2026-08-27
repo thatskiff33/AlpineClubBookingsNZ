@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { formatNZDateTime } from "@/lib/nzst-date"
+import { useClubTime } from "@/components/club-time-provider"
+import { requireInstant } from "@/lib/club-time"
 import { fetchJson, postJson } from "./api"
 import { SectionCard, type ToggleSection } from "./shared"
 import type { MembershipSyncMode, SyncResult, XeroHealthSnapshot } from "./types"
@@ -26,6 +27,10 @@ export function MembershipSyncPanel({
   onRefreshDiagnostics: () => void
   refreshToken: number
 }) {
+  // Both stamps below are real INSTANTS (a cron start, a refresh completion), so
+  // they are projected through the club's persisted zone rather than the
+  // viewer's or the build's (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime()
   const [lastRefresh, setLastRefresh] = useState<XeroHealthSnapshot["lastMembershipRefresh"] | null>(null)
   const [error, setError] = useState("")
 
@@ -88,11 +93,11 @@ export function MembershipSyncPanel({
         <div className="rounded-md border bg-muted p-3 text-sm">
           <p>
             <span className="text-muted-foreground">Last refresh:</span>{" "}
-            {lastRefresh?.at ? formatNZDateTime(new Date(lastRefresh.at)) : "No refresh recorded yet"}
+            {lastRefresh?.at ? clubTime.instantDateTime(requireInstant(lastRefresh.at)) : "No refresh recorded yet"}
           </p>
           {lastRefresh?.lastCronStartedAt ? (
             <p className="mt-1 text-xs text-muted-foreground">
-              Cron started {formatNZDateTime(new Date(lastRefresh.lastCronStartedAt))}
+              Cron started {clubTime.instantDateTime(requireInstant(lastRefresh.lastCronStartedAt))}
               {lastRefresh.lastCronStatus ? ` - ${lastRefresh.lastCronStatus}` : ""}
             </p>
           ) : null}

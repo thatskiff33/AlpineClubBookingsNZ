@@ -3,7 +3,6 @@ import {
   FinanceSnapshotType,
   Prisma,
 } from "@prisma/client";
-import { formatNZDate } from "@/lib/nzst-date";
 import {
   DEFAULT_FINANCE_REPORT_CATEGORIES,
   type FinanceReportCategoryKindValue,
@@ -23,6 +22,11 @@ import {
 } from "@/lib/finance-pnl-snapshot";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
+import {
+  calendarDateOfDateOnlyInstant,
+  formatClubDate,
+  requireStoredCalendarDay,
+} from "@/lib/club-time";
 import { formatDateOnly } from "@/lib/date-only";
 
 // test seam
@@ -207,6 +211,38 @@ function snapshotStart(snapshot: FinanceSnapshotRecord): Date {
 
 function snapshotEnd(snapshot: FinanceSnapshotRecord): Date {
   return snapshot.periodEnd ?? snapshot.asOfDate;
+}
+
+/**
+ * The fallback P&L period label, when the stored payload carries none of its own.
+ *
+ * A CALENDAR DAY, SO IT TAKES NO ZONE (#3123; `INV-DATE-019`). Both values
+ * {@link snapshotEnd} can return — `FinanceSnapshot.periodEnd` and
+ * `FinanceSnapshot.asOfDate` — are `@db.Date` columns, which round-trip as UTC
+ * midnight and name the same day everywhere on earth. `formatNZDate` projected
+ * them through `APP_TIME_ZONE`: the identity for a club east of Greenwich, and
+ * the PREVIOUS day's period label on a finance report for any club west of it.
+ * Moving this onto the club's persisted zone instead of off a zone entirely
+ * would swap one wrong answer for another.
+ *
+ * Composed rather than wrapped in a shorter name, per `docs/CLUB_TIME_KERNEL.md`:
+ * `date-only-encoding-guard.test.ts` audits encodings by the encoder's own name
+ * at the call site, and a rename is what once hid thirty-three Xero document
+ * dates from it. `requireStoredCalendarDay` proves the `Date` really carries a
+ * date-only encoding, so a caller that wires a real timestamp in here fails
+ * loudly rather than quietly labelling the wrong period.
+ */
+function formatSnapshotPeriodEnd(value: Date): string {
+  return formatClubDate(
+    calendarDateOfDateOnlyInstant(
+      requireStoredCalendarDay(value, {
+        subject: "A finance snapshot's fallback period label",
+        instead:
+          "A real timestamp rendered as a bare day is a projection, and both " +
+          "FinanceSnapshot.periodEnd and FinanceSnapshot.asOfDate are @db.Date columns.",
+      }),
+    ),
+  );
 }
 
 function snapshotOverlapsRange(
@@ -651,7 +687,7 @@ function loadSnapshotLines(input: {
     const payload = readPnlReportPayload(snapshot.payload);
     const label =
       (payload ? readPnlPeriodLabel(payload) : null) ??
-      formatNZDate(snapshotEnd(snapshot));
+      formatSnapshotPeriodEnd(snapshotEnd(snapshot));
     const lines = payload
       ? categorizeLines({
           lines: extractPnlLines({

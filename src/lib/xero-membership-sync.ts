@@ -10,7 +10,7 @@
 import { Invoice, type XeroClient } from "xero-node";
 import logger from "@/lib/logger";
 import { prisma } from "./prisma";
-import { getSeasonYear } from "./pricing";
+import { clubSeasonYear } from "./financial-year";
 import { buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -27,7 +27,23 @@ import {
   getResolvedAccountMapping,
   getSubscriptionItemCodes,
 } from "./xero-mappings";
-import { getSeasonStartMonth } from "@/lib/financial-year";
+import {
+  getFinancialYearEndMonth,
+  getSeasonStartMonth,
+  seasonYearOfCalendarDate,
+} from "@/lib/financial-year";
+import {
+  clubToday,
+  compareCalendarDates,
+  dateOnlyInstantOf,
+  type CalendarDate,
+} from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import {
+  xeroCalendarDate,
+  xeroCalendarDateAsDateOnly,
+  xeroInstant,
+} from "@/lib/xero-provider-dates";
 import { loadMembershipLockoutSettings } from "@/lib/membership-lockout-settings";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 import { enqueueHostingCoverageReevaluationForMember } from "@/lib/adult-member-hosting-review";
@@ -221,6 +237,16 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
   deletedCount: number;
   deactivatedLinkCount: number;
 }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const outcome = await prisma.$transaction(async (tx) => {
     const subscriptions = await tx.memberSubscription.findMany({
       where: { memberId },
@@ -276,9 +302,12 @@ export async function flushMemberSubscriptionHistory(memberId: string): Promise<
     }) : { count: 0 };
 
     if (deletedSubscriptions.count > 0) {
-      await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-        cause: "SYSTEM_CHANGE",
-      });
+      await enqueueHostingCoverageReevaluationForMember(
+        memberId,
+        tx,
+        clubTodayForFanout,
+        { cause: "SYSTEM_CHANGE" },
+      );
     }
 
     return {
@@ -315,7 +344,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
     new Set(
       (options?.seasonYears?.length
         ? options.seasonYears
-        : [getSeasonYear(new Date())]
+        : [clubSeasonYear(await readClubTimeZoneOutsideRequest())]
       ).filter(
         (seasonYear): seasonYear is number =>
           Number.isInteger(seasonYear) &&
@@ -401,6 +430,16 @@ async function writeXeroDerivedSubscriptionState(input: {
   survivingPaidAt: Date | null;
   survivingOnlineInvoiceUrl: string | null;
 }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const outcome = await prisma.$transaction(async (tx) => {
     const data = {
       status: input.status,
@@ -449,9 +488,12 @@ async function writeXeroDerivedSubscriptionState(input: {
         }
       }
     }
-    await enqueueHostingCoverageReevaluationForMember(input.memberId, tx, {
-      cause: "SYSTEM_CHANGE",
-    });
+    await enqueueHostingCoverageReevaluationForMember(
+      input.memberId,
+      tx,
+      clubTodayForFanout,
+      { cause: "SYSTEM_CHANGE" },
+    );
     return {
       written: true,
       survivingStatus: input.status,
@@ -480,7 +522,8 @@ export async function checkMembershipStatus(
   });
   if (!member) throw new Error(`Member not found: ${memberId}`);
 
-  const year = seasonYear ?? getSeasonYear(new Date());
+  const year =
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
 
   // #1944 non-clobber guard: never let Xero discovery downgrade a subscription
   // that was manually marked paid outside the Xero pipeline. The finance:edit
@@ -748,7 +791,15 @@ export async function checkMembershipStatus(
       return { status: "NOT_INVOICED" };
     }
 
-    const status = determineSubscriptionStatus(subscriptionInvoice);
+    // The club's calendar day, from the PERSISTED club timezone (INV-CONFIG-002)
+    // — never the container's. Read once here, outside the pure judgement below.
+    const clubTodayCalendarDate = clubToday(
+      await readClubTimeZoneOutsideRequest(),
+    );
+    const status = determineSubscriptionStatus(
+      subscriptionInvoice,
+      clubTodayCalendarDate,
+    );
     const matchedInvoiceChanged = Boolean(
       matchedInvoiceId && options?.changedInvoiceIds?.has(matchedInvoiceId)
     );
@@ -799,6 +850,7 @@ export async function checkMembershipStatus(
     // for the other non-linking writes.
     let subscriptionRecordId: string | null = null;
     if (matchedInvoiceId) {
+      const clubTodayForFanout = dateOnlyInstantOf(clubTodayCalendarDate);
       const subscriptionRecord = await prisma.$transaction(async (tx) => {
         const row = await tx.memberSubscription.upsert({
           where: {
@@ -824,9 +876,14 @@ export async function checkMembershipStatus(
             paidAt: status.paidAt,
           },
         });
-        await enqueueHostingCoverageReevaluationForMember(memberId, tx, {
-          cause: "SYSTEM_CHANGE",
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          memberId,
+          tx,
+          // #3123 — the SAME club day the subscription status above was judged
+          // against, resolved outside this transaction (`INV-LOCK-004`).
+          clubTodayForFanout,
+          { cause: "SYSTEM_CHANGE" },
+        );
         return row;
       });
       subscriptionRecordId = subscriptionRecord.id;
@@ -929,6 +986,16 @@ async function releaseVoidedSubscriptionInvoice(input: {
   seasonYear: number;
   voidedInvoiceId: string | null;
 }): Promise<{ coverageReleased: boolean; chargeVoidedId: string | null }> {
+  // #3123 / INV-LOCK-004 — the club's day, resolved before the transaction
+  // opens. The hosting fan-out inside takes a `Member` row lock and bounds its
+  // candidate set on `checkOut >= today`; resolving the club's persisted
+  // timezone in there would be a `clubTimeSettings.findUnique` taking a second
+  // pooled connection under that lock. The runtime reader, not the server
+  // binding: this module is reachable from both a CLI entry point and
+  // `instrumentation.node.ts`, where `server-only` is a bare throw at import.
+  const clubTodayForFanout = dateOnlyInstantOf(
+    clubToday(await readClubTimeZoneOutsideRequest()),
+  );
   const now = new Date();
   const outcome = await prisma.$transaction(async (tx) => {
     let coverageReleased = false;
@@ -981,9 +1048,12 @@ async function releaseVoidedSubscriptionInvoice(input: {
       });
       qualificationChanged = subscriptionUpdate.count > 0;
       if (qualificationChanged) {
-        await enqueueHostingCoverageReevaluationForMember(input.memberId, tx, {
-          cause: "SYSTEM_CHANGE",
-        });
+        await enqueueHostingCoverageReevaluationForMember(
+          input.memberId,
+          tx,
+          clubTodayForFanout,
+          { cause: "SYSTEM_CHANGE" },
+        );
       }
       await tx.xeroObjectLink.updateMany({
         where: {
@@ -1070,18 +1140,27 @@ export function collectSubscriptionInvoiceMatches(
     textFallbackEnabled = true,
   } = options;
   const itemCodeSet = new Set(itemCodes.filter((code): code is string => Boolean(code)));
-  const startMonth = getSeasonStartMonth(); // 1-12
-  const seasonStart = new Date(seasonYear, startMonth - 1, 1);
-  const seasonEndExclusive = new Date(seasonYear + 1, startMonth - 1, 1);
+  // The club's configured financial year-end, read once for the whole sweep so a
+  // single batch cannot classify two invoices against two different windows.
+  const yearEndMonth = getFinancialYearEndMonth();
 
   const matches: SubscriptionInvoiceMatch[] = [];
 
   invoices.forEach((invoice, index) => {
-    // Check if invoice date falls within the season year [seasonStart, seasonEndExclusive)
-    const invoiceDate = invoice.date ? new Date(invoice.date) : null;
+    // `Invoice.date` is a CALENDAR DATE, so the season window is decided on the
+    // calendar and never on the host's clock (#2869). The previous form built
+    // `new Date(seasonYear, startMonth - 1, 1)` — host-LOCAL midnight — and
+    // compared it against `new Date(invoice.date)`, whose meaning depends on
+    // which of the four Xero wire shapes arrived. On a container west of
+    // Greenwich the two disagreed by the offset, so an invoice dated the first
+    // day of a season fell OUTSIDE it and a paid member read as unpaid. Comparing
+    // the invoice's own season year against the one asked for removes the host
+    // from the question entirely; plain `CalendarDate` string ordering would work
+    // too, and this spelling also says what the window MEANS.
+    const invoiceDate = xeroCalendarDate(invoice.date);
     if (!invoiceDate) return;
 
-    if (invoiceDate < seasonStart || invoiceDate >= seasonEndExclusive) return;
+    if (seasonYearOfCalendarDate(invoiceDate, yearEndMonth) !== seasonYear) return;
 
     // Match on the configured chart-of-account code (e.g. 203 "Annual Subs").
     const hasAccountCode = Boolean(
@@ -1120,7 +1199,12 @@ export function collectSubscriptionInvoiceMatches(
     matches.push({
       invoice,
       index,
-      isPaid: determineSubscriptionStatus(invoice).status === "PAID",
+      // A settled invoice, decided by STATUS alone. This used to ask
+      // `determineSubscriptionStatus(invoice).status === "PAID"`, which computes
+      // the identical answer — only that function's PAID branch can return
+      // "PAID" — while also dragging the due-date comparison, and therefore the
+      // club's calendar, into a ranking that has no use for either (#2869).
+      isPaid: invoice.status === Invoice.StatusEnum.PAID,
       // "Strong" = matched by a DISTINGUISHING signal (the account code, the
       // flat primary/fallback item code, or the text fallback) rather than ONLY
       // a union-only fee-schedule code shared with hut/joining/promo fees. A
@@ -1247,21 +1331,34 @@ export async function buildSubscriptionInvoiceMatchOptions(): Promise<Subscripti
 
 // test seam
 /**
- * Determine subscription status from a Xero invoice. Exported for testing.
+ * Subscription status from a Xero invoice, judged against the CLUB's calendar
+ * day rather than against the host's clock. Exported for testing.
+ *
+ * `clubToday` is passed in rather than read here so this stays a pure function
+ * of the provider payload plus one explicit civil-time fact — which is what lets
+ * the hostile-host-zone tests hold the club zone constant while moving `TZ`.
  */
-export function determineSubscriptionStatus(invoice: Invoice): {
+export function determineSubscriptionStatus(
+  invoice: Invoice,
+  clubToday: CalendarDate,
+): {
   status: "PAID" | "UNPAID" | "OVERDUE";
   paidAt?: Date;
 } {
   const invoiceStatus = invoice.status;
 
   if (invoiceStatus === Invoice.StatusEnum.PAID) {
-    // Use fullyPaidOnDate if available, otherwise fall back to updatedDateUTC
-    const paidAt = invoice.fullyPaidOnDate
-      ? new Date(invoice.fullyPaidOnDate)
-      : invoice.updatedDateUTC
-        ? new Date(invoice.updatedDateUTC)
-        : undefined;
+    // TWO DIFFERENT CONCEPTS, and the old code read both with `new Date(...)`.
+    // `fullyPaidOnDate` is a CALENDAR DATE (Xero types it `string` and documents
+    // it as a date); `updatedDateUTC` is an INSTANT the provider names as UTC. A
+    // calendar day has no time of day, so the paid-at instant it implies is the
+    // start of that day in UTC — the same date-only encoding every other calendar
+    // value in this system carries (INV-DATE-010) — not host-local midnight,
+    // which is what the previous parse produced for an offset-less payload.
+    const paidAt =
+      xeroCalendarDateAsDateOnly(invoice.fullyPaidOnDate) ??
+      xeroInstant(invoice.updatedDateUTC) ??
+      undefined;
     return { status: "PAID", paidAt };
   }
 
@@ -1269,9 +1366,16 @@ export function determineSubscriptionStatus(invoice: Invoice): {
     invoiceStatus === Invoice.StatusEnum.AUTHORISED ||
     invoiceStatus === Invoice.StatusEnum.SUBMITTED
   ) {
-    // Check if it's past due
-    const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
-    if (dueDate && dueDate < new Date()) {
+    // Past due is a CALENDAR comparison: an invoice is overdue once the club's
+    // today is past its due day, not once some instant derived from that day has
+    // elapsed. The old `new Date(invoice.dueDate) < new Date()` compared a
+    // midnight — UTC midnight for an SDK `Date`, host-local midnight for an
+    // offset-less string — against the wall clock, so the flip happened partway
+    // through the due date itself, at an hour that moved with the container's
+    // zone: an invoice went OVERDUE on the afternoon of the day it was due in
+    // New Zealand, and on the EVENING BEFORE on a host west of Greenwich.
+    const dueDate = xeroCalendarDate(invoice.dueDate);
+    if (dueDate && compareCalendarDates(clubToday, dueDate) > 0) {
       return { status: "OVERDUE" };
     }
     return { status: "UNPAID" };
@@ -1308,7 +1412,8 @@ export async function refreshAllMembershipStatuses(
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
 }> {
-  const year = seasonYear ?? getSeasonYear(new Date());
+  const year =
+    seasonYear ?? clubSeasonYear(await readClubTimeZoneOutsideRequest());
   const syncStartedAt = new Date();
   const cursor = await getXeroSyncCursor(
     MEMBERSHIP_SYNC_CURSOR_RESOURCE,

@@ -1,7 +1,7 @@
 /**
  * Help for the "Bookings & Beds" admin section.
  *
- * The section IS the sidebar's (`navSections` in `admin-sidebar.tsx`): this
+ * The section IS the sidebar's (`buildAdminNavSections` in `admin-sidebar.tsx`): this
  * split groups help by the areas the product already shows operators, so the
  * module a page's help lives in is the menu heading they found it under.
  */

@@ -5,6 +5,7 @@ import {
   PaymentSource,
   PaymentStatus,
 } from "@prisma/client";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
@@ -136,6 +137,11 @@ export async function POST(request: NextRequest) {
   const leadTime = checkInternetBankingLeadTime({
     checkIn: booking.checkIn,
     settings: internetBankingSettings,
+    // #3123 — the club's PERSISTED zone decides the cutoff day, not the
+    // container's. `booking.checkIn` is a stored `@db.Date` calendar day and
+    // stays zone-free; this is the other side of that comparison, encoded on
+    // the same UTC-midnight frame (`INV-DATE-026`).
+    today: await clubTodayDateOnlyInstant(),
   });
   if (!leadTime.allowed) {
     return NextResponse.json(

@@ -5,6 +5,7 @@ import { AgeTier } from "@prisma/client";
 // the module under test never touches a real database.
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 
+import { requireClubTimeZone } from "@/lib/club-time";
 import { reassignHeldBookingGuests } from "@/lib/booking-request";
 import type { MemberGuestAddPolicy } from "@/lib/member-guest-add-policy";
 
@@ -68,6 +69,9 @@ const MODULE_ON: MemberGuestAddPolicy = {
   wideningEnabled: true,
   approvalRequired: true,
   pendingHoldExpiryDays: 7,
+  // A club behind Greenwich, so the fixture cannot pass by reading the
+  // container's zone — which is `Pacific/Auckland` here (#3123).
+  timeZone: requireClubTimeZone("America/Denver"),
 };
 const MODULE_OFF: MemberGuestAddPolicy = {
   wideningEnabled: false,

@@ -5,13 +5,15 @@ import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { getDefaultLodgeId } from "@/lib/lodges";
-import { isDateOnlyString, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { isDateOnlyString } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { bookableAgeTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { bookingHoldsCapacity } from "@/lib/booking-status";
 import { bookingManagementAuthorizationRole } from "@/lib/admin-permissions";
 import logger from "@/lib/logger";
@@ -126,6 +128,8 @@ export async function POST(
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone.
+    today: await clubTodayDateOnlyInstant(),
   });
   if (!editPolicy.canModify) {
     return NextResponse.json(
@@ -178,16 +182,16 @@ export async function POST(
     ageTier: g.ageTier,
     isMember: g.isMember,
     memberId: g.memberId,
-    stayStart: normalizeDateOnlyForTimeZone(g.stayStart),
-    stayEnd: normalizeDateOnlyForTimeZone(g.stayEnd),
+    stayStart: storedDateOnly(g.stayStart),
+    stayEnd: storedDateOnly(g.stayEnd),
     nights: g.nights.map((night) => ({
-      stayDate: normalizeDateOnlyForTimeZone(night.stayDate),
+      stayDate: storedDateOnly(night.stayDate),
     })),
   }));
 
   const { base, proposed } = buildModificationProposalParties({
-    bookingCheckIn: normalizeDateOnlyForTimeZone(booking.checkIn),
-    bookingCheckOut: normalizeDateOnlyForTimeZone(booking.checkOut),
+    bookingCheckIn: storedDateOnly(booking.checkIn),
+    bookingCheckOut: storedDateOnly(booking.checkOut),
     liveGuests,
     delta: {
       checkIn,

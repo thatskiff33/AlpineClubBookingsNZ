@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatCents, getSeasonYear } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+// `getSeasonYear` lived in `utils.ts` and is gone (CT-4 group F1, #2870): it read
+// its argument's HOST-local components. Every fixture below is a UTC-midnight
+// date-only string, so the successor is `seasonYearOfStoredDate`, which takes no
+// zone at all.
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 
 describe("formatCents", () => {
   it("formats whole dollar amounts", () => {
@@ -24,24 +29,24 @@ describe("formatCents", () => {
   });
 });
 
-describe("getSeasonYear", () => {
+describe("seasonYearOfStoredDate", () => {
   it("returns current year for April", () => {
-    expect(getSeasonYear(new Date("2026-04-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-04-15"))).toBe(2026);
   });
 
   it("returns current year for December", () => {
-    expect(getSeasonYear(new Date("2026-12-15"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-12-15"))).toBe(2026);
   });
 
   it("returns previous year for January", () => {
-    expect(getSeasonYear(new Date("2026-01-15"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-01-15"))).toBe(2025);
   });
 
   it("returns previous year for March", () => {
-    expect(getSeasonYear(new Date("2026-03-31"))).toBe(2025);
+    expect(seasonYearOfStoredDate(new Date("2026-03-31"))).toBe(2025);
   });
 
   it("returns current year for April 1 (boundary)", () => {
-    expect(getSeasonYear(new Date("2026-04-01"))).toBe(2026);
+    expect(seasonYearOfStoredDate(new Date("2026-04-01"))).toBe(2026);
   });
 });

@@ -38,9 +38,6 @@ vi.mock("@/lib/session-guards", async () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/utils", () => ({
-  getSeasonYear: vi.fn().mockReturnValue(2026),
-}));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 
 const {

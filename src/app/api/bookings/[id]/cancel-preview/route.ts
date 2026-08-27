@@ -5,6 +5,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { loadCancellationPolicy } from "@/lib/cancellation";
 import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
+import { clubTime } from "@/lib/club-time/server";
 import { paymentEligibleForPaidCancelPath } from "@/lib/booking-cancel";
 import logger from "@/lib/logger";
 import { hasAdminAccess } from "@/lib/access-roles";
@@ -105,6 +106,14 @@ export async function GET(
       finalPriceCents: booking.finalPriceCents,
       checkIn: booking.checkIn,
       policyRules: policy,
+      // #3123 — the CLUB's day, from its persisted zone, and the same authority
+      // the executed cancel uses. The refund figure below is what the member is
+      // shown before they confirm; a day resolved from the container's zone
+      // instead could quote them a different tier from the one they are charged.
+      // No transaction is open here, and this route is not reachable from a CLI
+      // or from instrumentation, so the request-scoped `server-only` binding is
+      // the right reader (`docs/CLUB_TIME_KERNEL.md`).
+      todayAtClub: (await clubTime()).today(),
     });
 
     return NextResponse.json({

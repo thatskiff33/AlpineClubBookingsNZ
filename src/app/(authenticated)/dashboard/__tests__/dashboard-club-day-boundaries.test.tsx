@@ -21,8 +21,9 @@
  *
  * ## Why the assertions below are about calendar DAYS
  *
- * A `@db.Date` column holds an NZ calendar day encoded at UTC midnight
- * (INV-DATE-010). `@prisma/adapter-pg` narrows whatever `Date` is bound against
+ * A `@db.Date` column holds a CLUB calendar day encoded at UTC midnight
+ * (INV-DATE-010 — the rule's own word, because the day is the club's and not New
+ * Zealand's). `@prisma/adapter-pg` narrows whatever `Date` is bound against
  * such a column with `formatDate`, which reads `getUTCFullYear/Month/Date` and
  * throws the time away — so Postgres compares two calendar days, and a bound
  * instant of `(D-1)T12:00Z` arrives as the day `D-1`, not as a moment partway

@@ -17,7 +17,7 @@ import {
 } from "./layout";
 import { CLUB_NAME } from "@/config/club-identity";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { emailClubDateTime } from "@/lib/email-templates-club-time";
 
 export function passwordResetTemplate(resetUrl: string): string {
   return layout(`
@@ -82,7 +82,7 @@ export function twoFactorCodeTemplate(params: {
     ${paragraph(
       `<strong style="display: inline-block; font-size: 28px; letter-spacing: 0.16em; padding: 8px 0;">${escapeHtml(params.code)}</strong>`,
     )}
-    ${muted("This code expires on " + escapeHtml(formatNZDateTime(params.expiresAt)) + ". If you did not try to sign in, change your password and contact the club.")}
+    ${muted("This code expires on " + escapeHtml(emailClubDateTime(params.expiresAt)) + ". If you did not try to sign in, change your password and contact the club.")}
   `);
 }
 
@@ -97,7 +97,7 @@ export function emailVerificationTemplate(
     ${paragraph(`Hi ${name}, thanks for creating your ${escapeHtml(CLUB_NAME)} booking account!`)}
     ${paragraph("Please verify your email address by clicking the button below.")}
     ${button("Verify Email", verifyUrl)}
-    ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not create this account, please ignore this email.")}
+    ${muted("This link expires on " + escapeHtml(emailClubDateTime(expiresAt)) + ". If you did not create this account, please ignore this email.")}
   `);
 }
 
@@ -111,7 +111,7 @@ export function emailChangeVerificationTemplate(
     ${paragraph(`You requested to change the email address on your ${escapeHtml(CLUB_NAME)} account to <strong>${escapeHtml(newEmail)}</strong>.`)}
     ${paragraph("Click the button below to confirm this change.")}
     ${button("Confirm Email Change", verifyUrl)}
-    ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not request this change, please ignore this email.")}
+    ${muted("This link expires on " + escapeHtml(emailClubDateTime(expiresAt)) + ". If you did not request this change, please ignore this email.")}
   `);
 }
 

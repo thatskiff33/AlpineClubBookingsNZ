@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { parseAdminAuditLogQuery } from "@/lib/audit-admin-query";
+import { requireClubTimeZone } from "@/lib/club-time";
 import {
   buildAuditDrilldownLinks,
   buildAuditMemberScopeWhere,
   getAuditTimelinePage,
   inferAuditCategoryFromAction,
 } from "@/lib/audit-query";
+
+/**
+ * The club's persisted timezone, supplied rather than read (#3123): the audit
+ * date filters bound `AuditLog.createdAt`, a real instant column, so their
+ * boundaries are the club's. That the value comes from the PERSISTED setting
+ * rather than `APP_TIME_ZONE` is pinned in
+ * `audit-admin-query-club-time-authority.test.ts`.
+ */
+const CLUB_ZONE = requireClubTimeZone("Pacific/Auckland");
 
 describe("audit query helpers", () => {
   it("builds precise member scope filters", () => {
@@ -99,6 +109,7 @@ describe("audit query helpers", () => {
         page: "2",
         pageSize: "50",
       }),
+      CLUB_ZONE,
     );
 
     expect(result.success).toBe(true);
@@ -131,7 +142,12 @@ describe("audit query helpers", () => {
         {
           createdAt: {
             gte: new Date("2026-03-31T11:00:00.000Z"),
-            lte: new Date("2026-04-30T11:59:59.999Z"),
+            // #3123 made the upper bound HALF-OPEN. `lte` against the last
+            // millisecond of the day and `lt` against the next midnight differ
+            // only below the millisecond — and Postgres keeps microseconds, so
+            // the inclusive form could drop a row written in the day's final
+            // millisecond.
+            lt: new Date("2026-04-30T12:00:00.000Z"),
           },
         },
         { outcome: "success" },
@@ -210,11 +226,15 @@ describe("audit query helpers", () => {
 
   it("rejects invalid admin audit filter values", () => {
     expect(
-      parseAdminAuditLogQuery(new URLSearchParams({ category: "unknown" })),
+      parseAdminAuditLogQuery(
+        new URLSearchParams({ category: "unknown" }),
+        CLUB_ZONE,
+      ),
     ).toEqual({ success: false, details: undefined });
 
     const oversizedPage = parseAdminAuditLogQuery(
       new URLSearchParams({ pageSize: "101" }),
+      CLUB_ZONE,
     );
     expect(oversizedPage.success).toBe(false);
     if (oversizedPage.success) return;

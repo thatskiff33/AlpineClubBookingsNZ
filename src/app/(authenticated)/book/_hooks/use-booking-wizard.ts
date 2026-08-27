@@ -19,7 +19,7 @@ import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
-import { countNightsDateOnly, parseDateOnly } from "@/lib/date-only";
+import { countClubNights, parseCalendarDate } from "@/lib/club-time";
 import { buildBookingMemberNightConflictSummary } from "@/lib/booking-member-night-conflict-messages";
 import { shouldShowInviteFamilyGroupMembersLink } from "@/lib/family-booking";
 import { hasAccessRole, hasAdminAccess } from "@/lib/access-roles";
@@ -1645,12 +1645,18 @@ export function useBookingWizard() {
     };
   }
 
-  // Whole date-only nights between the two lodge dates. UTC date-only
-  // arithmetic (#2474) — DST-immune and exact, unlike a millisecond span that
-  // an off-midnight instant would round.
-  const nights = checkIn && checkOut
-    ? countNightsDateOnly(parseDateOnly(checkIn), parseDateOnly(checkOut))
-    : 0;
+  // Whole nights between the two lodge dates, counted as CALENDAR days and so
+  // needing no timezone at all (#2474; CT-4, #2870) — DST-immune by
+  // construction, because there is no clock in the calculation to be moved.
+  // `parseCalendarDate` rather than `requireCalendarDate`: these two dates are
+  // user-driven and may be half-entered, and a throw on every render would
+  // replace the booking form with an error boundary.
+  const parsedCheckIn = checkIn ? parseCalendarDate(checkIn) : null;
+  const parsedCheckOut = checkOut ? parseCalendarDate(checkOut) : null;
+  const nights =
+    parsedCheckIn && parsedCheckOut
+      ? countClubNights(parsedCheckIn, parsedCheckOut)
+      : 0;
 
   function getGuestProfileBlockMessage(block: GuestProfileRequiredMember) {
     if (block.action === "own_login_required") {

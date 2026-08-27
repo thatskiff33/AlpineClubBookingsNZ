@@ -1,12 +1,9 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 import { HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES } from "@/lib/booking-status";
-import {
-  eachDateOnlyInRange,
-  formatDateOnly,
-  parseDateOnly,
-  todayDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import {
   resolveAdultMemberHostingPolicy,
   type ResolvedAdultMemberHostingPolicy,
@@ -97,11 +94,21 @@ function incidentPolicyChanged(
 export async function enqueueActiveHostingIncidentPolicyReconciliation(
   params: {
     beforePolicies: readonly HostingPolicyReconciliationSnapshot[];
-    /** Test seam for the New Zealand lodge-night boundary. */
+    /** Test seam for the lodge-night boundary. */
     todayDateOnly?: string;
   },
   db: HostingPolicyReconciliationDb,
 ): Promise<number> {
+  // The club's own lodge-night boundary, from its PERSISTED timezone rather
+  // than the container's (#3123, INV-CONFIG-002). The CLI-safe runtime reader:
+  // `src/instrumentation.node.ts` reaches this module through
+  // `config-transfer/bootstrap-import`, where `server-only` throws at import.
+  // Resolved once, before the query below, and only when the test seam has not
+  // supplied the day.
+  const todayDateOnly = params.todayDateOnly
+    ? requireCalendarDate(params.todayDateOnly)
+    : clubToday(await readClubTimeZoneOutsideRequest());
+
   const afterPolicies = (await db.adultMemberHostingPolicy.findMany({
     select: HOSTING_POLICY_RECONCILIATION_SELECT,
   })) as HostingPolicyReconciliationSnapshot[];
@@ -112,11 +119,9 @@ export async function enqueueActiveHostingIncidentPolicyReconciliation(
         {
           deletedAt: null,
           status: { in: [...HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES] },
-          checkOut: {
-            gt: parseDateOnly(
-              params.todayDateOnly ?? todayDateOnlyForTimeZone(),
-            ),
-          },
+          // `Booking.checkOut` is `@db.Date`, so the bound is the UTC-midnight
+          // encoding of a calendar day, not an instant boundary.
+          checkOut: { gt: dateOnlyInstantOf(todayDateOnly) },
         },
         { hostingCoverageIncidents: { some: { resolvedAt: null } } },
       ],

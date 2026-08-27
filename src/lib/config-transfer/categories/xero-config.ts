@@ -23,7 +23,9 @@ import {
 import { RowValidator, nz, readCsvRows } from "../values";
 import type { ConfigTransferCategory } from "../manifest";
 import { bundleCarriesJoiningFeeSchedule } from "./membership-fees";
-import { addDaysDateOnly, getTodayDateOnly } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 
 // xero-config category: the accounting mappings — GL account/item-code mappings
 // and per-category item codes. Contact-group rules/accepted-groups are excluded
@@ -693,7 +695,7 @@ async function planXeroConfig(ctx: PlanContext): Promise<CategoryPlanResult> {
       ctx.db,
       parsedItemRows,
       batch.membershipTypesByKey,
-      getTodayDateOnly(),
+      dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest())),
     );
     warnings.push(...materialisation.warnings);
     fingerprintParts.push(...materialisation.fingerprintParts);
@@ -783,7 +785,12 @@ async function applyXeroConfig(ctx: ApplyContext): Promise<CategoryApplyResult> 
   // (the precedence the plan previewed). With membership-fees deselected the
   // fan-out still runs, so the fees are not silently dropped.
   if (!itemCodeJoiningFeeSuperseded(ctx.files, ctx.selectedCategories)) {
-    const today = getTodayDateOnly();
+    // The club's calendar day for the fee window this import opens. Read from
+    // the PERSISTED club timezone (CT-5, #2869; INV-CONFIG-002) rather than the
+    // container's `TZ`. It is a single indexed primary-key read on the shared
+    // client, so it does not join this apply transaction; threading the zone
+    // through `ApplyContext` would be tidier and belongs with that machinery.
+    const today = dateOnlyInstantOf(clubToday(await readClubTimeZoneOutsideRequest()));
     const materialisation = await decideJoiningFeeMaterialisation(
       ctx.tx,
       parsedItemRows,

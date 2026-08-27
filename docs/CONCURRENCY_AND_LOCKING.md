@@ -857,6 +857,112 @@ one request can disagree if an admin saves the panel between them, which on
 member's settlement delta) is a money error rather than a nuisance. See the
 `INV-LOCKOUT` rules in `docs/invariants/subscription-lockout-pricing.md`.
 
+#### Which client reads the club's timezone (#2870)
+
+The same rule again, and the one place it decides whether a member keeps a bed.
+A payment link expires at the end of the check-in day in the club's **persisted**
+timezone (`INV-CONFIG-002`), and four decisions read that one boundary: the mint
+in `payment-link.ts` / `booking-request.ts` / `group-booking.ts`, the refusal to
+mint a link that would be born expired, and the two capacity-releasing
+`PENDING -> CANCELLED` terminal cancels in `cron-confirm-pending.ts`. Three of
+those sites are inside a `prisma.$transaction` already holding
+`acquireLodgeCapacityLock`, one of them under `lock(1)` as well.
+
+Resolving the zone is a `clubTimeSettings.findUnique`. So the zone is **resolved
+once, outside the transaction, and passed as a value** to
+`paymentLinkExpiryForCheckIn(checkIn, zone)`, which is pure and takes no client —
+`mintSplitGuestPaymentLinkIfAbsent` and `resolveHoldWindowUnderLock` both take
+the zone as a parameter rather than reading it. The reader is
+`readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`, not
+`clubTime()`, because all four files are reachable from
+`src/instrumentation.node.ts`; `docs/CLUB_TIME_KERNEL.md` -> "Where the zone
+comes from" is the rule and the measurement.
+
+`confirmPendingBookings` reads it **once per run** rather than once per booking,
+for the second, non-pool reason as well: two bookings resolved in one tick must
+be judged against the same club day, or a zone change mid-run would cancel one
+booking's hold and extend another's on different boundaries.
+
+**What enforces it, and why it is a source contract.** `paymentLinkExpiryForCheckIn`
+imports no reader at all, so it cannot resolve the zone under a lock however it is
+called — the refuse-when-handed-a-transaction-client shape used by
+`buildSubscriptionBillingPreview` has nothing to key on here, because there is no
+client to key on. What is left to protect is a property of the four **callers**:
+each one's own `await` must sit outside its own transaction. Two guards hold it.
+
+- `payment-link-expiry-club-zone.test.ts` -> `reads the club's zone outside every
+  transaction, in all four writers` reads the four files off disk, paren-matches
+  every `$transaction(...)` argument list, and fails on a
+  `readClubTimeZoneOutsideRequest(` found inside one. It covers all four writers
+  at once, including `approveBookingRequest` and `verifyAndCreateNonMemberJoin`,
+  which no runtime test reaches — measured: a read added straight after
+  `acquireLodgeCapacityLock` in both of those files left every suite covering them
+  green. A companion case fails if the scanner stops matching anything, so it
+  cannot go quietly vacuous.
+- `cron-confirm-pending.test.ts` counts the zone reads that happen **while a
+  `$transaction` callback is running**, and requires zero. A per-run call count
+  cannot stand in for that: a read that moved inside the transaction but still ran
+  once per run keeps the count at 1 and passes.
+
+If you add a fifth writer on this boundary, the first guard already covers it the
+moment its file joins that census's list; add the file, do not add a bespoke test.
+
+#### Which client reads the cancellation and non-member-hold policy (#3110)
+
+`getNonMemberHoldPolicy`, `getNonMemberHoldDays` and `loadCancellationPolicy`
+(`cancellation.ts`) each take an optional trailing `db` that defaults to the
+module-level Prisma client, under the same one-line rule the three sections
+above state: **a caller already inside `prisma.$transaction` MUST pass its own `tx`.**
+The three share a private helper, `getBookingPeriodForDate`, which holds two of
+the reads, so the parameter is threaded through it as well.
+
+**Nine call sites are in that position**, every one of them holding
+`pg_advisory_xact_lock(1)` **and** the per-lodge capacity lock. Six pass `tx`
+directly: the guest-add route, `modifyBookingDates` (two reads),
+`adminShiftBookingDates`, `booking-cancel.ts`'s paid-cancel path, and the
+waitlist confirm. Three are reached indirectly, through helpers that hold no
+transaction opener of their own:
+
+- `applyLifecycleTransitions` already takes `tx` as its first parameter and
+  passes it on;
+- `calculateModificationSettlementOptions` and `calculateModificationChangeFee`
+  take a **required** `db`. Required rather than defaulted, and deliberately:
+  neither `booking-modify-settlement.ts` nor `booking-modify-plan.ts` imports a
+  module-level Prisma client at all, so a `db = prisma` default would place a
+  silent fall-back to a second pooled connection inside a transaction-scoped
+  helper — the exact failure the parameter removes, in the hardest place to see
+  it. It also turns the caller census into a typecheck rather than a grep.
+
+Hoisting these reads above their transactions was considered and rejected at
+every site. All nine feed the readers a `checkIn` and `lodgeId` taken from a
+booking row re-read by `tx.booking.findUnique` **after** both locks, and two of
+them read against `newCheckIn` — a value the transaction is itself computing. A
+hoisted read would resolve the policy against a check-in the transaction is in
+the middle of changing, which reintroduces the snapshot divergence passing `tx`
+exists to remove.
+
+**Eleven other call sites are deliberately outside a transaction and keep the
+default:** the quote route, booking create, the exception-approval path, the
+booking-request approval, the group-join and cross-lodge waitlist offers, the
+pending-confirm cron, the advisory `modify-quote` route (which now passes the
+module client explicitly, because its helper requires the choice), the
+cancel-preview route, the booking detail page and `group-cancel.ts`. Those are
+pre-write or read-only checks with no lock held, so the module client is correct
+and cheapest there.
+
+This is a **pool** argument, not a lock-order one: no cancellation-policy or
+booking-period writer takes a per-lodge capacity lock, and no booking path takes
+a policy-set key, so the two keyspaces are disjoint and cannot deadlock in
+either order.
+
+`cancellation-policy-client-contract.test.ts` pins both halves off the real
+source, with **no allowlist of sites**, so a tenth in-transaction call site is
+caught the day it is written rather than by the next audit. It reads the
+transaction spans lexically — including `withOptionalTransaction`, which a scan
+built only from `prisma.$transaction(` misses — and separately requires any
+reader call inside a function that *receives* a client to pass that client on,
+which is the only way to reach the three indirect sites.
+
 ### Composition: application-approval mapping (E10, #1936)
 
 The membership-application approval transaction is the one writer that composes
@@ -3217,6 +3323,22 @@ compounded by this repair.
 - **Bailing out of a `$transaction` callback?** Only `throw` rolls back;
   `return` COMMITS everything written so far. A `count === 0` guard that returns
   must sit above every write it does not want committed.
+- **Deciding which client a read uses, or censusing that with a grep?**
+  `INV-LOCK-004` is the rule: a read taken while a lock is held goes through the
+  caller's transaction client. When you audit it, remember a transaction is
+  opened **three** ways here and a scan keyed only on `prisma.$transaction(`
+  under-reports. `withOptionalTransaction(callerTx, async (tx) → ...)`
+  (`src/lib/db-transaction.ts`) either reuses a caller's `tx` or opens its own,
+  so its callback body always runs inside a transaction while containing no
+  opener itself → `modifyBookingBatch` and `createConfirmedBooking` both reach
+  their locked work through it. And a transaction-scoped helper that merely
+  *receives* a `tx` or `db` parameter contains no opener at all, so a lexical
+  scan cannot see it either; `applyLifecycleTransitions`,
+  `calculateModificationSettlementOptions` and `calculateModificationChangeFee`
+  are that shape. #3110's census read two sites short until the first was
+  accounted for and three short until the second was.
+  `cancellation-policy-client-contract.test.ts` covers both, without an
+  allowlist, and is the model to copy rather than a grep.
 - **Writing raw SQL for a row lock?** Take it with `$executeRaw` on a statement
   that selects a constant, then read what you need through the Prisma model
   under that lock (#2289). Never type a `$queryRaw` result and read it: the

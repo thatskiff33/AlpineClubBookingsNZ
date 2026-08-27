@@ -1,48 +1,51 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   AGE_UNAVAILABLE_LABEL,
   calculateMemberAgeParts,
   formatAgeYearsMonths,
   formatMemberIdentityAge,
 } from "@/lib/member-age";
+import { requireCalendarDate } from "@/lib/club-time";
 
-// Every case below pins its own reference date, so nothing here depends on the
-// real calendar. The block at the end deliberately moves the system clock to
-// prove the DEFAULT reference date is the New Zealand calendar day; it restores
-// the suite-wide frozen instant afterwards (AGENTS.md frozen-clock convention).
-const NZ_TODAY = "2026-07-01";
+// Every case below states its own reference day. There is no default to test
+// any more: #3123 deleted it, because the only zone this module could have
+// defaulted to was the container's (on a server) or the build's (in the
+// browser), and neither is the club's. Which zone the day comes from is now the
+// CALLER's contract, proved in `member-age-club-time-authority.test.ts`.
+const day = requireCalendarDate;
+const NZ_TODAY = day("2026-07-01");
 
 describe("formatAgeYearsMonths", () => {
   it("formats a normal date of birth", () => {
-    expect(formatAgeYearsMonths("1990-01-01", "2026-05-10")).toBe(
+    expect(formatAgeYearsMonths("1990-01-01", day("2026-05-10"))).toBe(
       "36 years 4 months"
     );
   });
 
   it("handles a birthday that has not occurred this month", () => {
-    expect(formatAgeYearsMonths("1990-05-20", "2026-05-10")).toBe(
+    expect(formatAgeYearsMonths("1990-05-20", day("2026-05-10"))).toBe(
       "35 years 11 months"
     );
   });
 
   it("handles a birthday today", () => {
-    expect(formatAgeYearsMonths("1990-05-10", "2026-05-10")).toBe(
+    expect(formatAgeYearsMonths("1990-05-10", day("2026-05-10"))).toBe(
       "36 years 0 months"
     );
   });
 
   it("handles leap-day dates of birth in non-leap years", () => {
-    expect(formatAgeYearsMonths("2000-02-29", "2026-02-28")).toBe(
+    expect(formatAgeYearsMonths("2000-02-29", day("2026-02-28"))).toBe(
       "26 years 0 months"
     );
   });
 
   it("returns null for a null date of birth", () => {
-    expect(formatAgeYearsMonths(null, "2026-05-10")).toBeNull();
+    expect(formatAgeYearsMonths(null, day("2026-05-10"))).toBeNull();
   });
 
   it("singularises one year and one month", () => {
-    expect(formatAgeYearsMonths("2025-06-01", "2026-07-01")).toBe(
+    expect(formatAgeYearsMonths("2025-06-01", day("2026-07-01"))).toBe(
       "1 year 1 month"
     );
   });
@@ -101,10 +104,10 @@ describe("formatMemberIdentityAge — years versus years-and-months (#2568)", ()
   });
 
   it("switches to years only on the fifth birthday", () => {
-    expect(formatMemberIdentityAge("2021-07-01", "2026-06-30")).toBe(
+    expect(formatMemberIdentityAge("2021-07-01", day("2026-06-30"))).toBe(
       "4 years 11 months"
     );
-    expect(formatMemberIdentityAge("2021-07-01", "2026-07-01")).toBe("5 years");
+    expect(formatMemberIdentityAge("2021-07-01", day("2026-07-01"))).toBe("5 years");
   });
 });
 
@@ -124,32 +127,32 @@ describe("formatMemberIdentityAge — birthdays around the reference date (#2568
 
 describe("formatMemberIdentityAge — 29 February (#2568)", () => {
   it("counts the birthday on 29 February in a leap year", () => {
-    expect(formatMemberIdentityAge("2000-02-29", "2028-02-28")).toBe("27 years");
-    expect(formatMemberIdentityAge("2000-02-29", "2028-02-29")).toBe("28 years");
+    expect(formatMemberIdentityAge("2000-02-29", day("2028-02-28"))).toBe("27 years");
+    expect(formatMemberIdentityAge("2000-02-29", day("2028-02-29"))).toBe("28 years");
   });
 
   it("counts the birthday on 28 February in a non-leap year", () => {
     // Documented convention: the anniversary clamps to the last day of the
     // month, so a leap-day member turns over on 28 February rather than 1 March.
-    expect(formatMemberIdentityAge("2000-02-29", "2027-02-27")).toBe("26 years");
-    expect(formatMemberIdentityAge("2000-02-29", "2027-02-28")).toBe("27 years");
-    expect(formatMemberIdentityAge("2000-02-29", "2027-03-01")).toBe("27 years");
+    expect(formatMemberIdentityAge("2000-02-29", day("2027-02-27"))).toBe("26 years");
+    expect(formatMemberIdentityAge("2000-02-29", day("2027-02-28"))).toBe("27 years");
+    expect(formatMemberIdentityAge("2000-02-29", day("2027-03-01"))).toBe("27 years");
   });
 
   it("handles a leap-day toddler in the years-and-months band", () => {
-    expect(formatMemberIdentityAge("2024-02-29", "2027-03-01")).toBe(
+    expect(formatMemberIdentityAge("2024-02-29", day("2027-03-01"))).toBe(
       "3 years 0 months"
     );
-    expect(formatMemberIdentityAge("2024-02-29", "2027-02-28")).toBe(
+    expect(formatMemberIdentityAge("2024-02-29", day("2027-02-28"))).toBe(
       "3 years 0 months"
     );
-    expect(formatMemberIdentityAge("2024-02-29", "2027-02-27")).toBe(
+    expect(formatMemberIdentityAge("2024-02-29", day("2027-02-27"))).toBe(
       "2 years 11 months"
     );
   });
 
   it("accepts a 29 February reference date", () => {
-    expect(formatMemberIdentityAge("2020-01-31", "2028-02-29")).toBe("8 years");
+    expect(formatMemberIdentityAge("2020-01-31", day("2028-02-29"))).toBe("8 years");
   });
 });
 
@@ -191,10 +194,20 @@ describe("formatMemberIdentityAge — missing and invalid dates (#2568)", () => 
     expect(calculateMemberAgeParts("2026-07-02", NZ_TODAY)).toBeNull();
   });
 
-  it("reports an unusable reference date as unavailable", () => {
-    expect(formatMemberIdentityAge("2000-01-01", "not-a-date")).toBe(
-      AGE_UNAVAILABLE_LABEL
-    );
+  it("reports an unusable reference day as unavailable", () => {
+    // Unreachable from a legitimately-obtained `CalendarDate` — the brand can
+    // only be minted by a validator — so the cast is the point: it proves the
+    // runtime guard behind the type is still there, because on this surface a
+    // quietly-wrong age year is worse than "Age unavailable" (#2568).
+    expect(
+      formatMemberIdentityAge("2000-01-01", "not-a-date" as never)
+    ).toBe(AGE_UNAVAILABLE_LABEL);
+    // The same guard, reached the other way a cast can defeat the brand: a
+    // value that is not a string at all. It must read as unavailable rather
+    // than throw, because this module renders inside a client error boundary.
+    expect(
+      formatMemberIdentityAge("2000-01-01", new Date("2026-07-01") as never)
+    ).toBe(AGE_UNAVAILABLE_LABEL);
   });
 });
 
@@ -219,10 +232,22 @@ describe("member age — date-only semantics, no timezone drift (#2568)", () => 
     expect(formatMemberIdentityAge("2007-07-01", NZ_TODAY)).toBe("19 years");
   });
 
-  it("accepts a Date as the reference date", () => {
-    expect(
-      formatMemberIdentityAge("2007-07-01", new Date("2026-07-01T00:00:00.000Z"))
-    ).toBe("19 years");
+  it("refuses an INSTANT as the reference day — the type is the guard (#3123)", () => {
+    // This used to be "accepts a Date as the reference date", and accepting one
+    // was the hazard: a `Date` in that position is an instant, and an instant
+    // has no calendar day until a zone is chosen. `CalendarDate` makes the
+    // confusion unrepresentable, so the claim is now about what the compiler
+    // refuses. The block is never CALLED — `@ts-expect-error` is checked by
+    // `tsc`, and running these lines would only prove what happens after the
+    // type system has already been defeated.
+    const refusedByTheCompiler = () => {
+      // @ts-expect-error a Date is not a CalendarDate (#3123)
+      formatMemberIdentityAge("2007-07-01", new Date("2026-07-01T00:00:00.000Z"));
+    };
+    expect(refusedByTheCompiler).toBeTypeOf("function");
+    expect(formatMemberIdentityAge("2007-07-01", day("2026-07-01"))).toBe(
+      "19 years"
+    );
   });
 
   it("exposes the parts as completed years and months", () => {
@@ -233,31 +258,34 @@ describe("member age — date-only semantics, no timezone drift (#2568)", () => 
   });
 });
 
-describe("member age — the default reference date is the NZ calendar day (#2568)", () => {
-  afterEach(() => {
-    // Hand the clock back to the suite-wide frozen instant (midday NZ, where UTC
-    // and NZ agree), so nothing after this block inherits a pinned edge case.
-    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
-  });
+describe("member age — the reference day is the CALLER's contract now (#3123)", () => {
+  /*
+    THE BLOCK THAT USED TO LIVE HERE MOVED THE SYSTEM CLOCK to prove the DEFAULT
+    reference date was the New Zealand calendar day. #3123 deleted that default,
+    so the block had no subject: the only zone this module could default to was
+    `APP_TIME_ZONE`, which is the container's claim on a server and the build's
+    in the browser, and `INV-CONFIG-002` says neither is the club's.
 
-  it("uses the NZ date when UTC is still on the previous day", () => {
-    // 2026-06-30 13:00 UTC is 2026-07-01 01:00 in New Zealand. A member born on
-    // 1 July has their birthday TODAY in club terms; deriving "today" from the
-    // UTC date would report them a year younger for the first 12 hours of it.
-    vi.setSystemTime(new Date("2026-06-30T13:00:00.000Z"));
-    expect(formatMemberIdentityAge("2007-07-01")).toBe("19 years");
-    expect(formatMemberIdentityAge("2007-07-02")).toBe("18 years");
-  });
-
-  it("uses the NZ date when UTC has already moved to the next day", () => {
-    // 2026-07-01 23:00 UTC is 2026-07-02 11:00 NZ — one NZ day past the 1st, so
-    // a 2 July birthday has landed.
-    vi.setSystemTime(new Date("2026-07-01T23:00:00.000Z"));
-    expect(formatMemberIdentityAge("2007-07-02")).toBe("19 years");
-  });
-
-  it("uses the NZ date for the years-and-months band too", () => {
-    vi.setSystemTime(new Date("2026-06-30T13:00:00.000Z"));
-    expect(formatMemberIdentityAge("2022-10-20")).toBe("3 years 8 months");
+    What replaced it is a contract on each of the five callers, proved under a
+    persisted club zone the host does not hold, in
+    `member-age-club-time-authority.test.ts`. Nothing here can test it: this
+    module no longer knows what day it is, which is the fix.
+  */
+  it("has no default, so omitting the reference day does not compile", () => {
+    // Never called: `@ts-expect-error` is a COMPILE-time assertion, and `tsc`
+    // fails the build if any of these three lines becomes legal again — which
+    // is exactly what reintroducing a default would do.
+    const refusedByTheCompiler = () => {
+      // @ts-expect-error the reference day is required (#3123)
+      formatMemberIdentityAge("2007-07-01");
+      // @ts-expect-error the reference day is required (#3123)
+      formatAgeYearsMonths("2007-07-01");
+      // @ts-expect-error the reference day is required (#3123)
+      calculateMemberAgeParts("2007-07-01");
+    };
+    expect(refusedByTheCompiler).toBeTypeOf("function");
+    expect(formatMemberIdentityAge("2007-07-01", day("2026-07-01"))).toBe(
+      "19 years"
+    );
   });
 });

@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getAuditTimelinePage } from "@/lib/audit-query";
 import { parseAdminAuditLogQuery } from "@/lib/audit-admin-query";
+import { clubTimeZone } from "@/lib/club-time/server";
 import logger from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -67,7 +68,9 @@ export async function GET(request: NextRequest) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
   const { searchParams } = new URL(request.url);
-  const parsed = parseAdminAuditLogQuery(searchParams);
+  // The date filters bound `AuditLog.createdAt`, a real instant column, so the
+  // day boundaries are the CLUB's — read once for this request (#3123).
+  const parsed = parseAdminAuditLogQuery(searchParams, await clubTimeZone());
 
   if (!parsed.success) {
     return NextResponse.json(

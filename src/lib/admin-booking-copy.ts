@@ -23,11 +23,11 @@ import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import {
   addDaysDateOnly,
   formatDateOnly,
-  getTodayDateOnly,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { prisma } from "@/lib/prisma";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -55,7 +55,7 @@ export async function copyBookingToDraft({
   if (Number.isNaN(newCheckIn.getTime())) {
     throw new ApiError("Invalid target check-in date", 400);
   }
-  if (newCheckIn < getTodayDateOnly()) {
+  if (newCheckIn < (await clubTodayDateOnlyInstant())) {
     throw new ApiError("Target check-in date cannot be in the past", 400);
   }
 
@@ -79,8 +79,26 @@ export async function copyBookingToDraft({
     throw new ApiError("Cannot copy a booking with no guests", 400);
   }
 
-  const sourceCheckIn = normalizeDateOnlyForTimeZone(source.checkIn);
-  const sourceCheckOut = normalizeDateOnlyForTimeZone(source.checkOut);
+  // ALL FOUR STORED DATES IN THIS FUNCTION DECODE, AND THEY MOVE TOGETHER
+  // (#3107). These two, and the guest bounds below, all used to project through
+  // the configured zone, and the four errors CANCELLED: `shiftDays` is measured
+  // from a projected `sourceCheckIn` to a zone-free `newCheckIn`, so it absorbed
+  // exactly the offset the projected guest bounds then carried back out. The
+  // copy therefore came out right on every zone whose UTC offset keeps one sign.
+  //
+  // So fixing only the guest bounds would have BROKEN a working path: measured
+  // on America/Denver, decoding the guest bounds while `shiftDays` still
+  // compensated moved a copied stay from 2026-08-05 to 2026-08-06, a day late.
+  // Only the whole set may move, and moving the whole set is a no-op there.
+  //
+  // What it is NOT a no-op for is a zone whose offset CHANGES SIGN across DST,
+  // where the projection is not a uniform shift and the cancellation fails.
+  // Measured on Atlantic/Azores, whose 2026 change is 29 March: a source
+  // booking of 03-28 -> 03-31 projected to 03-27 -> 03-31, so `nights` came out
+  // 4 instead of 3 and the copy gained a night it never had, while the guest
+  // stay landed a day late. Decoded, both are right.
+  const sourceCheckIn = storedDateOnly(source.checkIn);
+  const sourceCheckOut = storedDateOnly(source.checkOut);
   const nights = dayDiff(sourceCheckIn, sourceCheckOut);
   if (nights <= 0) {
     throw new ApiError("Source booking has invalid dates", 400);
@@ -140,12 +158,14 @@ export async function copyBookingToDraft({
       );
     }
 
+    // The other half of the set above: these are `@db.Date` reads too, and
+    // `shiftDays` is now the true shift rather than a compensating one.
     const stayStart = addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayStart ?? source.checkIn),
+      storedDateOnly(guest.stayStart ?? source.checkIn),
       shiftDays,
     );
     const stayEnd = addDaysDateOnly(
-      normalizeDateOnlyForTimeZone(guest.stayEnd ?? source.checkOut),
+      storedDateOnly(guest.stayEnd ?? source.checkOut),
       shiftDays,
     );
 

@@ -1,10 +1,13 @@
 "use client";
 
 import type { AgeTier, SubscriptionStatus } from "@prisma/client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { format } from "date-fns";
+import { useClubTime } from "@/components/club-time-provider";
+import { requireInstant } from "@/lib/club-time";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { seasonSelectLabel } from "@/lib/season-label";
 import { subscriptionStatusLabel } from "@/lib/status-colors";
 import {
   resetSubscriptionsDatasetSearchParams,
@@ -76,13 +79,32 @@ import {
   type ManualPaymentTarget,
 } from "./_components/manual-payment-dialog";
 
-function getSeasonYear(date: Date): number {
-  return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
-}
-
-const currentYear = getSeasonYear(new Date());
-const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
-
+// THE ACKNOWLEDGED DEFERRALS THIS FILE CARRIED ARE CLOSED — the first two by
+// CT-4 group F1 (#2870), the third after it. There were three, not one.
+//
+// 1. THE ZONE. A module-scope `getSeasonYear(new Date())` with host-local getters,
+//    evaluated once at import in a `"use client"` file. It never read the viewer's
+//    clock, as several comments on this epic claimed: `APP_TIME_ZONE` is
+//    `TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` and `next.config.ts` passes no
+//    `TZ` into the bundle, so what it actually read was the BUILD's zone — the
+//    same wrong answer for every viewer, which is harder to notice, not easier.
+//    It is now `clubSeasonYear(clubTime.zone)` inside the component, where the
+//    zone is the one the SERVER read from `ClubTimeSettings` and handed to the
+//    provider. It could not be fixed by passing a better `Date` in: the helper
+//    read the argument's host-local components, and measured across a host x club
+//    matrix that made a behind-UTC deployment WORSE.
+//
+// 2. THE SEASON START, which this was NOT a copy of. The hard-coded April was a
+//    copy of the shipped DEFAULT rather than of the rule — the shared rule derives
+//    the start month from the CONFIGURABLE financial year-end.
+//
+// 3. THE SELECT'S LABEL, the deferral this comment used to record. Both halves
+//    were literal text; `season-label.ts` derives both and says why.
+//
+// NEITHER 2 NOR 3 MOVES A PIXEL YET, for ONE reason rather than two: the year-end
+// month reaches no client, so `currentYear` below and the label both read the
+// March default. `INV-OPS-013` prescribes the remedy rather than forbidding it,
+// and plumbing the LABEL alone would name one season while selecting another.
 
 interface Subscription {
   id: string;
@@ -136,11 +158,16 @@ function parsePageParam(value: string | null) {
   return Number.isInteger(page) && page > 0 ? page : 1;
 }
 
-function parseSeasonYearParam(value: string | null) {
+/**
+ * `fallbackYear` is passed in rather than read from a module constant (CT-4,
+ * #2870): the club's current season now comes from the zone the provider carries,
+ * which only exists inside the component tree.
+ */
+function parseSeasonYearParam(value: string | null, fallbackYear: number) {
   const year = Number(value);
   return Number.isInteger(year) && year >= 2020 && year <= 2040
     ? year
-    : currentYear;
+    : fallbackYear;
 }
 
 function getSortBy(value: string | null): SubscriptionSortBy {
@@ -196,6 +223,10 @@ function SummaryCard({
 }
 
 export default function SubscriptionsPage() {
+  // `paidAt` is a real INSTANT. date-fns `format` read it with HOST-LOCAL
+  // getters, so a treasurer abroad saw their own day rather than the club's
+  // (CT-4, #2870; INV-CONFIG-002). The "16 Apr 2026" shape is unchanged.
+  const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
@@ -209,7 +240,16 @@ export default function SubscriptionsPage() {
     xeroConnected === true,
   );
   const { confirm, confirmDialog } = useConfirm();
-  const [seasonYear, setSeasonYear] = useState(() => parseSeasonYearParam(searchParams.get("seasonYear")));
+  // The CLUB's current season and the five-year window around it. See the note at
+  // the top of this file: the zone is the persisted one, arriving as data.
+  const currentYear = clubSeasonYear(clubTime.zone);
+  const yearOptions = useMemo(
+    () => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i),
+    [currentYear],
+  );
+  const [seasonYear, setSeasonYear] = useState(() =>
+    parseSeasonYearParam(searchParams.get("seasonYear"), currentYear),
+  );
   const [status, setStatus] = useState(searchParams.get("status") || "all");
   const [ageTier, setAgeTier] = useState<AgeTier | "all">(
     (searchParams.get("ageTier") as AgeTier | "all" | null) || "all"
@@ -530,7 +570,7 @@ export default function SubscriptionsPage() {
                 <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>{y} - {y + 1} (Apr-Mar)</SelectItem>
+                    <SelectItem key={y} value={String(y)}>{seasonSelectLabel(y)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -744,7 +784,7 @@ export default function SubscriptionsPage() {
                     </a>
                   ) : "—"}
                 </TableCell>
-                <TableCell className="text-sm">{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
+                <TableCell className="text-sm">{sub.paidAt ? clubTime.instantDate(requireInstant(sub.paidAt)) : "—"}</TableCell>
                 {canEditFinance ? (
                   <TableCell>
                     {sub.id.startsWith("not-required:") ? (

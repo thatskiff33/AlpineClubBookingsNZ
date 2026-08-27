@@ -15,7 +15,7 @@ import {
   layout,
   paragraph,
 } from "./layout";
-import { formatNZDate } from "@/lib/nzst-date";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 /**
  * "A family member added you to a booking" (#2284, S2).
@@ -43,7 +43,7 @@ export function familyMemberBookingAddedTemplate(data: {
       { label: "Lodge", value: escapeHtml(data.lodgeName) },
       {
         label: "Stay",
-        value: `${escapeHtml(formatNZDate(data.checkIn))} - ${escapeHtml(formatNZDate(data.checkOut))}`,
+        value: `${escapeHtml(emailCalendarDay(data.checkIn))} - ${escapeHtml(emailCalendarDay(data.checkOut))}`,
       },
     ])}
     ${paragraph(escapeHtml(data.removalNote))}

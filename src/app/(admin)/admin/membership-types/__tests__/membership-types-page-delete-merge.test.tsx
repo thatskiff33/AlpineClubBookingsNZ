@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
+// The shared renderer, not Testing Library directly: this page derives the club's
+// current season from `useClubTime()` since CT-4 group F1 (#2870), and that hook
+// throws deliberately when no provider is mounted.
 import {
   fireEvent,
   render,
   screen,
   waitFor,
   within,
-} from "@testing-library/react";
+} from "@/lib/__tests__/support/club-time-render";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 

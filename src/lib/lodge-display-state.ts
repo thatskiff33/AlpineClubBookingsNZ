@@ -14,8 +14,8 @@ import {
   addDaysDateOnly,
   eachDateOnlyInRange,
   formatDateOnly,
-  getTodayDateOnly,
 } from "./date-only";
+import { clubTodayDateOnlyInstant } from "./club-time/server";
 import { getCachedClubIdentity } from "./public-layout-config";
 import {
   CLUB_THEME_ID,
@@ -360,7 +360,23 @@ export async function buildDisplayState(
   // `windowStart` is the admin-preview simulated date (issue #60); it only
   // reaches here from the preview branch of the state route — device fetches
   // never pass it, so a real screen always starts today.
-  const startDate = options.windowStart ?? getTodayDateOnly();
+  //
+  // WHOSE "TODAY", AND A DECLARED `src/lib` FIX INSIDE CT-4 GROUP E (#2870).
+  // `src/lib/**` is group F by the epic's published partition, so group E does
+  // not normally touch it. It has to here: group E migrated the wall's HEADER to
+  // read the live day through `club.calendarDateOf(now)` — the club's persisted
+  // zone — while this line, which keys the whole board (occupancy, arrivals,
+  // roster, chores, custodian in residence), still took the CONTAINER's day from
+  // `getTodayDateOnly()`. For a club in `Pacific/Auckland` on a `TZ=UTC` host
+  // that is a twelve-hour window every day in which the header reads
+  // "Fri, 17 Apr" above a board still showing 16 April's guests and arrivals.
+  // One unattended screen, contradicting itself, with nobody to reload it.
+  //
+  // The club's today is a CALENDAR DATE; `clubTodayDateOnlyInstant` re-encodes it
+  // as the UTC-midnight `Date` every query below and every `@db.Date` bound wants,
+  // which is exactly the shape `getTodayDateOnly()` returned. CT-6 (#2991) still
+  // owns carrying `CalendarDate` through this function rather than re-encoding here.
+  const startDate = options.windowStart ?? (await clubTodayDateOnlyInstant());
   const endExclusive = addDaysDateOnly(startDate, days);
   const endInclusive = addDaysDateOnly(endExclusive, -1);
   const windowDates = eachDateOnlyInRange(startDate, endExclusive).slice(0, days);

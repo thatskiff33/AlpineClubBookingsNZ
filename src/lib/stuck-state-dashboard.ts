@@ -1,10 +1,8 @@
 import type { FeatureFlags } from "@/config/schema";
 import { CLUB_HUT_LEADER_LABEL } from "@/config/club-identity";
-import {
-  addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
-} from "@/lib/date-only";
+import { formatDateOnly } from "@/lib/date-only";
+import { addCalendarDays } from "@/lib/club-time";
+import { clubTime } from "@/lib/club-time/server";
 import { groupSettlementReapDeadline } from "@/lib/cron-group-settlement-reaper";
 import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escalation";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
@@ -682,11 +680,17 @@ async function addBedAllocationItems(
   items: StuckStateItem[],
   deps: StuckStateDashboardDependencies,
 ) {
-  const today = getTodayDateOnly();
-  const range = parseBedAllocationDateRange({
-    from: formatDateOnly(today),
-    to: formatDateOnly(addDaysDateOnly(today, BED_ALLOCATION_LOOKAHEAD_DAYS)),
-  });
+  // ONE club day for the whole lookahead window, and no `@db.Date` encoding on
+  // the way through: every value here is a calendar day, which takes no
+  // timezone at all (#3123).
+  const clubToday = (await clubTime()).today();
+  const range = parseBedAllocationDateRange(
+    {
+      from: clubToday,
+      to: addCalendarDays(clubToday, BED_ALLOCATION_LOOKAHEAD_DAYS),
+    },
+    clubToday,
+  );
   const dashboard = await deps.getBedAllocationDashboard({ range });
 
   addItem(items, {

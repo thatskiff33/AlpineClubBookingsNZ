@@ -41,9 +41,14 @@ prisma/schema.prisma text eol=lf
 # exactly the churn that matters. Every tracked source file on `main` is
 # already LF, so pinning the set is zero-churn today and ends the class.
 *.ts text eol=lf
-# The main-branch blob for this file contains a historical literal NUL in the
-# resolution-key separator. Force textual review while this change normalises
-# it to the equivalent escaped source form.
+# This file builds a composite resolution key with a NUL between the entity and
+# the key, written as the `\u0000` escape. Its blob carries no literal
+# control byte, and did not on `main` either: the comment that used to sit here
+# claimed a `historical literal NUL`, and that was measured wrong (#3072).
+# The `diff` attribute stays, and earns its line. If a literal NUL were ever
+# reintroduced here, `diff` keeps the file inside Git's text scan, so
+# `docs:indexcheck` reports the byte with its line and column instead of
+# reporting that it has lost the whole file.
 src/lib/config-transfer/import-types.ts text eol=lf diff
 *.tsx text eol=lf
 *.js text eol=lf
@@ -112,7 +117,27 @@ src/lib/config-transfer/import-types.ts text eol=lf diff
 # `core.autocrlf` and git warned on every Windows touch (flagged in #2431's fix
 # round). Same fix and same zero churn as the migration SQL and shell scripts —
 # the stored blob is already LF; this only stops Windows re-materialising CRLF.
-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv text eol=lf
+#
+# `merge=union` was added by #3111, which audited the class of artifacts every
+# lane appends to. This ledger is a member nobody had registered: one row per
+# migration, hand-appended by every schema lane, measured at 86-90% pure-append
+# across 37-40 merges, and `blue-green-ledger-lint.test.ts` already calls it
+# "append-only, hand-edited TSV" in its own docblock. Two lanes each adding a
+# migration conflicted on the last line for no reason: neither row has anything
+# to say about the other, and every one of those conflicts was resolved by hand
+# as "keep both", which is exactly what union does.
+#
+# Union is safe HERE, and the reason is worth stating because it is not safe in
+# general. `AGENTS.md` makes the fragment directory the default remedy and union
+# the exception, because union-merging a NARRATIVE document interleaves its
+# sections in arbitrary order and can duplicate headings, silently. This file is
+# the opposite shape: a flat list of unrelated rows, parsed row-by-row and
+# order-independently by `scripts/check-migration-safety-coverage.sh`. And the
+# one bad outcome union could produce - the same row arriving twice - is already
+# a loud failure: the validator rejects a `duplicate safety ledger row`, pinned
+# by `blue-green-ledger-lint.test.ts`. Loud beats silent, which is the whole
+# reason the kernel ledger did NOT get this treatment (#3111).
+docs/BLUE_GREEN_MIGRATION_SAFETY.tsv text eol=lf merge=union
 
 # The rendered-email pin file (#2689) is the sixth instance of the same class.
 # Its parser strips a stray CR defensively, so a CRLF checkout no longer makes
@@ -131,3 +156,22 @@ src/lib/__tests__/support/email-render-pins.txt text eol=lf
 # Unreleased under a version header) union can concatenate two restructurings
 # silently — eyeball the CHANGELOG on release PRs.
 CHANGELOG.md merge=union
+
+# Binary assets, declared rather than left to Git's content sniffing. `binary`
+# is Git's standard macro for `-diff -merge -text`, and all three are already
+# how Git treats these files by auto-detection, so this changes nothing about
+# checkout, diff or merge (measured: zero working-tree churn across all 113).
+#
+# What it changes is that `npm run docs:indexcheck` can fail CLOSED. Its
+# coverage check asks whether a file that dropped out of Git's text scan is a
+# declared binary asset; anything else is a text file with a NUL hiding it from
+# every check in that command. The first version keyed on the `text` pins above
+# instead, assuming every tracked text class was pinned. It was not: that made
+# the check vacuous for 43 tracked text files across 18 unpinned classes,
+# `knip.jsonc`, `Dockerfile`, `Caddyfile`, the `.awk` statement splitter and the
+# `.html` mockups among them. A new binary format now reds that check until
+# somebody adds it here, which is the direction an omission should point (#3072).
+*.png binary
+*.ico binary
+*.gif binary
+*.zip binary

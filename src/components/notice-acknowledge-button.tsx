@@ -4,13 +4,27 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * Member-facing "Acknowledge" control, shown only for notices that require
  * acknowledgement. Posts to the acknowledge route (memberId comes from the
  * session server-side) and reflects the acknowledged state.
  */
+/**
+ * When the member acknowledged the notice.
+ *
+ * A real INSTANT, projected through the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. `instantDate` keeps the
+ * medium "16 Apr 2026" shape this line has always shown; only the zone's
+ * AUTHORITY moved. The zone reaches this browser as data through
+ * `ClubTimeProvider` - never from the viewer's own clock.
+ */
+function useAcknowledgedAtFormatter() {
+  const clubTime = useClubTime();
+  return (value: string) => clubTime.instantDate(new Date(value));
+}
+
 export function NoticeAcknowledgeButton({
   noticeId,
   acknowledged: initialAcknowledged,
@@ -20,6 +34,7 @@ export function NoticeAcknowledgeButton({
   acknowledged: boolean;
   acknowledgedAt: string | null;
 }) {
+  const formatAcknowledgedAt = useAcknowledgedAtFormatter();
   const router = useRouter();
   const [acknowledged, setAcknowledged] = useState(initialAcknowledged);
   const [submitting, setSubmitting] = useState(false);
@@ -31,7 +46,7 @@ export function NoticeAcknowledgeButton({
         <Check className="h-4 w-4" />
         Acknowledged
         {acknowledgedAt
-          ? ` on ${formatNZDate(new Date(acknowledgedAt))}`
+          ? ` on ${formatAcknowledgedAt(acknowledgedAt)}`
           : ""}
       </p>
     );

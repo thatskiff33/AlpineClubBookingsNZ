@@ -1,7 +1,7 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
 import { isQuotePricedBooking } from "@/lib/booking-modify-validation";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import { getTodayDateOnly } from "@/lib/date-only";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import type { MemberGuestConsentBlockedReason } from "@/lib/member-guest-consent-service";
 import {
   predictConsentDeclineRefusal,
@@ -230,7 +230,7 @@ export function classifyLiveConsentExceptionReason(params: {
 /**
  * `today` is read ONCE, here, and threaded into every row's derivation — never
  * left to a default deep inside the prediction. One list must be classified
- * against one date: a sweep that straddled midnight NZ time would otherwise
+ * against one date: a sweep that straddled the club's midnight would otherwise
  * report two rows on the same booking under two different rules, and a test
  * that pins a check-in date would pass or fail depending on the day it ran.
  */
@@ -238,7 +238,7 @@ export async function listMemberGuestConsentExceptions(
   db: typeof prisma = prisma,
   options: { today?: Date } = {},
 ): Promise<MemberGuestConsentExceptionRow[]> {
-  const today = options.today ?? getTodayDateOnly();
+  const today = options.today ?? (await clubTodayDateOnlyInstant());
   const rows = await db.bookingGuest.findMany({
     where: ATTENTION_GUEST_WHERE,
     orderBy: { booking: { checkIn: "asc" } },

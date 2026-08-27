@@ -18,7 +18,11 @@ import {
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 
 type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
@@ -104,13 +108,26 @@ interface BookingChangeRequestData {
   };
 }
 
+/**
+ * A lodge night as the calendar day it IS - no timezone, because a calendar day
+ * has none (CT-4, #2870; INV-DATE-010). A `@db.Date` crosses the wire as UTC
+ * midnight and the kernel's calendar-date formatter pins UTC over that encoding,
+ * so the projection is the identity. What this replaces read the day through a
+ * ZONE: the identity east of Greenwich, the PREVIOUS DAY west of it.
+ */
 function formatDate(value: string) {
-  return formatNZDate(new Date(value));
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return null;
-  return formatNZDateTime(new Date(value));
+/**
+ * A real INSTANT, in the club's PERSISTED timezone (CT-4, #2870;
+ * INV-CONFIG-002) rather than the container's `TZ`. A hook because that setting
+ * reaches the browser as data through `ClubTimeProvider`.
+ */
+function useInstantFormatter() {
+  const clubTime = useClubTime();
+  return (value: string | null) =>
+    value ? clubTime.instantDateTime(new Date(value)) : null;
 }
 
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {
@@ -181,6 +198,7 @@ export function BookingChangeRequestsPanel({
   showHeading = true,
   canEdit = true,
 }: BookingChangeRequestsPanelProps) {
+  const formatDateTime = useInstantFormatter();
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get("status");

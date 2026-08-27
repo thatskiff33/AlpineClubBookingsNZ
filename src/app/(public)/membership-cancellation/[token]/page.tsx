@@ -6,13 +6,9 @@ import { auth } from "@/lib/auth";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { getMembershipCancellationConfirmationDetails } from "@/lib/membership-cancellation-requests";
 import { participantStatusLabel } from "@/lib/membership-cancellation-status-labels";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 
 const statusLabel = participantStatusLabel;
-
-function formatDate(value: string) {
-  return formatNZDate(new Date(value));
-}
 
 export default async function MembershipCancellationConfirmationPage({
   params,
@@ -30,6 +26,11 @@ export default async function MembershipCancellationConfirmationPage({
     token,
     session.user.id,
   );
+
+  // `submittedAt` is a real INSTANT (a `DateTime`, serialised to ISO), so the
+  // civil day it reads as comes from the club's PERSISTED timezone rather than
+  // the container's (CT-4, #2870; INV-CONFIG-002).
+  const club = await clubTime();
 
   return (
     <Card className="w-full max-w-2xl">
@@ -53,7 +54,7 @@ export default async function MembershipCancellationConfirmationPage({
                   Submitted
                 </p>
                 <p className="mt-1 text-sm">
-                  {formatDate(details.request.submittedAt)}
+                  {club.instantDate(new Date(details.request.submittedAt))}
                 </p>
               </div>
             </div>

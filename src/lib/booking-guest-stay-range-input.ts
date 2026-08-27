@@ -2,9 +2,9 @@ import {
   addDaysDateOnly,
   formatDateOnly,
   isDateOnlyString,
-  normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 export type BookingGuestStayRangeInput = {
   stayStart?: Date | string | null;
@@ -40,7 +40,11 @@ function normalizeInputDate(value: Date | string, fieldName: string): Date {
       throw new BookingGuestStayRangeValidationError(`${fieldName} must be a valid date.`);
     }
 
-    return normalizeDateOnlyForTimeZone(value);
+    // A caller handing in a `Date` is handing in a stored calendar day, so read
+    // it as one. The only live producer of this branch is a stored delta replay;
+    // every member-supplied field on the input types is a string and takes the
+    // `parseDateOnly` branch below.
+    return storedDateOnly(value);
   }
 
   const trimmed = value.trim();
@@ -71,8 +75,27 @@ export function normalizeGuestStayRange(
   booking: { checkIn: Date; checkOut: Date },
   index: number
 ): NormalizedBookingGuestStayRange {
-  const checkIn = normalizeDateOnlyForTimeZone(booking.checkIn);
-  const checkOut = normalizeDateOnlyForTimeZone(booking.checkOut);
+  // CT-4 (#2870), group F4b: THE STORED CALENDAR DAYS, read as themselves.
+  //
+  // These two lines were `normalizeDateOnlyForTimeZone`, which projected the
+  // envelope through `APP_TIME_ZONE` — the identity for a club ahead of
+  // Greenwich, the PREVIOUS DAY for one behind it. They default a guest who
+  // supplied no dates of their own, which is what the member form sends for
+  // every guest unless multi-range mode is open, so on a Denver club that guest
+  // was priced, capacity-checked, frozen for an officer and executed a night
+  // early. `checkIn`/`checkOut` are `@db.Date` lodge-night identities and take
+  // no zone at all (`INV-DATE-019`, `INV-DATE-026`).
+  //
+  // BOTH callers of this default were affected, and the ledger recorded only
+  // one. `resolveModificationStayRanges` normalises every ADDED guest here
+  // against the final envelope, including a range-less one — while its own first
+  // pass defaults that same guest to the unprojected envelope. So one call
+  // computed the envelope in one frame and the guest's range in another, leaving
+  // the guest a night outside the booking they were added to. Pinned on both the
+  // environment and the host axis in
+  // `__tests__/booking-range-less-guest-frame.test.ts`.
+  const checkIn = storedDateOnly(booking.checkIn);
+  const checkOut = storedDateOnly(booking.checkOut);
   const label = `Guest ${index + 1}`;
 
   // Explicit night set (multi date range mode): normalize, dedupe and sort.

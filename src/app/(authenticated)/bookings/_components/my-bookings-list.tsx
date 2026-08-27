@@ -16,7 +16,11 @@ import {
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
-import { formatNZWeekdayDate } from "@/lib/nzst-date";
+import {
+  calendarDateOfSerialisedDbDate,
+  compareCalendarDates,
+  formatClubWeekdayDate,
+} from "@/lib/club-time";
 
 export interface MyBookingItem {
   id: string;
@@ -34,10 +38,15 @@ export interface MyBookingItem {
 
 type SortDir = "desc" | "asc";
 
-// Wrapper kept only for the ISO-string -> Date parse; the format itself is the
-// shared weekday-bearing club-time helper.
+// `checkIn`/`checkOut` arrive as SERIALISED `@db.Date` lodge nights, so they are
+// CALENDAR DATES and take no zone at all (CT-4, #2870): the kernel reads the day
+// out of the serialised value's first ten characters and formats it pinned to
+// `UTC`, which is the identity for every club. `formatNZWeekdayDate` projected
+// them through `APP_TIME_ZONE`, and for a club west of Greenwich that names the
+// night before the stay — including the weekday, which is what this shape exists
+// to show.
 function formatDate(value: string) {
-  return formatNZWeekdayDate(new Date(value));
+  return formatClubWeekdayDate(calendarDateOfSerialisedDbDate(value));
 }
 
 // #1975: the pre-#1975 inline link labels. When a provisional child is nested
@@ -119,8 +128,14 @@ export function MyBookingsList({ bookings }: { bookings: MyBookingItem[] }) {
     // Sort by start date with a stable id tiebreaker so equal dates keep a
     // deterministic order (issue #771).
     return [...filtered].sort((a, b) => {
+      // Calendar-day ordering, compared as calendar days rather than as
+      // instants: the kernel's comparator reads the branded `yyyy-MM-dd`, so no
+      // clock, offset or DST transition is anywhere in the sort.
       const byDate =
-        (new Date(a.checkIn).getTime() - new Date(b.checkIn).getTime()) * direction;
+        compareCalendarDates(
+          calendarDateOfSerialisedDbDate(a.checkIn),
+          calendarDateOfSerialisedDbDate(b.checkIn),
+        ) * direction;
       return byDate !== 0 ? byDate : a.id.localeCompare(b.id);
     });
   }, [bookings, statusFilter, sortDir]);

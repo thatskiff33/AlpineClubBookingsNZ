@@ -35,6 +35,14 @@ import {
   applyPromoCodeChanges,
   resolvePromoBeneficiarySelection,
 } from "@/lib/booking-modify-plan";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 describe("resolvePromoBeneficiarySelection (#2266 MED-4)", () => {
   const guestNightRates = [
@@ -145,6 +153,7 @@ describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED
         { bookingGuestId: "g1", memberId: "m1", isMember: true, perNightRates: [10_000] },
         { bookingGuestId: "g2", memberId: null, isMember: false, perNightRates: [10_000] },
       ],
+      todayAtClub: CLUB_TODAY_FOR_TEST,
     };
   }
 
@@ -152,7 +161,8 @@ describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED
     await expect(
       applyPromoCodeChanges(
         tx as never,
-        baseArgs({ promoCode: "MATES50", promoGuestIds: ["g-gone"] }),
+        baseArgs({
+promoCode: "MATES50", promoGuestIds: ["g-gone"] }),
       ),
     ).rejects.toThrow(/no longer on this booking/);
 
@@ -174,7 +184,8 @@ describe("applyPromoCodeChanges — beneficiary binding at apply time (#2266 MED
 
     const result = await applyPromoCodeChanges(
       tx as never,
-      baseArgs({ promoCode: "MATES50", promoGuestIds: ["g2"] }),
+      baseArgs({
+promoCode: "MATES50", promoGuestIds: ["g2"] }),
     );
 
     expect(result.promoChanged).toBe(true);

@@ -8,6 +8,8 @@ import {
 } from "@/lib/policies/booking-route-decisions";
 import { priceBookingGuestsWithMembershipTypePolicy } from "@/lib/membership-type-policy";
 import { lodgeNullTolerantScope } from "@/lib/lodges";
+import { clubToday } from "@/lib/club-time";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { prisma } from "@/lib/prisma";
 import {
   acquireLodgeCapacityLock,
@@ -42,7 +44,7 @@ import {
   evaluateNonMemberPricingRequirements,
   toSubscriptionLockoutParticipants,
 } from "@/lib/subscription-lockout-enforcement";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import {
   reconcileBedAllocationsForBookingWithLodgeLockHeld,
 } from "@/lib/bed-allocation-lifecycle";
@@ -427,7 +429,7 @@ export async function confirmCrossLodgeWaitlistOffer(
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(prisma, {
       mode: await resolveSubscriptionLockoutMode(),
       lodgeId: offeredLodgeId,
-      seasonYear: getSeasonYear(preflight.checkIn),
+      seasonYear: seasonYearOfStoredDate(preflight.checkIn),
       checkIn: preflight.checkIn,
       checkOut: preflight.checkOut,
       // Owner decision, 3 Aug 2026: the requirement follows the unfinancial
@@ -700,6 +702,13 @@ export async function confirmCrossLodgeWaitlistOffer(
   let outcome;
   try {
     outcome = await createConfirmedBooking({
+      // #3123 — the CLUB's day (`INV-CONFIG-002`). The three `prisma.$transaction`
+      // spans this confirm runs have all closed by here, so this is a position
+      // outside every lock; `createConfirmedBooking` is transaction-aware and
+      // cannot resolve one for itself (`INV-LOCK-004`). The runtime reader
+      // because `cron-waitlist.ts` reaches this module from
+      // `src/instrumentation.node.ts`, where `server-only` throws at import.
+      todayAtClub: clubToday(await readClubTimeZoneOutsideRequest()),
       effectiveMemberId: memberId,
       isOnBehalf: false,
       sessionUserId: memberId,

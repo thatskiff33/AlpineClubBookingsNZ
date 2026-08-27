@@ -16,7 +16,7 @@ import {
   paragraph,
   supportContactSentence,
 } from "./layout";
-import { formatNZDate } from "@/lib/nzst-date";
+import { emailCalendarDay } from "@/lib/email-templates-club-time";
 
 /**
  * #2321 — the refund-appeal outcome emails, ONE FUNCTION PER OUTCOME.
@@ -56,7 +56,7 @@ export function refundRequestApprovedTemplate(data: {
     firstName: data.firstName,
     headingText: "Refund Appeal Approved",
     outcomeSentence:
-      "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0) + " will be processed to your original payment method.",
+      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0) + " will be processed to your original payment method.",
     outcomeTone: "success",
     adminNotes: data.adminNotes,
   });
@@ -74,7 +74,7 @@ export function refundRequestDeclinedTemplate(data: {
     firstName: data.firstName,
     headingText: "Refund Appeal Update",
     outcomeSentence:
-      "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") was not approved at this time.",
+      "Your refund appeal for your booking (" + emailCalendarDay(data.checkIn) + " - " + emailCalendarDay(data.checkOut) + ") was not approved at this time.",
     outcomeTone: "warning",
     adminNotes: data.adminNotes,
   });

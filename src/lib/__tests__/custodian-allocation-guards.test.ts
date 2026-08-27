@@ -2,6 +2,14 @@ import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDateOnly } from "@/lib/date-only";
 
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 /**
  * Custodian occupancy — allocation chokepoints (#2286).
  *
@@ -215,7 +223,12 @@ describe("chokepoint 5 — bed and room admin guards", () => {
     ]);
 
     await expect(
-      updateBedAllocationBed({ id: "bed-1", active: false, db: buildDb() }),
+      updateBedAllocationBed({
+        id: "bed-1",
+        active: false,
+        db: buildDb(),
+        today: CLUB_TODAY_DATE_ONLY,
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringContaining("held by a hut-leader assignment"),
@@ -267,7 +280,12 @@ describe("chokepoint 5 — bed and room admin guards", () => {
     ]);
 
     await expect(
-      updateBedAllocationRoom({ id: "room-1", active: false, db: buildDb() }),
+      updateBedAllocationRoom({
+        id: "room-1",
+        active: false,
+        db: buildDb(),
+        today: CLUB_TODAY_DATE_ONLY,
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringContaining("held by a hut-leader assignment"),
@@ -276,7 +294,12 @@ describe("chokepoint 5 — bed and room admin guards", () => {
 
   it("lets an ordinary room deactivate through when no bed is held", async () => {
     await expect(
-      updateBedAllocationRoom({ id: "room-1", active: false, db: buildDb() }),
+      updateBedAllocationRoom({
+        id: "room-1",
+        active: false,
+        db: buildDb(),
+        today: CLUB_TODAY_DATE_ONLY,
+      }),
     ).resolves.toMatchObject({ id: "room-1" });
   });
 

@@ -8,8 +8,15 @@ import {
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
-  FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron-config";
+
+/**
+ * CT-5 (#2869): every definition names the CLUB's persisted timezone, which the
+ * caller resolves and passes in. A zone that is deliberately NOT this machine's
+ * would be a stronger probe still; `Pacific/Auckland` is used because the
+ * assertions below quote the strings an operator reads.
+ */
+const CLUB_TIME_ZONE = "Pacific/Auckland";
 
 function cronDefinition(
   overrides: Partial<AdminCronJobDefinition> & { jobName: string }
@@ -66,6 +73,7 @@ describe("admin cron health", () => {
     ];
     const report = buildCronHealthReport({
       now: new Date("2026-05-15T00:00:00.000Z"),
+      clubTimeZone: CLUB_TIME_ZONE,
       definitions,
       runs: [
         cronRun({
@@ -118,8 +126,65 @@ describe("admin cron health", () => {
     );
   });
 
-  it("documents the finance daily sync schedule as a Pacific/Auckland local-time job", () => {
-    const definitions = getAdminCronJobDefinitions({
+  describe("the running zone versus the configured one (CT-5, #2869)", () => {
+    /*
+      `node-cron` reads a job's zone when the job is REGISTERED and never
+      re-reads it, so between an admin changing the club timezone and the next
+      restart the setting and the running schedule disagree. The health page was
+      stating the SETTING across about forty "expected local time" sentences for
+      jobs still firing on the old zone — an hour no job would fire at. The
+      report now carries both and says which.
+    */
+    const definitions = [cronDefinition({ jobName: "current" })];
+
+    it("states the configured zone, and no restart, when nothing can report a running one", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.configuredTimezone).toBe("Pacific/Chatham");
+      expect(report.runningTimezone).toBeNull();
+      expect(report.defaultTimezone).toBe("Pacific/Chatham");
+      // Unknown is NOT "they agree": claiming a restart is outstanding when
+      // nothing knows would put a permanent warning on every web slot.
+      expect(report.timezoneRestartRequired).toBe(false);
+    });
+
+    it("prefers the running zone and flags the outstanding restart", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        runningTimeZone: "America/Denver",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.configuredTimezone).toBe("Pacific/Chatham");
+      expect(report.runningTimezone).toBe("America/Denver");
+      // The times on the page describe when jobs fire TODAY.
+      expect(report.defaultTimezone).toBe("America/Denver");
+      expect(report.timezoneRestartRequired).toBe(true);
+    });
+
+    it("flags nothing once the two agree", () => {
+      const report = buildCronHealthReport({
+        now: new Date("2026-05-15T00:00:00.000Z"),
+        clubTimeZone: "Pacific/Chatham",
+        runningTimeZone: "Pacific/Chatham",
+        definitions,
+        runs: [],
+      });
+
+      expect(report.timezoneRestartRequired).toBe(false);
+      expect(report.defaultTimezone).toBe("Pacific/Chatham");
+    });
+  });
+
+  it("documents the finance daily sync schedule in the club's own timezone", () => {
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const finance = definitions.find(
@@ -128,15 +193,15 @@ describe("admin cron health", () => {
 
     expect(finance).toMatchObject({
       schedule: FINANCE_SYNC_CRON_SCHEDULE,
-      timezone: FINANCE_SYNC_CRON_TIMEZONE,
-      expectedLocalTime: "10:15 NZT/NZDT daily",
+      timezone: CLUB_TIME_ZONE,
+      expectedLocalTime: `10:15 daily in ${CLUB_TIME_ZONE}`,
       staleAfterMinutes: 2160,
     });
-    expect(finance?.note).toContain("10:15 local New Zealand time");
+    expect(finance?.note).toContain(`10:15 in the club's own time (${CLUB_TIME_ZONE})`);
   });
 
   it("tracks draft cleanup as a daily CronJobRun-backed job", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const draftCleanup = definitions.find(
@@ -151,7 +216,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks general cron cycle jobs with matching freshness thresholds", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
 
@@ -179,7 +244,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks payment recovery every fifteen minutes with a matching freshness threshold", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
     const paymentRecovery = definitions.find(
@@ -194,7 +259,7 @@ describe("admin cron health", () => {
   });
 
   it("tracks Xero outbox and stale link cleanup as CronJobRun-backed jobs", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
     } as unknown as NodeJS.ProcessEnv);
 
@@ -215,7 +280,7 @@ describe("admin cron health", () => {
   });
 
   it("describes the daily Xero membership refresh as an optional disabled safety net", () => {
-    const definitions = getAdminCronJobDefinitions({
+    const definitions = getAdminCronJobDefinitions(CLUB_TIME_ZONE, {
       CRON_ENABLED: "true",
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false",
     } as unknown as NodeJS.ProcessEnv);

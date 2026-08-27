@@ -4,9 +4,17 @@
  * Recharts trees for the admin reports page, extracted verbatim (#1147) so the
  * ~139kB gz recharts chunk loads on demand via next/dynamic instead of inside
  * the route's First Load JS. Rendering, formatters, and colours are unchanged.
+ *
+ * CT-4 (#2870) changed one thing here and nothing visible: every axis and
+ * tooltip label below is a CALENDAR DAY — a bucket key, not a moment — so it
+ * takes no timezone. The hand-rolled `new Date(key + "T00:00:00")` local-midnight
+ * parse is now `calendarDayAsLocalDate`, which validates the key and cannot
+ * throw a `RangeError` into a chart render. See that module for why host-local
+ * is the right encoding to hand a date-fns formatter.
  */
 
 import { format } from "date-fns";
+import { calendarDayAsLocalDate } from "./host-local-day";
 import {
   BarChart,
   Bar,
@@ -31,6 +39,16 @@ import { bookingStatusLabel } from "@/lib/status-colors";
 const PIE_COLORS = ["#3b82f6", "#ef4444"];
 const STATUS_COLORS = ["#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#f97316"];
 
+/**
+ * A bucket key (`yyyy-MM-dd`) through one of the chart's date-fns patterns.
+ * An unparseable key renders as itself rather than throwing into the chart.
+ */
+function formatDayKey(key: unknown, pattern: string): string {
+  if (typeof key !== "string") return String(key);
+  const day = calendarDayAsLocalDate(key);
+  return day === null ? key : format(day, pattern);
+}
+
 export function OccupancyAreaChart({
   data,
 }: {
@@ -43,7 +61,7 @@ export function OccupancyAreaChart({
         <XAxis
           dataKey="date"
           tick={{ fontSize: 12 }}
-          tickFormatter={(date) => format(new Date(date + "T00:00:00"), "MMM d")}
+          tickFormatter={(date) => formatDayKey(date, "MMM d")}
         />
         <YAxis
           domain={[0, 100]}
@@ -52,9 +70,7 @@ export function OccupancyAreaChart({
         />
         <Tooltip
           formatter={(value) => [`${value}%`, "Occupancy"]}
-          labelFormatter={(date) =>
-            format(new Date(date + "T00:00:00"), "EEE, MMM d yyyy")
-          }
+          labelFormatter={(date) => formatDayKey(date, "EEE, MMM d yyyy")}
         />
         <Area
           type="monotone"
@@ -124,15 +140,11 @@ export function TrendsLineChart({
         <XAxis
           dataKey="week"
           tick={{ fontSize: 12 }}
-          tickFormatter={(week) =>
-            format(new Date(week + "T00:00:00"), "MMM d")
-          }
+          tickFormatter={(week) => formatDayKey(week, "MMM d")}
         />
         <YAxis tick={{ fontSize: 12 }} />
         <Tooltip
-          labelFormatter={(week) =>
-            `Week of ${format(new Date(week + "T00:00:00"), "MMM d, yyyy")}`
-          }
+          labelFormatter={(week) => `Week of ${formatDayKey(week, "MMM d, yyyy")}`}
         />
         <Legend />
         <Line

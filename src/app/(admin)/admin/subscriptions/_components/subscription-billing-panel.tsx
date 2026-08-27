@@ -15,7 +15,7 @@ import { useConfirm } from "@/components/confirm-dialog";
 import { AdminViewOnlySectionBanner, ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 
 type BillingData = {
   preview: {
@@ -97,7 +97,15 @@ type BillingData = {
 export function SubscriptionBillingPanel({ seasonYear }: { seasonYear: number }) {
   const { confirm, confirmDialog } = useConfirm();
   const canEditFinance = useAdminAreaEditAccess("finance");
-  const [decisionDate, setDecisionDate] = useState(() => todayDateOnlyForTimeZone());
+  // The default decision date is the CLUB's today, not the build's
+  // `NEXT_PUBLIC_TZ` — the server interprets it in club time, so seeding it from
+  // a constant fixed at build time hides or invents a day whenever that constant
+  // is not the club's persisted zone, which includes every deployment that sets
+  // only `TZ` (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
+  const [decisionDate, setDecisionDate] = useState<string>(() =>
+    clubTime.today(),
+  );
   const [data, setData] = useState<BillingData | null>(null);
   const [dueDays, setDueDays] = useState("30");
   const [familyBillingMode, setFamilyBillingMode] = useState<FamilyBillingMode>("BILL_FAMILY_VIA_BILLING_MEMBER");

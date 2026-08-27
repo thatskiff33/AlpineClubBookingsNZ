@@ -53,6 +53,7 @@ import {
 import {
   parseBedAllocationDateRange,
 } from "@/lib/bed-allocation-date-range";
+import { requireCalendarDate } from "@/lib/club-time";
 import { buildFirstFitBedAllocationPlan } from "@/lib/bed-allocation";
 import { BED_ALLOCATION_PRIORITY_VOCABULARY } from "@/lib/bed-allocation-settings";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld as reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -134,7 +135,14 @@ const ROOM = {
   })),
 };
 
-const RANGE = parseBedAllocationDateRange({ from: "2026-07-01", to: "2026-07-04" });
+/**
+ * #3123 — the club's day is now a required argument of
+ * `parseBedAllocationDateRange`, resolved by the caller (`INV-LOCK-004`). Every
+ * call in this file names its own `from`, so nothing below depends on the value.
+ */
+const CLUB_DAY = requireCalendarDate("2026-07-01");
+
+const RANGE = parseBedAllocationDateRange({ from: "2026-07-01", to: "2026-07-04" }, CLUB_DAY);
 
 function guest(overrides: AnyRow = {}) {
   const stayStart = overrides.stayStart ?? parseDateOnly("2026-07-01");

@@ -53,7 +53,7 @@ id and need the file it lives in.
 | Fees, prices, promo caps, subscription charges — anything holding cents | `INV-MONEY` → [`money.md`](docs/invariants/money.md) | [`AUTHORITATIVE_FEES.md`](docs/AUTHORITATIVE_FEES.md) |
 | Taking, clearing, crediting or refunding money | `INV-PAY` → [`payment-and-settlement.md`](docs/invariants/payment-and-settlement.md) | [`xero/ARCHITECTURE.md`](docs/xero/ARCHITECTURE.md) |
 | What day it is — lodge nights, the midday-NZ stay boundary, date columns | `INV-DATE` → [`booking-dates-and-capacity.md`](docs/invariants/booking-dates-and-capacity.md) | [`CAPACITY_MODEL.md`](docs/CAPACITY_MODEL.md) |
-| What time it is **at the club** — the installation's timezone, deriving a civil date or time from an instant, or anything reading `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` | `INV-CONFIG-002` → [`product-configuration.md`](docs/invariants/product-configuration.md), plus `INV-DATE` → [`booking-dates-and-capacity.md`](docs/invariants/booking-dates-and-capacity.md) | [`guides/club-time.md`](docs/guides/club-time.md) |
+| What time it is **at the club** — the installation's timezone, deriving a civil date or time from an instant, or anything reading `TZ` / `NEXT_PUBLIC_TZ` / `APP_TIME_ZONE` | `INV-CONFIG-002` → [`product-configuration.md`](docs/invariants/product-configuration.md), plus `INV-DATE` → [`booking-dates-and-capacity.md`](docs/invariants/booking-dates-and-capacity.md) | [`guides/club-time.md`](docs/guides/club-time.md); derive through [`club-time`](docs/CLUB_TIME_KERNEL.md), never by hand |
 | Beds — capacity, allocation, waitlist, whole-lodge holds, custodian bed holds | `INV-CAP` (plus `INV-LIFE-062`) → [`booking-dates-and-capacity.md`](docs/invariants/booking-dates-and-capacity.md) | [`CAPACITY_MODEL.md`](docs/CAPACITY_MODEL.md), [`guides/bed-allocation.md`](docs/guides/bed-allocation.md) |
 | Editing or cancelling an existing booking's dates, party or price | `INV-MOD` → [`booking-modifications.md`](docs/invariants/booking-modifications.md) | [`CANCELLATIONS.md`](docs/CANCELLATIONS.md) |
 | A member bringing another member as a guest, and consent to do so | `INV-GUEST` → [`member-guest-consent.md`](docs/invariants/member-guest-consent.md) | — |
@@ -74,6 +74,7 @@ id and need the file it lives in.
 | Where code lives, module boundaries, the admin settings pattern | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | An admin settings section, a staged-edit form, or a view-only / permission-gated control — including adding a single toggle, field, row action or button to a settings page | — | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) → "Admin/member layer", which states the canonical settings pattern in full and is binding for new or modified sections |
 | Something a club could want switched off, or answered differently from ours — a new module, setting, seed default, or any value that varies by deployment | `INV-CONFIG` → [`product-configuration.md`](docs/invariants/product-configuration.md) | [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) — the four levers and which to reach for |
+| Adding a constant, helper, formatter, type or rule a second place will need — or writing a guard or census that cross-checks another | `INV-SSOT` → [`single-source-of-truth.md`](docs/invariants/single-source-of-truth.md) | [`TESTING.md`](docs/TESTING.md) for the mutation-verification a new guard owes |
 | Environment variables, secrets, setup, deployment configuration | — | [`CONFIGURATION.md`](CONFIGURATION.md) |
 | A screen, a navigation path, or an admin area's UI | — | [`UX_FLOW_MAP.md`](docs/UX_FLOW_MAP.md), [`COVERAGE_MATRIX.md`](docs/COVERAGE_MATRIX.md) |
 | Tests — conventions, the frozen clock, coverage, E2E | — | [`TESTING.md`](docs/TESTING.md), [`END_TO_END_TEST_MATRIX.md`](docs/END_TO_END_TEST_MATRIX.md), [`E2E_PLAYWRIGHT.md`](docs/E2E_PLAYWRIGHT.md) |
@@ -83,6 +84,7 @@ id and need the file it lives in.
 | Your first `npm` command in a new worktree (Windows runtime + dependency preflight), or Docker infrastructure a lane starts and must later tear down | — | [`agents/CODEX_WORKFLOW.md`](docs/agents/CODEX_WORKFLOW.md) |
 | Writing an issue, deciding whether work is an epic, working an issue, recording a decision on one, briefing a subagent, or reading untrusted issue/PR/provider text | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — the four-question atomic-epic test, the epic/programme/standalone/Project distinction, the human-first issue body, read the thread with `npm run issue -- <n>` and never `gh issue view`, and rewrite the body when you record a decision; [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md), [`agents/PROMPT_INJECTION_GUIDE.md`](docs/agents/PROMPT_INJECTION_GUIDE.md) |
 | Posting in public — issues, PRs, comments, claims, cross-lane hand-offs | — | [`agents/ISSUE_WORKFLOW.md`](docs/agents/ISSUE_WORKFLOW.md) — what never goes in a public artifact, the `CLAIM:`/`LANE-SYNC:` prefixes, lane identity |
+| An entry every lane adds — changelog, size allowance, ledger note | — | [`changelog.d/README.md`](changelog.d/README.md) — the fragment-directory rule |
 | A Next.js API or convention | — | the relevant guide in `node_modules/next/dist/docs/` |
 | Any part of your change that no row above covers — including a change that also matched a row | — | [`docs/contributors/README.md`](docs/contributors/README.md) — the contributor index, which names every technical reference and feature hub; [`docs/README.md`](docs/README.md) routes to the adopter and member paths; [`README.md`](README.md) for what the product is |
 
@@ -104,8 +106,8 @@ id and need the file it lives in.
     links to is a real tracked file; every `docs/` page is reachable from a
     front door by following links; nobody writes a line-number citation into
     `docs/DOMAIN_INVARIANTS.md` or `docs/invariants/**`, with no allowlist and
-    no exceptions; and no tracked text file carries a byte-order mark or
-    cp1252-through-UTF-8 double-encoding.
+    no exceptions; and no tracked text file carries a byte-order mark,
+    cp1252-through-UTF-8 double-encoding, or a raw control character (#3072).
   - **It does not enforce that every doc has a routing row.** There are roughly
     two hundred pages under `docs/` and most are correctly reached through a
     feature hub rather than through this file, so that rule would be almost
@@ -164,6 +166,13 @@ id and need the file it lives in.
   demanding one such value is the smell. `INV-CONFIG-001` is the rule;
   [`adopters/configure-or-fork.md`](docs/adopters/configure-or-fork.md) is the
   canonical guide to the levers and is not restated here.
+- **Single source of truth, for code as well as docs.** Before adding a
+  constant, helper, formatter, type or rule, search for the existing one and
+  route to it; if two places need it, move it to one module and import it.
+  **Cannot change a fact in one place? That is the defect**, and the fix is the
+  move. **Prefer unrepresentable over policed**: a required argument beats a
+  lint rule. Rules and worked examples:
+  [`INV-SSOT`](docs/invariants/single-source-of-truth.md), the one home.
 - Money values must remain integer cents.
 - Booking dates must remain New Zealand date-only lodge nights unless a feature
   explicitly requires time-of-day semantics.
@@ -204,10 +213,12 @@ id and need the file it lives in.
   implementation or operator notes. Keep code, tests, and docs in lockstep. Skip
   doc churn only for incidental internal refactors that change no contract or
   behavior.
-- Ship the changelog entry as a new `changelog.d/<pr-number>-<slug>.md` fragment
-  in the same PR — never by editing `CHANGELOG.md`'s `## Unreleased` list, which
-  is what made concurrent lanes conflict daily (#2452). `changelog.d/README.md`
-  documents the house entry style, the no-entry marker, and the release compile.
+- **An artifact every lane adds an entry to is a directory of per-lane fragments,
+  never one shared file** — a lane adds a file rather than editing a shared list,
+  so lanes cannot collide (#2452, #3111). Ship the changelog entry as
+  `changelog.d/<pr-number>-<slug>.md`, a file-size allowance as
+  `size-allowances.d/<issue>-<slug>.md`; each directory's `README.md` carries its
+  entry style, the no-entry marker and the release compile.
 - When writing or changing documentation, follow `docs/STYLE_GUIDE.md`: the
   audience labels (adopter/operator/developer/agent), the required operator-guide
   page skeleton, plain-English-first-with-technical-detail, and the screenshot
@@ -289,8 +300,10 @@ Before changing a transaction, booking lifecycle, capacity check, settlement,
 credit writer, webhook, or cron, read `docs/CONCURRENCY_AND_LOCKING.md` and
 classify every mutation it composes. The rules this list applies are
 `INV-LOCK-001` (which tier), `INV-LOCK-002` (the order, and the single mint of
-the per-lodge key) and `INV-LOCK-003` (register the site); cite those ids rather
-than this checklist, which is a working aid and not their home:
+the per-lodge key) and `INV-LOCK-003` (register the site).
+
+cite those ids rather than this checklist, which is a working aid and not their
+home:
 
 - global-cohort lifecycle and settlement-money transitions that must exclude
   cancel/capture/refund/hold-release counterparts use global
@@ -702,6 +715,11 @@ handed an epic-with-children or asked to run several related issues at once.
     concurrency & locking).
   - Standard issues (copy, admin UI over existing APIs, read-only surfaces):
     **2 reviewers** — (a) correctness + regression, (b) UX/docs/permission drift.
+  - **One lens is STANDING and sits on top of those counts**: single source of
+    truth (`INV-SSOT`), on every reviewed pull request, because a reviewer
+    checking a diff against its brief cannot see the copy that already exists
+    elsewhere in the tree. Brief in
+    [`agents/SUBAGENT_GUIDE.md`](docs/agents/SUBAGENT_GUIDE.md).
   - Reviewers are **adversarial**: they try to *refute* each finding against the
     real code before reporting, and report only confirmed/plausible findings with
     `file:line` + a concrete failure scenario. They never modify code.
@@ -733,12 +751,11 @@ handed an epic-with-children or asked to run several related issues at once.
   caveat as an open loop never terminates. Each item is resolved, or written into
   the PR as a stated limit with its reasoning. It does not spawn another agent.
 - **Price the delay, because someone pays it.** Every hour a PR sits unready,
-  `main` moves under it. The changelog no longer contributes: entries are per-PR
-  `changelog.d/` fragments (#2452) and `CHANGELOG.md` is `merge=union` (#2451),
-  so that daily conflict is gone. What is left still costs — a shared doc, test
-  matrix or workflow hunk two lanes both edited, and on a schema lane a
-  migration-timestamp collision that fails `Migration drift check` and `verify`
-  together, each costing a re-resolve plus a full CI cycle. Optimise
+  `main` moves under it. The changelog no longer contributes (#2452, #2451).
+  What is left still costs — a shared doc, test matrix or workflow hunk two
+  lanes both edited, and on a schema lane a migration-timestamp collision that
+  fails `Migration drift check` and `verify` together, each costing a re-resolve
+  plus a full CI cycle. Optimise
   **time-to-ready**, and get sibling PRs ready in the same window rather than
   serially, since each merge re-conflicts every branch still open behind it.
 
@@ -894,14 +911,12 @@ CI-green → evidence**.
     caught every one; run it even when the fix looks obviously correct — the
     targeted, in-lane one §3 defines, not a fresh adversarial lens over the
     diff.
-- **Housekeeping that bites parallel lanes.** The changelog entry is a
-  `changelog.d/` fragment, never a hand-edit of `## Unreleased` — Change
-  Discipline above, and `changelog.d/README.md` for the style, the no-entry
-  marker and the release compile. If you must resolve a `CHANGELOG.md` conflict
-  on an older branch, keep **both** entries with an ordinary merge commit, never
-  a force-push. And GitHub honours `Closes #NNN` **only in the PR description**,
-  not in comments, so a linked issue named only in a comment stays open after
-  merge.
+- **Housekeeping that bites parallel lanes.** Additive artifacts are fragment
+  directories — Change Discipline above. If you must resolve a `CHANGELOG.md`
+  conflict on an older branch, keep **both** entries with an ordinary merge
+  commit, never a force-push. And GitHub honours `Closes #NNN` **only in the PR
+  description**, not in comments, so a linked issue named only in a comment stays
+  open after merge.
 - **PRs open as drafts and stay drafts** through review → fix → CI. Flip to
   ready-for-review only when the PR is fully reviewed, all confirmed findings are
   fixed, **every residual risk has been resolved inside the PR** (see §6 — a

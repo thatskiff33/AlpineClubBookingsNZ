@@ -53,7 +53,7 @@ import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-clean
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
-import { getSeasonYear } from "@/lib/utils";
+import { seasonYearOfStoredDate } from "@/lib/financial-year";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
   evaluateNonMemberPricingRequirements,
@@ -62,11 +62,12 @@ import {
 } from "@/lib/subscription-lockout-enforcement";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { getDefaultLodgeId, lodgeNullTolerantScope } from "@/lib/lodges";
+import { formatDateOnly } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 import {
-  formatDateOnly,
-  getTodayDateOnly,
-  normalizeDateOnlyForTimeZone,
-} from "@/lib/date-only";
+  calendarDateOfDateOnlyInstant,
+  type CalendarDate,
+} from "@/lib/club-time";
 // #2250 — the status half of the self-removal rule now lives in one module so
 // the booking page's affordance and the night-conflict card cannot drift from
 // this authoritative gate. The gate itself is unchanged.
@@ -271,6 +272,7 @@ export async function removeBookingGuestInTransaction({
   consentAuthority,
   subscriptionLockoutMode,
   hostingCoverageOverride,
+  today,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -293,6 +295,17 @@ export async function removeBookingGuestInTransaction({
    * a peek; a consent-authority removal never reaches it at all.
    */
   subscriptionLockoutMode?: SubscriptionLockoutMode;
+  /**
+   * The club's today (#3123), resolved by the caller BEFORE it opened this
+   * transaction, exactly like `subscriptionLockoutMode` above and for the same
+   * reason: reading the club's persisted timezone is a
+   * `clubTimeSettings.findUnique`, and this transaction holds the per-lodge
+   * capacity key (`INV-LOCK-004`). It is the UTC-midnight `@db.Date` encoding
+   * (`INV-DATE-026`), and it is REQUIRED rather than defaulted — the default
+   * is what let the self-removal window be judged against the container's
+   * timezone instead of the club's (`INV-CONFIG-002`).
+   */
+  today: Date;
   /**
    * Member-guest consent (#2307, epic #2305): the narrow authority that lets a
    * DECLINE or an EXPIRY reach this function at all.
@@ -451,10 +464,21 @@ export async function removeBookingGuestInTransaction({
     role: actorRole,
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the SAME club day the self-removal test below uses, and the same
+    // one the caller resolved before opening this transaction. The policy used
+    // to read the environment's day for itself, so the two sides of this
+    // function's date reasoning could disagree.
+    today,
   });
+  // #3123 — BOTH operands moved together, deliberately. `booking.checkIn` is a
+  // `@db.Date` and therefore a CALENDAR DAY that takes no timezone at all, so
+  // it is decoded zone-free (`storedDateOnly`, `INV-DATE-026`); the right-hand
+  // side is a real question about the club's clock and arrives already resolved
+  // from outside this transaction. Moving one side alone is the #3107 shape,
+  // where two projections cancelled and fixing one of them broke a path that
+  // had been working.
   const selfRemovalIsFuture =
-    isSelfRemoval &&
-    normalizeDateOnlyForTimeZone(booking.checkIn) > getTodayDateOnly();
+    isSelfRemoval && storedDateOnly(booking.checkIn) > today;
   if (!isSelfRemoval && !editPolicy.canModify) {
     throw new BookingGuestRemovalError(
       editPolicy.reason ?? "This booking cannot be modified",
@@ -506,7 +530,7 @@ export async function removeBookingGuestInTransaction({
     // guest must return exactly that guest's own price, policy permitting.
     lockedNightPrices: lockedNightPricesForGuest(guest),
   }));
-  const seasonYear = getSeasonYear(booking.checkIn);
+  const seasonYear = seasonYearOfStoredDate(booking.checkIn);
   await assertMembershipTypeBookingAllowed(tx, {
     ownerMemberId: booking.memberId,
     guests: guestsForPricing,
@@ -546,7 +570,7 @@ export async function removeBookingGuestInTransaction({
     const nonMemberPricing = await evaluateNonMemberPricingRequirements(tx, {
       mode: subscriptionLockoutMode,
       lodgeId: bookingLodgeId,
-      seasonYear: getSeasonYear(booking.checkIn),
+      seasonYear: seasonYearOfStoredDate(booking.checkIn),
       checkIn: booking.checkIn,
       checkOut: booking.checkOut,
       // Owner decision, 3 Aug 2026. It matters most on this path: an unfinancial
@@ -612,12 +636,21 @@ export async function removeBookingGuestInTransaction({
   }));
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
+  // #3123 — the SAME club day the caller resolved before it opened this
+  // transaction, re-expressed as the calendar day the promo window and the
+  // refund tier are written in. `today` arrives as the UTC-midnight `@db.Date`
+  // encoding of that day (`INV-DATE-026`) because the self-removal comparison
+  // above is written in `Date`s; `calendarDateOfDateOnlyInstant` is its exact
+  // inverse, so this is one day in two encodings and NOT a second reading of
+  // the club's clock.
+  const todayAtClub = calendarDateOfDateOnlyInstant(today);
   const promoResult = await recalculateBookingPromo({
     tx,
     bookingId,
     booking,
     newTotalPriceCents,
     guestNightRates,
+    todayAtClub,
   });
   const newFinalPriceCents = newTotalPriceCents + promoResult.newPromoAdjustmentCents;
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
@@ -643,6 +676,9 @@ export async function removeBookingGuestInTransaction({
   const settlementOptions = await calculateModificationSettlementOptions({
     booking: booking as unknown as LoadedBookingForModify,
     netChargeCents: priceDiffCents,
+    db: tx, // locked transaction; see `CancellationPolicyDb`
+    // #3123 — the refund tier for this reduction, on the club's day.
+    todayAtClub,
   });
   if (settlementOptions?.requiresSettlementMethod && !settlementMethod) {
     // A settled booking needs an explicit card/credit election. The only
@@ -894,6 +930,7 @@ export async function recalculateBookingPromo({
   booking,
   newTotalPriceCents,
   guestNightRates,
+  todayAtClub,
 }: {
   tx: Prisma.TransactionClient;
   bookingId: string;
@@ -920,6 +957,16 @@ export async function recalculateBookingPromo({
     perNightRates: number[];
     firstNight?: Date | null;
   }>;
+  /**
+   * The club's own calendar day (#3123, `INV-CONFIG-002`), resolved by whichever
+   * caller opened the transaction `tx` belongs to, BEFORE it opened it.
+   *
+   * REQUIRED. `INV-LOCK-004` names the club timezone as one of only two reads
+   * that cannot take a transaction client, and both callers hold the per-lodge
+   * capacity key and the promo row lock here. It decides the promotion's
+   * validity window inside `validateAndCalculatePromoDiscount`.
+   */
+  todayAtClub: CalendarDate;
 }) {
   let newDiscountCents = 0;
   let newPromoAdjustmentCents = 0;
@@ -960,6 +1007,8 @@ export async function recalculateBookingPromo({
         // #2390: never refuse the edit over somebody else's cap consumption —
         // keep whoever is already benefiting and leave out only new people.
         capOverflow: "coverExisting",
+        // #3123 — resolved outside this transaction by the caller.
+        todayAtClub,
       },
     );
 

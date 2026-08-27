@@ -175,6 +175,7 @@ import {
   type AgeTierSettingData,
 } from "@/lib/age-tier";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
 import { evaluatePersistedBookingNonHostingPolicyViolations } from "@/lib/booking-exception-request-service";
 import { findBookingMemberNightConflicts } from "@/lib/booking-member-night-conflicts";
 import {
@@ -191,7 +192,12 @@ import {
   isDeletedAccountRecord,
 } from "@/lib/deleted-account";
 import { getInductionStatusForMember } from "@/lib/induction";
-import { getSeasonYearForYearEndMonth } from "@/lib/financial-year";
+import { asClubTimeZone } from "@/lib/club-time";
+import { CLUB_TIME_SETTINGS_ID } from "@/lib/club-time-zone";
+import {
+  clubSeasonYear,
+  seasonYearOfStoredDate,
+} from "@/lib/financial-year";
 import { getStoredFinancialYearResolution } from "@/lib/financial-year-server";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import { peekSubscriptionLockoutModeStrict } from "@/lib/member-subscription-eligibility";
@@ -360,9 +366,10 @@ function assertPopulationWithinCeiling(
  * must derive it identically or they contradict each other for whichever part of
  * the year the two answers straddle.
  *
- * WHY NOT `getSeasonYear`. That helper — the platform's one derivation, shared by
- * ~40 call sites — reads the process-level year-end month cached in
- * `financial-year.ts`. The cache is seeded by `refreshFinancialYearConfig()`, which
+ * WHY NOT THE SHARED SEASON HELPERS' DEFAULT YEAR-END. `clubSeasonYear` and
+ * `seasonYearOfStoredDate` (`financial-year.ts`) default their year-end month to
+ * the process-level cache in
+ * that module. That cache is seeded by `refreshFinancialYearConfig()`, which
  * is called by exactly three product paths (the membership-lockout settings write,
  * the finance dashboard page, and the subscription-eligibility gate). NOTHING on a
  * diagnostics path calls it. So on a cold process the cache is still
@@ -417,8 +424,7 @@ function readOnce<T>(read: () => Promise<T>): () => Promise<T> {
   return () => (pending ??= read());
 }
 
-async function resolveStoredSeasonYear(
-  date: Date,
+async function requireStoredYearEndMonth(
   tx: Prisma.TransactionClient,
 ): Promise<number> {
   const financialYear = await getStoredFinancialYearResolution(tx);
@@ -427,7 +433,96 @@ async function resolveStoredSeasonYear(
       "AI Diagnostics AID-6B: this club follows its connected Xero organisation for the financial year and that year-end month is not stored locally, so the membership season for these dates cannot be resolved without a provider call. Set the financial year-end month override in membership settings to make this evidence available.",
     );
   }
-  return getSeasonYearForYearEndMonth(date, financialYear.effectiveMonth);
+  return financialYear.effectiveMonth;
+}
+
+/**
+ * The season a STORED lodge night falls in.
+ *
+ * TAKES NO ZONE. `Booking.checkIn` is a `@db.Date` calendar day whose encoding is
+ * defined in UTC (`INV-DATE-019`, `INV-DATE-026`), so the day it names is the same
+ * day everywhere and projecting it through one is the defect. Until CT-4 group F1
+ * this and the "now" question below went through ONE host-local helper, which read
+ * this value with `date.getMonth()` — so on any host behind Greenwich a 1 April
+ * check-in was judged in the previous season, and the paid-up-adult rule then read
+ * `MemberSubscription` by the wrong `(memberId, seasonYear)`.
+ */
+async function resolveStoredNightSeasonYear(
+  date: Date,
+  tx: Prisma.TransactionClient,
+): Promise<number> {
+  return seasonYearOfStoredDate(date, await requireStoredYearEndMonth(tx));
+}
+
+/**
+ * The club's persisted timezone, READ THROUGH `tx` — and that is the whole point.
+ *
+ * The first version of this called `readClubTimeZoneOutsideRequest()`, which was
+ * wrong in four ways at once, and a correctness lens caught every one (#2870):
+ *
+ *  - it uses the GLOBAL Prisma client, so the read escaped the seam this pack's
+ *    entry opens — `withBoundedReadOnlyTransaction`, whose own contract says "DO
+ *    NOT NEST ... A sub-read that needs the database takes `tx` from its caller
+ *    instead";
+ *  - escaping it meant escaping `SET TRANSACTION READ ONLY`, the `RepeatableRead`
+ *    snapshot and the transaction-local 5s `statement_timeout` that this pack
+ *    advertises as "the one database bound, in one place";
+ *  - it needed a SECOND pool connection while the seam already held one;
+ *  - and `readPersistedClubTimeZoneRow` swallows every throw, so a pool timeout
+ *    would have resolved the zone from the environment seed and reported a
+ *    member's subscription state for a season that is not the club's, with one
+ *    throttled warn line as the only evidence.
+ *
+ * The pack's own guard could not see it, because the global client was one import
+ * away and the census matches the literal token `prisma.` — 374 tests passed while
+ * the rule was broken. `read-only-transaction.test.ts` now refuses an indirect
+ * reach as well.
+ *
+ * IT REFUSES RATHER THAN FALLING BACK, which is `requireStoredYearEndMonth`'s rule
+ * three lines below and the reason the two halves are now consistent. Guessing a
+ * zone for an evidence path is the same defect as guessing a year-end month: the
+ * answer would look freshly measured and be about the wrong season. The executor
+ * renders this rejection as `evidence_unavailable`.
+ *
+ * It duplicates six lines of QUERY and no judgement at all — the row id comes from
+ * CT-1's shared `CLUB_TIME_SETTINGS_ID` and the validation from CT-1's
+ * `asClubTimeZone` — which is the same trade `club-time-zone-runtime.ts` documents
+ * for the same reason: the canonical readers cannot be handed a `tx`.
+ */
+async function requireStoredClubTimeZone(tx: Prisma.TransactionClient) {
+  const row = await tx.clubTimeSettings.findUnique({
+    where: { id: CLUB_TIME_SETTINGS_ID },
+    select: { timeZone: true },
+  });
+  const zone = asClubTimeZone(row?.timeZone ?? null);
+  if (!zone) {
+    throw new Error(
+      "AI Diagnostics AID-6B: the club's timezone is not stored locally as a usable named zone, so the membership season the club is currently in cannot be resolved from stored state. Set the club's timezone at /admin/club-time (or run npm run setup) to make this evidence available.",
+    );
+  }
+  return zone;
+}
+
+/**
+ * The season the club is in RIGHT NOW.
+ *
+ * TAKES THE CLUB'S PERSISTED ZONE (`INV-CONFIG-002`), because "now" is a club
+ * business decision and the container's month is not the club's. This is the other
+ * half of the split above: the two questions are not the same temporal kind, and
+ * one function answering both is what made this pack's own answer host-dependent.
+ * BOTH halves come from STORED state through `tx` — the year-end month and the
+ * zone — so nothing here consults the process-level financial-year cache and
+ * nothing escapes the seam its caller opened. See `requireStoredClubTimeZone`
+ * above for why the zone half is not the canonical reader.
+ */
+async function resolveStoredClubSeasonYear(
+  tx: Prisma.TransactionClient,
+): Promise<number> {
+  const [yearEndMonth, zone] = await Promise.all([
+    requireStoredYearEndMonth(tx),
+    requireStoredClubTimeZone(tx),
+  ]);
+  return clubSeasonYear(zone, undefined, yearEndMonth);
 }
 
 /**
@@ -931,9 +1026,19 @@ async function readOwnerSubscriptionHardBlock(
 export async function readBookingBlockStateEvidence(args: {
   bookingId: string;
 }): Promise<readonly DiagnosticsToolRawRow[]> {
+  // #3123 review — the CLUB's day, resolved BEFORE the bounded read-only
+  // transaction opens. `withBoundedReadOnlyTransaction` runs at RepeatableRead
+  // under a statement timeout, and `clubTodayDateOnlyInstant()` reads through
+  // the MODULE client, not `tx` — so calling it from inside would take a second
+  // pooled connection for the length of that query while this transaction's is
+  // held, which is the shape `INV-LOCK-004` forbids and which the pack's own
+  // `requireStoredClubTimeZone` docblock already reasons about from the other
+  // direction. Resolved once and threaded, so the edit policy and the
+  // person-night scan below report the same day.
+  const todayAtClub = await clubTodayDateOnlyInstant();
   return withDeadline(
     withBoundedReadOnlyTransaction((tx) =>
-      readBookingBlockState(args.bookingId, tx),
+      readBookingBlockState(args.bookingId, tx, todayAtClub),
     ),
     "booking block state",
   );
@@ -942,6 +1047,8 @@ export async function readBookingBlockStateEvidence(args: {
 async function readBookingBlockState(
   bookingId: string,
   tx: Prisma.TransactionClient,
+  /** The club's today, resolved outside this transaction (`INV-LOCK-004`). */
+  todayAtClub: Date,
 ): Promise<readonly DiagnosticsToolRawRow[]> {
   const booking = await tx.booking.findUnique({
     where: { id: bookingId },
@@ -1020,7 +1127,9 @@ async function readBookingBlockState(
    * `null` on those rows is "not needed", and it is never passed anywhere.
    */
   const seasonYear =
-    deleted || terminal ? null : await resolveStoredSeasonYear(booking.checkIn, tx);
+    deleted || terminal
+      ? null
+      : await resolveStoredNightSeasonYear(booking.checkIn, tx);
 
   /**
    * The club's subscription-lockout mode, read ONCE and STRICTLY, then handed to
@@ -1238,6 +1347,8 @@ async function readBookingBlockState(
           actorRole: "USER",
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
+          // Resolved outside this transaction and threaded in (`INV-LOCK-004`).
+          today: todayAtClub,
           guests: guests.map((guest) => ({
             memberId: guest.memberId,
             stayStart: guest.stayStart,
@@ -1314,6 +1425,12 @@ async function readBookingBlockState(
     role: "USER",
     checkIn: booking.checkIn,
     checkOut: booking.checkOut,
+    // #3123 — the CLUB's day, from its persisted zone. A diagnostic that reported
+    // a booking as locked on the environment's day would be describing a state
+    // the member never saw. Resolved by this entry point BEFORE it opened the
+    // bounded read-only transaction, and shared with the person-night scan above
+    // so the two halves of one snapshot cannot disagree (`INV-LOCK-004`).
+    today: todayAtClub,
   });
 
   const reviewCodes = bookingReviewReasonCodes({
@@ -1820,8 +1937,9 @@ async function readMemberEligibility(
    * THE SEASON YEAR IS NOT THE CALENDAR YEAR, and this entry computed it as if it
    * were until #2679's review.
    *
-   * `getSeasonYear` (`utils.ts`) is the platform's ONE derivation and ~40 call
-   * sites share it, including the admin member detail screen this entry mirrors. A
+   * `clubSeasonYear` (`financial-year.ts`) is the platform's ONE derivation for
+   * this question and every call site shares it, including the admin member detail
+   * screen this entry mirrors. A
    * season starts on the first of the month AFTER the club's financial year-end —
    * April by default (the NZ 31-March convention) and club-configurable through
    * `financialYearEndMonth` — so from 1 January until the season starts, the
@@ -1840,12 +1958,20 @@ async function readMemberEligibility(
    * and the hosting subscription bridge, both keyed on the BOOKING's check-in
    * night, because a stay is judged in the season it falls in. This entry is
    * MEMBER-scoped with no booking to key on, so "now" is the right instant here —
-   * but the derivation has to be the same one, or the two entries answer one
-   * question two ways for a quarter of every year. Both now go through
-   * `resolveStoredSeasonYear`, which is the single definition and the reason
-   * neither depends on the process-level financial-year cache.
+   * but the RULE has to be the same one, or the two entries answer one question two
+   * ways for a quarter of every year.
+   *
+   * THEY ARE STILL NOT THE SAME FUNCTION, and CT-4 group F1 (#2870) is why. A
+   * booking's check-in is a stored calendar day and takes NO zone; "now" is an
+   * instant and takes the club's PERSISTED zone. One helper answering both had to
+   * read a `Date`'s host-local components, which made this pack's own answer depend
+   * on where the container ran. So the pair is
+   * `resolveStoredNightSeasonYear` / `resolveStoredClubSeasonYear`, sharing one
+   * year-end resolution (`requireStoredYearEndMonth`) — which is what keeps the two
+   * entries agreeing, and what keeps neither depending on the process-level
+   * financial-year cache.
    */
-  const seasonYear = await resolveStoredSeasonYear(new Date(), tx);
+  const seasonYear = await resolveStoredClubSeasonYear(tx);
 
   const member = await tx.member.findUnique({
     where: { id: memberId },

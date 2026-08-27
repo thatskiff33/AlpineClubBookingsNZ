@@ -274,6 +274,8 @@ describe("#1440 — server-side NOT_APPLICABLE enforcement on member writes", ()
       expect(hostingMocks.enqueue).toHaveBeenCalledWith(
         "org1",
         expect.any(Object),
+        // #3123: the club's day, resolved before the transaction opened.
+        expect.any(Date),
         { cause: "SYSTEM_CHANGE", actorMemberId: "actor1" },
       );
       expect(hostingMocks.settle).toHaveBeenCalledWith({ limit: 50 });
@@ -298,6 +300,8 @@ describe("#1440 — server-side NOT_APPLICABLE enforcement on member writes", ()
       expect(hostingMocks.enqueue).toHaveBeenCalledWith(
         "org1",
         expect.any(Object),
+        // #3123: the club's day, resolved before the transaction opened.
+        expect.any(Date),
         { cause: "SYSTEM_CHANGE", actorMemberId: "actor1" },
       );
       expect(hostingMocks.settle).toHaveBeenCalledWith({ limit: 50 });

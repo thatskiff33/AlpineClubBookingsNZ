@@ -37,166 +37,16 @@ import {
   type DisplayModuleProps,
 } from "@/components/lodge-display/modules";
 import { useDisplayState, type DisplayPayload } from "./use-display-state";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
-import { formatNZTime, formatNZWeekdayDate } from "@/lib/nzst-date";
+import {
+  DisplayClubTimeProvider,
+  HeaderClock,
+  readPreviewState,
+} from "./display-header-clock";
 
 // The lobby display screen (fork issue #32): full-screen, non-interactive,
 // driven entirely by the display-state payload + resolved template. States:
 // pairing (show the code, poll claim), active (render regions, rotate
 // eligible panels), stale (keep the last good render, badge it).
-
-// #2264: the lobby clock used to render in the VIEWER's zone, so a TV browser or
-// an operator previewing from outside New Zealand showed the wrong time on the
-// wall. `formatNZTime` pins the club zone.
-function formatClock(date: Date): string {
-  return formatNZTime(date).toUpperCase();
-}
-
-// Not one of the shared helpers: the header date line deliberately drops the
-// year to fit the fixed-width clock block without shifting the layout.
-const SHORT_WEEKDAY_DAY = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
-
-const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Preview-mode state for the header (issue #60): whether the URL marks this
- * as an admin preview, and any active simulated date. Computed after mount so
- * the server render and first client render match (the page is force-dynamic
- * and client-hydrated). */
-function readPreviewState(): { isPreview: boolean; previewDate: string | null } {
-  if (typeof window === "undefined") return { isPreview: false, previewDate: null };
-  const params = new URLSearchParams(window.location.search);
-  // A sandboxed authoring-page embed carries ?previewGrant (LTV-036) instead of
-  // ?preview/?previewDevice, but it is still a preview: the clock's simulate
-  // affordance and the "previewing against" line belong there too.
-  const isPreview =
-    params.has("preview") ||
-    params.has("previewDevice") ||
-    params.has("previewGrant");
-  const raw = params.get("previewDate");
-  const previewDate = raw && DATE_ONLY_REGEX.test(raw) ? raw : null;
-  return { isPreview, previewDate };
-}
-
-/** Human-readable label for the accessible simulating hint; falls back to the
- * raw value if it is not a real calendar date. */
-function formatSimulatedDate(dateStr: string): string {
-  // Date-only preview date: parse at UTC midnight so the club-time formatter
-  // cannot roll it back a day for an operator outside New Zealand.
-  const parsed = new Date(`${dateStr}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return dateStr;
-  return formatNZWeekdayDate(parsed);
-}
-
-/** Live clock + payload freshness for the header (issue #56). Ticks on the
- * client only; the server render shows a blank slot for one frame. In an admin
- * preview (issue #60) the date line becomes a date picker that rewrites
- * ?previewDate and reloads — a testing tool, so a full reload is fine. While a
- * previewDate is active the clock recolours amber (data-simulated) and its date
- * line shows the simulated window start instead of today; the layout never
- * shifts. The rendered lodge is identified on the admin preview host page
- * around the frame (LTV-036), so no in-frame "previewing against" line is
- * needed — a preview always renders the lodge the device or template is bound
- * to. */
-function HeaderClock({
-  generatedAt,
-  windowStart,
-}: {
-  generatedAt: string;
-  windowStart: string;
-}) {
-  const [now, setNow] = useState<Date | null>(null);
-  const [preview, setPreview] = useState(() => ({
-    isPreview: false,
-    previewDate: null as string | null,
-  }));
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    setNow(new Date());
-    setPreview(readPreviewState());
-    const timer = setInterval(() => setNow(new Date()), 15_000);
-    return () => clearInterval(timer);
-  }, []);
-  if (!now) return <div className="display-header-clock" />;
-  const updated = new Date(generatedAt);
-  const simulated = preview.isPreview && preview.previewDate !== null;
-
-  const applyPreviewDate = (value: string) => {
-    if (!DATE_ONLY_REGEX.test(value)) return;
-    const params = new URLSearchParams(window.location.search);
-    params.set("previewDate", value);
-    // A testing tool: a full reload keeps the fetch/render path identical to a
-    // fresh preview open.
-    window.location.search = params.toString();
-  };
-
-  const openPicker = () => {
-    const input = dateInputRef.current;
-    if (!input) return;
-    try {
-      input.showPicker();
-    } catch {
-      input.focus();
-      input.click();
-    }
-  };
-
-  // The date line shows real "today" normally; when a previewDate override is
-  // active it shows the simulated window start (the board's window.start),
-  // keeping the header and the board in agreement without shifting layout.
-  const dateSource = simulated ? new Date(`${windowStart}T00:00:00Z`) : now;
-  const dateLine = (
-    <>
-      {SHORT_WEEKDAY_DAY.format(dateSource)}
-      {" · "}
-      <b>updated {formatClock(updated).toLowerCase()}</b>
-    </>
-  );
-
-  return (
-    <div
-      className="display-header-clock"
-      data-simulated={simulated ? "" : undefined}
-    >
-      <span className="display-clock-time">{formatClock(now)}</span>
-      {preview.isPreview ? (
-        // #65 fix: the date <input> is a SIBLING of the button, not its child.
-        // A native date input nested inside a <button> is invalid HTML and its
-        // selection does not reliably fire `change`, so picking a date never
-        // applied; as siblings the picker fires normally and the button just
-        // opens it via showPicker() on the shared ref (focus/click fallback).
-        <>
-          <button
-            type="button"
-            className="display-clock-date display-clock-date-picker"
-            onClick={openPicker}
-          >
-            {dateLine}
-          </button>
-          <input
-            ref={dateInputRef}
-            type="date"
-            className="display-simulate-input"
-            defaultValue={preview.previewDate ?? ""}
-            onChange={(event) => applyPreviewDate(event.target.value)}
-            aria-label="Simulate a date"
-          />
-        </>
-      ) : (
-        <span className="display-clock-date">{dateLine}</span>
-      )}
-      {simulated && (
-        <span className="display-visually-hidden">
-          Simulating {formatSimulatedDate(preview.previewDate as string)}
-        </span>
-      )}
-    </div>
-  );
-}
 
 function LodgeHeader({ state }: DisplayModuleProps) {
   // #2322: the served-image logo wins over the legacy inlined data URI.
@@ -753,7 +603,22 @@ function MinimalDisplayShell() {
   );
 }
 
-export function DisplayScreen() {
+/**
+ * The lobby screen, with the club's timezone supplied by its server page.
+ *
+ * See `page.tsx` for why the zone arrives as a prop rather than through the
+ * application's shared provider, and `display-header-clock.tsx` for the binding
+ * and the one component that consumes it.
+ */
+export function DisplayScreen({ zone }: { zone: string }) {
+  return (
+    <DisplayClubTimeProvider zone={zone}>
+      <DisplayScreenBody />
+    </DisplayClubTimeProvider>
+  );
+}
+
+function DisplayScreenBody() {
   const lifecycle = useDisplayState();
 
   if (lifecycle.mode === "loading") {

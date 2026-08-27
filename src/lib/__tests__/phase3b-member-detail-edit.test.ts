@@ -758,6 +758,8 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(hostingMocks.enqueue).toHaveBeenCalledWith(
       "m1",
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: "admin1" },
     );
     expect(hostingMocks.settle).toHaveBeenCalledWith({ limit: 50 });
@@ -1037,6 +1039,8 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(hostingMocks.enqueue).toHaveBeenCalledWith(
       "m1",
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: "admin1" },
     );
     expect(hostingMocks.settle).toHaveBeenCalledWith({ limit: 50 });

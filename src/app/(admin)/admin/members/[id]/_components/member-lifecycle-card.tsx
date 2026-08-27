@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Archive } from "lucide-react"
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
+import { useClubTime } from "@/components/club-time-provider"
+import { formatPayloadInstantDate } from "../../../_lib/payload-instant"
 import type {
   MemberDetail,
   MemberLifecycleActionRequest,
@@ -82,6 +83,11 @@ export function MemberLifecycleCard({
   className,
   ancestorRendersViewOnlyBanner = false,
 }: MemberLifecycleCardProps) {
+  // Every stamp on this card is a real INSTANT — when a lifecycle row was
+  // written or reviewed — so it has no civil date until a zone is chosen, and
+  // that is the club's persisted zone (`INV-CONFIG-002`), not the admin's
+  // browser. None of them is a `@db.Date` calendar day.
+  const clubTime = useClubTime()
   // #1788: which archive review is waiting on the admin's notify-or-not choice.
   // The dialog only opens when an email would actually send (the target member
   // has an address on file); a member with no email reviews directly with no
@@ -133,7 +139,7 @@ export function MemberLifecycleCard({
             {member.cancelledAt ? (
               <div className="mt-2 space-y-1 text-sm">
                 <Badge variant="secondary" className="bg-warning-3 text-warning-11 border-warning-6">
-                  Cancelled {formatMemberDateNz(member.cancelledAt)}
+                  Cancelled {formatPayloadInstantDate(clubTime, member.cancelledAt)}
                 </Badge>
                 {member.cancelledReason && <p className="text-muted-foreground">{member.cancelledReason}</p>}
               </div>
@@ -148,7 +154,7 @@ export function MemberLifecycleCard({
             {member.archivedAt ? (
               <div className="mt-2 space-y-1 text-sm">
                 <Badge variant="secondary" className="bg-border text-foreground border-border">
-                  Archived {formatMemberDateNz(member.archivedAt)}
+                  Archived {formatPayloadInstantDate(clubTime, member.archivedAt)}
                 </Badge>
                 {member.archivedReason && <p className="text-muted-foreground">{member.archivedReason}</p>}
               </div>
@@ -175,7 +181,7 @@ export function MemberLifecycleCard({
               )}
               <p className="text-xs text-warning-11">
                 Requested by {openCancellationRequest.requestedBy?.name ?? "Unknown"} on{" "}
-                {formatMemberDateNz(openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
+                {formatPayloadInstantDate(clubTime, openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
               </p>
               <p className="text-xs text-warning-11">
                 Review in the <Link href="/admin/membership-cancellations" className="underline">cancellation review queue</Link>.
@@ -214,7 +220,7 @@ export function MemberLifecycleCard({
                 <p className="text-sm text-warning-11">{pendingArchiveRequest.reason}</p>
                 <p className="text-xs text-warning-11">
                   Requested by {pendingArchiveRequest.requestedBy?.name ?? "Unknown admin"} on{" "}
-                  {formatMemberDateNz(pendingArchiveRequest.requestedAt)}
+                  {formatPayloadInstantDate(clubTime, pendingArchiveRequest.requestedAt)}
                 </p>
               </div>
               {isArchiveRequester ? (
@@ -306,7 +312,7 @@ export function MemberLifecycleCard({
                       {request.status === "APPROVED" ? "Approved" : "Rejected"}
                     </Badge>
                     <span className="text-muted-foreground">
-                      {request.reviewedAt ? formatMemberDateNz(request.reviewedAt) : "Not dated"} by{" "}
+                      {request.reviewedAt ? formatPayloadInstantDate(clubTime, request.reviewedAt) : "Not dated"} by{" "}
                       {request.reviewedBy?.name ?? "Unknown admin"}
                     </span>
                   </div>

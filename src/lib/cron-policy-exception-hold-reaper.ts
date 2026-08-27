@@ -64,6 +64,7 @@ import { prisma } from "@/lib/prisma";
 import { createAuditLog } from "@/lib/audit";
 import { resolvePolicyExceptionRequestTerminal } from "@/lib/booking-exception-execution";
 import { computePolicyExceptionHoldExpiry } from "@/lib/booking-exception-requests";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { formatDateOnly } from "@/lib/date-only";
 import { sendPolicyExceptionRequestExpiredEmail } from "@/lib/email/booking";
 import logger from "@/lib/logger";
@@ -149,6 +150,16 @@ export async function reapExpiredPolicyExceptionHolds(
     orderBy: { createdAt: "asc" },
   });
 
+  // #3123 — ONE read of the club's persisted zone for the whole run, taken
+  // before the loop. Only the NULL-`holdExpiresAt` fallback below needs it, but
+  // resolving it inside the loop would be one uncached `ClubTimeSettings` query
+  // per candidate row, and a run straddling club midnight could cap two rows'
+  // holds against two different days. This module is instrumentation-reachable
+  // (`instrumentation.node.ts` -> `general-cron-runner.ts` -> here), so it takes
+  // the runtime reader rather than the `server-only` binding, which would throw
+  // at import when the cron loads.
+  const clubZone = await readClubTimeZoneOutsideRequest();
+
   const result: PolicyExceptionHoldReapResult = {
     scanned: candidates.length,
     expired: 0,
@@ -183,6 +194,7 @@ export async function reapExpiredPolicyExceptionHolds(
       computePolicyExceptionHoldExpiry({
         createdAt: candidate.createdAt,
         firstHeldNight,
+        zone: clubZone,
       });
     if (now < deadline) continue;
 

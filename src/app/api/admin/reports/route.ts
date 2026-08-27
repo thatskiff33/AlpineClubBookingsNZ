@@ -20,22 +20,15 @@ import {
   summarizeNetCollectedCash,
   summarizeOverlappingGuests,
 } from "@/lib/admin-reports";
-import { getSeasonYear } from "@/lib/utils";
-import {
-  OPERATIONAL_STAY_BOOKING_STATUSES,
-} from "@/lib/booking-status";
+import { clubSeasonYear } from "@/lib/financial-year";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
 } from "@/lib/booking-delete-visibility";
-import {
-  addDaysDateOnly,
-  eachDateOnlyInRange,
-  endOfDateOnlyForTimeZone,
-  formatDateOnly,
-  parseDateOnly,
-  startOfDateOnlyForTimeZone,
-} from "@/lib/date-only";
+import { dateOnlyInstantOf, endOfClubDayInclusive, parseCalendarDate, startOfClubDay } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
+import { addDaysDateOnly, eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -66,15 +59,27 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const fromDate = startOfDateOnlyForTimeZone(parsed.data.from);
-  const toDate = endOfDateOnlyForTimeZone(parsed.data.to);
-  const occupancyFromDate = parseDateOnly(parsed.data.from);
-  const occupancyToDate = parseDateOnly(parsed.data.to);
+  // ONE REPORT WINDOW, TWO ENCODINGS, BECAUSE THE COLUMNS ARE TWO KINDS OF THING
+  // (INV-DATE-013). The `*Instant` pair is the club's first and last MOMENT of the day,
+  // in the PERSISTED timezone rather than the container's (CT-4, #2870; INV-CONFIG-002),
+  // keeping the INCLUSIVE last-millisecond `lte` shape — the kernel's day end is
+  // half-open, hence the -1. The `*Day` pair is the two CALENDAR DAYS, for `@db.Date`
+  // columns, which take no zone: the adapter narrows such a bound to its UTC date, so a
+  // club-midnight instant lands a day early (INV-DATE-026). The shape regex admits two
+  // bad requests and both are refused here: `2026-13-45`, a day that does not exist,
+  // which used to reach Prisma as an Invalid Date and surface as a 500; and `9999-12-31`,
+  // which has no day AFTER it, so the half-open end below throws a `RangeError` from
+  // OUTSIDE the `try` — and `/admin/audit-log?to=9999-12-31` is a URL that really gets used.
+  const from = parseCalendarDate(parsed.data.from);
+  const to = parseCalendarDate(parsed.data.to);
+  if (!from || !to || parsed.data.to >= "9999-12-31") return NextResponse.json({ error: "Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD" }, { status: 400 });
+  const zone = await clubTimeZone();
+  const fromInstant = startOfClubDay(from, zone);
+  const toInstant = endOfClubDayInclusive(to, zone);
+  const fromDay = dateOnlyInstantOf(from);
+  const toDay = dateOnlyInstantOf(to);
   const deletedWhere = buildBookingDeletedWhere(parsed.data.deleted);
-
-  if (toDate <= fromDate) {
-    return NextResponse.json({ error: "to must be after from" }, { status: 400 });
-  }
+  if (toInstant <= fromInstant) return NextResponse.json({ error: "to must be after from" }, { status: 400 });
 
   // Validate an explicit lodge scope the way the write paths do (400 on
   // unknown/inactive). Omitted stays "all active lodges" — the sanctioned
@@ -90,7 +95,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const currentSeasonYear = getSeasonYear(new Date());
+    const currentSeasonYear = clubSeasonYear(zone);
     const currentSeasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
 
     const { capacity: lodgeCapacity, bookingLodgeWhere } =
@@ -110,8 +115,8 @@ export async function GET(request: NextRequest) {
           ...bookingLodgeWhere,
           // Selected report dates are inclusive; booking lodge nights are the
           // half-open [checkIn, checkOut) range.
-          checkIn: { lte: occupancyToDate },
-          checkOut: { gt: occupancyFromDate },
+          checkIn: { lte: toDay },
+          checkOut: { gt: fromDay },
           status: { in: [...REPORT_BOOKING_STATUSES] },
         },
         include: {
@@ -170,10 +175,13 @@ export async function GET(request: NextRequest) {
         where: {
           active: true,
           OR: [
-            { joinedDate: { gte: fromDate, lte: toDate } },
+            // `joinedDate` is `@db.Date` (#2872) so it takes the two DAYS,
+            // inclusive at both ends — what the instant pair meant before the
+            // column was narrowed. `createdAt` is an instant and keeps them.
+            { joinedDate: { gte: fromDay, lte: toDay } },
             {
               joinedDate: null,
-              createdAt: { gte: fromDate, lte: toDate },
+              createdAt: { gte: fromInstant, lte: toInstant },
             },
           ],
         },
@@ -182,8 +190,8 @@ export async function GET(request: NextRequest) {
 
     // 1. Occupancy by date
     const days = eachDateOnlyInRange(
-      occupancyFromDate,
-      addDaysDateOnly(occupancyToDate, 1),
+      fromDay,
+      addDaysDateOnly(toDay, 1),
     );
 
     // Custodian occupancy (#2286) is deliberately EXCLUDED here. Utilisation
@@ -211,19 +219,19 @@ export async function GET(request: NextRequest) {
     });
 
     // 2. Revenue by dynamic granularity
-    const revenueSeries = buildRevenueSeries(bookings, occupancyFromDate, occupancyToDate);
+    const revenueSeries = buildRevenueSeries(bookings, fromDay, toDay);
 
     // 3. Booking trends by overlapped stay week. A booking spanning several
     // nights is counted once in each touched week, never once per night.
     const trendData = buildBookingTrendSeries(
       bookings,
-      occupancyFromDate,
-      occupancyToDate,
+      fromDay,
+      toDay,
     );
 
     // 4. Distinct guest rows that stay at least one selected night.
     const { totalGuests, memberGuests, nonMemberGuests } =
-      summarizeOverlappingGuests(bookings, occupancyFromDate, occupancyToDate);
+      summarizeOverlappingGuests(bookings, fromDay, toDay);
 
     // 5. Summary stats. Booked revenue is the selected stay-night slice; the
     // allocator divided the WHOLE price first, preserving every integer cent.

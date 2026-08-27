@@ -444,6 +444,8 @@ describe("APPROVE", () => {
     expect(h.enqueueHostingCoverage).toHaveBeenCalledWith(
       TARGET_ID,
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: TARGET_ID },
     );
     expect(h.settleHostingCoverage).toHaveBeenCalledWith({
@@ -478,6 +480,8 @@ describe("APPROVE", () => {
     expect(h.enqueueHostingCoverage).toHaveBeenCalledWith(
       TARGET_ID,
       expect.any(Object),
+      // #3123: the club's day, resolved before the transaction opened.
+      expect.any(Date),
       { cause: "SYSTEM_CHANGE", actorMemberId: DELEGATE_ID },
     );
     expect(h.settleHostingCoverage).toHaveBeenCalledWith({

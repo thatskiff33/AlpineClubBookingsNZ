@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { formatMemberIdentityAge } from "@/lib/member-age";
+import { clubTime } from "@/lib/club-time/server";
 import { buildParentLinks, type ParentLinkSummary } from "@/lib/member-parent-links";
 
 /**
@@ -152,6 +153,15 @@ export async function searchFamilyGroupCandidateMembers(
     prisma.member.count({ where }),
   ]);
 
+  // #3123: the club's own day, resolved ONCE for the whole result set. Every
+  // row is aged against the same day, so two similarly-named members in one
+  // response can never be judged against different todays across club midnight
+  // — which matters because telling those two apart is this endpoint's entire
+  // purpose (#2568). Measured: this module is reachable from no CLI entry point
+  // and no instrumentation edge, so the request-scoped `server-only` reader is
+  // the right one.
+  const clubToday = (await clubTime()).today();
+
   return {
     members: members.map((member) => ({
       id: member.id,
@@ -161,7 +171,7 @@ export async function searchFamilyGroupCandidateMembers(
       ageTier: member.ageTier,
       active: member.active,
       canLogin: member.canLogin,
-      ageLabel: formatMemberIdentityAge(member.dateOfBirth),
+      ageLabel: formatMemberIdentityAge(member.dateOfBirth, clubToday),
       parentLinks: buildParentLinks(member),
     })),
     total,

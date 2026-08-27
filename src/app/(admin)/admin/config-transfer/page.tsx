@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { ArrowRightLeft, Download, Upload, AlertTriangle, ShieldAlert } from "lucide-react";
 
 import { isFullAdmin } from "@/lib/access-roles";
-import { todayDateOnlyForTimeZone } from "@/lib/date-only";
+import { useClubTime } from "@/components/club-time-provider";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -87,6 +87,12 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export default function ConfigTransferPage() {
+  // The exported bundle is stamped with the CLUB's PERSISTED day. Two operators
+  // in different countries already got the same filename — the build's
+  // `NEXT_PUBLIC_TZ` is fixed at build time, not read from the viewer. The
+  // defect was that the shared answer could be the wrong day for the club
+  // (CT-4, #2870; INV-CONFIG-002).
+  const clubTime = useClubTime();
   const { data: session } = useSession();
   const fullAdmin = isFullAdmin({
     accessRoles: session?.user?.accessRoles ?? [],
@@ -147,7 +153,7 @@ export default function ConfigTransferPage() {
       }
       downloadBlob(
         await res.blob(),
-        `config-transfer-${todayDateOnlyForTimeZone()}.zip`,
+        `config-transfer-${clubTime.today()}.zip`,
       );
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Export failed.");
@@ -237,7 +243,7 @@ export default function ConfigTransferPage() {
       }
       downloadBlob(
         await res.blob(),
-        `config-transfer-resealed-${todayDateOnlyForTimeZone()}.zip`,
+        `config-transfer-resealed-${clubTime.today()}.zip`,
       );
     } catch (err) {
       setImportError(err instanceof Error ? err.message : "Reseal failed.");

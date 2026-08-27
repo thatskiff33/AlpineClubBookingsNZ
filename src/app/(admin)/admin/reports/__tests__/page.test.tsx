@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/dynamic", () => ({
@@ -34,16 +34,12 @@ beforeEach(() => {
   };
 });
 
-vi.mock("@/lib/date-only", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/date-only")>();
-  return {
-    ...actual,
-    getTodayDateOnly: () => new Date("2026-04-13T00:00:00.000Z"),
-    todayDateOnlyForTimeZone: () => "2026-04-13",
-  };
-});
-
 import ReportsPage from "@/app/(admin)/admin/reports/page";
+import type { ReactNode } from "react";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { getReportsDatasetDefaults } from "@/lib/admin-dataset-reset-state";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const EMPTY_REPORT = {
   summary: {
@@ -156,10 +152,47 @@ describe("ReportsPage quick ranges", () => {
       target: { value: "next_month" },
     });
 
+    // This file used to `vi.mock("@/lib/date-only")` and pin `getTodayDateOnly`
+    // to 2026-04-13, which fixed these bounds at May. The CT-4 review read that
+    // mock as DEAD — the reports page itself no longer imports `date-only` —
+    // but it was not: `DateRangeControls` calls `getDateRangeForPreset(preset)`
+    // with no `today`, so the presets reach `getTodayDateOnly()` one module
+    // across. What the mock really did was give this file a SECOND "today"
+    // disagreeing with the frozen clock every other suite runs on, which is the
+    // reading trap the clock convention exists to remove.
+    //
+    // So the mock is gone and the window is DERIVED from the zone the presets
+    // genuinely read — `APP_TIME_ZONE` — with an independent `Intl` projection
+    // rather than through `date-only` itself, which would let the test agree
+    // with the code it is checking. Hard-coding August instead would have been
+    // a sixth `TZ=America/Denver` failure: behind UTC the frozen instant is
+    // still 30 June, so "next month" is July there.
+    //
+    // That the QUICK RANGES still read the environment rather than the club's
+    // persisted zone is a real remaining gap, in `DateRangeControls`
+    // (`src/components/**`) — reported on #2870 for the group that owns that
+    // file. This test pins today's behaviour honestly rather than asserting the
+    // behaviour we want and failing everywhere.
+    const [envYear, envMonth] = new Intl.DateTimeFormat("en-CA", {
+      timeZone: APP_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .format(new Date())
+      .split("-")
+      .map(Number);
+    const nextYear = envMonth === 12 ? envYear + 1 : envYear;
+    const nextMonth = envMonth === 12 ? 1 : envMonth + 1;
+    const pad = (value: number) => String(value).padStart(2, "0");
+    const lastDay = new Date(Date.UTC(nextYear, nextMonth, 0)).getUTCDate();
+    const expectedFrom = `${nextYear}-${pad(nextMonth)}-01`;
+    const expectedTo = `${nextYear}-${pad(nextMonth)}-${pad(lastDay)}`;
+
     await waitFor(() => {
       const latest = requests.at(-1);
-      expect(latest).toContain("from=2026-05-01");
-      expect(latest).toContain("to=2026-05-31");
+      expect(latest).toContain(`from=${expectedFrom}`);
+      expect(latest).toContain(`to=${expectedTo}`);
       expect(latest).toContain("lodgeId=lodge-2");
       expect(latest).toContain("deleted=include");
     });
@@ -375,5 +408,74 @@ describe("occupancy scope label survives a lost lodge list (#2887)", () => {
     await renderReports();
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
     expect(screen.queryByText(/All lodges/i)).toBeNull();
+  });
+});
+
+
+/**
+ * THE DISCRIMINATING ONE (CT-4, #2870).
+ *
+ * Everything above renders under the default `CLUB_TIME_TEST_ZONE`, which is
+ * deliberately the zone `APP_TIME_ZONE` also resolves to, so the default range
+ * is the same either way and none of it proves the provider was consulted.
+ *
+ * The range is not cosmetic here. `getReportsDatasetDefaults` takes the club's
+ * day back three whole months and forward to the end of ITS month, so a day
+ * either side of a month boundary moves BOTH bounds by a month — the officer is
+ * shown a different quarter's numbers from the one they asked for, with nothing
+ * on screen saying so. This file used to carry a `@/lib/date-only` mock pinning
+ * "2026-04-13" for exactly this range; the page stopped importing that module,
+ * the mock went dead, and the default range lost its only coverage. That mock
+ * is now gone and this is what replaces it.
+ */
+describe("reports default range comes from the club's zone (CT-4, #2870)", () => {
+  const dayIn = (zone: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      // An independent oracle, not the kernel under test.
+    }).format(new Date());
+
+  it("anchors from/to on the PERSISTED club zone's today, not APP_TIME_ZONE's", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "day",
+      cases: [
+        // -6: still 30 June, so the window is 1 Mar .. 30 Jun.
+        { zone: "America/Denver", day: "2026-06-30", from: "2026-03-01", to: "2026-06-30" },
+        // +14: already 1 July, so it is 1 Apr .. 31 Jul — a different quarter.
+        { zone: "Pacific/Kiritimati", day: "2026-07-01", from: "2026-04-01", to: "2026-07-31" },
+      ],
+      answerFor: dayIn,
+      // NOT `["UTC"]` — see the chooser's note on "today" assertions.
+    });
+    const environmentDay = dayIn(APP_TIME_ZONE);
+    // The literals above are hand-written; this cross-checks them against the
+    // pure defaults helper so a typo in one of the four cannot pass silently.
+    expect(getReportsDatasetDefaults(chosen.day)).toMatchObject({
+      from: chosen.from,
+      to: chosen.to,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => EMPTY_REPORT })),
+    );
+    render(<ReportsPage />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    });
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+
+    const requested = String(
+      (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] ?? "",
+    );
+    expect(requested).toContain(`from=${chosen.from}`);
+    expect(requested).toContain(`to=${chosen.to}`);
+    const environmentDefaults = getReportsDatasetDefaults(environmentDay);
+    expect(requested).not.toContain(`from=${environmentDefaults.from}`);
   });
 });

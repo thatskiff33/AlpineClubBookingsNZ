@@ -18,6 +18,11 @@ import {
   type CancellationRule,
 } from "@/lib/policies";
 import { normalizeCancellationRule } from "@/lib/cancellation-rules";
+import {
+  addCalendarDays,
+  dateOnlyInstantOf,
+  requireCalendarDate,
+} from "@/lib/club-time";
 
 /**
  * Property-based tests (fast-check) for the refund, change-fee, and
@@ -269,14 +274,20 @@ describe("calculateCancellationPreview properties", () => {
         rulesArb,
         (payment, finalPriceCents, daysAhead, rules) => {
           fc.pre(payment.refundedAmountCents <= payment.amountCents);
-          const now = new Date(2026, 5, 1);
-          const checkIn = new Date(2026, 5, 1 + daysAhead);
+          // #3123 — the club's day is a `CalendarDate` now, and the check-in is
+          // built as the UTC-midnight `@db.Date` encoding it really is rather
+          // than as `new Date(2026, 5, 1 + n)`, which was HOST-local midnight
+          // and therefore a different day on either side of Greenwich.
+          const todayAtClub = requireCalendarDate("2026-06-01");
+          const checkIn = dateOnlyInstantOf(
+            addCalendarDays(todayAtClub, daysAhead),
+          );
           const preview = calculateCancellationPreview({
             payment,
             finalPriceCents,
             checkIn,
             policyRules: rules,
-            now,
+            todayAtClub,
           });
 
           const paid = payment.amountCents - payment.refundedAmountCents;

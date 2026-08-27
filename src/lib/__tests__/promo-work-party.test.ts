@@ -21,6 +21,14 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { validateAndCalculatePromoDiscount } from "../promo";
+import { requireCalendarDate } from "@/lib/club-time";
+
+// #3123 — the transaction-bound promo and refund helpers take the CLUB's
+// calendar day as a REQUIRED value now: the club timezone is one of the two
+// reads that cannot happen under a lock (`INV-LOCK-004`), so it is resolved by
+// the caller and threaded in. These call sites are not about a date boundary,
+// so the frozen clock's own club day is used.
+const CLUB_TODAY_FOR_TEST = requireCalendarDate("2026-07-01");
 
 const d = parseDateOnly;
 
@@ -92,6 +100,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -124,6 +134,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -160,6 +172,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -193,6 +207,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -223,6 +239,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();
@@ -261,6 +279,8 @@ describe("validateAndCalculatePromoDiscount with internal work party promos", ()
         ],
       },
       null
+    ,
+      { todayAtClub: CLUB_TODAY_FOR_TEST }
     );
 
     expect(result.error).toBeUndefined();

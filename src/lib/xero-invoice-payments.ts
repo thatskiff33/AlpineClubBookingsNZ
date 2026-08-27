@@ -24,7 +24,8 @@ import {
   getAuthenticatedXeroClient,
 } from "./xero-api-client";
 import { getAccountMapping } from "./xero-mappings";
-import { formatDateOnlyForTimeZone } from "@/lib/date-only";
+import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 
 export const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
   "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
@@ -52,8 +53,10 @@ export async function createXeroPaymentForInvoice(
     amount: params.amountCents / 100,
     // A payment date is bank-reconciliation input and decides the GST period the
     // cash falls in, so it is the club's calendar day rather than the UTC one,
-    // which is still yesterday all New Zealand morning (INV-DATE-019, #2834).
-    date: formatDateOnlyForTimeZone(new Date()),
+    // which is still yesterday all New Zealand morning (INV-DATE-019, #2834) —
+    // and "the club's" now means the PERSISTED zone rather than the container's
+    // `TZ` (CT-5, #2869; INV-CONFIG-002).
+    date: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
     reference: params.reference,
   };
 
@@ -124,18 +127,27 @@ interface CreateXeroRefundPaymentParams {
   createdByMemberId?: string;
 }
 
+/**
+ * `paymentDate` is an ARGUMENT, not a clock read (CT-5, #2869).
+ *
+ * This builder is called from two places, one of them inside a provider-retry
+ * closure, and it must be a pure function of its inputs so a retry sends the
+ * date it first sent. The caller supplies the club's calendar day, which it
+ * reads once from the PERSISTED club timezone (`INV-CONFIG-002`) — never from
+ * the container's `TZ`, and never twice.
+ */
 export function buildRefundCreditNotePayment(params: {
   paymentId: string;
   creditNoteId: string;
   refundAmountCents: number;
   bankCode: string;
+  paymentDate: string;
 }): XeroPayment {
   return {
     creditNote: { creditNoteID: params.creditNoteId },
     account: { code: params.bankCode },
     amount: params.refundAmountCents / 100,
-    // Club calendar day, as for the invoice payment above (INV-DATE-019, #2834).
-    date: formatDateOnlyForTimeZone(new Date()),
+    date: params.paymentDate,
     reference: `Stripe Refund - ${CLUB_NAME} payment ${params.paymentId.slice(0, 8)}`,
     isReconciled: false,
   };
@@ -152,6 +164,7 @@ export async function createXeroRefundPaymentForInvoice(
     creditNoteId: params.creditNoteId,
     refundAmountCents: params.refundAmountCents,
     bankCode,
+    paymentDate: xeroDocumentDateForClubToday(await readClubTimeZoneOutsideRequest()),
   });
   // Key on the credit note id (#1162): equal-amount refund deltas each settle a
   // distinct credit note, so amount alone would collide onto one payment key.

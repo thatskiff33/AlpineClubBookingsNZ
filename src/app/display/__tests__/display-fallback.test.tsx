@@ -31,6 +31,17 @@ vi.mock("@/components/lodge-display/modules", async () => {
 
 import { DisplayScreen } from "@/app/display/display-screen";
 
+/**
+ * The club timezone these renders are about (CT-4, #2870).
+ *
+ * `DisplayScreen` takes the zone as a REQUIRED prop because `/display` sits
+ * outside both route-group chrome components and so has no shared provider above
+ * it: the server page resolves the club's persisted setting and hands it down.
+ * A test therefore has to say which club it is rendering for, which is what makes
+ * a zone assertion here capable of failing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const PAYLOAD = {
   lodge: { name: "Silverpeak Lodge" },
   club: { name: "Alpine Sports Club", logoUrl: null, logoDataUrl: null },
@@ -123,7 +134,7 @@ afterEach(() => {
 describe("DisplayScreen page-level fallback (LTV-030) — client render throw", () => {
   it("drops a throwing LayoutScreen to the FallbackBoard, with no error text on a real wall", async () => {
     enqueueState({ ...PAYLOAD, layoutRender: THROWING_LAYOUT_RENDER });
-    const { container } = render(<DisplayScreen />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -143,7 +154,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — client render throw", 
   it("shows the preview marker only in preview mode", async () => {
     window.history.pushState({}, "", "/display?preview=1");
     enqueueState({ ...PAYLOAD, layoutRender: THROWING_LAYOUT_RENDER });
-    const { container } = render(<DisplayScreen />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -156,7 +167,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — client render throw", 
 describe("DisplayScreen page-level fallback (LTV-030) — server broken binding", () => {
   it("renders the FallbackBoard when the server flags layoutRenderError (no layoutRender)", async () => {
     enqueueState({ ...PAYLOAD, layoutRenderError: true });
-    const { container } = render(<DisplayScreen />);
+    const { container } = render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });
@@ -169,7 +180,7 @@ describe("DisplayScreen page-level fallback (LTV-030) — server broken binding"
   it("marks the broken binding in preview mode", async () => {
     window.history.pushState({}, "", "/display?previewDevice=dev-9");
     enqueueState({ ...PAYLOAD, layoutRenderError: true });
-    render(<DisplayScreen />);
+    render(<DisplayScreen zone={CLUB_ZONE} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10);
     });

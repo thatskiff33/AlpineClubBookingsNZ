@@ -25,7 +25,7 @@ import {
 import { enqueueRefundRequestRefundRecovery } from "@/lib/payment-recovery";
 import { buildRefundRequestRefundMetadata } from "@/lib/payment-recovery-keys";
 import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
-import { formatNZDate } from "@/lib/nzst-date";
+import { calendarDateOfDateOnlyInstant, formatClubDate } from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { renderEmailHtml } from "@/lib/email-theme";
 
@@ -335,8 +335,12 @@ export async function PUT(
           // conditional syntax, so a resolution with no admin note must not
           // print a bare "Notes:" heading over nothing.
           adminNotesLine: composeOptionalEmailLine("Notes", adminNotes),
-          checkIn: formatNZDate(booking.checkIn),
-          checkOut: formatNZDate(booking.checkOut),
+          // Lodge nights are CALENDAR DAYS (`@db.Date`), rendered with no zone at all
+          // (CT-4, #2870). The zoned instant formatter this replaced projected UTC
+          // midnight through the club zone: the identity in New Zealand, and the
+          // PREVIOUS DAY for any club behind UTC.
+          checkIn: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkIn)),
+          checkOut: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkOut)),
         },
       }).catch((err) =>
         logger.error({ err }, "Failed to send refund appeal approved email")
@@ -419,8 +423,9 @@ export async function PUT(
           adminNotes: adminNotes ?? "",
           // #2268: pre-composed optional line (see the approved branch).
           adminNotesLine: composeOptionalEmailLine("Notes", adminNotes),
-          checkIn: formatNZDate(booking.checkIn),
-          checkOut: formatNZDate(booking.checkOut),
+          // Calendar days, no zone — see the approved branch above.
+          checkIn: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkIn)),
+          checkOut: formatClubDate(calendarDateOfDateOnlyInstant(booking.checkOut)),
         },
       }).catch((err) =>
         logger.error({ err }, "Failed to send refund appeal declined email")

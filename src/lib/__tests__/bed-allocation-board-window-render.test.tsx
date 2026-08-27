@@ -12,10 +12,13 @@
  */
 
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@/lib/__tests__/support/club-time-render";
 import { useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardPayload } from "@/app/(admin)/admin/bed-allocation/_components/types";
+import { ClubTimeProvider } from "@/components/club-time-provider";
+import { APP_TIME_ZONE } from "@/config/operational";
+import { chooseDivergentClubZone } from "@/lib/__tests__/helpers/club-time-zone";
 
 const openRemovalDialogMock = vi.hoisted(() => vi.fn());
 const openMoveDialogMock = vi.hoisted(() => vi.fn());
@@ -400,5 +403,76 @@ describe("bed allocation board — a payload with no custodianHolds (#2286)", ()
     // Singular wording comes from the tolerant list's own length, not from the
     // raw payload field (the bug this finding named).
     expect(screen.getByText(/This bed is/)).toBeInTheDocument();
+  });
+});
+
+
+/**
+ * THE DISCRIMINATING ONE (CT-4, #2870).
+ *
+ * Every render above uses the default `CLUB_TIME_TEST_ZONE`, which is
+ * deliberately the zone `APP_TIME_ZONE` also resolves to, so the board's opening
+ * night is the same string whether the page read its provider or the
+ * environment — and this whole file passes against either.
+ *
+ * The opening night is the board an officer allocates beds on. A day out and
+ * every guest chip on screen belongs to a different night from the one the
+ * officer thinks they are looking at, which is a bed-allocation error rather
+ * than a display one. It travels in the request's `from` parameter, which is
+ * where it is read back here.
+ */
+describe("bed allocation board — the opening night comes from the club's zone (CT-4, #2870)", () => {
+  const dayIn = (zone: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      // An independent oracle rather than the kernel under test, so one defect
+      // cannot satisfy both sides of the comparison.
+    }).format(new Date());
+
+  beforeEach(() => {
+    editAccessMock.mockReturnValue(true);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => buildPayload() }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("opens on the PERSISTED club zone's night, not APP_TIME_ZONE's", async () => {
+    const chosen = chooseDivergentClubZone({
+      subject: "the club's today at the frozen instant",
+      answerKey: "day",
+      cases: [
+        { zone: "America/Denver", day: "2026-06-30" }, // -6: still 30 June
+        { zone: "Pacific/Kiritimati", day: "2026-07-01" }, // +14: already 1 July
+      ],
+      answerFor: dayIn,
+      // NOT `["UTC"]` — see the chooser's note on "today" assertions.
+    });
+    // `answerKey` makes the chooser check the literal against its own zone, so
+    // `chosen.day` is provably not the environment's answer.
+    const environmentDay = dayIn(APP_TIME_ZONE);
+
+    render(<AdminBedAllocationPage />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <ClubTimeProvider zone={chosen.zone}>{children}</ClubTimeProvider>
+      ),
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("room-table")).toBeInTheDocument();
+    });
+
+    const urls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([url]) => String(url),
+    );
+    expect(urls.some((url) => url.includes(`from=${chosen.day}`))).toBe(true);
+    expect(urls.some((url) => url.includes(`from=${environmentDay}`))).toBe(false);
   });
 });

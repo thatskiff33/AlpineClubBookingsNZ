@@ -27,7 +27,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { APP_LOCALE } from "@/config/operational";
+import { parseInstant, type ClubTimeZone } from "@/lib/club-time";
+import { clubTimeZone } from "@/lib/club-time/server";
 import { auth } from "@/lib/auth";
 import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import {
@@ -57,16 +59,30 @@ const severityLabels: Record<StuckStateSeverity, string> = {
 // #2264: deliberately not `formatNZDateTime` — this "generated at" stamp sits in
 // a dense operations header, so it drops the year and keeps 2-digit fields to
 // match the system-health timestamps beside it.
-const GENERATED_AT = new Intl.DateTimeFormat(APP_LOCALE, {
-  timeZone: APP_TIME_ZONE,
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+// CT-4 (#2870): `generatedAt` is a real INSTANT, so it is projected through
+// the club's PERSISTED zone (INV-CONFIG-002) rather than APP_TIME_ZONE. The
+// shape is not one of the kernel's house shapes, so the formatter is built
+// here and memoised per zone instead of frozen at module scope.
+const GENERATED_AT_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 
-function formatGeneratedAt(value: string) {
-  return GENERATED_AT.format(new Date(value));
+function generatedAtFormatter(zone: ClubTimeZone): Intl.DateTimeFormat {
+  const cached = GENERATED_AT_FORMATTERS.get(zone);
+  if (cached) return cached;
+  const created = new Intl.DateTimeFormat(APP_LOCALE, {
+    timeZone: zone,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  GENERATED_AT_FORMATTERS.set(zone, created);
+  return created;
+}
+
+function formatGeneratedAt(zone: ClubTimeZone, value: string) {
+  const instant = parseInstant(value);
+  if (instant === null) return "an unknown time";
+  return generatedAtFormatter(zone).format(instant);
 }
 
 function severityBadgeVariant(severity: StuckStateSeverity) {
@@ -177,12 +193,13 @@ export default async function AdminStuckStatesPage() {
     ? hasAdminAreaAccess(session.user, { area: "membership", level: "view" })
     : false;
   const dashboard = await getStuckStateDashboard({ viewerCanViewMembership });
+  const zone = await clubTimeZone();
 
   return (
     <div className="space-y-8">
       <AdminPageHeader
         title="Stuck States"
-        description={`Generated ${formatGeneratedAt(dashboard.generatedAt)}`}
+        description={`Generated ${formatGeneratedAt(zone, dashboard.generatedAt)}`}
         actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/admin/health">System Health</Link>

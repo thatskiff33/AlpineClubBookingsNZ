@@ -124,6 +124,23 @@ vi.mock("@/components/admin-sidebar", () => ({
   getAdminFeatureSearchIndex: () => [],
 }));
 
+/*
+  Chrome, like its sidebar sibling above — and now REQUIRED to be stubbed rather
+  than merely tidy (#3123). This file mocks `AppProviders` down to a passthrough
+  on purpose, because what it asserts is route-group gating and the real
+  providers want data none of these cases supply. Since #3123 the palette reads
+  the club's day from `ClubTimeProvider` (which `AppProviders` mounts), and
+  `useClubTime()` throws when there is none — deliberately, so a tree that
+  forgot the mount fails loudly instead of rendering a plausible wrong day. With
+  the provider mocked away the only honest choice is to stub the component that
+  needs it; the palette's own behaviour is covered by
+  `admin-command-palette.test.tsx` and
+  `admin-sidebar-club-time.test.tsx`, both of which mount a real provider.
+*/
+vi.mock("@/components/admin-command-palette", () => ({
+  AdminCommandPalette: () => null,
+}));
+
 vi.mock("@/components/help-widget/help-widget-context", () => ({
   HelpWidgetProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   useHelpWidgetExtras: () => {},

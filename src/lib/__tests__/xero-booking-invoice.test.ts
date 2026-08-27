@@ -156,7 +156,6 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/pricing", () => ({
-  getSeasonYear: vi.fn(() => 2026),
   getStayNights: vi.fn(() => [new Date("2026-07-31"), new Date("2026-08-01")]),
 }));
 

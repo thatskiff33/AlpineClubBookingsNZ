@@ -25,7 +25,11 @@ import {
 } from "@/components/admin/view-only-action";
 import { ADMIN_VIEW_ONLY_ACTION_REASON } from "@/hooks/use-admin-area-edit-access";
 import { BookingNoEmailsNotice } from "@/components/booking-no-emails-notice";
-import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { formatCents } from "@/lib/utils";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -108,12 +112,31 @@ function buildBookingApprovalsPath(
   });
 }
 
+/**
+ * A lodge night as the calendar day it IS - no timezone, because a calendar day
+ * has none (CT-4, #2870; INV-DATE-010). `checkIn`/`checkOut` are `@db.Date`
+ * columns and reach the browser as UTC midnight; the kernel's calendar-date
+ * formatter pins UTC over that encoding, so the projection is the identity.
+ *
+ * WHAT THIS REPLACES projected the same value through a zone, which is the
+ * identity for a club east of Greenwich and the PREVIOUS DAY west of it.
+ */
+function formatStayDate(value: string): string {
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
+}
+
 export function BookingApprovalsPanel({
   basePath = "/admin/booking-requests",
   fixedSearchParams = EMPTY_SEARCH_PARAMS,
   showHeading = true,
   canEdit = true,
 }: BookingApprovalsPanelProps) {
+  /**
+   * Real INSTANTS project through the club's PERSISTED timezone (CT-4, #2870;
+   * INV-CONFIG-002), not the container's `TZ`. The zone reaches this browser as
+   * data through `ClubTimeProvider` and is never read from the viewer's clock.
+   */
+  const clubTime = useClubTime();
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialFilter = searchParams.get("status");
@@ -436,7 +459,7 @@ export function BookingApprovalsPanel({
                         {booking.member.firstName} {booking.member.lastName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
-                        Created {formatNZDateTime(new Date(booking.createdAt))} —{" "}
+                        Created {clubTime.instantDateTime(new Date(booking.createdAt))} —{" "}
                         <Link href={`/admin/bookings/${booking.id}`} className="underline">
                           view booking
                         </Link>
@@ -462,8 +485,8 @@ export function BookingApprovalsPanel({
                   <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <span className="text-muted-foreground">Dates:</span>{" "}
-                      {formatNZDate(new Date(booking.checkIn))} to{" "}
-                      {formatNZDate(new Date(booking.checkOut))}
+                      {formatStayDate(booking.checkIn)} to{" "}
+                      {formatStayDate(booking.checkOut)}
                     </div>
                     <div>
                       <span className="text-muted-foreground">Status:</span> {booking.status}
@@ -509,7 +532,7 @@ export function BookingApprovalsPanel({
                           ? ` by ${booking.adminReviewedBy.firstName} ${booking.adminReviewedBy.lastName}`
                           : ""}
                         {booking.adminReviewedAt
-                          ? ` on ${formatNZDateTime(new Date(booking.adminReviewedAt))}`
+                          ? ` on ${clubTime.instantDateTime(new Date(booking.adminReviewedAt))}`
                           : ""}
                       </p>
                       {booking.adminReviewNotes && (

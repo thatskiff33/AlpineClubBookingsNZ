@@ -19,6 +19,17 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }))
 
+/**
+ * The CLUB's persisted zone (CT-5, #2869), pinned to something that is neither
+ * this runner's nor the documented fallback so the daily bucket cannot look
+ * right by coincidence.
+ */
+const CLUB_TIME_ZONE = "Pacific/Chatham"
+
+vi.mock("@/lib/club-time-zone-runtime", () => ({
+  readClubTimeZoneOutsideRequest: vi.fn(async () => CLUB_TIME_ZONE),
+}))
+
 import { getTodaysXeroUsageSummary, recordXeroApiUsage } from "@/lib/xero-api-usage"
 
 describe("xero-api-usage", () => {
@@ -44,6 +55,40 @@ describe("xero-api-usage", () => {
     expect(mockPrisma.xeroApiUsageEvent.create).toHaveBeenCalledTimes(1)
     expect(mockPrisma.xeroApiUsageDaily.upsert).toHaveBeenCalledTimes(1)
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
+  })
+
+  it("buckets a call on the CLUB's calendar day, as a date-only encoding", async () => {
+    /*
+      TWO DEFECTS IN ONE LINE, both fixed here (CT-5, #2869 review).
+
+      `usageDate` was `new Date(d.getFullYear(), d.getMonth(), d.getDate())` —
+      the HOST's calendar components at host-LOCAL midnight. The zone was the
+      container's rather than the club's, so a redeployed container re-bucketed
+      the day; and a local-midnight instant is not a date-only encoding, so for
+      any club east of Greenwich the `@db.Date` column took its UTC date part
+      and labelled the bucket a day EARLY.
+
+      The fixture is 2026-08-22 12:00 UTC, which is already the 23rd in
+      Pacific/Chatham (+12:45) and still the 22nd in UTC and in the Americas —
+      so a regression to either the host zone or a UTC truncation shows up as a
+      different day rather than as the same one.
+    */
+    mockPrisma.xeroApiUsageEvent.create.mockReturnValue({ kind: "event-create" })
+    mockPrisma.xeroApiUsageDaily.upsert.mockReturnValue({ kind: "daily-upsert" })
+
+    await recordXeroApiUsage({
+      operation: "getContacts",
+      resourceType: "CONTACT",
+      success: true,
+      createdAt: new Date("2026-08-22T12:00:00.000Z"),
+    })
+
+    const written = mockPrisma.xeroApiUsageEvent.create.mock.calls[0][0] as {
+      data: { usageDate: Date }
+    }
+    expect(written.data.usageDate.toISOString()).toBe(
+      "2026-08-23T00:00:00.000Z",
+    )
   })
 
   it("redacts sensitive values before persisting failure messages", async () => {

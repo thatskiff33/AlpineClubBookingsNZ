@@ -38,6 +38,14 @@ import {
 } from "@/lib/adult-member-hosting-review";
 import { hostingCoverageStateKey } from "@/lib/adult-member-hosting-coverage-incidents";
 import { HostingCoverageParticipantRetryError } from "@/lib/adult-member-hosting-queue-participants";
+
+/**
+ * #3123 — the club's day now arrives at these lock-bound entry points as a
+ * REQUIRED argument, resolved by the caller outside its transaction
+ * (`INV-LOCK-004`). This is the same day the frozen clock's default instant
+ * produced before the migration, so every assertion below is unchanged.
+ */
+const CLUB_TODAY_DATE_ONLY = new Date("2026-07-01T00:00:00.000Z");
 import {
   SameOwnerCoverageOverrideRequiredError,
   SameOwnerCoverageWouldBreakError,
@@ -2022,7 +2030,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
     });
 
     await expect(
-      enqueueHostingCoverageReevaluationForMember("lapsing-adult", db),
+      enqueueHostingCoverageReevaluationForMember("lapsing-adult", db, CLUB_TODAY_DATE_ONLY),
     ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
     expect(db.booking.findMany).not.toHaveBeenCalled();
   });
@@ -2040,6 +2048,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
       const count = await enqueueHostingCoverageReevaluationForMember(
         "lapsing-adult",
         db,
+        CLUB_TODAY_DATE_ONLY,
         { cause: "SYSTEM_CHANGE", actorMemberId: "officer-1" },
       );
       expect(count).toBe(2);
@@ -2077,7 +2086,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
         }),
       ]);
       expect(
-        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", db),
+        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", db, CLUB_TODAY_DATE_ONLY),
       ).toBe(0);
       expect(queued).toEqual([]);
     } finally {
@@ -2100,7 +2109,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
         attendedBooking("b-deleted", "owner-1", { deletedAt: TODAY }),
       ]);
       expect(
-        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", db),
+        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", db, CLUB_TODAY_DATE_ONLY),
       ).toBe(0);
       expect(queued).toEqual([]);
     } finally {
@@ -2120,7 +2129,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
         policies: [policyRow({ mode: "ADMIN_REVIEW_REQUIRED" })],
       });
       expect(
-        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", review.db),
+        await enqueueHostingCoverageReevaluationForMember("lapsing-adult", review.db, CLUB_TODAY_DATE_ONLY),
       ).toBe(0);
       expect(review.queued).toEqual([]);
 
@@ -2131,6 +2140,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
         await enqueueHostingCoverageReevaluationForMember(
           "lapsing-adult",
           sameBookingOnly.db,
+          CLUB_TODAY_DATE_ONLY,
         ),
       ).toBe(1);
     } finally {
@@ -2159,7 +2169,7 @@ describe("a change to one PERSON's standing (#2576 §8, §17)", () => {
       });
 
       await expect(
-        enqueueHostingCoverageReevaluationForMember("lapsing-adult", db),
+        enqueueHostingCoverageReevaluationForMember("lapsing-adult", db, CLUB_TODAY_DATE_ONLY),
       ).rejects.toBeInstanceOf(HostingCoverageParticipantRetryError);
       expect(db.$executeRaw).toHaveBeenCalledTimes(1);
       expect(queued).toEqual([]);
@@ -2449,5 +2459,83 @@ describe("the dependent reads truncate reproducibly (#2576 §10)", () => {
         typeof args?.take === "number" && args?.select?.guests?.where,
     );
     expect(sourceReads.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * #3123 — the hosting-coverage fan-out bounds its candidate set on the day the
+ * CALLER resolved, and resolves nothing itself.
+ *
+ * `loadHostingCoverageMemberFanoutCandidates` asks for every current-or-future
+ * booking this person attends — `checkOut >= today` against a `@db.Date`
+ * column. It used to answer "today" from `APP_TIME_ZONE`, the container's zone,
+ * and it cannot: `enqueueHostingCoverageReevaluationForMember` takes the
+ * standing-subject `Member` row lock on its first line and calls this twice
+ * under it, so resolving the club's persisted zone here would be a
+ * `clubTimeSettings.findUnique` on a second pooled connection while that lock
+ * is held (`INV-LOCK-004`). `today` is therefore a REQUIRED third parameter,
+ * ahead of the defaulted `context` so the compiler enumerates all thirteen
+ * callers.
+ *
+ * TWO PROPERTIES, and the second is the one that costs a member a booking.
+ * A wrong day drops a stay that ends today out of the candidate set, so nothing
+ * records the obligation to re-check the bookings a lapsed host was covering.
+ * And the PLAN pass and the post-lock RE-VERIFY pass compare their two results
+ * for equality — if each resolved its own day, a request straddling club
+ * midnight would raise `HostingCoverageParticipantRetryError` on a merge or a
+ * deactivation that nothing was wrong with. One value, threaded to both.
+ *
+ * DISCRIMINATION: 30 June is supplied and 1 July rejected. 1 July is what
+ * `getTodayDateOnly()` answers at the frozen instant under this file's unmocked
+ * environment, so it is exactly the value the pre-migration code produced.
+ */
+describe("the hosting fan-out takes the day it is given (#3123)", () => {
+  const SUPPLIED_CLUB_DAY = new Date("2026-06-30T00:00:00.000Z");
+
+  function candidateCheckOutBounds(
+    findMany: ReturnType<typeof vi.fn>,
+  ): string[] {
+    return findMany.mock.calls
+      .map((call) => (call[0] as { where?: { checkOut?: { gte?: Date } } }).where)
+      .filter(
+        (where): where is { checkOut: { gte: Date } } =>
+          where?.checkOut?.gte instanceof Date,
+      )
+      .map((where) => where.checkOut.gte.toISOString());
+  }
+
+  it("bounds both the planning read and the post-lock re-verify on that day", async () => {
+    const attended = booking({
+      id: "b-attended",
+      memberId: "owner-1",
+      guests: [
+        guestRow(
+          "adult-on-b-attended",
+          ["2026-07-03", "2026-07-04"],
+          memberRow({ id: "lapsing-adult" }),
+        ),
+      ],
+    });
+    const { db } = makeStore([attended], {
+      policies: [policyRow({ hostScopeSameBookingOwner: true })],
+    });
+
+    await enqueueHostingCoverageReevaluationForMember(
+      "lapsing-adult",
+      db,
+      SUPPLIED_CLUB_DAY,
+      { cause: "SYSTEM_CHANGE", actorMemberId: "officer-1" },
+    );
+
+    const bounds = candidateCheckOutBounds(db.booking.findMany);
+    // Both passes, and both on the supplied day. A site that read the
+    // container's zone would answer 2026-07-01 here; two independent reads
+    // would answer inconsistently across club midnight and 409 the caller.
+    expect(bounds.length).toBeGreaterThanOrEqual(2);
+    for (const bound of bounds) {
+      expect(bound).toBe(SUPPLIED_CLUB_DAY.toISOString());
+      expect(bound).not.toBe(CLUB_TODAY_DATE_ONLY.toISOString());
+    }
+    expect(new Set(bounds).size).toBe(1);
   });
 });

@@ -20,7 +20,11 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import {
+  calendarDateOfSerialisedDbDate,
+  formatClubDate,
+} from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 
 const NOTE_MAX_LENGTH = 500;
@@ -89,18 +93,38 @@ interface AutoRefundedNotice {
  * text instead, which is what a Full Admin needs to look the booking up and what a
  * finance operator needs to quote it to somebody who can.
  */
+/**
+ * A lodge night as the calendar day it IS - no timezone, because a calendar day
+ * has none (CT-4, #2870; INV-DATE-010). `checkIn`/`checkOut` are `@db.Date`
+ * columns and cross the wire as UTC midnight; the kernel's calendar-date
+ * formatter pins UTC over that encoding, so the projection is the identity.
+ * What this replaces read the day through a zone - correct east of Greenwich, a
+ * day early west of it.
+ */
+function formatStayDate(value: string): string {
+  return formatClubDate(calendarDateOfSerialisedDbDate(value));
+}
+
 function AutomaticRefundNoticeRow({ notice }: { notice: AutoRefundedNotice }) {
+  /**
+   * `refundedAt` is the payment task's `completedAt` - a real INSTANT, not a
+   * lodge night - so it projects through the club's PERSISTED timezone (CT-4,
+   * #2870; INV-CONFIG-002). `instantDate` keeps the medium "16 Apr 2026" shape
+   * this row has always shown; only the zone's AUTHORITY changed, from the
+   * container's `TZ` to the club's recorded setting.
+   */
+  const clubTime = useClubTime();
   return (
     <li className="space-y-1 rounded-md border border-border px-3 py-2 text-sm">
       <p className="font-medium text-foreground">
         {notice.memberName} - {formatCents(notice.amountCents)} refunded
         {notice.refundedAt
-          ? ` on ${formatNZDate(new Date(notice.refundedAt))}`
+          ? ` on ${clubTime.instantDate(new Date(notice.refundedAt))}`
           : ""}
       </p>
       <p className="text-muted-foreground">
-        {formatNZDate(new Date(notice.checkIn))} to{" "}
-        {formatNZDate(new Date(notice.checkOut))} - booking{" "}
+        {formatStayDate(notice.checkIn)} to{" "}
+        {formatStayDate(notice.checkOut)} - booking{" "}
         <span className="font-mono text-xs">{notice.bookingId}</span>
       </p>
       {/*
@@ -557,8 +581,8 @@ export function ManualRefundTaskQueue() {
                         {task.memberName} — {formatTaskAmount(task.amountCents)}
                       </p>
                       <p className="text-muted-foreground">
-                        {formatNZDate(new Date(task.checkIn))} to{" "}
-                        {formatNZDate(new Date(task.checkOut))} ·{" "}
+                        {formatStayDate(task.checkIn)} to{" "}
+                        {formatStayDate(task.checkOut)} ·{" "}
                         <Link
                           className="underline"
                           href={`/bookings/${task.bookingId}`}

@@ -1,5 +1,6 @@
 import { BookingStatus } from "@prisma/client";
-import { addDaysDateOnly, getTodayDateOnly, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { addDaysDateOnly } from "@/lib/date-only";
+import { storedDateOnly } from "@/lib/stored-calendar-day";
 
 const MEMBER_FUTURE_EDIT_STATUSES = new Set<string>([
   BookingStatus.PENDING,
@@ -54,6 +55,11 @@ export interface BookingEditPolicyInput {
   // branches, so member/officer-without-bookings:edit output is byte-for-byte
   // unchanged whether or not this flag is set.
   adminOverride?: boolean;
+  /**
+   * The club's TODAY, as the UTC-midnight instant a `@db.Date` round-trips
+   * through. REQUIRED since #3123 — see {@link getBookingEditPolicy}.
+   */
+  today: Date;
 }
 
 function isAdmin(role: string) {
@@ -70,13 +76,41 @@ function isInProgressEditStatusAllowed(status: string): boolean {
   return IN_PROGRESS_EDIT_STATUSES.has(status);
 }
 
+/**
+ * Classify what may be edited on a booking, and from which date.
+ *
+ * `input.today` is the CLUB's day, from its persisted `ClubTimeSettings.timeZone`
+ * (`INV-CONFIG-002`), and it is REQUIRED (#3123).
+ *
+ * It used to be read here from the zone-defaulting `date-only` helper, whose
+ * default is `APP_TIME_ZONE` —
+ * `TZ || NEXT_PUBLIC_TZ || "Pacific/Auckland"` (`src/config/operational.ts`) —
+ * so with `NEXT_PUBLIC_TZ=America/Denver` in a UTC container, the exact
+ * deployment shape epic #2988 exists for, this was Denver's day, and with
+ * neither variable set it was Auckland's whatever the host was.
+ *
+ * The previous version of this comment said the plumbing to fix that was CT-6's
+ * (#2991). It is this issue's, and it is a THREADED REQUIRED PARAMETER rather
+ * than an `await` in here, deliberately: this function is synchronous and pure,
+ * it is called from eleven places including inside a `prisma.$transaction` (the
+ * guest-removal service) where an uncached `ClubTimeSettings` read would take a
+ * second pooled connection under held locks, and two of its callers invoke it
+ * TWICE and must get one answer both times. Making it `async` would have
+ * infected all eleven and bought nothing.
+ *
+ * `checkIn`/`checkOut` are stored `@db.Date` CALENDAR DAYS and take no zone at
+ * all — they are decoded zone-free through `storedDateOnly` (`INV-DATE-026`).
+ * `today` is the other side of those comparisons and must arrive on the same
+ * UTC-midnight frame, which is what every caller's `clubTodayDateOnlyInstant()`
+ * or `dateOnlyInstantOf(clubToday(zone))` produces.
+ */
 export function getBookingEditPolicy(
   input: BookingEditPolicyInput
 ): BookingEditPolicy {
-  const today = getTodayDateOnly();
+  const today = input.today;
   const tomorrow = addDaysDateOnly(today, 1);
-  const checkIn = normalizeDateOnlyForTimeZone(input.checkIn);
-  const checkOut = normalizeDateOnlyForTimeZone(input.checkOut);
+  const checkIn = storedDateOnly(input.checkIn);
+  const checkOut = storedDateOnly(input.checkOut);
 
   // Admin override (issue #1668): lift the date-window locks entirely. Status
   // eligibility is still enforced (canModifyBookingStatusForRole); only the
@@ -146,15 +180,20 @@ export function getBookingEditPolicy(
  * #2029: a stay has "started" once its NZ check-in date is today or earlier.
  * The single source of truth shared by the self-service started-stay cancel
  * block (`booking-cancel.ts`) and the booking-detail UI, so the cancel route and
- * the Cancel button can never disagree about when a stay has begun. `today` is
- * injectable purely for deterministic tests; production always resolves the NZ
- * calendar date via `getTodayDateOnly()`.
+ * the Cancel button can never disagree about when a stay has begun.
+ *
+ * `today` is REQUIRED since #3123. It was a default, and the default read the
+ * ENVIRONMENT's day rather than the club's persisted one — so a club configured
+ * behind its container's zone called a stay started a day early, blocking a
+ * self-service cancellation the member was still entitled to. `checkIn` is a
+ * `@db.Date` calendar day and is read as one (CT-4, #2870); `today` is the other
+ * side of that comparison and arrives on the same UTC-midnight frame.
  */
 export function bookingStayHasStarted(
   checkIn: Date,
-  today: Date = getTodayDateOnly(),
+  today: Date,
 ): boolean {
-  return normalizeDateOnlyForTimeZone(checkIn) <= today;
+  return storedDateOnly(checkIn) <= today;
 }
 
 export function canModifyBookingStatusForRole(status: string, role: string): boolean {

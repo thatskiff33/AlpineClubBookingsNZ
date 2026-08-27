@@ -65,6 +65,13 @@ import { resolveTargetDates } from "@/lib/booking-modify-validation";
 import { buildModificationProposalParties } from "@/lib/booking-exception-request-service";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { eachDateOnlyInRange } from "@/lib/date-only";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-07-01"));
 
 const CHECK_IN = parseDateOnly("2026-08-01");
 const CHECK_OUT = parseDateOnly("2026-08-03");
@@ -177,8 +184,17 @@ async function runRealPlanner(
 ) {
   const booking = bookingWith(guests) as never;
   const input = { ...delta, reviewedMemberProposal: true } as never;
-  const dates = resolveTargetDates({ booking, role: "ADMIN", input });
+  const dates = resolveTargetDates({
+    booking,
+    role: "ADMIN",
+    input,
+    // #3123 - the club's day is now a required input. Every fixture here is
+    // future-dated against the frozen clock, so the frozen day keeps the
+    // planner on exactly the branch these cases were written for.
+    today: new Date("2026-07-01T00:00:00.000Z"),
+  });
   const plan = await prepareGuestPlan(tx, {
+    today: FIXTURE_CLUB_TODAY,
     booking,
     role: "ADMIN",
     actorId: "officer-1",

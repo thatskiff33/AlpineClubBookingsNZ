@@ -36,7 +36,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
-import { formatNZDateTime } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import { parseInstant, type BoundClubTime } from "@/lib/club-time";
 import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { FocusedActionError } from "@/components/focused-action-error";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
@@ -123,12 +124,18 @@ function numberOrFallback(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) {
+// Real INSTANTS, shown in the club's persisted zone rather than the viewer's
+// or the build's (CT-4, #2870; INV-CONFIG-002). `parseInstant` is stricter
+// than the `new Date()` it replaces: an offset-less ISO string names a
+// wall-clock reading in whichever zone happens to be reading it, so it now
+// falls to the placeholder instead of being read in the host's zone.
+function formatDateTime(clubTime: BoundClubTime, value: string | null) {
+  const instant = value === null ? null : parseInstant(value);
+  if (instant === null) {
     return null;
   }
 
-  return formatNZDateTime(new Date(value));
+  return clubTime.instantDateTime(instant);
 }
 
 function getErrorMessage(data: unknown, fallback: string) {
@@ -152,9 +159,9 @@ function readStringArray(value: unknown) {
     : [];
 }
 
-function getWaitlistActionContext(entry: WaitlistEntry) {
+function getWaitlistActionContext(clubTime: BoundClubTime, entry: WaitlistEntry) {
   if (entry.status === "WAITLIST_OFFERED") {
-    const expires = formatDateTime(entry.waitlistOfferExpiresAt);
+    const expires = formatDateTime(clubTime, entry.waitlistOfferExpiresAt);
     return expires ? `Offer expires ${expires}` : "Offer sent; no expiry recorded";
   }
 
@@ -215,13 +222,13 @@ function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
   return "bg-success-muted text-success";
 }
 
-function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
+function formatOfferEmailDetail(clubTime: BoundClubTime, delivery: OfferEmailDelivery) {
   if (delivery.retryState === "delivered" && delivery.lastAttemptAt) {
-    return `Last delivery ${formatDateTime(delivery.lastAttemptAt)}`;
+    return `Last delivery ${formatDateTime(clubTime, delivery.lastAttemptAt)}`;
   }
 
   if (delivery.retryState === "queued" && delivery.lastAttemptAt) {
-    return `Queued ${formatDateTime(delivery.lastAttemptAt)}`;
+    return `Queued ${formatDateTime(clubTime, delivery.lastAttemptAt)}`;
   }
 
   if (delivery.errorMessage) {
@@ -229,7 +236,7 @@ function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
   }
 
   if (delivery.lastAttemptAt) {
-    return `Last attempt ${formatDateTime(delivery.lastAttemptAt)}`;
+    return `Last attempt ${formatDateTime(clubTime, delivery.lastAttemptAt)}`;
   }
 
   return null;
@@ -247,6 +254,7 @@ function buildForceConfirmAuditPath(report: ForceConfirmReport) {
 }
 
 export default function AdminWaitlistPage() {
+  const clubTime = useClubTime();
   const router = useRouter();
   // Force Confirm writes /api/admin/bookings/[id]/force-confirm (bookings
   // area). A view-only bookings admin browses the queue but cannot act (#1997).
@@ -900,7 +908,7 @@ export default function AdminWaitlistPage() {
                       View booking
                     </Link>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {getWaitlistActionContext(entry)}
+                      {getWaitlistActionContext(clubTime, entry)}
                     </p>
                     {entry.offerEmailDelivery && (
                       <div className="mt-2 space-y-1">
@@ -910,9 +918,9 @@ export default function AdminWaitlistPage() {
                         >
                           {getOfferEmailSummary(entry.offerEmailDelivery)}
                         </Badge>
-                        {formatOfferEmailDetail(entry.offerEmailDelivery) && (
+                        {formatOfferEmailDetail(clubTime, entry.offerEmailDelivery) && (
                           <p className="max-w-xs text-xs text-muted-foreground">
-                            {formatOfferEmailDetail(entry.offerEmailDelivery)}
+                            {formatOfferEmailDetail(clubTime, entry.offerEmailDelivery)}
                           </p>
                         )}
                         {entry.offerEmailDelivery.needsOperatorAction &&
@@ -939,7 +947,7 @@ export default function AdminWaitlistPage() {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="text-xs">{formatDateTime(entry.createdAt)}</TableCell>
+                  <TableCell className="text-xs">{formatDateTime(clubTime, entry.createdAt)}</TableCell>
                   <TableCell>
                     <ViewOnlyActionButton
                       canEdit={canEditBookings}

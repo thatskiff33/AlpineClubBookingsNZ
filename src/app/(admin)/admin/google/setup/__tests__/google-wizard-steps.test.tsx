@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@/lib/__tests__/support/club-time-render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsStep, VerifyStep } from "../google-wizard-steps";
 import type { GoogleWizardContext } from "../use-google-wizard-context";

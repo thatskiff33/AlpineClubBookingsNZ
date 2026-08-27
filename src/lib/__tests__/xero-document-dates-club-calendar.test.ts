@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
 import { frozenTestNow } from "@/lib/__tests__/helpers/clock";
 import { expectClubTimeZonePremise } from "@/lib/__tests__/helpers/club-time-zone";
+import { requireClubTimeZone } from "@/lib/club-time";
+import { xeroDocumentDateForClubToday } from "@/lib/xero-provider-dates";
 
 /**
  * Every Xero document date derived from an INSTANT is the club's calendar day
@@ -239,6 +241,15 @@ const CLUB_DAY_CASES = [
   },
 ] as const;
 
+/**
+ * The club's zone, named rather than left to the legacy helpers'
+ * `APP_TIME_ZONE` default, which #3123 deletes. It is New Zealand because that
+ * is the premise this whole file rests on, and `expectClubTimeZonePremise()`
+ * above asserts the environment still agrees — so this constant cannot drift
+ * out of step and leave the divergence cases measuring nothing.
+ */
+const CLUB_ZONE = "Pacific/Auckland";
+
 const SENTINEL = "sentinel-stop";
 
 function pinClubMorning(instant: Date) {
@@ -271,7 +282,7 @@ describe("#2834 the premise: the club zone is New Zealand and each instant reall
       // can never fail, so it would keep passing while the fixture drifted out
       // of the divergence window and quietly stopped testing anything.
       expect(instant.toISOString().slice(0, 10)).toBe(utcDay);
-      expect(formatDateOnlyForTimeZone(instant)).toBe(clubDay);
+      expect(formatDateOnlyForTimeZone(instant, CLUB_ZONE)).toBe(clubDay);
     },
   );
 
@@ -316,7 +327,7 @@ describe("#2834 the other half of the premise: a `@db.Date` receiver is read by 
   });
 
   it("but the two agree in the club's own zone, which is exactly why the assertions below cannot decide it alone", () => {
-    expect(formatDateOnlyForTimeZone(lodgeNight)).toBe("2026-08-03");
+    expect(formatDateOnlyForTimeZone(lodgeNight, CLUB_ZONE)).toBe("2026-08-03");
     expect(formatDateOnly(lodgeNight)).toBe("2026-08-03");
   });
 });
@@ -407,11 +418,19 @@ describe.each(CLUB_DAY_CASES)(
     it("is dated on the club's calendar day", () => {
       pinClubMorning(instant);
 
+      // CT-5 (#2869) made the builder a pure function of its inputs, so the
+      // clock read moved to the caller. What is asserted here is therefore the
+      // caller's DERIVATION — `xeroDocumentDateForClubToday(<the club zone>)`,
+      // character-for-character what `createXeroRefundPaymentForInvoice` and
+      // `createXeroRefundCreditNote` pass — plus the pass-through itself.
       const payment = buildRefundCreditNotePayment({
         paymentId: "pay_local",
         creditNoteId: "cn_1",
         refundAmountCents: 5000,
         bankCode: "606",
+        paymentDate: xeroDocumentDateForClubToday(
+          requireClubTimeZone(CLUB_ZONE),
+        ),
       });
 
       expect(payment.date).toBe(clubDay);
@@ -791,10 +810,11 @@ describe("a due date counted in days is counted in CLUB days, not 24-hour blocks
     // Read in club time, because that is the reading the claim is about. The
     // UTC reading happens to give the same answer here, so verifying the
     // premise with `toISOString()` would test the wrong calendar and still pass.
-    expect(formatDateOnlyForTimeZone(issuedAt)).toBe("2026-03-15");
+    expect(formatDateOnlyForTimeZone(issuedAt, CLUB_ZONE)).toBe("2026-03-15");
     expect(
       formatDateOnlyForTimeZone(
         new Date(issuedAt.getTime() + 30 * 24 * 60 * 60 * 1000),
+        CLUB_ZONE,
       ),
     ).toBe("2026-04-13");
   });

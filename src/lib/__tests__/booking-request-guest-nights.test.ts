@@ -42,6 +42,13 @@ import {
 } from "@/lib/bed-allocation-board";
 import { parseDateOnly } from "@/lib/date-only";
 import { buildInvoiceLineItems } from "@/lib/xero-booking-invoices";
+import { dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-time";
+
+// #3123 (`INV-LOCK-004`) — the CLUB's day, resolved by the caller BEFORE it opens
+// its transaction and threaded in. Pinned to the frozen clock's club day, so
+// these fixtures answer exactly as they did while the guard read the club's zone
+// for itself.
+const FIXTURE_CLUB_TODAY = dateOnlyInstantOf(requireCalendarDate("2026-07-01"));
 
 const CHECK_IN = parseDateOnly("2026-08-01");
 const CHECK_OUT = parseDateOnly("2026-08-04"); // three nights
@@ -214,6 +221,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
 
   it("attaches nights to every guest, matching each one's own price", async () => {
     const guestCreates = await buildApprovalGuestCreates(tx, {
+      today: FIXTURE_CLUB_TODAY,
       guests: [
         { firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT },
         { firstName: "Sam", lastName: "Student", ageTier: AgeTier.CHILD },
@@ -234,6 +242,7 @@ describe("buildApprovalGuestCreates gives every guest a night set (#2739)", () =
 
   it("nests them the way Prisma wants at the shared write point", async () => {
     const [guestCreate] = await buildApprovalGuestCreates(tx, {
+      today: FIXTURE_CLUB_TODAY,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],
@@ -315,6 +324,7 @@ describe("the guests now reach the Bed Allocation officer card (#2739)", () => {
    */
   async function pipelineNights() {
     const [guestCreate] = await buildApprovalGuestCreates({} as never, {
+      today: FIXTURE_CLUB_TODAY,
       guests: [{ firstName: "Tara", lastName: "Tester", ageTier: AgeTier.ADULT }],
       linkedMembers: new Map<number, string>(),
       guestPriceCents: [9000],

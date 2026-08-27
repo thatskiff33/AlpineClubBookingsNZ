@@ -336,7 +336,8 @@ describe("membership cancellation admin review", () => {
     // it never refuses the cancellation. Drained unfiltered after the commit, because one
     // person can attend bookings owned by several accounts at several lodges.
     expect(hostingMocks.fanout).toHaveBeenCalledTimes(1);
-    expect(hostingMocks.fanout.mock.calls[0]?.[2] as object).toMatchObject({
+    expect(hostingMocks.fanout.mock.calls[0]?.[2]).toBeInstanceOf(Date);
+    expect(hostingMocks.fanout.mock.calls[0]?.[3] as object).toMatchObject({
       cause: "SYSTEM_CHANGE",
       actorMemberId: "admin-1",
     });

@@ -5,7 +5,9 @@ import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { formatNZInstantOrRaw } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
+import type { BoundClubTime } from "@/lib/club-time";
+import { formatPayloadInstantDateTimeOrRaw } from "@/lib/payload-instant";
 import {
   EnvironmentXeroContainment,
   type DeclarationKind,
@@ -163,7 +165,10 @@ function describeDeclaration(state: EnvironmentSafetyState): string {
  * role is displayed directly above this block and says which state applies; this
  * block says how much and how lately, in words true of both (#3035).
  */
-function describeWithheldEmail(state: EnvironmentSafetyState): {
+function describeWithheldEmail(
+  club: BoundClubTime,
+  state: EnvironmentSafetyState,
+): {
   headline: string;
   detail: string;
 } {
@@ -192,7 +197,7 @@ function describeWithheldEmail(state: EnvironmentSafetyState): {
   */
   if (withheld.captureInProduction > 0) {
     const recently = withheld.mostRecentAt
-      ? ` Most recently ${formatNZInstantOrRaw(withheld.mostRecentAt)}.`
+      ? ` Most recently ${formatPayloadInstantDateTimeOrRaw(club, withheld.mostRecentAt)}.`
       : "";
     return {
       headline: `${withheld.captureInProduction} message${withheld.captureInProduction === 1 ? "" : "s"} refused: this installation says it is BOTH the live site and a mail capture`,
@@ -202,7 +207,7 @@ function describeWithheldEmail(state: EnvironmentSafetyState): {
   return {
     headline: `${withheld.count} message${withheld.count === 1 ? "" : "s"} held back`,
     detail: withheld.mostRecentAt
-      ? `Most recently ${formatNZInstantOrRaw(withheld.mostRecentAt)}. A steady and recent count is what a LIVE club looks like when it has been wrongly declared a copy, or left undeclared. If members are waiting for that mail, the answer above is wrong.`
+      ? `Most recently ${formatPayloadInstantDateTimeOrRaw(club, withheld.mostRecentAt)}. A steady and recent count is what a LIVE club looks like when it has been wrongly declared a copy, or left undeclared. If members are waiting for that mail, the answer above is wrong.`
       : "A steady and recent count is what a LIVE club looks like when it has been wrongly declared a copy, or left undeclared. If members are waiting for that mail, the answer above is wrong.",
   };
 }
@@ -217,6 +222,14 @@ function describeOverride(state: EnvironmentSafetyState): string {
 }
 
 export function EnvironmentSafetyPanel() {
+  /*
+    THE CLUB'S PERSISTED ZONE, NOT THE OPERATOR'S BROWSER (#3123, INV-CONFIG-002).
+    The two stamps this screen prints — when application mail was last held back,
+    and when the safer override was last changed — are real INSTANTS, so they
+    have no civil date until a zone is chosen. `useClubTime` reads the club's
+    configured one from `ClubTimeProvider`, mounted by `(admin)/layout.tsx`.
+  */
+  const club = useClubTime();
   const [state, setState] = useState<EnvironmentSafetyState | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -347,9 +360,9 @@ export function EnvironmentSafetyPanel() {
           <p className="text-sm font-semibold">
             Application email held back for environment safety
           </p>
-          <p className="text-base">{describeWithheldEmail(state).headline}</p>
+          <p className="text-base">{describeWithheldEmail(club, state).headline}</p>
           <p className="text-sm text-muted-foreground">
-            {describeWithheldEmail(state).detail}
+            {describeWithheldEmail(club, state).detail}
           </p>
         </div>
       ) : null}
@@ -385,7 +398,7 @@ export function EnvironmentSafetyPanel() {
           </p>
           {state.override.updatedAt ? (
             <p className="text-xs text-muted-foreground">
-              {`Last changed ${formatNZInstantOrRaw(state.override.updatedAt)}`}
+              {`Last changed ${formatPayloadInstantDateTimeOrRaw(club, state.override.updatedAt)}`}
               {state.override.updatedByName
                 ? ` by ${state.override.updatedByName}`
                 : null}

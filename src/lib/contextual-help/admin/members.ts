@@ -2,7 +2,7 @@
  * Help for the "Members" admin section: the roll, applications, subscriptions,
  * induction, family groups and member communications.
  *
- * Section per the sidebar's `navSections`.
+ * Section per the sidebar's `buildAdminNavSections`.
  */
 import { entry, help, type HelpEntry } from "../types";
 

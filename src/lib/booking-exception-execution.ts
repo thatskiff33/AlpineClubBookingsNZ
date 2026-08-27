@@ -1011,21 +1011,21 @@ export async function resolvePolicyExceptionRequestTerminal(params: {
 
 // ---------------------------------------------------------------------------
 // Messages
+//
+// A refusal states what WAS established plus the next step, never a cause the
+// engine cannot distinguish (`INV-EXCEPT-035`, #3089): a replay mismatch is a
+// live edit OR corrected code re-deriving the evidence (#3087); a moved
+// fingerprint is a policy edit OR only a re-derived night set. A cause it DID
+// observe — an unreplayable row (#2526) — keeps its own words.
 // ---------------------------------------------------------------------------
 
 export const PROPOSAL_TAMPERED_MESSAGE =
   "This request's stored proposal no longer matches its signature. Please resubmit the request.";
 export const PROPOSAL_DRIFT_MESSAGE =
-  "The live booking has changed since this request was made. Please resubmit the request.";
-/**
- * The request carries no replayable proposal at all — a row written before the
- * replayable-delta format existed, or one edited into nonsense. The remedy is the
- * same resubmission, but nothing about the booking moved, so saying so would send
- * an officer looking for an edit that never happened (#2526 review).
- */
+  "This request can no longer be applied exactly as it was reviewed, so nothing has been changed. Ask the member to submit it again, then review it against the booking as it stands now.";
 export const PROPOSAL_UNREPLAYABLE_MESSAGE =
   "This request was made before the current approval format and cannot be applied. Ask the member to resubmit it; nothing about the booking has changed.";
 export const POLICY_DRIFT_MESSAGE =
-  "The booking policies have changed since this request was reviewed. Please resubmit the request so an admin can review the current situation.";
+  "The exceptions this request needs are no longer the ones that were reviewed, so nothing has been changed. Ask the member to submit it again, then review it against the situation as it stands now.";
 export const CAPACITY_CONFLICT_MESSAGE =
   "The lodge no longer has room for this booking. The request stays pending so it can be approved once capacity frees up.";
