@@ -404,12 +404,51 @@ export const memberFallbackHelp: HelpPageContent = {
   ],
 };
 
+// Source: docs/user-guide/the-message-board.md — keep in sync (see docs/user-guide/README.md)
+const messageBoardHelp: HelpPageContent = {
+  title: "Message Board",
+  summary:
+    "A board the members write themselves — a road report, a reminder, an offer of a lift. A post stays inside your own club unless you tick Share with all clubs; posts other clubs have shared appear here on shaded cards. The newest few posts also appear on your dashboard.",
+  actions: [
+    "Write into the box at the top and click Post; it appears straight away with your name on it.",
+    "Use 'Older posts' at the bottom to move back through the board, and 'Back to the latest' to return.",
+    "Ask a club administrator if you need a post of yours hidden or removed.",
+  ],
+  questions: [
+    {
+      q: "Who can see what I post?",
+      a: "Every signed-in member of your own club — and, only if you tick 'Share with all clubs' before posting, members of the other clubs on the network, who see it with your name and your club's name on it. Untick is the default, and if sharing is not set up for your club the tickbox says so and every post stays here.",
+    },
+    {
+      q: "Can I edit or delete my own post?",
+      a: "No. Ask a club administrator, who can hide it — which is reversible and keeps the text — or remove it, which deletes the words permanently.",
+    },
+    {
+      q: "Why can I not find the message board?",
+      a: "Your club has not switched the Message board module on. Your club administrator can turn it on.",
+    },
+    {
+      q: "Can I post under a different name?",
+      a: "No. Your name is taken from your member record when you post, not from anything you type, so a post is always attributed to the person who wrote it.",
+    },
+    {
+      q: "Why was my post refused?",
+      a: "Posts are limited to ten an hour per member, and to 4000 characters. The counter under the box shows how much you have used. The limit is far above ordinary use — it is there so one person cannot fill the board.",
+    },
+    {
+      q: "Will formatting or links work?",
+      a: "Yes — the toolbar offers headings, bold, italic, underline, a fixed set of colours and sizes, alignment, lists and pictures. The colours on offer are the whole menu, chosen to stay readable on both themes. Pictures have their location data removed on upload, so a photo does not publish where it was taken.",
+    },
+  ],
+};
+
 export const memberHelpEntries: HelpPageEntry[] = [
   entry("/book", bookHelp),
   entry("/bookings", bookingsListHelp),
   entry("/bookings/*", bookingDetailHelp),
   entry("/profile", profileHelp),
   entry("/dashboard", dashboardHelp),
+  entry("/message-board", messageBoardHelp),
   entry("/induction", inductionHelp),
   entry("/lodge-instructions", lodgeInstructionsHelp),
 ];

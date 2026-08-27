@@ -230,6 +230,12 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/admin/communications",
       "/admin/notices",
       "/admin/lockers",
+      // Club message board moderation (#2998). Membership, beside /admin/notices:
+      // the people who curate what members read are the same people. Without
+      // these two the paths fall through to the "/admin" catch-all and resolve
+      // as `overview`, which disagrees with what every one of these handlers
+      // actually enforces via requireAdmin({ area: "membership" }).
+      "/admin/message-board",
       "/admin/family-groups",
       "/admin/family-suggestions",
       "/admin/deletion-requests",
@@ -249,6 +255,7 @@ const ROUTE_AREA_PREFIXES: Array<{
       "/api/admin/communications",
       "/api/admin/notices",
       "/api/admin/lockers",
+      "/api/admin/club-posts",
       "/api/admin/family-groups",
       "/api/admin/family-suggestions",
       "/api/admin/deletion-requests",

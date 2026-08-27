@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   familyMarker: { findFirst: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(),
   clubTimeSettings: { findUnique: vi.fn() },
+  refreshFinancialYearConfig: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -32,6 +33,13 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/lib/xero-subscription-invoices", () => ({ enqueueMembershipSubscriptionChargeOperation: mocks.enqueue }));
 vi.mock("@/lib/audit", () => ({ createAuditLog: mocks.audit }));
+// REFRESH_PREVIEW resolves the club's financial year-end before reconciling, so
+// the reconcile transaction is never the thing that reads settings or calls Xero
+// under the season's advisory lock (#3116). Mocked here because the real module
+// reaches Prisma and the provider, neither of which this route test stands up.
+vi.mock("@/lib/financial-year-server", () => ({
+  refreshFinancialYearConfig: mocks.refreshFinancialYearConfig,
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     membershipSubscriptionCharge: mocks.charges,
@@ -77,6 +85,7 @@ describe("admin subscription billing route", () => {
     mocks.buildPreview.mockResolvedValue(preview);
     mocks.confirmPreview.mockResolvedValue({ chargeIds: ["charge-1"], exceptionCount: 0 });
     mocks.reconcile.mockResolvedValue({ resolvedCount: 0 });
+    mocks.refreshFinancialYearConfig.mockResolvedValue(3);
     mocks.enqueue.mockResolvedValue({ queueOperationId: "op-1", message: "queued" });
     mocks.charges.findMany.mockResolvedValue([]);
     mocks.exceptions.findMany.mockResolvedValue([]);
@@ -246,7 +255,10 @@ describe("admin subscription billing route", () => {
     const response = await POST(request({ action: "REFRESH_PREVIEW", seasonYear: 2026, decisionDate: "2026-07-13" }));
     expect(response.status).toBe(200);
     expect(mocks.requireAdmin).toHaveBeenCalledWith({ permission: { area: "finance", level: "edit" } });
-    expect(mocks.reconcile).toHaveBeenCalledWith({ seasonYear: 2026, decisionDate: expect.any(Date) });
+    // The year-end is resolved HERE and handed to reconcile, so the reconcile
+    // transaction never resolves it under the season's advisory lock (#3116).
+    expect(mocks.reconcile).toHaveBeenCalledWith({ seasonYear: 2026, decisionDate: expect.any(Date), yearEndMonth: 3 });
+    expect(mocks.refreshFinancialYearConfig).toHaveBeenCalled();
     const body = await response.json();
     expect(body).toMatchObject({ success: true, reconciledCount: 3, preview, settings: { invoiceDueDays: 30 } });
     // Audits the reconciliation when it resolved rows.

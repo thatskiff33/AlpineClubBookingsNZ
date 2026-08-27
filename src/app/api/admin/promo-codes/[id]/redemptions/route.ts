@@ -10,7 +10,7 @@ import { createAuditLog } from "@/lib/audit";
 import {
   BENEFICIAL_PROMO_ALLOCATION_FILTER,
   isBeneficialPromoAllocation,
-} from "@/lib/promo";
+} from "@/lib/promo-usage-counts";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",

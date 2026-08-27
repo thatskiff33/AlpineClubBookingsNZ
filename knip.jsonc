@@ -20,6 +20,10 @@
     // Invoked from scripts/e2e-stack.sh (shell) to seed test-mode Stripe keys
     // into the encrypted credential store (#2082), never imported.
     "e2e/setup/seed-stripe-credentials.ts",
+    // Invoked by hand (node scripts/branding/generate-calendar-icons.mjs) to
+    // regenerate the committed add-to-calendar email icons under
+    // public/branding/calendar/ (fork #41); never imported.
+    "scripts/branding/generate-calendar-icons.mjs",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
     "scripts/codex/issue-to-prompt.mjs",

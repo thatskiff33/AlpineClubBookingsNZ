@@ -489,23 +489,30 @@ const CENSUS_CEILING = {
    * `parseDateOnly`) into a file of their own, so one importer became two. No
    * call changed and no zone is consulted on either side of the seam.
    *
-   * 215 since #3128's third split did the same thing again: the three
-   * write-time re-filters moved verbatim out of `bed-allocation-lifecycle.ts`
-   * into `src/lib/bed-allocation-write-rechecks.ts`, taking `addDaysDateOnly`,
-   * `eachDateOnlyInRange` and `formatDateOnly` with them. Same shape, same
-   * reason, no call changed, no zone consulted.
+   * 214 -> 216 (#3108): the booking add-to-calendar feature adds two
+   * importers -- `calendar-links.ts` and the `.ics` download route -- both of
+   * which use only the zone-free exports (`parseDateOnly`, `addDaysDateOnly`,
+   * `formatDateOnly`) to keep lodge nights calendar days per INV-DATE-001;
+   * neither consults a timezone.
+   *
+   * 216 -> 217 since #3128's third split did the same thing as the first again:
+   * the three write-time re-filters moved verbatim out of
+   * `bed-allocation-lifecycle.ts` into `src/lib/bed-allocation-write-rechecks.ts`,
+   * taking `addDaysDateOnly`, `eachDateOnlyInRange` and `formatDateOnly` with
+   * them. Same shape, same reason, no call changed, no zone consulted.
    *
    * A WARNING FOR THE NEXT LANE THAT SPLITS A FILE, because this counter caught
-   * nobody and nearly shipped wrong. Two sibling branches each raised it 213 →
-   * 214 independently and correctly. The first merged; the second REBASED
-   * CLEANLY, because git saw both sides making the identical edit and had no
-   * conflict to report — leaving a branch that had added a 215th importer
-   * asserting 214, with a green rebase and no warning anywhere. Only running
-   * this suite found it. If you bump this number on a branch, re-run this file
-   * after every rebase onto a moved `main`: a clean merge is not evidence the
-   * count is still right.
+   * nobody and nearly shipped wrong -- twice. Two sibling branches each raised
+   * it 213 -> 214 independently and correctly. The first merged; the second
+   * REBASED CLEANLY, because git saw both sides making the identical edit and
+   * had no conflict to report -- leaving a branch that had added a 215th
+   * importer asserting 214, with a green rebase and no warning anywhere. This
+   * branch then sat at 215 while `main` moved to 216 underneath it. Only
+   * running this suite found either. If you bump this number on a branch,
+   * re-run this file after every rebase or merge onto a moved `main`: a clean
+   * merge is not evidence the count is still right, and neither is arithmetic.
    */
-  dateOnlyImporters: 215,
+  dateOnlyImporters: 217,
   /**
    * `new Date(y, m, d)` — local midnight in the HOST's zone.
    *
