@@ -12,7 +12,7 @@ import {
   MAX_CLUB_POST_LENGTH,
 } from "@/lib/club-posts";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 
 export const metadata = {
   title: "Message board",
@@ -59,6 +59,10 @@ export default async function MessageBoardPage({
     before,
     beforeId,
   });
+
+  // Post timestamps are instants, shown in the club's own timezone (CT-4,
+  // #2870): `formatNZDate` went with the deleted environment-zone adapter.
+  const club = await clubTime();
 
   // Whether the composer may offer sharing at all. A tickbox that cannot do
   // anything is worse than no tickbox: a member ticks it, posts, and reasonably
@@ -125,7 +129,7 @@ export default async function MessageBoardPage({
                       <span className="text-xs text-muted-foreground">You</span>
                     ) : null}
                     <span className="text-xs text-muted-foreground">
-                      {formatNZDate(new Date(post.postedAt))}
+                      {club.instantDate(new Date(post.postedAt))}
                     </span>
                   </div>
                   <ClubPostBody

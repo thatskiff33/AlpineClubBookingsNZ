@@ -8,7 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { listClubPostsForMember } from "@/lib/club-posts";
-import { formatNZDate } from "@/lib/nzst-date";
+import { clubTime } from "@/lib/club-time/server";
 
 /**
  * Dashboard "Message board" card (#2994): the newest few posts.
@@ -18,6 +18,7 @@ import { formatNZDate } from "@/lib/nzst-date";
  */
 export async function MessageBoardCard({ memberId }: { memberId: string }) {
   const { posts } = await listClubPostsForMember(memberId, { take: 3 });
+  const club = await clubTime();
   if (posts.length === 0) {
     return null;
   }
@@ -46,7 +47,7 @@ export async function MessageBoardCard({ memberId }: { memberId: string }) {
                   {post.authorName}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {formatNZDate(new Date(post.postedAt))}
+                  {club.instantDate(new Date(post.postedAt))}
                 </span>
               </div>
               {/* One line on the dashboard. The full post is on the board;

@@ -14,7 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import type { AdminClubPost, AdminPostTab } from "@/lib/club-posts-admin";
-import { formatNZDate } from "@/lib/nzst-date";
+import { useClubTime } from "@/components/club-time-provider";
 
 /**
  * Club message board moderation (#2998, epic #2992).
@@ -38,6 +38,8 @@ export function ClubPostsAdmin({
   tab: AdminPostTab;
   query: string;
 }) {
+  const club = useClubTime();
+
   const router = useRouter();
   const canEdit = useAdminAreaEditAccess("membership");
   const [pending, startTransition] = useTransition();
@@ -160,7 +162,7 @@ export function ClubPostsAdmin({
                         {post.authorName}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {formatNZDate(new Date(post.postedAt))}
+                        {club.instantDate(new Date(post.postedAt))}
                       </span>
                       {post.hiddenAt ? (
                         <span className="rounded-full bg-warning-3 px-2 py-0.5 text-xs font-medium text-warning-11">

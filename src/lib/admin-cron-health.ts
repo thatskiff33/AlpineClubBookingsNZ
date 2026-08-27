@@ -188,8 +188,8 @@ export function getAdminCronJobDefinitions(
         jobName: "club-post-mirror-sync",
         label: "Club message board mirror sync",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -203,8 +203,8 @@ export function getAdminCronJobDefinitions(
         jobName: "club-post-retention",
         label: "Club message board retention",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
@@ -218,8 +218,8 @@ export function getAdminCronJobDefinitions(
         jobName: "club-post-share-retry",
         label: "Club message board share retry",
         schedule: "0 */3 * * *",
-        timezone: nzTimezone,
-        expectedLocalTime: "Every 3 hours at minute 0 in Pacific/Auckland",
+        timezone: clubTimeZone,
+        expectedLocalTime: `Every 3 hours at minute 0 in ${clubTimeZone}`,
         staleAfterMinutes: THREE_HOURLY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason

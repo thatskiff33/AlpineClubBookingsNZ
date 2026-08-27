@@ -438,13 +438,11 @@ export default async function DashboardPage() {
   // events card below: the dashboard must not read for a surface it is not
   // going to show.
   //
-  // Seven CLUB days, stepped over the date-only value rather than derived from
-  // the process's own zone (INV-DATE-019), so every viewer is told about the
-  // same seven days no matter where they are reading from.
+  // Seven CLUB days, stepped over the club's calendar rather than derived from
+  // the process's own zone (INV-DATE-019; CT-4 #2870), so every viewer is told
+  // about the same seven days no matter where they are reading from.
   const recentPostCount = modules.commsPortal
-    ? await countClubPostsSince(
-        startOfDateOnlyForTimeZone(formatDateOnly(addDaysDateOnly(today, -7))),
-      )
+    ? await countClubPostsSince(club.startOfDay(addCalendarDays(todayDate, -7)))
     : 0;
 
   // Upcoming club events for the next two weeks (Events card → /calendar).
