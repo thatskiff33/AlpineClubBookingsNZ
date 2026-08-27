@@ -1134,3 +1134,32 @@ one, check the other.
   refund mirror twice — the replay only ever writes a mirror to an
   already-CANCELLED plan child whose `refundedAmountCents` is still zero,
   via a conditional update. Alerts fire on retry exhaustion only.
+
+## INV-PAY-051
+
+- **An unpriceable booking edit holds the money as an explicit typed review, and
+  one occurrence is one task** (#3030, epic #2797, owner decisions D1-D3). When a
+  valid structural edit's exact adjustment cannot be read from the booking's own
+  stored sold-price evidence, the stay change completes and the money becomes an
+  OPEN `ManualRefundTask` of kind `EDIT_FINANCIAL_REVIEW`. `amountCents` NULL
+  means the amount is genuinely unknown and `0` may never be used to mean it;
+  `paymentId` NULL is a credit owed against no captured payment and completing
+  such a task writes no refund allocation. Identity is the `occurrenceKey`, minted
+  only by `editFinancialReviewOccurrenceKey`
+  (`src/lib/edit-financial-review.ts`), never a `reason` sentence — so a replay
+  raises one task across OPEN, COMPLETED and DISMISSED, and both terminal states
+  are terminal for the OCCURRENCE. Completion carries the admin's confirmed
+  non-negative integer cents plus a note, written inside the same status-guarded
+  claim as the status so it cannot apply twice; a figure differing from one the
+  task already held is the audited amendment D2 permits on this kind alone, with
+  `raisedAmountCents` preserving what it was raised with. DISMISSED means reviewed
+  and nothing is due, and writes no amount. Nothing moves at Stripe, in the
+  ledger, in Xero or as account credit until an admin confirms.
+  - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
+    single occurrence-key mint, the raise, the DB constraints and the audited
+    completion. It ships NO caller: the booking-edit path that decides an edit is
+    unpriceable and calls the raise is #3032, and until it lands no production
+    path creates a row of this kind. Read the rules above as binding on any writer
+    of this kind rather than as a description of a live flow — which is also why
+    the current estimator behaviour in `INV-MOD-005` is still true today and is
+    #3031's to remove.

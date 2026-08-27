@@ -1438,7 +1438,39 @@ OPEN -> DISMISSED   (#2700: the Stripe webhook, with NO acting member at all —
                      who got there first claims nothing. Moves no money —
                      COMPLETED here would write a SECOND refund allocation for
                      one refund. See `INV-ADDPAY-036`.)
+OPEN -> COMPLETED   (#3030: the same finance:edit close, but the amount arrives
+                     WITH it. An `EDIT_FINANCIAL_REVIEW` task can be OPEN with
+                     `amountCents` NULL - genuinely unknown, never a magic zero -
+                     and the admin's confirmed non-negative integer cents is
+                     written inside the SAME status-fenced claim as the status.
+                     There is therefore no priced-but-still-OPEN state, and a
+                     confirmation can no more apply twice than a status can. A
+                     note is REQUIRED on this arm, because the admin is pricing
+                     real money from evidence. Where the confirmed figure differs
+                     from one the task already carried, that is the audited
+                     amendment of owner decision D2 and `raisedAmountCents` keeps
+                     what it was raised with; on a legacy kind a differing figure
+                     is refused as a stale screen instead. Credit-only tasks
+                     (`paymentId` NULL) write no refund allocation - there is
+                     nothing to allocate against.)
+OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
+                     REVIEWED, NO ADJUSTMENT IS DUE for that occurrence - a real
+                     decision, which is why it is not the same thing as an
+                     unknown amount. It writes NO amount at all: putting a zero
+                     there would be the magic value this epic exists to remove.)
 ```
+
+**#3030: terminal is terminal PER OCCURRENCE, not merely per row.** An
+`EDIT_FINANCIAL_REVIEW` task carries an `occurrenceKey` - the identity of the
+structural edit that raised it, minted in exactly one place
+(`editFinancialReviewOccurrenceKey`, `src/lib/edit-financial-review.ts`, which is
+also where the definition of "the same structural edit" is written down and
+tested). A replay of that edit finds the existing row and raises nothing,
+whatever state it has reached, so COMPLETED and DISMISSED close the OCCURRENCE
+rather than just the row. Because PostgreSQL exempts NULL from a unique index, a
+row of this kind that omitted the key would silently opt out of that fence, so
+the `ManualRefundTask_edit_review_occurrence_key_present` CHECK (migration
+`20260903010000`) makes that unrepresentable.
 
 **Where a terminal row is read, and the #2750 decision behind it.** Both
 terminal states are terminal for the row, not for the operator: the finance
@@ -1524,7 +1556,7 @@ the refund has already gone out. The rows it shows are defined once, in
 route uses rather than restating; an operator's own dismissal never appears
 there.
 
-There are THREE creators, and only the first two ever make an OPEN row:
+There are FOUR creators, and only the first, second and fourth ever make an OPEN row:
 
 - Created atomically with the CANCELLED claim when a **cash-settled** booking is
   cancelled with a non-zero policy refund. A zero-refund outcome creates no task.
@@ -1547,6 +1579,24 @@ There are THREE creators, and only the first two ever make an OPEN row:
   find-then-write rather than an atomic fenced update. On the PRIMARY path there is
   never an `OPEN` row to close — nothing raises one for a primary intent — so the
   create arm is the only one reachable there.
+- Created by a **booking edit whose exact sold price cannot be read from the
+  booking's own stored history** (#3030, epic #2797; `kind`
+  `EDIT_FINANCIAL_REVIEW`). Owner decision D1: the stay change is applied and
+  only the MONEY is held, so the booking never disagrees with reality while an
+  admin prices the adjustment. Raised by `raiseEditFinancialReviewTask`
+  (`src/lib/edit-financial-review.ts`) INSIDE the caller's transaction, so the
+  structural edit and the one task are atomic locally, and under
+  `pg_advisory_xact_lock(1)` — the same cohort and the same reason as the two
+  raisers above, because create-or-find is a find-then-write. Idempotent on the
+  `occurrenceKey` rather than on any `reason` sentence: text is not an identity,
+  and #3030 rejects it as one by name. This is the only creator that may leave
+  `amountCents` and `paymentId` NULL (owner decision D2), and it carries the D3
+  evidence in `reviewContext` — the cause, the guest strand, the nights given
+  back, the stored guest total and whatever stored night prices existed, and the
+  booking dates. The booking's payment and rate history is deliberately NOT
+  copied there: the admin surface links to the live one. Nothing raises this task
+  yet on `main`; the booking-edit path is wired by #3032 on the epic branch.
+
 The transition is a status-fenced conditional update, so a double click can
 never double-apply the allocation, and the row is never processed by any cron —
 it deliberately is not a `PaymentRecoveryOperation`. (That dispatcher's final
