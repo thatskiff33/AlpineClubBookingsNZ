@@ -70,7 +70,10 @@ are permanent: never renumbered, never reused.
   missed copy was the member-facing one; and no census guards against a sixth,
   because the remedy is structural and because that module's docblock quotes the
   old spelling to explain what replaced it — which a raw-source scanner would
-  report as the defect itself (`INV-SSOT-004`).
+  report as the defect itself (`INV-SSOT-004`). The convergence covers every
+  server-side scope decision; the admin promo-codes client still reads the same
+  default inline twice, which is recorded in `promo-guest-scope.ts` rather than
+  left silent, and waits on the server/client boundary work in #2850/#2851.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
