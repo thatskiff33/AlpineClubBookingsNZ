@@ -36,6 +36,7 @@ import {
   type MemberGuestConsentColumns,
 } from "@/lib/member-guest-consent";
 import { normalizeMemberGuestSettings } from "@/lib/member-guest-settings";
+import { mergeFamilySource } from "@/lib/__tests__/support/member-merge-family";
 import {
   DEFAULT_MEMBER_GUEST_SETTINGS,
   MEMBER_GUEST_PENDING_HOLD_EXPIRY_DAYS_MAX,
@@ -418,7 +419,10 @@ describe("member-merge classification", () => {
   it("documents both new FK-less member-id scalars", () => {
     // The list is explicitly illustrative, so nothing fails if a column is
     // omitted — which is exactly why it is asserted here.
-    const memberMerge = readRepoFile("src/lib/member-merge.ts");
+    // READ THE MERGE FAMILY, NOT ONE FILE. #3128 moved the snapshot column list
+    // out of `member-merge.ts` into `member-merge-snapshot-columns.ts`, and this
+    // pin went red on a change that moved no behaviour at all.
+    const memberMerge = mergeFamilySource();
     expect(memberMerge).toContain('"BookingGuest.consentRespondedByMemberId"');
     expect(memberMerge).toContain('"MemberGuestSettings.updatedByMemberId"');
   });

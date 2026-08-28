@@ -341,7 +341,7 @@ const memberIdInputSchema = {
  * THERE IS NO MEMBER NUMBER IN THIS SCHEMA, so no such field is reported. `Member`
  * carries a cuid `id`, an `email` and a `xeroContactId`; a grep of the whole tree
  * for `memberNumber`/`membershipNumber` finds no column, only one comment in
- * `member-merge.ts`. A member who quotes "their membership number" is quoting
+ * `member-merge-schema-coverage.ts`. A member quoting "their number" means
  * something else — a Xero contact number or an invoice number, both finance
  * records — and the scope line says so, because a tool that invented the field
  * would have a model tell an officer to read a number off a card the club has never

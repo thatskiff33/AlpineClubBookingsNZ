@@ -131,7 +131,9 @@ vi.mock("@/lib/booking-policies", () => ({
   validateMinimumStay: (...a: unknown[]) => mocks.validateMinimumStay(...a),
 }));
 
-vi.mock("@/lib/adult-member-hosting-review", () => ({
+// #3128 moved `evaluateProposedAdultMemberHosting` to its own module; the mock
+// follows the function, or it stops intercepting while the suite keeps passing.
+vi.mock("@/lib/adult-member-hosting-proposed", () => ({
   evaluateProposedAdultMemberHosting: (...a: unknown[]) =>
     mocks.evaluateHosting(...a),
 }));
