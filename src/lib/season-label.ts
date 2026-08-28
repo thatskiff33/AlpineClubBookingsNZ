@@ -53,9 +53,18 @@
  *
  * What this buys is that **the RULE is shared**, so when the year-end does reach
  * the client - through `ClubTimeSettings` and the provider, as the zone already
- * does - the label follows it instead of quietly contradicting it. Every helper
- * below takes the year-end as an optional argument for exactly that: a caller
- * that already HOLDS the value passes it, with no process-global write.
+ * does - the label follows it instead of quietly contradicting it.
+ *
+ * **Two of the three helpers below now REQUIRE the year-end** (#3133).
+ * `seasonMonthsLabel` and `seasonYearsLabel` had a default that read the process
+ * cache; every non-test caller already passed the value explicitly after #3136,
+ * so deleting it cost nothing and an unstated year-end is now a compile error
+ * rather than a silent March. `seasonSelectLabel` still carries the default, and
+ * that is the deferral the section above describes rather than an inconsistency:
+ * its thirteen callers are the display sites, ten of them in `"use client"`
+ * files where no value is available to pass yet. `INV-SSOT-003` names
+ * `getFinancialYearEndMonth` as a pending entry on the lint arm's resolver list
+ * for exactly this reason, with the promotion condition published beside it.
  *
  * ## A stated limit: the SSR pass is reasoned, not measured
  *
@@ -114,8 +123,9 @@
  *
  * ## The real hazard was the DEFAULT, not the sharing
  *
- * Every helper below defaults `yearEndMonth` to `getFinancialYearEndMonth()`,
- * the `financial-year.ts` process cache. That default is right for a request
+ * Every helper below USED TO default `yearEndMonth` to
+ * `getFinancialYearEndMonth()`, the `financial-year.ts` process cache; two of
+ * the three no longer do (#3133, above). That default is right for a request
  * path and WRONG for a background one: the cache is seeded only by
  * `refreshFinancialYearConfig()`, and no outbox path calls it. Adopting the
  * shared derivation at those four sites while taking the default would have
@@ -161,9 +171,7 @@ const MONTH_NAME_ANCHOR_YEAR = 2001;
  * names the month CONTAINING each Gregorian season boundary, which is the only
  * answer available: the boundary itself is defined as a Gregorian month number.
  */
-export function seasonMonthsLabel(
-  yearEndMonth: number = getFinancialYearEndMonth(),
-): string {
+export function seasonMonthsLabel(yearEndMonth: number): string {
   const endMonth = normalizeYearEndMonth(yearEndMonth);
   const startMonth = seasonStartMonthOf(endMonth);
   const start = calendarDateFromParts(MONTH_NAME_ANCHOR_YEAR, startMonth, 1);
@@ -177,7 +185,7 @@ export function seasonMonthsLabel(
  */
 export function seasonYearsLabel(
   seasonYear: number,
-  yearEndMonth: number = getFinancialYearEndMonth(),
+  yearEndMonth: number,
 ): string {
   return seasonStartMonthOf(yearEndMonth) === 1
     ? String(seasonYear)
