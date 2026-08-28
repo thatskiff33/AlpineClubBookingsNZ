@@ -1938,8 +1938,27 @@ approvals, and the verified non-member group joiner. A hazard clears the moment
 current facts cover every night, and reopens only when the uncovered set or the
 policy revision materially differs.
 
-Because the split child borrows its parent's rows, the dependency runs both ways,
-so mutation paths call `reconcileAdultMemberHostingReviewWithSiblings`: it
+Four things that are NOT that live beside it, split out in #3128 when the engine
+reached 3,051 lines. `adult-member-hosting-refusal.ts` turns an already-decided
+violation into the 409 a route throws and the body a member is shown.
+`adult-member-hosting-coverage-ceilings.ts` holds the bounded-read limits and the
+two "I cannot tell you" errors, kept together because the two limits sit at the
+same number for opposite reasons. `adult-member-hosting-proposed.ts` evaluates a
+party that is not persisted yet, which is the create path's preflight and the one
+hosting entry point whose input is a submitted party rather than rows.
+`adult-member-hosting-merge-coverage-plan.ts` builds the fan-out plan member merge
+compares against itself under participant locks.
+
+**The import edge runs one way for each, but not the same way for all four.**
+Refusal and coverage-ceilings are leaves — the engine imports them and they
+import nothing back. Proposed and merge-coverage-plan are the reverse: they
+import the engine, and nothing in the engine calls them. That asymmetry is what
+the split was chosen on, and it is worth stating because the two halves invite
+opposite mistakes.
+
+A different dependency, between booking ROWS rather than between modules, runs
+the other way. Because the split child borrows its parent's rows, that one runs
+both ways, so mutation paths call `reconcileAdultMemberHostingReviewWithSiblings`: it
 reconciles the mutated booking and then the live same-member siblings the borrow
 reads, one level deep, in the same transaction. Without that, shortening the
 member's own stay on the parent would silently drop the child's hazard and
@@ -1960,7 +1979,8 @@ member-owned flows — including member whole-lodge approval — remain enforced
 An admin booking for somebody else may supply an explicit reason, which records
 an attributable APPROVED review; `/admin/book` renders that reason panel for
 confirm and save-as-draft. `adultMemberHostingReviewedById` is a real `SetNull`
-relation to `Member` with a `member-merge.ts` spec, so that attribution survives
+relation to `Member` with a `member-merge-relations.ts` spec, so that
+attribution survives
 a merge and does not dangle after deletion. Once an accepted booking loses
 same-owner cover, a separate urgent incident opens without changing
 `Booking.status` and resolves automatically when cover returns.

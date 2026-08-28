@@ -557,8 +557,8 @@ const bookingSearch = defineDiagnosticsTool<BookingSearchArgs>({
  * THERE IS NO `member_number` KIND, AND THAT IS A FINDING RATHER THAN AN OMISSION.
  * #2376 asks for a member-number search. This schema has no member-number column:
  * `Member` carries a cuid `id`, an `email`, and a `xeroContactId`, and a grep of the
- * whole tree for `memberNumber`/`membershipNumber` returns nothing but one comment
- * in `member-merge.ts`. A tool offering the search would be inventing a concept the
+ * whole tree for `memberNumber`/`membershipNumber` returns one comment, in
+ * `member-merge-schema-coverage.ts`. Such a tool would be inventing a concept the
  * platform does not have, and a model handed such a tool would tell an officer to
  * read a number off a card that does not exist. The pack doc records this under
  * "what this pack cannot answer".

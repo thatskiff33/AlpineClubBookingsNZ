@@ -6,7 +6,7 @@ import {
   holdBookingRequestSlots,
 } from "@/lib/booking-request-quotes";
 import { BookingRequestError } from "@/lib/booking-request";
-import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import {
   BookingMemberNightConflictError,
   getBookingMemberNightConflictResponse,

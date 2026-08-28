@@ -32,6 +32,12 @@ const recordAdultMemberHostingReviewDecision = vi.fn();
 vi.mock("@/lib/adult-member-hosting-review", () => ({
   recordAdultMemberHostingReviewDecision: (...args: unknown[]) =>
     recordAdultMemberHostingReviewDecision(...args),
+}));
+// #3128 split `evaluateProposedAdultMemberHosting` into its own module. It is
+// mocked separately rather than dropped: the stub is what keeps the create-path
+// evaluation out of this suite's fake transaction, and a mock on the old module
+// would silently stop intercepting.
+vi.mock("@/lib/adult-member-hosting-proposed", () => ({
   evaluateProposedAdultMemberHosting: vi.fn(async () => null),
 }));
 

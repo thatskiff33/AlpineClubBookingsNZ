@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
 import { BookingRequestType } from "@prisma/client";
-import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-review";
+import { AdultMemberHostingRequiredError } from "@/lib/adult-member-hosting-refusal";
 import { approveBookingRequest, BookingRequestError } from "@/lib/booking-request";
 import {
   approveMemberWholeLodgeRequest,

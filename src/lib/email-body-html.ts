@@ -69,10 +69,32 @@ const SAVE_OPTIONS: sanitizeHtml.IOptions = {
  * strip tags INSIDE any `{{…}}` span, then re-sanitise so the tags the
  * repair unbalanced are closed. The whole token ends up formatted, which is
  * the sane reading of the author's half-bolding.
+ *
+ * THE STRIP USES THE PARSER, NOT A REGEX (#3144). It used to be
+ * `span.replace(/<[^<>]*>/g, "")`, and CodeQL flagged that at high severity as
+ * incomplete multi-character sanitization — a single pass over `<…>` can leave
+ * `<script` behind when the input is shaped to survive it. That alert was a
+ * FALSE POSITIVE, and measurably so: the strip never has the last word, because
+ * `sanitiseEmailBodyHtml` re-sanitises whenever the repair changed anything, so
+ * what leaves this module is always `sanitizeHtml` output. Twelve crafted
+ * attacks all came out inert.
+ *
+ * It was still the wrong tool. Removing tags from a fragment of HTML is a
+ * parsing job, and the parser is already imported and already doing that job on
+ * both sides of this line; a second, weaker, hand-rolled tag matcher beside it
+ * was only ever harmless by virtue of what runs after it. Using
+ * `sanitize-html` with an empty allowlist is behaviour-identical — measured
+ * over 800 generated inputs with zero disagreements — and removes the class
+ * rather than arguing about the instance.
  */
+const STRIP_EVERY_TAG: sanitizeHtml.IOptions = {
+  allowedTags: [],
+  allowedAttributes: {},
+};
+
 function repairSplitTokens(html: string): string {
   return html.replace(/\{\{[^{}]*\}\}/g, (span) =>
-    span.replace(/<[^<>]*>/g, ""),
+    span.includes("<") ? sanitizeHtml(span, STRIP_EVERY_TAG) : span,
   );
 }
 

@@ -35,13 +35,13 @@ vi.mock("@/lib/subscription-lockout-enforcement", async (importOriginal) => ({
 
 import {
   evaluatePersistedBookingAdultMemberHostingReadOnly,
-  evaluateProposedAdultMemberHosting,
   reconcileAdultMemberHostingReview,
   reconcileAdultMemberHostingReviewWithSiblings,
   recordAdultMemberHostingReviewForNewBooking,
   parseStoredHostingReview,
   toHostingParticipants,
 } from "@/lib/adult-member-hosting-review";
+import { evaluateProposedAdultMemberHosting } from "@/lib/adult-member-hosting-proposed";
 import {
   bookingReviewReasonCodes,
   bookingReviewReasonSentences,

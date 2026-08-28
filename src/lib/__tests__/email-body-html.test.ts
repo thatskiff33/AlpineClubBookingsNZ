@@ -154,3 +154,82 @@ describe("emailBodyHtmlToText", () => {
     ).toBe("Hi {{firstName}}\n\n{{promoSummary}}\ntwo\nBye");
   });
 });
+
+/**
+ * The token-repair strip inside `{{…}}` (#3144).
+ *
+ * CodeQL flagged the old `span.replace(/<[^<>]*>/g, "")` at high severity as
+ * incomplete multi-character sanitization. It was a false positive — the strip
+ * never has the last word, because `sanitiseEmailBodyHtml` re-sanitises
+ * whenever the repair changed anything — but it was still a hand-rolled tag
+ * matcher standing next to a real parser, so the strip now uses the parser.
+ *
+ * These tests assert the INVARIANT, not the implementation: nothing that can
+ * execute ever leaves this function. That is what a future refactor of the
+ * repair needs to keep true, whichever way it strips tags.
+ */
+describe("sanitiseEmailBodyHtml never emits live markup", () => {
+  const LIVE_MARKUP = /<script|<svg|<img|<iframe|on[a-z]+\s*=/i;
+
+  // Each of these is shaped to survive a SINGLE pass over `<…>`: the strip
+  // removes the inner match and the remaining characters re-form a tag.
+  it.each([
+    ["nested script that re-forms after one pass", "{{<<script>script>alert(1)<</script>/script>}}"],
+    ["tag split by an allowlisted tag", "{{a<scr<b></b>ipt>alert(1)</script>}}"],
+    ["angle bracket rejoined across a strip", "{{<<b>script>alert(1)</script>}}"],
+    ["event handler on an image", "{{<img src=x onerror=alert(1)>}}"],
+    ["event handler on an svg", "{{<svg/onload=alert(1)>}}"],
+    ["empty allowlisted tags between the halves", "{{<<i></i>script>alert(1)}}"],
+    ["split across two spans", "{{ <scr<span>ipt>alert(1)</scr</span>ipt> }}"],
+    ["braces closed between the halves", "{{<}}{{script>alert(1)}}"],
+    ["NUL byte inside the tag name", "{{<sc\u0000ript>alert(1)</script>}}"],
+    ["pre-escaped entities inside a token", "{{&lt;script&gt;alert(1)&lt;/script&gt;}}"],
+    ["pre-escaped entities outside a token", "&lt;script&gt;alert(1)&lt;/script&gt;"],
+    ["the real split-token case this repair exists for", "<b>{{first</b>Name}}"],
+  ])("neutralises %s", (_name, attack) => {
+    expect(sanitiseEmailBodyHtml(attack)).not.toMatch(LIVE_MARKUP);
+  });
+
+  it("neutralises every combination of allowlisted tag and hostile payload", () => {
+    // A generated corpus rather than a handful of examples: the failure mode
+    // this guards against is a payload shape nobody thought to write down.
+    const tags = ["b", "strong", "i", "em", "u", "span", "li", "p", "div", "h2", "br"];
+    const payloads = [
+      "first", "firstName", "a&b", "a<b", "<", ">", "<<", "x</b>y", "&lt;script&gt;",
+      "<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "<svg/onload=alert(1)>",
+      "<scr<b></b>ipt>", "<<b>script>", "  spaced  ", "", "&amp;", "&nbsp;", "\u00a0", "a\nb",
+    ];
+
+    let checked = 0;
+    for (const payload of payloads) {
+      const inputs = [
+        `{{${payload}}}`,
+        `text {{${payload}}} text`,
+        `<p>{{${payload}}}</p>`,
+        `{{${payload}}}{{${payload}}}`,
+        `{{{{${payload}}}}}`,
+        `{{${payload}`,
+        `${payload}}}`,
+        ...tags.flatMap((tag) => [
+          `<${tag}>{{${payload}</${tag}>rest}}`,
+          `{{<${tag}>${payload}</${tag}>}}`,
+          `<${tag}>{{${payload}}}</${tag}>`,
+        ]),
+      ];
+      for (const input of inputs) {
+        checked += 1;
+        expect(sanitiseEmailBodyHtml(input), `live markup from: ${input}`).not.toMatch(LIVE_MARKUP);
+      }
+    }
+
+    // Guard the guard: a corpus that silently stopped generating would pass
+    // this suite while testing nothing.
+    expect(checked).toBe(800);
+  });
+
+  it("still repairs a token split across tags, which is why the strip exists at all", () => {
+    // The security assertions above are all satisfied by returning "", so the
+    // repair's actual job has to be pinned here or they are vacuous.
+    expect(sanitiseEmailBodyHtml("<b>{{first</b>Name}}")).toBe("<b>{{firstName}}</b>");
+  });
+});
