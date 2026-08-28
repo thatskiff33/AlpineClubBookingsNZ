@@ -11,6 +11,16 @@ import path from "path";
 import { execFile, spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
 
+// #1881 — the lock/key assertions below scan source with indexOf/toContain. The
+// literal `pg_advisory_xact_lock(1)` also appears in CODE COMMENTS (e.g.
+// booking-cancel.ts, cron-quote-expiry-reminders.ts), so a regression that
+// deleted the executable `$executeRaw...pg_advisory_xact_lock(1)` line but left a
+// comment mentioning it would still pass — the exact laxity class that let the
+// original lock-drift regression through. The shared stripper keeps string and
+// template literals verbatim, which is load-bearing here: the executable lock
+// lives inside one (`$executeRaw`SELECT pg_advisory_xact_lock(1)``).
+import { stripComments } from "./support/strip-comments";
+
 // #2806 — the shell-out budgets for this file, and the measurements behind the
 // numbers, live in one place next door.
 import {
@@ -31,81 +41,6 @@ function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
-}
-
-// #1881 — the lock/key assertions below scan raw source with indexOf/toContain.
-// The literal `pg_advisory_xact_lock(1)` also appears in CODE COMMENTS (e.g.
-// booking-cancel.ts, cron-quote-expiry-reminders.ts), so a regression that
-// deleted the executable `$executeRaw...pg_advisory_xact_lock(1)` line but left
-// a comment mentioning it would still pass — the exact laxity class that let the
-// original lock-drift regression through. Strip line + block comments (outside
-// string/template literals) BEFORE those assertions so only EXECUTABLE lock text
-// counts. The executable lock lives inside a template literal
-// (`$executeRaw\`SELECT pg_advisory_xact_lock(1)\``), so string literals are
-// preserved verbatim — only comments are removed.
-function stripComments(source: string): string {
-  let out = "";
-  let state:
-    | "code"
-    | "line"
-    | "block"
-    | "single"
-    | "double"
-    | "template" = "code";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    switch (state) {
-      case "code":
-        if (c === "/" && next === "/") {
-          state = "line";
-          i++;
-        } else if (c === "/" && next === "*") {
-          state = "block";
-          i++;
-        } else if (c === "'") {
-          state = "single";
-          out += c;
-        } else if (c === '"') {
-          state = "double";
-          out += c;
-        } else if (c === "`") {
-          state = "template";
-          out += c;
-        } else {
-          out += c;
-        }
-        break;
-      case "line":
-        // Keep the newline so line numbers / ordering are unperturbed.
-        if (c === "\n") {
-          state = "code";
-          out += c;
-        }
-        break;
-      case "block":
-        if (c === "*" && next === "/") {
-          state = "code";
-          i++;
-        }
-        break;
-      case "single":
-      case "double":
-      case "template": {
-        out += c;
-        const quote = state === "single" ? "'" : state === "double" ? '"' : "`";
-        if (c === "\\") {
-          // Preserve the escaped char verbatim.
-          out += source[i + 1] ?? "";
-          i++;
-        } else if (c === quote) {
-          state = "code";
-        }
-        break;
-      }
-    }
-  }
-  return out;
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker?: string) {

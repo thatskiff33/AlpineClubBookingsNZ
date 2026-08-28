@@ -2,6 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+// Comments are stripped before every count below, because a census that counts
+// prose counts the wrong things in both directions. It really happened:
+// `booking-edit-guest-ranges.ts` documents what its callers pass by naming the
+// mapper and its argument, and the raw-text scan read that sentence as an
+// undeclared production call site. The reverse mistake is the dangerous one — a
+// scan that cannot tell code from prose can be talked out of a finding by
+// wording, in either direction.
+import { stripComments } from "./support/strip-comments";
+
 /**
  * Census: the club's edit-time group-discount switch has exactly ONE gate, and
  * every edit path goes through it (#2770, INV-MOD-026).
@@ -86,61 +95,6 @@ function allSourceFiles(directory: string): string[] {
 
 function repoRelative(absolute: string): string {
   return path.relative(process.cwd(), absolute).split(path.sep).join("/");
-}
-
-/**
- * Source text with comments removed, because a census that counts prose counts
- * the wrong things in both directions.
- *
- * It really happened: `booking-edit-guest-ranges.ts` documents what its callers
- * pass by naming the mapper and its argument, and the raw-text scan read that
- * sentence as an undeclared production call site. The reverse mistake is the
- * dangerous one — a scan that cannot tell code from prose can be talked out of a
- * finding by wording, in either direction. So the stripping is a real scanner
- * over string and template literals and both comment forms, not a line regex
- * that would eat the double slash inside a URL.
- */
-function stripComments(source: string): string {
-  let out = "";
-  let i = 0;
-  while (i < source.length) {
-    const char = source[i];
-    const next = source[i + 1];
-    if (char === "/" && next === "/") {
-      while (i < source.length && source[i] !== "\n") i += 1;
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      i += 2;
-      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) {
-        i += 1;
-      }
-      i += 2;
-      continue;
-    }
-    if (char === '"' || char === "'" || char === "`") {
-      const quote = char;
-      out += char;
-      i += 1;
-      while (i < source.length) {
-        if (source[i] === "\\") {
-          out += source[i] + (source[i + 1] ?? "");
-          i += 2;
-          continue;
-        }
-        out += source[i];
-        if (source[i] === quote) {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      continue;
-    }
-    out += char;
-    i += 1;
-  }
-  return out;
 }
 
 function readSource(absolute: string): string {

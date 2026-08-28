@@ -224,14 +224,23 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and it is not yet the only one.** Eighteen definitions exist
-  in the tree and three files import the canonical one. **Use it; do not write a
-  nineteenth.** The copies are not equivalent — `analytics-settings.test.ts` is
-  a two-regex strip that drops newlines, where the canonical one is a
-  mode-tracking scanner that preserves them — which is this very rule's failure
-  mode, at scale, inside the tests meant to enforce it. Converging them is
-  #3132; until it lands, treat a source-scanning test you did not write as
-  measuring differently from yours until you have checked.
+  `stripComments`, and since #3132 it is the only one.** Every source-scanning
+  test imports it, and so does the one CI script that used to export a copy.
+  **Use it; do not write a second.** Nothing fails on a second copy yet — the
+  lint arm is a follow-up, because this rule's first bullet prefers deleting the
+  copies to policing them — so this one is on review.
+- **What converging measured is the argument for the rule, not a footnote.** The
+  sixteen copies fell into five behaviour classes, and they disagreed where it
+  mattered: six tracked no string literals at all, so a `//` inside `"https://x"`
+  opened a comment and ate the rest of the line; one was the two-regex strip that
+  drops newlines. Worse, the canonical itself read `.replace(/\//g, "_")` — two
+  adjacent slashes inside a regex literal — as a line comment and deleted real
+  code in a dozen files, a defect the #2869 review had already found and fixed in
+  `xero-provider-date-boundary-census.test.ts` **alone**. One of two instruments
+  repaired is this rule stated as a defect; the predicate now lives with the
+  scanner and that census imports it. Where the remaining gaps are, and why
+  neither the scanner nor a full TypeScript parse dominates the other, is in the
+  canonical module's docblock rather than restated here.
 - When you add the second instrument to a guard, check what the first one
   normalises before writing the second, and say in the test which method both
   share. **Prefer the broader instrument for the second one**: over-reporting is

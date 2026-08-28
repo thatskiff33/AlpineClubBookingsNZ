@@ -3,6 +3,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  endOfRegexLiteral,
+  lastSignificant,
+  startsRegexLiteral,
+} from "./support/strip-comments";
+
 /**
  * The provider, job and export temporal boundary, enforced mechanically
  * (CT-5, #2869; epic #2988).
@@ -181,68 +187,11 @@ function scanTemplateLiteral(source: string, start: number): ScanResult {
   return { code: out, next: index };
 }
 
-/** The last character of `code` that is not whitespace, or `""`. */
-function lastSignificant(code: string): string {
-  for (let index = code.length - 1; index >= 0; index -= 1) {
-    if (!/\s/.test(code[index])) return code[index];
-  }
-  return "";
-}
-
-/** Tokens after which a `/` opens a REGEX rather than dividing. */
-const REGEX_POSITION_KEYWORD =
-  /\b(?:return|typeof|instanceof|case|in|of|do|else|void|delete|new|yield|await)\s*$/;
-
-/**
- * Does a `/` at this point open a regex literal?
- *
- * THIS IS NOT PEDANTRY, IT IS A MEASURED DEFECT (#2869 review).
- * `xero-contacts.ts` writes `.replace(/"/g, "")` inside a template
- * interpolation. Treating that `"` as a string opener desynchronised the
- * scanner for the remaining thousand lines of the file, so every docblock after
- * it was emitted as CODE — and the census then reported its own explanation of
- * the original defect AS the defect. The previous version of this file claimed
- * "nothing on the scanned surface writes a regex containing a quote", which was
- * untrue when it was written.
- *
- * The rule is the ordinary one: a `/` divides when it follows a value, and
- * opens a regex otherwise. `//` and comment openers are handled before this is
- * reached, and an empty regex is unwritable in JavaScript, so the two cannot
- * collide.
- */
-function startsRegexLiteral(codeSoFar: string): boolean {
-  const previous = lastSignificant(codeSoFar);
-  if (previous === "") return true;
-  if (/[)\]\w$]/.test(previous)) {
-    return REGEX_POSITION_KEYWORD.test(codeSoFar);
-  }
-  return true;
-}
-
-/** The index just past a regex literal that starts at `start`. */
-function endOfRegexLiteral(source: string, start: number): number {
-  let index = start + 1;
-  let inCharacterClass = false;
-  while (index < source.length) {
-    const char = source[index];
-    if (char === "\\") {
-      index += 2;
-      continue;
-    }
-    // A regex literal cannot span lines; if one appears to, the `/` was
-    // division after all and giving up here is the containing answer.
-    if (char === "\n") return index;
-    if (char === "[") inCharacterClass = true;
-    else if (char === "]") inCharacterClass = false;
-    else if (char === "/" && !inCharacterClass) {
-      index += 1;
-      while (index < source.length && /[a-z]/.test(source[index])) index += 1;
-      return index;
-    }
-    index += 1;
-  }
-  return index;
-}
+// `startsRegexLiteral` and `endOfRegexLiteral` were written here for the
+// #2869 review and are now shared (#3132). The shared scanner had the very
+// defect they were written to fix — `.replace(/\//g, "_")` read as a line
+// comment — so leaving a repaired copy here and a broken one there was
+// INV-SSOT-004 with the two instruments named.
 
 /**
  * What a string literal becomes once blanked — usually `""`, but the KEY of a

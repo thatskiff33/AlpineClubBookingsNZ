@@ -3,6 +3,24 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 
+// Every check below asks "does this file CONTAIN this text", and raw text cannot
+// tell a call site from prose ABOUT a call site. That distinction has bitten this
+// branch twice, both times inflating the published counts by one:
+// `view-only-action.tsx`'s JSDoc quotes `describeReason={false}` while documenting
+// when to pass it, and `public-booking-requests-section.tsx` carries a JSX comment
+// narrating the #2142 conversion that quotes it too. Excluding those two files by
+// name would only postpone the third instance, so the strip is structural.
+//
+// #2166 is why the shared scanner is not a `ts.createScanner` lexer: a lexer
+// cannot resume a template literal after a `${…}` substitution, so the closing
+// `` `} `` of a `className={`…${…}`}` template opened a bogus template literal that
+// ran 700-odd characters forward into the #2142 JSX comment, and the
+// `describeReason={false}` that comment QUOTES was counted as a real opt-out. The
+// shared scanner matches backticks rather than lexing tokens, so it does not have
+// that failure; measured on that exact file it agrees with the TypeScript parser
+// on every count this test makes (#3132).
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 /*
   Every test here is pure static analysis: parse ~230 admin source files with
   TypeScript's own parser, then walk the ASTs. That is CPU-bound with no I/O to
@@ -39,84 +57,6 @@ vi.setConfig({ testTimeout: 30_000 });
 */
 
 const SRC = join(process.cwd(), "src");
-
-/**
- * `source` with every comment blanked out — each comment character replaced by
- * a space, newlines kept — so offsets and line numbers still line up with the
- * file on disk.
- *
- * Every check below asks "does this file CONTAIN this text", and raw text can
- * not tell a call site from prose ABOUT a call site. That distinction has now
- * bitten this branch twice, both times inflating the published counts by one:
- * `view-only-action.tsx`'s JSDoc quotes `describeReason={false}` while
- * documenting when to pass it, and `public-booking-requests-section.tsx`
- * carries a JSX comment narrating the #2142 conversion that quotes it too.
- *
- * Excluding those two files by name would only postpone the third instance, so
- * the strip is structural instead. It uses TypeScript's own PARSER — a full
- * `createSourceFile`, then every comment range attached to every token — rather
- * than a regex or a bare scanner.
- *
- * A regex can not reliably tell a comment from a `/*` inside a string, a
- * template literal, or a regex literal, and a naive JSX-comment pattern
- * (`\{\s*\/\*[\s\S]*?\*\/\s*\}`) silently swallows an object type that merely
- * OPENS with a JSDoc member comment, taking the real call sites inside it along
- * with the prose.
- *
- * A bare `ts.createScanner` is not enough either, and #2166 caught it being
- * wrong. The scanner is a LEXER, not a parser: it cannot resume a template
- * literal after a `${…}` substitution, because that resumption is the parser's
- * job (`rescanTemplateToken`). So in
- * `booking-policies/public-booking-requests-section.tsx`, the closing
- * `` `} `` of a `className={`…${…}`}` template opened a BOGUS template literal
- * that ran forward until the next backtick — 700-odd characters later, inside
- * the `#2142` JSX comment. The comment therefore never opened as far as the
- * lexer was concerned, its prose was lexed as ordinary code, and the
- * `describeReason={false}` it QUOTES was counted as a real opt-out. That is
- * precisely the miscount this helper exists to prevent, in its third incarnation.
- *
- * Both leading AND trailing comment ranges are collected. A JSX comment
- * (`{/* … *\/}`) sits on the same line as the `{` that opens it, and
- * `getLeadingCommentRanges` by design only reports comments that follow a line
- * break — so a leading-only sweep misses exactly the JSX-comment form this file
- * family keeps hitting.
- */
-function stripComments(source: string): string {
-  const sourceFile = ts.createSourceFile(
-    "in-memory.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TSX,
-  );
-  const chars = source.split("");
-  const blank = (start: number, end: number) => {
-    for (let i = start; i < end; i += 1) {
-      if (chars[i] !== "\n") chars[i] = " ";
-    }
-  };
-
-  const visit = (node: ts.Node): void => {
-    const children = node.getChildren(sourceFile);
-    if (children.length > 0) {
-      for (const child of children) visit(child);
-      return;
-    }
-    for (const range of ts.getLeadingCommentRanges(
-      source,
-      node.getFullStart(),
-    ) ?? []) {
-      blank(range.pos, range.end);
-    }
-    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ??
-      []) {
-      blank(range.pos, range.end);
-    }
-  };
-  visit(sourceFile);
-
-  return chars.join("");
-}
 
 // Plain recursive walk rather than a glob library: this is the only place in
 // the repo that would need one, and knip rightly flags a dependency added for a
