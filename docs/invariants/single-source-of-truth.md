@@ -59,6 +59,21 @@ are permanent: never renumbered, never reused.
   restated here — a number repeated in prose is a number that drifts.
 - A duplicated age rule that still carried a bug its canonical copy had been
   fixed for is the shape this rule exists to prevent; #3123 measured it.
+- Second worked example, and the one that shows the drift happening rather than
+  its consequence: #3131 found the rule deciding which guests a promotional code
+  covers on an existing booking written out **five** times across the
+  booking-modification and guest-removal paths, and one of the five had already
+  diverged in shape. It is now `src/lib/promo-stored-guest-targets.ts`, reading
+  the field it turns on through the one definition of that field's meaning in
+  `promo-guest-scope.ts`. Two details worth carrying forward: the issue was filed
+  saying "four" after a grep of three `src/lib` files plus one route, so the
+  missed copy was the member-facing one; and no census guards against a sixth,
+  because the remedy is structural and because that module's docblock quotes the
+  old spelling to explain what replaced it — which a raw-source scanner would
+  report as the defect itself (`INV-SSOT-004`). The convergence covers every
+  server-side scope decision; the admin promo-codes client still reads the same
+  default inline twice, which is recorded in `promo-guest-scope.ts` rather than
+  left silent, and waits on the server/client boundary work in #2850/#2851.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
