@@ -104,7 +104,7 @@ const OCCURRENCE_KEY_VERSION = "v1";
  *  2. why the price could not be proven (the `cause`);
  *  3. the set of night dates surrendered, and the set added - as SETS, so order
  *     and duplicates cannot change the answer; and
- *  4. the stored sold-price evidence the edit was judged against - the guest's
+ *  4. the stored night-price rows the edit was judged against - the guest's
  *     stored total, and every stored night row's date and price, including the
  *     nulls, as it all stood BEFORE the edit.
  *
@@ -134,6 +134,15 @@ const OCCURRENCE_KEY_VERSION = "v1";
  * The evidence fingerprint costs nothing extra: it is data the planner has
  * necessarily already read (it is what failed to reconcile), and the same data
  * `reviewContext` must capture regardless, because the edit destroys it.
+ *
+ * It is IDENTITY MATERIAL, and calling it "sold-price evidence" would overstate
+ * it. A stored `BookingGuestNight.priceCents` may be a derived even split rather
+ * than a price anyone was ever charged - two backfill migrations wrote splits,
+ * and nothing distinguishes their rows from genuinely-sold ones
+ * (`StoredNightPriceEvidence` names them). That does not weaken its use HERE:
+ * the key needs a fingerprint of what the database held at the moment of the
+ * edit, and that is exactly what this is. It is also why the amount goes to a
+ * human instead of being computed.
  *
  * ## Why a hash rather than a readable composite key
  *

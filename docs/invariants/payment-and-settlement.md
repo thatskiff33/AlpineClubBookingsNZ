@@ -1155,6 +1155,18 @@ one, check the other.
   `raisedAmountCents` preserving what it was raised with. DISMISSED means reviewed
   and nothing is due, and writes no amount. Nothing moves at Stripe, in the
   ledger, in Xero or as account credit until an admin confirms.
+  - **A stored night price is not proof of a sold price, which is why a human
+    prices this.** Two backfill migrations populated
+    `BookingGuestNight.priceCents` by dividing a stored guest total by the night
+    count (`20260704150000`, #1098; and `20260810010000`, whose header says it
+    "deliberately does NOT reprice anything: it reads the stored total and
+    divides"), and nothing in the schema tells such a row apart from a
+    genuinely-sold one. The evidence captured in `reviewContext` therefore
+    records what the database HELD, and claims no more than that. Separating
+    derived rows from sold ones is #3031's; for this invariant it is the
+    argument, not an exception — a figure whose provenance cannot be established
+    is precisely the figure the club must confirm rather than the system
+    reconstruct.
   - **An OPEN task may carry an amount, and that state is defined.** The raise
     accepts a figure and writes it to both `amountCents` and `raisedAmountCents`,
     so `priced-but-still-OPEN` is legal and means *the edit could prove a figure

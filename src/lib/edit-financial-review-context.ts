@@ -25,7 +25,7 @@ import type { CalendarDate } from "@/lib/club-time";
  * history", not a copy of it — a copy taken at raise time would be stale by the
  * time an admin reads it, and would be a second home for facts the payment
  * tables already own (`INV-SSOT`). What IS captured is only what the edit
- * DESTROYS: the stored sold-price rows for the nights it surrenders are gone the
+ * DESTROYS: the stored night-price rows for the nights it surrenders are gone the
  * moment the edit commits, so if they are not recorded here they cannot be
  * recovered at all.
  */
@@ -41,7 +41,7 @@ import type { CalendarDate } from "@/lib/club-time";
  * "corruption terminology" and blaming the member).
  */
 export const EDIT_FINANCIAL_REVIEW_CAUSES = [
-  /** The guest strand carries no stored per-night sold price at all. */
+  /** The guest strand carries no stored per-night price at all. */
   "NO_STORED_NIGHT_PRICES",
   /** Some of the surrendered nights carry a stored price and some do not. */
   "PARTIAL_STORED_NIGHT_PRICES",
@@ -53,11 +53,27 @@ export type EditFinancialReviewCause =
   (typeof EDIT_FINANCIAL_REVIEW_CAUSES)[number];
 
 /**
- * One stored sold-price row as it existed BEFORE the edit. `priceCents` is null
+ * One stored night-price row as it existed BEFORE the edit. `priceCents` is null
  * where the row existed with no usable price, or where no row existed for that
  * night at all — the distinction an admin needs, and the reason this is
- * `number | null` rather than a number defaulted to zero. Zero is a real sold
- * price (a comped night); null is an absence.
+ * `number | null` rather than a number defaulted to zero. Zero is a real price
+ * (a comped night); null is an absence.
+ *
+ * A NUMBER HERE IS NOT PROOF OF A SOLD PRICE, and the field deliberately says
+ * nothing about where it came from. Two backfill migrations populated
+ * `BookingGuestNight.priceCents` by DIVIDING a stored guest total by the night
+ * count — 20260704150000 (#1098) and 20260810010000, whose own header says it
+ * "deliberately does NOT reprice anything: it reads the stored total and
+ * divides" — and nothing in the schema distinguishes such a derived row from a
+ * genuinely-sold one. So this type records the number that is stored, and claims
+ * only that. No provenance field is added: there is no honest value to put in
+ * one, and this shape is hashed into the occurrence key, so widening it would
+ * re-identify every future occurrence.
+ *
+ * That indistinguishability is not a gap in this feature — it is the CASE FOR
+ * it. A figure whose provenance cannot be established is exactly the figure a
+ * human must confirm rather than the machine compute. Separating derived rows
+ * from sold ones is #3031's.
  */
 export type StoredNightPriceEvidence = {
   date: CalendarDate;
@@ -87,7 +103,11 @@ export type EditFinancialReviewOccurrence = {
    * the identity.
    */
   addedNightDates: readonly CalendarDate[];
-  /** The stored sold-price evidence this edit was judged against. */
+  /**
+   * The stored night-price rows this edit was judged against, as they stood
+   * before it. Evidence of what the database HELD, not proof of what was sold —
+   * see `StoredNightPriceEvidence`.
+   */
   storedEvidence: {
     /** `BookingGuest.priceCents` as stored, or null where absent. */
     guestTotalCents: number | null;
