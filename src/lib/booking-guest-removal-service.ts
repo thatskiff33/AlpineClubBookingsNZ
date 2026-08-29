@@ -54,6 +54,7 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
+import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
@@ -399,6 +400,34 @@ export async function removeBookingGuestInTransaction({
   if (!isOwnerOrAdmin && !isSelfRemoval) {
     throw new BookingGuestRemovalError("Forbidden", 403);
   }
+
+  /**
+   * #3032 (epic #2797): refuse a second money-affecting edit while this booking's
+   * last one is still under financial review. Taken under both locks, on the
+   * post-lock re-read, and before any write, so a refused removal leaves the
+   * booking exactly as it was.
+   *
+   * THE CONSENT-AUTHORITY EXEMPTION IS NOT A CLAIM THAT THE REMOVAL MOVES NO
+   * MONEY. It does - it gives nights back like any other removal. It is owner
+   * decision D-14: a member who never consented must always be able to come off
+   * a booking, and holding that behind a pricing question nobody has answered
+   * would trap them for as long as the review stayed open. So the structural
+   * removal proceeds with its money unresolved, and this issue is what parks that
+   * money as a second review task rather than letting it be invented or silently
+   * skipped. Two occurrences, two keys, two amounts, each priced on its own
+   * evidence.
+   *
+   * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
+   * touching this booking must get the same 403 they got before this issue -
+   * telling a stranger that the club is reviewing a booking's money is a leak,
+   * and a 409 where a 403 belongs is also a wrong answer.
+   */
+  await assertNoPendingEditFinancialReview({
+    bookingId,
+    moneyAffecting: !consentAuthorityApplies,
+    store: tx,
+  });
+
 
   if (
     !isSelfRemoval &&

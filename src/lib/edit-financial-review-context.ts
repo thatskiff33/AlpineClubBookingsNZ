@@ -133,6 +133,31 @@ export type EditFinancialReviewContext = {
   /** The booking's own stay window, for the "which rates applied then" question. */
   bookingCheckIn: CalendarDate;
   bookingCheckOut: CalendarDate;
+  /**
+   * #3032 (owner decision D-3032-1): the `BookingModification` row the edit that
+   * raised this review wrote, and the anchor a confirmed amount settles against
+   * later.
+   *
+   * WHY IT IS CARRIED AT ALL. Two of the three ways money can go back key their
+   * exactly-once on a modification id and nothing else: `MemberCredit`
+   * `.sourceBookingModificationId` is `@unique`, and the Stripe refund
+   * idempotency key is `${prefix}_${bookingModificationId}`. A completion that
+   * did not know the id would have to mint a fresh anchor - a second history row
+   * per edited booking, which the owner weighed and rejected - or invent a
+   * fourth settlement path, which the epic forbids outright.
+   *
+   * DELIBERATELY NOT ON `EditFinancialReviewOccurrence`. The occurrence is the
+   * identity the key is hashed from, and this value is a POINTER to a row, not a
+   * fact about which edit happened: two replays of one edit are the same
+   * occurrence whether or not they landed the same modification row. Putting it
+   * in the identity would re-identify every future occurrence and, worse, make a
+   * replay of one edit hash differently from the first attempt.
+   *
+   * NULL is legitimate and is the shape of a raise that had no modification row
+   * to point at. A completion that needs an anchor and finds none refuses before
+   * it claims anything, rather than guessing which row to settle against.
+   */
+  bookingModificationId: string | null;
 };
 
 const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
@@ -206,6 +231,7 @@ const contextSchema: z.ZodType<EditFinancialReviewContext> = z
     guestMemberId: z.string().min(1).nullable(),
     bookingCheckIn: calendarDateSchema,
     bookingCheckOut: calendarDateSchema,
+    bookingModificationId: z.string().min(1).nullable(),
   })
   .strict();
 

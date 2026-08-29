@@ -401,6 +401,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     groupDiscountSetting: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
     },

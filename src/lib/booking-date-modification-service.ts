@@ -34,6 +34,7 @@ import {
   executeBookingModificationRefund,
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
+import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
 import {
   acquireLodgeCapacityLock,
   checkCapacity,
@@ -327,6 +328,18 @@ export async function modifyBookingDates({
       throw new ApiError("Forbidden", 403);
     }
     await assertBookingNotQuotePriced(tx, bookingId);
+
+    // #3032 (epic #2797): a date change always reprices - it is the path this
+    // fence exists for. Taken under both locks, on the post-lock re-read, and
+    // before any write, so a refused edit leaves the booking untouched. There is
+    // no identity-only shape here to exempt: `adminShiftBookingDates` is the
+    // price-preserving date path (`priceDiffCents: 0`, no refund, no credit) and
+    // is deliberately NOT fenced.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: true,
+      store: tx,
+    });
 
     // Under an admin override the fully-past COMPLETED status is editable too
     // (issue #1668); the standard path keeps the active-lifecycle allowlist.

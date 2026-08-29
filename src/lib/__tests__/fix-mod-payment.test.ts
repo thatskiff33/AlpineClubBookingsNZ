@@ -74,6 +74,10 @@ vi.mock("@/lib/prisma", () => ({
     // route's early getDefaultLodgeCapacity guard reads it off the singleton).
     lodgeSettings: { findUnique: async () => ({ capacity: 100 }) },
     bookingGuest: { create: mockBookingGuestCreate, update: mockBookingGuestUpdate },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingModification: { create: mockBookingModCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     season: { findMany: mockSeasonFindMany },
@@ -450,6 +454,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     payment: { update: vi.fn().mockResolvedValue({}) },

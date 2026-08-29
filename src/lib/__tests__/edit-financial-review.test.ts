@@ -89,6 +89,8 @@ const raiseInput = {
   guestMemberId: "member-1",
   bookingCheckIn: day("2026-08-01"),
   bookingCheckOut: day("2026-08-04"),
+  // #3032: the settlement anchor a confirmed amount closes against (D-3032-1).
+  bookingModificationId: "mod-1",
 };
 
 beforeEach(() => {
@@ -524,6 +526,8 @@ describe("#3030 reviewContext parser - a blob it cannot vouch for is not read", 
         guestMemberId: null,
         bookingCheckIn: "2026-08-01",
         bookingCheckOut: "2026-08-04",
+        // #3032: the settlement anchor is part of the shape the writer produces.
+        bookingModificationId: "mod-1",
       }),
     ).not.toBeNull();
   });

@@ -56,6 +56,10 @@ vi.mock("@/lib/prisma", () => ({
       update: mockUpdate,
       delete: mockDelete,
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingModification: { create: mockCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
     promoRedemption: { delete: mockDelete },
@@ -377,6 +381,10 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    // #3032: the pending-review fence reads this under the booking-edit locks.
+    // Empty by default - no financial review is open - so every pre-#3032 test
+    // asserts exactly what it asserted before.
+    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod1" }),
     },

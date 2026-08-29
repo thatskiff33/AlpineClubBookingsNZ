@@ -40,6 +40,7 @@ import {
   requestIsOtherLodgeRateElectionOnly,
 } from "@/lib/booking-other-lodge-rate";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
@@ -682,6 +683,21 @@ export async function modifyBookingBatch({
       identityOnlyModification &&
       !quotePriced &&
       isBookingFullyPaidForGuestNameEdits(booking);
+
+    // #3032 (epic #2797): refuse a second money-affecting edit while this
+    // booking's last one is still under financial review. Taken here - under both
+    // locks, on the post-lock re-read, and BEFORE `calculateModifiedPricing`
+    // below or any write - so a refused edit changes nothing at all.
+    //
+    // A name correction and a credit election pass through: neither reads the
+    // booking's stored money, so neither can compound an unresolved amount. The
+    // rule itself, and why it is this narrow, are in
+    // `assertNoPendingEditFinancialReview`.
+    await assertNoPendingEditFinancialReview({
+      bookingId,
+      moneyAffecting: !identityOnlyModification && !requestIsCreditElectionOnly,
+      store: tx,
+    });
 
     // Identity-only modifications are price-preserving by construction
     // (#1099): the stored totals, per-guest prices, and night rows are echoed
