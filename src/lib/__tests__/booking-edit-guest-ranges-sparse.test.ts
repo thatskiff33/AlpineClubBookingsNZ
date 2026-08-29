@@ -52,6 +52,7 @@ import {
   type SeasonRateData,
 } from "@/lib/pricing";
 import { eachDateOnlyInRange, normalizeDateOnlyForTimeZone } from "@/lib/date-only";
+import { storedSoldPriceEvidenceForGuest } from "@/lib/stored-sold-price-evidence";
 
 /**
  * The zone the LEGACY oracle below reads, named rather than left to
@@ -149,8 +150,8 @@ type TestGuest = {
  * it is testing.
  *
  * `driftCents` moves the guest's stored TOTAL away from the sum of their rows,
- * which is the one fallback that can happen to a guest whose rows are all
- * present and priced.
+ * which is the one unpriceable case a guest whose rows are all present and
+ * priced can still be in (`STORED_TOTAL_MISMATCH`).
  */
 function guestFromNights(
   nights: string[],
@@ -459,20 +460,24 @@ describe("#2736/#2743 contiguous stays", () => {
     "2026-08-28",
   ];
 
-  // What the guest's stored `BookingGuestNight` rows look like. All four must
-  // agree with the pre-#2736 arithmetic:
+  // What the guest's stored `BookingGuestNight` rows look like. ONE of the four
+  // is priced, and the other three are the reasons an edit can no longer be
+  // priced at all (#3031). The matrix asks a different question of each:
   //
   //  - `rows+prices` is the ordinary live booking whose rates have not moved
   //    since it was made, so #2744's locked prices ARE the current rates and
-  //    every number has to come out the same. Without this row the matrix could
-  //    not tell "honours what was paid" apart from "changes ordinary bookings",
-  //    because the others carry no price to honour.
+  //    every number has to come out the same as the pre-#2736 arithmetic.
+  //    Without this row the matrix could not tell "honours what was paid" apart
+  //    from "changes ordinary bookings", because the others carry no price to
+  //    honour. It is the only variant the equivalence claim is ABOUT.
   //  - `drifted` is that same guest with a stored TOTAL that no longer matches
-  //    the sum of their rows. Their nights still price at what they paid, but
-  //    the per-night amounts written back fall back to the even split, because a
-  //    distribution built from numbers that disagree would be a guess. It is the
-  //    only fallback reachable by a guest whose rows are all present and priced,
-  //    which is why it is worth a whole matrix pass.
+  //    the sum of their rows. It used to be priced anyway — the per-night
+  //    amounts written back fell back to an even split of the total across the
+  //    nights — and that output became the evidence the NEXT edit read as a sold
+  //    price. #3031 deletes the fallback: this is `STORED_TOTAL_MISMATCH` and it
+  //    goes to a person. It is the only unpriceable case reachable by a guest
+  //    whose rows are all present and priced, which is why it is worth a whole
+  //    matrix pass.
   //  - `rows` is a guest whose rows arrive WITHOUT their price. The schema makes
   //    `BookingGuestNight.priceCents` NOT NULL and both production loaders ask
   //    for it, so this is not a state the database can hold — it is the shape a
@@ -577,14 +582,21 @@ describe("#2736/#2743 contiguous stays", () => {
     // How the 960 land. Pinned so a later change cannot quietly move cases
     // between buckets.
     //
-    // The grid is four row variants (#2744) over the 240 edits below, and the
-    // four MUST land identically — that is the #2744 half of this matrix: a
-    // guest whose rows record what they paid, a guest whose stored total has
-    // drifted from those rows, a guest whose rows arrive without a price and a
-    // guest with no rows at all all agree with the pre-#2736 arithmetic, so
-    // "honours what was paid" is separated from "changes ordinary bookings".
-    // Per-variant buckets are counted and compared as well as totalled, so a
-    // change that moved only the priced variants could not hide inside a total.
+    // The grid is four row variants (#2744) over the 240 edits below, and since
+    // #3031 they DO NOT all land identically — the buckets asserted above are
+    // what says so, case by case. Only `rows+prices` is priced at all; the other
+    // three carry no exact evidence to read and every edit on them is
+    // `financial_review_required`. That separation IS the #3031 half of this
+    // matrix, and it is the assertion that would fail if a fallback came back:
+    // an estimator would move those cases out of `review` and into `identical`
+    // or `corrected`.
+    //
+    // What survives from #2744 is narrower and still load-bearing: on the ONE
+    // variant that can be priced, every ordinary edit agrees with the pre-#2736
+    // arithmetic to the cent, so "honours what was paid" is still separated from
+    // "changes ordinary bookings". Per-variant buckets are counted and compared
+    // as well as totalled, so a change that moved only the priced variant could
+    // not hide inside a total.
     //
     // Read the proportions as a property of THIS matrix, not of the club's
     // diary: three of its four stays deliberately finish before the booking
@@ -845,20 +857,15 @@ describe("#2736/#2743 contiguous stays", () => {
       }
     }
 
-    // #2744: every row variant lands in exactly the same buckets, in exactly the
-    // same numbers. That is the assertion that says the sold-price read changed
-    // nothing about ordinary bookings — a guest carrying real prices, a guest
-    // whose total has drifted, a guest whose rows arrive unpriced and a guest
-    // with no rows at all are indistinguishable here. Asserted per variant and
-    // not only in the total, because a total can absorb a move in one variant
-    // that a per-variant comparison cannot.
     // #3031: the row variants no longer land identically, and the shape of the
     // difference IS the claim. `rows+prices` is unchanged case for case — that
     // is what says an ordinary live booking prices exactly as it always did.
     // The three variants with nothing exact to read produce no number at all,
     // and every one of them that the pre-#2743 arithmetic would have PRICED is
     // now a review rather than an estimate: none of them lands in `identical`
-    // or `corrected` on a case that was priced.
+    // or `corrected` on a case that was priced. Asserted per variant and not
+    // only in the total, because a total can absorb a move in one variant that a
+    // per-variant comparison cannot.
     const pricedVariant = byVariant.get("rows+prices");
     for (const variant of ROW_VARIANTS.slice(1)) {
       const counts = byVariant.get(variant.label);
@@ -1234,6 +1241,97 @@ describe("#2736 a sparse stay", () => {
       ]);
     expect(legacyDeltaCents).toBeLessThan(0);
     expect(entry.futureDeltaCents).toBeGreaterThan(legacyDeltaCents);
+  });
+
+  it("sends a strand whose rows reach past its own stored stayEnd to review (#3031)", () => {
+    // THE SECOND REVIEW RETURN, which the post-compose reconciliation check
+    // raises — and which nothing reached until this case existed. It is a real
+    // shape, not a defensive branch: `stayEnd` is a DERIVED envelope
+    // (INV-DATE-012) and can disagree with the rows in either direction; the
+    // suite already covers the envelope running WIDER than the rows, and this is
+    // the other side, where the rows run past the envelope.
+    //
+    // Why the money then fails to reconcile, in the order the plan computes it:
+    // `oldWindowNightKeys` is bounded by the guest's stored `stayEnd`, so the
+    // night of the 22nd is NOT in the old-price window and is credited nowhere;
+    // the proposed set keeps it, so it is charged again in the new one. The
+    // guest's price therefore gains a night they already hold, while the rows
+    // composed for them still sum to what they were sold. That is a
+    // reconciliation failure like any other, and #3031's rule is that it goes to
+    // a person rather than being smoothed over — smoothing it over is precisely
+    // what the deleted even-split rewrite did.
+    const rowsPastEnvelope = {
+      ...guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"]),
+      // One day short: the real envelope for those rows is the 23rd.
+      stayEnd: D("2026-08-22"),
+    };
+    // PREMISE, so the fixture cannot silently stop being the shape under test:
+    // the strand's own stored evidence is EXACT. Whatever this returns, it is
+    // not the first gate.
+    expect(
+      storedSoldPriceEvidenceForGuest(rowsPastEnvelope, {
+        checkIn: D("2026-08-20"),
+        checkOut: D("2026-08-23"),
+      }).kind,
+    ).toBe("exact");
+
+    const occurrences = reviewOf(
+      planInput({
+        guests: [rowsPastEnvelope],
+        editableFrom: "2026-08-22",
+        newCheckOut: "2026-08-24",
+        checkIn: "2026-08-20",
+        checkOut: "2026-08-23",
+      }),
+    );
+
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]).toMatchObject({
+      bookingGuestId: "g1",
+      cause: "STORED_TOTAL_MISMATCH",
+      // Nothing leaves the stay — the edit only extends it — so the identity
+      // records the added night alone.
+      surrenderedNightDates: [],
+      addedNightDates: ["2026-08-23"],
+    });
+    // The evidence handed to the admin is the rows as they stand, unrewritten.
+    expect(occurrences[0].storedEvidence).toEqual({
+      guestTotalCents: 3 * LOW,
+      nightPrices: [
+        { date: "2026-08-20", priceCents: LOW },
+        { date: "2026-08-21", priceCents: LOW },
+        { date: "2026-08-22", priceCents: LOW },
+      ],
+    });
+  });
+
+  it("prices the SAME edit on the SAME guest once the envelope agrees with the rows", () => {
+    // The control for the case above, and the reason it is not merely "any
+    // fixture the planner happens to refuse": one field moves — the stored
+    // `stayEnd` back onto the morning after the last row — and the identical
+    // edit prices. So the refusal is about the drift and about nothing else.
+    const plan = pricedPlan(
+      planInput({
+        guests: [guestFromNights(["2026-08-20", "2026-08-21", "2026-08-22"])],
+        editableFrom: "2026-08-22",
+        newCheckOut: "2026-08-24",
+        checkIn: "2026-08-20",
+        checkOut: "2026-08-23",
+      }),
+    );
+    const entry = plan.proposedExistingGuests[0];
+
+    expect(entry.nights.map(key)).toEqual([
+      "2026-08-20",
+      "2026-08-21",
+      "2026-08-22",
+      "2026-08-23",
+    ]);
+    // The three nights they already hold, unchanged, plus the one this edit
+    // genuinely buys at current policy — and the rows add up to the price.
+    expect(entry.perNightCents).toEqual([LOW, LOW, LOW, rateFor("2026-08-23")]);
+    expect(entry.priceCents).toBe(3 * LOW + rateFor("2026-08-23"));
+    expect(entry.perNightCents.reduce((a, b) => a + b, 0)).toBe(entry.priceCents);
   });
 
   it("keeps every cent an integer, with no float anywhere in the sum", () => {
@@ -2068,7 +2166,18 @@ describe("#2744 a night is credited back at the price it was sold for", () => {
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
     expect(2 * HIGH).toBeGreaterThan(3 * LOW);
-    expect(Object.keys(occurrences[0])).not.toContain("priceCents");
+    // The WHOLE key set, not `not.toContain("priceCents")` — that assertion was
+    // tautological, because no branch of this union has such a key and nothing
+    // could add one under that name. Pinning the key set is what actually fails
+    // if a numeric field appears on the review branch under ANY name.
+    expect(Object.keys(occurrences[0]).sort()).toEqual([
+      "addedNightDates",
+      "bookingGuestId",
+      "bookingId",
+      "cause",
+      "storedEvidence",
+      "surrenderedNightDates",
+    ]);
   });
 
   it("credits a guest exactly the stored price of every night they give back", () => {

@@ -320,11 +320,19 @@ describe("calculateModifiedPricing in-progress check-out-day capacity (#2029)", 
       // guest total, so a row without a price is now the unpriceable case rather
       // than a fixture detail. This stay is contiguous at one rate, so the rows
       // reconcile and every expectation is unchanged.
-      nights: eachDateOnlyInRange(D(stayStart), D(stayEnd)).map((stayDate) => ({
-        stayDate,
-        priceCents:
-          priceCents / eachDateOnlyInRange(D(stayStart), D(stayEnd)).length,
-      })),
+      nights: (() => {
+        const dates = eachDateOnlyInRange(D(stayStart), D(stayEnd));
+        // INTEGER cents, remainder on the first night. A float division puts a
+        // fraction of a cent on every row, so the reconciliation the plan
+        // applies would rest on floating point rather than on the integer
+        // arithmetic the column actually holds (INV-MONEY-001).
+        const base = Math.floor(priceCents / dates.length);
+        const remainder = priceCents - base * dates.length;
+        return dates.map((stayDate, index) => ({
+          stayDate,
+          priceCents: index === 0 ? base + remainder : base,
+        }));
+      })(),
       priceCents,
     };
   }
@@ -1019,7 +1027,16 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       "2026-08-23",
       "2026-08-24",
     ]);
-    // No amount anywhere on the result: not the clamped zero, not 2 x HIGH.
-    expect(Object.keys(occurrences[0])).not.toContain("priceCents");
+    // No amount anywhere on the occurrence: not the clamped zero, not 2 x HIGH.
+    // Asserted as the WHOLE key set rather than as the absence of one name,
+    // which nothing could have added anyway.
+    expect(Object.keys(occurrences[0]).sort()).toEqual([
+      "addedNightDates",
+      "bookingGuestId",
+      "bookingId",
+      "cause",
+      "storedEvidence",
+      "surrenderedNightDates",
+    ]);
   });
 });

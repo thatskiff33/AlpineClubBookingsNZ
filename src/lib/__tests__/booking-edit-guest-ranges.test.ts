@@ -55,10 +55,19 @@ function guest(stayStart: string, stayEnd: string, priceCents: number, id = "g1"
     // the guest total, so a night row without a price is no longer a fixture
     // detail — it is the unpriceable case. These are contiguous stays at one
     // rate, so the rows reconcile and every expectation below is unchanged.
-    nights: eachDateOnlyInRange(D(stayStart), D(stayEnd)).map((stayDate) => ({
-      stayDate,
-      priceCents: priceCents / eachDateOnlyInRange(D(stayStart), D(stayEnd)).length,
-    })),
+    nights: (() => {
+      const dates = eachDateOnlyInRange(D(stayStart), D(stayEnd));
+      // INTEGER cents, remainder on the first night. A float division puts a
+      // fraction of a cent on every row, so the reconciliation the plan
+      // applies would rest on floating point rather than on the integer
+      // arithmetic the column actually holds (INV-MONEY-001).
+      const base = Math.floor(priceCents / dates.length);
+      const remainder = priceCents - base * dates.length;
+      return dates.map((stayDate, index) => ({
+        stayDate,
+        priceCents: index === 0 ? base + remainder : base,
+      }));
+    })(),
     priceCents,
   };
 }

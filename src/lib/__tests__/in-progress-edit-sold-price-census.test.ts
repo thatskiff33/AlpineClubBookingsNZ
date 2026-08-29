@@ -383,7 +383,7 @@ const LENIENT_LOCK_CALL_SITES = [
   {
     file: "src/lib/booking-date-modification-service.ts",
     calls: 1,
-    what: "a date change: nights kept across the move keep their booked price, and the nights the new range adds are bought at current rates. The old side of the credit is the booking's stored total, which is exact evidence and not a reprice",
+    what: "a date change: the locks are keyed by NORMALISED stay date, so a night the guest keeps across the move matches its lock however far the range moved and keeps its booked price - only genuinely new nights reach the season table. The old side of the credit is `Booking.finalPriceCents` as stored, so nothing here reconstructs a historical amount. What this path does NOT do is test that the stored rows can account for that total: a strand with no usable per-night price still has its dropped nights valued at today's rate, which is #3166 and not INV-MOD-028",
   },
   {
     file: "src/lib/booking-guest-removal-service.ts",

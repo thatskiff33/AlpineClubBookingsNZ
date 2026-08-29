@@ -299,11 +299,19 @@ function completeHostingGuestRows<
  * `BookingGuestNight` rows for `[stayStart, stayEnd)` that sum EXACTLY to
  * `priceCents` (#3031).
  *
- * The remainder lands on the first night, which is a real allocation a club can
- * hold rather than an invention: what matters is that the rows reconcile to the
- * stored total, because that is the test an edit applies before it will price
- * anything. A guest with no stored total gets no rows - there is nothing to
- * allocate - and that fixture is then deliberately in the unpriceable case.
+ * AN EVEN SPLIT, DELIBERATELY, and it is not the estimator #3031 removes. It
+ * mirrors what migrations `20260704150000` (#1098) and `20260810010000` (#2739)
+ * really wrote into this table for guests who had no rows: the stored total
+ * divided by the night count with the remainder on the first night. So a fixture
+ * built this way is the shape a large share of live bookings genuinely carries,
+ * which is exactly why INV-MOD-028 tests RECONCILIATION rather than provenance —
+ * these rows reconcile, and the invariant says in as many words that an evenly
+ * split backfilled strand prices as exact.
+ *
+ * What matters here is that the rows reconcile to the stored total, because that
+ * is the test an edit applies before it will price anything. A guest with no
+ * stored total gets no rows - there is nothing to allocate - and that fixture is
+ * then deliberately in the unpriceable case.
  */
 function syntheticSoldNightRows(
   stayStart: Date,
