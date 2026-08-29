@@ -100,6 +100,14 @@ across the stay envelope, integer cents, remainder on the first night), so
 that fallback now covers only quote-priced bookings — already protected by
 the #1032 edit block — and rows created outside the app.
 
+**Superseded in part by INV-MOD-028 (#3031, epic #2797).** The last sentence's
+"legacy guests without stored night rows price at current rates" no longer holds
+on the two paths that give a night BACK — the in-progress edit planner and the
+single-guest removal. There, a strand whose stored rows cannot account for its
+stored total is not priced at all: the edit is `financial_review_required` and a
+person prices it. Everything else here stands, including current-rate pricing for
+a night an edit genuinely buys.
+
 ## INV-MOD-006
 
 Every edit path passes the default group discount into pricing exactly as
@@ -651,6 +659,14 @@ still subject to the minimum — deferred as scope B on #2124.)
 
 ## INV-MOD-025
 
+**Amended by INV-MOD-028 (#3031, epic #2797).** Two of #2744's clauses below are
+gone rather than changed: the refund CEILING (it clamped a credit against a
+derived total, which is a valuation taken by arithmetic) and the even-split
+write-back for a guest whose rows cannot account for their total (its output
+became the evidence the next edit read). Both conditions are now
+`financial_review_required`. "Values each at the price it was sold for" is
+unchanged and is now the only rule — there is no fallback beneath it.
+
 **Not retired, and #2770 records why.** The owner's 10 Aug 2026 decision on #2756
 asked for this id to be retired, and #2770's acceptance criterion 5 repeated it.
 Following that literally would delete rules that are still true: `SCHEME.md`
@@ -1160,3 +1176,47 @@ stale version is refused instead of overwriting a concurrent admin or import.
 Config transfer is the one replace-set exception: it takes the config-import
 lock then the shared policy-set lock, re-plans, and may delete omitted policies
 only after they appeared in Preview. Existing policies migrate to `HOLD`.
+
+## INV-MOD-028
+
+**Exact stored sold-price evidence, or an explicit financial review. Never an
+estimate of historical money.** (#3031, epic #2797.)
+
+A guest strand is **exactly priced** when every night it holds carries a stored
+non-negative integer `BookingGuestNight.priceCents` and those prices sum to
+`BookingGuest.priceCents` to the cent. The test is RECONCILIATION and not
+provenance: two of the three events that populated that table were themselves
+even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there
+is no provenance column and `createdAt` does not separate a backfilled row from a
+live one — so an evenly-split backfilled strand reconciles and prices as exact,
+which is the intended consequence. A deliberate negotiated-flat allocation is
+valid evidence once stored; equal nightly rows alone are not a defect.
+
+Where a strand is exact, an edit values every night it keeps or gives back at the
+integer on the row, and every night it newly buys under current pricing policy
+(INV-MOD-005, INV-MOD-006). Where it is not, the edit produces **no numeric
+result at all** — not zero, not null, not an optional a caller can default —
+only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
+`STORED_TOTAL_MISMATCH`) and the evidence as it stands. Nothing is written: a
+retained row is preserved byte for byte or not written at all.
+
+Prohibited as a source of a historical amount, on every edit path: today's season
+rate for a night the edit does not buy; a stored average; a proportional
+estimator; an even split of a total across nights; and a clamp of a credit
+against a derived total. The captured-cash settlement caps in
+`booking-modify-settlement.ts` are NOT in this class and are untouched — they cap
+a refund against money actually taken.
+
+A negative or non-integer stored row is classified as an ABSENCE of usable
+evidence, never as a price: trusting one inverts an edit, so giving a night back
+would charge the member. Nothing already stored is rewritten or repaired here;
+that is #2745's audited decision. Forward only.
+
+Quote and apply consume the identical discriminated result, so a preview can
+never show a price the save would decline to honour.
+
+Pinned by `booking-edit-guest-ranges-sparse.test.ts` (the 960-case matrix and one
+refusal proof per removed estimator), `booking-edit-financial-review-parity.test.ts`,
+`booking-guest-removal-exact-credit.test.ts`,
+`guest-removal-minors-alert-route.test.ts` and the lenient-reader census in
+`in-progress-edit-sold-price-census.test.ts`.
