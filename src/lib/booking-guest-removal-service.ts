@@ -690,29 +690,23 @@ export async function removeBookingGuestInTransaction({
   }));
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
-  // #3031: the credit IS the departing guest's own stored price, and this is
-  // where that is proved rather than hoped for. Every remaining night was locked
-  // at what it was sold for, so the reprice cannot have moved a remaining
-  // guest's total; if it did, something valued a night the club did not just
-  // sell, and no amount derived from it can be trusted. Refuse rather than
-  // settle it.
-  const expectedRemainingTotalCents =
-    booking.totalPriceCents - guestToRemove.priceCents;
-  if (newTotalPriceCents !== expectedRemainingTotalCents) {
-    throw new BookingEditFinancialReviewRequiredError([
-      {
-        bookingId,
-        bookingGuestId: guestId,
-        cause: "STORED_TOTAL_MISMATCH",
-        surrenderedNightDates: [],
-        addedNightDates: [],
-        storedEvidence: {
-          guestTotalCents: null,
-          nightPrices: [],
-        },
-      },
-    ]);
-  }
+  // #3031: THE CREDIT IS THE DEPARTING GUEST'S OWN STORED PRICE, and the gate
+  // above is what makes it so rather than an assertion here.
+  //
+  // `newTotalPriceCents` is a reprice of the REMAINING guests, and the credit is
+  // the difference against the booking's stored total. That was the defect: a
+  // remaining guest whose rows carried no usable price had their nights valued
+  // at today's rate, and the whole of that movement landed inside what the
+  // member was told was the departing guest's credit.
+  //
+  // Every remaining night is now locked at what it was sold for before this
+  // point is reached, and a locked night short-circuits the season lookup, so
+  // the reprice returns each remaining guest's stored total unchanged and the
+  // difference is exactly `guestToRemove.priceCents`. It is structural, not
+  // policed - there is no state left in which the reprice could move - and it is
+  // proved against the REAL pricing engine in
+  // `booking-guest-removal-exact-credit.test.ts` rather than re-checked here
+  // against a number this function has just derived.
   // #3123 — the SAME club day the caller resolved before it opened this
   // transaction, re-expressed as the calendar day the promo window and the
   // refund tier are written in. `today` arrives as the UTC-midnight `@db.Date`

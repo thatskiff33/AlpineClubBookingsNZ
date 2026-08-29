@@ -2019,6 +2019,15 @@ describe("PUT /api/bookings/[id]/modify", () => {
             memberId: "m1",
             stayStart: new Date("2026-08-20T00:00:00.000Z"),
             stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+            // #3031: an in-progress edit prices from the stored sold-price rows
+            // and refuses to invent an amount when there are none. Four nights
+            // at 2500 summing to the stored 10000 below.
+            nights: [
+              { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-22T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-23T00:00:00.000Z"), priceCents: 2500 },
+            ],
             priceCents: 10000,
           },
         ],
@@ -2110,6 +2119,15 @@ describe("PUT /api/bookings/[id]/modify", () => {
             memberId: "m1",
             stayStart: new Date("2026-08-20T00:00:00.000Z"),
             stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+            // #3031: an in-progress edit prices from the stored sold-price rows
+            // and refuses to invent an amount when there are none. Four nights
+            // at 2500 summing to the stored 10000 below.
+            nights: [
+              { stayDate: new Date("2026-08-20T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-21T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-22T00:00:00.000Z"), priceCents: 2500 },
+              { stayDate: new Date("2026-08-23T00:00:00.000Z"), priceCents: 2500 },
+            ],
             priceCents: 10000,
           },
         ],

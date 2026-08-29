@@ -261,25 +261,70 @@ afterEach(() => {
  * "shape production cannot emit" this whole helper exists to stop.
  */
 function completeHostingGuestRows<
-  T extends { memberId?: string | null; ageTier?: string },
+  T extends { memberId?: string | null; ageTier?: string; priceCents?: number },
 >(guests: readonly T[], checkIn: Date, checkOut: Date) {
-  return guests.map((guest) => ({
-    // A guest with no stay window of its own stays the whole booking, which is
-    // what every route in this file assumes when it reprices the full party.
-    stayStart: checkIn,
-    stayEnd: checkOut,
-    nights: [] as Array<{ stayDate: Date }>,
-    // `null` = no consent was ever needed, which is operationally present (D-12)
-    // and the right default for an ordinary guest row.
-    consentStatus: null as string | null,
-    ...guest,
-    member:
-      typeof guest.memberId === "string"
-        ? hostingMemberRow(
-            guest.memberId,
-            guest.ageTier ? { ageTier: guest.ageTier } : {},
-          )
-        : null,
+  return guests.map((guest) => {
+    const stayStart = (guest as { stayStart?: Date }).stayStart ?? checkIn;
+    const stayEnd = (guest as { stayEnd?: Date }).stayEnd ?? checkOut;
+    return {
+      // A guest with no stay window of its own stays the whole booking, which is
+      // what every route in this file assumes when it reprices the full party.
+      stayStart,
+      stayEnd,
+      // #3031: and a per-night SOLD PRICE that reconciles to the guest's stored
+      // total. `[]` used to be the default, and it was the pre-#713 row shape -
+      // legitimate then, and the unpriceable case now: an edit that gives a
+      // night back reads what it was sold for off these rows and refuses to
+      // invent an amount when there is nothing to read. Production has carried
+      // rows for every guest since the #2739 backfill, so filling them in makes
+      // these fixtures MORE like a live booking, not less. A fixture that states
+      // its own `nights` still wins, including one that deliberately states none.
+      nights: syntheticSoldNightRows(stayStart, stayEnd, guest.priceCents),
+      // `null` = no consent was ever needed, which is operationally present (D-12)
+      // and the right default for an ordinary guest row.
+      consentStatus: null as string | null,
+      ...guest,
+      member:
+        typeof guest.memberId === "string"
+          ? hostingMemberRow(
+              guest.memberId,
+              guest.ageTier ? { ageTier: guest.ageTier } : {},
+            )
+          : null,
+    };
+  });
+}
+
+/**
+ * `BookingGuestNight` rows for `[stayStart, stayEnd)` that sum EXACTLY to
+ * `priceCents` (#3031).
+ *
+ * The remainder lands on the first night, which is a real allocation a club can
+ * hold rather than an invention: what matters is that the rows reconcile to the
+ * stored total, because that is the test an edit applies before it will price
+ * anything. A guest with no stored total gets no rows - there is nothing to
+ * allocate - and that fixture is then deliberately in the unpriceable case.
+ */
+function syntheticSoldNightRows(
+  stayStart: Date,
+  stayEnd: Date,
+  priceCents: number | undefined,
+): Array<{ stayDate: Date; priceCents: number }> {
+  if (typeof priceCents !== "number") return [];
+  const nights: Date[] = [];
+  for (
+    let night = new Date(stayStart);
+    night < stayEnd;
+    night = new Date(night.getTime() + 86_400_000)
+  ) {
+    nights.push(new Date(night));
+  }
+  if (nights.length === 0) return [];
+  const base = Math.floor(priceCents / nights.length);
+  const remainder = priceCents - base * nights.length;
+  return nights.map((stayDate, index) => ({
+    stayDate,
+    priceCents: base + (index === 0 ? remainder : 0),
   }));
 }
 

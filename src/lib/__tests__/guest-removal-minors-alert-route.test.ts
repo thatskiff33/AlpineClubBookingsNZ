@@ -66,6 +66,12 @@ vi.mock("@/lib/booking-modify", async (importActual) => {
     calculateModificationSettlementOptions: mocks.calculateModificationSettlementOptions,
     lockedNightPricesForGuest: mocks.lockedNightPricesForGuest,
     rateSnapshotUpdateForRepricedGuest: actual.rateSnapshotUpdateForRepricedGuest,
+    // #3031: the real refusal class. A module mock that omits it makes the
+    // service's `new BookingEditFinancialReviewRequiredError(...)` a TypeError,
+    // which the route maps to a bare 400 - so a fixture that stopped reconciling
+    // would fail as "something broke" instead of "the money needs review".
+    BookingEditFinancialReviewRequiredError:
+      actual.BookingEditFinancialReviewRequiredError,
   };
 });
 vi.mock("@/lib/membership-type-policy", () => ({
@@ -165,10 +171,16 @@ function preEditBooking(guests: Guest[]) {
       ...g,
       stayStart: CHECK_IN,
       stayEnd: CHECK_OUT,
-      // An array, not absent: `toHostingParticipants` reads `.length`. Empty is
-      // the honest value here — this fixture persists no BookingGuestNight rows,
-      // so the evaluator falls back to the stayStart..stayEnd envelope above.
-      nights: [],
+      // The guest's stored `BookingGuestNight` rows, with what each night was
+      // SOLD for. #3031: a removal gives every one of these nights back, and the
+      // credit is read off these rows - a strand with no rows, or rows that do
+      // not add up to `priceCents`, is refused as unpriceable rather than valued
+      // at today's rate. Two nights at 2000 summing to the 4000 below, which is
+      // also what `toHostingParticipants` reads `.length` from.
+      nights: [
+        { stayDate: CHECK_IN, priceCents: 2000 },
+        { stayDate: new Date("2027-07-16"), priceCents: 2000 },
+      ],
       priceCents: 4000,
       // No consent was ever asked for on this booking, which is one of the two
       // values `isOperationallyPresentConsent` counts as present (D-12).
