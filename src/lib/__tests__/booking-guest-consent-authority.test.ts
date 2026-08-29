@@ -685,6 +685,92 @@ describe("consentAuthority grants nothing on the paths that already existed", ()
   });
 });
 
+describe("a consent removal is never blocked by unpriceable history (D-14, #3031)", () => {
+  // #3031 added an evidence gate to this function: unless EVERY strand on the
+  // booking reconciles, the removal is refused as `FINANCIAL_REVIEW_REQUIRED`
+  // rather than credited from a number nobody can support (INV-MOD-028).
+  //
+  // A CONSENT REMOVAL IS EXEMPT, and this pair is what says so. D-14 is a direct
+  // owner decision: a decline or an expiry must ALWAYS be able to take its
+  // target off the booking. Refusing one does not merely inconvenience the
+  // member, it traps them — the refusal rolls back the status-guarded claim with
+  // `consentStatus` already written terminal, and the claim requires PENDING, so
+  // nothing can retry. And because the gate judges every strand, the member
+  // would be trapped by SOMEBODY ELSE's rows.
+  //
+  // Asserted DIFFERENTIALLY on one fixture, for the same reason the DRAFT case
+  // below is: the same guest, the same booking, the same unpriceable companion,
+  // going two ways according to who is asking. Nothing else in this suite would
+  // fail if the exemption were deleted.
+  function unpriceableCompanionBooking(targetConsent: ConsentStatus) {
+    const booking = makeBooking({ targetConsent });
+    // The companion carries money with no per-night record at all: a booking
+    // predating `BookingGuestNight`, or one created by approving a request
+    // (#2739 backfills those but cannot empty the population). Their strand
+    // cannot reconcile, and it is not the strand being removed.
+    booking.guests[1].nights = [];
+    return booking;
+  }
+
+  it("takes a declining member off even when another guest's rows cannot be priced", async () => {
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
+      where: { id: TARGET_GUEST },
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("lets the expiry sweep through on the same booking", async () => {
+    // The sweep has no actor at all, so a refusal here would leave the row
+    // PENDING-claimed-then-rolled-back for ever and hold its bed with it.
+    const tx = makeTx(unpriceableCompanionBooking("EXPIRED"));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("refuses the SAME removal on the SAME booking when the owner asks for it", async () => {
+    // The control. Without it the two cases above would pass just as well if the
+    // gate had never been added to this function at all.
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+
+    await expect(
+      remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER }),
+    ).rejects.toMatchObject({
+      code: "FINANCIAL_REVIEW_REQUIRED",
+      status: 409,
+    });
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+  });
+
+  it("still refuses an owner removal it CAN price, only on the money", async () => {
+    // And the other half of the control: the owner path is not refused in
+    // general. Every strand on the untouched fixture reconciles, so the same
+    // owner removal goes through — which is what makes the refusal above about
+    // the evidence rather than about the actor.
+    const tx = makeTx(makeBooking({ targetConsent: "DECLINED" }));
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+});
+
 describe("a consent removal runs the SELF-REMOVAL gate set (D-14)", () => {
   // THE DIFFERENTIAL TEST, and the reason D-14 holds to the letter: the cases in
   // which a never-consented member is trapped on a booking are exactly the cases in

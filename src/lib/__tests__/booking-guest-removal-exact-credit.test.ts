@@ -60,6 +60,18 @@ const SEASONS: SeasonRateData[] = [
 
 const NIGHTS = ["2026-08-20", "2026-08-21", "2026-08-22"];
 
+/**
+ * The booking's own stay window, which every evidence question is asked against.
+ *
+ * `storedSoldPriceEvidenceForGuest` takes it because it reaches the canonical
+ * `getGuestBedNightKeys`, whose rule is "explicit night rows, else the guest's
+ * envelope, else the BOOKING's" — the same rule every other reader of a guest's
+ * nights follows (INV-DATE-020). The local twin it replaced stopped at the
+ * guest's envelope and answered "no nights held" when that was null, which for a
+ * zero-priced strand reconciled to `exact` (`INV-SSOT`).
+ */
+const BOOKING_RANGE = { checkIn: D(NIGHTS[0]), checkOut: D("2026-08-23") };
+
 /** A remaining guest, as `guestsForPricing` builds one on the removal path. */
 function remainingGuest(
   nights: Array<{ stayDate: Date; priceCents?: number }>,
@@ -106,7 +118,7 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     );
 
     // The gate this all rests on: their evidence is exact.
-    expect(storedSoldPriceEvidenceForGuest(guest).kind).toBe("exact");
+    expect(storedSoldPriceEvidenceForGuest(guest, BOOKING_RANGE).kind).toBe("exact");
 
     const breakdown = calculateBookingPrice(
       D(NIGHTS[0]),
@@ -158,62 +170,102 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     // population). The envelope still says which nights; nothing says what they
     // cost.
     expect(
-      storedSoldPriceEvidenceForGuest({ ...base, priceCents: 12000, nights: [] }),
+      storedSoldPriceEvidenceForGuest(
+        { ...base, priceCents: 12000, nights: [] },
+        BOOKING_RANGE,
+      ),
     ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
 
     // Some rows priced, some not — a mixed strand, which is worse than none,
     // because the total that DOES reconcile is only part of the stay.
     expect(
-      storedSoldPriceEvidenceForGuest({
-        ...base,
-        priceCents: 12000,
-        nights: [
-          { stayDate: D(NIGHTS[0]), priceCents: 4000 },
-          { stayDate: D(NIGHTS[1]), priceCents: 4000 },
-          { stayDate: D(NIGHTS[2]), priceCents: null },
-        ],
-      }),
+      storedSoldPriceEvidenceForGuest(
+        {
+          ...base,
+          priceCents: 12000,
+          nights: [
+            { stayDate: D(NIGHTS[0]), priceCents: 4000 },
+            { stayDate: D(NIGHTS[1]), priceCents: 4000 },
+            { stayDate: D(NIGHTS[2]), priceCents: null },
+          ],
+        },
+        BOOKING_RANGE,
+      ),
     ).toMatchObject({ kind: "unusable", cause: "PARTIAL_STORED_NIGHT_PRICES" });
 
     // Rows all present and priced, and a stored total that disagrees. Nothing is
     // missing; the evidence simply does not add up.
     expect(
-      storedSoldPriceEvidenceForGuest({
-        ...base,
-        priceCents: 12001,
-        nights: NIGHTS.map((night) => ({
-          stayDate: D(night),
-          priceCents: 4000,
-        })),
-      }),
+      storedSoldPriceEvidenceForGuest(
+        {
+          ...base,
+          priceCents: 12001,
+          nights: NIGHTS.map((night) => ({
+            stayDate: D(night),
+            priceCents: 4000,
+          })),
+        },
+        BOOKING_RANGE,
+      ),
     ).toMatchObject({ kind: "unusable", cause: "STORED_TOTAL_MISMATCH" });
 
     // A negative row is not a cheap night; it is a row that cannot be money, and
     // pre-#2744 arithmetic could write one. Trusting it would invert the credit.
     expect(
-      storedSoldPriceEvidenceForGuest({
-        ...base,
-        priceCents: 0,
-        nights: NIGHTS.map((night) => ({
-          stayDate: D(night),
-          priceCents: -4000,
-        })),
-      }),
+      storedSoldPriceEvidenceForGuest(
+        {
+          ...base,
+          priceCents: 0,
+          nights: NIGHTS.map((night) => ({
+            stayDate: D(night),
+            priceCents: -4000,
+          })),
+        },
+        BOOKING_RANGE,
+      ),
     ).toMatchObject({ kind: "unusable", cause: "NO_STORED_NIGHT_PRICES" });
 
     // And the one that must NOT be refused: a negotiated flat allocation. Equal
     // nightly rows are not a defect, and epic #2797 says so in as many words -
     // refusing them would refuse a large share of historical bookings.
     expect(
-      storedSoldPriceEvidenceForGuest({
-        ...base,
-        priceCents: 12000,
-        nights: NIGHTS.map((night) => ({
-          stayDate: D(night),
-          priceCents: 4000,
-        })),
-      }),
+      storedSoldPriceEvidenceForGuest(
+        {
+          ...base,
+          priceCents: 12000,
+          nights: NIGHTS.map((night) => ({
+            stayDate: D(night),
+            priceCents: 4000,
+          })),
+        },
+        BOOKING_RANGE,
+      ),
     ).toMatchObject({ kind: "exact", totalCents: 12000 });
+  });
+
+  it("asks the BOOKING's range for a strand carrying no envelope of its own", () => {
+    // The null-envelope strand, which the local night-key derivation this module
+    // used to carry got wrong. `BookingGuest.stayStart`/`stayEnd` are nullable,
+    // and the canonical rule (`getGuestBedNightKeys`) falls back to the
+    // BOOKING's range for a guest with neither rows nor an envelope. The twin
+    // stopped one step earlier and answered "holds no nights at all" — which,
+    // against a zero stored total, reconciles to `exact` and lets a removal be
+    // credited from history nobody has.
+    const verdict = storedSoldPriceEvidenceForGuest(
+      { stayStart: null, stayEnd: null, priceCents: 0, nights: [] },
+      BOOKING_RANGE,
+    );
+
+    expect(verdict).toMatchObject({
+      kind: "unusable",
+      cause: "NO_STORED_NIGHT_PRICES",
+    });
+    // Three booking nights, each reported as an absence rather than as a zero.
+    expect(verdict.nightPrices).toEqual([
+      { date: "2026-08-20", priceCents: null },
+      { date: "2026-08-21", priceCents: null },
+      { date: "2026-08-22", priceCents: null },
+    ]);
   });
 
   it("treats a comped night as a price and an absent one as an absence", () => {
@@ -221,16 +273,19 @@ describe("#3031 a removal's credit is the departing guest's own stored price", (
     // evidence carries `number | null` rather than a number defaulted to zero:
     // "we gave them this night" and "we have no idea what this night cost" are
     // different facts, and only the second needs a person.
-    const comped = storedSoldPriceEvidenceForGuest({
-      stayStart: D(NIGHTS[0]),
-      stayEnd: D("2026-08-23"),
-      priceCents: 8000,
-      nights: [
-        { stayDate: D(NIGHTS[0]), priceCents: 4000 },
-        { stayDate: D(NIGHTS[1]), priceCents: 0 },
-        { stayDate: D(NIGHTS[2]), priceCents: 4000 },
-      ],
-    });
+    const comped = storedSoldPriceEvidenceForGuest(
+      {
+        stayStart: D(NIGHTS[0]),
+        stayEnd: D("2026-08-23"),
+        priceCents: 8000,
+        nights: [
+          { stayDate: D(NIGHTS[0]), priceCents: 4000 },
+          { stayDate: D(NIGHTS[1]), priceCents: 0 },
+          { stayDate: D(NIGHTS[2]), priceCents: 4000 },
+        ],
+      },
+      BOOKING_RANGE,
+    );
 
     expect(comped).toMatchObject({ kind: "exact", totalCents: 8000 });
   });

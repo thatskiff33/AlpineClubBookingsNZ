@@ -10,7 +10,6 @@ import {
   getGuestBedNightKeys,
   type BookingStayRange,
   type GuestNightInput,
-  type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 
 /**
@@ -257,7 +256,24 @@ export function editFinancialReviewOccurrence(args: {
  * zero-priced strand reconciled to "exact" instead of asking for a person.
  */
 export function storedSoldPriceEvidenceForGuest(
-  guest: GuestStayRange & { priceCents: number },
+  guest: {
+    /** `BookingGuest.priceCents` as stored. */
+    priceCents: number;
+    stayStart?: Date | null;
+    stayEnd?: Date | null;
+    /**
+     * The guest's `BookingGuestNight` rows as loaded. Spelled out rather than
+     * reusing `GuestNightInput`, which does not know about `priceCents` — a
+     * caller building the rows as an object literal would be refused by the
+     * excess-property check, and the price is the whole point here. Assignable
+     * to `GuestNightInput` either way, which is what `getGuestBedNightKeys`
+     * below needs.
+     */
+    nights?: ReadonlyArray<{
+      stayDate: Date | string;
+      priceCents?: number | null;
+    }> | null;
+  },
   booking: BookingStayRange,
 ): StoredSoldPriceEvidence {
   const priceByKey = storedNightPricesByKey(guest.nights);

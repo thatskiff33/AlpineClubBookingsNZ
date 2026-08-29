@@ -397,6 +397,14 @@ const LENIENT_LOCK_CALL_SITES = [
   },
 ] as const;
 
+/**
+ * {@link LENIENT_LOCK_CALL} without `g`, for `String.search` — a global flag
+ * makes a regex stateful, and a shared stateful one is a test that passes or
+ * fails depending on what ran before it.
+ */
+const LENIENT_LOCK_CALL_ONCE =
+  /(?<!function\s)\blockedNightPricesForGuest\s*\(/;
+
 /** A CALL, not the declaration or a re-export. */
 const LENIENT_LOCK_CALL =
   /(?<!function\s)\blockedNightPricesForGuest\s*\(/g;
@@ -433,11 +441,17 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     }
   });
 
-  it("keeps the removal path asking the STRICT twin as well", () => {
+  it("keeps the removal path asking the STRICT twin, and asking it FIRST", () => {
     // The one lenient call site that values nights being GIVEN BACK. It is safe
     // only because it runs after the strict gate; delete the gate and the
     // removal silently reprices a remaining guest's stay at today's rate again,
     // reporting the movement as the departing guest's credit (#3031, E10).
+    //
+    // ASSERTED AS CALLS AND AS AN ORDER, not as the presence of the words. A
+    // bare `toContain("storedSoldPriceEvidenceForGuest")` is satisfied by an
+    // IMPORT of the symbol, so it would still pass with the gate deleted and the
+    // import left behind — which is the likeliest way this actually regresses,
+    // because nothing else complains about an unused import until knip runs.
     const source = withoutComments(
       fs.readFileSync(
         path.resolve(process.cwd(), "src/lib/booking-guest-removal-service.ts"),
@@ -445,7 +459,19 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
       ),
     );
 
-    expect(source).toContain("storedSoldPriceEvidenceForGuest");
-    expect(source).toContain("BookingEditFinancialReviewRequiredError");
+    const strictCall = source.search(
+      /(?<!function\s)\bstoredSoldPriceEvidenceForGuest\s*\(/,
+    );
+    const lenientCall = source.search(LENIENT_LOCK_CALL_ONCE);
+    const refusal = source.search(
+      /throw new BookingEditFinancialReviewRequiredError\s*\(/,
+    );
+
+    expect(strictCall, "the strict twin must be CALLED, not merely imported").toBeGreaterThan(-1);
+    expect(refusal, "an unusable strand must be refused, not noted").toBeGreaterThan(-1);
+    expect(lenientCall).toBeGreaterThan(-1);
+    // The gate decides before the lenient reader is handed anything.
+    expect(strictCall).toBeLessThan(lenientCall);
+    expect(refusal).toBeLessThan(lenientCall);
   });
 });
