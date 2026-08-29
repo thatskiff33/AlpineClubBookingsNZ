@@ -888,3 +888,100 @@ describe("the self-removal window is judged on the day the caller supplies (#312
     });
   });
 });
+
+/**
+ * #3032 (epic #2797): the pending-review fence on the removal path, and the one
+ * exemption that keeps owner decision D-14 true.
+ *
+ * D-14 says a member who never consented must ALWAYS be able to come off a
+ * booking. The fence is what stops a second money-affecting edit compounding an
+ * amount nobody has priced yet — so without the exemption it would trap exactly
+ * the people D-14 exists to free, for as long as an admin left the review open.
+ * With it, the removal proceeds and #3032 parks its money as a second review
+ * task rather than inventing a figure or silently skipping one.
+ */
+describe("#3032 pending financial review fences a removal, except a consent one", () => {
+  const openReview = {
+    id: "task-open",
+    occurrenceKey: "edit-financial-review:v1:abc",
+    amountCents: null,
+    raisedAmountCents: null,
+    reviewContext: null,
+  };
+
+  it("refuses an ordinary owner removal while the booking's money is under review", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    // Refused BEFORE any write: the booking is exactly as it was.
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an admin removal on the same terms — the fence is about the money, not the actor", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, {
+        guestId: TARGET_GUEST,
+        actorMemberId: ADMIN,
+        actorRole: "ADMIN",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("D-14: a CONSENT_EXPIRY removal still comes off, with the review open", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: "EXPIRED" }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_EXPIRY"),
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("D-14: a CONSENT_DECLINE removal still comes off, with the review open", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: "DECLINED" }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+  });
+
+  it("CONTROL: the same ordinary removal succeeds when no review is open", async () => {
+    // Without this the four assertions above would still pass against a fence
+    // that refused every removal, or one that refused none.
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(null);
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
+    });
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(tx.manualRefundTask.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("a stranger still gets 403, not a 409 telling them the club is reviewing this booking's money", async () => {
+    const tx = makeTx(makeBooking({ targetConsent: null }));
+    tx.manualRefundTask.findFirst.mockResolvedValue(openReview);
+
+    await expect(
+      remove(tx, { guestId: TARGET_GUEST, actorMemberId: "m-stranger" }),
+    ).rejects.toMatchObject({ status: 403 });
+    // And the fence never even ran: it sits below the authorisation checks, so a
+    // caller with no business here learns nothing about the booking's finances.
+    expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
+  });
+});

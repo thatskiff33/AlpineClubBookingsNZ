@@ -23,11 +23,15 @@ import {
 vi.mock("server-only", () => ({}));
 
 import {
+  assertNoPendingEditFinancialReview,
   buildEditFinancialReviewReason,
   editFinancialReviewOccurrenceKey,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
   EditFinancialReviewError,
+  EditFinancialReviewPendingError,
+  EDIT_FINANCIAL_REVIEW_PENDING_CODE,
+  EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
 } from "@/lib/edit-financial-review";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSES,
@@ -596,5 +600,109 @@ describe("#3030 reviewContext parser - a blob it cannot vouch for is not read", 
         bookingCheckOut: "2026-08-04",
       }),
     ).toBeNull();
+  });
+});
+
+/**
+ * #3032 (epic #2797): the pending-review fence.
+ *
+ * The epic's rule is *"a second money-affecting edit is fenced when it would
+ * require unresolved money as its baseline"*, and the corresponding half of the
+ * issue's requirement is that *"identity-only changes remain independent where
+ * safe"*. Both halves matter: a fence that refused everything would trap a member
+ * on a booking they can see is wrong, for a reason that has nothing to do with
+ * their edit.
+ */
+describe("#3032 pending-review fence", () => {
+  it("refuses a money-affecting edit while an OPEN review holds the booking's money", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "task-1",
+      occurrenceKey: "edit-financial-review:v1:abc",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    });
+
+    await expect(
+      assertNoPendingEditFinancialReview({
+        bookingId: "booking-9",
+        moneyAffecting: true,
+        store: store(),
+      }),
+    ).rejects.toBeInstanceOf(EditFinancialReviewPendingError);
+  });
+
+  it("carries a machine code and a 409, so a surface can act on it instead of matching on the sentence", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: "task-1",
+      occurrenceKey: "edit-financial-review:v1:abc",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    });
+
+    await expect(
+      assertNoPendingEditFinancialReview({
+        bookingId: "booking-9",
+        moneyAffecting: true,
+        store: store(),
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: EDIT_FINANCIAL_REVIEW_PENDING_CODE,
+    });
+  });
+
+  it("blames nobody and never says the booking changed", async () => {
+    // The member did nothing wrong: the CLUB's records could not price their
+    // last change. #3033 renders this; it has to be safe to show as it stands.
+    expect(EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE).toMatch(/club/i);
+    expect(EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE).toMatch(/unchanged/i);
+    for (const forbidden of [
+      "corrupt",
+      "invalid",
+      "error",
+      "your fault",
+      "failed",
+    ]) {
+      expect(EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE.toLowerCase()).not.toContain(
+        forbidden,
+      );
+    }
+  });
+
+  it("MUTATION: lets a NON money-affecting edit through without so much as a query", async () => {
+    // Not merely "does not throw". If this ever ran the query, a slow or failing
+    // read would start affecting name corrections, and the exemption would be one
+    // refactor away from disappearing.
+    await expect(
+      assertNoPendingEditFinancialReview({
+        bookingId: "booking-9",
+        moneyAffecting: false,
+        store: store(),
+      }),
+    ).resolves.toBeUndefined();
+    expect(mocks.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: a money-affecting edit passes when no review is open", async () => {
+    // The control case. Without it every assertion above would still pass
+    // against a fence that refused unconditionally.
+    mocks.findFirst.mockResolvedValue(null);
+
+    await expect(
+      assertNoPendingEditFinancialReview({
+        bookingId: "booking-9",
+        moneyAffecting: true,
+        store: store(),
+      }),
+    ).resolves.toBeUndefined();
+    expect(mocks.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("is an ApiError, so an existing handler answers it rather than letting it fall through to a 500", () => {
+    const error = new EditFinancialReviewPendingError();
+    expect(error).toBeInstanceOf(EditFinancialReviewError);
+    expect(error.name).toBe("EditFinancialReviewPendingError");
   });
 });
