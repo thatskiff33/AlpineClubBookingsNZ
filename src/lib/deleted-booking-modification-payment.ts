@@ -226,8 +226,8 @@ export function automaticCancelledBookingRefundTaskReasons(
  * provenance in full.)
  *
  * WHY `COMPLETED` AND NOTHING ELSE. `resolveManualRefundTask` in
- * `manual-booking-payment.ts` writes `applyLocalRefundAllocation` on — and only
- * on — the `COMPLETED` resolution. That allocation is the ledger saying the money
+ * `manual-refund-task-resolution.ts` writes `applyLocalRefundAllocation` on —
+ * and only on — the `COMPLETED` resolution. That allocation is the ledger saying the money
  * went back. So a `COMPLETED` row for this capture means the club has already
  * paid the member, out of its own pocket, and Stripe's refund on top of it is a
  * second payment for one capture.
@@ -550,9 +550,9 @@ export const AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS = 30;
  * payments"), so it would look unresolvable as well as being wrong.
  *
  * DISMISSED, not COMPLETED, and the distinction is load-bearing. In
- * `manual-booking-payment.ts` COMPLETED means "an operator handed the money back
- * by hand" and is what writes the local refund allocation; DISMISSED means
- * "settled another way", moves no money and writes no allocation. Stripe
+ * `manual-refund-task-resolution.ts` COMPLETED means "an operator handed the
+ * money back by hand" and is what writes the local refund allocation; DISMISSED
+ * means "settled another way", moves no money and writes no allocation. Stripe
  * refunded this one and `refundPaymentTransactions` already wrote the
  * allocation, so COMPLETED here would be both untrue and a second allocation
  * for one refund. `completedByMemberId` stays null because no member did it.

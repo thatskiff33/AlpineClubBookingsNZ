@@ -390,8 +390,9 @@ describe("raiseDeletedBookingModificationRefundTask (#2700)", () => {
 
 describe("recordAutomaticCancelledBookingRefundTask (#2700 close, #2760 write)", () => {
   it("closes an OPEN task as DISMISSED, which writes no refund allocation", async () => {
-    // In `manual-booking-payment.ts` COMPLETED means "an operator handed the
-    // money back by hand" and is what writes the local refund allocation.
+    // In `manual-refund-task-resolution.ts` COMPLETED means "an operator
+    // handed the money back by hand" and is what writes the local refund
+    // allocation.
     // Stripe refunded this one and `refundPaymentTransactions` already wrote the
     // allocation, so COMPLETED here would be both untrue and a second allocation
     // for one refund.

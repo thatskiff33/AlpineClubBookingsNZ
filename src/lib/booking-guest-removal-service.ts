@@ -22,6 +22,10 @@ import {
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
 import {
+  selectedIndexesForStoredGuestTargets,
+  targetBookingGuestIdsForSelectedIndexes,
+} from "@/lib/promo-stored-guest-targets";
+import {
   toEditTimeGroupDiscountConfig,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
@@ -120,50 +124,6 @@ export type RemoveBookingGuestResult = {
   // blocked minors-only review state, so the route should alert admins.
   minorsOnlyReviewNewlyFlagged: boolean;
 };
-
-type PromoRedemptionWithTargets = {
-  promoCode: {
-    assignedMembersOnlyOwnNights?: boolean | null;
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
-  return (
-    redemption.promoCode.assignments.length > 0 &&
-    redemption.promoCode.assignedMembersOnlyOwnNights === false
-  );
-}
-
-function selectedIndexesForStoredGuestTargets(
-  redemption: PromoRedemptionWithTargets,
-  guestNightRates: Array<{ bookingGuestId?: string | null }>
-) {
-  if (!promoRequiresStoredGuestTargets(redemption)) {
-    return undefined;
-  }
-
-  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
-  if (targetIds.size === 0) {
-    return guestNightRates.map((_, index) => index);
-  }
-
-  return guestNightRates
-    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
-    .filter((index) => index >= 0);
-}
-
-function targetBookingGuestIdsForSelectedIndexes(
-  guestNightRates: Array<{ bookingGuestId?: string | null }>,
-  selectedGuestIndexes: number[] | undefined
-) {
-  if (!selectedGuestIndexes) return undefined;
-  return selectedGuestIndexes
-    .map((index) => guestNightRates[index]?.bookingGuestId)
-    .filter((id): id is string => Boolean(id));
-}
 
 type RemovalReviewUpdate = {
   requiresAdminReview: boolean;

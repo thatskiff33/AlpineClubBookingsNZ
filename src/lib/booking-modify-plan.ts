@@ -10,7 +10,6 @@ import {
   type AgeTier,
   type BookingGuest,
   type Prisma,
-  type PromoCode,
   type Role,
 } from "@prisma/client";
 
@@ -78,6 +77,10 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
+import {
+  selectedIndexesForStoredGuestTargets,
+  targetBookingGuestIdsForSelectedIndexes,
+} from "@/lib/promo-stored-guest-targets";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import type { SubscriptionLockoutMode } from "@/lib/membership-lockout-settings";
 import {
@@ -123,7 +126,6 @@ import {
   resolveStayRangesOrApiError,
   type BatchModifyInput,
   type LoadedBookingForModify,
-  type LoadedPromoRedemption,
 } from "@/lib/booking-modify-validation";
 
 type ProposedGuestPricingInput = {
@@ -1735,40 +1737,6 @@ export type PromoChangeResult = {
   // the repriced booking; null means everyone it applies to is covered.
   promoCoverage: PromoCoverageNotice | null;
 };
-
-function promoRequiresStoredGuestTargets(
-  promo: PromoCode & { assignments: Array<{ memberId: string }> }
-) {
-  return promo.assignments.length > 0 && promo.assignedMembersOnlyOwnNights === false;
-}
-
-function selectedIndexesForStoredGuestTargets(
-  redemption: LoadedPromoRedemption,
-  guestNightRates: Array<{ bookingGuestId?: string | null }>
-) {
-  if (!promoRequiresStoredGuestTargets(redemption.promoCode)) {
-    return undefined;
-  }
-
-  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
-  if (targetIds.size === 0) {
-    return guestNightRates.map((_, index) => index);
-  }
-
-  return guestNightRates
-    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
-    .filter((index) => index >= 0);
-}
-
-function targetBookingGuestIdsForSelectedIndexes(
-  guestNightRates: Array<{ bookingGuestId?: string | null }>,
-  selectedGuestIndexes: number[] | undefined
-) {
-  if (!selectedGuestIndexes) return undefined;
-  return selectedGuestIndexes
-    .map((index) => guestNightRates[index]?.bookingGuestId)
-    .filter((id): id is string => Boolean(id));
-}
 
 /**
  * Resolve a request's promo beneficiaries to positional indexes over the

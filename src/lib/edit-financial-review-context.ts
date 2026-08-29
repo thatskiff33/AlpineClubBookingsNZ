@@ -25,7 +25,7 @@ import type { CalendarDate } from "@/lib/club-time";
  * history", not a copy of it — a copy taken at raise time would be stale by the
  * time an admin reads it, and would be a second home for facts the payment
  * tables already own (`INV-SSOT`). What IS captured is only what the edit
- * DESTROYS: the stored sold-price rows for the nights it surrenders are gone the
+ * DESTROYS: the stored night-price rows for the nights it surrenders are gone the
  * moment the edit commits, so if they are not recorded here they cannot be
  * recovered at all.
  */
@@ -41,7 +41,7 @@ import type { CalendarDate } from "@/lib/club-time";
  * "corruption terminology" and blaming the member).
  */
 export const EDIT_FINANCIAL_REVIEW_CAUSES = [
-  /** The guest strand carries no stored per-night sold price at all. */
+  /** The guest strand carries no stored per-night price at all. */
   "NO_STORED_NIGHT_PRICES",
   /** Some of the surrendered nights carry a stored price and some do not. */
   "PARTIAL_STORED_NIGHT_PRICES",
@@ -53,11 +53,27 @@ export type EditFinancialReviewCause =
   (typeof EDIT_FINANCIAL_REVIEW_CAUSES)[number];
 
 /**
- * One stored sold-price row as it existed BEFORE the edit. `priceCents` is null
+ * One stored night-price row as it existed BEFORE the edit. `priceCents` is null
  * where the row existed with no usable price, or where no row existed for that
  * night at all — the distinction an admin needs, and the reason this is
- * `number | null` rather than a number defaulted to zero. Zero is a real sold
- * price (a comped night); null is an absence.
+ * `number | null` rather than a number defaulted to zero. Zero is a real price
+ * (a comped night); null is an absence.
+ *
+ * A NUMBER HERE IS NOT PROOF OF A SOLD PRICE, and the field deliberately says
+ * nothing about where it came from. Two backfill migrations populated
+ * `BookingGuestNight.priceCents` by DIVIDING a stored guest total by the night
+ * count — 20260704150000 (#1098) and 20260810010000, whose own header says it
+ * "deliberately does NOT reprice anything: it reads the stored total and
+ * divides" — and nothing in the schema distinguishes such a derived row from a
+ * genuinely-sold one. So this type records the number that is stored, and claims
+ * only that. No provenance field is added: there is no honest value to put in
+ * one, and this shape is hashed into the occurrence key, so widening it would
+ * re-identify every future occurrence.
+ *
+ * That indistinguishability is not a gap in this feature — it is the CASE FOR
+ * it. A figure whose provenance cannot be established is exactly the figure a
+ * human must confirm rather than the machine compute. Separating derived rows
+ * from sold ones is #3031's.
  */
 export type StoredNightPriceEvidence = {
   date: CalendarDate;
@@ -87,7 +103,11 @@ export type EditFinancialReviewOccurrence = {
    * the identity.
    */
   addedNightDates: readonly CalendarDate[];
-  /** The stored sold-price evidence this edit was judged against. */
+  /**
+   * The stored night-price rows this edit was judged against, as they stood
+   * before it. Evidence of what the database HELD, not proof of what was sold —
+   * see `StoredNightPriceEvidence`.
+   */
   storedEvidence: {
     /** `BookingGuest.priceCents` as stored, or null where absent. */
     guestTotalCents: number | null;
@@ -138,31 +158,43 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
  * Integer cents, non-negative — `INV-MONEY-001`, and the same rule the
  * `ManualRefundTask_amount_nonnegative` CHECK enforces in the database.
  *
- * THE ONE STATEMENT OF THE RULE (`INV-SSOT`). A stored
- * `BookingGuestNight.priceCents` is a bare `Int` with no non-negative
- * constraint, so "is this stored value usable as money at all" is a question
- * several modules ask — the planner that refuses to price from it (#3031), the
- * review-context schema below, and the task writer. They must agree to the
- * value, so the rule is written here once, as a schema, and everything else is
- * derived from it rather than restated beside it.
+ * `INV-SSOT`, and this is the ONE home for it across this feature. #3030 needed
+ * the rule in four places — the raise (`edit-financial-review.ts`), the
+ * completion (`manual-refund-task-resolution.ts`), the stored-evidence parser
+ * below, and the admin route's request body — and there was no existing exported
+ * predicate to route to: the idiom is inline at ten pre-existing sites, none of
+ * them named, and `money-input.ts` is a PARSER for money a person typed, not a
+ * validator for an amount that is already a number. Four callers is the second
+ * clause of the rule ("if two places need it, move it to one module"), so it
+ * lives here — in the client-safe half of the feature, which every one of the
+ * four can import.
+ *
+ * #3031 added a fifth, and it is the one that explains why the rule has to be
+ * shared rather than merely tidy: a stored `BookingGuestNight.priceCents` is a
+ * bare `Int` with NO non-negative constraint, so "is this stored value usable as
+ * money at all" is asked by the planner that refuses to price from it as well as
+ * by the writers above. Those two disagreeing is the difference between refusing
+ * a value and storing it.
+ *
+ * The ten pre-existing inline sites are deliberately NOT refactored onto this;
+ * that is a wider change than this issue, and doing it half-way would leave the
+ * rule looking centralised when it is not.
  */
 export const nonNegativeCentsSchema = z.number().int().nonnegative();
 
 /**
- * The predicate form of {@link nonNegativeCentsSchema}, DERIVED rather than
- * re-implemented: a hand-rolled `typeof === "number" && Number.isInteger(…)`
- * twin is one edit away from disagreeing with the schema that gates the write,
- * and the two disagreeing is the difference between refusing a value and storing
- * it.
+ * The same rule as a predicate, for the server callers that validate a number
+ * they already hold and throw their own domain error. Derived FROM the schema
+ * rather than re-implemented beside it, so there is one definition and not two
+ * that agree today.
  */
 export function isNonNegativeIntegerCents(value: unknown): value is number {
   return nonNegativeCentsSchema.safeParse(value).success;
 }
 
 /**
- * {@link nonNegativeCentsSchema}, with null accepted where the evidence is
- * genuinely absent — which is not the same as zero (see
- * `StoredNightPriceEvidence`).
+ * Null is accepted where the evidence is genuinely absent, which is not the same
+ * as zero (see `StoredNightPriceEvidence`).
  */
 const nonNegativeCentsOrNull = nonNegativeCentsSchema.nullable();
 

@@ -254,7 +254,8 @@ runs the next epic.
   hand-resolved long-lived conflict (#2979's ceiling, and the `CHANGELOG.md`
   churn that #2452 ended).
 
-  `.github/workflows/epic-branch-sync.yml` does this for you at 06:20 UTC daily:
+  `.github/workflows/epic-branch-sync.yml` does this for you every six hours
+  (00:20, 06:20, 12:20 and 18:20 UTC):
   one long-lived `main` → `epic/**` pull request per live integration branch,
   auto-merge armed, so a clean sync needs nobody and a conflicted one waits for a
   human — which is the correct division. **A red sync pull request is the branch
@@ -356,7 +357,7 @@ mismatched pattern is the likeliest mistake and it reports `false`.
 
 **Two consequences of that configuration, both load-bearing.** Required status
 checks gate **pushes**, not only merges, so nothing lands on an integration branch
-without the nine checks — which is why the daily sync opens a pull request from
+without the nine checks — which is why the sync opens a pull request from
 `main` rather than pushing a merge commit it has just created. And
 `required_pull_request_reviews` is deliberately absent (`main` has it with a count
 of `0`, meaning a pull request is required and an approval is not); on an

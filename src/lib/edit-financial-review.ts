@@ -1,16 +1,21 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
 import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
   Prisma,
 } from "@prisma/client";
-import { stableStringify } from "@/lib/stable-json";
-import type {
-  EditFinancialReviewContext,
-  EditFinancialReviewOccurrence,
+import { ApiError } from "@/lib/api-error";
+import logger from "@/lib/logger";
+import { stableDigest } from "@/lib/stable-digest";
+import { canonicalNights } from "@/lib/stable-json";
+import {
+  isNonNegativeIntegerCents,
+  parseEditFinancialReviewContext,
+  type EditFinancialReviewContext,
+  type EditFinancialReviewOccurrence,
 } from "@/lib/edit-financial-review-context";
+import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import type { CalendarDate } from "@/lib/club-time";
 
 /**
@@ -44,13 +49,25 @@ import type { CalendarDate } from "@/lib/club-time";
  * row and each write one, and two operators would then hand back one adjustment
  * twice.
  *
- * It takes the key ITSELF rather than trusting the caller to hold it, and that
- * is safe in both directions. A caller that already holds it (#3032 does) gets a
- * no-op, because a transaction re-acquiring an advisory key it already owns
- * returns immediately. A caller that forgot gets the fence anyway. The
- * `INV-LOCK-002` order - global before per-lodge - is preserved because global
- * is the FIRST tier: re-taking a key already held cannot deadlock, and there is
- * no tier above it to violate.
+ * It takes the key ITSELF rather than trusting the caller to hold it. A caller
+ * that already holds it (#3032 does) gets a no-op, because a transaction
+ * re-acquiring an advisory key it already owns returns immediately.
+ *
+ * THAT IS NOT AN UNCONDITIONAL SAFETY PROPERTY, and the difference matters
+ * enough to be a stated PRECONDITION rather than a reassurance. `INV-LOCK-002`
+ * orders global before per-lodge, so a caller must hold the global key, or no
+ * lock at all, before it calls this. A caller holding ONLY the per-lodge
+ * capacity key deadlocks:
+ *
+ *   Tx A: acquireLodgeCapacityLock(L) -> calls this -> waits for lock(1)
+ *   Tx B: holds lock(1) (booking-cancel.ts, or any of the ~40 global-then-lodge
+ *         writers) -> waits for L
+ *
+ * Postgres detects the cycle and kills one transaction with 40P01. Re-taking the
+ * FIRST tier is only free for a transaction that is already at or above it; it
+ * cannot rescue a caller that took the tiers out of order, and nothing here can.
+ * The three services #3032 will wrap all take global first, so this is a
+ * precondition to keep rather than a live defect.
  *
  * The unique index on `occurrenceKey` therefore stays belt-and-braces rather
  * than being the primary fence, and that split is deliberate. A unique violation
@@ -76,17 +93,6 @@ import type { CalendarDate } from "@/lib/club-time";
 const OCCURRENCE_KEY_NAMESPACE = "edit-financial-review";
 const OCCURRENCE_KEY_VERSION = "v1";
 
-/** `ManualRefundTask.reason` is `VarChar(500)`. */
-const REASON_MAX_LENGTH = 500;
-
-/**
- * Sorted-and-deduplicated dates, so an occurrence key does not depend on the
- * order the planner happened to walk the nights in.
- */
-function canonicalDates(dates: readonly CalendarDate[]): string[] {
-  return [...new Set(dates)].sort();
-}
-
 /**
  * The identity of one unpriceable structural edit, as 64 lowercase hex
  * characters behind a namespaced, versioned prefix.
@@ -99,7 +105,7 @@ function canonicalDates(dates: readonly CalendarDate[]): string[] {
  *  2. why the price could not be proven (the `cause`);
  *  3. the set of night dates surrendered, and the set added - as SETS, so order
  *     and duplicates cannot change the answer; and
- *  4. the stored sold-price evidence the edit was judged against - the guest's
+ *  4. the stored night-price rows the edit was judged against - the guest's
  *     stored total, and every stored night row's date and price, including the
  *     nulls, as it all stood BEFORE the edit.
  *
@@ -130,6 +136,15 @@ function canonicalDates(dates: readonly CalendarDate[]): string[] {
  * necessarily already read (it is what failed to reconcile), and the same data
  * `reviewContext` must capture regardless, because the edit destroys it.
  *
+ * It is IDENTITY MATERIAL, and calling it "sold-price evidence" would overstate
+ * it. A stored `BookingGuestNight.priceCents` may be a derived even split rather
+ * than a price anyone was ever charged - two backfill migrations wrote splits,
+ * and nothing distinguishes their rows from genuinely-sold ones
+ * (`StoredNightPriceEvidence` names them). That does not weaken its use HERE:
+ * the key needs a fingerprint of what the database held at the moment of the
+ * edit, and that is exactly what this is. It is also why the amount goes to a
+ * human instead of being computed.
+ *
  * ## Why a hash rather than a readable composite key
  *
  * The material is unbounded - a stay can be a fortnight, and every night
@@ -137,8 +152,14 @@ function canonicalDates(dates: readonly CalendarDate[]): string[] {
  * A digest is fixed-width. It is not a secret and nothing is hidden by it: the
  * whole input is stored in plain form in `reviewContext` on the same row, so the
  * key can be recomputed and checked. Canonicalisation goes through the shared
- * `stableStringify` (`INV-SSOT`) because `JSON.stringify` is insertion-ordered
- * and a key that shifts with field order is not an identity either.
+ * `stableDigest` (`INV-SSOT`) because `JSON.stringify` is insertion-ordered and
+ * a key that shifts with field order is not an identity either.
+ *
+ * The digest for a fixed occurrence is PINNED in
+ * `src/lib/__tests__/edit-financial-review.test.ts`. That pin is what makes the
+ * "never widen the material without bumping the version" rule above enforceable
+ * rather than merely written down: every other test recomputes the key on both
+ * sides and would pass through exactly the change that loses the money.
  */
 export function editFinancialReviewOccurrenceKey(
   occurrence: EditFinancialReviewOccurrence,
@@ -147,8 +168,8 @@ export function editFinancialReviewOccurrenceKey(
     bookingId: occurrence.bookingId,
     bookingGuestId: occurrence.bookingGuestId,
     cause: occurrence.cause,
-    surrenderedNightDates: canonicalDates(occurrence.surrenderedNightDates),
-    addedNightDates: canonicalDates(occurrence.addedNightDates),
+    surrenderedNightDates: canonicalNights(occurrence.surrenderedNightDates),
+    addedNightDates: canonicalNights(occurrence.addedNightDates),
     storedEvidence: {
       guestTotalCents: occurrence.storedEvidence.guestTotalCents,
       // Sorted by date so the planner's read order cannot change the identity.
@@ -165,10 +186,7 @@ export function editFinancialReviewOccurrenceKey(
         ),
     },
   };
-  const digest = createHash("sha256")
-    .update(stableStringify(material), "utf8")
-    .digest("hex");
-  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${digest}`;
+  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
 }
 
 /**
@@ -185,16 +203,22 @@ export function editFinancialReviewOccurrenceKey(
 export function buildEditFinancialReviewReason(
   occurrence: EditFinancialReviewOccurrence,
 ): string {
-  const nights = canonicalDates(occurrence.surrenderedNightDates);
+  const nights = canonicalNights(occurrence.surrenderedNightDates);
+  // NOT "first to last". A night set need not be contiguous, and "3 nights
+  // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
+  // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
+  // are listed instead, and the list is what gets truncated if the stay is long
+  // enough to overrun the column; `reviewContext` carries the full set either
+  // way, and #3033 renders it.
   const nightsPhrase =
     nights.length === 0
       ? "no nights"
       : nights.length === 1
         ? `the night of ${nights[0]}`
-        : `${nights.length} nights (${nights[0]} to ${nights[nights.length - 1]})`;
+        : `${nights.length} nights: ${nights.join(", ")}`;
   return `Booking edit gave back ${nightsPhrase}. The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.`.slice(
     0,
-    REASON_MAX_LENGTH,
+    MANUAL_REFUND_TASK_REASON_MAX,
   );
 }
 
@@ -216,12 +240,21 @@ export type RaiseEditFinancialReviewResult = {
   status: ManualRefundTaskStatus;
 };
 
-export class EditFinancialReviewError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+/**
+ * `{ message, status }`, which `ApiError` already defines and 57 files already
+ * use - so this SUBCLASSES it rather than being a fifth independent spelling of
+ * the same shape (`INV-SSOT`, #3030).
+ *
+ * A distinct class still earns its place: #3032 composes a structural edit with
+ * this raise and needs to tell "the raise refused" from any other `ApiError`
+ * thrown inside the same transaction, which `instanceof` gives it. What it does
+ * NOT need is a second definition of what an error carrying an HTTP status looks
+ * like, and an `ApiError` handler anywhere up the stack now catches this too
+ * instead of falling through to a 500.
+ */
+export class EditFinancialReviewError extends ApiError {
+  constructor(message: string, status: number) {
+    super(message, status);
     this.name = "EditFinancialReviewError";
   }
 }
@@ -241,9 +274,34 @@ export class EditFinancialReviewError extends Error {
  * OPEN task "as one logical local action". A function that could open its own
  * transaction would let a caller commit the stay change and lose the money
  * question in a separate failed write, which is the first of the two failure
- * modes that issue names. Typing this as `Prisma.TransactionClient` rather than
- * the module-level client makes that mistake a compile error rather than a
- * code-review question.
+ * modes that issue names.
+ *
+ * THE TYPE DOES NOT ENFORCE THIS, and an earlier version of this docblock
+ * claimed it did. `Prisma.TransactionClient` is `PrismaClient` minus a deny
+ * list, and in Prisma 7 that list
+ * (`denylist` in `node_modules/@prisma/client/runtime/client.d.ts`) is
+ * `["$connect","$disconnect","$on","$use","$extends"]`. `$transaction` is NOT in
+ * it - Prisma 7 supports nested transactions - so the full client is
+ * structurally assignable here and passing `prisma` compiles cleanly. Measured
+ * with a compile probe, not assumed. The obvious type-level repair does not work
+ * either: `Prisma.TransactionClient & { $transaction?: never }` collapses to
+ * `never` and rejects BOTH clients, which the same probe showed.
+ *
+ * So the guarantee is enforced at RUNTIME, at the top of the function. The
+ * discriminator is `$connect`, and it has to be: measured against a real
+ * PostgreSQL on Prisma 7.9.1, an interactive transaction client reports
+ * `typeof tx.$transaction === "function"` (nested transactions again) while
+ * `$connect`, `$disconnect` and `$extends` are all `undefined` on it - they are
+ * the deny list, and the deny list is exactly what tells the two apart.
+ *
+ * The failure this prevents is worth the check. Given the full client,
+ * `store.$executeRaw` would run `pg_advisory_xact_lock(1)` in its own implicit
+ * transaction, which COMMITS IMMEDIATELY and releases the lock before
+ * `findUnique` runs - no fence at all. The P2002 argument below inverts as well:
+ * it declines to re-read because a unique violation aborts the surrounding
+ * transaction, but with no surrounding transaction an ordinary concurrent replay
+ * would become a 409 "retry the edit" instead of returning the existing task.
+ * Every unit test would still pass, because they inject a mock `store`.
  *
  * ## What it does not do
  *
@@ -289,13 +347,25 @@ export async function raiseEditFinancialReviewTask({
   raisedAmountCents?: number | null;
   store: Prisma.TransactionClient;
 }): Promise<RaiseEditFinancialReviewResult> {
+  // The runtime half of the `store` contract above, and the whole of the
+  // guarantee - see the docblock for why the TYPE cannot provide it, why
+  // `$connect` rather than `$transaction` is what tells the two clients apart,
+  // and what silently breaks when a caller passes `prisma`.
+  if (typeof (store as { $connect?: unknown }).$connect === "function") {
+    throw new EditFinancialReviewError(
+      "raiseEditFinancialReviewTask must run inside the caller's transaction: pass the transaction client, not the Prisma client.",
+      500,
+    );
+  }
+
   if (
     raisedAmountCents !== null &&
-    (!Number.isInteger(raisedAmountCents) || raisedAmountCents < 0)
+    !isNonNegativeIntegerCents(raisedAmountCents)
   ) {
-    // `INV-MONEY-001`: integer cents, non-negative. The DB
-    // `ManualRefundTask_raised_amount_nonnegative` CHECK enforces the same rule;
-    // this refuses first, with a message that names the caller's bug.
+    // `INV-MONEY-001`: integer cents, non-negative, through the one predicate
+    // (`INV-SSOT`). The DB `ManualRefundTask_raised_amount_nonnegative` CHECK
+    // enforces the same rule; this refuses first, with a message that names the
+    // caller's bug.
     throw new EditFinancialReviewError(
       "A raised financial-review amount must be non-negative integer cents.",
       400,
@@ -330,6 +400,21 @@ export async function raiseEditFinancialReviewTask({
     bookingCheckIn,
     bookingCheckOut,
   };
+  // Parsed through the SAME schema the reader uses, at the WRITE site, because
+  // the reader returns null on failure and does so deliberately (an admin must
+  // still see the task). That is the right read behaviour and the wrong write
+  // behaviour: a caller whose planner type had widened, or that supplied a
+  // non-integer cents value, would store a row whose evidence can never be read
+  // back - and the occurrence key is minted over that same material, so the
+  // identity would be unrecoverable too. Nothing would throw and nothing would
+  // log. TypeScript does not close this: the values arrive from a caller across
+  // a `Json` boundary and `CalendarDate` is a branded string a cast can forge.
+  if (!parseEditFinancialReviewContext(reviewContext)) {
+    throw new EditFinancialReviewError(
+      "This booking edit's review evidence could not be recorded in a readable form.",
+      400,
+    );
+  }
 
   try {
     const created = await store.manualRefundTask.create({
@@ -347,7 +432,7 @@ export async function raiseEditFinancialReviewTask({
         reviewContext: reviewContext as unknown as Prisma.InputJsonValue,
         reason: (reason ?? buildEditFinancialReviewReason(occurrence)).slice(
           0,
-          REASON_MAX_LENGTH,
+          MANUAL_REFUND_TASK_REASON_MAX,
         ),
         status: ManualRefundTaskStatus.OPEN,
       },
@@ -362,7 +447,13 @@ export async function raiseEditFinancialReviewTask({
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
+      error.code === "P2002" &&
+      // Only the occurrence key. Today it is the only unique constraint on this
+      // table other than the cuid primary key, so the check changes nothing -
+      // but a later `@@unique([bookingId, kind])` or similar would otherwise be
+      // reported to the operator as "raised concurrently, retry the edit", and
+      // the retry would loop for ever on a violation retrying cannot fix.
+      occurrenceKeyViolation(error)
     ) {
       // Reported, never swallowed. Reaching here means the find-then-create
       // above raced despite the advisory lock, so the lock was not actually
@@ -378,6 +469,24 @@ export async function raiseEditFinancialReviewTask({
     }
     throw error;
   }
+}
+
+/**
+ * Was this unique violation the occurrence-key index, rather than some other
+ * unique constraint added later?
+ *
+ * `meta.target` is `string[]` on PostgreSQL, and Prisma has spelled it more than
+ * one way across versions, so an unrecognised shape is treated as "not the
+ * occurrence key" - the safe direction, because it sends the caller a genuine
+ * error rather than an invitation to retry for ever.
+ */
+function occurrenceKeyViolation(
+  error: Prisma.PrismaClientKnownRequestError,
+): boolean {
+  const target = error.meta?.target;
+  if (Array.isArray(target)) return target.includes("occurrenceKey");
+  if (typeof target === "string") return target.includes("occurrenceKey");
+  return false;
 }
 
 /**
@@ -403,9 +512,14 @@ export async function findOpenEditFinancialReviewTask(
   occurrenceKey: string | null;
   amountCents: number | null;
   raisedAmountCents: number | null;
-  reviewContext: Prisma.JsonValue | null;
+  /**
+   * PARSED, not raw. An unreadable blob is unusable to every caller anyway, and
+   * handing back a `JsonValue` invites exactly the field-by-field indexing into
+   * an `any` that `edit-financial-review-context.ts` exists to prevent.
+   */
+  reviewContext: EditFinancialReviewContext | null;
 } | null> {
-  return store.manualRefundTask.findFirst({
+  const task = await store.manualRefundTask.findFirst({
     where: {
       bookingId,
       kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
@@ -420,4 +534,22 @@ export async function findOpenEditFinancialReviewTask(
     },
     orderBy: { createdAt: "asc" },
   });
+  if (!task) return null;
+
+  const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
+  if (!reviewContext && task.reviewContext !== null) {
+    // The parser returns null rather than throwing ON PURPOSE - an admin must
+    // still be able to see the task, its amount and the booking's live payment
+    // history when one JSON blob is unreadable. But silence is the wrong half of
+    // that bargain: the row's captured evidence is money evidence the edit
+    // DESTROYED, so a row that cannot be read back has lost something nothing
+    // else holds. Losing it quietly is how nobody finds out until an admin is
+    // staring at an empty screen. The write site refuses to create such a row at
+    // all; this covers a row written by an older or newer shape.
+    logger.warn(
+      { taskId: task.id, bookingId },
+      "EDIT_FINANCIAL_REVIEW task has a reviewContext this release cannot read",
+    );
+  }
+  return { ...task, reviewContext };
 }

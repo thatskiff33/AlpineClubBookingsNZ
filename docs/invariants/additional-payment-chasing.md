@@ -956,8 +956,9 @@ orderings must not pay the member twice:
 - **Confirm endpoint first** — it records and raises the task; the webhook's
   refund then answers that task's whole question, so the webhook **closes** it
   as `DISMISSED` with a note. `DISMISSED`, never `COMPLETED`: in
-  `manual-booking-payment.ts` COMPLETED means an operator handed the money back
-  by hand and is what writes the local refund allocation, so COMPLETED here
+  `manual-refund-task-resolution.ts` COMPLETED means an operator handed the
+  money back by hand and is what writes the local refund allocation, so
+  COMPLETED here
   would be untrue AND would write a second allocation for one refund.
   `completedByMemberId` stays null because no member did it.
 - **Interleaved** — the webhook completes entirely inside the confirm route's

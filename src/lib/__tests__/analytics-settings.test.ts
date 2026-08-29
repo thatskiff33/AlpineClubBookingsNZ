@@ -2,6 +2,12 @@ import { readFileSync } from "fs";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The source-scanning assertions below strip comments first: several of the
+// files they read legitimately EXPLAIN the removal being asserted. This file
+// used to use a two-regex strip that dropped newlines and mishandled a `//`
+// inside a string literal; it shares the one scanner now (#3132).
+import { stripComments } from "./support/strip-comments";
+
 const mocks = vi.hoisted(() => ({
   findUnique: vi.fn(),
   pageFindUnique: vi.fn(),
@@ -588,11 +594,6 @@ describe("isAnalyticsIntegrationConfigured", () => {
  * to the database configuration, and no behavioural test that stubs the variable
  * empty would notice.
  */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1");
-}
 
 describe("hard cutover: no runtime read of the environment variable", () => {
   const RUNTIME_FILES = [

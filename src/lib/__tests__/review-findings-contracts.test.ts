@@ -10,6 +10,17 @@ import { tmpdir } from "os";
 import path from "path";
 import { execFile, spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
+import { jobBlock, stepBlock } from "./helpers/ci-workflow";
+
+// #1881 — the lock/key assertions below scan source with indexOf/toContain. The
+// literal `pg_advisory_xact_lock(1)` also appears in CODE COMMENTS (e.g.
+// booking-cancel.ts, cron-quote-expiry-reminders.ts), so a regression that
+// deleted the executable `$executeRaw...pg_advisory_xact_lock(1)` line but left a
+// comment mentioning it would still pass — the exact laxity class that let the
+// original lock-drift regression through. The shared stripper keeps string and
+// template literals verbatim, which is load-bearing here: the executable lock
+// lives inside one (`$executeRaw`SELECT pg_advisory_xact_lock(1)``).
+import { stripComments } from "./support/strip-comments";
 
 // #2806 — the shell-out budgets for this file, and the measurements behind the
 // numbers, live in one place next door.
@@ -31,81 +42,6 @@ function readRepoFile(relativePath: string) {
   // Test helper: reads a fixed repo file under process.cwd(); relativePath is test-controlled, not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
-}
-
-// #1881 — the lock/key assertions below scan raw source with indexOf/toContain.
-// The literal `pg_advisory_xact_lock(1)` also appears in CODE COMMENTS (e.g.
-// booking-cancel.ts, cron-quote-expiry-reminders.ts), so a regression that
-// deleted the executable `$executeRaw...pg_advisory_xact_lock(1)` line but left
-// a comment mentioning it would still pass — the exact laxity class that let the
-// original lock-drift regression through. Strip line + block comments (outside
-// string/template literals) BEFORE those assertions so only EXECUTABLE lock text
-// counts. The executable lock lives inside a template literal
-// (`$executeRaw\`SELECT pg_advisory_xact_lock(1)\``), so string literals are
-// preserved verbatim — only comments are removed.
-function stripComments(source: string): string {
-  let out = "";
-  let state:
-    | "code"
-    | "line"
-    | "block"
-    | "single"
-    | "double"
-    | "template" = "code";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    switch (state) {
-      case "code":
-        if (c === "/" && next === "/") {
-          state = "line";
-          i++;
-        } else if (c === "/" && next === "*") {
-          state = "block";
-          i++;
-        } else if (c === "'") {
-          state = "single";
-          out += c;
-        } else if (c === '"') {
-          state = "double";
-          out += c;
-        } else if (c === "`") {
-          state = "template";
-          out += c;
-        } else {
-          out += c;
-        }
-        break;
-      case "line":
-        // Keep the newline so line numbers / ordering are unperturbed.
-        if (c === "\n") {
-          state = "code";
-          out += c;
-        }
-        break;
-      case "block":
-        if (c === "*" && next === "/") {
-          state = "code";
-          i++;
-        }
-        break;
-      case "single":
-      case "double":
-      case "template": {
-        out += c;
-        const quote = state === "single" ? "'" : state === "double" ? '"' : "`";
-        if (c === "\\") {
-          // Preserve the escaped char verbatim.
-          out += source[i + 1] ?? "";
-          i++;
-        } else if (c === quote) {
-          state = "code";
-        }
-        break;
-      }
-    }
-  }
-  return out;
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker?: string) {
@@ -1271,32 +1207,83 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("executes the ManualRefundTask money constraints against a real PostgreSQL in CI (#3030)", () => {
-    // These are CHECK constraints and a unique index, so a mocked Prisma client
-    // can say nothing about them: the mock accepts every row it is handed. The
-    // suite offers the bad rows to a real Postgres and reads back the SQLSTATE
-    // and the constraint name - and it describe.skip's itself without the env
-    // var, so the step going missing would silently un-test the constraint that
-    // stops one booking edit raising two financial-review tasks.
+    // These are CHECK constraints, a unique index and an advisory lock, so a
+    // mocked Prisma client can say nothing about them: the mock accepts every row
+    // it is handed and blocks nobody. The suite offers the bad rows to a real
+    // Postgres and reads back the SQLSTATE and the constraint name - and it
+    // describe.skip's itself without the env var, so an unwired step would
+    // silently un-test the constraint that stops one booking edit raising two
+    // financial-review tasks.
+    //
+    // SCOPED TO THE JOB AND THE STEP, not matched against the whole file, which
+    // is the weakest of the three patterns this repository already has. A
+    // file-wide `toContain` stays green while the `env:` line is COMMENTED OUT
+    // (`# MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:` still contains it),
+    // while the `run:` has moved to a job with no PostgreSQL service, and while
+    // the two matches have drifted onto different steps entirely.
     const workflow = readRepoFile(".github/workflows/ci.yml");
-    expect(workflow).toContain(
-      "MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:"
+    const job = jobBlock(workflow, "migration-drift");
+    expect(job, "ci.yml has no migration-drift job").not.toBe("");
+    const step = stepBlock(
+      job,
+      "Test ManualRefundTask money constraints against PostgreSQL"
     );
-    expect(workflow).toContain(
+    expect(
+      step,
+      "the ManualRefundTask constraints step is no longer in the migration-drift job. " +
+        "That suite self-skips without MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL, " +
+        "so removing or moving the step silently un-tests every #3030 money constraint."
+    ).not.toBe("");
+    // Both on the SAME step: the env var it needs, and the command that runs it.
+    expect(step).toContain("MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL:");
+    expect(step).toContain(
       "npx vitest run src/lib/__tests__/manual-refund-task-constraints.test.ts"
     );
+    // A commented-out env line satisfies `toContain` on the raw text.
+    expect(
+      step,
+      "the database URL must be a live mapping, not a commented-out line"
+    ).toMatch(/\n {10}MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL: /);
+    // AGENTS.md: GitHub counts a SKIPPED required check as SATISFYING branch
+    // protection, so a job-level `if:` would make this vacuously green - and
+    // `continue-on-error: true` (the house idiom on the advisory trivy step)
+    // would make the whole job advisory.
+    expect(job, "the executing job must not be continue-on-error").not.toContain(
+      "continue-on-error"
+    );
+    expect(job, "the executing job must not carry a job-level if:").not.toMatch(
+      /\n {4}if:/
+    );
+
     const suite = readRepoFile(
       "src/lib/__tests__/manual-refund-task-constraints.test.ts"
     );
     expect(suite).toContain(
-      "process.env.MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL"
+      'const DATABASE_URL_ENV = "MANUAL_REFUND_TASK_CONSTRAINT_TEST_DATABASE_URL"'
     );
+    // The suite's own self-guard, which is what makes an unwired step
+    // UNREPRESENTABLE as green rather than merely policed from out here: inside
+    // the migration-drift job it FAILS when the URL is unset instead of skipping.
+    expect(
+      suite,
+      "the suite must fail rather than skip inside its own CI job"
+    ).toContain('process.env.GITHUB_JOB !== CI_JOB_ID');
     // It must apply the SHIPPED migration files rather than a hand-copied CREATE.
     expect(suite).toContain(
       "20260903010000_manual_refund_task_edit_review_occurrence_key_required/migration.sql"
     );
-    expect(suite).toContain(
-      "ManualRefundTask_edit_review_occurrence_key_present"
-    );
+    for (const constraint of [
+      "ManualRefundTask_edit_review_occurrence_key_present",
+      "ManualRefundTask_non_edit_review_amount_present",
+      "ManualRefundTask_raised_amount_requires_amount",
+    ]) {
+      expect(suite, `#3030 constraint unproved: ${constraint}`).toContain(
+        constraint
+      );
+    }
+    // And the advisory lock, which is the module's PRIMARY fence and the half a
+    // mocked $executeRaw can say nothing about.
+    expect(suite).toContain("SELECT pg_advisory_xact_lock(1)");
   });
 
   it("wraps age-up membership upgrades and token issuance in a transaction", () => {

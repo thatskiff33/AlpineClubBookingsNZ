@@ -41,8 +41,27 @@ name: Epic branch sync
 
 on:
   schedule:
-    # 06:20 UTC daily — after the nightly jobs, before the working day in NZ.
-    - cron: "20 6 * * *"
+    # Every six hours at :20 past — 00:20, 06:20, 12:20 and 18:20 UTC. FOUR
+    # ATTEMPTS A DAY RATHER THAN ONE, and the reason is that a sync pull request
+    # only lands during a QUIET WINDOW on `main` (#3150).
+    #
+    # Its head is `main` itself, so every merge into `main` fires `synchronize`
+    # on every open sync pull request and starts its checks again — and `ci.yml`
+    # sets `cancel-in-progress: true`, so the run already in flight is thrown
+    # away rather than finishing. Measured over the fourteen days to 28 August
+    # 2026: the median merge-to-merge gap on `main` is 13.5 minutes and 184 of
+    # 268 gaps are under 40 minutes, while the `CI` workflow alone takes 33-37.
+    # So roughly seven times in ten the next merge arrives before the checks
+    # could possibly have finished. Observed on 27 August: seven restart waves
+    # between 11:17 and 12:22 UTC, four of them inside eighty seconds, and pull
+    # requests #3138 and #3141 each took 3h20m to land a sync that contained no
+    # conflicts at all.
+    #
+    # This schedule does not fix that mechanism — it gives the job four chances
+    # to catch a quiet window instead of one, which is what actually decides
+    # whether a sync lands. A three-hour-late sync is not a failure; a branch
+    # ninety-three commits behind is the drift this workflow exists to prevent.
+    - cron: "20 */6 * * *"
   workflow_dispatch:
     inputs:
       branch:
@@ -132,8 +151,8 @@ jobs:
               # exact opposite of why it opens a pull request at all.
               #
               # The gate matches its five field labels EXACTLY, so the failure
-              # mode of a typo is a red pull request opened by a 06:20 UTC
-              # scheduled job that nobody is awake to read. Keeping the text in a
+              # mode of a typo is a red pull request opened by a scheduled job
+              # that may well run with nobody awake to read it. Keeping the text in a
               # file that `scripts/ci/render-epic-sync-pr-body.test.mjs` runs
               # through the real gate is what moves that failure into `npm test`.
               if ! body="$(BRANCH="${branch}" RUN_URL="${RUN_URL}" \

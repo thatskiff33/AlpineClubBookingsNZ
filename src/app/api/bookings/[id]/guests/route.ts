@@ -40,6 +40,10 @@ import {
   describePromoCapCoverage,
   type PromoCoverageNotice,
 } from "@/lib/promo-cap-coverage";
+import {
+  selectedIndexesForStoredGuestTargets,
+  targetBookingGuestIdsForSelectedIndexes,
+} from "@/lib/promo-stored-guest-targets";
 import { ApiError as SharedApiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
@@ -139,50 +143,6 @@ const addGuestsSchema = z.object({
   // would actually strand another booking on the account.
   hostingCoverageOverride: hostingCoverageOverrideSchema.optional(),
 });
-
-type PromoRedemptionWithTargets = {
-  promoCode: {
-    assignedMembersOnlyOwnNights?: boolean | null;
-    assignments: Array<{ memberId: string }>;
-    lodges?: Array<{ lodgeId: string }>;
-  };
-  guestTargets?: Array<{ bookingGuestId: string }>;
-};
-
-function promoRequiresStoredGuestTargets(redemption: PromoRedemptionWithTargets) {
-  return (
-    redemption.promoCode.assignments.length > 0 &&
-    redemption.promoCode.assignedMembersOnlyOwnNights === false
-  );
-}
-
-function selectedIndexesForStoredGuestTargets(
-  redemption: PromoRedemptionWithTargets,
-  guestNightRates: Array<{ bookingGuestId?: string | null }>
-) {
-  if (!promoRequiresStoredGuestTargets(redemption)) {
-    return undefined;
-  }
-
-  const targetIds = new Set((redemption.guestTargets ?? []).map((target) => target.bookingGuestId));
-  if (targetIds.size === 0) {
-    return guestNightRates.map((_, index) => index);
-  }
-
-  return guestNightRates
-    .map((guest, index) => (guest.bookingGuestId && targetIds.has(guest.bookingGuestId) ? index : -1))
-    .filter((index) => index >= 0);
-}
-
-function targetBookingGuestIdsForSelectedIndexes(
-  guestNightRates: Array<{ bookingGuestId?: string | null }>,
-  selectedGuestIndexes: number[] | undefined
-) {
-  if (!selectedGuestIndexes) return undefined;
-  return selectedGuestIndexes
-    .map((index) => guestNightRates[index]?.bookingGuestId)
-    .filter((id): id is string => Boolean(id));
-}
 
 export async function POST(
   request: NextRequest,

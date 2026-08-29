@@ -1149,12 +1149,60 @@ one, check the other.
   (`src/lib/edit-financial-review.ts`), never a `reason` sentence — so a replay
   raises one task across OPEN, COMPLETED and DISMISSED, and both terminal states
   are terminal for the OCCURRENCE. Completion carries the admin's confirmed
-  non-negative integer cents plus a note, written inside the same status-guarded
+  POSITIVE integer cents plus a note, written inside the same status-guarded
   claim as the status so it cannot apply twice; a figure differing from one the
   task already held is the audited amendment D2 permits on this kind alone, with
   `raisedAmountCents` preserving what it was raised with. DISMISSED means reviewed
   and nothing is due, and writes no amount. Nothing moves at Stripe, in the
   ledger, in Xero or as account credit until an admin confirms.
+  - **A stored night price is not proof of a sold price, which is why a human
+    prices this.** Two backfill migrations populated
+    `BookingGuestNight.priceCents` by dividing a stored guest total by the night
+    count (`20260704150000`, #1098; and `20260810010000`, whose header says it
+    "deliberately does NOT reprice anything: it reads the stored total and
+    divides"), and nothing in the schema tells such a row apart from a
+    genuinely-sold one. The evidence captured in `reviewContext` therefore
+    records what the database HELD, and claims no more than that. Separating
+    derived rows from sold ones is #3031's; for this invariant it is the
+    argument, not an exception — a figure whose provenance cannot be established
+    is precisely the figure the club must confirm rather than the system
+    reconstruct.
+  - **An OPEN task may carry an amount, and that state is defined.** The raise
+    accepts a figure and writes it to both `amountCents` and `raisedAmountCents`,
+    so `priced-but-still-OPEN` is legal and means *the edit could prove a figure
+    and a human has not yet confirmed it*. It decides nothing and moves nothing:
+    money moves only on a COMPLETED transition, whatever the row already holds.
+    The ordinary case is still `amountCents` NULL. (`raisedAmountCents` has no
+    caller passing it on `main`; #3031 is the child that will prove figures.)
+  - **A completion at zero is refused, at the route and in the library.** `0`
+    means the club handed nothing back, so COMPLETED at `0` writes a row and a
+    `REFUNDED` booking event asserting a refund that did not happen - and
+    `booking-narrative.ts` selects a cancelled booking's settlement event by TYPE
+    without filtering on amount, so that event is chosen and shadows any genuine
+    later one. "Reviewed, nothing is due" is DISMISSED. This is the same magic
+    zero the epic exists to remove, arriving through the completion door.
+  - **A credit-only completion records no refund.** With `paymentId` NULL nothing
+    writes account credit, nothing moves in the ledger and
+    `Payment.refundedAmountCents` is untouched, so no `REFUNDED` booking event is
+    written either - that log is member-facing and must not claim money the
+    system did not return. The admin's action is recorded in the AUDIT log. When
+    the path that ISSUES the credit is wired (#3032/#3033), the booking event
+    belongs there, written where the money moves.
+  - **Three database constraints, because prose is not enforcement** (migration
+    `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
+    `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) -
+    PostgreSQL exempts NULL from a unique index, so a row without one would
+    silently opt out of the duplicate fence. Every OTHER kind must carry an
+    amount (`ManualRefundTask_non_edit_review_amount_present`) - those amounts
+    came from cancellation or capture policy and an operator does not get to
+    reprice them, which the stale-screen guard can only enforce on a row that has
+    an amount to compare against. And a non-null `raisedAmountCents` requires a
+    non-null `amountCents` (`ManualRefundTask_raised_amount_requires_amount`) -
+    "raised with a figure that has since become unknown" is not a state. The
+    schema's other claim about that column, that it is never amended, is a
+    property of an UPDATE rather than of a row and is NOT enforced by the
+    database; it holds because the column has one writer and every completion
+    audits the previous and raised figures.
   - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
     single occurrence-key mint, the raise, the DB constraints and the audited
     completion. It ships NO caller: the booking-edit path that decides an edit is

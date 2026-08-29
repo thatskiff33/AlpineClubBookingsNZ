@@ -3,11 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+// `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
+// inline `.number().int().nonnegative()`.
+import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import {
   ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
-} from "@/lib/manual-booking-payment";
+} from "@/lib/manual-refund-task-resolution";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
@@ -25,6 +28,13 @@ const confirmedField = z.literal(true);
  * the task already carries" — and it is exactly what the current queue screen
  * means when it posts no amount. The pricing input that will send a real figure
  * is #3033's.
+ *
+ * ZERO IS REFUSED (`INV-PAY-051`). "Reviewed, nothing is due" is DISMISSED, not a
+ * completion at $0.00 — a $0 completion records a refund the club did not make.
+ * The rule is enforced in `resolveManualRefundTask` too, which is the real
+ * boundary; this refuses it a step earlier so the operator gets a validation
+ * message rather than a thrown one, and so the two layers cannot drift into
+ * disagreeing about what an amount may be.
  */
 const bodySchema = z.discriminatedUnion("resolution", [
   z
@@ -32,10 +42,8 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("completed"),
       note: noteField,
       confirmed: confirmedField,
-      confirmedAmountCents: z
-        .number()
-        .int()
-        .nonnegative()
+      confirmedAmountCents: nonNegativeCentsSchema
+        .positive()
         .optional()
         .nullable(),
     })
@@ -54,8 +62,9 @@ const bodySchema = z.discriminatedUnion("resolution", [
  *
  * B5 (#2262). Close a hand-back task raised when a cash-settled booking was
  * cancelled: "completed" means the money genuinely went back to the member (so
- * the local refund allocation and a REFUNDED booking event are written),
- * "dismissed" means it was declined or settled another way and requires a note.
+ * the local refund allocation and a REFUNDED booking event are written, where
+ * there is a captured payment behind the task), "dismissed" means it was
+ * declined or settled another way and requires a note.
  * Gated finance:edit; audited either way; never calls Stripe or Xero.
  *
  * #3030 (epic #2797, owner decision D2): a completion may also carry

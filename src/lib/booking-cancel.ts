@@ -61,6 +61,9 @@ import {
 import { settleHostingCoverageAfterCommit } from "@/lib/adult-member-hosting-coverage-drain";
 import type { HostingCoverageOverrideInput } from "@/lib/adult-member-hosting-same-owner";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
+// `INV-SSOT` (#3030): the one home for `ManualRefundTask.reason`'s column width,
+// beside the same table's `note` width, which this repository already keeps there.
+import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
 import { bookingStayHasStarted } from "@/lib/booking-edit-policy";
 import { clubToday, dateOnlyInstantOf } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
@@ -1550,7 +1553,7 @@ async function performBookingCancellation(
           raisedAmountCents: refundAmountCents,
           reason: `Booking ${bookingId} cancelled — cash/manual settlement, refund by hand (${refundPercentage}% under the policy in effect at the time).`.slice(
             0,
-            500
+            MANUAL_REFUND_TASK_REASON_MAX
           ),
         },
         select: { id: true },
