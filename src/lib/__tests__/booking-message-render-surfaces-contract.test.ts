@@ -19,6 +19,9 @@
 import { readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+
+// Comments are stripped so only EXECUTABLE text is matched.
+import { stripComments } from "./support/strip-comments";
 import {
   BOOKING_MESSAGE_DEFINITIONS,
   renderClientBookingMessage,
@@ -161,36 +164,6 @@ function read(file: string): string {
   // Test helper: a fixed repository path under process.cwd().
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), file), "utf8");
-}
-
-/** Strip `//` and block comments so only EXECUTABLE text is matched. */
-function stripComments(source: string): string {
-  let out = "";
-  let state: "code" | "line" | "block" = "code";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    if (state === "code") {
-      if (c === "/" && next === "/") {
-        state = "line";
-        i++;
-      } else if (c === "/" && next === "*") {
-        state = "block";
-        i++;
-      } else {
-        out += c;
-      }
-    } else if (state === "line") {
-      if (c === "\n") {
-        state = "code";
-        out += c;
-      }
-    } else if (c === "*" && next === "/") {
-      state = "code";
-      i++;
-    }
-  }
-  return out;
 }
 
 const ALL_SOURCE_FILES = listSourceFiles("src");

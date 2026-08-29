@@ -20,7 +20,29 @@ export function hasAssignedMembers(assignedMemberIds: string[] | null | undefine
   return Boolean(assignedMemberIds && assignedMemberIds.length > 0);
 }
 
-function assignedMembersOnlyOwnNights(
+/**
+ * Whether an assigned code is scoped to the assigned members' own linked guest
+ * nights. The one definition of what that column means **for every server-side
+ * promotion-scope decision**: it is `Boolean @default(true)` in
+ * `schema.prisma`, so an absent or `null` value reads as ON — own-night scoping
+ * is the default and must never be inferred as off from a missing value.
+ *
+ * Exported for `promo-stored-guest-targets.ts` (#3131), which asks a different
+ * question of the same field on an existing booking's stored redemption. Until
+ * then five copies of that module's predicate each spelled this read as
+ * `assignedMembersOnlyOwnNights === false` — equivalent over all four values,
+ * but a second definition of one fact, which is what `INV-SSOT-001` forbids.
+ *
+ * **The admin promo-codes client still spells the same default inline**, at
+ * `promo-codes-page-client.tsx` lines 522 and 770 — one seeding a form control,
+ * one choosing a display label. Both agree with this function and neither makes
+ * a pricing decision, so the scope of the claim above is deliberate rather than
+ * an oversight. They are not converged here because that file is `"use client"`
+ * and this module imports `@/lib/pricing`, which makes it a server/client
+ * boundary question that #2850 and #2851 own; widening #3131 into it would cost
+ * more than the duplication does. Converge them when that boundary work lands.
+ */
+export function assignedMembersOnlyOwnNights(
   promoCode: { assignedMembersOnlyOwnNights?: boolean | null }
 ) {
   return promoCode.assignedMembersOnlyOwnNights ?? true;

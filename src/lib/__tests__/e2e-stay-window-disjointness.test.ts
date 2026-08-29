@@ -25,6 +25,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+// Comments are stripped before the census below. Load-bearing here, not
+// tidiness: several specs discuss window indexes in prose ("indexes 0–4 are
+// taken by other specs"), and a census that counted those would claim occupancy
+// that does not exist — and would have "passed" this file's own motivating bug
+// for the wrong reason.
+import { stripComments } from "./support/strip-comments";
+
 const SPEC_UNDER_CONTRACT = "e2e/locked-out-pickup-and-pay.spec.ts";
 const STAY_DATES_HELPER = "e2e/helpers/stay-dates.ts";
 const MAX_PLAYWRIGHT_RETRY = 2;
@@ -57,49 +64,6 @@ function specFiles(): string[] {
   };
   walk(root);
   return found.sort();
-}
-
-/**
- * Strip `//` and block comments.
- *
- * Load-bearing here, not tidiness: several specs discuss window indexes in
- * prose ("indexes 0–4 are taken by other specs"), and a census that counted
- * those would claim occupancy that does not exist — and would have "passed"
- * this file's own motivating bug for the wrong reason.
- */
-function stripComments(source: string): string {
-  let out = "";
-  let state: "code" | "line" | "block" = "code";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    if (state === "code") {
-      if (c === "/" && next === "/") {
-        state = "line";
-        i++;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        state = "block";
-        i++;
-        continue;
-      }
-      out += c;
-      continue;
-    }
-    if (state === "line") {
-      if (c === "\n") {
-        state = "code";
-        out += c;
-      }
-      continue;
-    }
-    if (c === "*" && next === "/") {
-      state = "code";
-      i++;
-    }
-  }
-  return out;
 }
 
 /** The first argument of the call whose `(` sits at `openParen`. */

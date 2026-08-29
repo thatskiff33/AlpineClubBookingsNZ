@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ESLint } from "eslint";
+import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { stripComments } from "./support/strip-comments";
 
 import {
+  AMBIENT_AUTHORITY_RESOLVERS,
   MANDATORY_SRC_RESTRICTIONS,
   SRC_RESTRICTION_EXEMPTIONS,
   SSOT_GUARD_ARMS,
@@ -97,6 +99,27 @@ import {
  * this file rather than written down as figures here, for the same
  * numbers-drift reason as above. A raw-text census would have reported this
  * issue's success as its failure, which is what #3123 measured four times over.
+ *
+ * ## The arm has a SECOND half since #3133, and it brings a third instrument
+ *
+ * `INV-SSOT-003`'s first sentence bans a default resolving "a global,
+ * environment or configuration authority", and everything above mechanises the
+ * ENVIRONMENT word. The rest of it is a default that calls a resolver answering
+ * from AMBIENT PROCESS-GLOBAL STATE — a module-level cache with a synchronous
+ * accessor and a shipped fallback — which is the same defect written through a
+ * function name. `eslint.config.mjs` carries the criterion, the named list, and
+ * why a named list rather than a pattern; the short version is that a
+ * TypeScript-AST census of every default in the tree finds twenty non-test
+ * defaults whose value contains a call and only four of them are the defect.
+ *
+ * ITS SECOND INSTRUMENT PARSES RATHER THAN GREPS, and the reason is measured:
+ * `emailPalette()` is called in a BODY in more than a dozen email templates,
+ * every one correct, so an `=`-anchored scanner reports a dozen false positives.
+ * Both instruments for that half are therefore parsers, which is the stronger
+ * reading of `INV-SSOT-004` — a comment is not a node, so neither can misfire on
+ * this repository's postmortems at all. The census also resolves the alias hop
+ * the arm has no symbol table for, which is what earns it its place rather than
+ * making it a rubber stamp.
  */
 
 const ROOT = path.resolve(__dirname, "../../..");
@@ -172,20 +195,39 @@ describe("the arm is mandatory everywhere, and nothing lifts it", () => {
     // Vacuity guard. An empty family would make every assertion below trivially
     // true, which is the failure mode a guard suite is most likely to have.
     //
-    // A FLOOR, NOT A COUNT, and deliberately so: the arm is built as four PAIRS
-    // — a field anchor and a descendant form per shape — so the honest floor is
-    // four times two. It was nine while the arm enumerated wrapper node types,
-    // and enumeration is what six spellings walked past; replacing two
-    // wrapper-specific selectors with one general descendant form made the
+    // A FLOOR, NOT A COUNT, and deliberately so: the arm is built as PAIRS — a
+    // field anchor and a descendant form per shape — so the honest floor is
+    // twice the number of shapes. It was nine while the arm enumerated wrapper
+    // node types, and enumeration is what six spellings walked past; replacing
+    // two wrapper-specific selectors with one general descendant form made the
     // family SMALLER and strictly stronger, which is why an array length is the
     // wrong thing to assert here. The spellings suite below is what actually
     // holds the coverage, because it measures outcomes rather than length.
+    //
+    // SEVEN PAIRS SINCE #3133: four for the environment authorities, and three
+    // for a default that CALLS one of the named ambient-state resolvers —
+    // identifier callee, member callee, computed member callee.
     expect(
       SSOT_GUARD_ARMS.authorityDefault.length,
-      "The INV-SSOT-003 arm family has fallen below its four self/descendant " +
+      "The INV-SSOT-003 arm family has fallen below its seven self/descendant " +
         "pairs, so some shape has lost one of its two forms and is now closed " +
         "only when it is written bare.",
-    ).toBeGreaterThanOrEqual(8);
+    ).toBeGreaterThanOrEqual(14);
+  });
+
+  it("bans at least one ambient-state resolver, so the #3133 half is not vacuous", () => {
+    // The #3133 arm is built from a NAMED list rather than a pattern, so an
+    // empty list would leave six selectors that can never match while every
+    // structural assertion above still passed. The pending list is not a
+    // substitute: a pending name is one the arm deliberately does not fire on.
+    expect(
+      AMBIENT_AUTHORITY_RESOLVERS.banned.length,
+      "The ambient-state resolver list is empty, so the three selector pairs " +
+        "#3133 added match nothing and the arm's second half is decoration. " +
+        "Every name on it had a live default population of zero when it was " +
+        "added, so nothing forced a removal — check a merge did not eat the " +
+        "list, which is the failure #2684/#2685 paid for.",
+    ).toBeGreaterThan(0);
   });
 
   it("keeps every arm inside the mandatory restriction set", () => {
@@ -410,6 +452,69 @@ describe("every spelling of the defect is closed", () => {
       "NEXT_PUBLIC_TZ behind a non-null assertion",
       "export function f(tz: string = process.env.NEXT_PUBLIC_TZ!) {\n  return tz;\n}",
     ],
+    // ------------------------------------------------------------------
+    // THE AMBIENT-STATE RESOLVER HALF (#3133). Same defect, written through
+    // a function name: a synchronous accessor over a module-level cache with
+    // a shipped fallback, so a runtime that seeded nothing gets the product
+    // default and cannot tell. `readEnvironmentClubTimeZoneSeed` is the
+    // sharpest of them — it returns `process.env.TZ ?? NEXT_PUBLIC_TZ`, the
+    // very variables the arm above bans, and a name regex cannot see a
+    // function that reads them.
+    // ------------------------------------------------------------------
+    [
+      "a bare call to an ambient-state resolver",
+      'import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        "export function f(tz: string | null = readEnvironmentClubTimeZoneSeed()) {\n  return tz;\n}",
+    ],
+    [
+      "the same call in an options-object property default",
+      'import { emailPalette } from "@/lib/email-theme";\n' +
+        "export function f({ palette = emailPalette() }: { palette?: unknown } = {}) {\n" +
+        "  return palette;\n}",
+    ],
+    [
+      "the same call destructured inside a body",
+      'import { getClubIdentitySync } from "@/lib/club-identity-settings";\n' +
+        "export function f(opts: { club?: unknown }) {\n" +
+        "  const { club = getClubIdentitySync() } = opts;\n  return club;\n}",
+    ],
+    [
+      "the resolver call behind a non-null assertion",
+      'import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        "export function f(tz: string = readEnvironmentClubTimeZoneSeed()!) {\n  return tz;\n}",
+    ],
+    [
+      "the resolver call wrapped in another call",
+      'import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        "export function f(tz: string = String(readEnvironmentClubTimeZoneSeed())) {\n  return tz;\n}",
+    ],
+    [
+      "the resolver call behind a nullish fallback, which is what a non-null return forces",
+      'import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        'export function f(tz: string = readEnvironmentClubTimeZoneSeed() ?? "Pacific/Auckland") {\n' +
+        "  return tz;\n}",
+    ],
+    [
+      "the resolver reached through a namespace import",
+      'import * as env from "@/lib/club-time-zone-env";\n' +
+        "export function f(tz: string | null = env.readEnvironmentClubTimeZoneSeed()) {\n  return tz;\n}",
+    ],
+    [
+      "the resolver reached through a namespace import, computed",
+      'import * as env from "@/lib/club-time-zone-env";\n' +
+        'export function f(tz: string | null = env["readEnvironmentClubTimeZoneSeed"]()) {\n' +
+        "  return tz;\n}",
+    ],
+    [
+      "a THUNK default, which defers the read without stating the fact",
+      'import { getClubIdentitySync } from "@/lib/club-identity-settings";\n' +
+        "export function f(club: () => unknown = () => getClubIdentitySync()) {\n  return club;\n}",
+    ],
+    [
+      "the classifier beside it, which is the same read with a nicer return type",
+      'import { classifyEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        "export function f(seed: unknown = classifyEnvironmentClubTimeZoneSeed()) {\n  return seed;\n}",
+    ],
   ];
 
   it.each(spellings)("reports %s exactly once", async (_label, code) => {
@@ -483,6 +588,62 @@ describe("the stated boundaries hold — each of these must stay clean", () => {
       "an ordinary default that is not an authority at all",
       "export function f(limit = 10) {\n  return limit;\n}",
     ],
+    // ------------------------------------------------------------------
+    // THE #3133 BOUNDARIES. The arm bans a NAMED list rather than a pattern,
+    // and these are the sixteen-out-of-twenty the pattern would have hit.
+    // Measured, not imagined: a TypeScript-AST census of every default in
+    // `src/`, `scripts/` and `prisma/` finds twenty non-test defaults whose
+    // value contains a call, and only four of them are the defect. A guard
+    // wrong sixteen times out of twenty trains its reader to switch it off.
+    // ------------------------------------------------------------------
+    [
+      "Date.now() as a default, which five live call sites write and all are seams",
+      "export function f(now: number = Date.now()) {\n  return now;\n}",
+    ],
+    [
+      "performance.now(), as member-guest-probe-guard.ts writes it",
+      "export function f(now: number = performance.now()) {\n  return now;\n}",
+    ],
+    [
+      "a random value, which has no source to be the wrong one of",
+      'import crypto from "node:crypto";\n' +
+        "export function f(salt: Buffer = crypto.randomBytes(8)) {\n  return salt;\n}",
+    ],
+    [
+      "a Prisma injection seam, as setup-wizard-db.ts writes it twice",
+      "declare function defaultDb(): unknown;\n" +
+        "export function f(db: unknown = defaultDb()) {\n  return db;\n}",
+    ],
+    [
+      "process.cwd() in an operator script, which is where the script was run",
+      "export function f(repoRoot: string = process.cwd()) {\n  return repoRoot;\n}",
+    ],
+    [
+      "a pure factory with no ambient state behind it",
+      "declare function emptyMap(): Map<string, string>;\n" +
+        "export function f(seen: Map<string, string> = emptyMap()) {\n  return seen;\n}",
+    ],
+    [
+      "an AWAITED read of the club's own persisted answer, which is the remedy not the defect",
+      'import { clubTimeZone } from "@/lib/club-time/server";\n' +
+        "export async function f(tz: string = await clubTimeZone()) {\n  return tz;\n}",
+    ],
+    [
+      "the club's year-end resolved from stored state, which is what #3136 wrote at four money sites",
+      'import { refreshFinancialYearConfig } from "@/lib/financial-year-server";\n' +
+        "export async function f(month: number = await refreshFinancialYearConfig()) {\n" +
+        "  return month;\n}",
+    ],
+    [
+      "a PENDING resolver name, which the arm deliberately does not fire on yet",
+      // This is the assertion that makes the pending list honest rather than a
+      // comment. It must stay clean while `getFinancialYearEndMonth` is pending
+      // and must START reporting the moment that name is promoted — at which
+      // point THIS ROW is what has to move to the spellings suite above, and
+      // the census below is what will have told you to.
+      'import { getFinancialYearEndMonth } from "@/lib/financial-year";\n' +
+        "export function f(month: number = getFinancialYearEndMonth()) {\n  return month;\n}",
+    ],
   ];
 
   it.each(boundaries)("does not report %s", async (label, code) => {
@@ -497,6 +658,29 @@ describe("the stated boundaries hold — each of these must stay clean", () => {
 });
 
 describe("the message hands the reader the rule, the remedy and the precedent", () => {
+  it("names all three for the ambient-state half too", async () => {
+    const [message] = await messagesFor(
+      'import { readEnvironmentClubTimeZoneSeed } from "@/lib/club-time-zone-env";\n' +
+        "export function f(tz: string | null = readEnvironmentClubTimeZoneSeed()) {\n" +
+        "  return tz;\n}",
+      "src/lib/x.ts",
+    );
+    // A separate message from the environment arm's, because the remedy is
+    // different: there is no `ClubTimeProvider` answer for a financial year-end
+    // or an email palette, and telling somebody to pass the club's zone when
+    // they defaulted a palette sends them to the wrong place.
+    expect(message).toContain("INV-SSOT-003");
+    expect(message).toContain("AMBIENT PROCESS-GLOBAL STATE");
+    expect(message).toContain("DELETE THE DEFAULT");
+    // The measured case, so whoever trips it can read what it cost.
+    expect(message).toContain("#3116");
+    expect(message).toContain("#3123");
+    // And the resolvers that are NOT this defect, so the reader does not
+    // conclude that resolving a fact in a default is banned outright.
+    expect(message).toContain("refreshFinancialYearConfig()");
+    expect(message).toContain("readClubTimeZoneOutsideRequest()");
+  });
+
   it("names all three", async () => {
     const [message] = await messagesFor(
       AUTHORITY_DEFAULT_VIOLATION,
@@ -820,4 +1004,283 @@ describe("the census: nothing in the tree binds a club authority but the module 
         "the same way or they are one instrument and a rubber stamp.",
     ).toBeGreaterThan(code.length);
   });
+});
+
+// ---------------------------------------------------------------------------
+// THE SECOND INSTRUMENT FOR THE AMBIENT-STATE HALF (#3133), and it parses.
+// ---------------------------------------------------------------------------
+//
+// The census above is a comment-stripped regex, and for the environment
+// authorities that is the right instrument: `APP_TIME_ZONE` appears in a BINDING
+// position a handful of times in the whole tree, so a scanner that cannot tell a
+// parameter default from a body assignment over-reports by one file and says so.
+//
+// FOR A RESOLVER THAT SHAPE OF SCANNER IS USELESS, and it is worth saying why
+// rather than leaving the choice to look arbitrary. `emailPalette()` is called
+// as `const p = emailPalette()` in more than a dozen email templates, every one
+// of them correct — a body call inside a function that is about to render, not a
+// default answering for a caller. A regex anchored on `=` reports all of them,
+// and a guard that fires a dozen times on correct code is worse than no guard.
+// So this half reads the same tree with the same `typescript` parser the contract
+// tests in this repository already use, and asks the AST the exact question the
+// arm asks: is this call the value of a DEFAULT?
+//
+// THAT IS NOT A WEAKER SECOND INSTRUMENT, it is a stronger one, and it satisfies
+// `INV-SSOT-004` in the direction that rule cares about. Both instruments are now
+// parsers rather than one parser and one text scan, so neither can misfire on
+// this repository's postmortem comments — the class #3123 measured four times —
+// because a comment is not a node. And it resolves the ONE indirection the arm
+// has no symbol table for: `import { emailPalette as palette }` followed by
+// `= palette()` is invisible to every selector in `eslint.config.mjs` and is
+// caught here.
+//
+// WHAT IT STILL CANNOT SEE, stated rather than left to be discovered. An alias of
+// an alias (`const p = palette;` then `= p()`), and a resolver re-exported
+// through another module and imported from there. Both need a real binder rather
+// than a per-file parse, and neither has a live instance — the same two limits
+// the census above states for the same reason.
+
+/** One default whose value calls a tracked resolver, and which name it called. */
+interface ResolverDefaultHit {
+  readonly name: string;
+  readonly file: string;
+  readonly line: number;
+  readonly text: string;
+}
+
+/**
+ * Every default in one file whose value CALLS one of `names`, alias resolved.
+ *
+ * It reports the CANONICAL name rather than the local spelling, so one pass over
+ * the tree answers for every tracked resolver at once. That is not a micro
+ * optimisation: parsing this tree costs about five seconds, and a per-name pass
+ * put two assertions over vitest's default timeout while measuring exactly the
+ * same thing.
+ */
+function resolverDefaults(
+  code: string,
+  file: string,
+  names: readonly string[],
+): ResolverDefaultHit[] {
+  const source = ts.createSourceFile(
+    file,
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+
+  // The local spellings of the named resolvers in THIS file, each mapped back to
+  // the canonical name it resolves to. The bare names map to themselves, because
+  // a file may declare one itself; a named import adds its local alias, which is
+  // the hop the lint arm cannot follow.
+  const local = new Map<string, string>(names.map((name) => [name, name]));
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const clause = statement.importClause;
+    if (!clause?.namedBindings) continue;
+    // A namespace import needs no entry: `ambient.emailPalette()` is matched on
+    // its PROPERTY below, which is also the only thing the lint arm can match.
+    if (ts.isNamespaceImport(clause.namedBindings)) continue;
+    for (const element of clause.namedBindings.elements) {
+      const exported = (element.propertyName ?? element.name).text;
+      if (names.includes(exported)) local.set(element.name.text, exported);
+    }
+  }
+
+  /** Which resolver this call names, in any spelling, or `undefined`. */
+  const resolverCalled = (call: ts.CallExpression): string | undefined => {
+    const callee = call.expression;
+    if (ts.isIdentifier(callee)) return local.get(callee.text);
+    if (ts.isPropertyAccessExpression(callee)) {
+      // `ambient.emailPalette()`, and also `anything.emailPalette()`. Matched on
+      // the property alone DELIBERATELY, because that is exactly what the arm's
+      // `[callee.property.name=...]` selector can see: a receiver needs a symbol
+      // table neither instrument has, and the two must not disagree about scope.
+      return local.get(callee.name.text);
+    }
+    if (ts.isElementAccessExpression(callee)) {
+      const argument = callee.argumentExpression;
+      return ts.isStringLiteralLike(argument) ? local.get(argument.text) : undefined;
+    }
+    return undefined;
+  };
+
+  const found: ResolverDefaultHit[] = [];
+  const visit = (node: ts.Node): void => {
+    const initializer =
+      (ts.isParameter(node) || ts.isBindingElement(node)) && node.initializer
+        ? node.initializer
+        : undefined;
+    if (initializer) {
+      // ANYWHERE inside the default, not just as its whole value — the arm's
+      // descendant selectors cover `as`, `!`, `??`, a template, an outer call, a
+      // sequence and a thunk, and an instrument that only checked the top node
+      // would agree with the arm exactly where the arm is blind.
+      let hit: string | undefined;
+      const scan = (inner: ts.Node): void => {
+        if (ts.isCallExpression(inner)) hit ??= resolverCalled(inner);
+        inner.forEachChild(scan);
+      };
+      scan(initializer);
+      if (hit !== undefined) {
+        const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+        found.push({
+          name: hit,
+          file,
+          line: line + 1,
+          text: node.getText(source).replace(/\s+/g, " ").slice(0, 120),
+        });
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  return found;
+}
+
+describe("the resolver scanner asks the question it claims to ask", () => {
+  const NAMES = ["emailPalette"] as const;
+  // A real newline in a template literal, so no escape has to survive an edit.
+  const IMPORT_NS = `import * as a from "@/lib/email-theme";
+`;
+  const scan = (code: string) => resolverDefaults(code, "src/lib/x.ts", NAMES);
+
+  it("finds every default spelling the arm closes", () => {
+    for (const code of [
+      "export function f(p = emailPalette()) { return p; }",
+      "export function f({ p = emailPalette() }) { return p; }",
+      "export function f([p = emailPalette()]) { return p; }",
+      "export function f(o: { p?: unknown }) { const { p = emailPalette() } = o; return p; }",
+      "export function f(p = emailPalette()!) { return p; }",
+      "export function f(p = String(emailPalette())) { return p; }",
+      "export function f(p = emailPalette() as unknown) { return p; }",
+      "export function f(p = () => emailPalette()) { return p; }",
+      IMPORT_NS + "export function f(p = a.emailPalette()) { return p; }",
+      IMPORT_NS + 'export function f(p = a["emailPalette"]()) { return p; }',
+    ]) {
+      expect(scan(code), code).toHaveLength(1);
+    }
+  });
+
+  it("resolves the rename the lint arm has no symbol table for", () => {
+    // THE HALF THAT PAYS FOR THIS INSTRUMENT. `palette` is on no list in
+    // `eslint.config.mjs` and no selector there can learn that it is
+    // `emailPalette`, so without this the alias is a free pass.
+    const aliased =
+      'import { emailPalette as palette } from "@/lib/email-theme";\n' +
+      "export function f(p = palette()) { return p; }";
+    expect(scan(aliased)).toHaveLength(1);
+  });
+
+  it("does NOT count the near misses", () => {
+    for (const code of [
+      // A BODY call, which is the correct shape and the reason this instrument
+      // parses instead of grepping: more than a dozen email templates write it.
+      "export function f() { const p = emailPalette(); return p; }",
+      // A default that names the resolver without CALLING it — handing the
+      // function itself over states a fact rather than resolving one.
+      "export function f(get = emailPalette) { return get; }",
+      // A different function that merely shares a prefix.
+      "export function f(p = emailPaletteFor(1)) { return p; }",
+      // A bare read in a body.
+      "export function f() { return emailPalette; }",
+      // A default with no call in it at all.
+      "export function f(p = 10) { return p; }",
+      // A member access whose receiver is not the namespace and whose property
+      // is not the resolver.
+      "export function f(p = theme.palette()) { return p; }",
+    ]) {
+      expect(scan(code), code).toHaveLength(0);
+    }
+  });
+
+  it("reads CODE, not prose, by construction rather than by stripping it", () => {
+    // The failure `INV-SSOT-004` is about, and a parser is immune to it: a
+    // comment is not a node, so this needs no `stripComments` pass and cannot
+    // disagree with one. The docblock below is the shape this repository writes
+    // at every site it cleaned.
+    const postmortem =
+      "/**\n * It used to carry `= emailPalette()`, which answered from a cache\n" +
+      " * no worker seeds. #3133 banned it.\n */\n" +
+      "export function f(p: unknown) { return p; }\n";
+    expect(scan(postmortem)).toHaveLength(0);
+  });
+});
+
+describe("the ambient-state census: the banned names have no default anywhere, and the pending one is pinned", () => {
+  type PendingResolver = { readonly name: string; readonly liveDefaults: number };
+
+  const pending = AMBIENT_AUTHORITY_RESOLVERS.pending as PendingResolver[];
+  const banned = AMBIENT_AUTHORITY_RESOLVERS.banned as string[];
+
+  /**
+   * ONE parse of the tree, for every tracked name at once.
+   *
+   * Parsing `src/`, `scripts/` and `prisma/` costs about five seconds, so a pass
+   * per name put both assertions below over vitest's default timeout while
+   * measuring exactly the same thing. Computed in `beforeAll` rather than at
+   * module scope so a collection error is reported as a failing hook rather than
+   * as a file that would not import.
+   */
+  let hits: ResolverDefaultHit[] = [];
+
+  beforeAll(() => {
+    const tracked = [...banned, ...pending.map((entry) => entry.name)];
+    hits = CENSUS_ROOTS.flatMap((root) => walk(path.join(ROOT, root))).flatMap(
+      (file) =>
+        resolverDefaults(
+          fs.readFileSync(path.join(ROOT, file), "utf8"),
+          file,
+          tracked,
+        ),
+    );
+  }, 120_000);
+
+  it("finds no default calling a BANNED resolver, under any local alias", () => {
+    const offenders = hits.filter((hit) => banned.includes(hit.name));
+    expect(
+      offenders,
+      "A production default resolves a club authority from ambient " +
+        "process-global state (`INV-SSOT-003`). If it is written under the " +
+        "resolver's own name the lint arm should have caught it and did not — " +
+        "say so, because that means the two instruments disagree and one of " +
+        "them is broken. If it is written under an ALIAS, this instrument is the " +
+        "only one that can see it and the arm is working as designed. Either way " +
+        "the remedy is the same: DELETE the default, let the compiler enumerate " +
+        "the call sites, and resolve the fact from stored state at each.\n" +
+        offenders.map((o) => `${o.file}:${o.line}  ${o.text}`).join("\n"),
+    ).toEqual([]);
+  });
+
+  it.each(pending)(
+    "pins the live default population of the pending resolver $name",
+    ({ name, liveDefaults }: PendingResolver) => {
+      const live = hits.filter((hit) => hit.name === name);
+      // THIS IS THE RATCHET, AND IT HAS A MECHANICAL TRIGGER, which is what
+      // separates it from an exemption list that rots. A pending name is one the
+      // arm deliberately does not fire on because deleting its remaining
+      // defaults needs a decision the arm cannot make. Pinning the count means
+      // the deferral cannot silently GROW, and — the half a comment could never
+      // do — the moment somebody deletes the last one this fails and hands them
+      // the next step instead of leaving the name pending forever.
+      expect(
+        live.map((entry) => `${entry.file}:${entry.line}`),
+        `The live default population of \`${name}\` is no longer ${liveDefaults}.\n` +
+          "WENT DOWN, or to zero? Good — that is the ratchet turning. Lower " +
+          "`liveDefaults` in `AMBIENT_AUTHORITY_RESOLVERS.pending` in " +
+          "eslint.config.mjs, and if it reached zero, MOVE THE NAME to `banned` " +
+          "and delete its pending entry: the arm then closes the class, and the " +
+          "boundary row asserting this name stays clean has to move up to the " +
+          "spellings suite.\n" +
+          "WENT UP? A new default on an ambient-state resolver was written while " +
+          "the arm was deliberately not firing on it, which is exactly what the " +
+          "pin exists to catch. Delete it rather than raising the number.\n" +
+          "Found:\n" +
+          live
+            .map((entry) => `${entry.file}:${entry.line}  ${entry.text}`)
+            .join("\n"),
+      ).toHaveLength(liveDefaults);
+    },
+  );
 });

@@ -107,7 +107,7 @@ describe("seasonSelectLabel", () => {
         .toBe(2026);
       expect(seasonYearOfCalendarDate(lastMonth), `year-end ${yearEndMonth}`)
         .toBe(2026);
-      expect(seasonYearsLabel(2026), `year-end ${yearEndMonth}`).toBe(
+      expect(seasonYearsLabel(2026, yearEndMonth), `year-end ${yearEndMonth}`).toBe(
         lastMonthYear === 2026 ? "2026" : "2026 - 2027",
       );
     }
@@ -115,7 +115,7 @@ describe("seasonSelectLabel", () => {
 
   it("names the months independently of which season is being labelled", () => {
     __setFinancialYearEndMonthForTesting(6);
-    expect(seasonMonthsLabel()).toBe("Jul-Jun");
+    expect(seasonMonthsLabel(6)).toBe("Jul-Jun");
     for (const seasonYear of [1999, 2026, 2400]) {
       expect(seasonSelectLabel(seasonYear)).toBe(
         `${seasonYear} - ${seasonYear + 1} (Jul-Jun)`,
@@ -147,16 +147,27 @@ describe("seasonSelectLabel", () => {
 
 describe("the explicit yearEndMonth argument", () => {
   /*
-    Every sibling derivation in `financial-year.ts` takes the year-end as an
-    optional override — `seasonYearOfCalendarDate(date, m)`,
-    `seasonYearOfStoredDate(value, m)`, `clubSeasonYear(zone, clock, m)` — and
-    these three match it. The point is not symmetry: a SERVER caller that already
-    holds the club's year-end can render a label for it without writing to a
-    process-global cache, and when the value is finally plumbed to the client the
-    cheapest path this API leaves open is a call from a client provider, which
-    would be a module-global write during mount feeding a string read during
-    render. That is a manufactured hydration mismatch. Passing the value cannot
-    produce one.
+    The point is not symmetry with `financial-year.ts`: a SERVER caller that
+    already holds the club's year-end can render a label for it without writing
+    to a process-global cache, and when the value is finally plumbed to the
+    client the cheapest path this API leaves open is a call from a client
+    provider, which would be a module-global write during mount feeding a string
+    read during render. That is a manufactured hydration mismatch. Passing the
+    value cannot produce one.
+
+    THE ARGUMENT IS NO LONGER OPTIONAL ON TWO OF THE THREE (#3133).
+    `seasonMonthsLabel` and `seasonYearsLabel` REQUIRE it; `seasonSelectLabel`
+    still defaults to the cache, and so do
+    `seasonYearOfCalendarDate(date, m?)`, `seasonYearOfStoredDate(value, m?)`
+    and `clubSeasonYear(zone, clock, m?)` next door. That split is deliberate
+    rather than half-finished: the two that became required had no non-test
+    caller left relying on the default after #3136, and the ones that kept it
+    have populations that cannot be threaded without a decision — thirteen
+    display sites, ten of them in a browser bundle the cache can never reach,
+    and a roughly ninety-site cascade through the two optional pass-throughs.
+    `INV-SSOT-003` carries that measurement and the promotion condition; the
+    lint arm carries `getFinancialYearEndMonth` as a pending name with its live
+    count pinned in `ssot-authority-default-guard.test.ts`.
   */
   it("matches the cached path for every year-end, both halves", () => {
     // The discriminating assertion in this file for the override being wired
@@ -240,7 +251,9 @@ describe("the host machine cannot move a month name", () => {
     // A fresh graph means a fresh financial-year cache, so this is the March
     // default by construction rather than by this file's beforeEach.
     withTimeZone("Pacific/Pago_Pago", () => {
-      expect(fresh.seasonMonthsLabel()).toBe("Apr-Mar");
+      expect(
+        fresh.seasonMonthsLabel(DEFAULT_FINANCIAL_YEAR_END_MONTH),
+      ).toBe("Apr-Mar");
       expect(fresh.seasonSelectLabel(2026)).toBe("2026 - 2027 (Apr-Mar)");
       expect(fresh.seasonMonthsLabel(12)).toBe("Jan-Dec");
     });

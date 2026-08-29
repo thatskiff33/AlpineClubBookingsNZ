@@ -24,48 +24,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+// Comments are stripped so only EXECUTABLE text is matched.
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 const PAGE = "src/app/(admin)/admin/book/page.tsx";
 
 function readPageSource(): string {
   // Test helper: a fixed repo file under process.cwd(), not user input.
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   return readFileSync(path.resolve(process.cwd(), PAGE), "utf8");
-}
-
-/** Strip `//` and block comments so only EXECUTABLE text is matched. */
-function stripComments(source: string): string {
-  let out = "";
-  let state: "code" | "line" | "block" = "code";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    const next = source[i + 1];
-    if (state === "code") {
-      if (c === "/" && next === "/") {
-        state = "line";
-        i++;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        state = "block";
-        i++;
-        continue;
-      }
-      out += c;
-      continue;
-    }
-    if (state === "line") {
-      if (c === "\n") {
-        state = "code";
-        out += c;
-      }
-      continue;
-    }
-    if (c === "*" && next === "/") {
-      state = "code";
-      i++;
-    }
-  }
-  return out;
 }
 
 /**
