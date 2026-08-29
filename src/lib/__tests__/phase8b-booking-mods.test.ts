@@ -780,6 +780,96 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(body.changeFeeCents).toBe(0);
   });
 
+  it("writes the moved range's night rows at the amounts it priced (#3031)", async () => {
+    // THE CONTROL for the refusal below, and the reason the refusal cannot pass
+    // against a function that simply always throws: given a complete per-night
+    // vector, this writer stores exactly those amounts against exactly those
+    // nights. `BookingGuestNight` rows ARE the booking's sold-price history from
+    // here on, so what lands here is what the NEXT edit reads back as evidence
+    // (INV-MOD-028).
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    // Deliberately UNEQUAL: an even split of 15000 across three nights would be
+    // 5000/5000/5000 and would satisfy a weaker assertion just as well.
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [4000, 5000, 6000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuestNight.createMany).toHaveBeenCalledWith({
+      data: [
+        { bookingGuestId: "g1", stayDate: movedNights[0], priceCents: 4000 },
+        { bookingGuestId: "g1", stayDate: movedNights[1], priceCents: 5000 },
+        { bookingGuestId: "g1", stayDate: movedNights[2], priceCents: 6000 },
+      ],
+    });
+  });
+
+  it("refuses to write a moved night the reprice put no amount against (#3031)", async () => {
+    // The prohibited answer is `?? 0`, which this writer carried until #3031: a
+    // per-night vector shorter than the night list would put a REAL night into
+    // the sold-price history at zero, and the next edit would credit it back at
+    // nothing. Refusing is the only answer that neither invents money nor
+    // silently loses it. Nothing must be committed either.
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+    const movedNights = [
+      new Date("2026-06-05T00:00:00.000Z"),
+      new Date("2026-06-06T00:00:00.000Z"),
+      new Date("2026-06-07T00:00:00.000Z"),
+    ];
+    mockedCalcPrice.mockReturnValue({
+      guests: [
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+        { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 3, priceCents: 15000, perNightCents: [5000, 5000], nightDates: movedNights },
+      ],
+      totalPriceCents: 30000,
+    });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+    mockedDaysUntilDate.mockReturnValue(30);
+    mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }]);
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05", checkOut: "2026-06-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "The new dates could not be priced night by night",
+    );
+    expect(tx.bookingGuestNight.createMany).not.toHaveBeenCalled();
+  });
+
   it("processes Stripe refund on price decrease for confirmed+paid booking", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking();
