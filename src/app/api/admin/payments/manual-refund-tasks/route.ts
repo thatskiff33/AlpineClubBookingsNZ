@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasAdminAreaAccess } from "@/lib/admin-permissions";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -6,6 +7,10 @@ import {
   AUTOMATIC_REFUND_NOTICE_WINDOW_DAYS,
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
+import {
+  parseEditFinancialReviewContext,
+  toEditFinancialReviewEvidence,
+} from "@/lib/edit-financial-review-context";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -68,6 +73,27 @@ export async function GET() {
   });
   if (!guard.ok) return guard.response;
 
+  /*
+    #3033. Whether this caller may open a booking at all, read off the
+    DB-verified matrix `requireAdmin()` just resolved onto the session — the
+    #2823 stuck-state shape, and defaulted to FALSE on the client for the same
+    reason that route's own flag is: a caller that omits it must fail closed.
+
+    It is a real distinction on this card and not a hypothetical one. The card is
+    gated on `finance:view`, which a Finance Viewer holds with NO bookings access
+    at all, and the automatic-refund card beside it already prints identifiers as
+    plain text rather than linking, precisely because `/bookings/{id}` 403s or
+    404s for part of this card's audience. Owner decision D3 asks for "a link to
+    the booking's payment and rate history", so the link has to land somewhere
+    when it is offered; for everyone else the booking id is printed instead, which
+    is what a finance operator needs in order to quote it to somebody who can open
+    it.
+  */
+  const viewerCanViewBookings = hasAdminAreaAccess(guard.session.user, {
+    area: "bookings",
+    level: "view",
+  });
+
   const bookingSummary = {
     checkIn: true,
     checkOut: true,
@@ -119,6 +145,18 @@ export async function GET() {
         id: true,
         bookingId: true,
         amountCents: true,
+        /*
+          #3033. `kind` decides which SENTENCE the card prints beside a row: the
+          queue's standing paragraph says every row "was paid in cash or by a
+          bank transfer that never reached Xero", which is simply untrue of an
+          EDIT_FINANCIAL_REVIEW row. `raisedAmountCents` is what the task was
+          raised with, so a row whose amount an admin has since amended says so
+          on its face rather than only in the audit log. `reviewContext` is owner
+          decision D3's evidence — projected below, never sent raw.
+        */
+        kind: true,
+        raisedAmountCents: true,
+        reviewContext: true,
         reason: true,
         createdAt: true,
         booking: { select: bookingSummary },
@@ -161,16 +199,47 @@ export async function GET() {
   ]);
 
   return NextResponse.json({
-    tasks: tasks.map((task) => ({
-      id: task.id,
-      bookingId: task.bookingId,
-      amountCents: task.amountCents,
-      reason: task.reason,
-      createdAt: task.createdAt.toISOString(),
-      memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
-      checkIn: task.booking.checkIn.toISOString(),
-      checkOut: task.booking.checkOut.toISOString(),
-    })),
+    // #3033: whether the "open the booking's payment and rate history" link is
+    // offered at all. Sent as an explicit boolean, never inferred by the card
+    // from the presence of anything else.
+    viewerCanViewBookings,
+    tasks: tasks.map((task) => {
+      /*
+        PARSED HERE, and the raw column never crosses the wire.
+
+        Two things fall out of that and both are deliberate. The parser returns
+        NULL rather than throwing on a row it cannot read (#3030), so an
+        unreadable blob costs the card its captured evidence and nothing else —
+        the task, its amount and the booking are still shown. And parsing on the
+        server is what lets `toEditFinancialReviewEvidence` do the redaction:
+        the guest's member id and the guest-strand id have no field in the shape
+        the browser receives, so no amount of forgetting can put them there.
+      */
+      const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
+      return {
+        id: task.id,
+        bookingId: task.bookingId,
+        amountCents: task.amountCents,
+        raisedAmountCents: task.raisedAmountCents,
+        kind: task.kind,
+        reason: task.reason,
+        createdAt: task.createdAt.toISOString(),
+        memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
+        checkIn: task.booking.checkIn.toISOString(),
+        checkOut: task.booking.checkOut.toISOString(),
+        reviewEvidence: reviewContext
+          ? toEditFinancialReviewEvidence(reviewContext)
+          : null,
+        /*
+          The row HAS captured evidence this release cannot read, as distinct
+          from never having had any. The card says so in a line of its own: an
+          admin pricing a refund needs to know that the one record of what the
+          edit destroyed is unreadable, rather than silently see a task with no
+          evidence section and assume none was ever taken.
+        */
+        reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
+      };
+    }),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is

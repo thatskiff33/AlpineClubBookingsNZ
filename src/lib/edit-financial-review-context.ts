@@ -227,3 +227,83 @@ export function parseEditFinancialReviewContext(
   const parsed = contextSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+/**
+ * #3033: the safe diagnostic category, in words an admin can act on.
+ *
+ * ONE HOME, here rather than in the admin card, because the vocabulary above
+ * already exists for exactly this purpose — its own doc comment says the closed
+ * set is what lets #3033 render "a safe diagnostic category" — and a label map
+ * kept anywhere else would be a second place a renamed cause has to be changed
+ * (`INV-SSOT`).
+ *
+ * Each label says what the EVIDENCE is missing, never what anybody did wrong.
+ * These reach an admin screen only; the member surface renders none of them
+ * (#3033 forbids corruption terminology and blaming the member), and nothing
+ * here is a sentence a member's copy may be built from.
+ */
+export const EDIT_FINANCIAL_REVIEW_CAUSE_LABEL: Record<
+  EditFinancialReviewCause,
+  string
+> = {
+  NO_STORED_NIGHT_PRICES:
+    "No per-night price was stored for this guest, so there is nothing to work the refund out from.",
+  PARTIAL_STORED_NIGHT_PRICES:
+    "Only some of the nights given back carry a stored price, so the total cannot be worked out from what is stored.",
+  STORED_TOTAL_MISMATCH:
+    "The stored night prices do not add up to the stored total for this guest, so neither figure can be trusted on its own.",
+};
+
+/**
+ * What an admin surface may SEE of a captured review context.
+ *
+ * A PROJECTION, not the context: `guestMemberId` and `bookingGuestId` have no
+ * field here at all, so no admin payload can carry them. They identify a member
+ * and a guest strand — membership-roll identifiers with no rendering use on the
+ * finance queue, which already shows the booking's own member by name — and the
+ * honest way to keep them off a `finance:view` screen is to make them
+ * unrepresentable in the shape that screen is built from, rather than to
+ * remember to delete them at each send site (`INV-SSOT`: prefer unrepresentable
+ * over policed).
+ *
+ * Everything that survives is money evidence about a task whose amount the same
+ * screen already shows, which is why it needs no second permission: the nights
+ * the edit gave back and added, whatever night prices were stored, the stored
+ * guest total, and the booking's own stay window for the "which rates applied
+ * then" question.
+ */
+export type EditFinancialReviewEvidence = {
+  cause: EditFinancialReviewCause;
+  surrenderedNightDates: readonly CalendarDate[];
+  addedNightDates: readonly CalendarDate[];
+  storedEvidence: {
+    guestTotalCents: number | null;
+    nightPrices: readonly StoredNightPriceEvidence[];
+  };
+  bookingCheckIn: CalendarDate;
+  bookingCheckOut: CalendarDate;
+};
+
+/**
+ * Reduce a parsed context to the evidence an admin surface may render.
+ *
+ * The single redaction point for this feature. Field-by-field rather than a
+ * spread-and-delete, so a field added to `EditFinancialReviewContext` later is
+ * withheld by default and has to be admitted deliberately — the safe direction
+ * for a shape whose whole job is to carry evidence about a member's money.
+ */
+export function toEditFinancialReviewEvidence(
+  context: EditFinancialReviewContext,
+): EditFinancialReviewEvidence {
+  return {
+    cause: context.occurrence.cause,
+    surrenderedNightDates: context.occurrence.surrenderedNightDates,
+    addedNightDates: context.occurrence.addedNightDates,
+    storedEvidence: {
+      guestTotalCents: context.occurrence.storedEvidence.guestTotalCents,
+      nightPrices: context.occurrence.storedEvidence.nightPrices,
+    },
+    bookingCheckIn: context.bookingCheckIn,
+    bookingCheckOut: context.bookingCheckOut,
+  };
+}
