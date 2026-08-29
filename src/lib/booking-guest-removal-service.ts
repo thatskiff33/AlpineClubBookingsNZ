@@ -44,12 +44,17 @@ import {
   applyPaymentAdjustments,
   assertBookingNotQuotePriced,
   calculateModificationSettlementOptions,
+  BookingEditFinancialReviewRequiredError,
   lockedNightPricesForGuest,
   rateSnapshotUpdateForRepricedGuest,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
+import {
+  storedEvidenceForOccurrence,
+  storedSoldPriceEvidenceForGuest,
+} from "@/lib/stored-sold-price-evidence";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-allocation-lifecycle";
 import { lockRosterDates } from "@/lib/roster-lock";
@@ -507,6 +512,55 @@ export async function removeBookingGuestInTransaction({
 
   await assertBookingNotQuotePriced(tx, bookingId);
 
+  // #3031 (epic #2797): CAN THIS BOOKING'S HISTORY PRICE THE REMOVAL EXACTLY?
+  //
+  // Removing a guest gives back every night that guest holds, so the credit is
+  // historical money and must come from what was actually sold. This path never
+  // computed it that way: it repriced the REMAINING guests and took the
+  // difference against the booking's stored total. Where a remaining guest's
+  // rows carry no usable price, that reprice values THEIR nights at today's
+  // rate, and the whole of that movement lands inside what the member is told is
+  // the departing guest's credit — a rate rise on somebody else's stay changing
+  // the amount refunded for this one.
+  //
+  // Requiring every strand to reconcile is what makes the existing arithmetic
+  // exact rather than replacing it: with every remaining night locked, the
+  // reprice returns each remaining guest's stored total unchanged, so the
+  // difference IS the departing guest's own stored price. That equality is
+  // asserted below rather than assumed.
+  //
+  // Judged before any write. `removeGuestChoreAssignments` and the guest delete
+  // follow immediately, and although this runs in a transaction that would roll
+  // back, refusing before touching anything is the clearer contract.
+  const unpriceableStrands = [guestToRemove, ...booking.guests]
+    .filter(
+      (guest, index, all) =>
+        all.findIndex((other) => other.id === guest.id) === index,
+    )
+    .flatMap((guest) => {
+      const evidence = storedSoldPriceEvidenceForGuest(guest);
+      if (evidence.kind === "exact") return [];
+      return [
+        {
+          bookingId,
+          bookingGuestId: guest.id,
+          cause: evidence.cause,
+          // A removal surrenders every night the departing guest holds and adds
+          // none; a remaining guest surrenders nothing. Recorded from the rows
+          // this service can still see, because the delete below destroys them.
+          surrenderedNightDates:
+            guest.id === guestId
+              ? evidence.nightPrices.map((night) => night.date)
+              : [],
+          addedNightDates: [],
+          storedEvidence: storedEvidenceForOccurrence(evidence, guest.priceCents),
+        },
+      ];
+    });
+  if (unpriceableStrands.length > 0) {
+    throw new BookingEditFinancialReviewRequiredError(unpriceableStrands);
+  }
+
   const choreWarnings = await removeGuestChoreAssignments(tx, guestId);
 
   await tx.bookingGuest.delete({ where: { id: guestId } });
@@ -636,6 +690,29 @@ export async function removeBookingGuestInTransaction({
   }));
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
+  // #3031: the credit IS the departing guest's own stored price, and this is
+  // where that is proved rather than hoped for. Every remaining night was locked
+  // at what it was sold for, so the reprice cannot have moved a remaining
+  // guest's total; if it did, something valued a night the club did not just
+  // sell, and no amount derived from it can be trusted. Refuse rather than
+  // settle it.
+  const expectedRemainingTotalCents =
+    booking.totalPriceCents - guestToRemove.priceCents;
+  if (newTotalPriceCents !== expectedRemainingTotalCents) {
+    throw new BookingEditFinancialReviewRequiredError([
+      {
+        bookingId,
+        bookingGuestId: guestId,
+        cause: "STORED_TOTAL_MISMATCH",
+        surrenderedNightDates: [],
+        addedNightDates: [],
+        storedEvidence: {
+          guestTotalCents: null,
+          nightPrices: [],
+        },
+      },
+    ]);
+  }
   // #3123 — the SAME club day the caller resolved before it opened this
   // transaction, re-expressed as the calendar day the promo window and the
   // refund tier are written in. `today` arrives as the UTC-midnight `@db.Date`

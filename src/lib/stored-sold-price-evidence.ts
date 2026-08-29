@@ -3,7 +3,11 @@ import {
   type EditFinancialReviewCause,
   type StoredNightPriceEvidence,
 } from "@/lib/edit-financial-review-context";
-import type { CalendarDate } from "@/lib/club-time";
+import { isCalendarDate, type CalendarDate } from "@/lib/club-time";
+import {
+  expandStayEnvelopeToNightKeys,
+  getExplicitGuestBedNightKeys,
+} from "@/lib/booking-guest-stay-ranges";
 
 /**
  * #3031 (epic #2797): can this guest strand's stored history price an edit
@@ -179,4 +183,55 @@ export function storedEvidenceForOccurrence(
       priceCents: night.priceCents,
     })),
   };
+}
+
+/**
+ * The strict twin of `lockedNightPricesForGuest` (#3031, E6).
+ *
+ * That function is LENIENT by design and stays that way: it turns whatever
+ * prices a guest's rows carry into locks, and a night without one prices at
+ * current policy. That is the right answer for a night the edit is genuinely
+ * BUYING, and the wrong answer for a night it is giving BACK — where a missing
+ * lock silently revalues history at today's rate, which epic #2797 prohibits.
+ * The lenient reader cannot tell those apart, because it is handed no idea what
+ * the edit is doing.
+ *
+ * So a path whose money depends on the guest's stored history being complete
+ * asks THIS instead, and gets a verdict rather than a best effort. `unusable`
+ * carries no locks at all, so there is nothing a caller can price with by
+ * accident.
+ *
+ * The guest's held nights are their explicit `BookingGuestNight` rows where they
+ * have any and their stay envelope otherwise — `getGuestBedNightKeys`'s own
+ * rule, reached through the canonical helpers so the keys match the ones every
+ * other reader derives (INV-DATE-020).
+ */
+export function storedSoldPriceEvidenceForGuest(guest: {
+  priceCents: number;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
+  nights?: ReadonlyArray<{ stayDate: Date; priceCents?: number | null }> | null;
+}): StoredSoldPriceEvidence {
+  const priceByKey = new Map<string, number | null | undefined>();
+  for (const night of guest.nights ?? []) {
+    const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
+    if (key !== undefined) {
+      priceByKey.set(key, night.priceCents);
+    }
+  }
+  const heldNightKeys =
+    getExplicitGuestBedNightKeys(guest) ??
+    (guest.stayStart && guest.stayEnd
+      ? expandStayEnvelopeToNightKeys(guest.stayStart, guest.stayEnd)
+      : []);
+
+  return classifyStoredSoldPriceEvidence(
+    heldNightKeys.map((key) => {
+      if (!isCalendarDate(key)) {
+        throw new Error(`Night key ${key} is not a lodge calendar day`);
+      }
+      return { date: key, priceCents: priceByKey.get(key) };
+    }),
+    guest.priceCents,
+  );
 }
