@@ -11,7 +11,7 @@ import {
 } from "@/lib/date-only";
 import {
   calendarDateOfDateOnlyInstant,
-  isCalendarDate,
+  requireCalendarDate,
   requireStoredCalendarDay,
   type CalendarDate,
 } from "@/lib/club-time";
@@ -22,13 +22,15 @@ import {
   type GuestNightInput,
 } from "@/lib/booking-guest-stay-ranges";
 import type { MemberGuestConsentGuestFields } from "@/lib/member-guest-add-policy";
-import {
-  isNonNegativeIntegerCents,
-  type EditFinancialReviewOccurrence,
+import type {
+  EditFinancialReviewOccurrence,
+  FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
   classifyStoredSoldPriceEvidence,
-  storedEvidenceForOccurrence,
+  editFinancialReviewOccurrence,
+  storedNightPricesByKey,
+  unusableStoredSoldPriceEvidence,
   type HeldNightPrice,
 } from "@/lib/stored-sold-price-evidence";
 
@@ -213,10 +215,19 @@ export interface BookingEditGuestRangePlan {
  * stored sold-price evidence plus current policy for the nights it newly buys,
  * or the exact adjustment cannot be read from this booking's history and a
  * person has to price it. There is deliberately no third shape carrying an
- * estimate, an average, a clamp or a zero: `financial_review_required` has NO
- * numeric field at all, so a caller cannot read a fake amount off it however
- * carelessly it is written. Making the wrong answer unrepresentable is cheaper
- * than policing it (`INV-SSOT`).
+ * estimate, an average, a clamp or a zero: `financial_review_required` carries
+ * NO FIELD HOLDING AN ADJUSTMENT, so a caller cannot read a fake amount off it
+ * however carelessly it is written. Making the wrong answer unrepresentable is
+ * cheaper than policing it (`INV-SSOT`).
+ *
+ * It is NOT free of numbers, and the difference matters to whoever populates
+ * #3032's task amount from it. `occurrences[].storedEvidence` carries the
+ * strand's `guestTotalCents` and its per-night `priceCents` — that is EVIDENCE,
+ * the stored history as it stands, which is precisely what D-3 says the admin
+ * needs in order to price the change. It is never an amount to move. A
+ * `guestTotalCents ?? 0` reached for as "the amount" would be the manufactured
+ * historical money this epic exists to stop: on a `STORED_TOTAL_MISMATCH` strand
+ * the stored total is the number the rows DISAGREE with.
  *
  * The structural half of the edit is not decided here. A refusal that is about
  * the STAY — a check-out that would leave nights nobody occupies — is still a
@@ -226,16 +237,15 @@ export interface BookingEditGuestRangePlan {
  */
 export type InProgressGuestRangePlanResult =
   | { kind: "priced"; plan: BookingEditGuestRangePlan }
-  | {
-      kind: "financial_review_required";
-      /**
-       * One per guest strand whose stored history cannot price this edit, in
-       * booking-guest order. Ready to hand to `raiseEditFinancialReviewTask`
-       * (#3030) — this planner decides WHAT could not be priced and why; #3032
-       * decides what is written down about it.
-       */
-      occurrences: EditFinancialReviewOccurrence[];
-    };
+  /**
+   * `occurrences` holds one entry per guest strand whose stored history cannot
+   * price this edit, in booking-guest order. Ready to hand to
+   * `raiseEditFinancialReviewTask` (#3030) — this planner decides WHAT could not
+   * be priced and why; #3032 decides what is written down about it. The branch
+   * itself is `FinancialReviewRequired`, shared with `PricingResult` rather than
+   * spelled out twice (`INV-SSOT`).
+   */
+  | FinancialReviewRequired;
 
 export interface BuildInProgressGuestRangePlanInput {
   booking: {
@@ -295,7 +305,7 @@ function minDate(a: Date, b: Date): Date {
  * against come from `getExplicitGuestBedNightKeys`, whose `BookingGuestNight`
  * rows were never projected, so behind Greenwich a night's price never matched
  * the night it was the price OF and that night silently repriced at today's rate
- * - the failure `storedNightPricesByKey` below warns about under INV-DATE-020.
+ * - the failure `storedNightPricesByKey` warns about under INV-DATE-020.
  *
  * A second copy of `booking-guest-stay-ranges.ts`'s own derivation, kept only
  * because that one is module-private behind bodies its contract test freezes
@@ -313,52 +323,6 @@ function dateOnlyKey(value: Date): CalendarDate {
 }
 
 /**
- * What is stored against each night the guest already holds, by NZ date-only
- * key — read straight off their loaded `BookingGuestNight` rows.
- *
- * `null` means the night carries NO USABLE STORED PRICE: no row, a row loaded
- * without its price, or a row whose value is not non-negative integer cents.
- * The three are one thing to this plan, and the distinction from a stored ZERO
- * is the whole point of the null — zero is a real sold price (a comped night),
- * absence is not a price at all.
- *
- * #3031 CHANGED WHAT ABSENCE MEANS, and it is worth being plain about the
- * before. This used to DROP such a night from the map, and a dropped night fell
- * through to a current-season-rate lookup: the plan credited a night given back
- * at TODAY's price list, which epic #2797 prohibits outright ("never guess
- * historical money"). Nothing here decides that any more — absence is reported
- * to `classifyStoredSoldPriceEvidence`, and a strand carrying one is refused as
- * unpriceable rather than valued from the rate table.
- *
- * Nothing already stored is rewritten, including a negative row: what those rows
- * should become is a separate, audited decision on #2745. This refuses; it does
- * not repair.
- */
-function storedNightPricesByKey(
-  guest: Pick<ExistingBookingEditGuest, "nights">
-): Map<string, number | null> {
-  const byKey = new Map<string, number | null>();
-  for (const entry of guest.nights ?? []) {
-    const priceCents =
-      entry instanceof Date || typeof entry === "string"
-        ? undefined
-        : "priceCents" in entry
-          ? entry.priceCents
-          : undefined;
-    // Keyed through the SAME canonical helper that builds `heldNightKeys`, one
-    // entry at a time, rather than by re-deriving the key here. A price keyed
-    // even slightly differently from its night would never match it, and the
-    // failure would be silent — the night would quietly price at today's rate
-    // again, which is the whole defect (INV-DATE-020).
-    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
-    if (key !== undefined) {
-      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
-    }
-  }
-  return byKey;
-}
-
-/**
  * The nights this guest holds, each with whatever is stored against it, in the
  * shape `classifyStoredSoldPriceEvidence` reads.
  *
@@ -373,23 +337,38 @@ function heldNightPrices(
   storedNightPriceByKey: ReadonlyMap<string, number | null>
 ): HeldNightPrice[] {
   return heldNightKeys.map((key) => ({
-    date: nightKeyAsCalendarDate(key),
+    date: requireCalendarDate(key),
     priceCents: storedNightPriceByKey.get(key) ?? null,
   }));
 }
 
 /**
- * A night key, narrowed to the branded lodge calendar day the review context
- * stores. Validated rather than cast: every key reaching here came from a
- * canonical helper and is already `yyyy-mm-dd`, so the throw is a wiring
- * assertion, and a cast would let a malformed key into the material the
- * occurrence identity is hashed from (#3030).
+ * The two halves of the structural change this edit makes to one strand — the
+ * nights it takes away and the nights it adds — which together identify the
+ * occurrence (#3030). Read off the night SETS, so a sparse stay's gaps are
+ * described as they are.
+ *
+ * Derived here once because both review returns need them and the occurrence
+ * identity is hashed from them: two spellings of "which nights left" would be
+ * two different occurrence keys for one edit (`INV-SSOT`).
  */
-function nightKeyAsCalendarDate(key: string): CalendarDate {
-  if (!isCalendarDate(key)) {
-    throw new Error(`Night key ${key} is not a lodge calendar day (INV-DATE-020)`);
-  }
-  return key;
+function surrenderedNightDatesOf(entry: {
+  heldNightKeys: readonly string[];
+  proposedNightKeySet: ReadonlySet<string>;
+}): CalendarDate[] {
+  return entry.heldNightKeys
+    .filter((key) => !entry.proposedNightKeySet.has(key))
+    .map(requireCalendarDate);
+}
+
+/** The added half of {@link surrenderedNightDatesOf}. */
+function addedNightDatesOf(entry: {
+  proposedNightKeys: readonly string[];
+  heldNightKeySet: ReadonlySet<string>;
+}): CalendarDate[] {
+  return entry.proposedNightKeys
+    .filter((key) => !entry.heldNightKeySet.has(key))
+    .map(requireCalendarDate);
 }
 
 /** One guest, the nights to price for them, and what they already paid. */
@@ -738,20 +717,22 @@ function composeProposedNightPrices(args: {
  * move, deliberately, is a refund on a stay whose rate has changed since: it is
  * now what the club charged rather than what it would charge today.
  *
- * **And a floor under it: no edit leaves a guest owing less than nothing.** The
- * locked prices cure the cause wherever a guest's rows record what they paid,
- * but a guest with no per-night record at all — a booking that predates
+ * **And no floor under it, because there is nothing left to floor (#3031,
+ * INV-MOD-028).** A `refundCeilingCents` clamp used to sit on the credit,
+ * holding it down to what the guest was carrying. It was needed only because a
+ * guest with no per-night record at all — a booking predating
  * `BookingGuestNight`, or one created by approving a booking request, which
- * still writes no rows (#2739) — has nothing to recover, so their nights are
- * valued on the old leg at today's rate and after a rate rise the credit can
- * exceed everything the club ever charged them. `refundCeilingCents` caps the
- * credit at what the guest is actually carrying, so their price lands at worst
- * on zero and no negative amount is ever written to a night row for the next
- * edit to read back as a sold price. It cannot bind on a guest whose nights cost
- * no more than they paid, which is every healthy booking and every case in the
- * contiguous equivalence matrix. Guests ALREADY below zero from an edit made
- * before this change are left exactly as found — not driven deeper, not
- * repaired; that correction is an owner decision with its own audit, on #2745.
+ * still writes no rows (#2739) — had their nights valued on the old leg at
+ * TODAY's rate, so after a rate rise the credit could exceed everything the club
+ * ever charged them. That leg is gone: such a strand no longer prices at all,
+ * it is `financial_review_required` and a person prices it. The clamp is deleted
+ * rather than kept as a belt: it clamped against a DERIVED total, which is a
+ * valuation taken by arithmetic and exactly the class epic #2797 prohibits, and
+ * with every held night carrying a stored price the credit can no longer exceed
+ * what the guest is carrying in the first place. Guests ALREADY below zero from
+ * an edit made before this change are left exactly as found — not driven deeper,
+ * not repaired; that correction is an owner decision with its own audit, on
+ * #2745.
  */
 export function buildInProgressGuestRangePlan(
   input: BuildInProgressGuestRangePlanInput
@@ -809,7 +790,7 @@ export function buildInProgressGuestRangePlan(
     // night that has one is priced at it in BOTH windows below, so a night given
     // back is credited at the price it was sold for and a night kept still
     // cancels between the two (INV-MOD-005).
-    const storedNightPriceByKey = storedNightPricesByKey(guest);
+    const storedNightPriceByKey = storedNightPricesByKey(guest.nights);
 
     const oldFutureStart = maxDate(stayStart, editableFrom);
     const oldFutureStartKey = dateOnlyKey(oldFutureStart);
@@ -1113,24 +1094,16 @@ export function buildInProgressGuestRangePlan(
     if (verdict.kind === "exact") {
       continue;
     }
-    financialReviewOccurrences.push({
-      bookingId: input.booking.id,
-      bookingGuestId: entry.guest.id,
-      cause: verdict.cause,
-      // What this edit TAKES AWAY and what it ADDS — the two halves of the
-      // structural change, which together identify the occurrence (#3030). Read
-      // off the night sets, so a sparse stay's gaps are described as they are.
-      surrenderedNightDates: entry.heldNightKeys
-        .filter((key) => !entry.proposedNightKeySet.has(key))
-        .map(nightKeyAsCalendarDate),
-      addedNightDates: entry.proposedNightKeys
-        .filter((key) => !entry.heldNightKeySet.has(key))
-        .map(nightKeyAsCalendarDate),
-      storedEvidence: storedEvidenceForOccurrence(
-        verdict,
-        entry.guest.priceCents
-      ),
-    });
+    financialReviewOccurrences.push(
+      editFinancialReviewOccurrence({
+        bookingId: input.booking.id,
+        bookingGuestId: entry.guest.id,
+        evidence: verdict,
+        guestTotalCents: entry.guest.priceCents,
+        surrenderedNightDates: surrenderedNightDatesOf(entry),
+        addedNightDates: addedNightDatesOf(entry),
+      })
+    );
   }
 
   if (financialReviewOccurrences.length > 0) {
@@ -1356,32 +1329,17 @@ export function buildInProgressGuestRangePlan(
       kind: "financial_review_required",
       occurrences: unreconciledGuestIndexes.map((index) => {
         const entry = existingNightPlans[index];
-        return {
+        return editFinancialReviewOccurrence({
           bookingId: input.booking.id,
           bookingGuestId: entry.guest.id,
-          cause: "STORED_TOTAL_MISMATCH" as const,
-          surrenderedNightDates: entry.heldNightKeys
-            .filter((key) => !entry.proposedNightKeySet.has(key))
-            .map(nightKeyAsCalendarDate),
-          addedNightDates: entry.proposedNightKeys
-            .filter((key) => !entry.heldNightKeySet.has(key))
-            .map(nightKeyAsCalendarDate),
-          storedEvidence: storedEvidenceForOccurrence(
-            {
-              kind: "unusable",
-              cause: "STORED_TOTAL_MISMATCH",
-              nightPrices: heldNightPrices(
-                entry.heldNightKeys,
-                entry.storedNightPriceByKey
-              ).map((night) => ({
-                date: night.date,
-                priceCents:
-                  typeof night.priceCents === "number" ? night.priceCents : null,
-              })),
-            },
-            entry.guest.priceCents
+          evidence: unusableStoredSoldPriceEvidence(
+            "STORED_TOTAL_MISMATCH",
+            heldNightPrices(entry.heldNightKeys, entry.storedNightPriceByKey)
           ),
-        };
+          guestTotalCents: entry.guest.priceCents,
+          surrenderedNightDates: surrenderedNightDatesOf(entry),
+          addedNightDates: addedNightDatesOf(entry),
+        });
       }),
     };
   }

@@ -102,11 +102,14 @@ the #1032 edit block — and rows created outside the app.
 
 **Superseded in part by INV-MOD-028 (#3031, epic #2797).** The last sentence's
 "legacy guests without stored night rows price at current rates" no longer holds
-on the two paths that give a night BACK — the in-progress edit planner and the
-single-guest removal. There, a strand whose stored rows cannot account for its
-stored total is not priced at all: the edit is `financial_review_required` and a
-person prices it. Everything else here stands, including current-rate pricing for
-a night an edit genuinely buys.
+on the two paths INV-MOD-028 gates: the IN-PROGRESS edit planner
+(`buildInProgressGuestRangePlan`) and the single-guest removal
+(`removeBookingGuestInTransaction`). There, a strand whose stored rows cannot
+account for its stored total is not priced at all: the edit is
+`financial_review_required` and a person prices it. It DOES still hold on an
+edit to a booking that has not started yet, which is the larger population and is
+#3166's decision, not this one's. Everything else here stands, including
+current-rate pricing for a night an edit genuinely buys.
 
 ## INV-MOD-006
 
@@ -663,9 +666,12 @@ still subject to the minimum — deferred as scope B on #2124.)
 gone rather than changed: the refund CEILING (it clamped a credit against a
 derived total, which is a valuation taken by arithmetic) and the even-split
 write-back for a guest whose rows cannot account for their total (its output
-became the evidence the next edit read). Both conditions are now
-`financial_review_required`. "Values each at the price it was sold for" is
-unchanged and is now the only rule — there is no fallback beneath it.
+became the evidence the next edit read). Both lived in the in-progress planner,
+both are deleted outright, and both conditions are now
+`financial_review_required` there. "Values each at the price it was sold for" is
+unchanged and is now the only rule on that path — there is no fallback beneath
+it. The pre-check-in edit path keeps its own current-rate pricing for an
+unrecoverable night; see INV-MOD-028's scope note and #3166.
 
 **Not retired, and #2770 records why.** The owner's 10 Aug 2026 decision on #2756
 asked for this id to be retired, and #2770's acceptance criterion 5 repeated it.
@@ -891,21 +897,24 @@ passes, and which party each counts is the rule:
   request (#2739 backfills those but cannot empty the population) — and for them
   today's party is a guess, so it can only ever SHRINK the credit. A removal on
   such a booking credited $160 for nights the club had charged $240 for, and a
-  shortened check-out kept $480 across six guests. `refundCeilingCents` caps this
-  leg from ABOVE only, so that direction has no floor: the club would have kept
-  money it should have returned, on the credit leg, which is the leg #2744 exists
-  to keep honest.
+  shortened check-out kept $480 across six guests. The `refundCeilingCents` clamp
+  that then existed capped this leg from ABOVE only, so that direction had no
+  floor: the club would have kept money it should have returned, on the credit
+  leg, which is the leg #2744 exists to keep honest.
 
-  So a night with **no recoverable stored price** is credited at the guest's own
-  rate type at today's rate, no substitution — which errs TOWARD the member for any
-  sane rate table, and is bounded above by `refundCeilingCents` so it can still
-  never hand back more than the guest is carrying. That is the documented
-  pre-existing degradation this file already names above, unchanged. The accurate
-  answer is that guest's own stored per-night average, which is right in both
-  directions where neither today's-rate rule is; it also moves the
-  discount-DISABLED path and therefore the 960-case equivalence matrix, so it is a
-  change to ordinary bookings, and it is filed as **#2771** alongside #2745's
-  repricing decision rather than taken here.
+  So a night with **no recoverable stored price** was credited at the guest's own
+  rate type at today's rate, no substitution — erring TOWARD the member for any
+  sane rate table, and bounded above by that clamp so it could never hand back
+  more than the guest was carrying.
+
+  **Both halves of that paragraph are history now (#3031, INV-MOD-028).** On the
+  in-progress planner and the single-guest removal, a strand with no recoverable
+  stored price is not credited at today's rate and is not clamped: it is not
+  priced at all, and the edit is `financial_review_required`. The clamp is
+  deleted, because clamping a credit against a derived total is itself a
+  valuation taken by arithmetic. #2771 is closed as superseded by epic #2797,
+  which answers the same question — the accurate credit for an unrecoverable
+  night — with a person rather than with a better estimator.
 
 **A night the guest KEEPS is valued from the post-edit pass in BOTH windows**, and
 that is the property that makes a party-aware discount safe on live bookings, not
@@ -1200,12 +1209,47 @@ only a typed cause (`NO_STORED_NIGHT_PRICES`, `PARTIAL_STORED_NIGHT_PRICES`,
 `STORED_TOTAL_MISMATCH`) and the evidence as it stands. Nothing is written: a
 retained row is preserved byte for byte or not written at all.
 
-Prohibited as a source of a historical amount, on every edit path: today's season
-rate for a night the edit does not buy; a stored average; a proportional
-estimator; an even split of a total across nights; and a clamp of a credit
-against a derived total. The captured-cash settlement caps in
-`booking-modify-settlement.ts` are NOT in this class and are untouched — they cap
-a refund against money actually taken.
+Prohibited as a source of a historical amount: today's season rate for a night
+the edit does not buy; a stored average; a proportional estimator; an even split
+of a total across nights; and a clamp of a credit against a derived total. The
+captured-cash settlement caps in `booking-modify-settlement.ts` are NOT in this
+class and are untouched — they cap a refund against money actually taken.
+
+### Where it holds today, and where it does not
+
+**Stated as narrowly as the code enforces it, on purpose.** A documented claim is
+a contract here, and an invariant asserting a reach it does not have is worse
+than no invariant: the next reader stops checking.
+
+GATED — the rule above is enforced, and restoring an estimator makes a named test
+fail:
+
+- the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
+  (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
+  preview and the modify save whenever the stay is already under way;
+- the single-guest removal, `removeBookingGuestInTransaction`
+  (`src/lib/booking-guest-removal-service.ts`), reached from the guest DELETE
+  route.
+
+NOT GATED, and named rather than left to be discovered:
+
+- **Any edit to a booking that has NOT started yet.** `calculateModifiedPricing`
+  builds the gated planner only when the edit is in progress; every other edit
+  takes the ordinary pricing pass, where a night with no usable stored price
+  still prices at today's rate through the lenient `lockedNightPricesForGuest`
+  and that amount is written into the night rows. This is the busiest booking
+  path, and widening the gate onto it is a product decision about refusing edits
+  to a large share of live bookings, not a tidy-up. It is **#3166**.
+- **A consent DECLINE or EXPIRY removal.** Owner decision D-14 says such a
+  removal must ALWAYS be able to take its target off the booking, so it is exempt
+  from the removal gate: refusing it would trap a member on a booking they have
+  said no to. Its money still comes from the existing arithmetic until #3032
+  parks it. See the exemption in `removeBookingGuestInTransaction`.
+- **The waitlist offer-time reprice** re-bases the whole stay at current rates by
+  design (the offer is a new price the member has not yet accepted) and, since
+  #3031, writes the per-night rows it prices so the next edit reads real
+  evidence. It values no historical night, so it is outside this rule rather than
+  an exception to it.
 
 A negative or non-integer stored row is classified as an ABSENCE of usable
 evidence, never as a price: trusting one inverts an edit, so giving a night back

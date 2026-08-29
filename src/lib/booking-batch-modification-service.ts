@@ -193,6 +193,32 @@ export type BatchModificationResponse = {
  * arrays, which the guest-sync step treats as "leave the rows alone".
  */
 function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResult {
+  // #3031: NO `?? 0`, ANYWHERE IN THIS ECHO. These amounts are written straight
+  // back onto `BookingGuestNight.priceCents` by `syncGuestNights`, so a default
+  // would replace a night's real sold price with a magic zero on an edit whose
+  // entire promise is that it preserves it (INV-MOD-028). A night loaded without
+  // its price is a SELECT that did not ask for it — the census in
+  // `in-progress-edit-sold-price-census.test.ts` exists to stop exactly that —
+  // and the honest response is to refuse rather than to invent. A stored value
+  // that is negative IS echoed, unchanged: the promise is byte-for-byte
+  // preservation, and repairing damaged rows is #2745's audited decision, not
+  // this echo's.
+  //
+  // ONE READ OF THE ROWS, feeding both the breakdown and the per-night rates
+  // (`INV-SSOT`). They were read twice, and the second read defaulted — dead
+  // only because object-literal properties evaluate in source order and the
+  // refusal happened to precede it. A prohibited construct on a money value must
+  // not depend on evaluation order for its harmlessness.
+  const echoedNights = booking.guests.map((guest) =>
+    (guest.nights ?? []).map((night) => {
+      if (typeof night.priceCents !== "number") {
+        throw new Error(
+          `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
+        );
+      }
+      return { stayDate: night.stayDate, priceCents: night.priceCents };
+    }),
+  );
   return {
     kind: "priced",
     inProgressPlan: null,
@@ -200,35 +226,18 @@ function buildIdentityOnlyPricing(booking: LoadedBookingForModify): PricingResul
     newTotalPriceCents: booking.totalPriceCents,
     priceBreakdown: {
       totalPriceCents: booking.totalPriceCents,
-      guests: booking.guests.map((guest) => ({
+      guests: booking.guests.map((guest, index) => ({
         priceCents: guest.priceCents,
-        // #3031: NO `?? 0`. These amounts are written straight back onto
-        // `BookingGuestNight.priceCents` by `syncGuestNights`, so a default here
-        // would replace a night's real sold price with a magic zero on an edit
-        // whose entire promise is that it preserves it. A night loaded without
-        // its price is a SELECT that did not ask for it — the census in
-        // `in-progress-edit-sold-price-census.test.ts` exists to stop exactly
-        // that — and the honest response is to refuse rather than to invent.
-        // A stored value that is negative IS echoed, unchanged: the promise is
-        // byte-for-byte preservation, and repairing damaged rows is #2745's
-        // audited decision, not this echo's.
-        perNightCents: (guest.nights ?? []).map((night) => {
-          if (typeof night.priceCents !== "number") {
-            throw new Error(
-              `Booking guest ${guest.id} night ${night.stayDate.toISOString()} was loaded without its stored sold price (#3031)`,
-            );
-          }
-          return night.priceCents;
-        }),
-        nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+        perNightCents: echoedNights[index].map((night) => night.priceCents),
+        nightDates: echoedNights[index].map((night) => night.stayDate),
       })),
     },
-    guestNightRates: booking.guests.map((guest) => ({
+    guestNightRates: booking.guests.map((guest, index) => ({
       bookingGuestId: guest.id,
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
-      perNightRates: (guest.nights ?? []).map((night) => night.priceCents ?? 0),
-      nightDates: (guest.nights ?? []).map((night) => night.stayDate),
+      perNightRates: echoedNights[index].map((night) => night.priceCents),
+      nightDates: echoedNights[index].map((night) => night.stayDate),
     })),
     // Nothing was rated here — this echo does not run the rate resolver at all.
     // A request carrying an other-lodge election is therefore kept OFF this path

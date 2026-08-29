@@ -1,12 +1,16 @@
 import {
   isNonNegativeIntegerCents,
   type EditFinancialReviewCause,
+  type EditFinancialReviewOccurrence,
   type StoredNightPriceEvidence,
 } from "@/lib/edit-financial-review-context";
-import { isCalendarDate, type CalendarDate } from "@/lib/club-time";
+import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
 import {
-  expandStayEnvelopeToNightKeys,
   getExplicitGuestBedNightKeys,
+  getGuestBedNightKeys,
+  type BookingStayRange,
+  type GuestNightInput,
+  type GuestStayRange,
 } from "@/lib/booking-guest-stay-ranges";
 
 /**
@@ -160,28 +164,70 @@ export function classifyStoredSoldPriceEvidence(
 }
 
 /**
- * `storedEvidence` for an `EditFinancialReviewOccurrence` (#3030), from a
- * verdict and the strand's stored total.
+ * A verdict for a strand this module could not classify as unusable ITSELF, but
+ * whose rows a caller has since found do not add up.
  *
- * `guestTotalCents` is null when the stored total is not usable money, because
- * the review context refuses a negative or fractional one — and a total that
- * cannot be represented is itself part of what the admin needs to know.
+ * The one caller is the planner's post-compose reconciliation check, which
+ * discovers a mismatch only after composing the proposed rows. It is here rather
+ * than there so the "which stored values count as money" rule is applied by the
+ * module that owns it — a caller hand-rolling the union literal wrote a fourth,
+ * weaker spelling of that rule and could have recorded a negative row as if it
+ * were a price (`INV-SSOT`).
  */
-export function storedEvidenceForOccurrence(
-  verdict: StoredSoldPriceEvidence,
-  guestTotalCents: number,
-): {
-  guestTotalCents: number | null;
-  nightPrices: ReadonlyArray<StoredNightPriceEvidence>;
-} {
+export function unusableStoredSoldPriceEvidence(
+  cause: EditFinancialReviewCause,
+  heldNights: readonly HeldNightPrice[],
+): Extract<StoredSoldPriceEvidence, { kind: "unusable" }> {
   return {
-    guestTotalCents: isNonNegativeIntegerCents(guestTotalCents)
-      ? guestTotalCents
-      : null,
-    nightPrices: verdict.nightPrices.map((night) => ({
+    kind: "unusable",
+    cause,
+    nightPrices: heldNights.map((night) => ({
       date: night.date,
-      priceCents: night.priceCents,
+      priceCents: isNonNegativeIntegerCents(night.priceCents)
+        ? night.priceCents
+        : null,
     })),
+  };
+}
+
+/**
+ * THE ONE BUILDER for an `EditFinancialReviewOccurrence` (#3030), from an
+ * unusable verdict and the two halves of the structural change (`INV-SSOT`).
+ *
+ * Three call sites used to compose this literal by hand — the planner twice and
+ * the single-guest removal once — and the identity they build is the material
+ * the occurrence key is hashed from, so a field spelled differently at one site
+ * is a duplicate task at that site and nowhere else.
+ *
+ * `guestTotalCents` is recorded as null when the stored total is not usable
+ * money, because the review context refuses a negative or fractional one — and a
+ * total that cannot be represented is itself part of what the admin needs to
+ * know.
+ */
+export function editFinancialReviewOccurrence(args: {
+  bookingId: string;
+  bookingGuestId: string;
+  evidence: Extract<StoredSoldPriceEvidence, { kind: "unusable" }>;
+  /** `BookingGuest.priceCents` as stored. */
+  guestTotalCents: number;
+  surrenderedNightDates: readonly CalendarDate[];
+  addedNightDates: readonly CalendarDate[];
+}): EditFinancialReviewOccurrence {
+  return {
+    bookingId: args.bookingId,
+    bookingGuestId: args.bookingGuestId,
+    cause: args.evidence.cause,
+    surrenderedNightDates: args.surrenderedNightDates,
+    addedNightDates: args.addedNightDates,
+    storedEvidence: {
+      guestTotalCents: isNonNegativeIntegerCents(args.guestTotalCents)
+        ? args.guestTotalCents
+        : null,
+      nightPrices: args.evidence.nightPrices.map((night) => ({
+        date: night.date,
+        priceCents: night.priceCents,
+      })),
+    },
   };
 }
 
@@ -201,37 +247,62 @@ export function storedEvidenceForOccurrence(
  * carries no locks at all, so there is nothing a caller can price with by
  * accident.
  *
- * The guest's held nights are their explicit `BookingGuestNight` rows where they
- * have any and their stay envelope otherwise — `getGuestBedNightKeys`'s own
- * rule, reached through the canonical helpers so the keys match the ones every
- * other reader derives (INV-DATE-020).
+ * The guest's held nights come from `getGuestBedNightKeys` itself — their
+ * explicit `BookingGuestNight` rows where they have any, and their stay envelope
+ * (falling back to the BOOKING's own range for a guest carrying neither)
+ * otherwise. Calling the canonical helper rather than restating its rule is what
+ * keeps these keys identical to the ones every other reader derives
+ * (INV-DATE-020, `INV-SSOT`): a local `stayStart && stayEnd ? … : []` twin
+ * classified a null-envelope strand as holding no nights at all, which for a
+ * zero-priced strand reconciled to "exact" instead of asking for a person.
  */
-export function storedSoldPriceEvidenceForGuest(guest: {
-  priceCents: number;
-  stayStart?: Date | null;
-  stayEnd?: Date | null;
-  nights?: ReadonlyArray<{ stayDate: Date; priceCents?: number | null }> | null;
-}): StoredSoldPriceEvidence {
-  const priceByKey = new Map<string, number | null | undefined>();
-  for (const night of guest.nights ?? []) {
-    const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
-    if (key !== undefined) {
-      priceByKey.set(key, night.priceCents);
-    }
-  }
-  const heldNightKeys =
-    getExplicitGuestBedNightKeys(guest) ??
-    (guest.stayStart && guest.stayEnd
-      ? expandStayEnvelopeToNightKeys(guest.stayStart, guest.stayEnd)
-      : []);
-
+export function storedSoldPriceEvidenceForGuest(
+  guest: GuestStayRange & { priceCents: number },
+  booking: BookingStayRange,
+): StoredSoldPriceEvidence {
+  const priceByKey = storedNightPricesByKey(guest.nights);
   return classifyStoredSoldPriceEvidence(
-    heldNightKeys.map((key) => {
-      if (!isCalendarDate(key)) {
-        throw new Error(`Night key ${key} is not a lodge calendar day`);
-      }
-      return { date: key, priceCents: priceByKey.get(key) };
-    }),
+    getGuestBedNightKeys(guest, booking).map((key) => ({
+      date: requireCalendarDate(key),
+      priceCents: priceByKey.get(key) ?? null,
+    })),
     guest.priceCents,
   );
+}
+
+/**
+ * What is stored against each night a guest already holds, by lodge-night key.
+ *
+ * `null` means the night carries NO USABLE STORED PRICE: no row, a row loaded
+ * without its price, or a row whose value is not non-negative integer cents. The
+ * three are one thing to every reader of this map, and the distinction from a
+ * stored ZERO is the whole point of the null — zero is a real sold price (a
+ * comped night), absence is not a price at all.
+ *
+ * KEYED THROUGH THE SAME CANONICAL HELPER that builds the night keys, one entry
+ * at a time, rather than by re-deriving the key here. A price keyed even
+ * slightly differently from its night would never match it, and the failure
+ * would be silent — the night would quietly price at today's rate, which is the
+ * defect INV-DATE-020 exists for.
+ *
+ * ONE PROJECTION (`INV-SSOT`). The planner and the removal path both need it and
+ * had written it twice, already normalising differently.
+ */
+export function storedNightPricesByKey(
+  nights: ReadonlyArray<GuestNightInput> | null | undefined,
+): Map<string, number | null> {
+  const byKey = new Map<string, number | null>();
+  for (const entry of nights ?? []) {
+    const priceCents =
+      entry instanceof Date || typeof entry === "string"
+        ? undefined
+        : "priceCents" in entry
+          ? entry.priceCents
+          : undefined;
+    const [key] = getExplicitGuestBedNightKeys({ nights: [entry] }) ?? [];
+    if (key !== undefined) {
+      byKey.set(key, isNonNegativeIntegerCents(priceCents) ? priceCents : null);
+    }
+  }
+  return byKey;
 }

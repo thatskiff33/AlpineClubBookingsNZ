@@ -97,6 +97,21 @@ export type EditFinancialReviewOccurrence = {
 };
 
 /**
+ * THE ONE "we cannot price this" OUTCOME (`INV-SSOT`, #3031, epic #2797).
+ *
+ * Both the in-progress planner (`InProgressGuestRangePlanResult`) and the
+ * modification pricer (`PricingResult`) answer with either a priced result or
+ * this — one idea, so one type rather than two parallel unions that happened to
+ * be spelled identically. There is deliberately NO numeric field on it: the epic
+ * prohibits a magic zero and an estimate alike, and a shape carrying neither is
+ * cheaper than a rule saying not to read one (INV-MOD-028).
+ */
+export type FinancialReviewRequired = {
+  kind: "financial_review_required";
+  occurrences: EditFinancialReviewOccurrence[];
+};
+
+/**
  * What is written to `ManualRefundTask.reviewContext`: the identity above, plus
  * the display-only evidence D3 asks for.
  *
@@ -123,22 +138,33 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
  * Integer cents, non-negative — `INV-MONEY-001`, and the same rule the
  * `ManualRefundTask_amount_nonnegative` CHECK enforces in the database.
  *
- * THE ONE PREDICATE (`INV-SSOT`). A stored `BookingGuestNight.priceCents` is a
- * bare `Int` with no non-negative constraint, so "is this stored value usable as
- * money at all" is a question several modules ask — the planner that refuses to
- * price from it (#3031), the review-context schema below, and the task writer.
- * They must agree to the value, so the test lives here once and is imported.
+ * THE ONE STATEMENT OF THE RULE (`INV-SSOT`). A stored
+ * `BookingGuestNight.priceCents` is a bare `Int` with no non-negative
+ * constraint, so "is this stored value usable as money at all" is a question
+ * several modules ask — the planner that refuses to price from it (#3031), the
+ * review-context schema below, and the task writer. They must agree to the
+ * value, so the rule is written here once, as a schema, and everything else is
+ * derived from it rather than restated beside it.
+ */
+export const nonNegativeCentsSchema = z.number().int().nonnegative();
+
+/**
+ * The predicate form of {@link nonNegativeCentsSchema}, DERIVED rather than
+ * re-implemented: a hand-rolled `typeof === "number" && Number.isInteger(…)`
+ * twin is one edit away from disagreeing with the schema that gates the write,
+ * and the two disagreeing is the difference between refusing a value and storing
+ * it.
  */
 export function isNonNegativeIntegerCents(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  return nonNegativeCentsSchema.safeParse(value).success;
 }
 
 /**
- * The schema form of {@link isNonNegativeIntegerCents}. Null is accepted where
- * the evidence is genuinely absent, which is not the same as zero (see
+ * {@link nonNegativeCentsSchema}, with null accepted where the evidence is
+ * genuinely absent — which is not the same as zero (see
  * `StoredNightPriceEvidence`).
  */
-const nonNegativeCentsOrNull = z.number().int().nonnegative().nullable();
+const nonNegativeCentsOrNull = nonNegativeCentsSchema.nullable();
 
 const occurrenceSchema: z.ZodType<EditFinancialReviewOccurrence> = z
   .object({

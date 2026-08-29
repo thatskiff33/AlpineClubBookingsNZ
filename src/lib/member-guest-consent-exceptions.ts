@@ -202,6 +202,17 @@ export function describeConsentExceptionColumns(params: {
  * it stands NOW. The four predictable blockers reuse the member-card
  * prediction (same gates, same order as the removal service).
  *
+ * IT IS STILL COMPLETE AFTER #3031, and only because of the D-14 exemption.
+ * `removeBookingGuestInTransaction` gained an evidence gate (INV-MOD-028) that
+ * this prediction cannot see — it would need every guest's stored night rows —
+ * but a CONSENT-AUTHORITY removal is exempt from it, exactly so a declining
+ * member is never trapped. So the gate cannot be why one of these rows is stuck.
+ * If that exemption is ever narrowed, this classifier goes stale in the worst
+ * direction: it would report a row as `NO_LONGER_BLOCKED` ("it should go through
+ * this time") for a removal the server is about to refuse. The behavioural proof
+ * that the exemption still holds is in
+ * `booking-guest-removal-exact-credit.test.ts`.
+ *
  * WHEN NO PREDICTABLE BLOCKER APPLIES, `hasSettledPayment` DECIDES, and it is
  * the honest divider rather than a guess. The one refusal the prediction cannot
  * see is the settled-payment election: `removeBookingGuestInTransaction` refuses

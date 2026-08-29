@@ -98,7 +98,10 @@ import {
   type MemberGuestConsentGuestFields,
   type MemberGuestConsentWritePlanEntry,
 } from "@/lib/member-guest-add-policy";
-import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
+import {
+  isNonNegativeIntegerCents,
+  type FinancialReviewRequired,
+} from "@/lib/edit-financial-review-context";
 import {
   isOperationallyPresentConsent,
   type MemberGuestAddActor,
@@ -153,12 +156,26 @@ type ProposedRemainingGuest = {
  * The guest's stored per-night prices, usable as `lockedNightPrices` (#1036).
  * Rows loaded without `priceCents` (or legacy guests without night rows)
  * yield no locks, so those nights price at current season rates.
+ *
+ * LENIENT BY DESIGN, and it stays that way: a night with no lock is a night the
+ * edit is BUYING, and current policy is the right price for it. The strict twin
+ * for a night an edit gives BACK is `storedSoldPriceEvidenceForGuest`
+ * (INV-MOD-028), which returns a verdict rather than a best effort.
+ *
+ * What is NOT lenient is what counts as money. This used to lock any
+ * `typeof === "number"`, so a NEGATIVE stored row — representable, and
+ * pre-#2744 arithmetic could write one — was handed to pricing as the price of
+ * the night, on the guest-add and date-change paths. A negative row is not a
+ * cheap night; it is a row that cannot be money, and it is classified as an
+ * absence of usable evidence everywhere else in this epic. One predicate decides
+ * that here too (`isNonNegativeIntegerCents`, `INV-SSOT`), so the night falls
+ * through to current policy instead of inverting the charge.
  */
 export function lockedNightPricesForGuest(guest: {
   nights?: { stayDate: Date; priceCents?: number }[];
 }): Array<{ stayDate: Date; priceCents: number }> {
   return (guest.nights ?? []).flatMap((night) =>
-    typeof night.priceCents === "number"
+    isNonNegativeIntegerCents(night.priceCents)
       ? [{ stayDate: night.stayDate, priceCents: night.priceCents }]
       : [],
   );
@@ -1250,17 +1267,17 @@ export type PricedModification = {
  *
  * A DISCRIMINATED UNION RATHER THAN NULLABLE NUMBERS. The review branch carries
  * no `newTotalPriceCents`, no `priceBreakdown` and no `inProgressPlan`, so there
- * is nothing a caller could default to zero — the epic prohibits a magic zero,
- * and the cheapest enforcement is a shape in which one cannot be written.
+ * is no ADJUSTMENT a caller could default to zero — the epic prohibits a magic
+ * zero, and the cheapest enforcement is a shape in which one cannot be written.
+ * What it does carry is `occurrences[].storedEvidence`: the stored history as it
+ * stands, which is evidence for a person and never an amount to move. See
+ * `InProgressGuestRangePlanResult` for why that distinction is worth stating.
  * Quote and apply consume this same type, which is the issue's own parity
  * requirement.
  */
 export type PricingResult =
   | ({ kind: "priced" } & PricedModification)
-  | {
-      kind: "financial_review_required";
-      occurrences: EditFinancialReviewOccurrence[];
-    };
+  | FinancialReviewRequired;
 
 /**
  * The per-night breakdown for one guest of an in-progress edit, in the shape the
@@ -1272,9 +1289,11 @@ export type PricingResult =
  * the average, and `lockedNightPricesForGuest` handed that average to the next
  * edit as the price the member was deemed to have paid (#2744). The plan now
  * computes each night's real amount itself, alongside the price it charges for
- * them, so there is nothing left to split here; the even split survives inside
- * the plan as the fallback for a guest whose stored total cannot be reconciled
- * with their rows (`composeProposedNightPrices`).
+ * them, so there is nothing left to split here. Nor is there anywhere else:
+ * #3031 deleted the even split from the plan too, where it had survived as the
+ * fallback for a guest whose stored total could not be reconciled with their
+ * rows. That case is `financial_review_required` now — the fallback's output was
+ * becoming the evidence the NEXT edit read as a sold price (INV-MOD-028).
  *
  * Integer cents throughout, and `perNightCents` sums to `priceCents` exactly —
  * which is what keeps the Xero lines, rebuilt per contiguous run with
