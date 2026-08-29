@@ -7,7 +7,8 @@ import {
 } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
 import logger from "@/lib/logger";
-import { canonicalNights, stableDigest } from "@/lib/stable-json";
+import { stableDigest } from "@/lib/stable-digest";
+import { canonicalNights } from "@/lib/stable-json";
 import {
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,

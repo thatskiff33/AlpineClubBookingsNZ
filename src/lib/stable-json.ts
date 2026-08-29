@@ -13,9 +13,9 @@
  * an identity at all.
  *
  * `INV-SSOT`: this is the ONE home for the pieces those three share — the
- * recursive key sorter, the sha256-hex of a string, the "sorted JSON, then
- * sha256" composition, and the sorted-deduplicated night list that makes a date
- * set order-independent before it reaches any of them. #3030 collected them
+ * recursive key sorter, deterministic stringification, and the
+ * sorted-deduplicated night list that makes a date set order-independent before
+ * it reaches any of them. #3030 collected them
  * here; before that the sorter existed TWICE (privately in
  * `booking-exception-requests.ts` and again in `diagnostics/knowledge/hash.ts`)
  * and the sorted-night helper existed once with a second copy about to be
@@ -25,14 +25,30 @@
  * `edit-financial-review.test.ts`, `diagnostics/knowledge/__tests__/hash.test.ts`)
  * rather than merely recomputed on both sides.
  *
+ * THIS MODULE IS CLIENT-SAFE, AND MUST STAY THAT WAY. It imports nothing —
+ * not `node:crypto`, not the club-time boundary, nothing. That is load-bearing
+ * rather than tidy: `booking-exception-requests.ts` is reached from seven
+ * `"use client"` entry points (the booking editor, the review step, the officer
+ * approval card, the admin requests panel), so everything it imports is
+ * compiled into the browser bundle. `INV-OPS-013` and
+ * `client-server-boundary-census.test.ts` enforce that, and they caught this
+ * module the first time round: collecting the hashing helpers here dragged
+ * `node:crypto` onto the client graph through a path no allowlist covered.
+ *
+ * So the sha256 helpers live next door in `stable-digest.ts`, which is
+ * server-only, and the one client-reachable hasher
+ * (`computeProposalHash`) keeps its own direct `node:crypto` import — the
+ * single edge the census allowlist has always named, with its reasoning
+ * attached there. Splitting the module along the boundary is what keeps that
+ * allowlist one entry long instead of growing it to cover a shared helper that
+ * any client module could then import.
+ *
  * What deliberately stays OUT of here: `canonicalStringify`, whose 2-space
  * indent and trailing newline are load-bearing for the diagnostics bundle's
  * on-disk bytes and its byte ceilings. That formatting is specific to that
  * bundle, so it stays in `diagnostics/knowledge/hash.ts` and imports the sorter
  * from here.
  */
-
-import { createHash } from "node:crypto";
 
 /** Deterministic JSON with recursively sorted object keys. */
 export function stableStringify(value: unknown): string {
@@ -55,25 +71,6 @@ export function sortKeysDeep(value: unknown): unknown {
     return out;
   }
   return value;
-}
-
-/** Lowercase hex sha256 of a UTF-8 string. */
-export function sha256Hex(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-/**
- * The digest of a structure: sorted JSON, then sha256, as lowercase hex.
- *
- * One function rather than two statements at each call site, because "stable
- * JSON" and "sha256 of it" drifting apart is not hypothetical — before #3030 one
- * of the two hashers passed the `"utf8"` encoding argument and the other did
- * not. Node defaults to utf8 so the bytes agreed, which is the worst kind of
- * near-miss: identical output, two spellings, and nothing to fail when a third
- * caller picks the wrong one.
- */
-export function stableDigest(value: unknown): string {
-  return sha256Hex(stableStringify(value));
 }
 
 /**

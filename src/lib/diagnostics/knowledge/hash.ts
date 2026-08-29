@@ -11,7 +11,8 @@
  *    object key order can never shift the bytes.
  */
 
-import { sha256Hex, sortKeysDeep } from "@/lib/stable-json";
+import { sha256Hex } from "@/lib/stable-digest";
+import { sortKeysDeep } from "@/lib/stable-json";
 
 /**
  * `INV-SSOT` (#3030): the recursive key sorter and the sha256-hex of a string
