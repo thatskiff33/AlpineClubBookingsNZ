@@ -54,7 +54,7 @@ vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { resolveManualRefundTask } from "@/lib/manual-booking-payment";
+import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
 
 const tx = {
   manualRefundTask: {

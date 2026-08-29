@@ -67,6 +67,26 @@ export const MANUAL_PAYMENT_NOTE_MAX = 500;
  */
 export const MANUAL_REFUND_TASK_REASON_MAX = 500;
 
+/**
+ * Trim an admin's free-text manual-payment note and truncate it to the column
+ * width, or null when nothing was typed.
+ *
+ * `INV-SSOT`: it lives HERE, beside `MANUAL_PAYMENT_NOTE_MAX`, for the same
+ * reason `MANUAL_REFUND_TASK_REASON_MAX` does. It was private to
+ * `manual-booking-payment.ts` while that module was the only caller; splitting
+ * the refund-task completion out into
+ * `manual-refund-task-resolution.ts` gave it a second, and a five-line rule
+ * copied into two modules is how the note quietly ends up trimmed one way on
+ * one screen and another way on the next.
+ */
+export function normaliseManualPaymentNote(
+  note: string | null | undefined
+): string | null {
+  const trimmed = note?.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MANUAL_PAYMENT_NOTE_MAX);
+}
+
 export type ManualPaymentDirection = "paid" | "unpaid";
 
 export type ManualSubscriptionPaymentResult = {

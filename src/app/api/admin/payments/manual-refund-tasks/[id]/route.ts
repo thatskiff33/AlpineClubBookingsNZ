@@ -10,7 +10,7 @@ import {
   ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
   resolveManualRefundTask,
-} from "@/lib/manual-booking-payment";
+} from "@/lib/manual-refund-task-resolution";
 
 const noteField = z.string().max(MANUAL_PAYMENT_NOTE_MAX).optional().nullable();
 // Explicit confirmation so closing a money task is never a single-click
