@@ -7,9 +7,13 @@ import {
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-subscription-payment";
+import {
+  MANUAL_PAYMENT_NOTE_MAX,
+  MANUAL_REFUND_TASK_REASON_MAX,
+} from "@/lib/manual-subscription-payment";
 import {
   ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
@@ -56,7 +60,7 @@ import { prisma } from "@/lib/prisma";
  *    identically to before this feature existed.
  */
 export { ManualBookingPaymentError };
-export { MANUAL_PAYMENT_NOTE_MAX };
+export { MANUAL_PAYMENT_NOTE_MAX, MANUAL_REFUND_TASK_REASON_MAX };
 
 export type ManualBookingPaymentDirection = "paid" | "unpaid";
 
@@ -460,10 +464,11 @@ export async function resolveManualRefundTask(
     resolution === "completed" ? input.confirmedAmountCents : null;
   if (
     confirmedAmountCents !== null &&
-    (!Number.isInteger(confirmedAmountCents) || confirmedAmountCents < 0)
+    !isNonNegativeIntegerCents(confirmedAmountCents)
   ) {
-    // `INV-MONEY-001`: integer cents, non-negative. The DB
-    // `ManualRefundTask_amount_nonnegative` CHECK says the same; this refuses
+    // `INV-MONEY-001`: integer cents, non-negative, through the ONE predicate
+    // (`INV-SSOT`, #3030) rather than a fourth inline spelling of the rule. The
+    // DB `ManualRefundTask_amount_nonnegative` CHECK says the same; this refuses
     // first with a message an operator can read.
     throw new ManualBookingPaymentError(
       "A confirmed refund amount must be non-negative whole cents.",
@@ -504,8 +509,14 @@ export async function resolveManualRefundTask(
     // #3030 (owner decision D2): work out the amount this completion closes at,
     // BEFORE the claim, so it is written inside the same status-fenced update and
     // cannot be applied separately from the status it belongs to.
-    let settledAmountCents: number | null = null;
-    let amountAmended = false;
+    //
+    // NULL means DISMISSED and nothing else. It is not a "could not work out an
+    // amount" fallback: every branch below either produces a figure or throws,
+    // which is why the code after the claim tests `settlement` rather than
+    // re-checking an amount for null. A guard that can never fire on a money path
+    // is worse than no guard - it would turn a future bug from a loud failure
+    // into a silently skipped refund allocation on a row already COMPLETED.
+    let settlement: { amountCents: number; amended: boolean } | null = null;
     if (resolution === "completed") {
       if (isEditReview && !trimmedNote) {
         // #3030: an edit-review completion is an admin pricing real money from
@@ -528,7 +539,7 @@ export async function resolveManualRefundTask(
             409
           );
         }
-        settledAmountCents = task.amountCents;
+        settlement = { amountCents: task.amountCents, amended: false };
       } else if (
         task.amountCents !== null &&
         task.amountCents !== confirmedAmountCents
@@ -545,10 +556,35 @@ export async function resolveManualRefundTask(
         }
         // #2797 (owner decision D2): amend at completion, audited. The row keeps
         // `raisedAmountCents`, so it says by itself that the amount moved.
-        settledAmountCents = confirmedAmountCents;
-        amountAmended = true;
+        settlement = { amountCents: confirmedAmountCents, amended: true };
       } else {
-        settledAmountCents = confirmedAmountCents;
+        settlement = { amountCents: confirmedAmountCents, amended: false };
+      }
+
+      if (settlement.amountCents === 0) {
+        // #3030 (`INV-PAY-051`): a completion at ZERO is refused, whichever way
+        // the zero arrived. COMPLETED means the money genuinely went back, so a
+        // $0 completion writes a row asserting a refund of nothing and a
+        // `REFUNDED` booking event for $0.00 - and `booking-narrative.ts` picks a
+        // cancelled booking's settlement event by TYPE without filtering on
+        // amount, so that event is chosen and SHADOWS any genuine later one. The
+        // member is then shown nothing about a refund that did happen.
+        //
+        // "Reviewed, nothing is due" already has an honest representation and it
+        // is DISMISSED. Magic zero is the thing this epic exists to remove, and
+        // the repository already avoids zero-amount REFUNDED events deliberately
+        // elsewhere - `group-cancel.ts` writes CANCELLED rather than REFUNDED at
+        // zero, and `booking-cancel.ts` carries an explicit "Deliberately NO
+        // REFUNDED here" comment.
+        //
+        // No OPEN row is stranded by this. Neither legacy creator can make a
+        // zero-amount task (both guard on a positive refund), and a row that
+        // somehow carried one is still DISMISSABLE - which is the state it should
+        // have been in.
+        throw new ManualBookingPaymentError(
+          "A completed refund must be more than zero — if nothing is due, dismiss the task with a note instead.",
+          400
+        );
       }
     }
 
@@ -567,9 +603,7 @@ export async function resolveManualRefundTask(
         // leaves it exactly as it was — including null — because DISMISSED means
         // "reviewed, no adjustment is due for this occurrence", and writing a
         // zero there would be the magic value this epic exists to remove.
-        ...(resolution === "completed"
-          ? { amountCents: settledAmountCents }
-          : {}),
+        ...(settlement ? { amountCents: settlement.amountCents } : {}),
       },
     });
     if (claimed.count === 0) {
@@ -579,7 +613,7 @@ export async function resolveManualRefundTask(
       );
     }
 
-    if (resolution === "completed" && settledAmountCents !== null) {
+    if (settlement && task.paymentId !== null) {
       // #2797 (owner decision D2): a credit-only task (`paymentId` null) has no
       // captured payment to allocate a refund against — the money is returned as
       // account credit or off-Stripe by hand — so the local refund allocation is
@@ -587,12 +621,32 @@ export async function resolveManualRefundTask(
       // the ledger record that money was returned; doing it at creation time
       // would have the mirror claim a refund before the club handed anything
       // back.
-      if (task.paymentId !== null) {
+      try {
         await applyLocalRefundAllocation({
           paymentId: task.paymentId,
-          amountCents: settledAmountCents,
+          amountCents: settlement.amountCents,
           store: tx,
         });
+      } catch (error) {
+        // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the
+        // amount always came from cancellation or capture policy and could not
+        // exceed what was captured; now an admin types it. The cap itself is not
+        // weakened by a byte here - the allocation still refuses and the
+        // transaction still rolls back - but a correct refusal must not be
+        // reported as a server fault: an untyped Error falls past the route's
+        // `instanceof ManualBookingPaymentError` check, so the operator was told
+        // "Could not close the refund task" and monitoring recorded a 500 for
+        // working code. This says what is wrong and what to do about it.
+        if (
+          error instanceof Error &&
+          error.message === "Refund amount exceeds captured payments"
+        ) {
+          throw new ManualBookingPaymentError(
+            "That is more than was ever captured on this payment — check the amount against the booking's payment history.",
+            400
+          );
+        }
+        throw error;
       }
     }
 
@@ -625,10 +679,10 @@ export async function resolveManualRefundTask(
           // before and after. `raisedAmountCents` is what the task was raised
           // with, `previousAmountCents` what it carried when this admin opened
           // it, and `amountCents` what it closed at.
-          amountCents: settledAmountCents,
+          amountCents: settlement?.amountCents ?? null,
           previousAmountCents: task.amountCents,
           raisedAmountCents: task.raisedAmountCents,
-          amountAmended,
+          amountAmended: settlement?.amended ?? false,
           kind: task.kind,
           resolution,
         },
@@ -640,10 +694,34 @@ export async function resolveManualRefundTask(
       taskId: task.id,
       bookingId: task.bookingId,
       paymentId: task.paymentId,
-      amountCents: settledAmountCents,
+      amountCents: settlement?.amountCents ?? null,
       raisedAmountCents: task.raisedAmountCents,
-      amountAmended,
+      amountAmended: settlement?.amended ?? false,
       kind: task.kind,
+      /**
+       * #3030: the refund this completion actually MADE, or null.
+       *
+       * Non-null exactly when a local refund allocation was written above, which
+       * is what the `REFUNDED` booking event is the record of. A credit-only task
+       * (`paymentId` null) moves nothing here: no allocation, no ledger entry, no
+       * account credit, and no change to `Payment.refundedAmountCents`. Recording
+       * `REFUNDED` for one would put a claim in the booking's DURABLE event log
+       * that the system can point to nothing to back - and that log is
+       * member-facing, because `booking-narrative.ts` turns the first
+       * `REFUNDED`/`CREDITED` event into the sentence a member reads about a
+       * cancelled booking's settlement. What a member would be shown is the test
+       * this fails: "your money was refunded" when nothing in this system
+       * returned any.
+       *
+       * The admin's action is still fully recorded - in the AUDIT log, which is
+       * where "an operator closed this task" belongs. When #3032/#3033 wire the
+       * path that actually ISSUES the account credit, the booking event belongs
+       * there, written where the money moves. `INV-PAY-051` says the same.
+       */
+      recordedRefund:
+        settlement && task.paymentId !== null
+          ? { amountCents: settlement.amountCents }
+          : null,
       memberId: task.booking.memberId,
       status:
         resolution === "completed"
@@ -652,12 +730,12 @@ export async function resolveManualRefundTask(
     };
   });
 
-  if (resolution === "completed" && result.amountCents !== null) {
+  if (result.recordedRefund) {
     await recordBookingEvent({
       bookingId: result.bookingId,
       type: BookingEventType.REFUNDED,
       actorMemberId: actingMemberId,
-      amountCents: result.amountCents,
+      amountCents: result.recordedRefund.amountCents,
       reason: "manual_refund_completed",
     });
   }

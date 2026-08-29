@@ -322,7 +322,7 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("completes a credit-only task with no payment behind it, and writes no refund allocation to allocate against", async () => {
+  it("MUTATION: completes a credit-only task without claiming a refund the system never made", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(
       editReviewTask({ paymentId: null })
     );
@@ -339,9 +339,102 @@ describe("#3030 - pricing an unknown amount at completion", () => {
     // link to satisfy the model is exactly what owner decision D2 removed.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(result.amountCents).toBe(4500);
-    expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "REFUNDED", amountCents: 4500 })
+
+    // And NO booking event. Nothing here writes account credit, nothing moves in
+    // the ledger and `Payment.refundedAmountCents` is untouched - so a REFUNDED
+    // event would put a claim in the booking's durable, MEMBER-FACING log that
+    // the system can point to nothing to back: `booking-narrative.ts` turns the
+    // first REFUNDED/CREDITED event into the sentence a member reads about their
+    // cancelled booking's settlement. The admin's action is in the audit log,
+    // which is where it belongs.
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.manual-refund-task.complete",
+        metadata: expect.objectContaining({ amountCents: 4500 }),
+      }),
+      tx
     );
+  });
+
+  it("MUTATION: refuses to COMPLETE at zero and points the operator at dismissal instead", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Nothing turned out to be owed.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 0,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    // COMPLETED at 0 would write `amountCents = 0` and a $0.00 REFUNDED booking
+    // event, which `booking-narrative.ts` selects by TYPE without filtering on
+    // amount - shadowing any genuine later settlement event. "Reviewed, nothing
+    // is due" is DISMISSED; magic zero is what this epic exists to remove.
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("refuses to complete at zero even when the ZERO came from the task's own stored amount rather than the operator", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ amountCents: 0, raisedAmountCents: 0 })
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "closing it",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: null,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("tells the operator when the confirmed amount exceeds what was ever captured, instead of logging a 500 for a correct refusal", async () => {
+    // Newly reachable: before #3030 the amount always came from cancellation or
+    // capture policy and could not exceed the capture. `applyLocalRefundAllocation`
+    // throws a plain Error, which the route's `instanceof ManualBookingPaymentError`
+    // check misses - so the operator saw "Could not close the refund task" and
+    // monitoring recorded a server fault for working code. The cap itself is
+    // untouched: the allocation still refuses and the transaction still rolls back.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
+      new Error("Refund amount exceeds captured payments")
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "priced at 900",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 90000,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not disguise some OTHER allocation failure as an operator input error", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
+      new Error("connection reset")
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "priced",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 9000,
+      })
+    ).rejects.toMatchObject({ message: "connection reset" });
   });
 });
 

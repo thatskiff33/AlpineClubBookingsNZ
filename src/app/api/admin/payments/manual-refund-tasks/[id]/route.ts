@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { requireAdmin } from "@/lib/session-guards";
+// `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
+// inline `.number().int().nonnegative()`.
+import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
 import {
   ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
@@ -25,6 +28,13 @@ const confirmedField = z.literal(true);
  * the task already carries" — and it is exactly what the current queue screen
  * means when it posts no amount. The pricing input that will send a real figure
  * is #3033's.
+ *
+ * ZERO IS REFUSED (`INV-PAY-051`). "Reviewed, nothing is due" is DISMISSED, not a
+ * completion at $0.00 — a $0 completion records a refund the club did not make.
+ * The rule is enforced in `resolveManualRefundTask` too, which is the real
+ * boundary; this refuses it a step earlier so the operator gets a validation
+ * message rather than a thrown one, and so the two layers cannot drift into
+ * disagreeing about what an amount may be.
  */
 const bodySchema = z.discriminatedUnion("resolution", [
   z
@@ -32,10 +42,8 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("completed"),
       note: noteField,
       confirmed: confirmedField,
-      confirmedAmountCents: z
-        .number()
-        .int()
-        .nonnegative()
+      confirmedAmountCents: nonNegativeCentsSchema
+        .positive()
         .optional()
         .nullable(),
     })

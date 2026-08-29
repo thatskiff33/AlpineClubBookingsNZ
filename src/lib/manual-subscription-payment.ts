@@ -53,6 +53,20 @@ export class ManualSubscriptionPaymentError extends Error {
 
 export const MANUAL_PAYMENT_NOTE_MAX = 500;
 
+/**
+ * `ManualRefundTask.reason` is `@db.VarChar(500)`, and every writer that builds
+ * that sentence truncates to it.
+ *
+ * `INV-SSOT` (#3030): it lives HERE, beside `MANUAL_PAYMENT_NOTE_MAX`, which is
+ * the same column width for the sibling `note` field on the same table and is
+ * already the house pattern - imported by `manual-booking-payment.ts` and
+ * re-exported from it. Before this there were three homes for one column's
+ * width: the schema, a bare `500` literal in `booking-cancel.ts`, and a private
+ * constant in `edit-financial-review.ts`, so widening the column would have
+ * fixed one truncation and silently left two.
+ */
+export const MANUAL_REFUND_TASK_REASON_MAX = 500;
+
 export type ManualPaymentDirection = "paid" | "unpaid";
 
 export type ManualSubscriptionPaymentResult = {

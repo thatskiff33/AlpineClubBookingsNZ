@@ -214,6 +214,23 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     );
   });
 
+  it("names the nights it gave back rather than implying a RANGE across ones it did not", () => {
+    // "3 nights (2026-08-02 to 2026-08-20)" reads as a nineteen-night span. This
+    // sentence is what an admin reads in the finance queue while pricing real
+    // money, so it must not overstate the stay.
+    const reason = buildEditFinancialReviewReason(
+      occurrence({
+        surrenderedNightDates: [
+          day("2026-08-02"),
+          day("2026-08-03"),
+          day("2026-08-20"),
+        ],
+      }),
+    );
+    expect(reason).toContain("3 nights: 2026-08-02, 2026-08-03, 2026-08-20");
+    expect(reason).not.toContain("2026-08-02 to 2026-08-20");
+  });
+
   it("does not move when only the operator prose changes, because text is not the identity", () => {
     const key = editFinancialReviewOccurrenceKey(occurrence());
     const reason = buildEditFinancialReviewReason(occurrence());
@@ -316,6 +333,7 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
       new Prisma.PrismaClientKnownRequestError("unique", {
         code: "P2002",
         clientVersion: "test",
+        meta: { target: ["occurrenceKey"] },
       }),
     );
 
@@ -329,6 +347,104 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
       name: "EditFinancialReviewError",
       status: 409,
     });
+  });
+
+  it("does NOT tell the caller to retry a unique violation on some OTHER constraint, which retrying could never fix", async () => {
+    // Today `occurrenceKey` is the only unique constraint on ManualRefundTask
+    // besides the cuid primary key, so this cannot happen yet. A later
+    // `@@unique([bookingId, kind])` would make it happen, and the operator would
+    // be told "raised concurrently - retry the edit" for a violation that every
+    // retry reproduces exactly.
+    mocks.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("unique", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: { target: ["bookingId", "kind"] },
+      }),
+    );
+
+    await expect(
+      raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: occurrence(),
+        store: store(),
+      }),
+    ).rejects.not.toBeInstanceOf(EditFinancialReviewError);
+  });
+
+  it("MUTATION: refuses the FULL Prisma client, because the advisory lock it takes would commit and release before the find", async () => {
+    // The type cannot refuse it: Prisma 7's deny list is
+    // ["$connect","$disconnect","$on","$use","$extends"], so `PrismaClient` is
+    // structurally assignable to `Prisma.TransactionClient`, and `$transaction`
+    // is on BOTH (Prisma 7 nests transactions). `$connect` is what tells them
+    // apart, and this is the only thing enforcing it.
+    const fullClient = {
+      ...store(),
+      $connect: () => Promise.resolve(),
+      $transaction: () => Promise.resolve(),
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: occurrence(),
+        store: fullClient,
+      }),
+    ).rejects.toMatchObject({
+      name: "EditFinancialReviewError",
+      status: 500,
+    });
+    // Nothing was attempted with it - in particular no advisory lock was taken
+    // in an implicit transaction that would commit and release it immediately.
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a real transaction client, which DOES carry $transaction on Prisma 7", async () => {
+    // Guards the guard: discriminating on `$transaction` instead of `$connect`
+    // would refuse every legitimate caller. Measured against a real PostgreSQL
+    // on 7.9.1, an interactive transaction client reports
+    // `typeof tx.$transaction === "function"` and `typeof tx.$connect ===
+    // "undefined"`.
+    const txClient = {
+      ...store(),
+      $transaction: () => Promise.resolve(),
+    } as unknown as Prisma.TransactionClient;
+
+    await expect(
+      raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: occurrence(),
+        store: txClient,
+      }),
+    ).resolves.toMatchObject({ created: true });
+  });
+
+  it("refuses to write a reviewContext its own reader could not read back, rather than storing evidence nobody can recover", async () => {
+    // The read site returns null rather than throwing, deliberately - an admin
+    // must still see the task. That is the wrong behaviour for the WRITE, where
+    // the alternative is a row whose money evidence is lost for good: the edit
+    // destroys the stored night prices, and the occurrence key is minted over
+    // the same material, so the identity goes with it.
+    await expect(
+      raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: occurrence({
+          // A caller whose planner type widened. TypeScript cannot stop this:
+          // the value crosses a `Json` boundary and `CalendarDate` is a branded
+          // string a cast can forge.
+          storedEvidence: {
+            guestTotalCents: 4500.5,
+            nightPrices: [],
+          },
+        }),
+        store: store(),
+      }),
+    ).rejects.toMatchObject({
+      name: "EditFinancialReviewError",
+      status: 400,
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
   });
 
   it("lets any other database error through untouched, so a real fault is not disguised as a race", async () => {

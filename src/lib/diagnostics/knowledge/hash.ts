@@ -11,7 +11,19 @@
  *    object key order can never shift the bytes.
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex, sortKeysDeep } from "@/lib/stable-json";
+
+/**
+ * `INV-SSOT` (#3030): the recursive key sorter and the sha256-hex of a string
+ * both live in `@/lib/stable-json`, which is the one home shared with the two
+ * derived-identity hashers (`booking-exception-requests.ts` and
+ * `edit-financial-review.ts`). They were duplicated here until #3030. Only the
+ * two things that are genuinely specific to the knowledge bundle stay in this
+ * file: BOM/CRLF normalization, and `canonicalStringify`'s pinned indentation.
+ * `sha256Hex` is re-exported so every existing importer of this module keeps
+ * working and there is still only one definition.
+ */
+export { sha256Hex };
 
 /**
  * Normalize file/excerpt text before hashing or excerpting: LF-only newlines,
@@ -20,36 +32,6 @@ import { createHash } from "node:crypto";
 export function normalizeContent(raw: string): string {
   const withoutBom = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
   return withoutBom.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-
-/** Lowercase hex sha256 of a UTF-8 string. */
-export function sha256Hex(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
-
-function sortKeysDeep(value: unknown): JsonValue {
-  if (Array.isArray(value)) {
-    return value.map(sortKeysDeep);
-  }
-  if (value !== null && typeof value === "object") {
-    const source = value as Record<string, unknown>;
-    const sorted: Record<string, JsonValue> = {};
-    for (const key of Object.keys(source).sort()) {
-      sorted[key] = sortKeysDeep(source[key]);
-    }
-    return sorted;
-  }
-  // Primitives pass through; JSON.stringify rejects undefined/functions, which is
-  // correct — the bundle is plain data.
-  return value as JsonValue;
 }
 
 /**

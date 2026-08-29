@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import type { ClubTimeZone } from "@/lib/club-time";
 import {
@@ -11,7 +9,7 @@ import {
   type PolicyExceptionReasonCode,
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
-import { stableStringify } from "@/lib/stable-json";
+import { canonicalNights, stableDigest } from "@/lib/stable-json";
 
 /**
  * The durable member-request + admin-decision workflow that sits ON TOP of the
@@ -347,11 +345,6 @@ export type ExceptionProposalSnapshot =
   | NewBookingProposalSnapshot
   | ModificationProposalSnapshot;
 
-/** Sort + de-duplicate a night list so a snapshot is canonical. */
-function canonicalNights(nights: readonly string[]): string[] {
-  return [...new Set(nights)].sort();
-}
-
 /** Canonicalise a party so two freezes of the same facts are byte-identical. */
 export function canonicalizeProposalParty(party: ProposalParty): ProposalParty {
   const guests = party.guests
@@ -406,7 +399,7 @@ export function canonicalizeProposalSnapshot(
  */
 export function computeProposalHash(snapshot: ExceptionProposalSnapshot): string {
   const canonical = canonicalizeProposalSnapshot(snapshot);
-  return createHash("sha256").update(stableStringify(canonical)).digest("hex");
+  return stableDigest(canonical);
 }
 
 // ---------------------------------------------------------------------------
