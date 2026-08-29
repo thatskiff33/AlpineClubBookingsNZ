@@ -770,5 +770,5 @@ ten pre-split domain headings the index keeps verbatim.
 | --- | --- |
 | `INV-SSOT-001` | One canonical definition per concept: if you cannot change a fact in one place, that is the defect, and the structural remedy is preferred over the guard |
 | `INV-SSOT-002` | Both sides of a comparison are produced by the same helper — including a value and its own encoding, a writer and its reader, a key's mint and its parse |
-| `INV-SSOT-003` | An authority-bearing parameter carries no default; the lint arm guards the narrower club civil-time class, and every exclusion is judged, measured and stated rather than discovered |
+| `INV-SSOT-003` | An authority-bearing parameter carries no default; the lint arm guards the club civil-time names plus a named list of ambient-state resolvers, and every exclusion is judged, measured and stated rather than discovered |
 | `INV-SSOT-004` | Two instruments that claim independence must measure the same way, or they are one instrument and a rubber stamp; `stripComments` lives once |

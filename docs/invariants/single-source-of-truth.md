@@ -59,6 +59,21 @@ are permanent: never renumbered, never reused.
   restated here — a number repeated in prose is a number that drifts.
 - A duplicated age rule that still carried a bug its canonical copy had been
   fixed for is the shape this rule exists to prevent; #3123 measured it.
+- Second worked example, and the one that shows the drift happening rather than
+  its consequence: #3131 found the rule deciding which guests a promotional code
+  covers on an existing booking written out **five** times across the
+  booking-modification and guest-removal paths, and one of the five had already
+  diverged in shape. It is now `src/lib/promo-stored-guest-targets.ts`, reading
+  the field it turns on through the one definition of that field's meaning in
+  `promo-guest-scope.ts`. Two details worth carrying forward: the issue was filed
+  saying "four" after a grep of three `src/lib` files plus one route, so the
+  missed copy was the member-facing one; and no census guards against a sixth,
+  because the remedy is structural and because that module's docblock quotes the
+  old spelling to explain what replaced it — which a raw-source scanner would
+  report as the defect itself (`INV-SSOT-004`). The convergence covers every
+  server-side scope decision; the admin promo-codes client still reads the same
+  default inline twice, which is recorded in `promo-guest-scope.ts` rather than
+  left silent, and waits on the server/client boundary work in #2850/#2851.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
@@ -136,21 +151,45 @@ are permanent: never renumbered, never reused.
     is governed by `INV-CONFIG-003`, under which the database may force the safer
     role — a second source by this file's own definition. Widen the arm only on a
     fresh measurement, recorded here.
-- **The environment list is a FLOOR, not the boundary of the rule.** The first
-  bullet bans a default resolving "a global, environment or configuration
-  authority"; the arm mechanises only the environment part. The measured
-  instance sitting outside it is #3116:
-  `seasonYearsLabel(seasonYear, yearEndMonth = getFinancialYearEndMonth())`,
-  where the default reads a **module-level cache** that no background worker
-  seeds — so the subscription-invoice mint renders the wrong season for a
-  club whose financial year does not end in March, while every call site reads
-  as though it stated the fact. Same defect, same remedy (delete the default,
-  require the argument), and an env-name regex cannot see it. Four live
-  instances: `financial-year.ts` and `season-label.ts` ×3. **A default supplying
-  ambient process-global state breaks this rule whether or not the arm reports
-  it.** Widening the arm to a named list of ambient-state resolvers is tracked
-  in #3133 and deliberately not done here, because #3116 is deleting those
-  defaults in flight and the two changes would collide.
+- **The arm has two halves: the environment names above, and a NAMED LIST of
+  ambient-state resolvers** (#3133). A default that calls a **synchronous
+  accessor over a module-level cache with a shipped fallback** is the same defect
+  written through a function name — unseeded, it answers with the product default
+  and the call site reads as though it stated the fact. The measured instance is
+  #3116: a season label defaulting to `getFinancialYearEndMonth()`, a cache no
+  outbox worker seeds, put the wrong season on a Xero **invoice line** for a club
+  whose financial year does not end in March. **A default supplying ambient
+  process-global state breaks this rule whether or not the arm reports it.**
+  - The four qualifying clauses, the banned names, and why a named list rather
+    than a pattern — most call-valued defaults in this tree are legitimate, and
+    the measurement saying so is recorded with the list — live once, in
+    `eslint.config.mjs` above `NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT`. No figure
+    is restated here; a number repeated in prose is a number that drifts.
+  - A resolver returning the **club's own** answer on every call
+    (`await clubTimeZone()`, `await readClubTimeZoneOutsideRequest()`) is not
+    this defect and is not on the list.
+  - **`getFinancialYearEndMonth` is PENDING, not exempt**, and the difference is
+    structural: an exemption is a file the arm stops applying to and shelters
+    whatever that file grows later, which is exactly how a `= APP_TIME_ZONE`
+    default survived for months inside a lift written for a READ.
+    `AUTHORITY_DEFAULT_RESTRICTIONS` still carries **zero** exemptions and
+    `ssot-authority-default-guard.test.ts` asserts it. A pending name is one
+    identifier the arm declines to fire on, with its live population **pinned**
+    in that suite — so the deferral cannot grow, and the moment the last default
+    goes the pin fails and hands the reader the promotion step. That is a ratchet
+    with a mechanical trigger rather than a list that rots.
+  - Its remaining defaults are held by **cost, not doubt**, and each needs a
+    decision rather than more threading. `seasonSelectLabel`'s callers are
+    display sites, most of them in browser bundles that the `server-only` seeder
+    can never reach, so the year-end has to arrive as data the way the club's
+    zone already does. `seasonYearOfCalendarDate` cascades through two optional
+    pass-throughs into most of the booking, waitlist, membership and Xero tree,
+    where the change actually written at each site would be
+    `getFinancialYearEndMonth()` **at** the call site — compliant with this
+    rule's letter while reading the same cold cache, and one ambient read spread
+    across every one of those modules. That is the `APP_STRIPE_CURRENCY` argument
+    above, again. The figures live with the pending entry in `eslint.config.mjs`,
+    beside the pin that keeps them true.
 - **What no syntactic arm here reaches**, stated plainly rather than left as a
   discovered gap: a default that calls a **club-time** resolver
   (`= await clubTimeZone()`), which returns the club's own answer and is not
@@ -185,14 +224,23 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and it is not yet the only one.** Eighteen definitions exist
-  in the tree and three files import the canonical one. **Use it; do not write a
-  nineteenth.** The copies are not equivalent — `analytics-settings.test.ts` is
-  a two-regex strip that drops newlines, where the canonical one is a
-  mode-tracking scanner that preserves them — which is this very rule's failure
-  mode, at scale, inside the tests meant to enforce it. Converging them is
-  #3132; until it lands, treat a source-scanning test you did not write as
-  measuring differently from yours until you have checked.
+  `stripComments`, and since #3132 it is the only one.** Every source-scanning
+  test imports it, and so does the one CI script that used to export a copy.
+  **Use it; do not write a second.** Nothing fails on a second copy yet — the
+  lint arm is a follow-up, because this rule's first bullet prefers deleting the
+  copies to policing them — so this one is on review.
+- **What converging measured is the argument for the rule, not a footnote.** The
+  sixteen copies fell into five behaviour classes, and they disagreed where it
+  mattered: six tracked no string literals at all, so a `//` inside `"https://x"`
+  opened a comment and ate the rest of the line; one was the two-regex strip that
+  drops newlines. Worse, the canonical itself read `.replace(/\//g, "_")` — two
+  adjacent slashes inside a regex literal — as a line comment and deleted real
+  code in a dozen files, a defect the #2869 review had already found and fixed in
+  `xero-provider-date-boundary-census.test.ts` **alone**. One of two instruments
+  repaired is this rule stated as a defect; the predicate now lives with the
+  scanner and that census imports it. Where the remaining gaps are, and why
+  neither the scanner nor a full TypeScript parse dominates the other, is in the
+  canonical module's docblock rather than restated here.
 - When you add the second instrument to a guard, check what the first one
   normalises before writing the second, and say in the test which method both
   share. **Prefer the broader instrument for the second one**: over-reporting is
