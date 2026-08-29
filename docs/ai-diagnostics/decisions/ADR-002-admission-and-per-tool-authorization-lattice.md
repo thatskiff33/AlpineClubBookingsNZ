@@ -47,11 +47,17 @@ strength of admission alone.
 > **Owner-ratified (2 August 2026, #2370): admission counts *all seven* areas,
 > `finance` included** — a treasurer holding only `finance:view` may open the
 > shell, because the shell exposes nothing and their finance-scoped tools still
-> gate independently. This is deliberately *wider* than `hasAdminPortalAccess`
-> (`admin-permissions.ts:556-561`), which excludes a finance-only account from
-> the *admin portal*; the shell is not the admin portal and carries no data.
-> Narrowing admission later (to exclude finance-only accounts) remains possible
-> without affecting any tool's own gate, but requires a fresh owner decision.
+> gate independently. Narrowing admission later (to exclude finance-only
+> accounts) remains possible without affecting any tool's own gate, but requires
+> a fresh owner decision.
+>
+> **This used to be wider than `hasAdminPortalAccess`, and since #2984 the two
+> agree.** That function excluded `finance`, so a finance-only account was not
+> counted an admin-portal user at all, and this ADR had to say the shell is not
+> the admin portal in order to admit them. The owner corrected the portal rule
+> itself: any one of the seven areas is standing to enter the shell, and
+> standing is not authorization for any area. Nothing about admission here
+> changes — the reasoning simply stopped being an exception.
 
 ### 2. Every tool freshly re-checks its own `area:view` at call time
 

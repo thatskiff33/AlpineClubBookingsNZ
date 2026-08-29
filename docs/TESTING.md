@@ -949,3 +949,35 @@ Two limits, stated rather than implied:
    typically resolving `requireAdmin` straight to `{ ok: true, session }`. Those
    bypass the permission check entirely rather than degrading it, and neither
    control above says anything about them.
+
+### The guard itself: `admin-route-authorization-proof.test.ts`
+
+Both limits above have the same shape — the mock stands where the guard should
+be — and no amount of care inside a mocked suite closes it. `#2975` added the
+suite that does not mock it. It discovers every admin page and every
+`/api/admin` route **from disk**, then puts each one to the real `requireAdmin`
+and the real `guardAdminLayout`, through the same `x-pathname` /
+`x-request-method` headers `src/proxy.ts` stamps on a real request, for sixteen
+access-role grids.
+
+Read its arrangement before adding to it, because the parts are deliberately not
+interchangeable:
+
+- the **sweeps** compute what they expect from `getAdminRouteRequirement`, so
+  they prove the guard consults the map and honours `view` versus `edit`, and
+  they are explicitly incapable of catching a map that is wrong;
+- the **anchor table** is the second opinion, hand-written for that reason: it
+  names which area a handful of unmistakable routes belong to, and a seeded
+  wrong mapping contradicts it by name. It is drift-guarded against the
+  enumeration, so it cannot rot into a list of routes that no longer exist;
+- the **floors** (`toBeGreaterThan`) exist because a broken walk would otherwise
+  make every sweep pass by covering nothing — verified by pointing the walk at a
+  directory that does not exist, which reddens five assertions rather than none.
+
+It reads `src/` from disk for the enumeration, so like the forwarding contract
+above it has no import edge to the routes it covers and `npm run test:related`
+will not select it. **Run it by name when you touch admin authorization, the
+route-to-area map, or either guard.**
+
+Writing a per-route suite does not oblige you to extend this file. Assert domain
+behaviour in the route suite; authorization is proved here, once, for everything.

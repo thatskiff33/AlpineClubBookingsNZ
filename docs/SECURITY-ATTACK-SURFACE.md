@@ -200,6 +200,20 @@ These family rules are enforced by automated tests (issue #1132):
 - `src/lib/__tests__/finance-api-auth.test.ts` behaviourally tests the
   `/api/finance` guard pair, including that a full `ADMIN` without a finance
   role is rejected (the finance surface is separate from the admin portal).
+- `src/lib/__tests__/admin-route-authorization-proof.test.ts` is the one that
+  runs the real guards (#2975). The three above check that a route reaches a
+  guard, and that the map assigns the area somebody reviewed; every per-route
+  suite mocks `@/lib/session-guards` and therefore says nothing about
+  `requireAdmin` itself. This suite discovers every admin page and `/api/admin`
+  route from disk and puts each one to the real `requireAdmin` and the real
+  `guardAdminLayout`, through the `x-pathname` / `x-request-method` headers
+  `src/proxy.ts` stamps, for sixteen access-role grids: single-area holders,
+  a Full Admin, a plain member and a deactivated administrator. It also proves
+  the #2984 boundary by attempt — a finance-only administrator is refused every
+  admin page outside Finance and every non-finance API route on GET, POST,
+  PATCH, PUT and DELETE. Its hand-written area-anchor table is the part a
+  seeded wrong route-to-permission mapping contradicts; the sweeps derive their
+  expectation from the map and are stated as unable to catch that on their own.
 
 ### Public or Provider-Signed Exceptions
 
