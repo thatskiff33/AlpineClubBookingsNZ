@@ -121,9 +121,22 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
 
 /**
  * Integer cents, non-negative — `INV-MONEY-001`, and the same rule the
- * `ManualRefundTask_amount_nonnegative` CHECK enforces in the database. Null is
- * accepted where the evidence is genuinely absent, which is not the same as zero
- * (see `StoredNightPriceEvidence`).
+ * `ManualRefundTask_amount_nonnegative` CHECK enforces in the database.
+ *
+ * THE ONE PREDICATE (`INV-SSOT`). A stored `BookingGuestNight.priceCents` is a
+ * bare `Int` with no non-negative constraint, so "is this stored value usable as
+ * money at all" is a question several modules ask — the planner that refuses to
+ * price from it (#3031), the review-context schema below, and the task writer.
+ * They must agree to the value, so the test lives here once and is imported.
+ */
+export function isNonNegativeIntegerCents(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+/**
+ * The schema form of {@link isNonNegativeIntegerCents}. Null is accepted where
+ * the evidence is genuinely absent, which is not the same as zero (see
+ * `StoredNightPriceEvidence`).
  */
 const nonNegativeCentsOrNull = z.number().int().nonnegative().nullable();
 

@@ -16,6 +16,7 @@ import {
 } from "@prisma/client";
 
 import { ApiError } from "@/lib/api-error";
+import type { EditFinancialReviewOccurrence } from "@/lib/edit-financial-review-context";
 import { OTHER_LODGE_RATE_IN_PROGRESS_MESSAGE } from "@/lib/booking-other-lodge-rate";
 import {
   getBookingEditPolicy,
@@ -464,6 +465,37 @@ export class BookingModifyReviewJustificationRequiredError extends ApiError {
       400,
     );
     this.name = "BookingModifyReviewJustificationRequiredError";
+  }
+}
+
+/**
+ * Thrown when a booking edit's structural change is fine but the exact financial
+ * adjustment cannot be read from the booking's own stored history (#3031, epic
+ * #2797).
+ *
+ * The planner never returns an amount in this case — there is no field on its
+ * review branch to read one from — so this is the seam between "we could not
+ * price it" and "here is what happens next". Today it refuses the edit. #3032
+ * replaces the refusal with the epic's real answer: save the stay/guest change
+ * and park the money as one OPEN admin review task. The occurrences are carried
+ * on the error precisely so that change is a re-route rather than a re-derive.
+ *
+ * ## The wording is member-facing and is bound by the epic
+ *
+ * No estimate and no `$0` (both are prohibited), no "corrupt"/"invalid data"
+ * terminology, and nothing that reads as the member's fault — the stored history
+ * is the club's record, not theirs.
+ */
+export class BookingEditFinancialReviewRequiredError extends ApiError {
+  /** Machine-readable, in the style of `REVIEW_JUSTIFICATION_REQUIRED`. */
+  readonly code = "FINANCIAL_REVIEW_REQUIRED";
+
+  constructor(readonly occurrences: readonly EditFinancialReviewOccurrence[]) {
+    super(
+      "The club needs to confirm the amount for this change before it can be saved. Nothing has been changed yet — please contact the office, who can complete it.",
+      409,
+    );
+    this.name = "BookingEditFinancialReviewRequiredError";
   }
 }
 
