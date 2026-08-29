@@ -292,3 +292,127 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     expect(refusal.message).not.toMatch(/\$|corrupt|invalid|error|your data/i);
   });
 });
+
+describe("#3031 no magic zero reaches a night row", () => {
+  /**
+   * `syncGuestNights` used to write `bg?.perNightCents[k] ?? 0`.
+   *
+   * That write BECOMES the booking's sold-price history, so the default was a
+   * real financial number - zero - put on a real night, which the next edit
+   * would read back as evidence that the member paid nothing for it. Epic #2797
+   * prohibits exactly that, and a per-night vector shorter than the night list
+   * is a wiring defect in whoever built the breakdown rather than a night that
+   * happens to be free.
+   *
+   * The state is unreachable through the planner, which is the point: the guard
+   * exists so that a FUTURE breakdown builder fails loudly instead of quietly
+   * zeroing a night. So it is driven here by handing `applyGuestChanges` the
+   * malformed breakdown directly.
+   */
+  function writeDouble() {
+    const created: unknown[] = [];
+    return {
+      created,
+      tx: {
+        bookingGuestNight: {
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+          createMany: vi.fn(async (args: { data: unknown }) => {
+            created.push(args.data);
+            return { count: 1 };
+          }),
+        },
+        bookingGuest: { update: vi.fn().mockResolvedValue(undefined) },
+      } as never,
+    };
+  }
+
+  const PLAN_ENTRY = {
+    guest: { id: "g1", memberId: "m1" },
+    stayStart: D(HELD[0]),
+    stayEnd: D("2026-08-23"),
+    nights: HELD.map((night) => D(night)),
+    perNightCents: [RATE, RATE, RATE],
+    futureNights: [],
+    priceCents: 3 * RATE,
+    oldFuturePriceCents: 0,
+    newFuturePriceCents: 0,
+    futureDeltaCents: 0,
+    removedFromFuture: false,
+    futureStart: D(HELD[0]),
+  };
+
+  it("refuses to write a night the breakdown did not price", async () => {
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx, created } = writeDouble();
+
+    await expect(
+      applyGuestChanges(tx, {
+        bookingId: "bk-parity",
+        newCheckIn: D(HELD[0]),
+        newCheckOut: D("2026-08-23"),
+        removedGuests: [],
+        remainingGuests: [],
+        proposedRemainingGuests: [],
+        normalizedAddGuests: undefined,
+        priceBreakdown: {
+          totalPriceCents: 3 * RATE,
+          guests: [
+            {
+              priceCents: 3 * RATE,
+              // One amount short of the three nights below.
+              perNightCents: [RATE, RATE],
+              nightDates: HELD.map((night) => D(night)),
+            },
+          ],
+        },
+        inProgressPlan: {
+          proposedExistingGuests: [PLAN_ENTRY],
+          proposedAddedGuests: [],
+        } as never,
+      }),
+    ).rejects.toThrow(/No priced amount for the night of/);
+
+    // And nothing was written: the refusal comes before the row insert, so a
+    // partially-zeroed night set cannot survive the failure.
+    expect(created).toEqual([]);
+  });
+
+  it("writes the priced amounts when the breakdown is complete", async () => {
+    // The control, so the case above cannot pass on a function that always
+    // throws.
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx, created } = writeDouble();
+
+    await applyGuestChanges(tx, {
+      bookingId: "bk-parity",
+      newCheckIn: D(HELD[0]),
+      newCheckOut: D("2026-08-23"),
+      removedGuests: [],
+      remainingGuests: [],
+      proposedRemainingGuests: [],
+      normalizedAddGuests: undefined,
+      priceBreakdown: {
+        totalPriceCents: 3 * RATE,
+        guests: [
+          {
+            priceCents: 3 * RATE,
+            perNightCents: [RATE, RATE, RATE],
+            nightDates: HELD.map((night) => D(night)),
+          },
+        ],
+      },
+      inProgressPlan: {
+        proposedExistingGuests: [PLAN_ENTRY],
+        proposedAddedGuests: [],
+      } as never,
+    });
+
+    expect(created).toEqual([
+      HELD.map((night) => ({
+        bookingGuestId: "g1",
+        stayDate: D(night),
+        priceCents: RATE,
+      })),
+    ]);
+  });
+});

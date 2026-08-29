@@ -372,6 +372,77 @@ beforeEach(() => {
   mocks.sendAdminMinorsOnlyReviewAlert.mockResolvedValue(undefined);
 });
 
+describe("DELETE guest removal - unpriceable stored history (#3031, epic #2797)", () => {
+  /**
+   * The gate that makes the credit exact, driven through the REAL service.
+   *
+   * A removal gives back every night the departing guest holds, so the credit is
+   * historical money. This path never computed it directly: it reprices the
+   * REMAINING guests and takes the difference against the booking's stored
+   * total, which is exact only while the reprice cannot move. A remaining guest
+   * whose rows carry no usable price has no locks, so their nights reprice at
+   * TODAY's rate - and all of that movement was reported as the departing
+   * guest's credit.
+   *
+   * Disarming the gate is not visible to a source census (the symbol is still
+   * there) or to the mocked pricer beside it, so it has to be asserted on
+   * BEHAVIOUR: the route refuses, and no money moves.
+   */
+  function stripStoredNightPrices(guests: Guest[]) {
+    return {
+      guests: guests.map((g) => ({
+        ...g,
+        stayStart: CHECK_IN,
+        stayEnd: CHECK_OUT,
+        // The population epic #2797 names: a booking predating
+        // `BookingGuestNight`, or one created by approving a request.
+        nights: [] as Array<{ stayDate: Date; priceCents: number }>,
+        priceCents: 4000,
+        consentStatus: null,
+        member: g.memberId
+          ? hostingMemberRow(g.memberId, { ageTier: g.ageTier })
+          : null,
+      })),
+    };
+  }
+
+  it("refuses the removal, and moves no money, when no row records a price", async () => {
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]))),
+    );
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    // The machine-readable code the edit panel branches on, echoed above the
+    // generic ApiError branch that would have dropped it.
+    expect(body.code).toBe("FINANCIAL_REVIEW_REQUIRED");
+    // Member-facing wording: no estimate, no `$0`, and nothing that reads as
+    // the member's fault.
+    expect(body.error).toMatch(/nothing has been changed yet/i);
+
+    // And the refusal is BEFORE any settlement: no refund, no credit, no
+    // lifecycle transition. A guessed amount that never moves is still a
+    // guessed amount, but one that moves is the failure this epic exists for.
+    expect(mocks.applyPaymentAdjustments).not.toHaveBeenCalled();
+    expect(mocks.applyLifecycleTransitions).not.toHaveBeenCalled();
+    expect(mocks.sendBookingModifiedEmail).not.toHaveBeenCalled();
+  });
+
+  it("still removes the guest when every strand's rows reconcile", async () => {
+    // The control: the same removal on the ordinary fixture, whose rows carry
+    // what each night was sold for. Without this the case above could pass on a
+    // route that refuses everything.
+    const res = await runRemoval("g-child", [ADULT, CHILD]);
+
+    expect(res.status).toBe(200);
+    expect(mocks.applyPaymentAdjustments).toHaveBeenCalled();
+  });
+});
+
 describe("DELETE guest removal — minors-only admin alert wiring (#1372)", () => {
   it("alerts admins when removing the last adult leaves a paid booking minors-only", async () => {
     const res = await runRemoval("g-adult", [ADULT, CHILD]);
