@@ -145,8 +145,8 @@ const calendarDateSchema = z.custom<CalendarDate>(isCalendarDate, {
  *
  * `INV-SSOT`, and this is the ONE home for it across this feature. #3030 needed
  * the rule in four places — the raise (`edit-financial-review.ts`), the
- * completion (`manual-booking-payment.ts`), the stored-evidence parser below,
- * and the admin route's request body — and there was no existing exported
+ * completion (`manual-refund-task-resolution.ts`), the stored-evidence parser
+ * below, and the admin route's request body — and there was no existing exported
  * predicate to route to: the idiom is inline at ten pre-existing sites, none of
  * them named, and `money-input.ts` is a PARSER for money a person typed, not a
  * validator for an amount that is already a number. Four callers is the second
