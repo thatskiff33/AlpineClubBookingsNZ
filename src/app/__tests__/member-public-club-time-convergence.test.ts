@@ -156,7 +156,7 @@
  * ## Comments are stripped first, and what that shares with every other census
  *
  * These three are scanned over `stripComments(source)` — the one shared
- * implementation in `scripts/ci/check-website-render-modes.mjs`, for the reason
+ * implementation in `src/lib/__tests__/support/strip-comments.ts`, for the reason
  * `importsEnvironmentZone` gives below: twenty-nine of the forty-one files this
  * group migrated name `APP_TIME_ZONE` in a comment explaining what they no
  * longer do, and a census that could not tell an explanation from a call would
@@ -181,7 +181,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { stripComments } from "../../../scripts/ci/check-website-render-modes.mjs";
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
 
 const ROOT = process.cwd();
 const APP_DIR = path.join(ROOT, "src", "app");

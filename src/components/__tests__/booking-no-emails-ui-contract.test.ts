@@ -3,6 +3,13 @@ import { join, relative, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+// The closed-world scan below asks "does this file touch `notifyMember`", and
+// raw text cannot tell a call site from prose about one. Several of these files
+// discuss the flag at length, and `booking-no-emails-notice.tsx` — which does not
+// touch it at all — explains the whole honesty rule in its module comment.
+// Matching raw text enrolled it as a notify-prompt surface.
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 /*
   #2259 (owner decision D10) — the two invariants the "No emails" UI must never
   break, checked structurally rather than by review.
@@ -131,49 +138,6 @@ function parse(file: string): ts.SourceFile {
 function eachNode(root: ts.Node, visit: (node: ts.Node) => void): void {
   visit(root);
   root.forEachChild((child) => eachNode(child, visit));
-}
-
-/**
- * `source` with every comment blanked out, using TypeScript's own parser rather
- * than a regex — the same technique, and for the same reason, as
- * `view-only-banner-contract.test.ts`.
- *
- * The closed-world scan below asks "does this file touch `notifyMember`", and
- * raw text cannot tell a call site from prose about one. Several of these files
- * discuss the flag at length, and `booking-no-emails-notice.tsx` — which does
- * not touch it at all — explains the whole honesty rule in its module comment.
- * Matching raw text enrolled it as a notify-prompt surface.
- */
-function stripComments(source: string): string {
-  const sourceFile = ts.createSourceFile(
-    "in-memory.tsx",
-    source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TSX,
-  );
-  const chars = source.split("");
-  const blank = (start: number, end: number) => {
-    for (let i = start; i < end; i += 1) {
-      if (chars[i] !== "\n") chars[i] = " ";
-    }
-  };
-  const visit = (node: ts.Node): void => {
-    const children = node.getChildren(sourceFile);
-    if (children.length > 0) {
-      for (const child of children) visit(child);
-      return;
-    }
-    for (const range of ts.getLeadingCommentRanges(source, node.getFullStart()) ??
-      []) {
-      blank(range.pos, range.end);
-    }
-    for (const range of ts.getTrailingCommentRanges(source, node.getEnd()) ?? []) {
-      blank(range.pos, range.end);
-    }
-  };
-  visit(sourceFile);
-  return chars.join("");
 }
 
 type JsxTag = ts.JsxOpeningElement | ts.JsxSelfClosingElement;

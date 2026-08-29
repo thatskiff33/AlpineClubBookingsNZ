@@ -3,6 +3,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./support/strip-comments";
+
 /**
  * #3123, the SIGNATURE-RESHAPE group: seven modules whose civil-day authority
  * moved from a DEFAULT to a REQUIRED PARAMETER, and the guard that keeps it
@@ -58,94 +60,6 @@ import { describe, expect, it } from "vitest";
  */
 
 const ROOT = path.resolve(__dirname, "../../..");
-
-/**
- * Source with every comment blanked out, newlines preserved.
- *
- * DUPLICATED FROM `club-time-escape-hatch-census.test.ts` ON PURPOSE, and this
- * is the one place in this migration where a copy beat a reuse. That module
- * exports the function, but it is a TEST FILE: importing it executes its own
- * `describe` blocks inside this file's run, so this guard would report the
- * census's ratchet failures as its own and could not be read.
- *
- * The reason to strip at all is the census's, verbatim: this repository
- * documents each defect at the site where it removed it, so the strings a scan
- * looks for are densest in exactly the files that no longer commit the defect.
- * Newlines are preserved so a reported line still points at the real line;
- * string and template literals are tracked because `"https://x"` contains a
- * `//` that is not a comment.
- */
-const NEWLINE = "\n";
-
-function stripComments(source: string): string {
-  let out = "";
-  let index = 0;
-  type Mode = "code" | "line" | "block" | "single" | "double" | "template";
-  let mode: Mode = "code";
-
-  while (index < source.length) {
-    const character = source[index];
-    const next = source[index + 1];
-
-    if (mode === "code") {
-      if (character === "/" && next === "/") {
-        mode = "line";
-        index += 2;
-        continue;
-      }
-      if (character === "/" && next === "*") {
-        mode = "block";
-        index += 2;
-        continue;
-      }
-      if (character === "'") mode = "single";
-      else if (character === '"') mode = "double";
-      else if (character === "`") mode = "template";
-      out += character;
-      index += 1;
-      continue;
-    }
-
-    if (mode === "line") {
-      if (character === NEWLINE) {
-        mode = "code";
-        out += character;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (mode === "block") {
-      if (character === "*" && next === "/") {
-        mode = "code";
-        index += 2;
-        continue;
-      }
-      if (character === NEWLINE) out += character;
-      index += 1;
-      continue;
-    }
-
-    // Inside a literal: copy through, honouring escapes, until it closes.
-    out += character;
-    if (character === "\\") {
-      const following = source[index + 1];
-      if (following !== undefined) out += following;
-      index += 2;
-      continue;
-    }
-    if (
-      (mode === "single" && character === "'") ||
-      (mode === "double" && character === '"') ||
-      (mode === "template" && character === "`")
-    ) {
-      mode = "code";
-    }
-    index += 1;
-  }
-
-  return out;
-}
 
 /** The seven modules whose defaults this issue deleted. */
 const RESHAPED_MODULES = [

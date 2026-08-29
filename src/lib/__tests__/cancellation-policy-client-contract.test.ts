@@ -43,6 +43,17 @@
 // Mirrors the convention in adult-member-hosting-call-sites.test.ts (#2569) and
 // subscription-lockout-call-sites.test.ts (#2543).
 import { describe, expect, it } from "vitest";
+
+// Comments are stripped before every sweep below. Each sweep is a claim about
+// CODE, and this repository comments heavily: the fix for this very issue wrote
+// `prisma.$transaction` into a dozen explanatory comments beside the call sites
+// it corrected, and a plain text search reads those as transaction openers.
+//
+// This file used to strip block comments and whole-line `//` comments only,
+// leaving a trailing comment alone rather than risk eating a `//` inside a
+// string literal. The shared scanner tracks string and template literals, so
+// that trade is no longer necessary and trailing comments are stripped too.
+import { stripComments } from "./support/strip-comments";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -88,26 +99,6 @@ const RULE =
 
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
-}
-
-/**
- * The same source with its comments removed.
- *
- * Every sweep below is a claim about CODE, and this repository comments heavily:
- * the fix for this very issue wrote `prisma.$transaction` into a dozen
- * explanatory comments beside the call sites it corrected. A plain text search
- * reads those as transaction openers and the assertions become the opposite of
- * what they say.
- *
- * Block comments and whole-line `//` comments only: a trailing comment on a line
- * of code is left alone rather than risking a `//` inside a string literal.
- */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
 }
 
 /** Index of the `)` closing the `(` at `openIndex`, or -1. */
