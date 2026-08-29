@@ -37,7 +37,6 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/booking-events", () => ({
   recordBookingEvent: (...a: unknown[]) => mocks.recordBookingEvent(...a),
 }));
-vi.mock("@/lib/email", () => ({ sendBookingConfirmedEmail: vi.fn() }));
 vi.mock("@/lib/payment-reconciliation", () => ({
   ManualBookingPaymentError: class ManualBookingPaymentError extends Error {
     status: number;
@@ -47,8 +46,6 @@ vi.mock("@/lib/payment-reconciliation", () => ({
       this.status = status;
     }
   },
-  markBookingPaymentManuallySettled: vi.fn(),
-  reverseManualBookingPayment: vi.fn(),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
