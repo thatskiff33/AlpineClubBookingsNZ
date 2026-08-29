@@ -22,6 +22,10 @@ vi.mock("@/lib/prisma", () => ({
     // tables. Defaulted to empty for the same reason as the section above.
     newBookingPolicyExceptionRequest: { findMany: vi.fn(async () => []) },
     bookingChangeRequest: { findMany: vi.fn(async () => []) },
+    // #3033: the batched "which of these bookings have money held for review"
+    // read. Defaulted to empty so these nesting cases keep asserting only what
+    // they are about; the qualifier has its own suite.
+    manualRefundTask: { findMany: vi.fn(async () => []) },
   },
 }));
 

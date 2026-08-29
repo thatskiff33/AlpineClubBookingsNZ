@@ -206,3 +206,53 @@ describe("MyBookingsList nested split presentation (#1975)", () => {
     expect(screen.getAllByRole("link")).toHaveLength(2);
   });
 });
+
+/**
+ * #3033 (epic #2797) — the stale post-edit figure on the My Bookings row.
+ *
+ * `finalPriceCents` IS updated by a structural edit, so a booking whose
+ * adjustment is unresolved shows a number that looks authoritative and is not
+ * the last word. The fix is a qualifier, never a substitution: hiding the figure
+ * would leave the member with nothing, and correcting it is the estimation this
+ * whole epic exists to forbid.
+ *
+ * MUTATION PROOF. Render the chip unconditionally and "says nothing on an
+ * ordinary booking" fails. Replace the total with the qualifier and "keeps the
+ * figure and qualifies it" fails. Replace the status badge with the chip and
+ * "keeps the booking status, which is still true" fails.
+ */
+describe("a booking whose adjustment is still being worked out (#3033)", () => {
+  it("keeps the figure and qualifies it, rather than hiding or correcting it", () => {
+    render(
+      <MyBookingsList
+        bookings={[item({ id: "under-review", financialReviewPending: true })]}
+      />,
+    );
+
+    const card = screen.getByRole("link", { name: /Aug 2026/ });
+    expect(card).toHaveTextContent("$120.00");
+    expect(card).toHaveTextContent("being checked");
+    expect(card).toHaveTextContent("Adjustment being checked");
+  });
+
+  it("keeps the booking status, which is still true", () => {
+    // The stay is confirmed. Overwriting the status to say something about the
+    // money would misstate the booking.
+    render(
+      <MyBookingsList
+        bookings={[item({ id: "under-review", financialReviewPending: true })]}
+      />,
+    );
+
+    expect(screen.getByText("Paid")).toBeInTheDocument();
+  });
+
+  it("says nothing on an ordinary booking", () => {
+    render(<MyBookingsList bookings={[item({ id: "ordinary" })]} />);
+
+    expect(screen.queryByText("Adjustment being checked")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Aug 2026/ }),
+    ).not.toHaveTextContent("being checked");
+  });
+});

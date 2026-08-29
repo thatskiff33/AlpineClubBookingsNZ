@@ -30,9 +30,13 @@ const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
   loggerError: vi.fn(),
+  hasAdminAreaAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/session-guards", () => ({ requireAdmin: mocks.requireAdmin }));
+vi.mock("@/lib/admin-permissions", () => ({
+  hasAdminAreaAccess: mocks.hasAdminAreaAccess,
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
@@ -60,8 +64,54 @@ const OPEN_ROW = {
   id: "task-open",
   bookingId: "booking-cash",
   amountCents: 8000,
+  raisedAmountCents: 8000,
+  kind: "CANCELLED_CASH_BOOKING",
+  reviewContext: null,
   reason: "Cancelled after a cash payment",
   createdAt: new Date("2026-06-20T00:00:00.000Z"),
+  booking: {
+    checkIn: CHECK_IN,
+    checkOut: CHECK_OUT,
+    member: { firstName: "Ada", lastName: "Lovelace" },
+  },
+};
+
+/**
+ * #3033: an unpriced financial review carrying owner decision D3's evidence.
+ *
+ * The two identifiers at the end are the point of the redaction suite below:
+ * they are stored on the row and must not reach the browser.
+ */
+const REVIEW_CONTEXT = {
+  version: 1,
+  occurrence: {
+    bookingId: "booking-edit",
+    bookingGuestId: "guest-strand-1",
+    cause: "PARTIAL_STORED_NIGHT_PRICES",
+    surrenderedNightDates: ["2026-08-11"],
+    addedNightDates: [],
+    storedEvidence: {
+      guestTotalCents: 12000,
+      nightPrices: [
+        { date: "2026-08-10", priceCents: 6000 },
+        { date: "2026-08-11", priceCents: null },
+      ],
+    },
+  },
+  guestMemberId: "member-guest-9",
+  bookingCheckIn: "2026-08-10",
+  bookingCheckOut: "2026-08-12",
+};
+
+const REVIEW_ROW = {
+  id: "task-review",
+  bookingId: "booking-edit",
+  amountCents: null,
+  raisedAmountCents: null,
+  kind: "EDIT_FINANCIAL_REVIEW",
+  reviewContext: REVIEW_CONTEXT,
+  reason: "A change to this booking could not be priced from stored history.",
+  createdAt: new Date("2026-06-21T00:00:00.000Z"),
   booking: {
     checkIn: CHECK_IN,
     checkOut: CHECK_OUT,
@@ -109,6 +159,9 @@ beforeEach(() => {
     ok: true,
     session: { user: { id: "admin-1" } },
   });
+  // #3033: the default caller here holds bookings:view. The redaction suite
+  // below drives it the other way.
+  mocks.hasAdminAreaAccess.mockReturnValue(true);
   mocks.manualRefundTaskFindMany
     .mockResolvedValueOnce([OPEN_ROW])
     .mockResolvedValueOnce([AUTO_ROW]);
@@ -287,6 +340,9 @@ describe("GET manual-refund-tasks (#2262, #2750)", () => {
       tasks: [],
       autoRefunded: [],
       autoRefundedUnavailable: false,
+      // #3033: whether the booking link is offered at all. Part of the answer
+      // for the same reason as the flag above — the card must not have to guess.
+      viewerCanViewBookings: true,
     });
   });
 });
@@ -335,5 +391,162 @@ describe("a failed notices read must not take the work queue with it (#2750 revi
       .mockResolvedValueOnce([AUTO_ROW]);
 
     await expect(GET()).rejects.toThrow("statement timeout");
+  });
+});
+
+/**
+ * #3033 — the permission and redaction half of the acceptance criteria.
+ *
+ * MUTATION PROOF. Add `guestMemberId` or `bookingGuestId` to
+ * `EditFinancialReviewEvidence` and pass them through
+ * `toEditFinancialReviewEvidence`, and "sends no membership-roll identifier"
+ * fails. Send `task.reviewContext` raw instead of the projection and it fails
+ * too. Hardcode `viewerCanViewBookings: true` and "withholds the booking link
+ * from a caller who may not open one" fails. Drop `kind`, `raisedAmountCents`
+ * or `reviewContext` from the select and "asks the database for what the card
+ * needs" fails. Treat an unreadable context as "no evidence" and "distinguishes
+ * evidence it cannot read from evidence that was never taken" fails.
+ */
+describe("financial-review evidence: what may cross the wire (#3033)", () => {
+  beforeEach(() => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValueOnce([REVIEW_ROW])
+      .mockResolvedValueOnce([]);
+  });
+
+  it("asks the database for what the card needs to describe a review row", async () => {
+    // Without `kind` the card cannot tell a review from a hand-back and prints
+    // the cash sentence over both. Without `reviewContext` owner decision D3's
+    // evidence never leaves the database.
+    await GET();
+
+    expect(calls()[0].select).toMatchObject({
+      kind: true,
+      raisedAmountCents: true,
+      reviewContext: true,
+    });
+  });
+
+  it("sends no membership-roll identifier, whatever the caller may see", async () => {
+    /*
+      `guestMemberId` and `bookingGuestId` are stored ON the row and are the two
+      fields with no rendering use: the card already names the booking's own
+      member, and a raw cuid tells an operator nothing. They are dropped by
+      being absent from the shape the projection builds, not by being deleted
+      here — so this asserts the property that matters, which is that no payload
+      can carry them.
+    */
+    mocks.hasAdminAreaAccess.mockReturnValue(true);
+
+    const body = (await (await GET()).json()) as { tasks: unknown[] };
+    const serialised = JSON.stringify(body);
+
+    expect(serialised).not.toContain("guestMemberId");
+    expect(serialised).not.toContain("member-guest-9");
+    expect(serialised).not.toContain("bookingGuestId");
+    expect(serialised).not.toContain("guest-strand-1");
+  });
+
+  it("sends the evidence an admin prices from, and nothing behind it", async () => {
+    const body = (await (await GET()).json()) as {
+      tasks: {
+        kind: string;
+        amountCents: number | null;
+        raisedAmountCents: number | null;
+        reviewEvidence: Record<string, unknown> | null;
+        reviewEvidenceUnreadable: boolean;
+      }[];
+    };
+
+    expect(body.tasks[0].kind).toBe("EDIT_FINANCIAL_REVIEW");
+    // No magic zero anywhere: an unpriced review crosses the wire as null.
+    expect(body.tasks[0].amountCents).toBeNull();
+    expect(body.tasks[0].raisedAmountCents).toBeNull();
+    expect(body.tasks[0].reviewEvidenceUnreadable).toBe(false);
+    expect(body.tasks[0].reviewEvidence).toEqual({
+      cause: "PARTIAL_STORED_NIGHT_PRICES",
+      surrenderedNightDates: ["2026-08-11"],
+      addedNightDates: [],
+      storedEvidence: {
+        guestTotalCents: 12000,
+        nightPrices: [
+          { date: "2026-08-10", priceCents: 6000 },
+          // Null, not 0. An absent stored price and a comped night are
+          // different evidence and the card prints them differently.
+          { date: "2026-08-11", priceCents: null },
+        ],
+      },
+      bookingCheckIn: "2026-08-10",
+      bookingCheckOut: "2026-08-12",
+    });
+  });
+
+  it("distinguishes evidence it cannot read from evidence that was never taken", async () => {
+    /*
+      A row written by a shape this release does not know parses to null. The
+      task, its amount and its booking must still reach the screen — but the
+      card has to be able to SAY that the one record of what the edit destroyed
+      is unreadable, rather than render an absence an admin would read as "no
+      evidence was captured".
+    */
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValueOnce([
+        { ...REVIEW_ROW, reviewContext: { version: 99, nonsense: true } },
+        { ...REVIEW_ROW, id: "task-review-none", reviewContext: null },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: {
+        id: string;
+        reviewEvidence: unknown;
+        reviewEvidenceUnreadable: boolean;
+      }[];
+    };
+
+    expect(body.tasks[0]).toMatchObject({
+      id: "task-review",
+      reviewEvidence: null,
+      reviewEvidenceUnreadable: true,
+    });
+    expect(body.tasks[1]).toMatchObject({
+      id: "task-review-none",
+      reviewEvidence: null,
+      reviewEvidenceUnreadable: false,
+    });
+  });
+
+  it("withholds the booking link from a caller who may not open one", async () => {
+    /*
+      The card is gated on finance:view, which a Finance Viewer holds with no
+      bookings access at all. Owner decision D3 asks for a link to the booking's
+      payment and rate history, so it has to land somewhere when it is offered;
+      for everybody else the identifier is printed instead. Read off the
+      DB-verified matrix requireAdmin() just resolved, which is the #2823
+      stuck-state shape.
+    */
+    mocks.hasAdminAreaAccess.mockReturnValue(false);
+
+    const body = (await (await GET()).json()) as {
+      viewerCanViewBookings: boolean;
+    };
+
+    expect(mocks.hasAdminAreaAccess).toHaveBeenCalledWith(
+      { id: "admin-1" },
+      { area: "bookings", level: "view" },
+    );
+    expect(body.viewerCanViewBookings).toBe(false);
+  });
+
+  it("offers the booking link to a caller who may open one", async () => {
+    mocks.hasAdminAreaAccess.mockReturnValue(true);
+
+    const body = (await (await GET()).json()) as {
+      viewerCanViewBookings: boolean;
+    };
+
+    expect(body.viewerCanViewBookings).toBe(true);
   });
 });
