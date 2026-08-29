@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { parseCalendarDate, startOfClubDay } from "@/lib/club-time";
 import type { ClubTimeZone } from "@/lib/club-time";
 import {
@@ -11,6 +9,9 @@ import {
   type PolicyExceptionReasonCode,
   type PolicyExceptionViolation,
 } from "@/lib/booking-policy-exceptions";
+import { createHash } from "node:crypto";
+
+import { canonicalNights, stableStringify } from "@/lib/stable-json";
 
 /**
  * The durable member-request + admin-decision workflow that sits ON TOP of the
@@ -346,11 +347,6 @@ export type ExceptionProposalSnapshot =
   | NewBookingProposalSnapshot
   | ModificationProposalSnapshot;
 
-/** Sort + de-duplicate a night list so a snapshot is canonical. */
-function canonicalNights(nights: readonly string[]): string[] {
-  return [...new Set(nights)].sort();
-}
-
 /** Canonicalise a party so two freezes of the same facts are byte-identical. */
 export function canonicalizeProposalParty(party: ProposalParty): ProposalParty {
   const guests = party.guests
@@ -395,28 +391,6 @@ export function canonicalizeProposalSnapshot(
 }
 
 /**
- * Deterministic JSON with recursively sorted object keys. `JSON.stringify` alone
- * is insertion-ordered, so two objects with the same fields in a different order
- * would hash differently; this removes that as a source of false drift.
- */
-function stableStringify(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value));
-}
-
-function sortKeysDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
-      out[key] = sortKeysDeep(record[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
-/**
  * The proposal hash: SHA-256 over the canonicalised proposal snapshot. A stored
  * request carries it, and approval recomputes it from the SAME frozen snapshot
  * to prove the row was not tampered with, and — for a modification — recomputes
@@ -427,7 +401,17 @@ function sortKeysDeep(value: unknown): unknown {
  */
 export function computeProposalHash(snapshot: ExceptionProposalSnapshot): string {
   const canonical = canonicalizeProposalSnapshot(snapshot);
-  return createHash("sha256").update(stableStringify(canonical)).digest("hex");
+  // `node:crypto` is imported DIRECTLY here rather than through a shared digest
+  // helper, and that is the deliberate shape. This module is on the client
+  // graph (seven `"use client"` entry points reach it), so this import is the
+  // single allowlisted `INV-OPS-013` edge named in
+  // `client-server-boundary-census.test.ts`. Routing it through
+  // `@/lib/stable-digest` would move that edge onto a shared helper and license
+  // every future client importer of it. The digest is byte-identical to
+  // `stableDigest`, and pinned by test so the two cannot drift.
+  return createHash("sha256")
+    .update(stableStringify(canonical), "utf8")
+    .digest("hex");
 }
 
 // ---------------------------------------------------------------------------

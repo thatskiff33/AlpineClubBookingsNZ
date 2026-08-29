@@ -2766,16 +2766,36 @@ model ManualRefundTask {
   /// #2797 (owner decision D2): OPTIONAL while OPEN, because an edit can raise a
   /// task whose amount is genuinely unknown and `0` would be a magic value another
   /// consumer could read as "assessed at nothing". It becomes a required
-  /// non-negative integer at COMPLETED — enforced by `resolveManualRefundTask`
-  /// and by the `ManualRefundTask_completed_amount_present` check constraint, so
-  /// no path can close one without a number.
+  /// POSITIVE integer at COMPLETED — enforced by `resolveManualRefundTask` and by
+  /// the `ManualRefundTask_completed_amount_present` check constraint, so no path
+  /// can close one without a number. Zero is refused there too (`INV-PAY-051`):
+  /// "reviewed, nothing is due" is DISMISSED, and a $0 completion would record a
+  /// refund the club did not make.
+  ///
+  /// #3030: OPTIONAL FOR THE `EDIT_FINANCIAL_REVIEW` KIND ALONE. Every other kind
+  /// must carry an amount, by the `ManualRefundTask_non_edit_review_amount_present`
+  /// check (migration 20260903010000) — those amounts come from cancellation or
+  /// capture policy and an operator closing the task does not get to reprice them,
+  /// which the stale-screen guard can only enforce on a row that HAS an amount to
+  /// compare against.
   amountCents Int?
-  /// #2797 (owner decision D2, the AUDIT half): what the task was RAISED with,
-  /// written once at creation and never amended. `amountCents` above carries the
-  /// live figure and is what the admin confirms; this is what it was before they
-  /// touched it, so the row itself — not only the audit log — says whether the
-  /// amount moved and by how much. Null exactly when the task was raised with no
-  /// amount at all.
+  /// #2797 (owner decision D2, the AUDIT half): what the task was RAISED with.
+  /// `amountCents` above carries the live figure and is what the admin confirms;
+  /// this is what it was before they touched it, so the row itself — not only
+  /// the audit log — says whether the amount moved and by how much. Null exactly
+  /// when the task was raised with no amount at all.
+  ///
+  /// #3030, on what is and is not ENFORCED, because the two halves differ.
+  /// PAIRED: a non-null value here requires a non-null `amountCents`, by the
+  /// `ManualRefundTask_raised_amount_requires_amount` check (migration
+  /// 20260903010000) — so "raised with 5000, amount now unknown" is
+  /// unrepresentable. The converse is deliberately unconstrained, because null
+  /// here with a figure in `amountCents` is the ordinary shape of a review task
+  /// raised unpriced and completed at a confirmed amount. IMMUTABLE ONLY BY
+  /// CONVENTION: a CHECK constrains a row, not an UPDATE, so "never amended"
+  /// would need a trigger and does not have one. It holds because the column has
+  /// exactly one writer (creation), and every completion records both this and
+  /// the previous amount in its audit entry.
   raisedAmountCents Int?
   /// #2797: the typed reason this task exists. See `ManualRefundTaskKind`.
   kind ManualRefundTaskKind?
@@ -2784,6 +2804,15 @@ model ManualRefundTask {
   /// and DISMISSED. Unique where present; NULL for every row that predates the
   /// column (Postgres permits many NULLs under a unique index), and NULL for the
   /// legacy kinds, which carry their own idempotency in their writers.
+  ///
+  /// #3030: because NULL is exempt from the unique index above, an
+  /// EDIT_FINANCIAL_REVIEW row that omitted the key would silently opt OUT of the
+  /// duplicate fence, so a check constraint makes that unrepresentable for that
+  /// kind alone. WHERE the key is minted, what counts as "the same structural
+  /// edit", and which constraint enforces what are all stated once, in
+  /// `INV-PAY-051` (`docs/invariants/payment-and-settlement.md`) — not restated
+  /// here, because a rename that fixed one copy and left the others lying is
+  /// exactly what three homes for one rule produces.
   occurrenceKey String?
   /// #2797 (owner decision D3): the evidence an admin needs to price the
   /// adjustment fairly, captured at raise time because the rows it describes are

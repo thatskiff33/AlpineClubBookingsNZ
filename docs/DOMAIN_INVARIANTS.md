@@ -208,6 +208,7 @@ Prefix `INV-PAY`.
 | `INV-PAY-048` | A stored unconsumed credit election is cleared, recorded and reported, never stranded |
 | `INV-PAY-049` | Both directions are audited with the acting admin and the previous status |
 | `INV-PAY-050` | Xero Stripe refund notes cover provider-backed cash evidence, never the refunded-amount mirror |
+| `INV-PAY-051` | An unpriceable booking edit holds the money as one typed occurrence-keyed review task, never a guessed or zero amount |
 | `INV-PAY-002` | Account credit is consumed only at `PAYMENT_PENDING`; a draft stores an election and spends nothing |
 | `INV-PAY-003` | The edit path may write an election only onto DRAFT, AWAITING_REVIEW and PAYMENT_PENDING |
 | `INV-PAY-004` | Members may edit their own drafts; a draft edit moves no money and claims no capacity |
