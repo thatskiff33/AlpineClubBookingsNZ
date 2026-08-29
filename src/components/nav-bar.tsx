@@ -32,17 +32,6 @@ interface NavBarUser {
   email: string;
   role: string;
   canAccessAdmin?: boolean;
-  /**
-   * Where the Admin link points for THIS user (#2984). The portal shell admits
-   * anyone holding one of the seven admin areas, and that no longer implies
-   * `overview` — a finance-only administrator has standing but cannot view
-   * `/admin/dashboard`, so a hard-coded dashboard link would bounce them
-   * through `guardAdminLayout` on every click. The server computes this with
-   * `getFirstAccessibleAdminHref`, which is the very destination that guard
-   * would have redirected them to. It is a convenience, never a permission:
-   * the target page re-runs the whole admission preamble regardless.
-   */
-  adminHref?: string;
   canAccessFinance?: boolean;
   isHutLeader?: boolean;
   isStayingGuest?: boolean;
@@ -62,7 +51,24 @@ const memberLinks = [
 ];
 
 const financeLink = { href: "/finance", label: "Finance" };
-export const DEFAULT_ADMIN_LINK_HREF = "/admin/dashboard";
+/*
+  The Admin link is the SHELL entrance, not a page this user is known to hold
+  (#2984). Portal standing is any one of the seven areas, so a finance-only
+  administrator sees this link and does not hold `overview`: `guardAdminLayout`
+  refuses /admin/dashboard for them and redirects to the first area they do
+  hold, which for them is /admin/payments.
+
+  That extra hop was measured against pointing the link at
+  `getFirstAccessibleAdminHref` instead, and the redirect WON. Computing the
+  destination here means the member-facing and finance layouts would each have
+  to resolve an admin destination, which `admin-layout-guard-adoption.test.ts`
+  refuses by name: admin admission logic belongs to `admin-layout-guard.ts`
+  alone, and evading that census with a differently-named wrapper would be
+  worse than the hop it saves. `admin-route-authorization-proof.test.ts` proves
+  the hop always lands somewhere the same grid may actually open, for every
+  single-area grid and every admin page.
+*/
+const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
 
 // test seam
@@ -87,9 +93,7 @@ export function getNavBarLinks(
           ? [viewLodgeLink]
           : []
       : []),
-    ...(user.canAccessAdmin || user.role === "ADMIN"
-      ? [{ href: user.adminHref ?? DEFAULT_ADMIN_LINK_HREF, label: "Admin" }]
-      : []),
+    ...(user.canAccessAdmin || user.role === "ADMIN" ? [adminLink] : []),
   ];
 }
 
@@ -107,9 +111,7 @@ export function NavBar({ user, features }: NavBarProps) {
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
     if (href === "/dashboard") return pathname === "/dashboard";
-    // Any admin destination lights the one Admin tab; the href varies by which
-    // areas the user holds (#2984), so this matches the section, not a page.
-    if (href.startsWith("/admin")) return pathname.startsWith("/admin");
+    if (href === "/admin/dashboard") return pathname.startsWith("/admin");
     return pathname.startsWith(href);
   };
 

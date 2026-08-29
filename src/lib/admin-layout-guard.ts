@@ -93,8 +93,6 @@ export interface AdmittedAdmin {
     email: string;
     role: GuardedMember["role"];
     canAccessAdmin: boolean;
-    /** Where this user's Admin link points (#2984); see `nav-bar.tsx`. */
-    adminHref: string | undefined;
     canAccessFinance: boolean;
     isHutLeader: boolean;
     isStayingGuest: boolean;
@@ -215,8 +213,6 @@ export async function guardAdminLayout(
       email: session.user.email ?? "",
       role: member.role,
       canAccessAdmin: hasAdminPortalAccess(member),
-      // See the note in `nav-bar.tsx` (#2984).
-      adminHref: getFirstAccessibleAdminHref(member) ?? undefined,
       canAccessFinance: hasFinanceViewerAccess(member),
       isHutLeader: false,
       isStayingGuest: false,
