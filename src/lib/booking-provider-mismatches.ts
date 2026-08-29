@@ -3,6 +3,7 @@ import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { prisma } from "@/lib/prisma";
 import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 
 /**
  * Issue #1089: per-booking provider-mismatch surfacing. The aggregate views
@@ -18,7 +19,14 @@ import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 type BookingProviderMismatchId =
   | "xero-invoice-pending"
   | "xero-credit-note-pending"
-  | "waitlist-offer-email-failed";
+  | "waitlist-offer-email-failed"
+  // #3033: not a provider mismatch, and it is rendered in its own block on the
+  // Admin tools card rather than under "Provider state out of step". It reuses
+  // this row SHAPE — label, description, href, link label — because that is
+  // exactly what a one-line admin warning with an actionable path needs, and
+  // inventing a parallel interface with the same four fields would be a second
+  // home for one thing (`INV-SSOT`).
+  | "financial-review-open";
 
 export interface BookingProviderMismatch {
   id: BookingProviderMismatchId;
@@ -170,4 +178,39 @@ export async function getBookingProviderMismatches(
   }
 
   return mismatches;
+}
+
+/**
+ * #3033: the booking has money held for review, so the Admin tools card says so.
+ *
+ * A separate function from `getBookingProviderMismatches` above, and NOT folded
+ * into its list, because that list renders under a heading that says "Provider
+ * state out of step" — Xero and the waitlist mailer disagreeing with local
+ * state. A financial review is not a provider disagreement: the local state is
+ * exactly right and it is the club that owes a decision. Filing it under that
+ * heading would misdescribe it to the one person able to resolve it.
+ *
+ * Returns at most one row. The card is a warning, not a queue: an admin does not
+ * need to be told twice that this booking has unresolved money, and the queue
+ * the link goes to is where the individual reviews live.
+ *
+ * NO AMOUNT AND NO EVIDENCE HERE, deliberately. The amount is the question, not
+ * a fact, and repeating the evidence on a second screen would be a second home
+ * for it (owner decision D3 asks for a LINK). The row is the pointer.
+ */
+export async function getBookingFinancialReviewWarnings(
+  bookingId: string,
+): Promise<BookingProviderMismatch[]> {
+  if (!(await bookingHasOpenFinancialReview(bookingId))) return [];
+
+  return [
+    {
+      id: "financial-review-open",
+      label: "Money on this booking is waiting for review",
+      description:
+        "A change to this booking saved, but the refund or credit for it could not be worked out from what the booking has stored, so nothing has been refunded or credited and no amount has been assumed. The member has been told their change saved and that the club is working the adjustment out.",
+      href: "/admin/payments",
+      linkLabel: "Open the settlement queue",
+    },
+  ];
 }

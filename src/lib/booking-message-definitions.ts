@@ -8,6 +8,12 @@ export const BOOKING_MESSAGE_KEYS = [
   // "your Xero invoice has been emailed" is untrue.
   "booking.detail.internetBanking.pendingNoXero",
   "booking.detail.switchToInternetBanking",
+  // #3033 (epic #2797): the sentence a member reads when a stay change saved and
+  // the adjustment for it is with the club. Configurable because the owner named
+  // this exact wording as the cost of decision D1 — it "has to be honest without
+  // being alarming" — and how alarming a sentence sounds is a judgement each club
+  // makes about its own members, not one this codebase should fix in a string.
+  "booking.detail.financialReviewPending",
   "paymentLink.internetBanking.description",
   "cancellation.refundAppeal.description",
   "groupBooking.settle.description",
@@ -124,6 +130,16 @@ export const BOOKING_MESSAGE_DEFINITIONS: readonly BookingMessageDefinition[] = 
     description: "Shown beside the button that changes an unpaid card booking to Internet Banking.",
     defaultBody:
       "Prefer to pay by internet banking? We will email a Xero invoice and confirm the booking after the payment is reconciled.",
+    tokens: ALL_TOKENS,
+  },
+  {
+    key: "booking.detail.financialReviewPending",
+    section: "Booking Detail",
+    label: "Adjustment being reviewed",
+    description:
+      "Shown when a change to a booking saved but the refund or credit for it is still being worked out by the club. Never state or imply an amount here, and never say money has already moved — the whole point of this message is that the amount is not yet known.",
+    defaultBody:
+      "We keep a full history of what each stay was sold for, and for this booking that history does not give us a figure we would trust. Rather than guess, someone from the club is working the adjustment out and will confirm it with you. Your stay is unaffected and there is nothing for you to do.",
     tokens: ALL_TOKENS,
   },
   {

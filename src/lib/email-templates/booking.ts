@@ -447,6 +447,18 @@ export function bookingModifiedTemplate(params: {
   // #2390: see bookingModificationSummaryRows — it renders as one more change
   // row, so the HTML and the flat body stay identical.
   promoCoverageNote?: string | null;
+  /**
+   * #3033 (epic #2797): this change saved and its refund or credit could not be
+   * worked out from what the booking has stored, so the club is deciding it.
+   *
+   * It exists because without it the money section is SILENT. Every one of the
+   * three branches below tests a positive amount, and an unresolved adjustment
+   * has none by construction — so a member whose booking was edited received a
+   * "Booking Modified" email whose money section rendered as nothing at all,
+   * which reads as "no money is involved" on the one change where that is most
+   * conspicuously untrue.
+   */
+  financialReviewPending?: boolean;
 }): string {
   const {
     firstName,
@@ -467,6 +479,7 @@ export function bookingModifiedTemplate(params: {
     paymentReference,
     xeroInvoiceNumber,
     promoCoverageNote,
+    financialReviewPending = false,
   } = params;
 
   // The change rows come from the shared helper the flat {{changeSummary}}
@@ -489,7 +502,23 @@ export function bookingModifiedTemplate(params: {
   }));
 
   let paymentNote = "";
-  if (refundAmountCents > 0) {
+  /*
+    FIRST, not last, and that ordering is load-bearing (#3033).
+
+    A booking whose adjustment is unresolved can still carry a positive
+    additional amount from the priced half of the same edit — new nights are
+    priced normally under current policy while the surrendered ones are what
+    cannot be valued. Checked last, this branch would be shadowed by the
+    additional-payment one and the member would be told what to pay while being
+    told nothing about what they are owed. Checked first, the honest sentence
+    wins and the amounts stay in the change rows above, where they are true.
+  */
+  if (financialReviewPending) {
+    paymentNote = alertBox(
+      "The club is working out what this change means for the amount, and will confirm it with you. Nothing has been refunded or charged for it yet, and there is nothing for you to do.",
+      "info"
+    );
+  } else if (refundAmountCents > 0) {
     paymentNote = alertBox(
       `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
       "success"

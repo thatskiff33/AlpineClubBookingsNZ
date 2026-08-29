@@ -94,7 +94,11 @@ import {
   formatClubLongDate,
 } from "@/lib/club-time";
 import { clubTime } from "@/lib/club-time/server";
-import { getBookingProviderMismatches } from "@/lib/booking-provider-mismatches";
+import {
+  getBookingFinancialReviewWarnings,
+  getBookingProviderMismatches,
+} from "@/lib/booking-provider-mismatches";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadPublicBookingMessages } from "@/lib/booking-message-settings";
 import { renderBookingMessageTemplate } from "@/lib/booking-message-definitions";
@@ -161,6 +165,10 @@ const NARRATIVE_BANNER_STATES = new Set<BookingNarrativeState>([
   "cancelled_pre_payment",
   "cancelled_post_payment",
   "declined",
+  // #3033: a self-contained outcome like the five above — the stay change is
+  // settled and the money is with the club — so it belongs in the banner rather
+  // than in one of the active states' dedicated UI.
+  "financial_review_pending",
 ]);
 
 const narrativeBannerClasses: Record<string, string> = {
@@ -169,6 +177,11 @@ const narrativeBannerClasses: Record<string, string> = {
   cancelled_pre_payment: "border-warning-6 bg-warning-3 text-warning-11",
   cancelled_post_payment: "border-warning-6 bg-warning-3 text-warning-11",
   declined: "border-danger-6 bg-danger-3 text-danger-11",
+  // #3033: INFO, not warning or danger. Nothing is wrong with this booking and
+  // the member has nothing to fix — the club owes them a figure. A warning tone
+  // beside a saved stay change is exactly the alarm owner decision D1 said the
+  // wording had to avoid.
+  financial_review_pending: "border-info-6 bg-info-3 text-info-11",
 };
 
 // Candidate anchors for this long, mostly-conditional page. SectionNav prunes
@@ -614,10 +627,22 @@ export default async function BookingDetailPage({
       snapshot: true,
     },
   });
+  /*
+    #3033: money held for review on this booking. Read HERE, once, and handed to
+    the pure narrative resolver as data — the resolver is reachable from
+    instrumentation and a database read inside it would break it at import.
+
+    Read for every viewer, member and admin alike, because the member-facing
+    banner is the whole point: this is not admin-gated information, it is what
+    the member is owed after their change saved.
+  */
+  const financialReviewPending = await bookingHasOpenFinancialReview(booking.id);
+
   const bookingNarrative = resolveBookingNarrative({
     // The event stamps in the narrative are real instants and read in the
     // club's zone; its stay dates are @db.Date lodge nights and do not (#3123).
     club,
+    financialReviewPending,
     booking: {
       status: booking.status,
       finalPriceCents: booking.finalPriceCents,
@@ -1304,6 +1329,20 @@ export default async function BookingDetailPage({
   const switchToInternetBankingDescription = renderBookingMessage(
     "booking.detail.switchToInternetBanking",
   );
+  /*
+    #3033: the club's own explanation, beneath the banner's structural sentences.
+
+    Two messages and not one duplicate. The narrative owns the FACTS — your
+    change saved, these are your dates, nothing has moved — which are the same
+    for every club and are shared with the public payment-link page. This key
+    owns the club's EXPLANATION of what that means and how it will be handled,
+    which is the sentence the owner said has to be "honest without being
+    alarming" and therefore the one a club must be able to soften without a
+    release.
+  */
+  const financialReviewPendingDescription = renderBookingMessage(
+    "booking.detail.financialReviewPending",
+  );
   const refundAppealDescription = renderBookingMessage(
     "cancellation.refundAppeal.description",
   );
@@ -1358,6 +1397,16 @@ export default async function BookingDetailPage({
   const providerMismatches = isAdmin
     ? await getBookingProviderMismatches(booking.id)
     : [];
+
+  /*
+    #3033: the admin-side warning row. Derived from the flag already read above
+    rather than re-queried, so the member's banner and the admin's warning can
+    never disagree about the same booking on the same page load.
+  */
+  const financialReviewWarnings =
+    isAdmin && financialReviewPending
+      ? await getBookingFinancialReviewWarnings(booking.id)
+      : [];
 
   /*
     #2259 (owner decision D10) — the "No emails" switch and the persistent
@@ -1540,6 +1589,7 @@ export default async function BookingDetailPage({
           )}
           finalPriceCents={booking.finalPriceCents}
           providerMismatches={providerMismatches}
+          financialReviewWarnings={financialReviewWarnings}
           features={modules}
           capacityHold={{
             hasAdminCapacityHold: Boolean(booking.adminCapacityHoldAt),
@@ -1639,6 +1689,15 @@ export default async function BookingDetailPage({
         >
           <p className="font-medium">{bookingNarrative.headline}</p>
           <p>{bookingNarrative.message}</p>
+          {/* #3033: the club's configurable explanation, inside the banner and
+              between the facts and the next step, which is where a member reads
+              it as part of one message rather than as a second notice. */}
+          {bookingNarrative.state === "financial_review_pending" &&
+          financialReviewPendingDescription ? (
+            <p data-testid="booking-financial-review-description">
+              {financialReviewPendingDescription}
+            </p>
+          ) : null}
           <p className="opacity-80">{bookingNarrative.nextStep}</p>
         </div>
       ) : null}
