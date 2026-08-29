@@ -1078,7 +1078,12 @@ export const DATE_GUARD_ARMS = {
 //   * A default that CALLS a club authority resolver — `= await clubTimeZone()`,
 //     `= readClubTimeZoneOutsideRequest()`. Those return the CLUB's answer, so
 //     they are not this defect at all. Population zero; recorded so a later
-//     reader knows it was considered rather than missed.
+//     reader knows it was considered rather than missed. READ THAT NARROWLY: it
+//     says these two resolvers, not "resolver calls are fine". #3133 added a
+//     second arm below, `NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT`, which bans a
+//     NAMED list of resolvers that answer from a module-level cache with a
+//     shipped fallback — including two wrappers around the very variables this
+//     group bans. The criterion separating the two is stated there.
 //   * A `??` or `||` fallback in a function BODY — `const tz = opts.tz ??
 //     APP_TIME_ZONE`. Said plainly as a known limit: it is the same hazard
 //     written differently, and it is out of scope because banning it would reach
@@ -1164,7 +1169,247 @@ const NO_CLUB_AUTHORITY_DEFAULT = [
   `AssignmentPattern > .right MemberExpression[object.property.name="env"][property.value=/${CLUB_AUTHORITY_DEFAULT_ENV}/]`,
 ].map((selector) => ({ selector, message: AUTHORITY_DEFAULT_MESSAGE }));
 
-const AUTHORITY_DEFAULT_RESTRICTIONS = [...NO_CLUB_AUTHORITY_DEFAULT];
+// ---------------------------------------------------------------------------
+// THE SECOND HALF OF THE SAME RULE: a default that resolves the authority from
+// AMBIENT PROCESS-GLOBAL STATE rather than from the environment (#3133).
+// ---------------------------------------------------------------------------
+//
+// `INV-SSOT-003`'s first sentence bans a default whose value resolves "a global,
+// environment or configuration authority". Everything above mechanises the
+// ENVIRONMENT word, and #3126 said so out loud rather than leaving the gap to be
+// discovered: the environment list is a floor.
+//
+// This is the rest of it, and the defect is the same one written through a
+// function name. A module-level cache with a synchronous accessor and a shipped
+// fallback answers EVERY caller that did not pass a value — and answers with the
+// product default whenever nothing seeded it. The call site reads as though it
+// stated the fact. It did not.
+//
+// THE MEASURED INSTANCE IS #3116, and it is the reason this arm exists rather
+// than a hypothetical. `seasonYearsLabel(seasonYear, yearEndMonth =
+// getFinancialYearEndMonth())` reads `financial-year.ts`'s process cache. That
+// cache is seeded by `refreshFinancialYearConfig()`, whose callers are all
+// request paths; the subscription-invoice mint runs from
+// `xero-operation-outbox.ts`, a background worker that seeds nothing. So on a
+// cold worker a club whose financial year does not end in March had the wrong
+// season rendered into a Xero INVOICE LINE — and the obvious remedy, routing the
+// four hand-written labels through the shared helper and accepting its default,
+// would have reworded every existing club's invoices while leaving that defect
+// exactly where it was. Routing to the single definition is necessary and not
+// sufficient. #3136 fixed the money paths by resolving and PASSING the year-end;
+// this arm is what stops the default being written back in.
+//
+// WHY A NAMED LIST AND NOT A PATTERN. "Any zero-argument call used as a default"
+// was considered and rejected, and the rejection is MEASURED rather than
+// reasoned. A TypeScript-AST census of every default in `src/`, `scripts/` and
+// `prisma/` (3928 files) finds TWENTY non-test defaults whose value contains a
+// call. Sixteen are correct and would each be a false positive: `Date.now()`
+// five times over, `performance.now()`, `crypto.randomBytes(8)`,
+// `process.cwd()` in an operator script, `defaultDb()` twice as a Prisma
+// injection seam, `isContainerised()`, `defaultDistDir()`,
+// `requireDatabaseUrl()`, and a map built from an argument the same call already
+// received. A guard that is wrong sixteen times out of twenty trains its reader
+// to switch it off. WHICH NAMES ARE HAZARDOUS IS A JUDGEMENT, and a judgement
+// belongs in a reviewed list, not in a regular expression the next lane widens
+// by one character.
+//
+// THE SHAPE THAT QUALIFIES, so the list can be extended on a criterion rather
+// than on taste. All four of these must hold:
+//
+//   1. it is a SYNCHRONOUS accessor — an `await`ed read goes to the real source
+//      every time and cannot be cold;
+//   2. it answers from MODULE-LEVEL MUTABLE STATE, not from its arguments;
+//   3. something else must have SEEDED that state, and at least one live
+//      runtime does not — a cron tick, an outbox worker, a CLI, or the browser
+//      bundle, where a `server-only` seeder can never run at all;
+//   4. unseeded, it returns a SHIPPED DEFAULT rather than failing — so the wrong
+//      answer is indistinguishable from the right one.
+//
+// A resolver that fails or blocks when it has no answer is not this defect. Nor
+// is a resolver that returns the CLUB's own answer: `await clubTimeZone()` and
+// `await readClubTimeZoneOutsideRequest()` read the persisted
+// `ClubTimeSettings` row on every call and cache no value between them, so a
+// default calling either is stated-but-verbose rather than wrong. Both are
+// asserted clean in `ssot-authority-default-guard.test.ts`, and were before this
+// arm existed.
+//
+// WHAT THE CLUB-TIME SURVEY FOUND, because #3133 asked for it by name and "I
+// checked and here is why none qualify" is the answer a reader can act on.
+// Examined: `clubTimeZone()`, `clubTime()` and `clubTodayDateOnlyInstant()`
+// (`club-time/server.ts`) — async, request-scoped React `cache()`, persisted
+// row, so clause 1 fails and clause 3 cannot arise; `getClubTimeZone()`,
+// `loadPersistedClubTimeSettings()` and `resolveClubTimeZoneWithSource()`
+// (`club-time-zone-settings.ts`) — async, and that module says outright that it
+// caches nothing, deliberately; `readClubTimeZoneOutsideRequest()` and
+// `resolveClubTimeZoneOutsideRequest()` (`club-time-zone-runtime.ts`) — async,
+// re-reads the row per call, and its only module-level state is a
+// once-per-minute log throttle, which is not an answer; `emailClubDate()` and
+// its siblings (`email-templates-club-time.ts`) — these DO read a primed
+// module cache, but they are OPERATIONS that take the value they format, not
+// resolvers a default can stand in for, so no default can name them;
+// `emailClubTimeZoneForTests()` — a test seam, and naming it would ban a
+// fixture rather than a defect.
+//
+// TWO club-time readers DO qualify, and they are the most valuable entries on
+// the list because they are THIS FILE'S OWN existing target hidden behind a
+// function name. `readEnvironmentClubTimeZoneSeed()` and
+// `classifyEnvironmentClubTimeZoneSeed()` (`club-time-zone-env.ts`) return
+// `process.env.TZ ?? process.env.NEXT_PUBLIC_TZ`, live. The arm above bans those
+// two VARIABLES; a named wrapper around them is invisible to a name regex, and
+// `= readEnvironmentClubTimeZoneSeed()` would walk straight past every selector
+// written before today. Their live default population is zero, which is exactly
+// why they are cheap to list now: the same argument `INV-SSOT-003` already makes
+// for `APP_LOCALE`, and the same one that made this arm necessary at all.
+const AMBIENT_AUTHORITY_RESOLVERS = {
+  /**
+   * Banned outright. Every name here has a live default population of ZERO on
+   * this branch, so listing it costs nothing today and closes the class before
+   * the first instance is written — which is cheaper than the migration that
+   * closing it afterwards would need.
+   */
+  banned: [
+    // `club-identity-settings.ts`. Module cache seeded by
+    // `primeClubIdentitySync()`, falls back to `DEFAULT_IDENTITY`. The club's
+    // own name and branding, with a persisted row competing with a shipped
+    // default — the same two-sources-and-a-guess as the year-end.
+    "getClubIdentitySync",
+    // `email-theme.ts`. Module cache seeded by `primeEmailPalette()`, falls back
+    // to `DEFAULT_EMAIL_PALETTE`. An unseeded worker renders a club's email in
+    // the shipped colours and nothing says so.
+    "emailPalette",
+    // `club-time-zone-env.ts`. Named wrappers around `process.env.TZ` /
+    // `NEXT_PUBLIC_TZ` — the arm above bans the variables, and a regex over
+    // names cannot see a function that reads them.
+    "readEnvironmentClubTimeZoneSeed",
+    "classifyEnvironmentClubTimeZoneSeed",
+  ],
+  /**
+   * NAMED, MEASURED, AND NOT YET BANNED — with the condition that promotes each
+   * one published beside it.
+   *
+   * THIS IS NOT AN EXEMPTION, and the difference is structural rather than
+   * verbal. An exemption is a FILE the arm stops applying to, it lives on
+   * `SRC_RESTRICTION_EXEMPTIONS`, and it shelters whatever else that file grows
+   * later — which is precisely how the `= APP_TIME_ZONE` default survived for
+   * months inside a lift written for a READ. `AUTHORITY_DEFAULT_RESTRICTIONS`
+   * carries no such entry, `ssot-authority-default-guard.test.ts` asserts that
+   * it never will, and nothing here changes that. A pending name is the arm
+   * declining to fire on ONE identifier anywhere in the tree, with its live
+   * count pinned in that same suite, so the count is a ratchet with a
+   * MECHANICAL trigger: delete the last default and the census fails and tells
+   * you to promote the name.
+   */
+  pending: [
+    {
+      name: "getFinancialYearEndMonth",
+      /**
+       * Two live defaults remain, and the reason each is still here is a
+       * measurement rather than reluctance. #3133 expected zero — #3116 was
+       * deleting all four in flight — and #3136 merged having fixed the money
+       * paths WITHOUT deleting them.
+       *
+       * `season-label.ts`'s `seasonSelectLabel` — thirteen non-test callers,
+       * TEN of them inside five `"use client"` files, and the value is not
+       * available in a browser at all: the cache is a module-level `let` whose
+       * only writer is `server-only`, so `getFinancialYearEndMonth()` in a
+       * client bundle returns the March default unconditionally. That module's
+       * own docblock reasons this out at length and concludes that plumbing the
+       * LABEL alone makes the screen WORSE, because `clubSeasonYear()` beside it
+       * reads the same unseeded cache and the picker would then name `(Jul-Jun)`
+       * while still selecting April-based season years. Deferring both together
+       * is coherent; finishing half is not.
+       *
+       * `financial-year.ts`'s `seasonYearOfCalendarDate` — worse, and not for
+       * its own sake. Two optional pass-throughs forward the parameter,
+       * `seasonYearOfStoredDate(value, yearEndMonth?)` and
+       * `clubSeasonYear(zone, clock?, yearEndMonth?)`, and requiring it
+       * cascades to roughly NINETY non-test call sites across booking,
+       * waitlist, quote, membership, Xero, cron and `prisma/seed.ts`. Most of
+       * them have no year-end in scope, so the change that would actually get
+       * written at each is `getFinancialYearEndMonth()` AT the call site — which
+       * satisfies the letter of this rule while reading the same cold cache, and
+       * spreads one ambient read into ninety modules. That is worse for single
+       * source of truth, not better, by the same argument this file already
+       * makes for excluding `APP_STRIPE_CURRENCY`.
+       *
+       * Promote this name — move it to `banned` above and delete its pin in
+       * `ssot-authority-default-guard.test.ts` — when both defaults are gone.
+       * Neither is deleted by threading harder; each needs a decision the arm
+       * cannot make. The year-end has to reach the browser as data the way the
+       * zone already does, through `ClubTimeSettings` and the provider, and the
+       * cascade has to be taken as its own change.
+       */
+      liveDefaults: 2,
+    },
+  ],
+};
+
+/** Regex-safe alternation over the banned resolver names. */
+const CLUB_AUTHORITY_RESOLVER_NAMES = `^(${AMBIENT_AUTHORITY_RESOLVERS.banned.join("|")})$`;
+
+const AUTHORITY_RESOLVER_DEFAULT_MESSAGE =
+  "INV-SSOT-003: This parameter DEFAULTS to a resolver that answers from AMBIENT PROCESS-GLOBAL STATE, so it answers for every caller that did not pass one — and on any runtime that did not seed that state it answers with the SHIPPED DEFAULT, indistinguishably from the right answer. That is the same defect as defaulting to the environment, written through a function name: the call site reads as though it stated the fact, and it did not. THE MEASURED CASE IS #3116 — a season label defaulting to the `financial-year.ts` process cache, which no outbox worker seeds, put the wrong season on a Xero INVOICE LINE for any club whose financial year does not end in March, and routing the four hand-written labels through the shared helper while ACCEPTING its default would have reworded every existing club's invoices without fixing it. THE REMEDY IS TO DELETE THE DEFAULT and let the compiler enumerate the call sites: a required argument beats a lint rule, one exported symbol beats an allowlist, and a deleted default beats a counted ratchet. #3123 is the worked precedent — six `= APP_TIME_ZONE` defaults deleted from @/lib/date-only turned a hand-counted census into a compile error. Then resolve the fact and PASS it: `await refreshFinancialYearConfig()` for the year-end, `await getClubIdentity()` for the club's identity, `await ensureEmailPaletteReady()` before an email render, and the persisted `ClubTimeSettings` row rather than the environment seed for the club's zone. A resolver that reads the CLUB's own answer on every call — clubTimeZone() from @/lib/club-time/server, readClubTimeZoneOutsideRequest() from @/lib/club-time-zone-runtime — is NOT this defect and is not on the banned list.";
+
+// The same PAIRED design as the arm above, and for the same reason: a field
+// anchor for the bare spelling, a `> .right` descendant for every wrapped one.
+// The descendant combinator EXCLUDES self in esquery, so exactly one form of
+// each pair can match one node and #2685's triple-report at a single
+// line:column cannot come back. `ssot-authority-default-guard.test.ts` asserts
+// "exactly once" for every spelling rather than "at least once", which is what
+// makes that a measurement instead of a claim.
+//
+// THREE SHAPES, because a call's callee is written three ways. Do NOT collapse
+// them onto a bare `[callee.name=...]`: a namespace import
+// (`= ambient.getClubIdentitySync()`) has a MemberExpression callee with no
+// `name` at all, and the computed spelling has no property `name` either. The
+// three are mutually exclusive by construction — a callee that is an Identifier
+// has no `callee.property`, and a non-computed member access has no
+// `property.value` — so no node can match two of the six.
+//
+// AND DO NOT ANSWER A NEW INDIRECTION HERE. `import { getFinancialYearEndMonth
+// as yearEnd }` then `= yearEnd()` is invisible to every selector in this file,
+// because a selector has no symbol table. That half belongs to the second
+// instrument, which resolves the alias out of the source; the census in
+// `ssot-authority-default-guard.test.ts` reads the banned list from THIS
+// definition so the two instruments cannot drift apart into a rubber stamp
+// (`INV-SSOT-004`).
+const NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT = [
+  // `f(month = getFinancialYearEndMonth())` — the resolver call IS the default.
+  `AssignmentPattern > CallExpression.right[callee.name=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+  // The same call anywhere inside a wrapped default: `as`, `satisfies`, `!`, a
+  // template, an outer call, a sequence, `??`, a ternary, a thunk
+  // (`= () => getClubIdentitySync()`, which defers the read without stating the
+  // fact), or whatever TypeScript adds next.
+  `AssignmentPattern > .right CallExpression[callee.name=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+  // `f(month = ambient.getFinancialYearEndMonth())`, whose callee is a
+  // MemberExpression and therefore carries no `callee.name`.
+  `AssignmentPattern > CallExpression.right[callee.property.name=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+  `AssignmentPattern > .right CallExpression[callee.property.name=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+  // `f(month = ambient["getFinancialYearEndMonth"]())`. Computed access is the
+  // documented escape from every syntactic rule in this file and is closed on
+  // the way in rather than recorded as a known limitation.
+  `AssignmentPattern > CallExpression.right[callee.property.value=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+  `AssignmentPattern > .right CallExpression[callee.property.value=/${CLUB_AUTHORITY_RESOLVER_NAMES}/]`,
+].map((selector) => ({
+  selector,
+  message: AUTHORITY_RESOLVER_DEFAULT_MESSAGE,
+}));
+
+const AUTHORITY_DEFAULT_RESTRICTIONS = [
+  ...NO_CLUB_AUTHORITY_DEFAULT,
+  ...NO_AMBIENT_AUTHORITY_RESOLVER_DEFAULT,
+];
+
+/**
+ * The banned and pending resolver names, for the second instrument in
+ * `ssot-authority-default-guard.test.ts`.
+ *
+ * Read from HERE rather than from a copy in the suite, for the reason
+ * `INV-SSOT-004` states: a copy passes happily while the config that ships has
+ * dropped a name, and two instruments that do not share their input are one
+ * instrument and a rubber stamp.
+ */
+export { AMBIENT_AUTHORITY_RESOLVERS };
 
 /**
  * The `INV-SSOT-003` arm family as bare selector strings, for

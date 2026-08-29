@@ -816,7 +816,7 @@ CI-green → evidence**.
 
 - **Split local validation from CI.** Before push, run `npm run db:generate`,
   `npm run lint`, `npm run typecheck`, `npm run test:related -- $(git diff
-  --name-only main...HEAD)`, focused tests for the touched and adjacent
+  --name-only main...HEAD)`, `npm run test:named` for the touched and adjacent
   contracts, and mutation checks for every new guard. Run
   `npm run docs:linkcheck` and `npm run docs:indexcheck` when docs or invariant
   citations change, and `npm run knip` when files or exports change. Then push a
@@ -855,21 +855,22 @@ CI-green → evidence**.
 - **What `test:related` does NOT cover: tests that scan the source tree from
   disk.** A contract or census test reading `src/` with `fs.readFile` has no
   import edge to the files it scans, so the graph cannot reach it and **this
-  class stays CI-caught by design.** PR #2813's second failure was exactly this:
-  the #2440 published-PageContent contract bans a *call* of the unfiltered
-  by-path read, its regex matches `name(`, and so naming the function with
-  parentheses **inside a comment** tripped it. When a change edits any file
-  under `src/`, re-read the diff for text that a scanner might match — an added
-  route, a new exported name, a comment naming a banned symbol — rather than
-  assuming the local gate spoke for it.
+  class stays CI-caught by design.** PR #2813's second failure was this: the
+  #2440 contract bans a *call* of the unfiltered by-path read, and naming the
+  function with parentheses inside a comment tripped its regex. When a change
+  edits any file under `src/`, re-read the diff for text that a scanner might
+  match — an added route, a new exported name, a comment naming a banned
+  symbol — rather than assuming the local gate spoke for it. Run one with
+  `npm run test:named` — never bare `vitest run` on several paths, which
+  silently drops one that matches nothing (#3120).
 
-  Running those suites locally instead was measured and **rejected on
-  evidence**: all 186 of them take ~3 minutes natively on Windows and produce
-  false failures. `public-page-content-published-contract.test.ts` and
+  Running all 186 locally instead was measured and **rejected on evidence**:
+  ~3 minutes natively on Windows, with false failures.
+  `public-page-content-published-contract.test.ts` and
   `booking-no-emails-ui-contract.test.ts` both time out at 5000 ms under
   parallel load and both pass in isolation — the gate would red-light the very
-  test it exists to protect. A gate that cries wolf trains its reader to ignore
-  it, so the honest arrangement is a fast gate with a stated blind spot.
+  test it exists to protect, so a fast gate with a stated blind spot is the
+  honest arrangement.
 - **Validation traps that have produced confident false results here.** Every one
   of these has already cost a wave real time; treat a clean result that skipped
   them as unverified.

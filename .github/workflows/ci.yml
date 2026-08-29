@@ -608,8 +608,13 @@ jobs:
       # gets prerendered at build with no database and no CSP nonce, and a route
       # that quietly starts being per-request just costs CPU. Source-only, so it
       # runs before the build rather than after it.
+      # `--disable-warning`: the script imports the shared comment-stripper, which
+      # is a `.ts` (the only spelling `tsc` resolves for its twenty test callers —
+      # #3132). Node 24 strips the types natively, but warns MODULE_TYPELESS_PACKAGE_JSON
+      # because package.json declares no `type`. The warning is cosmetic and the
+      # check still exits 0; silenced so this gate's log stays readable.
       - name: Check public website render modes
-        run: node scripts/ci/check-website-render-modes.mjs
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/ci/check-website-render-modes.mjs
 
       - name: Build
         run: npm run build
