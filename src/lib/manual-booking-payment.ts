@@ -10,10 +10,7 @@ import { recordBookingEvent } from "@/lib/booking-events";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import {
-  MANUAL_PAYMENT_NOTE_MAX,
-  MANUAL_REFUND_TASK_REASON_MAX,
-} from "@/lib/manual-subscription-payment";
+import { MANUAL_PAYMENT_NOTE_MAX } from "@/lib/manual-subscription-payment";
 import {
   ManualBookingPaymentError,
   markBookingPaymentManuallySettled,
@@ -60,7 +57,7 @@ import { prisma } from "@/lib/prisma";
  *    identically to before this feature existed.
  */
 export { ManualBookingPaymentError };
-export { MANUAL_PAYMENT_NOTE_MAX, MANUAL_REFUND_TASK_REASON_MAX };
+export { MANUAL_PAYMENT_NOTE_MAX };
 
 export type ManualBookingPaymentDirection = "paid" | "unpaid";
 
@@ -383,13 +380,18 @@ export async function applyManualBookingPayment(
  *
  * #2797 owner decision D2 chose *"amend at completion, audited"* over a separate
  * `confirmedAmountCents` column, so the confirmed figure arrives HERE rather than
- * through some earlier pricing step — and a separate pre-completion amend was
- * deliberately not built, because a priced-but-still-OPEN task is a state no
- * invariant defines and another reader could mistake for a decision. That is the
- * same class of hazard as the magic zero this epic exists to remove.
+ * through some earlier pricing step, and a separate pre-completion AMEND was
+ * deliberately not built. Not because a priced-but-still-OPEN task is undefined
+ * — it is defined, in `INV-PAY-051`, and the raise can create one when the edit
+ * could prove a figure — but because that state means "proposed, not yet
+ * confirmed", and a second writer able to move the figure while the row stays
+ * OPEN would turn it into something a reader could mistake for a decision. The
+ * one path that changes an amount is this one, and it closes the task in the
+ * same write.
  *
- * A NUMBER is the admin's confirmed non-negative integer cents. On a task raised
- * with no amount (`EDIT_FINANCIAL_REVIEW`) it IS the pricing. On a task that
+ * A NUMBER is the admin's confirmed POSITIVE integer cents — zero is refused, see
+ * below. On a task raised with no amount (`EDIT_FINANCIAL_REVIEW`) it IS the
+ * pricing. On a task that
  * already carries one it must match, EXCEPT on an `EDIT_FINANCIAL_REVIEW` task,
  * where a different figure is the audited amendment D2 permits — the row keeps
  * `raisedAmountCents` either way, so the row itself says whether the amount moved
@@ -401,6 +403,12 @@ export async function applyManualBookingPayment(
  * NULL is an explicit claim that the task already carries its final amount, and
  * closes at it — today's behaviour, now stated rather than assumed. It 409s when
  * there is no amount to close at.
+ *
+ * ZERO IS REFUSED whichever way it arrives, and that is `INV-PAY-051`. COMPLETED
+ * means the money genuinely went back, so a $0.00 completion records a refund
+ * that did not happen — in the booking's durable, member-facing event log.
+ * "Reviewed, nothing is due" is DISMISSED, which is a real decision and is what
+ * this whole epic exists to make representable without a magic zero.
  *
  * It is REQUIRED rather than optional on purpose: making it optional would let
  * every existing call site keep the old behaviour silently, where requiring it
@@ -429,7 +437,11 @@ export type ManualRefundTaskResolution =
  *
  * COMPLETED means the money genuinely went back to the member, so — and only
  * then — the local refund allocation is written (the ledger mirror stays
- * honest) and a REFUNDED booking event is recorded. DISMISSED exists for
+ * honest) and a REFUNDED booking event is recorded. Both of those are written
+ * only where there IS a captured payment behind the task: a credit-only task
+ * (`paymentId` NULL) moves nothing here, so claiming a refund in the booking's
+ * member-facing event log would be a claim nothing backs — see `recordedRefund`
+ * below. DISMISSED exists for
  * "the member declined it" / "settled another way" and requires a note; it
  * moves no money and writes no allocation. For an `EDIT_FINANCIAL_REVIEW` task
  * DISMISSED carries its #2797 meaning: reviewed, no adjustment is due for that

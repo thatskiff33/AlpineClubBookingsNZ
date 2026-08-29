@@ -62,8 +62,9 @@ const bodySchema = z.discriminatedUnion("resolution", [
  *
  * B5 (#2262). Close a hand-back task raised when a cash-settled booking was
  * cancelled: "completed" means the money genuinely went back to the member (so
- * the local refund allocation and a REFUNDED booking event are written),
- * "dismissed" means it was declined or settled another way and requires a note.
+ * the local refund allocation and a REFUNDED booking event are written, where
+ * there is a captured payment behind the task), "dismissed" means it was
+ * declined or settled another way and requires a note.
  * Gated finance:edit; audited either way; never calls Stripe or Xero.
  *
  * #3030 (epic #2797, owner decision D2): a completion may also carry

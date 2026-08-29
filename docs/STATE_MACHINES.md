@@ -1442,11 +1442,17 @@ OPEN -> COMPLETED   (#3030: the same finance:edit close, but the amount arrives
                      WITH it. An `EDIT_FINANCIAL_REVIEW` task can be OPEN with
                      `amountCents` NULL - genuinely unknown, never a magic zero -
                      and the admin's confirmed non-negative integer cents is
-                     written inside the SAME status-fenced claim as the status.
-                     There is therefore no priced-but-still-OPEN state, and a
-                     confirmation can no more apply twice than a status can. A
-                     note is REQUIRED on this arm, because the admin is pricing
-                     real money from evidence. Where the confirmed figure differs
+                     written inside the SAME status-fenced claim as the status,
+                     so a confirmation can no more apply twice than a status can.
+                     An OPEN task MAY already carry an amount - see the note
+                     below - and this arm still requires a human to confirm one.
+                     A note is REQUIRED on this arm, because the admin is pricing
+                     real money from evidence. ZERO IS REFUSED: a completion at
+                     $0.00 would record a refund the club did not make, and
+                     "reviewed, nothing is due" is DISMISSED. A credit-only task
+                     (`paymentId` NULL) writes no refund allocation AND no
+                     REFUNDED booking event - there is nothing to allocate
+                     against and nothing moved. Where the confirmed figure differs
                      from one the task already carried, that is the audited
                      amendment of owner decision D2 and `raisedAmountCents` keeps
                      what it was raised with; on a legacy kind a differing figure
@@ -1462,15 +1468,22 @@ OPEN -> DISMISSED   (#3030: for an `EDIT_FINANCIAL_REVIEW` task this means
 
 **#3030: terminal is terminal PER OCCURRENCE, not merely per row.** An
 `EDIT_FINANCIAL_REVIEW` task carries an `occurrenceKey` - the identity of the
-structural edit that raised it, minted in exactly one place
-(`editFinancialReviewOccurrenceKey`, `src/lib/edit-financial-review.ts`, which is
-also where the definition of "the same structural edit" is written down and
-tested). A replay of that edit finds the existing row and raises nothing,
-whatever state it has reached, so COMPLETED and DISMISSED close the OCCURRENCE
-rather than just the row. Because PostgreSQL exempts NULL from a unique index, a
-row of this kind that omitted the key would silently opt out of that fence, so
-the `ManualRefundTask_edit_review_occurrence_key_present` CHECK (migration
-`20260903010000`) makes that unrepresentable.
+structural edit that raised it. A replay of that edit finds the existing row and
+raises nothing, whatever state it has reached, so COMPLETED and DISMISSED close
+the OCCURRENCE rather than just the row. Where the key is minted, what counts as
+"the same structural edit", and which database constraints hold the rules up are
+stated once, in [`INV-PAY-051`](invariants/payment-and-settlement.md#inv-pay-051)
+- not restated here, because one rule with three homes is one rename away from
+two of them lying.
+
+**#3030: an OPEN task MAY carry an amount, and that is a defined state.** The
+raise accepts `raisedAmountCents`, which is written to both `amountCents` and
+`raisedAmountCents` at creation, so a `priced-but-still-OPEN` row is legal. It
+means *the edit could prove a figure and a human has not yet confirmed it* - not
+that anything has been decided and not that any money may move. Nothing moves
+until a COMPLETED transition, whatever the row already holds. The ordinary case
+remains `amountCents` NULL: genuinely unknown, and never a zero standing in for
+it.
 
 **Where a terminal row is read, and the #2750 decision behind it.** Both
 terminal states are terminal for the row, not for the operator: the finance
