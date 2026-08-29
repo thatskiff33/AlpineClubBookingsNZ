@@ -629,11 +629,38 @@ export function getAdminPermissionLevel(
   return getAdminPermissionMatrix(input)[area];
 }
 
+/**
+ * STANDING TO ENTER THE ADMIN PORTAL SHELL: any ONE of the seven admin-area
+ * permissions (#2984, owner-gated privilege-model correction).
+ *
+ * This used to read `&& area.key !== "finance"`, so a finance-only grid had no
+ * standing at all — while `getFirstAccessibleAdminHref` below happily sent the
+ * same grid to `/admin/payments`. The module disagreed with itself, and #2925
+ * hit the disagreement from the other side: `GET /api/admin/lodges` admits "any
+ * admitted admin" and therefore refused "Finance Viewer" the lodge NAMES it
+ * needs to label a payment, with the refusal recorded as a decision about this
+ * function rather than about that endpoint. This is that decision.
+ *
+ * STANDING IS NOT AUTHORISATION, and the distinction is the whole of the
+ * correction. Entering the shell grants nothing: every admin page still clears
+ * `guardAdminLayout` step 6 (area permission for the REQUESTED path), every
+ * `/api/admin` route still clears `requireAdmin` against its own area/level,
+ * and the sidebar and command palette still filter item by item through
+ * `canViewAdminHrefWithMatrix`. A finance-only user reaches the shell and the
+ * Finance area and nothing else, which
+ * `admin-route-authorization-proof.test.ts` proves by attempting every
+ * discovered admin page and `/api/admin` route as that user (#2975).
+ *
+ * So the ONLY callers this function is correct for are the ones asking "is this
+ * person an administrator at all" — the nav bar's Admin link, the
+ * admin-notification recipient roster, and `requireAdmin`'s explicit
+ * `permission: "any-admin"`. It is never a substitute for an area check, and a
+ * caller that reasons "they cleared the shell, therefore they may see X" is a
+ * privilege escalation as written.
+ */
 export function hasAdminPortalAccess(input: AdminPermissionInput) {
   const matrix = getAdminPermissionMatrix(input);
-  return ADMIN_PERMISSION_AREAS.some(
-    (area) => matrix[area.key] !== "none" && area.key !== "finance",
-  );
+  return ADMIN_PERMISSION_AREAS.some((area) => matrix[area.key] !== "none");
 }
 
 export function hasAdminAreaAccess(

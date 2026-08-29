@@ -16,7 +16,10 @@ import {
   hasFinanceManagerAccess,
   requireFinanceViewer,
 } from "@/lib/finance-auth";
-import { hasAdminPortalAccess } from "@/lib/admin-permissions";
+import {
+  getFirstAccessibleAdminHref,
+  hasAdminPortalAccess,
+} from "@/lib/admin-permissions";
 
 export default async function FinanceLayout({
   children,
@@ -57,6 +60,8 @@ export default async function FinanceLayout({
             email: member.email,
             role: member.role,
             canAccessAdmin: hasAdminPortalAccess(member),
+            // See the note in (authenticated)/layout.tsx (#2984).
+            adminHref: getFirstAccessibleAdminHref(member) ?? undefined,
             canAccessFinance: true,
           }}
         />

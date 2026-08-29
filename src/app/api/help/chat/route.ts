@@ -22,8 +22,12 @@ import { buildHelpGrounding } from "@/lib/help/grounding";
 import type { HelpSurface } from "@/lib/help/types";
 import { MEMBER_ACCESS_ROLE_SELECT } from "@/lib/access-role-definitions";
 import {
+  canAccessConsolidatedFeesPage,
+  canViewAdminHref,
+  getAdminPermissionMatrix,
   hasAdminPortalAccess,
   hasFinanceViewerAccess,
+  isConsolidatedFeesPath,
 } from "@/lib/admin-permissions";
 import { prisma } from "@/lib/prisma";
 import { reportAiError } from "@/lib/observability-bridge";
@@ -84,10 +88,25 @@ function fallback(reason: FallbackReason): NextResponse {
  * holds that access — otherwise it is downgraded to "member". Uses the roles
  * read fresh from the database (joined definitions), never the JWT-carried
  * claim, so a stale token can never widen the grounding surface.
+ *
+ * THE ADMIN SURFACE IS RESOLVED PER PATH, NOT PER PORTAL STANDING (#2984/#2975).
+ * `pathname` is client-supplied, and the grounding it selects is the help entry
+ * for THAT admin screen — so answering "are you an admin at all" here would
+ * hand any administrator the page help for every area of the product, whichever
+ * ones they hold. It asks whether this caller could actually OPEN the screen
+ * they are asking about instead, which is the same question
+ * `guardAdminLayout` answers when they navigate there. Nobody legitimate loses
+ * anything: a caller asking about the page they are standing on passes by
+ * construction. The consolidated fee console is the one page admitted on
+ * EITHER bookings or finance (#1933), so it is honoured the same way here.
+ *
+ * A refused claim degrades to the member corpus rather than erroring, exactly
+ * as an unheld "finance" claim already did.
  */
 async function resolveEffectiveSurface(
   claimed: "admin" | "finance" | "member",
   memberId: string,
+  pathname: string,
 ): Promise<HelpSurface> {
   if (claimed === "member") return "member";
 
@@ -98,7 +117,10 @@ async function resolveEffectiveSurface(
   const input = { accessRoles: member?.accessRoles ?? [] };
 
   if (claimed === "admin") {
-    return hasAdminPortalAccess(input) ? "admin" : "member";
+    const admitted = isConsolidatedFeesPath(pathname)
+      ? canAccessConsolidatedFeesPage(getAdminPermissionMatrix(input))
+      : canViewAdminHref(input, pathname);
+    return hasAdminPortalAccess(input) && admitted ? "admin" : "member";
   }
   return hasFinanceViewerAccess(input) ? "finance" : "member";
 }
@@ -153,7 +175,11 @@ export async function POST(request: Request) {
   if (!apiKey) return fallback("not_configured");
 
   // 10. DB-verified surface downgrade, then trusted grounding.
-  const effectiveSurface = await resolveEffectiveSurface(surface, memberId);
+  const effectiveSurface = await resolveEffectiveSurface(
+    surface,
+    memberId,
+    pathname,
+  );
   const groundingText = buildHelpGrounding(effectiveSurface, pathname);
 
   // 11. Ask the model; meter BOTH outcomes; respond.

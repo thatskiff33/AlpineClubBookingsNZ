@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasAdminAccess } from "@/lib/access-roles";
 import {
   hasAdminAreaAccess,
   hasAdminPortalAccess,
@@ -64,8 +65,41 @@ export type RequireAdminMockOptions = {
  *    system cannot see (`evaluateRequireAdminMock({})` compiles fine and is
  *    just as inert).
  *
- * Passing `{ permission: false }` is the one legitimate way to ask for the
- * broad portal check, and it is explicit at the call site so a reviewer sees it.
+ * ## `permission: false` is FULL ADMIN, and this mock used to disagree (#2975)
+ *
+ * The real guard resolves `{ permission: false }` to `hasAdminAccess` — the
+ * literal `ADMIN` role — and its own docblock spells that out: "admit ONLY a
+ * full administrator, not merely somebody admitted to the portal". This mock
+ * used to fold `false` into the same branch as the absent-options case and
+ * answer `hasAdminPortalAccess`, so a Full-Admin-only route (the club timezone
+ * write, the environment-safety override) would have been admitted here for
+ * every scoped officer in the club. It is fixed below.
+ *
+ * No route test was relying on the old behaviour — the two routes that pass
+ * `permission: false` both refuse to mock this module at all and drive the real
+ * guard — so this closes a trap rather than changing a result. But it was a
+ * trap of exactly the kind this helper's own docblock is about: a mock that is
+ * WIDER than the guard makes the assertion "only a full admin may do this" pass
+ * without ever being true.
+ *
+ * ## What is still an approximation, stated rather than hidden
+ *
+ * The absent-options case is NOT the real guard's behaviour either. The real
+ * `requireAdmin()` with no options infers a requirement from the `x-pathname` /
+ * `x-request-method` headers `proxy.ts` stamps, and falls back to
+ * `hasAdminAccess` when they are missing; this mock has no request to read and
+ * answers `hasAdminPortalAccess`, which is wider than both. It is left that way
+ * deliberately: sixty-odd suites use this helper to reach routes whose real
+ * gate is path-inferred, and narrowing it here would turn a fidelity fix into a
+ * mass rewrite of unrelated files.
+ *
+ * The consequence is worth being precise about, because it bounds what those
+ * suites prove: **through this mock, a bare-`requireAdmin()` route cannot
+ * demonstrate its own area or level.** That proof lives in
+ * `admin-route-authorization-proof.test.ts` (#2975), which drives the REAL
+ * guard, over the REAL path-to-permission map, for every admin page and
+ * `/api/admin` route discovered on disk. Assert domain behaviour here; do not
+ * assert authorization here.
  */
 export async function evaluateRequireAdminMock(
   options: RequireAdminMockOptions | undefined,
@@ -79,16 +113,18 @@ export async function evaluateRequireAdminMock(
     };
   }
   const permission = options?.permission;
-  // #2925: "any-admin" carries NO area requirement, and the null branch below
-  // already resolves to hasAdminPortalAccess - which is precisely what
-  // "any-admin" means in the real guard, so the two agree by construction.
   const requirement =
     permission === false || permission === "any-admin"
       ? null
       : (permission ?? null);
   const hasAccess = requirement
     ? hasAdminAreaAccess(session.user, requirement)
-    : hasAdminPortalAccess(session.user);
+    : // `false` means Full Admin ONLY in the real guard (#2975). "any-admin"
+      // and the absent-options case both answer hasAdminPortalAccess: exact for
+      // the first (#2925), a documented widening for the second.
+      permission === false
+      ? hasAdminAccess(session.user)
+      : hasAdminPortalAccess(session.user);
   if (!hasAccess) {
     return {
       ok: false as const,

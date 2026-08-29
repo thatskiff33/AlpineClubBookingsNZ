@@ -68,15 +68,61 @@ describe("admin permission bundles", () => {
     expect(getAdminPermissionLevel(subject, "finance")).toBe("view");
   });
 
-  it("keeps finance viewers out of the admin portal while allowing treasurers", () => {
-    expect(hasAdminPortalAccess({ accessRoles: ["FINANCE_USER"] })).toBe(false);
+  /*
+    #2984 — a finance-only grid HAS portal standing. This test used to assert
+    the opposite ("keeps finance viewers out of the admin portal"), which is the
+    behaviour the owner corrected: `hasAdminPortalAccess` excluded `finance`
+    while `getFirstAccessibleAdminHref` sent the very same grid to
+    /admin/payments, so the module contradicted itself and #2925 had to record a
+    shipped preset's 403 as a known defect rather than fix it.
+
+    STANDING IS NOT AUTHORISATION. The negative half of that is proved by
+    attempt, not by assertion, in `admin-route-authorization-proof.test.ts`,
+    which drives the real guards over every admin page and /api/admin route
+    discovered on disk as a finance-only user.
+  */
+  it("gives a finance-only grid portal standing, and no other area with it", () => {
+    const financeViewer = { accessRoles: ["FINANCE_USER"] };
+
+    expect(hasAdminPortalAccess(financeViewer)).toBe(true);
     expect(hasAdminPortalAccess({ accessRoles: ["FINANCE_ADMIN"] })).toBe(true);
+
+    // The standing buys the finance area and nothing else.
+    expect(
+      hasAdminAreaAccess(financeViewer, { area: "finance", level: "view" }),
+    ).toBe(true);
+    expect(
+      hasAdminAreaAccess(financeViewer, { area: "finance", level: "edit" }),
+    ).toBe(false);
+    for (const area of [
+      "overview",
+      "bookings",
+      "membership",
+      "lodge",
+      "content",
+      "support",
+    ] as const) {
+      expect(
+        hasAdminAreaAccess(financeViewer, { area, level: "view" }),
+        `finance-only must not hold ${area}`,
+      ).toBe(false);
+    }
+
     expect(
       hasAdminAreaAccess(
         { accessRoles: ["FINANCE_ADMIN"] },
         { area: "finance", level: "edit" },
       ),
     ).toBe(true);
+  });
+
+  it("gives no portal standing to a member holding no admin area at all", () => {
+    expect(hasAdminPortalAccess({ accessRoles: ["USER"] })).toBe(false);
+    expect(hasAdminPortalAccess({ accessRoles: [] })).toBe(false);
+    // canLogin:false empties the matrix, so a suspended admin loses standing.
+    expect(
+      hasAdminPortalAccess({ accessRoles: ["ADMIN"], canLogin: false }),
+    ).toBe(false);
   });
 });
 

@@ -15,6 +15,7 @@ import { HelpWidgetMember } from "@/components/help-widget/help-widget-member";
 import { getCachedClubIdentity } from "@/lib/public-layout-config";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
 import {
+  getFirstAccessibleAdminHref,
   hasAdminPortalAccess,
   hasFinanceViewerAccess,
 } from "@/lib/admin-permissions";
@@ -165,6 +166,11 @@ export default async function AuthenticatedLayout({
     email: session.user.email ?? "",
     role: member.role,
     canAccessAdmin: hasAdminPortalAccess(member),
+    // Point the Admin link at a page this user may actually open (#2984):
+    // portal standing no longer implies `overview`, so /admin/dashboard is not
+    // universally reachable. Undefined only when they have no standing at all,
+    // in which case the link is not rendered.
+    adminHref: getFirstAccessibleAdminHref(member) ?? undefined,
     canAccessFinance: hasFinanceViewerAccess(member),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,

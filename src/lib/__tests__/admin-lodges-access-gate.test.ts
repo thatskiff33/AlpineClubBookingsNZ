@@ -139,28 +139,17 @@ const PRESETS_WITHOUT_LODGE_VIEW = [
   "ADMIN_MEMBERSHIP",
   "FINANCE_ADMIN",
   "ADMIN_CONTENT",
+  // #2984. FINANCE_USER used to sit in a long note below this list instead of
+  // in it: "Finance Viewer" ships `overviewLevel: "NONE"` and
+  // `lodgeLevel: "NONE"`, so it was refused here while still reaching the
+  // finance area, and #2925 recorded that as a question about
+  // `hasAdminPortalAccess` rather than about this endpoint — filed, not
+  // absorbed. The owner answered it: any one of the seven areas is portal
+  // standing. So the fourth shipped preset that holds no `lodge` entry now
+  // behaves like the other three, including the narrowed payload below, which
+  // is what makes admitting it safe.
+  "FINANCE_USER",
 ] as const satisfies readonly AppAccessRole[];
-
-/*
-  FINANCE_USER IS DELIBERATELY NOT IN THAT LIST, and it was reviewed and decided
-  rather than overlooked (#2925, 21 Aug 2026).
-
-  Review reported it as an incomplete fix: "Finance Viewer" ships
-  `overviewLevel: "NONE"` and `lodgeLevel: "NONE"`, so it is refused here while
-  still reaching the finance area. Checked against the issue, that is out of
-  scope: #2925 names exactly two presets, ADMIN_MEMBERSHIP and FINANCE_ADMIN,
-  and its acceptance criterion asks for those two.
-
-  It is also consistent rather than accidental. `hasAdminPortalAccess` excludes
-  `finance` from what counts as portal access, which predates this issue and
-  governs far more than this route. Admitting a finance-only role here would
-  either contradict that or require changing it everywhere.
-
-  Whether a finance-only viewer should read lodge names at all is a real product
-  question - `getFirstAccessibleAdminHref` does send them to /admin/payments, so
-  they are an admin in some sense - but it is a decision about
-  `hasAdminPortalAccess`, not about this endpoint. Filed rather than absorbed.
-*/
 
 describe("GET /api/admin/lodges admits any admitted admin (#2925)", () => {
   it.each(PRESETS_WITHOUT_LODGE_VIEW)(
@@ -312,14 +301,32 @@ describe("the explicit permission is what opens the route, not the bare call", (
     expect(result.ok).toBe(true);
   });
 
-  it("still refuses a finance-only role, which is not portal access (#2925)", async () => {
-    // Pinned so the boundary is deliberate rather than incidental.
-    // `hasAdminPortalAccess` excludes `finance`, so "any-admin" does not admit a
-    // finance-only grid. That predates this issue and is why FINANCE_USER is not
-    // in PRESETS_WITHOUT_LODGE_VIEW above - see the note there.
+  it("admits a finance-only role, which IS portal access since #2984", async () => {
+    /*
+      This assertion is the inverse of the one it replaces, and the inversion is
+      the point rather than a relaxation of this test. It used to pin
+      "any-admin refuses a finance-only grid" as deliberate; #2984 decided that
+      any one of the seven areas is portal standing, so the same call now
+      admits — and `requireAdmin` is where that has to show, because
+      "any-admin" is the one option that reads `hasAdminPortalAccess` directly.
+
+      What did NOT change is what they are handed. The payload assertions above
+      cover FINANCE_USER too: no door code, no address, no travel note.
+    */
     signInAs("FINANCE_USER");
 
     const result = await requireAdmin({ permission: "any-admin" });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("and a bare requireAdmin() on this path still refuses that same caller", async () => {
+    // The widening is to "any-admin", not to the route map: inference still
+    // resolves /api/admin/lodges to lodge:view, which a finance-only grid has
+    // no part of. Portal standing is not authorisation (#2984).
+    signInAs("FINANCE_USER");
+
+    const result = await requireAdmin();
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.response.status).toBe(403);
