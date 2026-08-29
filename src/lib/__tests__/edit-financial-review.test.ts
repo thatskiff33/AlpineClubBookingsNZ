@@ -134,6 +134,28 @@ describe("#3030 occurrence key - the same structural edit is one occurrence", ()
     expect(key).toMatch(/^edit-financial-review:v1:[0-9a-f]{64}$/);
   });
 
+  it("MUTATION: PINS the digest for a fixed occurrence, so widening the hashed material without bumping v1 fails loudly", () => {
+    // Every OTHER test in this describe recomputes the key on both sides -
+    // key(a) === key(a), key(shuffled) === key(base), the discrimination cases -
+    // so all of them would still pass if the canonicalisation, the field set or
+    // the digest algorithm changed. This one would not.
+    //
+    // It matters more here than for the sibling `computeProposalHash`, which
+    // re-derives from a frozen snapshot: this key is STORED in a unique-indexed
+    // column and IS the duplicate fence. Add a field to `material` without
+    // bumping OCCURRENCE_KEY_VERSION and every OPEN task already on file becomes
+    // unreachable by key - the raise finds nothing, raises a SECOND task for one
+    // adjustment, and two admins can hand the same money back twice. The module
+    // docblock forbids that; this is what enforces it.
+    //
+    // If you are here because this failed: do NOT re-pin it. Either you changed
+    // the material and must bump the namespace version (and then re-pin), or you
+    // changed the canonicalisation and must not have.
+    expect(editFinancialReviewOccurrenceKey(occurrence())).toBe(
+      "edit-financial-review:v1:3d3fcd8e9b0b3de5bab1fee6a9e794146bb7747c19633cef428bce52e1667eca",
+    );
+  });
+
   it.each([
     ["a different booking", { bookingId: "booking-2" }],
     ["a different guest strand", { bookingGuestId: "guest-2" }],
