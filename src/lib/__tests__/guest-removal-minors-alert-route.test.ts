@@ -564,6 +564,55 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
   });
 
+  it("tells the member their money is being worked out, on the email itself", async () => {
+    /*
+      #3032 - THE WIRE, and it was dead until this issue. #3033 taught the
+      "Booking Modified" email to say "the club is still working out what that
+      change means" instead of rendering a SILENT money section, but the
+      parameter arrived optional and defaulting to false and no production
+      caller set it. So the member whose removal had just been parked got the
+      identical silent email the fix existed to prevent.
+
+      Asserted through the REAL service on the REAL route: the fixture strips
+      the stored night prices, the service decides the strands are unpriceable
+      and parks them, and the value the email receives is the one that decision
+      produced. Nothing here hands the route a literal - hard-code `false` at
+      the call site and this fails; the control below fails if it is hard-coded
+      `true`.
+    */
+    const tx = buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]));
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(tx),
+    );
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(200);
+    // The park really happened, so the flag below is reporting a fact rather
+    // than agreeing with an empty scenario.
+    expect(tx.manualRefundTask.create).toHaveBeenCalled();
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ financialReviewPending: true }),
+    );
+  });
+
+  it("says nothing about a review on a removal that priced normally", async () => {
+    // The CONTROL for the case above, and the half that matters commercially:
+    // an ordinary removal must not tell a member their refund is under review
+    // when it is not. A hard-coded `true` at the call site passes the test
+    // above and fails this one.
+    const res = await runRemoval("g-child", [ADULT, CHILD]);
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ financialReviewPending: false }),
+    );
+  });
+
   it("settles normally, and raises nothing, when every strand's rows reconcile", async () => {
     // The control: the same removal on the ordinary fixture, whose rows carry
     // what each night was sold for. Without it the case above could pass on a

@@ -156,17 +156,41 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
       too, which is the difference between a member who can pay and one who
       cannot.
     */
-    const note = await paymentNoteFromSender({
+    const overrides = {
       financialReviewPending: true,
       additionalAmountCents: 4500,
       additionalPaymentMethod: "INTERNET_BANKING",
       xeroInvoiceNumber: "INV-0042",
       paymentReference: "TAC-1234",
-    });
+    };
+    const note = await paymentNoteFromSender(overrides);
 
     expect(note).toMatch(/working out what that change means/i);
     expect(note).toContain("Xero invoice INV-0042");
     expect(note).toContain("Payment reference: TAC-1234.");
+
+    /*
+      #3032: and the SAME composition in the HTML the member actually opens.
+      The flat body and the template build this from separate code, so asserting
+      only one of them leaves the other free to drop the how-to-pay half - which
+      is the exact shape of the #3033 defect, in the surface most members read.
+      This is also the case pinned byte-for-byte as
+      `bookingModifiedTemplate:financialReviewPendingWithPayment` in the
+      rendered-email corpus.
+    */
+    const html = bookingModifiedTemplate(params(overrides));
+
+    expect(html).toMatch(/working out what that change means/i);
+    expect(html).toMatch(
+      /An additional Internet Banking payment of \$45\.00 is required/,
+    );
+    expect(html).toContain("Xero invoice INV-0042");
+    expect(html).toContain("Payment reference: TAC-1234.");
+    // The two notes are SEPARATE boxes, and the review one comes first: the
+    // honest sentence must not be buried under the instruction to pay.
+    expect(html.indexOf("working out what that change means")).toBeLessThan(
+      html.indexOf("An additional Internet Banking payment"),
+    );
   });
 
   it("scopes 'nothing to do' to the change, so the payment instruction still stands", async () => {

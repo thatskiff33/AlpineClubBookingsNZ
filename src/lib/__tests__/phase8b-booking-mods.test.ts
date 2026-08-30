@@ -1135,6 +1135,53 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     expect(sendBookingModifiedEmail).toHaveBeenCalled();
   });
 
+  it("tells the member whether their money is still being worked out (#3032)", async () => {
+    /*
+      THE WIRE #3033 LEFT DEAD on the standard date path. The parameter arrived
+      optional and defaulting to false, and no production caller set it, so the
+      sentence #3033 added could never reach a member from here.
+
+      This path raises no review of its own, so the honest value is whether the
+      booking is under one now - read through `bookingHasOpenFinancialReview`.
+      Both directions are asserted in one test off the SAME fixture, so neither
+      a hard-coded `true` nor a hard-coded `false` can pass.
+    */
+    const { prisma } = await import("@/lib/prisma");
+
+    async function emailFlagForReviewRows(rows: Array<{ bookingId: string }>) {
+      vi.clearAllMocks();
+      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+      const tx = makeTx(makeBooking());
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 10, nightDetails: [] });
+      mockedCalcPrice.mockReturnValue({
+        guests: [
+          { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+          { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] },
+        ],
+        totalPriceCents: 10000,
+      });
+      mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 100, toTierRefundPct: 100 });
+      mockedDaysUntilDate.mockReturnValue(30);
+      mockedLoadPolicy.mockResolvedValue([]);
+      mockedGetHoldDays.mockResolvedValue(7);
+      mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(rows as never);
+
+      const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+        method: "PUT",
+        body: JSON.stringify({ checkOut: "2026-06-05" }),
+      });
+      await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+      expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+      return vi.mocked(sendBookingModifiedEmail).mock.calls[0][0]
+        .financialReviewPending;
+    }
+
+    expect(await emailFlagForReviewRows([{ bookingId: "bk1" }])).toBe(true);
+    expect(await emailFlagForReviewRows([])).toBe(false);
+  });
+
   it("returns 400 for PENDING with non-members modified to check-in within 7 days auto-confirms", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
     const booking = makeBooking({
@@ -1949,6 +1996,41 @@ describe("POST /api/bookings/[id]/guests", () => {
       expect.objectContaining({ action: "booking.modify.guests.add" })
     );
     expect(sendBookingModifiedEmail).toHaveBeenCalled();
+  });
+
+  it("tells the member whether their money is still being worked out (#3032)", async () => {
+    /*
+      The FIFTH call site, and the one no hand-written list of them mentioned -
+      the compiler found it when `financialReviewPending` became required. A
+      guest addition raises no review of its own, so the honest value is again
+      whether the booking is under one now. Both directions off the same
+      fixture, so no hard-coded literal passes.
+    */
+    const { prisma } = await import("@/lib/prisma");
+
+    async function emailFlagForReviewRows(rows: Array<{ bookingId: string }>) {
+      vi.clearAllMocks();
+      mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER", accessRoles: [{ role: "USER" }] } } as any);
+      const tx = makeTx(makeBooking());
+      mockTransaction.mockImplementation((fn: any) => fn(tx));
+      mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+      mockedCalcPrice.mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }, { ageTier: "ADULT" as const, isMember: true, rateMembershipTypeId: "type-member", nights: 2, priceCents: 5000, perNightCents: [5000, 5000], nightDates: [] }], totalPriceCents: 15000 });
+      mockedGetHoldDays.mockResolvedValue(7);
+      mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+      vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue(rows as never);
+
+      const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+        method: "POST",
+        body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: true }] }),
+      });
+      await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+      expect(sendBookingModifiedEmail).toHaveBeenCalledTimes(1);
+      return vi.mocked(sendBookingModifiedEmail).mock.calls[0][0]
+        .financialReviewPending;
+    }
+
+    expect(await emailFlagForReviewRows([{ bookingId: "bk1" }])).toBe(true);
+    expect(await emailFlagForReviewRows([])).toBe(false);
   });
 });
 

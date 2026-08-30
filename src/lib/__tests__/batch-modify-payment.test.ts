@@ -3319,6 +3319,58 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the member their money is still being worked out (#3032)", async () => {
+    /*
+      THE WIRE #3033 LEFT DEAD. `financialReviewPending` was optional and
+      defaulted to false, and no production caller set it - so the sentence
+      #3033 added to the email could not reach a member from this path at all.
+
+      This path raises no review of its own (the batch park is #3170, held on an
+      owner money decision), so the honest question is not "did this edit park
+      money" but "is the club still working out an amount on this booking". The
+      value therefore comes from the real `bookingHasOpenFinancialReview` read,
+      and this test drives it by putting an OPEN review row in front of that
+      read rather than by handing the route a literal.
+
+      Note the fence's own `findFirst` stays empty, so the edit proceeds. That
+      is not a contrived pairing: the fence reads inside the transaction and
+      this reads after it commits, so a review opened by another lane in between
+      produces exactly this state.
+    */
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([
+      { bookingId: "bk1" },
+    ] as never);
+
+    const response = await runZeroNetDateChange({});
+    expect(response.status).toBe(200);
+
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
+      expect.objectContaining({ financialReviewPending: true }),
+    );
+  });
+
+  it("says nothing about a review when the booking has none (#3032)", async () => {
+    // The CONTROL. Hard-code `true` at the call site and this fails; hard-code
+    // `false` and the case above fails. Only a real read passes both.
+    //
+    // The empty result is set EXPLICITLY rather than relied on from the mock's
+    // declaration: `vi.clearAllMocks()` clears recorded calls but keeps
+    // implementations, so the row the case above installed survives into this
+    // test and this control silently inverted until it was stated here.
+    const { prisma } = await import("@/lib/prisma");
+    vi.mocked(prisma.manualRefundTask.findMany).mockResolvedValue([] as never);
+
+    const response = await runZeroNetDateChange({});
+    expect(response.status).toBe(200);
+
+    const { sendBookingModifiedEmail } = await import("@/lib/email");
+    expect(vi.mocked(sendBookingModifiedEmail)).toHaveBeenCalledWith(
+      expect.objectContaining({ financialReviewPending: false }),
+    );
+  });
+
   it("always emails a member self-edit by default (#1696)", async () => {
     // Default session (a plain member owner) resolves to the USER actor, whose
     // edits always notify.
