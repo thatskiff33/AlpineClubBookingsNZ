@@ -7,17 +7,32 @@ import {
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
-import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
+import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
-import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
+import {
+  chooseEditReviewSettlementRoute,
+  type EditReviewSettlementRoute,
+} from "@/lib/edit-financial-review-settlement";
+import logger from "@/lib/logger";
 import {
   MANUAL_PAYMENT_NOTE_MAX,
   normaliseManualPaymentNote,
 } from "@/lib/manual-subscription-payment";
 import { createBookingModificationCredit } from "@/lib/member-credit";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import { applyLocalRefundAllocation } from "@/lib/payment-transactions";
+import {
+  buildBookingModificationRefundMetadata,
+  enqueueEditFinancialReviewRefundRecovery,
+  markEditFinancialReviewRefundRecoverySucceeded,
+} from "@/lib/payment-recovery";
+import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
+import {
+  applyLocalRefundAllocation,
+  RefundAllocationRacedError,
+  refundPaymentTransactions,
+} from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 
 /**
  * B5 (#2262) guard 4, and since #3030 the completion door of epic #2797: closing
@@ -181,12 +196,18 @@ export async function resolveManualRefundTask(
         booking: {
           select: {
             memberId: true,
+            // #3032: the booking's own status and its primary Xero invoice id,
+            // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
+            // a booking whose invoice was issued has to correct that invoice, or
+            // the ledger and Xero disagree permanently.
+            status: true,
             payment: {
               select: {
                 id: true,
                 status: true,
                 amountCents: true,
                 refundedAmountCents: true,
+                xeroInvoiceId: true,
               },
             },
           },
@@ -293,8 +314,12 @@ export async function resolveManualRefundTask(
     // "pretends money moved" failure `INV-PAY-051` forbids; a refusal from here
     // leaves the row untouched and still OPEN. The rules, the three routes and
     // the two refusals live in `edit-financial-review-settlement.ts`.
-    const settlementRoute = settlement
-      ? await chooseEditReviewSettlementRoute(task, tx)
+    const settlementRoute: EditReviewSettlementRoute | null = settlement
+      ? await chooseEditReviewSettlementRoute({
+          task,
+          amountCents: settlement.amountCents,
+          store: tx,
+        })
       : null;
 
     const now = new Date();
@@ -354,10 +379,34 @@ export async function resolveManualRefundTask(
             settlementRoute.allocateAgainstPaymentId ?? undefined,
           );
         }
-        // `stripe-refund` writes NOTHING here on purpose: the provider call has
-        // to happen outside this transaction, and `refundPaymentTransactions`
-        // writes the ledger allocation as part of it. Writing one here as well
-        // would consume the refundable headroom twice for one refund.
+        // `stripe-refund` writes no LEDGER allocation here on purpose: the
+        // provider call has to happen outside this transaction, and
+        // `refundPaymentTransactions` writes the allocation as part of it.
+        // Writing one here as well would consume the refundable headroom twice
+        // for one refund.
+        //
+        // What it DOES write here is the refund DEBT - booking-cancel's #1349
+        // persist-the-plan-first pattern, on the same infrastructure. This
+        // completion holds no advisory lock (the locking guide forbids holding
+        // `lock(1)` across a provider round trip), so its single-flight guarantee
+        // is the claim above, which has committed by the time Stripe is called.
+        // Without a durable row a crash in that window would leave a COMPLETED
+        // task, an untouched `refundedAmountCents` and NO trace that money was
+        // owed - a worse state than the booking-edit path's, precisely because
+        // this route writes no allocation. With it, the recovery cron replays the
+        // frozen slices under the same task-scoped Stripe key prefix the inline
+        // call uses, so Stripe answers a repeat with the original refund and the
+        // ledger dedupes on refund id.
+        else if (settlementRoute.kind === "stripe-refund") {
+          await enqueueEditFinancialReviewRefundRecovery({
+            bookingId: task.bookingId,
+            paymentId: settlementRoute.paymentId,
+            taskId: task.id,
+            amountCents: settlement.amountCents,
+            allocationPlan: settlementRoute.allocation,
+            store: tx,
+          });
+        }
       } catch (error) {
         // #3030: the settlement cap is now OPERATOR-REACHABLE. Before this the
         // amount always came from cancellation or capture policy and could not
@@ -375,6 +424,17 @@ export async function resolveManualRefundTask(
           throw new ManualBookingPaymentError(
             "That is more than was ever captured on this payment — check the amount against the booking's payment history.",
             400
+          );
+        }
+        // #3032: this completion holds no advisory lock, so a concurrent writer
+        // on the same payment can move the ledger under it. The compare-and-set
+        // inside `applyLocalRefundAllocation` turns that into a loud failure
+        // instead of a lost update; the transaction rolls back, so the task is
+        // still OPEN and its money is still owed when the operator retries.
+        if (error instanceof RefundAllocationRacedError) {
+          throw new ManualBookingPaymentError(
+            "This booking's payment changed while you were closing the task — refresh and try again.",
+            409
           );
         }
         throw error;
@@ -452,14 +512,21 @@ export async function resolveManualRefundTask(
        * shown is the test this fails: "your money was refunded" when nothing in
        * this system returned any.
        *
-       * #3032 NARROWED IT from "the task had a payment id" to "this route wrote
-       * the allocation here". The two other routes move money too, and both write
-       * their own event after the commit where the money actually moves: the
-       * Stripe route records `REFUNDED` only once the provider call has returned
-       * a refund id, and the account-credit route records `CREDITED`. Leaving the
-       * old test in place would have double-recorded the Stripe case - once here
-       * for an allocation this transaction never wrote, and once after the
-       * commit.
+       * #3032 NARROWED IT from "the task had a payment id" to "this completion
+       * took the `local-allocation` route". The two other routes move money too,
+       * and both write their own event after the commit where the money actually
+       * moves: the Stripe route records `REFUNDED` only once the provider call
+       * has returned a refund id, and the account-credit route records
+       * `CREDITED`. Leaving the old test in place would have double-recorded the
+       * Stripe case - once here for an allocation this transaction never wrote,
+       * and once after the commit.
+       *
+       * THE TEST IS THE ROUTE, NOT "an allocation was written in this
+       * transaction", and the difference is real: the account-credit route DOES
+       * write a local allocation inside this transaction when the booking has a
+       * captured payment behind it (`createBookingModificationCredit` consumes
+       * the refundable headroom, #1031), and it still belongs on `CREDITED`
+       * rather than `REFUNDED` - the member got credit, not their money back.
        */
       recordedRefund:
         settlement && settlementRoute?.kind === "local-allocation"
@@ -473,6 +540,12 @@ export async function resolveManualRefundTask(
       settlementRoute,
       settlementAmountCents: settlement?.amountCents ?? null,
       memberId: task.booking.memberId,
+      /**
+       * #3032: the two facts the post-commit Xero dispatch needs, read under the
+       * same transaction as everything else rather than re-queried afterwards.
+       */
+      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(task.booking),
+      bookingPaymentStatus: task.booking.payment?.status ?? null,
       status:
         resolution === "completed"
           ? ManualRefundTaskStatus.COMPLETED
@@ -501,43 +574,72 @@ export async function resolveManualRefundTask(
    * above, which has already committed: a second completion of this task is
    * refused by the status check, so nothing below can run twice for one task.
    *
-   * A crash between the commit and these calls leaves the task COMPLETED with
-   * the money not yet moved. That exposure is inherent to the no-lock design and
-   * is the same one the booking-edit path carries; `executeBookingModificationRefund`
-   * narrows it by enqueueing a durable recovery operation on any Stripe failure,
-   * replaying the identical idempotency key rather than minting a new one.
+   * A crash between the commit and these calls is NOT an accepted loss. The card
+   * route persisted its refund debt - the frozen per-transaction slices and the
+   * task-scoped Stripe key prefix - inside the transaction above, so the recovery
+   * cron replays exactly what this block would have sent. That is booking-cancel's
+   * #1349 arrangement, and the reasoning transfers verbatim.
    */
   let stripeRefundId: string | undefined;
   if (result.settlementRoute?.kind === "stripe-refund") {
-    stripeRefundId = await executeBookingModificationRefund({
-      bookingId: result.bookingId,
-      result: {
-        pendingRefundAmountCents: result.settlementAmountCents ?? 0,
-        paymentId: result.settlementRoute.paymentId,
-        bookingModificationId: result.settlementRoute.bookingModificationId,
-      },
-      // #1507: the reason is rebuilt byte-identically by a recovery replay from
-      // the stored key prefix, so it is a fixed discriminator, never prose.
-      metadataReason: "edit_financial_review",
-      // Scoped to the modification, exactly as every other modification refund
-      // is: two reviews on one booking that confirm the same amount must not
-      // collapse onto one Stripe key and silently under-refund the member.
-      idempotencyKeyPrefix: `mod_review_refund_${result.bookingId}`,
-      failureMessage:
-        "Stripe refund failed after an edit financial review was completed - enqueueing recovery",
-      recoveryFailureMessage:
-        "Failed to enqueue payment recovery for the Stripe refund of a completed edit financial review",
-    });
+    const route = result.settlementRoute;
+    const amountCents = result.settlementAmountCents ?? 0;
+    try {
+      const refundResult = await refundPaymentTransactions({
+        paymentId: route.paymentId,
+        amountCents,
+        // #1507: the body is rebuilt byte-identically by a recovery replay from
+        // the stored key prefix, so the reason is a fixed discriminator, never
+        // prose. `bookingModificationRefundReasonForKeyPrefix` maps this task's
+        // prefix back to exactly this string.
+        metadata: buildBookingModificationRefundMetadata(
+          result.bookingId,
+          "edit_financial_review",
+        ),
+        // TASK-scoped, not modification-scoped. Owner decision D-3032-1 settles a
+        // review against the ORIGINAL edit's `BookingModification`, and one edit
+        // can raise TWO review tasks - two unpriceable strands, one modification
+        // row. A modification-scoped prefix would give both the same per-slice
+        // key, Stripe would answer the second with the FIRST refund, and this
+        // code would take the replayed id as success and tell the member their
+        // money came back when half of it never left.
+        idempotencyKeyPrefix: buildEditFinancialReviewRefundStripeKeyPrefix(
+          result.taskId,
+        ),
+        // The slices frozen inside the transaction, so an inline attempt and a
+        // cron replay send byte-identical requests.
+        allocation: route.allocation,
+      });
+      stripeRefundId = refundResult.refunds[0]?.refundId;
+      // Best-effort close, exactly as #1349's is: a lost close leaves the
+      // operation PENDING and the cron replays the identical frozen slices, which
+      // Stripe answers with the original refunds.
+      await markEditFinancialReviewRefundRecoverySucceeded({
+        taskId: result.taskId,
+      }).catch((err) =>
+        logger.error(
+          { err, bookingId: result.bookingId, taskId: result.taskId },
+          "Failed to close the edit-financial-review refund recovery operation after an inline refund succeeded",
+        ),
+      );
+    } catch (err) {
+      // The debt is already durable, so there is nothing to enqueue here and
+      // nothing is lost: the operation stays PENDING and the cron replays it.
+      logger.error(
+        { err, bookingId: result.bookingId, taskId: result.taskId, amountCents },
+        "Stripe refund failed after an edit financial review was completed - the persisted recovery operation will replay it",
+      );
+    }
     if (stripeRefundId) {
-      // Only on a refund that actually issued. A failure enqueues recovery and
-      // records NO event: a REFUNDED row is member-facing through
-      // `booking-narrative.ts`, so writing one for money still sitting in the
-      // club's account would tell the member their refund had happened.
+      // Only on a refund that actually issued. A failure records NO event: a
+      // REFUNDED row is member-facing through `booking-narrative.ts`, so writing
+      // one for money still sitting in the club's account would tell the member
+      // their refund had happened.
       await recordBookingEvent({
         bookingId: result.bookingId,
         type: BookingEventType.REFUNDED,
         actorMemberId: actingMemberId,
-        amountCents: result.settlementAmountCents ?? 0,
+        amountCents,
         reason: "edit_financial_review_completed",
       });
     }
@@ -554,6 +656,75 @@ export async function resolveManualRefundTask(
       amountCents: result.settlementAmountCents ?? 0,
       reason: "edit_financial_review_credited",
     });
+  }
+
+  /**
+   * #3032: the Xero leg, which the issue's "through the existing canonical
+   * settlement path" includes.
+   *
+   * Every edit-time settlement in this repository computes an
+   * `xeroRefundAmountCents` and dispatches it; a completion that moved money on
+   * all three routes and dispatched nothing would leave a booking with an issued
+   * invoice showing a total the club no longer holds - and unlike a local ledger
+   * slip, nothing later reconciles it. Routed through the SAME choke point the
+   * three booking-edit services use, so the credit-note shape, the outbox
+   * idempotency (an active `MODIFICATION_CREDIT_NOTE` link on the anchor, plus a
+   * correlation key) and the connected-instance kick are the existing ones rather
+   * than a second dispatch.
+   *
+   * `settlementMethod` is what picks the note type, and it follows the route the
+   * money actually took: account credit issues an UNAPPLIED modification credit
+   * note, the two cash routes issue an ordinary one.
+   *
+   * Best-effort and after the commit, matching every other caller: a Xero outage
+   * must not undo a completion whose money has already moved.
+   */
+  /**
+   * The `BookingModification` this completion's Xero credit note hangs off, or
+   * null when there is nothing to correct: a DISMISSED task has no route, and
+   * every pre-#3032 task kind carries a null anchor by construction. Those are
+   * raised for cancelled cash-settled bookings whose Xero side the cancellation
+   * path already handled, so a credit note here would be a second, contradictory
+   * correction of the same money.
+   */
+  const xeroAnchorId = result.settlementRoute?.bookingModificationId ?? null;
+  if (xeroAnchorId && result.settlementAmountCents) {
+    void queueXeroBookingEditSettlement({
+      bookingId: result.bookingId,
+      bookingModificationId: xeroAnchorId,
+      createdByMemberId: actingMemberId,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      originalPaymentStatus: result.bookingPaymentStatus,
+      // A settled review only ever gives money BACK - a completion at zero is
+      // refused outright and a negative amount cannot be represented - so the
+      // delta is always negative and always reaches the credit-note branch.
+      priceDiffCents: -result.settlementAmountCents,
+      changeFeeCents: 0,
+      // The structural edit that raised this review queued its own narration
+      // update when it committed. This is the money leg alone; claiming the dates
+      // or the party changed here would queue a second, redundant invoice update.
+      datesChanged: false,
+      guestIdentityChanged: false,
+      settlementMethod:
+        result.settlementRoute?.kind === "account-credit" ? "credit" : "card",
+      settlementAmountCents: result.settlementAmountCents,
+    }).catch((err) =>
+      logger.error(
+        { err, bookingId: result.bookingId, taskId: result.taskId },
+        "Failed to queue Xero settlement for a completed edit financial review",
+      ),
+    );
+  } else if (result.settlementRoute && result.hasIssuedXeroInvoice) {
+    // An edit-review completion that moved money on a booking with an issued
+    // invoice but carries no anchor to correct it against. The card and
+    // account-credit routes refuse before the claim when the anchor is missing,
+    // so only the hand-settled route can reach here - and its money HAS moved, so
+    // refusing now is not available. Say so loudly instead of leaving the
+    // divergence silent: an operator has to correct that invoice by hand.
+    logger.warn(
+      { bookingId: result.bookingId, taskId: result.taskId },
+      "Edit financial review settled by hand with no BookingModification anchor - the Xero invoice must be corrected manually",
+    );
   }
 
   return { ...result, stripeRefundId: stripeRefundId ?? null };

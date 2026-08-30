@@ -64,8 +64,8 @@ const bodySchema = z.discriminatedUnion("resolution", [
  * cancelled: "completed" means the money genuinely went back to the member (so
  * the local refund allocation and a REFUNDED booking event are written, where
  * there is a captured payment behind the task), "dismissed" means it was
- * declined or settled another way and requires a note.
- * Gated finance:edit; audited either way; never calls Stripe or Xero.
+ * declined or settled another way and requires a note. Gated finance:edit;
+ * audited either way.
  *
  * #3030 (epic #2797, owner decision D2): a completion may also carry
  * `confirmedAmountCents`, which is how an `EDIT_FINANCIAL_REVIEW` task raised
@@ -73,7 +73,46 @@ const bodySchema = z.discriminatedUnion("resolution", [
  * task already held, how that amount is amended at completion with the change
  * recorded in the audit entry. On a legacy hand-back a differing figure is
  * refused as a stale screen rather than applied.
+ *
+ * #3032 CHANGED WHAT THIS ROUTE CAN SET IN MOTION, and the docblock used to say
+ * the opposite ("never calls Stripe or Xero"). Completing an
+ * `EDIT_FINANCIAL_REVIEW` task now routes the confirmed amount down whichever of
+ * the club's three existing settlement paths the booking's money actually took:
+ * a Stripe refund on a card booking, a ledger mirror of a hand-back, or account
+ * credit — and queues the matching Xero credit note on the outbox afterwards.
+ * The legacy task kinds are untouched and still move only the local ledger.
+ *
+ * That is why the success message below is per-route rather than one sentence.
+ * "Refund recorded as paid back by hand" over a Stripe refund that FAILED is a
+ * false receipt: the money is still in the club's account, and the operator who
+ * reads it has no reason to look again.
  */
+/**
+ * What the operator is told a completion actually did.
+ *
+ * One sentence per route, because the four outcomes are materially different
+ * claims about the club's money and only one of them is "paid back by hand". The
+ * failed-card case is the one that matters most: the refund did not go, the
+ * durable recovery operation will retry it, and saying so is the difference
+ * between an operator who checks back and one who does not.
+ */
+function completionMessage(result: {
+  amountAmended: boolean;
+  settlementRoute: { kind: string } | null;
+  stripeRefundId: string | null;
+}) {
+  const amended = result.amountAmended ? " at the confirmed amount" : "";
+  if (result.settlementRoute?.kind === "stripe-refund") {
+    return result.stripeRefundId
+      ? `Refund sent back to the card${amended}.`
+      : "The card refund could not be sent just now. It has been recorded and will be retried automatically — check this booking's payment history before handing the money back another way.";
+  }
+  if (result.settlementRoute?.kind === "account-credit") {
+    return `Account credit issued to the member${amended}.`;
+  }
+  return `Refund recorded as paid back by hand${amended}.`;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -124,9 +163,7 @@ export async function POST(
       task: result,
       message:
         parsed.data.resolution === "completed"
-          ? result.amountAmended
-            ? "Refund recorded as paid back by hand at the confirmed amount."
-            : "Refund recorded as paid back by hand."
+          ? completionMessage(result)
           : "Refund task dismissed.",
     });
   } catch (error) {

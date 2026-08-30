@@ -28,7 +28,16 @@ const mocks = vi.hoisted(() => ({
   // so these tests assert WHICH path was taken and with what, which is the
   // decision this module owns.
   createBookingModificationCredit: vi.fn(),
-  executeBookingModificationRefund: vi.fn(),
+  // #3032: the card route is no longer one opaque helper. The completion freezes
+  // the allocation and persists the refund DEBT inside its own transaction, then
+  // executes exactly those slices after the commit - booking-cancel's #1349
+  // pattern - so the four steps are mocked separately and their ORDER is what
+  // several of the tests below assert.
+  planStripeRefundAllocation: vi.fn(),
+  refundPaymentTransactions: vi.fn(),
+  enqueueEditFinancialReviewRefundRecovery: vi.fn(),
+  markEditFinancialReviewRefundRecoverySucceeded: vi.fn(),
+  queueXeroBookingEditSettlement: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -38,6 +47,30 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/payment-transactions", () => ({
   applyLocalRefundAllocation: (...a: unknown[]) =>
     mocks.applyLocalRefundAllocation(...a),
+  planStripeRefundAllocation: (...a: unknown[]) =>
+    mocks.planStripeRefundAllocation(...a),
+  refundPaymentTransactions: (...a: unknown[]) =>
+    mocks.refundPaymentTransactions(...a),
+  // The real class, re-declared: the module under test compares with
+  // `instanceof` against this same mocked module, so the identity matches.
+  RefundAllocationRacedError: class RefundAllocationRacedError extends Error {},
+}));
+vi.mock("@/lib/payment-recovery", () => ({
+  // Pure and shared with the recovery replay (#1507), so it is reproduced rather
+  // than stubbed - a test that let the metadata drift would pass while a real
+  // replay hit `idempotency_error`.
+  buildBookingModificationRefundMetadata: (bookingId: string, reason: string) => ({
+    bookingId,
+    reason,
+  }),
+  enqueueEditFinancialReviewRefundRecovery: (...a: unknown[]) =>
+    mocks.enqueueEditFinancialReviewRefundRecovery(...a),
+  markEditFinancialReviewRefundRecoverySucceeded: (...a: unknown[]) =>
+    mocks.markEditFinancialReviewRefundRecoverySucceeded(...a),
+}));
+vi.mock("@/lib/xero-booking-edit-settlement", () => ({
+  queueXeroBookingEditSettlement: (...a: unknown[]) =>
+    mocks.queueXeroBookingEditSettlement(...a),
 }));
 vi.mock("@/lib/audit", () => ({
   createAuditLog: (...a: unknown[]) => mocks.createAuditLog(...a),
@@ -62,12 +95,12 @@ vi.mock("@/lib/member-credit", () => ({
   createBookingModificationCredit: (...a: unknown[]) =>
     mocks.createBookingModificationCredit(...a),
 }));
-vi.mock("@/lib/booking-modification-settlement", () => ({
-  executeBookingModificationRefund: (...a: unknown[]) =>
-    mocks.executeBookingModificationRefund(...a),
-}));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+// NOT mocked: the Stripe key prefix is the exactly-once boundary this suite is
+// about, so it is asserted against the real builder rather than a stub that
+// could agree with a wrong caller.
+import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 
 const tx = {
   manualRefundTask: {
@@ -94,12 +127,29 @@ beforeEach(() => {
     raisedAmountCents: 9000,
     kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
     status: ManualRefundTaskStatus.OPEN,
-    booking: { memberId: "member-1" },
+    // #3032: the completion reads the booking's own status and its primary Xero
+    // invoice id so it can queue the credit note. A legacy hand-back carries
+    // neither route nor anchor, so nothing is queued for it - which is what the
+    // legacy test below pins.
+    booking: { memberId: "member-1", status: "CANCELLED", payment: null },
   });
   mocks.manualRefundTaskUpdateMany.mockResolvedValue({ count: 1 });
   // The anchor is free unless a test says otherwise.
   mocks.memberCreditFindUnique.mockResolvedValue(null);
-  mocks.executeBookingModificationRefund.mockResolvedValue("re_test");
+  // #3032 card-route defaults: plenty of captured headroom, one slice, and a
+  // refund that issues. Every case that cares overrides one of these.
+  mocks.planStripeRefundAllocation.mockResolvedValue({
+    slices: [{ paymentTransactionId: "txn-1", amountCents: 7300 }],
+    plannedAmountCents: 7300,
+    totalRefundableCents: 50000,
+  });
+  mocks.refundPaymentTransactions.mockResolvedValue({
+    refunds: [{ paymentIntentId: "pi_1", refundId: "re_test", amountCents: 7300 }],
+    totalRefundedAmountCents: 7300,
+  });
+  mocks.enqueueEditFinancialReviewRefundRecovery.mockResolvedValue({ id: "rec-1" });
+  mocks.markEditFinancialReviewRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
+  mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
 });
 
 describe("resolveManualRefundTask", () => {
@@ -246,7 +296,7 @@ function editReviewTask(overrides: Record<string, unknown> = {}) {
     // in explicitly.
     payment: { source: PaymentSource.INTERNET_BANKING },
     reviewContext: reviewContext(),
-    booking: { memberId: "member-1", payment: null },
+    booking: { memberId: "member-1", status: "PAID", payment: null },
     ...overrides,
   };
 }
@@ -695,7 +745,7 @@ describe("#2262 guard 3 — the self-match refutation, pinned", () => {
  * relative to the status claim, and what is refused before anything is written.
  */
 describe("#3032 - routing a confirmed review amount through canonical settlement", () => {
-  it("refunds a card-paid review through the canonical Stripe path, outside the transaction, keyed to the edit's modification", async () => {
+  it("refunds a card-paid review through the canonical Stripe path, keyed to the TASK", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(
       editReviewTask({ payment: { source: PaymentSource.STRIPE } })
     );
@@ -708,28 +758,32 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       confirmedAmountCents: 7300,
     });
 
-    // NOT a second ledger write. `refundPaymentTransactions` (inside
-    // `executeBookingModificationRefund`) increments `refundedAmountCents`
-    // itself, so an `applyLocalRefundAllocation` here as well would consume the
-    // refundable headroom twice for one refund.
+    // NOT a second ledger write. `refundPaymentTransactions` increments
+    // `refundedAmountCents` itself, so an `applyLocalRefundAllocation` here as
+    // well would consume the refundable headroom twice for one refund.
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
 
-    expect(mocks.executeBookingModificationRefund).toHaveBeenCalledWith(
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
-        bookingId: "booking-1",
-        result: {
-          pendingRefundAmountCents: 7300,
-          paymentId: "payment-1",
-          bookingModificationId: "mod-1",
-        },
-        // Scoped to the modification: two reviews on one booking that confirm
-        // the same figure must not collapse onto one Stripe key, which would
-        // replay the first refund and silently under-refund the member.
-        idempotencyKeyPrefix: "mod_review_refund_booking-1",
+        paymentId: "payment-1",
+        amountCents: 7300,
+        // TASK-scoped, not modification-scoped. One edit can raise TWO reviews
+        // against one `BookingModification` (D-3032-1), so a modification-scoped
+        // prefix would give two same-amount refunds the same per-slice key -
+        // Stripe would answer the second with the FIRST refund and this code
+        // would take the replayed id as success.
+        idempotencyKeyPrefix:
+          buildEditFinancialReviewRefundStripeKeyPrefix("task-1"),
+        // The slices frozen inside the transaction, replayed verbatim.
+        allocation: [{ paymentTransactionId: "txn-1", amountCents: 7300 }],
+        metadata: { bookingId: "booking-1", reason: "edit_financial_review" },
       })
     );
     expect(result.stripeRefundId).toBe("re_test");
+    expect(mocks.markEditFinancialReviewRefundRecoverySucceeded).toHaveBeenCalledWith(
+      { taskId: "task-1" }
+    );
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: BookingEventType.REFUNDED,
@@ -739,13 +793,51 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     );
   });
 
+  it("persists the refund debt INSIDE the transaction, before Stripe is called", async () => {
+    // The crash-safety property. The completion holds no advisory lock, so the
+    // claim commits before the provider call; without a durable row a death in
+    // that window leaves a COMPLETED task, an untouched `refundedAmountCents` and
+    // no trace that money was owed. booking-cancel solves this on the same
+    // infrastructure (#1349) and this is the same arrangement.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ payment: { source: PaymentSource.STRIPE } })
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+    });
+
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      // The anchor is the TASK, so two reviews of one edit cannot upsert each
+      // other's row - that upsert overwrites `amountCents` and `stripeKeyPrefix`,
+      // so a partially-processed refund would replay at the wrong figure under a
+      // different key.
+      taskId: "task-1",
+      amountCents: 7300,
+      allocationPlan: [{ paymentTransactionId: "txn-1", amountCents: 7300 }],
+      // On the CALLER'S transaction: the debt and the claim commit together or
+      // neither does.
+      store: tx,
+    });
+    expect(
+      mocks.enqueueEditFinancialReviewRefundRecovery.mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      mocks.refundPaymentTransactions.mock.invocationCallOrder[0]
+    );
+  });
+
   it("MUTATION: records no REFUNDED event when the Stripe refund did not issue", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(
       editReviewTask({ payment: { source: PaymentSource.STRIPE } })
     );
-    // What `executeBookingModificationRefund` returns when the provider call
-    // failed and a durable recovery operation was enqueued instead.
-    mocks.executeBookingModificationRefund.mockResolvedValue(undefined);
+    mocks.refundPaymentTransactions.mockRejectedValue(new Error("card_declined"));
 
     const result = await resolveManualRefundTask({
       taskId: "task-1",
@@ -757,9 +849,159 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
 
     // The task IS closed - the claim committed - but the member is not told
     // their money came back while it is still in the club's account. The
-    // recovery replay is what eventually moves it.
+    // persisted recovery operation is what eventually moves it, so it is
+    // deliberately NOT closed as succeeded here.
     expect(result.status).toBe(ManualRefundTaskStatus.COMPLETED);
     expect(result.stripeRefundId).toBeNull();
+    expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
+    expect(
+      mocks.markEditFinancialReviewRefundRecoverySucceeded
+    ).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: refuses a card amount larger than the capture BEFORE it claims the task", async () => {
+    // The failure this replaces was silent and total: the cap lived only inside
+    // `refundPaymentTransactions`, which runs AFTER the commit, so an over-cap
+    // amount left the task permanently COMPLETED with nothing moved and the
+    // operator was told "Refund recorded as paid back by hand".
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ payment: { source: PaymentSource.STRIPE } })
+    );
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: [{ paymentTransactionId: "txn-1", amountCents: 5000 }],
+      plannedAmountCents: 5000,
+      totalRefundableCents: 5000,
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Priced from the June card receipt.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 7300,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    // Nothing was claimed, so the task is still OPEN and still holds the money
+    // question - and no provider call and no refund debt were created.
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).not.toHaveBeenCalled();
+  });
+
+  it("MUTATION: refuses a card route with nothing captured behind it, whatever Payment.source says", async () => {
+    // `Payment.source` DEFAULTS to STRIPE in the schema, so a hand-settled
+    // booking can carry it with no capture at all. Routing on the column alone
+    // sent that booking down the card path.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ payment: { source: PaymentSource.STRIPE } })
+    );
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: [],
+      plannedAmountCents: 0,
+      totalRefundableCents: 0,
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Priced from the June card receipt.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 7300,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("queues the Xero credit note for the confirmed amount, on the edit's own anchor", async () => {
+    // Every edit-time settlement dispatches a Xero delta. A completion that moved
+    // money and dispatched none would leave an issued invoice and the ledger
+    // permanently disagreeing, with nothing that reconciles them later.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({
+        payment: { source: PaymentSource.STRIPE },
+        booking: {
+          memberId: "member-1",
+          status: "PAID",
+          payment: { id: "payment-1", status: "SUCCEEDED", xeroInvoiceId: "inv-1" },
+        },
+      })
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+    });
+
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        bookingModificationId: "mod-1",
+        hasIssuedXeroInvoice: true,
+        priceDiffCents: -7300,
+        settlementAmountCents: 7300,
+        // A card refund issues an ordinary modification credit note; account
+        // credit issues the UNAPPLIED one. The method follows the route the money
+        // actually took rather than an election nobody made.
+        settlementMethod: "card",
+        // The structural edit queued its own narration update when it committed.
+        datesChanged: false,
+        guestIdentityChanged: false,
+      })
+    );
+  });
+
+  it("MUTATION: queues NO Xero credit note when the booking has no issued invoice", async () => {
+    // Without this the assertion above would pass against a dispatch that fired
+    // unconditionally, which would mint a credit note against nothing.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      editReviewTask({ payment: { source: PaymentSource.STRIPE } })
+    );
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the June card receipt.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 7300,
+    });
+
+    // The dispatch still runs - `classifyXeroBookingEditSettlement` owns the
+    // "no invoice, nothing to do" decision and is the one place it is made - but
+    // it is told the truth about the invoice rather than a hopeful default.
+    expect(mocks.queueXeroBookingEditSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ hasIssuedXeroInvoice: false })
+    );
+  });
+
+  it("MUTATION: a raced ledger write is refused, never lost", async () => {
+    // This completion holds no advisory lock, so a concurrent writer can move the
+    // same `PaymentTransaction` between the read and the write. The
+    // compare-and-set inside `applyLocalRefundAllocation` makes that loud; here
+    // it becomes a 409 the operator can act on, with the transaction rolled back
+    // and the task still OPEN.
+    const { RefundAllocationRacedError } = await import(
+      "@/lib/payment-transactions"
+    );
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+    mocks.applyLocalRefundAllocation.mockRejectedValueOnce(
+      new RefundAllocationRacedError()
+    );
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "priced",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 4500,
+      })
+    ).rejects.toMatchObject({ status: 409 });
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
   });
 
@@ -888,9 +1130,13 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
       amountCents: 9000,
       store: tx,
     });
-    expect(mocks.executeBookingModificationRefund).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
     expect(mocks.memberCreditFindUnique).not.toHaveBeenCalled();
+    // A legacy hand-back carries no `BookingModification` anchor, so no Xero
+    // credit note is queued for it - the cancellation path already handled its
+    // Xero side, and a second correction here would contradict it.
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: BookingEventType.REFUNDED })
     );
@@ -911,8 +1157,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     // DISMISSED means reviewed and nothing is due. It must not look like a
     // settlement in ANY of the three places one is recorded.
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
-    expect(mocks.executeBookingModificationRefund).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.queueXeroBookingEditSettlement).not.toHaveBeenCalled();
     expect(mocks.recordBookingEvent).not.toHaveBeenCalled();
     expect(result.amountCents).toBeNull();
     // And no amount is written onto the row - a zero there would be the magic
@@ -947,7 +1194,8 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     ).rejects.toMatchObject({ status: 409 });
 
     expect(mocks.createBookingModificationCredit).not.toHaveBeenCalled();
-    expect(mocks.executeBookingModificationRefund).not.toHaveBeenCalled();
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
+    expect(mocks.enqueueEditFinancialReviewRefundRecovery).not.toHaveBeenCalled();
   });
 });

@@ -43,6 +43,11 @@ import {
   aggregatePolicyExceptionViolations,
   type AggregatedPolicyExceptions,
 } from "@/lib/booking-policy-exceptions";
+import {
+  EDIT_FINANCIAL_REVIEW_PENDING_CODE,
+  EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
+  findOpenEditFinancialReviewTask,
+} from "@/lib/edit-financial-review";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -586,6 +591,46 @@ export async function POST(
       { error: QUOTE_PRICED_EDIT_BLOCK_MESSAGE },
       { status: 400 },
     );
+  }
+
+  /**
+   * #3032 (epic #2797): the preview half of the pending-review fence.
+   *
+   * The save path refuses a money-affecting edit while this booking's last one is
+   * still under financial review. Without the same refusal here the preview would
+   * price a refund from a baseline the club has already admitted it cannot read,
+   * show the member a figure, and let the save 409 on submit — which is exactly
+   * the preview/apply divergence this file's own other-lodge and quote-priced
+   * exemptions exist to prevent (owner decision, 21 Aug 2026: "two
+   * hand-maintained lists drift; one cannot").
+   *
+   * THE PREDICATE IS THE SAME ONE, arrived at through this route's own names.
+   * `requestIsIdentityOnly` already requires `!requestedStructuralChange`, and
+   * THIS route's `requestedStructuralChange` includes the other-lodge fields — so
+   * `requestIsIdentityOnly || requestIsCreditElectionOnly` here is exactly the
+   * save path's `pricePreservingModification`. The pair is checked by the fence
+   * tests on both sides rather than by agreement between two comments.
+   *
+   * Read on the module client rather than a transaction because a preview opens
+   * none and writes nothing: a race with a completing review costs a stale quote,
+   * which the save then refuses under its own locks.
+   */
+  const previewIsPricePreserving =
+    requestIsIdentityOnly || requestIsCreditElectionOnly;
+  if (!previewIsPricePreserving) {
+    const pendingReview = await findOpenEditFinancialReviewTask(
+      bookingId,
+      prisma,
+    );
+    if (pendingReview) {
+      return NextResponse.json(
+        {
+          error: EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
+          code: EDIT_FINANCIAL_REVIEW_PENDING_CODE,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   // #2337: the synchronous narrow gate (admin, whole-lodge, placeholder-only). It

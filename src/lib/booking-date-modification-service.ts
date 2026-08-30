@@ -1320,11 +1320,18 @@ export async function adminShiftBookingDates({
 
   const result = await prisma.$transaction(async (tx) => {
     // Two-tier lock protocol (#1881): this admin date move claims capacity for
-    // the new range and can move money (recalculate mode), so it takes BOTH
-    // locks — global lock(1) FIRST (mutual exclusion with cancel / settlement),
-    // then the per-lodge lock. Even a frozen-cent shift takes lock(1) so its
-    // status/date commit can never clobber a booking a concurrent cancel just
-    // terminated.
+    // the new range, so it takes BOTH locks - global lock(1) FIRST (mutual
+    // exclusion with cancel / settlement), then the per-lodge lock.
+    //
+    // IT MOVES NO MONEY. Every exit from this function reports
+    // `priceDiffCents: 0` with no refund, no account credit, no additional
+    // charge and no Xero delta; the cents are frozen by construction, which is
+    // what separates it from `modifyBookingDates` above and is why #3032's
+    // pending-review fence deliberately does not stand in front of it. It still
+    // takes lock(1) so its status/date commit can never clobber a booking a
+    // concurrent cancel just terminated. (This comment used to say the shift
+    // "can move money (recalculate mode)"; the recalculate mode belongs to
+    // `modifyBookingDates`, not here.)
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
     // Pre-lock read of only the lodge lock key; lodgeId is immutable.
     const lockTarget = await tx.booking.findUnique({

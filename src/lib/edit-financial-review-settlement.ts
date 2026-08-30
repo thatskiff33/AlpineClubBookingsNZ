@@ -5,6 +5,10 @@ import { ManualRefundTaskKind, PaymentSource, Prisma } from "@prisma/client";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
+import {
+  planStripeRefundAllocation,
+  type RefundAllocationSlice,
+} from "@/lib/payment-transactions";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -23,12 +27,54 @@ import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
  *
  * ## What it deliberately does not do
  *
- * It moves no money and writes no row. Every function here either returns a
- * plan or throws; the writes happen in the caller, downstream of the
- * status-guarded claim, which is what makes them exactly-once. Splitting the
- * DECISION from the WRITE is the point: a refusal that fired after the claim
- * would leave a task COMPLETED with nothing moved, which is the "pretends money
- * moved" failure `INV-PAY-051` exists to prevent.
+ * It moves no money. Every function here either returns a plan or throws; the
+ * settlement writes happen in the caller, downstream of the status-guarded
+ * claim, which is what makes them exactly-once. Splitting the DECISION from the
+ * WRITE is the point: a refusal that fired after the claim would leave a task
+ * COMPLETED with nothing moved, which is the "pretends money moved" failure
+ * `INV-PAY-051` exists to prevent. (`planStripeRefundAllocation` may backfill
+ * legacy `PaymentTransaction` rows as a side effect of reading them; that is a
+ * read made durable on the caller's own transaction, not a settlement.)
+ *
+ * ## WHY THIS IS NOT `calculateModificationSettlementOptions`
+ *
+ * `booking-modify-settlement.ts` already answers "where does a reduction's money
+ * go" for a booking EDIT, and `INV-SSOT` says route to the existing answer rather
+ * than write a second one. It was weighed and it cannot serve this path, for one
+ * decisive reason: that function TIERS the amount. It takes a price delta, caps
+ * it at the refundable balance and then runs it through
+ * `calculateDualRefundAmounts`, so on a 50% tier a $50 basis becomes a $25 card
+ * refund. Here the $50 IS the answer - an authorised admin priced it from the
+ * booking's own evidence under owner decision D2, with the club's policy already
+ * in their hand, and the figure is recorded in the audit entry. Tier it again and
+ * the club silently hands back half of what the person who decided it authorised.
+ * No argument reaches the right number through that function, so this is a
+ * different question rather than a duplicated one.
+ *
+ * FOUR OF THE FIVE PROTECTIONS THAT FUNCTION CARRIES ARE STILL HERE, and this is
+ * where they live now:
+ *
+ *  1. `hasSettledPayment && source === STRIPE` - the card route is taken only
+ *     when the card money is genuinely there. Enforced below through
+ *     `planStripeRefundAllocation`'s refundable total, which is derived from the
+ *     captured `PaymentTransaction` rows themselves rather than from the
+ *     `Payment.source` column - whose schema DEFAULT is `STRIPE`, so a
+ *     hand-settled booking can carry it with nothing captured behind it.
+ *  2. the cap at the refundable balance - enforced below, BEFORE the claim, so an
+ *     over-cap amount leaves the task OPEN rather than COMPLETED-and-unpaid.
+ *  3. the Xero delta - queued by the caller after the commit, from this same
+ *     confirmed amount and the same `BookingModification` anchor.
+ *  4. an explicit card-vs-credit `settlementMethod` - NOT reproduced, and this is
+ *     the one deliberate omission. There is no choice to make here: the routes
+ *     below are mutually exclusive on facts rather than on preference. Money that
+ *     came in on a card goes back to that card; money with no card behind it can
+ *     only become account credit, because there is nothing to reverse. The edit
+ *     path needs an election because a captured card reduction may legitimately
+ *     go either way at the member's choice; a review completion has one lawful
+ *     destination per task, and offering a choice there would let an admin turn a
+ *     member's card refund into club credit with no policy basis at all.
+ *  5. the cancellation-policy tier itself - deliberately omitted, for the reason
+ *     above: the confirmed amount has already been decided by a person.
  */
 
 /**
@@ -57,8 +103,26 @@ export type EditReviewSettlementRoute =
       kind: "stripe-refund";
       paymentId: string;
       bookingModificationId: string;
+      /**
+       * The per-transaction slices frozen INSIDE the completion transaction,
+       * before any Stripe call (booking-cancel's #1349 pattern). The caller
+       * persists them on a recovery operation in that same transaction and then
+       * executes exactly these slices inline, so the inline attempt and any cron
+       * replay send byte-identical Stripe requests and converge on one refund.
+       */
+      allocation: RefundAllocationSlice[];
     }
-  | { kind: "local-allocation"; paymentId: string }
+  | {
+      kind: "local-allocation";
+      paymentId: string;
+      /**
+       * The `BookingModification` anchor, for the Xero credit note the caller
+       * queues after the commit. NULL on every pre-#3032 task kind, which is what
+       * keeps their behaviour byte-identical: they were raised for bookings with
+       * no edit behind them and no invoice line to correct.
+       */
+      bookingModificationId: string | null;
+    }
   | {
       kind: "account-credit";
       bookingModificationId: string;
@@ -114,6 +178,25 @@ export const REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE =
 export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
   "The booking change behind this review has already issued account credit, so a second credit cannot be recorded against it. Hand the amount back another way and dismiss this task with a note saying what was done.";
 
+/**
+ * The pre-claim cap on the card route.
+ *
+ * `refundPaymentTransactions` refuses an amount larger than the captured Stripe
+ * total - but it runs AFTER the commit, where a refusal is the worst possible
+ * outcome: the failure was swallowed, a recovery operation that could never
+ * succeed was enqueued, no `REFUNDED` event was written, and the route still
+ * answered "Refund recorded as paid back by hand" over a permanently COMPLETED
+ * task with nothing moved. Asking the same question here, before the claim, turns
+ * that into a refusal the operator can act on with the task still OPEN.
+ *
+ * It is the captured-payment check as well. `Payment.source` defaults to `STRIPE`
+ * in the schema, so routing on that column alone sends a hand-settled booking
+ * with nothing captured down the card path; the refundable total this cap is
+ * measured against is zero there, so the same refusal catches it.
+ */
+export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
+  "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
+
 /** Exactly what the route decision reads off the task, and nothing else. */
 export type EditReviewSettlementTask = {
   paymentId: string | null;
@@ -145,13 +228,27 @@ export type EditReviewSettlementTask = {
  * no card charge to reverse, so there is no Stripe route to send them down and
  * no anchor to credit against.
  */
-export async function chooseEditReviewSettlementRoute(
-  task: EditReviewSettlementTask,
-  store: Prisma.TransactionClient,
-): Promise<EditReviewSettlementRoute | null> {
+export async function chooseEditReviewSettlementRoute({
+  task,
+  amountCents,
+  store,
+}: {
+  task: EditReviewSettlementTask;
+  /**
+   * The confirmed amount this completion will settle, in integer cents. The card
+   * route needs it before the claim: the cap and the frozen allocation are both
+   * functions of it, and both have to be answered while a refusal is still free.
+   */
+  amountCents: number;
+  store: Prisma.TransactionClient;
+}): Promise<EditReviewSettlementRoute | null> {
   if (task.kind !== ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW) {
     return task.paymentId !== null
-      ? { kind: "local-allocation", paymentId: task.paymentId }
+      ? {
+          kind: "local-allocation",
+          paymentId: task.paymentId,
+          bookingModificationId: null,
+        }
       : null;
   }
 
@@ -170,18 +267,41 @@ export async function chooseEditReviewSettlementRoute(
         409,
       );
     }
+    // Freeze the allocation and cap the amount in ONE read, on the caller's
+    // transaction and before its claim. Once the cap has passed the planned total
+    // cannot be short of `amountCents`, because the planner allocates
+    // newest-first across exactly the transactions the cap totalled.
+    const { slices, totalRefundableCents } = await planStripeRefundAllocation({
+      paymentId: task.paymentId,
+      amountCents,
+      store,
+    });
+    if (amountCents > totalRefundableCents) {
+      throw new ManualBookingPaymentError(
+        REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE,
+        400,
+      );
+    }
     return {
       kind: "stripe-refund",
       paymentId: task.paymentId,
       bookingModificationId,
+      allocation: slices,
     };
   }
 
   if (task.paymentId !== null) {
-    // Internet banking, or any non-card capture: the club moves the money by
-    // hand and this records the ledger mirror of it, exactly as the legacy
-    // hand-back does.
-    return { kind: "local-allocation", paymentId: task.paymentId };
+    // Internet banking, or any non-card capture: the club moves the money by hand
+    // and this records the ledger mirror of it, exactly as the legacy hand-back
+    // does. The cap lives inside `applyLocalRefundAllocation`, which runs INSIDE
+    // the caller's transaction - so its refusal rolls the claim back and leaves
+    // the task OPEN, which is the guarantee the pre-claim card cap above has to
+    // buy by hand.
+    return {
+      kind: "local-allocation",
+      paymentId: task.paymentId,
+      bookingModificationId,
+    };
   }
 
   if (!bookingModificationId) {

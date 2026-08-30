@@ -72,6 +72,34 @@ export function buildDuplicateCaptureRefundStripeKeyPrefix(
   return `duplicate_capture_refund_${bookingId}_${paymentIntentId}`;
 }
 
+// #3032 (epic #2797): the recovery-operation dedup key for the Stripe refund a
+// completed EDIT_FINANCIAL_REVIEW task sends back. Keyed on the TASK, never on
+// the `BookingModification` anchor the amount settles against (owner decision
+// D-3032-1), because one edit can raise TWO review tasks - two unpriceable
+// strands share one modification row. Under the modification-scoped key those
+// two reviews would upsert the SAME recovery row, and that upsert overwrites
+// `amountCents` and `stripeKeyPrefix`: a partially-processed $50 refund would be
+// silently rewritten to $30 under a different prefix and replayed as fresh
+// refunds for slices already sent. One task, one refund debt.
+export function buildEditFinancialReviewRefundRecoveryIdempotencyKey(
+  taskId: string,
+) {
+  return `edit_financial_review_refund_recovery_${taskId}`;
+}
+
+// #3032: the Stripe idempotency-key prefix for that same refund, task-scoped for
+// the same reason and with a sharper consequence. The per-slice key is
+// `${prefix}_${transactionId}_${amount}`, so two reviews of ONE edit that confirm
+// the SAME amount would mint identical keys under a modification-scoped prefix -
+// Stripe answers the second with the FIRST refund, the ledger dedupes on refund
+// id, and the caller takes the replayed id as success and writes a member-facing
+// REFUNDED event. The member is told their money came back when only half of it
+// did. The inline refund and the recovery replay share this prefix, which is what
+// makes a genuine replay of ONE task's refund converge instead of double-refund.
+export function buildEditFinancialReviewRefundStripeKeyPrefix(taskId: string) {
+  return `edit_financial_review_refund_${taskId}`;
+}
+
 // #1494: the Stripe refund `metadata` for a booking-cancellation card refund.
 // The inline cancel path (which creates the Stripe refund) and the recovery
 // cron (which replays it under the shared `booking_cancel_refund_<bookingId>`
@@ -171,6 +199,17 @@ export function bookingModificationRefundReasonForKeyPrefix(
   // reconstructs the identical body from the persisted operation alone.
   if (keyPrefix?.startsWith("duplicate_capture_refund_")) {
     return "duplicate_capture";
+  }
+  // #3032: the completed edit-financial-review refund. The inline path builds its
+  // Stripe metadata from
+  // buildBookingModificationRefundMetadata(bookingId, "edit_financial_review"),
+  // so a recovery replay under the stored edit_financial_review_refund_<taskId>
+  // prefix reconstructs the identical body from the persisted operation alone.
+  // Without this row the replay would send the default reason below, Stripe would
+  // reject the reused key with `idempotency_error`, and the refund would never
+  // recover - safe, but permanently stuck.
+  if (keyPrefix?.startsWith("edit_financial_review_refund_")) {
+    return "edit_financial_review";
   }
   return "booking_modification_refund_recovery";
 }

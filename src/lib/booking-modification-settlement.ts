@@ -52,19 +52,6 @@ export async function drainSupersededPrimaryIntents({
   }
 }
 
-/**
- * What a modification refund actually reads off its context. #3032 narrowed the
- * parameter from the whole `BookingModificationPaymentContext` to exactly these
- * three fields, so the completion path for an edit financial review can call the
- * canonical refund without fabricating a customer id, an email and a name it
- * does not have and this function never looks at. The booking-edit callers pass
- * the full context and are unaffected - it is structurally assignable.
- */
-export type BookingModificationRefundContext = Pick<
-  BookingModificationPaymentContext,
-  "pendingRefundAmountCents" | "paymentId" | "bookingModificationId"
->;
-
 export async function executeBookingModificationRefund({
   bookingId,
   result,
@@ -74,7 +61,7 @@ export async function executeBookingModificationRefund({
   recoveryFailureMessage,
 }: {
   bookingId: string;
-  result: BookingModificationRefundContext;
+  result: BookingModificationPaymentContext;
   metadataReason: string;
   idempotencyKeyPrefix: string;
   failureMessage: string;

@@ -356,6 +356,8 @@ import {
   buildDuplicateCaptureRefundRecoveryIdempotencyKey,
   buildDuplicateCaptureRefundRecoveryKeyPrefixForBooking,
   buildDuplicateCaptureRefundStripeKeyPrefix,
+  buildEditFinancialReviewRefundRecoveryIdempotencyKey,
+  buildEditFinancialReviewRefundStripeKeyPrefix,
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
 } from "./payment-recovery-keys";
@@ -365,6 +367,84 @@ export {
   buildRefundRequestRefundMetadata,
   bookingModificationRefundReasonForKeyPrefix,
 };
+
+/**
+ * #3032 (epic #2797): the refund debt for a COMPLETED edit-financial-review task,
+ * persisted inside the completion's own transaction BEFORE the Stripe call -
+ * booking-cancel's #1349 pattern, on the same infrastructure, for the same
+ * reason.
+ *
+ * The completion holds no advisory lock (deliberately: the locking guide's
+ * bounded-exception rule forbids holding `lock(1)` across a provider round trip),
+ * so its only single-flight guarantee is the status-guarded claim, which has
+ * already committed by the time the refund is sent. Without this row a crash
+ * between the commit and the Stripe call would leave a COMPLETED task, an
+ * untouched `refundedAmountCents` and no trace at all that money was owed - a
+ * worse state than the booking-edit path's, because the Stripe route writes
+ * nothing in-transaction. With it, the cron replays the frozen plan under the
+ * stored task-scoped prefix and Stripe answers a repeat with the original refund.
+ *
+ * One row per TASK, never per `BookingModification`: two review tasks can share
+ * one modification anchor, and this upsert overwrites `amountCents` and
+ * `stripeKeyPrefix` on its update branch.
+ */
+export async function enqueueEditFinancialReviewRefundRecovery({
+  bookingId,
+  paymentId,
+  taskId,
+  amountCents,
+  allocationPlan,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  taskId: string;
+  amountCents: number;
+  /** Slices frozen inside the completion transaction, before any Stripe call. */
+  allocationPlan?: RefundAllocationSlice[];
+  store?: PaymentRecoveryStore;
+}) {
+  return enqueueLedgerRefundRecovery({
+    bookingId,
+    paymentId,
+    amountCents,
+    idempotencyKey:
+      buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId),
+    stripeKeyPrefix: buildEditFinancialReviewRefundStripeKeyPrefix(taskId),
+    allocationPlan,
+    store,
+  });
+}
+
+/**
+ * Happy-path close of the edit-financial-review refund recovery operation after
+ * the inline refund completed. Best-effort, exactly as #1349's is: a lost close
+ * leaves a PENDING operation whose replay re-requests the identical frozen slices
+ * under the identical Stripe keys, so Stripe answers with the original refunds
+ * and the ledger dedupes on refund id. No second movement of money is possible.
+ */
+export async function markEditFinancialReviewRefundRecoverySucceeded({
+  taskId,
+  store = prisma,
+}: {
+  taskId: string;
+  store?: PaymentRecoveryStore;
+}) {
+  return store.paymentRecoveryOperation.updateMany({
+    where: {
+      idempotencyKey:
+        buildEditFinancialReviewRefundRecoveryIdempotencyKey(taskId),
+      status: { not: PaymentRecoveryOperationStatus.SUCCEEDED },
+    },
+    data: {
+      status: PaymentRecoveryOperationStatus.SUCCEEDED,
+      nextRetryAt: null,
+      lastError: null,
+      processingStartedAt: null,
+      succeededAt: new Date(),
+    },
+  });
+}
 
 /**
  * Durable recovery for a booking cancellation whose inline Stripe card refund
