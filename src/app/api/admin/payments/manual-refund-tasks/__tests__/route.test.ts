@@ -11,6 +11,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * route's only list, so the money movement had no screen at all; this is the
  * screen, and this suite is what stops the two lists blurring into each other.
  *
+ * #3033 lifted the two row mappers into `manual-refund-task-queue-payload.ts`
+ * when this route crossed its 250-line budget — a budget an allowance may not
+ * carry a file over for the first time, so the split was the only answer. This
+ * suite still exercises them through the route, unmocked, because what it is
+ * pinning is the RESPONSE: which fields reach the browser and which cannot.
+ * Testing the mapper in isolation and mocking it here would leave the wiring —
+ * the half that actually decides what a finance screen receives — asserted
+ * nowhere.
+ *
  * Mock shape follows the house route-test precedent
  * (src/app/api/admin/member-guest-settings/__tests__/route.test.ts): the guard
  * and the delegate are stubbed, and the route's real mapping runs.

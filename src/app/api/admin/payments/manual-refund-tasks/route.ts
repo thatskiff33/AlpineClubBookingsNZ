@@ -8,9 +8,9 @@ import {
   automaticallyRefundedManualRefundTaskFilter,
 } from "@/lib/deleted-booking-modification-payment";
 import {
-  parseEditFinancialReviewContext,
-  toEditFinancialReviewEvidence,
-} from "@/lib/edit-financial-review-context";
+  toAutoRefundedManualRefundTaskPayload,
+  toOpenManualRefundTaskPayload,
+} from "@/lib/manual-refund-task-queue-payload";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -215,83 +215,21 @@ export async function GET() {
     // offered at all. Sent as an explicit boolean, never inferred by the card
     // from the presence of anything else.
     viewerCanViewBookings,
-    tasks: tasks.map((task) => {
-      /*
-        PARSED HERE, and the raw column never crosses the wire.
-
-        Two things fall out of that and both are deliberate. The parser returns
-        NULL rather than throwing on a row it cannot read (#3030), so an
-        unreadable blob costs the card its captured evidence and nothing else —
-        the task, its amount and the booking are still shown. And parsing on the
-        server is what lets `toEditFinancialReviewEvidence` do the redaction:
-        the guest's member id and the guest-strand id have no field in the shape
-        the browser receives, so no amount of forgetting can put them there.
-      */
-      const reviewContext = parseEditFinancialReviewContext(task.reviewContext);
-      return {
-        id: task.id,
-        bookingId: task.bookingId,
-        amountCents: task.amountCents,
-        raisedAmountCents: task.raisedAmountCents,
-        kind: task.kind,
-        reason: task.reason,
-        createdAt: task.createdAt.toISOString(),
-        memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
-        checkIn: task.booking.checkIn.toISOString(),
-        checkOut: task.booking.checkOut.toISOString(),
-        /*
-          #3033. `viewerCanViewBookings` above answers "may this admin open
-          ANYBODY's booking". It is not the only way somebody reaches
-          `/bookings/{id}`: the page admits the booking's own member
-          (`isBookingOwner`, compared against `session.user.id`, which is the
-          member id), so a finance-only admin whose own booking is sitting in
-          this queue was being shown an identifier for a page they can open.
-
-          Answered per row, because ownership is. Deleted bookings are excluded
-          because that page 404s for a non-admin even when they own it, and
-          offering a link into a 404 is the dead end the identifier exists to
-          avoid. Both halves default false, so a row that cannot establish
-          either still gets the identifier.
-        */
-        viewerOwnsBooking:
-          task.booking.deletedAt === null &&
-          task.booking.memberId === guard.session.user.id,
-        reviewEvidence: reviewContext
-          ? toEditFinancialReviewEvidence(reviewContext)
-          : null,
-        /*
-          The row HAS captured evidence this release cannot read, as distinct
-          from never having had any. The card says so in a line of its own: an
-          admin pricing a refund needs to know that the one record of what the
-          edit destroyed is unreadable, rather than silently see a task with no
-          evidence section and assume none was ever taken.
-        */
-        reviewEvidenceUnreadable: task.reviewContext !== null && !reviewContext,
-      };
-    }),
+    /*
+      Shaped by `manual-refund-task-queue-payload.ts`, which is also where the
+      redaction lives: the stored review context is parsed there and the raw
+      column never crosses the wire.
+    */
+    tasks: tasks.map((task) =>
+      toOpenManualRefundTaskPayload(task, guard.session.user.id),
+    ),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic
     // refunds in the last 30 days" is a claim about money and a failed query is
     // not entitled to make it.
     autoRefundedUnavailable: autoRefundedRead.unavailable,
-    autoRefunded: autoRefundedRead.rows.map((task) => ({
-      id: task.id,
-      bookingId: task.bookingId,
-      amountCents: task.amountCents,
-      reason: task.reason,
-      note: task.note,
-      // `completedAt` is nullable in the schema but never null on a row this
-      // filter matched — the writer sets it in the same statement as the status,
-      // on both the close arm and the #2760 create.
-      // Answered as null rather than coerced, so the surface renders a row whose
-      // date it cannot state instead of inventing one.
-      refundedAt: task.completedAt ? task.completedAt.toISOString() : null,
-      // #2760: which group the card puts this row in. A boolean, not the date:
-      // the card needs "is this booking still there?" and nothing more.
-      bookingDeleted: task.booking.deletedAt !== null,
-      memberName: `${task.booking.member.firstName} ${task.booking.member.lastName}`,
-      checkIn: task.booking.checkIn.toISOString(),
-      checkOut: task.booking.checkOut.toISOString(),
-    })),
+    autoRefunded: autoRefundedRead.rows.map(
+      toAutoRefundedManualRefundTaskPayload,
+    ),
   });
 }
