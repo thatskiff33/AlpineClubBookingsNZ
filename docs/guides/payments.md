@@ -232,7 +232,45 @@ Work the amount out from that evidence and the booking's payment history, then:
   review as *looked at, nothing due* — it moves no money and records none as
   having moved. A note is required, and it should say what the evidence showed.
 
+**A settlement of $0.00 is refused, and the screen says so rather than simply
+refusing to move.** "Settled at nothing" and "nothing to settle" are different
+statements, and once one is recorded as a zero nobody reading it later can tell
+which was meant — so the second one has its own button. If you have decided the
+answer really is nothing, use **No adjustment**.
+
 Every amount, note and status change is written to the booking's audit log.
+
+#### Say what the unpriced nights sold for, so the booking stops coming back
+
+Some of these bookings have nights with **no stored price at all** — that is
+usually why the change could not be worked out. Until somebody says what those
+nights sold for, the booking comes back to this queue *every time it is changed*,
+and you price it by hand again each time.
+
+So when a row has nights like that, the settle box lists them and asks. It is on
+both buttons: **Record the adjustment** and **No adjustment**, because a change
+that turns out to owe nothing is one of the commonest ones to have this problem.
+
+- **Nothing is filled in for you.** Not from the amount you are settling, not
+  from an even share, not from today's rates. An amount nobody decided is exactly
+  what this queue exists to avoid, so there is no button that produces one.
+- **Fill in every night or none of them.** A half-answered set is not accepted —
+  the missing ones would have to be invented.
+- **The figures have to add up.** They must come to what that guest's stay is
+  stored as being worth, adjusted by whatever you are settling: less if the club
+  is paying the member back, more if the member is being asked for money. The box
+  tells you what they currently come to and what they need to come to; it does
+  not close the gap for you.
+- **$0.00 is a real answer for a night** that was genuinely free, and it is not
+  the same as leaving the box empty.
+- **Leaving them all blank is fine.** The settle works exactly as it always did.
+  You would do that when the amount you are settling is not simply what the
+  nights were worth — a change fee, or a refund reduced by policy — because then
+  the figures cannot be made to add up honestly. The booking will come back to
+  this queue next time it changes, which is the cost of leaving them.
+
+Filling them in is a money-affecting act and is audited as one, in its own entry:
+what each night was set to, and what the guest's stay was worth before and after.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.

@@ -7,15 +7,22 @@ import {
   dateOnlyInstantOf,
   type CalendarDate,
 } from "@/lib/club-time";
+import { createAuditLog } from "@/lib/audit";
 import {
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
 } from "@/lib/edit-financial-review-context";
+import logger from "@/lib/logger";
 import { getExplicitGuestBedNightKeys } from "@/lib/booking-guest-stay-ranges";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
-import type {
-  RecordedNightPrice,
-  UnpricedNightsSummary,
+import {
+  checkStoredNightPriceRepair,
+  settlementDeltaCents,
+  NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
+  NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
+  type RecordedNightPrice,
+  type SettlementDirectionValue,
+  type UnpricedNightsSummary,
 } from "@/lib/stored-night-price-repair";
 
 /**
@@ -205,12 +212,169 @@ export async function unpricedNightsSummariesByTaskId({
 }
 
 /**
+ * The same summaries for a screen that must render whether or not they can be
+ * read.
+ *
+ * FAIL-CLOSED AND ON ITS OWN. An empty map means no row offers the repair, which
+ * is exactly what the finance queue did before #3191 - the money work on that
+ * card is unaffected by a repair it cannot offer this minute, and blanking the
+ * queue over a secondary read would take a list of money the club owes members
+ * off the screen. The strict function above stays available for a caller that
+ * must not silently degrade.
+ */
+export async function unpricedNightsSummariesForQueue(args: {
+  tasks: ReadonlyArray<{
+    id: string;
+    kind: ManualRefundTaskKind | string | null;
+    reviewContext: unknown;
+  }>;
+  store: Prisma.TransactionClient;
+}): Promise<Map<string, UnpricedNightsSummary>> {
+  try {
+    return await unpricedNightsSummariesByTaskId(args);
+  } catch (err) {
+    logger.error(
+      { err },
+      "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
+    );
+    return new Map<string, UnpricedNightsSummary>();
+  }
+}
+
+/**
  * The race refusal. It is a 409 rather than a 400 because nothing the officer
  * typed is wrong - the booking moved underneath them - and because the caller's
  * transaction rolls back with it, so the task is still OPEN when they retry.
  */
 export const NIGHT_PRICE_REPAIR_RACED_MESSAGE =
   "This booking's stored night prices changed while you were recording them, so nothing was saved. Reload the page and check the booking before trying again.";
+
+/** One checked repair, ready to write once the task has been claimed. */
+export type StoredNightPriceRepairPlan = {
+  bookingGuestId: string;
+  summary: UnpricedNightsSummary;
+  entries: readonly RecordedNightPrice[];
+};
+
+/**
+ * Turn what the officer typed into a plan, or throw the refusal that stops the
+ * settle.
+ *
+ * MUST run BEFORE the caller's status claim and on its transaction - the same
+ * boundary `chooseEditReviewSettlementRoute` draws, for the same reason: a
+ * refusal from here leaves the task OPEN with its money question intact, where
+ * one that fired after the claim would leave a closed task and no prices.
+ *
+ * The blanks are re-read HERE rather than trusted from the browser, and the
+ * officer's dates are checked against those. A screen minutes old is exactly how
+ * a figure ends up written against a night the booking no longer holds.
+ *
+ * `null` in, `null` out: not recording the amounts is an ordinary answer and
+ * must reach the strand not at all, so a settle that sends none reads and writes
+ * exactly what it did before #3191.
+ */
+export async function planStoredNightPriceRepair({
+  task,
+  requested,
+  settled,
+  store,
+}: {
+  task: { kind: ManualRefundTaskKind | string | null; reviewContext: unknown };
+  requested: readonly RecordedNightPrice[] | null;
+  /** What this settle moves, or null on a dismissal, which moves nothing. */
+  settled: { direction: SettlementDirectionValue; amountCents: number } | null;
+  store: Prisma.TransactionClient;
+}): Promise<StoredNightPriceRepairPlan | null> {
+  if (requested === null) return null;
+
+  const bookingGuestId = reviewTaskGuestId(task);
+  if (bookingGuestId === null) {
+    throw new ManualBookingPaymentError(
+      NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
+      409,
+    );
+  }
+  const summary = await loadUnpricedNightsSummary({ bookingGuestId, store });
+  if (summary === null) {
+    throw new ManualBookingPaymentError(
+      NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
+      409,
+    );
+  }
+  const check = checkStoredNightPriceRepair({
+    summary,
+    entries: requested,
+    deltaCents: settlementDeltaCents(settled),
+  });
+  if (!check.ok) throw new ManualBookingPaymentError(check.message, 400);
+  return { bookingGuestId, summary, entries: check.entries };
+}
+
+/**
+ * Write the plan and audit it, AFTER the caller's claim and inside it.
+ *
+ * AUDITED AS A MONEY-AFFECTING ACT IN ITS OWN RIGHT, which #3191 requires, and
+ * as a SECOND entry rather than as metadata on the settlement beside it. The two
+ * are different acts: one closes a task and moves money, the other rewrites what
+ * a stay is recorded as having sold for - and the second can happen on a
+ * DISMISSAL, whose entry says in as many words that nothing moved. Folding it in
+ * would put a price change inside a row whose summary denies one.
+ */
+export async function recordStoredNightPriceRepair({
+  plan,
+  task,
+  actingMemberId,
+  resolution,
+  note,
+  store,
+}: {
+  plan: StoredNightPriceRepairPlan;
+  task: { id: string; bookingId: string; booking: { memberId: string } };
+  actingMemberId: string;
+  resolution: "completed" | "dismissed";
+  note: string | null;
+  store: Prisma.TransactionClient;
+}): Promise<void> {
+  const { newGuestTotalCents } = await applyStoredNightPriceRepair({
+    bookingGuestId: plan.bookingGuestId,
+    summary: plan.summary,
+    entries: plan.entries,
+    store,
+  });
+  await createAuditLog(
+    {
+      action: "booking-payment.stored-night-price.record",
+      memberId: actingMemberId,
+      actorMemberId: actingMemberId,
+      subjectMemberId: task.booking.memberId,
+      targetId: task.bookingId,
+      entityType: "BookingGuest",
+      entityId: plan.bookingGuestId,
+      category: "payment",
+      severity: "important",
+      outcome: "success",
+      summary:
+        "Recorded what a booking's unpriced nights sold for while settling a financial review",
+      details: note,
+      metadata: {
+        taskId: task.id,
+        bookingId: task.bookingId,
+        resolution,
+        // The figures themselves, night by night, because "an admin priced
+        // these" is not auditable unless the entry says what they priced them
+        // at - the same reason the completion entry carries three amounts.
+        nightPrices: plan.entries.map((entry) => ({
+          date: entry.date,
+          priceCents: entry.priceCents,
+        })),
+        previousGuestTotalCents: plan.summary.storedGuestTotalCents,
+        newGuestTotalCents,
+        knownNightTotalCents: plan.summary.knownNightTotalCents,
+      },
+    },
+    store,
+  );
+}
 
 /**
  * Write the officer's per-night amounts and re-base what the strand is worth.

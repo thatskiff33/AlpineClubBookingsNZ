@@ -1176,13 +1176,25 @@ one, check the other.
     money moves only on a COMPLETED transition, whatever the row already holds.
     The ordinary case is still `amountCents` NULL. (`raisedAmountCents` has no
     caller passing it on `main`; #3031 is the child that will prove figures.)
-  - **A completion at zero is refused, at the route and in the library.** `0`
+  - **A completion at zero is refused, and the refusal names the way out.** `0`
     means the club handed nothing back, so COMPLETED at `0` writes a row and a
     `REFUNDED` booking event asserting a refund that did not happen - and
     `booking-narrative.ts` selects a cancelled booking's settlement event by TYPE
     without filtering on amount, so that event is chosen and shadows any genuine
     later one. "Reviewed, nothing is due" is DISMISSED. This is the same magic
     zero the epic exists to remove, arriving through the completion door.
+
+    The owner re-decided this on 31 Aug 2026 (#3195 question 1) and kept it,
+    knowingly accepting its cost: an officer who has genuinely concluded the
+    answer is nothing must reach for a differently-named action. So **a bare
+    refusal is not compliant with this rule** - the sentence must name that
+    action, in the words the officer's own screen uses, which is "no adjustment"
+    on a financial review and "dismiss" on a legacy hand-back. It is therefore
+    refused in ONE layer now rather than two: the admin route's schema no longer
+    rejects a zero, because it does not read the task's kind and so cannot know
+    which control to name. `zeroCompletionRefusal` is the one home for both
+    sentences, and the settle screen reads it too - the button is disabled at
+    zero, so without that the officer would press nothing and be told nothing.
   - **A credit-only completion records no refund.** With `paymentId` NULL there is
     nothing to allocate against and `Payment.refundedAmountCents` is untouched, so
     no `REFUNDED` booking event is written - that log is member-facing and must

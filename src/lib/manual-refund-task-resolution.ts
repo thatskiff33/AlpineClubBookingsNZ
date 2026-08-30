@@ -6,8 +6,8 @@ import {
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
 } from "@prisma/client";
-import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
+import { recordManualRefundTaskClosureAudit } from "@/lib/manual-refund-task-audit";
 import { hasIssuedPrimaryXeroInvoice } from "@/lib/booking-payment-state";
 import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
 import {
@@ -31,18 +31,10 @@ import { prisma } from "@/lib/prisma";
 // this module is `server-only` - so the sentence lives in a client-safe home and
 // both read it (`INV-SSOT`).
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import type { RecordedNightPrice } from "@/lib/stored-night-price-repair";
 import {
-  checkStoredNightPriceRepair,
-  settlementDeltaCents,
-  NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
-  NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
-  type RecordedNightPrice,
-  type UnpricedNightsSummary,
-} from "@/lib/stored-night-price-repair";
-import {
-  applyStoredNightPriceRepair,
-  loadUnpricedNightsSummary,
-  reviewTaskGuestId,
+  planStoredNightPriceRepair,
+  recordStoredNightPriceRepair,
 } from "@/lib/stored-night-price-repair-store";
 
 /**
@@ -133,24 +125,11 @@ export type ManualRefundTaskResolution =
       direction: ManualRefundTaskDirection | null;
       /**
        * #3191: what the officer says each of this review's UNPRICED NIGHTS sold
-       * for, or null for "I am not recording those now".
-       *
-       * REQUIRED rather than optional, for the reason `confirmedAmountCents` and
-       * `direction` are: optional would let every existing call site keep the old
-       * behaviour silently, where required makes the compiler list them.
-       *
-       * NULL IS A REAL AND ORDINARY ANSWER, and that is a deliberate departure
-       * from making it mandatory. A settlement figure is not always a pure
-       * restatement of what the nights were worth - a policy-reduced hand-back or
-       * a change fee will not reconcile - and a settle screen that refused to
-       * close such a task would hold the money question open over a repair that
-       * is optional by nature. So the screen ASKS, prominently, and says what
-       * leaving it blank costs; it does not make the officer's ability to settle
-       * depend on their ability to produce a breakdown that adds up.
-       *
-       * A NON-NULL value is checked in full and written in full - there is no
-       * partial answer (`INV-MOD-028`, and `stored-night-price-repair.ts` is the
-       * home of that rule).
+       * for, or null for "not recording those now" - which is an ordinary answer
+       * and settles exactly as this path did before #3191. REQUIRED rather than
+       * optional for the reason the two fields above are. Why it is optional
+       * rather than mandatory, and why a partial answer is refused rather than
+       * completed, is `stored-night-price-repair.ts` and `INV-MOD-028`.
        */
       recordedNightPrices: RecordedNightPrice[] | null;
     }
@@ -161,12 +140,11 @@ export type ManualRefundTaskResolution =
       actingMemberId: string;
       confirmedAmountCents?: never;
       /**
-       * #3191: a dismissal can record them too, and it has to be able to. A
-       * parked edit whose strand kept the same nights owes nothing either way, so
-       * "no adjustment" is its ordinary outcome - and if only a completion could
-       * fill the blanks in, exactly the bookings with nothing to settle would
-       * park forever. Nothing moves, so the figures must come to the strand's
-       * stored total unchanged.
+       * #3191: a dismissal records them too, and has to be able to - a parked
+       * edit whose strand kept the same nights owes nothing either way, so if
+       * only a completion could fill the blanks in, exactly the bookings with
+       * nothing to settle would park forever. Nothing moves, so the figures must
+       * come to the strand's stored total unchanged.
        */
       recordedNightPrices: RecordedNightPrice[] | null;
       /**
@@ -437,60 +415,22 @@ export async function resolveManualRefundTask(
         })
       : null;
 
-    /**
-     * #3191: the per-night repair, VALIDATED BEFORE THE CLAIM and written after
-     * it - the same boundary the settlement route draws, for the same reason. A
-     * refusal from here leaves the task OPEN with its money question intact; one
-     * that fired after the claim would leave a closed task and no prices.
-     *
-     * The blanks are re-read from the database on this transaction rather than
-     * taken from what the browser was shown, and the officer's dates are checked
-     * against THOSE. A screen minutes old is exactly how a figure ends up written
-     * against a night the booking no longer holds.
-     */
-    const requestedNightPrices = input.recordedNightPrices;
-    let nightPriceRepair: {
-      bookingGuestId: string;
-      summary: UnpricedNightsSummary;
-      entries: readonly RecordedNightPrice[];
-    } | null = null;
-    if (requestedNightPrices !== null) {
-      const bookingGuestId = reviewTaskGuestId(task);
-      if (bookingGuestId === null) {
-        throw new ManualBookingPaymentError(
-          NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
-          409,
-        );
-      }
-      const summary = await loadUnpricedNightsSummary({
-        bookingGuestId,
-        store: tx,
-      });
-      if (summary === null) {
-        throw new ManualBookingPaymentError(
-          NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
-          409,
-        );
-      }
-      const check = checkStoredNightPriceRepair({
-        summary,
-        entries: requestedNightPrices,
-        // A dismissal moves no money, so it moves no total: the officer's
-        // figures then have to come to the strand's stored total exactly.
-        deltaCents: settlementDeltaCents(
-          settlement
-            ? {
-                direction: settlementDirection,
-                amountCents: settlement.amountCents,
-              }
-            : null,
-        ),
-      });
-      if (!check.ok) {
-        throw new ManualBookingPaymentError(check.message, 400);
-      }
-      nightPriceRepair = { bookingGuestId, summary, entries: check.entries };
-    }
+    // #3191: what the officer says the booking's unpriced nights sold for,
+    // checked BEFORE the claim so a refusal leaves the task OPEN and its money
+    // question intact. `stored-night-price-repair-store.ts` owns the rules, the
+    // re-read of the blanks and the refusals; null in means null out, and the
+    // strand is not touched at all.
+    const nightPriceRepair = await planStoredNightPriceRepair({
+      task,
+      requested: input.recordedNightPrices,
+      settled: settlement
+        ? {
+            direction: settlementDirection,
+            amountCents: settlement.amountCents,
+          }
+        : null,
+      store: tx,
+    });
 
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
@@ -624,115 +564,31 @@ export async function resolveManualRefundTask(
       }
     }
 
-    /**
-     * #3191: the blanks become numbers, after the claim and inside it.
-     *
-     * AUDITED AS A MONEY-AFFECTING ACT IN ITS OWN RIGHT, which #3191 requires,
-     * and as a SECOND entry rather than as metadata on the completion below. The
-     * two are different acts: one closes a task and moves money, the other
-     * rewrites what a stay is recorded as having sold for - and the second can
-     * happen on a DISMISSAL, where the completion entry says in as many words
-     * that nothing moved. Folding it in would put a price change inside a row
-     * whose summary denies one.
-     */
+    // #3191: the blanks become numbers, after the claim and inside it, so a lost
+    // claim writes no prices. It records its OWN audit entry rather than adding
+    // to the one below - see `recordStoredNightPriceRepair` for why that is not
+    // tidiness.
     if (nightPriceRepair) {
-      const { newGuestTotalCents } = await applyStoredNightPriceRepair({
-        bookingGuestId: nightPriceRepair.bookingGuestId,
-        summary: nightPriceRepair.summary,
-        entries: nightPriceRepair.entries,
+      await recordStoredNightPriceRepair({
+        plan: nightPriceRepair,
+        task,
+        actingMemberId,
+        resolution,
+        note: trimmedNote,
         store: tx,
       });
-      await createAuditLog(
-        {
-          action: "booking-payment.stored-night-price.record",
-          memberId: actingMemberId,
-          actorMemberId: actingMemberId,
-          subjectMemberId: task.booking.memberId,
-          targetId: task.bookingId,
-          entityType: "BookingGuest",
-          entityId: nightPriceRepair.bookingGuestId,
-          category: "payment",
-          severity: "important",
-          outcome: "success",
-          summary:
-            "Recorded what a booking's unpriced nights sold for while settling a financial review",
-          details: trimmedNote,
-          metadata: {
-            taskId: task.id,
-            bookingId: task.bookingId,
-            resolution,
-            // The figures themselves, night by night, because "an admin priced
-            // these" is not auditable unless the entry says what they priced
-            // them at - the same reason the completion entry carries three
-            // amounts rather than one.
-            nightPrices: nightPriceRepair.entries.map((entry) => ({
-              date: entry.date,
-              priceCents: entry.priceCents,
-            })),
-            previousGuestTotalCents:
-              nightPriceRepair.summary.storedGuestTotalCents,
-            newGuestTotalCents,
-            knownNightTotalCents: nightPriceRepair.summary.knownNightTotalCents,
-          },
-        },
-        tx,
-      );
     }
 
-    await createAuditLog(
-      {
-        action:
-          resolution === "completed"
-            ? "booking-payment.manual-refund-task.complete"
-            : "booking-payment.manual-refund-task.dismiss",
-        memberId: actingMemberId,
-        actorMemberId: actingMemberId,
-        subjectMemberId: task.booking.memberId,
-        targetId: task.bookingId,
-        entityType: "ManualRefundTask",
-        entityId: task.id,
-        category: "payment",
-        severity: "important",
-        outcome: "success",
-        summary:
-          resolution === "completed"
-            ? "Manual booking refund paid back by hand"
-            : "Manual booking refund task dismissed",
-        details: trimmedNote,
-        metadata: {
-          taskId: task.id,
-          bookingId: task.bookingId,
-          paymentId: task.paymentId,
-          // #3030: three amounts, not one, because "audited amendment" (owner
-          // decision D2) is only auditable if the entry says what the figure was
-          // before and after. `raisedAmountCents` is what the task was raised
-          // with, `previousAmountCents` what it carried when this admin opened
-          // it, and `amountCents` what it closed at.
-          amountCents: settlement?.amountCents ?? null,
-          previousAmountCents: task.amountCents,
-          raisedAmountCents: task.raisedAmountCents,
-          amountAmended: settlement?.amended ?? false,
-          kind: task.kind,
-          resolution,
-          // #3032: WHICH settlement path this amount went down, and the anchor it
-          // settled against. Without these the entry says an amount was closed
-          // but not whether that meant a card refund, a ledger mirror of a hand
-          // -back, or freshly minted account credit - three materially different
-          // claims about the club's money.
-          settlementRoute: settlementRoute?.kind ?? null,
-          settlementBookingModificationId:
-            settlementRoute && settlementRoute.kind !== "local-allocation"
-              ? settlementRoute.bookingModificationId
-              : null,
-          // #3170: WHICH WAY, recorded beside the route. The route says how the
-          // money travelled and the direction says who ended up with it, and
-          // "additional-charge" is the only route where those two answers differ
-          // from every entry written before this issue.
-          settlementDirection: settlement ? settlementDirection : null,
-        },
-      },
-      tx
-    );
+    await recordManualRefundTaskClosureAudit({
+      task,
+      resolution,
+      actingMemberId,
+      note: trimmedNote,
+      settlement,
+      settlementRoute,
+      settlementDirection,
+      store: tx,
+    });
 
     return {
       taskId: task.id,

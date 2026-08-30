@@ -3,6 +3,12 @@ import { join, relative, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+// `INV-SSOT-004`: the ONE comment/string stripper in the tree, imported rather
+// than written again. A local copy that mis-reads a regex literal deletes the
+// rest of the line, and a census whose stripper under-reports goes FALSELY GREEN
+// - it passes while the thing it exists to catch is sitting in the file (#3164).
+import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments";
+
 /**
  * #3191 (epic #2797): the census behind `INV-MOD-028`'s hardest clause - "a
  * blank may only be filled in by a person supplying the amount".
@@ -36,8 +42,8 @@ import { describe, expect, it } from "vitest";
  * This repository documents defects at the site it removed them from, so the
  * modules that describe an even split at length are exactly the ones that must
  * not contain one. A raw-text scanner would misfire worst where the code is
- * cleanest. The stripper below is deliberately small and its limits are stated
- * where it is defined.
+ * cleanest. `stripCommentsAndStrings` is the tree's one stripper and this file
+ * imports it (`INV-SSOT-004`).
  *
  * `vitest related` cannot reach this file - it reads the tree from disk and has
  * no import edge to what it scans - so it is selected by name.
@@ -72,54 +78,6 @@ function sourceFiles(): string[] {
   };
   walk(SRC);
   return found;
-}
-
-/**
- * Source with comments and string/template literals blanked out.
- *
- * LIMITS, stated rather than discovered: it does not understand regex literals
- * (this feature contains none) and it blanks the CONTENTS of a template literal
- * including any `${}` inside it, which is why nothing below looks for an
- * identifier that only appears inside one. What it buys is the thing that
- * matters here - a docblock explaining why an even split is forbidden cannot be
- * read as an even split.
- */
-function stripCommentsAndStrings(source: string): string {
-  let out = "";
-  let i = 0;
-  while (i < source.length) {
-    const two = source.slice(i, i + 2);
-    if (two === "//") {
-      const end = source.indexOf("\n", i);
-      i = end === -1 ? source.length : end;
-      continue;
-    }
-    if (two === "/*") {
-      const end = source.indexOf("*/", i + 2);
-      i = end === -1 ? source.length : end + 2;
-      continue;
-    }
-    const ch = source[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i += 1;
-      while (i < source.length) {
-        if (source[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (source[i] === ch) {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      out += '""';
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
 }
 
 describe("only one module may fill in a blank night price", () => {

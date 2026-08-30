@@ -102,6 +102,7 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { requireCalendarDate } from "@/lib/club-time";
 // NOT mocked: the Stripe key prefix is the exactly-once boundary this suite is
 // about, so it is asserted against the real builder rather than a stub that
 // could agree with a wrong caller.
@@ -1315,7 +1316,9 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
  * it, so a lost claim writes nothing.
  */
 describe("recording per-night amounts while settling (#3191)", () => {
-  const nightPrices = [{ date: "2026-08-02" as const, priceCents: 6_000 }];
+  const nightPrices = [
+    { date: requireCalendarDate("2026-08-02"), priceCents: 6_000 },
+  ];
 
   it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
     mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
@@ -1330,7 +1333,9 @@ describe("recording per-night amounts while settling (#3191)", () => {
       // The one blank night has to absorb exactly what is left: the strand is
       // stored at $100.00, $45.00 of it is going back to the member, and $40.00
       // of it is already on the other night. $15.00.
-      recordedNightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+      recordedNightPrices: [
+        { date: requireCalendarDate("2026-08-02"), priceCents: 1_500 },
+      ],
     });
 
     expect(mocks.bookingGuestNightUpdateMany).toHaveBeenCalledWith({
@@ -1395,7 +1400,9 @@ describe("recording per-night amounts while settling (#3191)", () => {
         resolution: "dismissed",
         note: "Nothing owed either way.",
         actingMemberId: "admin-1",
-        recordedNightPrices: [{ date: "2026-08-02", priceCents: 5_999 }],
+        recordedNightPrices: [
+          { date: requireCalendarDate("2026-08-02"), priceCents: 5_999 },
+        ],
       }),
     ).rejects.toMatchObject({ status: 400 });
 

@@ -423,6 +423,28 @@ the member, the amount, the day the money went back, the stay dates, the booking
 identifier as plain text, and both the reason the payment was queued and the note
 saying it is already settled.
 
+**The settle box asks a second question when the booking has unpriced nights
+(#3191).** A financial-review row whose guest strand holds nights with no stored
+price carries a list of those nights inside the settle dialog, one money box each,
+on BOTH controls - the adjustment one and the no-adjustment one, because a change
+that owes nothing is one of the commonest to have this problem. Nothing is
+pre-filled and there is no control that produces a figure: `INV-MOD-028` forbids
+deriving a historical amount, and a box arriving with a number in it is a
+derivation an officer accepts by pressing a button. Under the boxes is a running
+line saying what the figures come to and what they have to come to - the strand's
+stored total adjusted by the amount being settled - and until the officer has
+chosen a direction and an amount it says instead that the target cannot be worked
+out yet. Filling some boxes and not others disables the confirm button with that
+sentence showing; filling none of them is a valid answer and posts exactly the
+body this screen posted before #3191.
+
+**A $0.00 settlement is refused with a sentence rather than a disabled button
+(#3195).** The confirm control was already disabled at zero and said nothing,
+which is the bare refusal the owner's 31 Aug 2026 decision rejected. The dialog
+now prints the refusal beneath the amount box, naming the control on that row -
+"no adjustment" on a review, "dismiss" on a hand-back - from the same string the
+server would have thrown.
+
 **Two groups inside that one card, deleted first (#2760).** The record covers every
 auto-refunded late capture, and since #2760 that includes bookings which are
 cancelled but still on file — where the refund is usually the expected outcome of

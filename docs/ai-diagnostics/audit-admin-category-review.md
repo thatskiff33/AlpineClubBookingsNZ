@@ -584,9 +584,9 @@ land.
 manifest moving with it. The numbers this page was written against:
 
 ```
-row-producing sites:  463
+row-producing sites:  464
 uncategorised:        0
-category values: admin 104, booking 101, xero 34, family 35, payment 38,
+category values: admin 104, booking 101, xero 34, family 35, payment 39,
                  lodge 65, account 19, security 22, privacy 19,
                  communication 21, system 4
 ```
@@ -634,10 +634,16 @@ serves both asks — the card request already paid, and the Xero supplementary
 invoice already sent — because they are the same fact about the same edit; a
 `leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
 what tells an officer which one to go and fix. That
-is the figure above, and it was taken from `npm run audit:census` on the merged
-tree rather than by adding one branch's delta to the other's total. The category
-values sum to 462 rather than 463 because one site forwards its category rather
-than naming one.
+Since then #3191 added the stored-night-price record
+(`payment` 38 → 39, 463 → 464): settling a review may also record what the
+booking's unpriced nights sold for, which rewrites what a stay is stored as
+having been worth and is therefore a money-affecting act in its own right. It is
+a SECOND entry beside the completion's rather than metadata on it, because it can
+also happen on a DISMISSAL, whose entry says in as many words that nothing moved.
+That is the figure above, and it was taken from `npm run audit:census` on the
+merged tree rather than by adding one branch's delta to the other's total. The
+category values sum to 463 rather than 464 because one site forwards its category
+rather than naming one.
 
 The 22 moves are pinned **per site**, not only by that
 distribution: `REVIEWED_ADMIN_CATEGORIES_2730` in
