@@ -108,6 +108,7 @@ import {
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
+  classifyNightPriceToWrite,
   preCheckInEditEvidence,
   preservedNightPrices,
   type PreCheckInEditStrand,
@@ -2554,18 +2555,16 @@ export async function applyGuestChanges(
     index: number,
     stayDate: Date,
   ): number | null => {
-    const cents = guest?.perNightCents[index];
-    // An explicit null: the composer said "not known", and that is a decision
-    // this function honours rather than second-guesses.
-    if (cents === null) {
-      return null;
-    }
-    if (typeof cents !== "number") {
+    // The three-way rule itself is `classifyNightPriceToWrite` (#3166,
+    // `INV-SSOT`) — the date path narrows the same decision and owes its
+    // operator a different failure, which is the only part that belongs here.
+    const decision = classifyNightPriceToWrite(guest?.perNightCents[index]);
+    if (decision.kind === "unstated") {
       throw new Error(
         `No priced amount for the night of ${stayDate.toISOString()} (#3031)`,
       );
     }
-    return cents;
+    return decision.kind === "not-known" ? null : decision.priceCents;
   };
 
   const syncGuestNights = async (

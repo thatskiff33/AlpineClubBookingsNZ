@@ -664,3 +664,54 @@ export function carriesUnvaluedStoredNight(
     ),
   );
 }
+
+/**
+ * What a per-night vector position MEANS at the moment a night row is written —
+ * the one statement of the three-way rule (#3031, #3170, #3166, `INV-SSOT`).
+ *
+ * Two writers ask it: `nightPriceCentsToWrite` in `booking-modify-plan.ts` (used
+ * by `syncGuestNights`) and the `createMany` inside
+ * `applyBookingDateModification`. Before this they each spelled the rule out,
+ * and the second copy arrived with #3166 — so the decision that decides whether
+ * a night's price is a number, a recorded blank, or a refusal had two homes
+ * within one release of having one.
+ *
+ * The three answers, and why the last two are not the same absence:
+ *
+ *  - **a number** — the amount this night is being sold at, written as-is. There
+ *    is no `?? 0` here and there never may be: a zero is a real financial number
+ *    (a comped night), and writing one for a night nobody priced is the
+ *    magic-zero defect under another name.
+ *  - **`not-known`** — an explicit `null`, which is a DECISION. Only a parked
+ *    composer produces one: the strand's stored total is frozen and this night's
+ *    price genuinely is not known, so `NULL` is written and `INV-MOD-028`'s
+ *    blank clause takes over. `buildIdentityOnlyPricing` also echoes stored
+ *    blanks back byte for byte on a name-only correction — it creates no new
+ *    blank, it declines to repair one.
+ *  - **`unstated`** — `undefined`, because the vector is SHORTER than the night
+ *    list or has a hole. Nobody decided anything; the breakdown is malformed,
+ *    which is a wiring defect in whoever built it. It must REFUSE.
+ *
+ * Letting `unstated` fall through to `NULL` would turn every wiring defect into
+ * an unpriced night, which is exactly the silent damage epic #2797 exists to
+ * remove — so the unknown has to be SAID, never inferred from an absence.
+ *
+ * WHAT THIS DOES NOT DO IS THROW, and that is deliberate. The two call sites
+ * owe their operators different failures: the modify plan raises an internal
+ * `Error`, and the date path raises an `ApiError(400)` whose sentence
+ * ("The new dates could not be priced night by night") is member-visible and
+ * pinned by `phase8b-booking-mods.test.ts`. Those are a legitimate second
+ * derivation; the DECISION they narrow is not, and it lives here.
+ */
+export type NightPriceToWrite =
+  | { kind: "amount"; priceCents: number }
+  | { kind: "not-known" }
+  | { kind: "unstated" };
+
+export function classifyNightPriceToWrite(
+  cents: number | null | undefined,
+): NightPriceToWrite {
+  if (cents === null) return { kind: "not-known" };
+  if (typeof cents !== "number") return { kind: "unstated" };
+  return { kind: "amount", priceCents: cents };
+}

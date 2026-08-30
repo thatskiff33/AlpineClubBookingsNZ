@@ -39,6 +39,7 @@ import {
   raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
 import {
+  classifyNightPriceToWrite,
   preCheckInEditEvidence,
   preservedNightPrices,
   type PreCheckInEditStrand,
@@ -1003,37 +1004,54 @@ export async function modifyBookingDates({
               // Only the parked composer above produces one; a short vector from
               // the pricing engine still throws.
               //
-              // NOT YET ROUTED THROUGH THE SHARED REFUSAL, and that is a stated
-              // hand-off rather than an oversight (`INV-SSOT`). #3167 lifts this
-              // predicate into `@/lib/required-price-cents` and converges the
-              // copies in `booking-modify-plan.ts`, `waitlist.ts`,
-              // `booking-create-guests.ts` and `booking-request-quotes.ts`. That
-              // module does not exist on this branch — #3167 is a sibling lane,
-              // unmerged — so importing it here would not compile, and writing a
-              // second copy of the module would be a second definition of the
-              // very rule being converged. #3167 merges after #3166 in the
-              // epic's own order and therefore has this shape in front of it:
-              // THIS SITE IS ITS FOURTH CALLER, and the null branch above must
-              // survive the conversion.
+              // THE HAND-OFF TO #3167, stated against that branch as it
+              // actually is (read at `fix/issue-3167-refuse-zero-price`, head
+              // `bc2b05838`) rather than as it was planned.
               //
-              // What that ordering must not lose: someone later making an
-              // unpriceable date change PARK instead of refuse would edit the
-              // shared module and `booking-modify-plan.ts`, both of which
-              // advertise themselves as the rule's home, and this path would
-              // silently keep the old refusal — so quote and apply would
-              // disagree about one edit, which is the parity this epic keeps
-              // re-fixing.
-              const priceCents = perNightCents[k];
-              if (priceCents === null) {
-                return { bookingGuestId: g.id, stayDate, priceCents: null };
-              }
-              if (typeof priceCents !== "number") {
+              // #3167 lifts the REFUSAL half into `@/lib/required-price-cents`
+              // and routes five writers through it: the add-guest route,
+              // `booking-create-guests.ts`, `booking-request-quotes.ts`,
+              // `booking-request-shared.ts` and `waitlist.ts`. That module does
+              // not exist on this branch, so this site cannot import it and
+              // writing a local copy would be a second definition of the rule
+              // being converged.
+              //
+              // TWO WRITE POINTS ARE DELIBERATELY OUTSIDE IT, and this is the
+              // second of them: `required-price-cents.ts` names them both in its
+              // own header. `requiredNightPriceCents` is TWO-WAY by design —
+              // every writer it guards is SELLING the night it writes, so "not
+              // known" is not an answer any of them may give, and its signature
+              // (`readonly number[] | undefined` -> `number`) cannot express the
+              // `not-known` arm at all. Two rules that differ in their arity are
+              // two rules.
+              //
+              // What #3167's follow-on round therefore converges here is the
+              // THROW, not the decision. The decision is already shared: this
+              // site and `nightPriceCentsToWrite` in `booking-modify-plan.ts`
+              // both narrow `classifyNightPriceToWrite` (#3166), which is the
+              // one home of the three-way rule. What is genuinely local is the
+              // failure — an `ApiError(400)` whose sentence is member-visible and
+              // pinned by `phase8b-booking-mods.test.ts`, against the modify
+              // plan's internal `Error`. That is a legitimate second derivation.
+              //
+              // What the conversion must not lose: someone later making an
+              // unpriceable date change PARK instead of refuse must edit the
+              // shared classifier, not this arm — otherwise quote and apply
+              // disagree about one member's edit, which is the parity this epic
+              // keeps re-fixing.
+              const decision = classifyNightPriceToWrite(perNightCents[k]);
+              if (decision.kind === "unstated") {
                 throw new ApiError(
                   "The new dates could not be priced night by night",
                   400,
                 );
               }
-              return { bookingGuestId: g.id, stayDate, priceCents };
+              return {
+                bookingGuestId: g.id,
+                stayDate,
+                priceCents:
+                  decision.kind === "not-known" ? null : decision.priceCents,
+              };
             }),
           });
         }
