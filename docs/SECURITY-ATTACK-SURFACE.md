@@ -952,22 +952,27 @@ Residual risks to keep visible:
   `src/lib/__tests__/client-server-boundary-census.test.ts` walks the
   transitive import graph in `verify`, with no allowlist; and
   `import "server-only"` makes the real production build refuse the whole
-  chain for the 107 modules that carry it, `@/lib/auth` among them.
-  `scripts/ci/server-only-boundary-selftest.mjs` plants a `"use client"` page
-  reaching `@/lib/auth` and requires that build to go red for the boundary
-  reason specifically, so the mechanism cannot lapse unnoticed.
-- **`@/lib/prisma` is covered by the first two and NOT by the build**, which
-  is the residual worth knowing. `server-only` throws at import under plain
-  Node, and fourteen operator CLI entrypoints — `npm run setup`,
-  `npm run db:seed`, the Xero and credit repair tools — statically
-  reach `@/lib/prisma`. Marking it would abort every one of them, which is
-  what `cli-server-only-reach-census.test.ts` (CT-5, #2869) exists to prevent
-  after a `server-only` edge added for a route's benefit killed
-  `E2E multi-lodge` (#3056). `@/lib/club-time-zone-env` and
-  `@/lib/environment-role*` are excluded for the same reason. Closing that
-  gap means running every operator CLI under Node's `react-server` resolution
-  condition, which is an owner decision rather than a build-configuration
-  change.
+  chain for the 114 modules that carry it, `@/lib/auth` and `@/lib/prisma`
+  among them. `scripts/ci/server-only-boundary-selftest.mjs` plants a
+  `"use client"` page reaching both and requires that build to go red for the
+  boundary reason specifically, attributed to each root, so the mechanism
+  cannot lapse unnoticed.
+- **`@/lib/prisma` is now covered by all three, and how that was paid for is
+  the part worth knowing.** `server-only` throws at import under plain Node,
+  and fourteen operator CLI entrypoints reach the database client — the setup
+  check, the seed, the config self-heal, the induction baseline, the Xero,
+  finance and credit repair tools, and both E2E seeds. Marking it used to abort
+  every one of them, which is what `cli-server-only-reach-census.test.ts`
+  (CT-5, #2869) existed to prevent after such an edge killed `E2E multi-lodge`
+  (#3056). #2850 closed the gap by running those commands under Node's
+  `react-server` resolution condition, where `server-only` resolves to an empty
+  module: every published invocation carries `--conditions=react-server`, the
+  documented money-repair commands became npm scripts that carry it for the
+  operator, and CT-5 now fails when a command reaching a marked module is
+  published without it. `@/lib/club-time-zone-env` and
+  `@/lib/environment-role*` stay unmarked — the condition would make marking
+  them possible, but that is a separate judgement and was not taken as a side
+  effect.
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 

@@ -240,12 +240,16 @@ rules first written here. #2765 extended it with the measured-audience half.
   `next/headers`, `server-only` or a Node built-in from a `"use client"` file
   ships database access, credential handling or filesystem code to every
   visitor. Importing `server-only` from the client layer fails the Next build
-  outright, and since #2850 so does reaching `@/lib/auth`, which now carries
-  that marker. The others do not: `@/lib/prisma`, `@/lib/audit`,
-  `@/lib/email`, `@/lib/xero` and `@/lib/stripe` are each reachable from an
-  operator CLI entrypoint, for the measured reason set out below, so they are
-  the ones that would ship silently were the two source-level guards to miss
-  them.
+  outright, and since #2850 so does reaching `@/lib/auth`, `@/lib/prisma`,
+  `@/lib/audit`, `@/lib/email`, `@/lib/xero` or `@/lib/stripe` — all six now
+  carry that marker, so the build refuses the whole chain. What made the last
+  five possible is set out below, and it is a change to how the operator
+  command-line tools are STARTED rather than a change to any of them.
+
+  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
+  `@/lib/environment-role` are still unmarked, and deliberately so — see
+  "Which modules carry the marker" below. They are the modules that would ship
+  silently were the two source-level guards to miss them.
 
   (`@/lib/session` and `@/lib/env` are named in the census's list but no such
   files exist today. They stay listed deliberately, so that creating one
@@ -276,30 +280,56 @@ rules first written here. #2765 extended it with the measured-audience half.
     allowlist**: the one edge it used to name was removed in #2851 and the
     exemption mechanism went with it, so re-introducing one is a visible design
     change rather than a one-line diff;
-  - **the production build itself**, for the 107 modules that carry
+  - **the production build itself**, for the 114 modules that carry
     `import "server-only"`. Next refuses the whole chain and prints it, which is
     the only one of the three that is not our own regular expression.
     `scripts/ci/server-only-boundary-selftest.mjs` runs last in `verify`: it
-    plants a `"use client"` page reaching `@/lib/auth` through an ordinary
-    intermediate module and requires the real build to go red **for the boundary
-    reason**, not merely to go red. That distinction is load-bearing — seeding
-    that import also drags Prisma's `pg` driver into the browser layer, so the
-    build fails either way, and a gate keyed on the exit code would pass with
-    Next's rule switched off. Measured: with the marker present the self-test
-    passes; with it removed the build still fails on `dns`/`fs`/`net`/`tls`, and
-    the self-test fails saying the failure is not attributable.
+    plants a `"use client"` page reaching **both** `@/lib/auth` and
+    `@/lib/prisma` through an ordinary intermediate module and requires the real
+    build to go red **for the boundary reason**, attributed to each of them
+    separately — not merely to go red. That distinction is load-bearing:
+    seeding that import also drags Prisma's `pg` driver into the browser layer,
+    so the build fails either way, and a gate keyed on the exit code would pass
+    with Next's rule switched off. Measured: with both markers present the
+    self-test passes; with `@/lib/prisma`'s marker removed and `@/lib/auth`'s
+    left in place the build is still red for a real boundary reason and the
+    self-test still fails, saying "no Turbopack error was attributed to
+    ./src/lib/prisma.ts".
 
-  **Which modules carry the marker, and why `@/lib/prisma` does not.** This is
-  measured rather than preferred. `server-only` throws at import under plain
-  Node, and **fourteen** operator CLI entrypoints statically reach
-  `@/lib/prisma` — `npm run setup`, `npm run db:seed`, `npm run config:self-heal`,
-  the finance and Xero repair tools. Marking it would abort all fourteen at
-  startup with an error message about React that names nothing the operator did,
-  which is exactly what `cli-server-only-reach-census.test.ts` (CT-5, #2869)
-  exists to prevent — a `server-only` edge added for a route's benefit already
-  killed the `E2E multi-lodge` gate that way (#3056). `@/lib/club-time-zone-env`
-  and `@/lib/environment-role*` are excluded for the same reason. `@/lib/auth`
-  IS marked because zero of the CLI census's thirty-three roots reach it.
+  **Which modules carry the marker, and how the operator CLIs live with it.**
+  `server-only` throws at import under plain Node, so for a year the marker
+  could not go on the modules that matter most: **fourteen** operator CLI
+  entrypoints reach `@/lib/prisma` — `npm run setup:check`, the seed,
+  `npm run config:self-heal`, `npm run induction:baseline`, the finance, Xero
+  and credit repair tools, and both E2E seeds — and marking it would have
+  aborted every one of them at startup with an error message about React that
+  names nothing the operator did. A `server-only` edge added for a route's
+  benefit had already killed the `E2E multi-lodge` gate exactly that way
+  (#3056).
+
+  #2850 closed that rather than living with it. `server-only`'s own `exports`
+  map resolves Node's **`react-server` condition** to an empty module, so a
+  command started as `tsx --conditions=react-server …` loads a marked module
+  cleanly. Every published invocation that reaches one now carries that flag,
+  and the five money-repair commands the documentation used to publish as raw
+  `npx tsx` lines are npm scripts that carry it for the operator —
+  `npm run xero:booking-repair`, `npm run xero:refund-note-link-repair`,
+  `npm run payments:backfill-orphaned-credits`,
+  `npm run payments:audit-ib-hold-clearing` and
+  `npm run calendar:diagnose-access`. That last part is a requirement, not a
+  nicety: somebody copying a runbook line during a money-repair incident must
+  not meet a confusing import failure.
+  `cli-server-only-reach-census.test.ts` (CT-5, #2869) enforces the pairing —
+  it walks every CLI root's import graph, sweeps every place a `tsx`
+  entrypoint is named (package scripts, `prisma.config.ts`, shell runners,
+  workflows, and the documentation), and fails when a command that reaches a
+  marked module is published without the condition.
+
+  `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
+  `@/lib/environment-role` remain deliberately unmarked. The condition would
+  make them safe to mark, but that is a separate judgement about modules whose
+  whole purpose is reading `process.env` on the server, and it was left to be
+  decided rather than taken as a side effect of this change.
 
   The cost that used to be cited here — "122 test files already carry
   `vi.mock("server-only", ...)`, so adding it would put that requirement on
@@ -307,10 +337,13 @@ rules first written here. #2765 extended it with the measured-audience half.
   `vitest.setup.ts` has stubbed the marker globally for every test file since
   0e278396d (22 Jul 2026), three weeks before that sentence was written. The
   full suite with the marker on six protected roots reported **zero**
-  `server-only` failures. The real obstacle was always the CLI invariant above.
+  `server-only` failures. The real obstacle was always the CLI invariant above,
+  and the answer to it was a resolution flag rather than a refactor.
 
-  Measured on this tree: 478 `"use client"` modules in `src/`, **zero** direct
-  imports of any listed module or Node built-in, and **zero** transitive edges.
+  Measured on this tree: 479 `"use client"` modules in `src/`, **zero** direct
+  imports of any listed module or Node built-in, and **zero** transitive edges;
+  14 of the CLI census's 33 roots reach `server-only`, and every published way
+  of running each of them carries the condition.
 
 ## INV-OPS-002
 

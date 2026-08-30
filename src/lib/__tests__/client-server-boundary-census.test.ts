@@ -15,15 +15,20 @@ import { describe, expect, it } from "vitest";
  * Next.js does have a build-time answer — `import "server-only"` in the leaf
  * module makes the compiler refuse the whole chain — and since #2850 this
  * repository uses it, proven by a real production build in
- * `scripts/ci/server-only-boundary-selftest.mjs`. It does not make this census
- * redundant, because it cannot be applied everywhere: `server-only` throws at
- * import under plain Node, and fourteen operator CLI entrypoints statically
- * reach `@/lib/prisma`, so marking it would abort `npm run setup`,
- * `npm run db:seed` and the Xero/credit repair tools —
- * `cli-server-only-reach-census.test.ts` (CT-5, #2869) is the invariant that
- * forbids exactly that. `@/lib/club-time-zone-env` and
- * `@/lib/environment-role*` are out for the same reason. `@/lib/auth` is in,
- * because no CLI root reaches it.
+ * `scripts/ci/server-only-boundary-selftest.mjs`. Its second half then put the
+ * marker on `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
+ * `@/lib/stripe` as well, which had been impossible while fourteen operator CLI
+ * entrypoints reached the database client under plain Node, where `server-only`
+ * throws at import. Those commands now run with `--conditions=react-server`,
+ * under which the marker resolves to an empty module, and
+ * `cli-server-only-reach-census.test.ts` (CT-5, #2869) fails any published
+ * command that reaches a marked module without it.
+ *
+ * That does not make this census redundant. Three of the modules below still
+ * cannot carry the marker — `@/lib/club-time-zone-env`,
+ * `@/lib/environment-role-declaration` and `@/lib/environment-role` — and this
+ * is the only guard that covers a module the moment somebody creates it, with
+ * no marker and no build to notice.
  *
  * The reason recorded here before #2850 was different and was WRONG: that 122
  * test files carry `vi.mock("server-only", …)` and marking `@/lib/prisma` would
@@ -44,19 +49,22 @@ const SRC = path.resolve(process.cwd(), "src");
 const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
 /**
- * The leaves a browser bundle must never reach. Since #2850 `@/lib/auth` fails
- * the Next build on its own; `@/lib/prisma`, `@/lib/audit`, `@/lib/email`,
- * `@/lib/xero` and `@/lib/stripe` do not, because each is reachable from an
- * operator CLI that `server-only` would abort — so those are the ones that
- * would ship silently if this census missed them.
+ * The leaves a browser bundle must never reach. Since #2850 six of them —
+ * `@/lib/auth`, `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and
+ * `@/lib/stripe` — also fail the Next build on their own. The three
+ * environment readers at the end of the list do not, so those are the ones
+ * that would ship silently if this census missed them.
  *
  * THIS LIST IS THE GUARD. It is not a sample of the server-only modules and
  * there is no rule that adds new ones automatically, so a module that is not
  * named here is not protected by this census however plainly its own docblock
  * says it is. `@/lib/club-time-zone-env` (#2989) is here for that reason: it
- * reads `process.env.TZ` and is deliberately NOT marked `server-only`, because
- * two of its callers are `tsx` entrypoints that a `server-only` import would
- * abort. Next inlines `NEXT_PUBLIC_*` into the browser bundle, so a
+ * reads `process.env.TZ` and is deliberately NOT marked `server-only`. Two of
+ * its callers are `tsx` entrypoints, which #2850's `--conditions=react-server`
+ * would now let it survive — but marking a module whose entire job is reading
+ * the environment on the server is a judgement of its own, not a side effect of
+ * a boundary change, so it was left unmarked and left here. Next inlines
+ * `NEXT_PUBLIC_*` into the browser bundle, so a
  * `"use client"` component importing it would silently answer from the
  * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
  * split-brain second authority `INV-CONFIG-002` forbids and the one that module
@@ -67,7 +75,8 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
  * epic #2986) are here for the same reason and a sharper one. Neither is
  * `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
- * entrypoint `npm run setup`, which such an import would abort — and the
+ * entrypoint `npm run setup:check`, and the same "not as a side effect"
+ * judgement above applies — and the
  * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
  * component importing it would answer from whatever the bundler inlined at
  * build time for a NON-public variable, which is `undefined`: the browser would
