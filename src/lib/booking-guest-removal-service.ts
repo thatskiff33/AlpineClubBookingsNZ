@@ -443,15 +443,13 @@ export async function removeBookingGuestInTransaction({
    * would trap them for as long as the review stayed open. So the structural
    * removal proceeds even while the earlier review is unresolved.
    *
-   * WHAT THIS BRANCH DOES AND DOES NOT DO ABOUT THE MONEY THAT REMOVAL OWES.
-   * The exempted removal prices normally today; it does NOT yet raise a second
-   * review task of its own, because nothing in `src/` calls
-   * `raiseEditFinancialReviewTask` yet - the raise trigger needs the
-   * discriminated pricing result that #3031 introduces, and the hand-off comment
-   * at the exemption site names it. When that lands the intended shape is two
-   * occurrences, two keys, two amounts, each priced on its own evidence. Until
-   * then this exemption's only effect is that a consent-authority removal is not
-   * refused by the fence.
+   * WHAT THIS BRANCH DOES ABOUT THE MONEY THAT REMOVAL OWES. It parks it, like
+   * any other unpriceable removal - the strand check below no longer exempts a
+   * consent removal, because it no longer refuses one. So an exempted removal can
+   * raise a SECOND review task beside the one already open, and that is the
+   * intended shape: two occurrences, two keys, two amounts, each settled on its
+   * own evidence. This exemption's only remaining effect is that such a removal
+   * is not turned away by the fence while an earlier review is unresolved.
    *
    * DELIBERATELY BELOW THE AUTHORISATION CHECKS. A caller with no business
    * touching this booking must get the same 403 they got before this issue -

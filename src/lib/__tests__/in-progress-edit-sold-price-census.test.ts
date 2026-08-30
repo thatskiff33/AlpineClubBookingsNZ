@@ -441,17 +441,26 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
     }
   });
 
-  it("keeps the removal path asking the STRICT twin, and asking it FIRST", () => {
+  it("keeps the removal path asking the STRICT twin, and fencing the reprice on its answer", () => {
     // The one lenient call site that values nights being GIVEN BACK. It is safe
-    // only because it runs after the strict gate; delete the gate and the
-    // removal silently reprices a remaining guest's stay at today's rate again,
-    // reporting the movement as the departing guest's credit (#3031, E10).
+    // only because the strict gate decides first; delete the gate and the removal
+    // silently reprices a remaining guest's stay at today's rate again, reporting
+    // the movement as the departing guest's credit (#3031, E10).
     //
-    // ASSERTED AS CALLS AND AS AN ORDER, not as the presence of the words. A
-    // bare `toContain("storedSoldPriceEvidenceForGuest")` is satisfied by an
-    // IMPORT of the symbol, so it would still pass with the gate deleted and the
-    // import left behind — which is the likeliest way this actually regresses,
-    // because nothing else complains about an unused import until knip runs.
+    // WHAT THIS ASSERTED BEFORE #3032, AND WHY IT MOVED. It used to require a
+    // `throw new BookingEditFinancialReviewRequiredError(` ahead of the lenient
+    // reader: the gate's answer was a REFUSAL, so "refuses before repricing" was
+    // the whole safety property. #3032 replaced the refusal with a park - the
+    // guest comes off and the amount is held as an OPEN review task - so there is
+    // no throw left to find, and asserting one would pin behaviour that was
+    // deliberately removed. The property it was protecting is unchanged, and is
+    // now asserted directly: THE REPRICE IS FENCED ON THE GATE'S ANSWER.
+    //
+    // ASSERTED AS CALLS AND AS AN ORDER, not as the presence of the words. A bare
+    // `toContain("storedSoldPriceEvidenceForGuest")` is satisfied by an IMPORT of
+    // the symbol, so it would still pass with the gate deleted and the import left
+    // behind - which is the likeliest way this actually regresses, because nothing
+    // else complains about an unused import until knip runs.
     const source = withoutComments(
       fs.readFileSync(
         path.resolve(process.cwd(), "src/lib/booking-guest-removal-service.ts"),
@@ -463,15 +472,41 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
       /(?<!function\s)\bstoredSoldPriceEvidenceForGuest\s*\(/,
     );
     const lenientCall = source.search(LENIENT_LOCK_CALL_ONCE);
-    const refusal = source.search(
-      /throw new BookingEditFinancialReviewRequiredError\s*\(/,
+    const verdict = source.search(
+      /const parkedFinancialReview = unpriceableStrands\.length > 0;/,
     );
+    const fence = source.search(/if \(!parkedFinancialReview\) \{/);
+    const repriceCall = /await priceBookingGuestsWithMembershipTypePolicy\s*\(/;
+    const reprice = source.search(repriceCall);
+    const raise = source.search(/await raiseEditFinancialReviewTask\s*\(/);
 
-    expect(strictCall, "the strict twin must be CALLED, not merely imported").toBeGreaterThan(-1);
-    expect(refusal, "an unusable strand must be refused, not noted").toBeGreaterThan(-1);
+    expect(
+      strictCall,
+      "the strict twin must be CALLED, not merely imported",
+    ).toBeGreaterThan(-1);
+    expect(
+      verdict,
+      "the gate's answer must be kept, not discarded",
+    ).toBeGreaterThan(-1);
+    expect(
+      raise,
+      "an unusable strand must be PARKED, not merely noted",
+    ).toBeGreaterThan(-1);
     expect(lenientCall).toBeGreaterThan(-1);
+    expect(reprice).toBeGreaterThan(-1);
     // The gate decides before the lenient reader is handed anything.
     expect(strictCall).toBeLessThan(lenientCall);
-    expect(refusal).toBeLessThan(lenientCall);
+    expect(strictCall).toBeLessThan(verdict);
+    // And the reprice - the pass that would revalue a remaining guest's nights
+    // at today's rate - sits INSIDE the fence the gate's answer opens. This is
+    // the assertion the refusal check used to stand in for.
+    expect(
+      fence,
+      "the reprice must be fenced on the gate's answer",
+    ).toBeGreaterThan(-1);
+    expect(verdict).toBeLessThan(fence);
+    expect(fence).toBeLessThan(reprice);
+    // Exactly one reprice, so a second unfenced call cannot hide behind it.
+    expect([...source.matchAll(new RegExp(repriceCall, "g"))]).toHaveLength(1);
   });
 });

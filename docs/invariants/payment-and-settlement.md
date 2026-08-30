@@ -1281,13 +1281,21 @@ one, check the other.
     not to the booking. A review raised against a captured payment blocks a
     reversal of that payment's manual settlement; the ordinary credit-only review
     (`paymentId` NULL) blocks nothing.
-  - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
-    single occurrence-key mint, the raise, the DB constraints and the audited
-    completion. #3032 adds the settlement routing, the anchor, the Xero leg and the
-    pending-review fence. Neither ships the RAISE CALLER: the booking-edit path
-    that decides an edit is unpriceable needs #3031's discriminated planner
-    result, so until that lands no production path creates a row of this kind - on
-    `main` or on the epic branch. Read the rules above as binding on any writer
-    of this kind rather than as a description of a live flow — which is also why
-    the current estimator behaviour in `INV-MOD-005` is still true today and is
-    #3031's to remove.
+  - **What #3030 enforces versus what #3032 wires, and where the raise is called
+    from.** #3030 ships the state, the single occurrence-key mint, the raise, the
+    DB constraints and the audited completion. #3032 adds the settlement routing,
+    the anchor, the Xero leg, the pending-review fence — and ONE production raise
+    caller: `removeBookingGuestInTransaction`, where an unpriceable single-guest
+    removal now commits structurally and parks its money (`INV-MOD-028`). The
+    in-progress batch edit does NOT yet raise; it still refuses, for the structural
+    reason stated in `INV-MOD-028`. So a live club can now hold rows of this kind,
+    and they arrive from exactly one door.
+  - **One task per unreadable STRAND, not one per edit.** The occurrence key is
+    minted per strand, so per strand is what "exactly one" can mean idempotently: a
+    replay of the same edit re-derives the same keys and creates nothing. The
+    ordinary booking has one unreadable strand — the guest leaving — and raises one
+    task. A booking predating `BookingGuestNight` has one per guest, and only the
+    departing guest's carries surrendered nights and therefore money; the others
+    record a strand whose history a person must read, and their honest resolution
+    is usually DISMISSED with a note, which is a defined state above and claims no
+    payment.

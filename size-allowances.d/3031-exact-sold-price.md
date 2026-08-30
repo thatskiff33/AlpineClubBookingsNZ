@@ -45,7 +45,7 @@ reason: `PricingResult` becomes a discriminated union, so the priced fields move
   `booking-guest-profile-gates.test.ts`, which compares positions inside it.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1592
+lines: 1613
 reason: the apply path narrows the pricing result once and refuses the review
   branch inside the transaction, so the structural change rolls back with it;
   plus the identity-only echo's `?? 0` becoming a refusal. The comment weight is
@@ -55,9 +55,17 @@ reason: the apply path narrows the pricing result once and refuses the review
   Merged forward: #3032's pending-review fence is now in this file too, taken
   under both locks before the pricing call. One file, one allowance, so this
   entry carries both lanes' growth rather than #3032 declaring it twice.
+  Raise-trigger round (+21): the refusal STAYS on this path and the comment says
+  why, in the one place a reader will look for it. #3032 parked the removal path
+  and could not park this one — this branch is reached only from the in-progress
+  planner, whose structural change rewrites every strand's night rows from a
+  per-night integer that an unreadable strand does not have — and the three ways
+  to supply one are money decisions rather than implementation choices. Twenty-one
+  lines is what it takes to leave that open question stated instead of leaving the
+  next lane to re-derive it, or worse, to assume it was an oversight.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1143
+lines: 1302
 reason: the evidence gate, which is the whole of E10: a removal's credit was
   derived as the difference between two repricings of the REMAINING guests, so a
   remaining guest with no stored price was revalued at today's rate and that
@@ -72,6 +80,20 @@ reason: the evidence gate, which is the whole of E10: a removal's credit was
   Merged forward: #3032's fence and the D-14 hand-off it satisfies now sit in
   this file beside the evidence gate. One file, one allowance, so this entry
   carries both lanes' growth.
+  Raise-trigger round (+159): the gate became a PARK, which is the epic's actual
+  answer rather than the interim refusal. The money block is now branched — no
+  reprice, no promotion recalculation, no settlement options and no per-guest
+  price write when the booking's history cannot price the removal — and the raise
+  itself sits inside the same transaction after the `BookingModification` anchor
+  is written. Splitting was weighed and rejected on the same ground as the gate
+  itself: the park is a decision about the booking THIS function has loaded under
+  THIS function's two locks, and the branch is only trustworthy while the reader
+  can see the settlement it is skipping a few lines below it. Roughly half the
+  growth is reasoning — why the exemption is gone rather than merely unused, why
+  `priceDiffCents` being zero is not a `$0` decision, and why the stored total is
+  left alone — and this repository has re-fixed one stay-boundary rule four times
+  (#2622/#2630/#2631/#2632) because the reasoning was somewhere the reader was
+  not.
 
 file: src/lib/booking-date-modification-service.ts
 lines: 1797

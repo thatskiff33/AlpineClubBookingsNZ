@@ -475,10 +475,22 @@ export class BookingModifyReviewJustificationRequiredError extends ApiError {
  *
  * The planner never returns an amount in this case — there is no field on its
  * review branch to read one from — so this is the seam between "we could not
- * price it" and "here is what happens next". Today it refuses the edit. #3032
- * replaces the refusal with the epic's real answer: save the stay/guest change
- * and park the money as one OPEN admin review task. The occurrences are carried
- * on the error precisely so that change is a re-route rather than a re-derive.
+ * price it" and "here is what happens next".
+ *
+ * ## Where this is still thrown, and where it is not
+ *
+ * #3032 replaced the refusal with the epic's real answer — save the stay/guest
+ * change and park the money as an OPEN admin review task — on the SINGLE-GUEST
+ * REMOVAL path, whose structural change is a row delete and therefore needs no
+ * valuation to apply.
+ *
+ * It is still thrown from the IN-PROGRESS BATCH EDIT (`modifyBookingBatch`) and
+ * echoed by the quote preview, because that path's structural change rewrites
+ * every strand's `BookingGuestNight` rows from a per-night integer that a strand
+ * with no usable stored price does not have. The reasoning, and the three money
+ * decisions parking it would require, are stated in full at the throw site in
+ * `booking-batch-modification-service.ts`. The occurrences are still carried on
+ * the error so that re-route stays a re-route when the decision is taken.
  *
  * ## The wording is member-facing and is bound by the epic
  *
