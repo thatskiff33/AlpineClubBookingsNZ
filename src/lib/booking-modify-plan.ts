@@ -2173,7 +2173,13 @@ export async function applyGuestChanges(
   );
   const linkByGuestId = guestMemberLinks ?? new Map();
 
-  type BreakdownGuest = { nightDates: Date[]; perNightCents: number[] };
+  type BreakdownGuest = {
+    nightDates: Date[];
+    // #3170: `null` at position k is a DELIBERATE STATEMENT by whoever composed
+    // this breakdown that night k's price is not known. It is not the same as
+    // the vector simply being short — see `nightPriceCentsToWrite` below.
+    perNightCents: ReadonlyArray<number | null>;
+  };
 
   // Re-sync a guest's BookingGuestNight rows to the priced nights (issue #713),
   // and return the matching stayStart/stayEnd envelope. Called on every guest
@@ -2185,18 +2191,51 @@ export async function applyGuestChanges(
   // back a continuous run, filling the gap for good. The plan now carries the
   // night list (INV-MOD-025) and this is the only writer that needs to know.
   /**
-   * The amount priced for night `index` of `guest`'s breakdown (#3031).
+   * What to write into `BookingGuestNight.priceCents` for night `index` of
+   * `guest`'s breakdown (#3031, #3170).
    *
-   * Throws rather than defaulting. The alternative — a zero — is a real
-   * financial number written into `BookingGuestNight.priceCents`, which is the
-   * only record of what a night was sold for.
+   * ## Two different absences, and only one of them is allowed through
+   *
+   * This is the distinction the whole of #3170 turns on, so it is worth being
+   * exact about. `perNightCents` is a vector of `number | null`, and the
+   * position `index` can be in one of three states:
+   *
+   *  - **A number** — the price. Written as it stands. `0` included: a comped
+   *    night is a real sold price and is not the same as an unknown one.
+   *  - **`null` — an explicit statement that the price is NOT KNOWN.** Only one
+   *    composer ever produces it (`composeProposedNightPrices`), and only for a
+   *    night the guest ALREADY HELD whose stored row carried no usable money —
+   *    a night this edit is KEEPING, not buying. There is no honest number for
+   *    such a night, so `NULL` is written and a person prices it from the OPEN
+   *    `EDIT_FINANCIAL_REVIEW` task the same edit raises.
+   *  - **`undefined` — no statement at all**, because the vector is SHORTER than
+   *    the night list (or has a hole). Nobody decided anything about this night;
+   *    the breakdown is simply malformed. That is a wiring defect in whoever
+   *    built it, and it STILL THROWS, exactly as #3031 made it.
+   *
+   * The two are kept apart on purpose. A night the edit is BUYING must always
+   * carry a real amount — it is being sold right now, at a price the pricing
+   * engine just produced — and letting a short vector fall through to `NULL`
+   * would quietly turn every wiring defect into an unpriced night, which is
+   * precisely the class of silent damage this epic exists to remove. So the
+   * unknown has to be SAID, not inferred from an absence.
+   *
+   * What has NOT changed is the prohibition #3031 shipped: there is still no
+   * `?? 0` here and there never may be. A zero is a real financial number, and
+   * writing one for a night nobody priced is the magic-zero defect by another
+   * name.
    */
-  const requiredNightPriceCents = (
+  const nightPriceCentsToWrite = (
     guest: BreakdownGuest | undefined,
     index: number,
     stayDate: Date,
-  ): number => {
+  ): number | null => {
     const cents = guest?.perNightCents[index];
+    // An explicit null: the composer said "not known", and that is a decision
+    // this function honours rather than second-guesses.
+    if (cents === null) {
+      return null;
+    }
     if (typeof cents !== "number") {
       throw new Error(
         `No priced amount for the night of ${stayDate.toISOString()} (#3031)`,
@@ -2225,7 +2264,12 @@ export async function applyGuestChanges(
           // A per-night vector shorter than the night list is a wiring defect in
           // whoever built the breakdown, and refusing is the only answer that
           // does not invent money.
-          priceCents: requiredNightPriceCents(bg, k, stayDate),
+          //
+          // #3170: and a vector position that says `null` is a night whose price
+          // is genuinely NOT KNOWN, which is now storable and is stored. The two
+          // absences are told apart by `nightPriceCentsToWrite`, whose docblock
+          // is the one place that rule is stated.
+          priceCents: nightPriceCentsToWrite(bg, k, stayDate),
         })),
       });
       return {

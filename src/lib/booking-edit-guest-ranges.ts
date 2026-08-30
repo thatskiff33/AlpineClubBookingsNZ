@@ -174,6 +174,68 @@ interface ProposedAddedGuestRange {
   priceCents: number;
 }
 
+/**
+ * One existing guest strand of a PARKED edit (#3170).
+ *
+ * It carries the structural half of the change and none of the money. Two
+ * fields say that outright:
+ *
+ *  - `perNightCents` is `(number | null)[]`. A night whose stored row already
+ *    carried usable money keeps it BYTE FOR BYTE, exactly as the priced path
+ *    preserves it. Everything else — a night whose row could not be read, and a
+ *    night this edit newly puts the guest on — is `null`: not known. Writing a
+ *    current-policy price for that new night would be worse than useless here,
+ *    because no money is moving for it and the next edit would read the number
+ *    back as evidence the member had paid it.
+ *  - `priceCents` is the guest's STORED total, unchanged. Not a recomputed one,
+ *    not a delta, not a zero. How much this edit alters it is the question under
+ *    review, and the OPEN task is where that question lives.
+ *
+ * There are deliberately NO booking-level totals on this plan and no
+ * `futureDeltaCents`, so no caller can read an adjustment off it — the same
+ * reason `FinancialReviewRequired` carries none.
+ */
+export interface ParkedExistingGuestRange {
+  guest: ExistingBookingEditGuest;
+  stayStart: Date;
+  stayEnd: Date;
+  nights: Date[];
+  perNightCents: (number | null)[];
+  /** `BookingGuest.priceCents` as stored. Untouched by a parked edit. */
+  priceCents: number;
+  futureNights: Date[];
+  futureStart: Date;
+  removedFromFuture: boolean;
+}
+
+/**
+ * The structural half of an edit whose money cannot be valued (#3170).
+ *
+ * Epic #2797's promise is that such an edit SAVES and PARKS: the booking becomes
+ * what the member asked for, and the amount is held as an OPEN
+ * `EDIT_FINANCIAL_REVIEW` task for a person to price. Until #3170 the batch path
+ * could not keep that promise, because committing the change means rewriting
+ * every strand's night rows and the column had no way to say "not known".
+ *
+ * WHY AN ADDED GUEST IS PRICED HERE AND AN EXISTING STRAND IS NOT. The epic
+ * prohibits guessing HISTORICAL money. A night an added guest is being put on is
+ * not history — it is being bought now, and the club's current rate is the
+ * correct price for it, arrived at by the same party pass and the same group
+ * discount as on any other edit. An existing strand's nights are the opposite:
+ * its total is frozen at what is stored, so pricing a new night for it would
+ * make its rows disagree with its own total by construction — manufacturing the
+ * very `STORED_TOTAL_MISMATCH` that made this edit unpriceable in the first
+ * place.
+ */
+export interface ParkedEditStructuralPlan {
+  proposedExistingGuests: ParkedExistingGuestRange[];
+  proposedAddedGuests: ProposedAddedGuestRange[];
+  remainingGuests: ExistingBookingEditGuest[];
+  removedGuests: ExistingBookingEditGuest[];
+  capacityGuestRanges: BookingEditGuestRangePlan["capacityGuestRanges"];
+  capacityRangeStart: Date;
+}
+
 export interface BookingEditGuestRangePlan {
   proposedExistingGuests: ProposedExistingGuestRange[];
   proposedAddedGuests: ProposedAddedGuestRange[];
@@ -244,8 +306,15 @@ export type InProgressGuestRangePlanResult =
    * be priced and why; #3032 decides what is written down about it. The branch
    * itself is `FinancialReviewRequired`, shared with `PricingResult` rather than
    * spelled out twice (`INV-SSOT`).
+   *
+   * #3170 adds `parkedPlan` alongside it, and adding it changes nothing about
+   * the property the union was built for: it carries WHICH BEDS the edit
+   * proposes and NO booking-level amount, so there is still no field a careless
+   * caller could read an adjustment off. Parking withholds the money, never the
+   * structural change — the whole point is that the booking becomes what the
+   * member asked for while a person prices it.
    */
-  | FinancialReviewRequired;
+  | (FinancialReviewRequired & { parkedPlan: ParkedEditStructuralPlan });
 
 export interface BuildInProgressGuestRangePlanInput {
   booking: {
@@ -523,6 +592,141 @@ function nightPricesFrom(
   return nightKeys.map((key) => nightPriceFrom(priced, key));
 }
 
+/**
+ * Narrow a composed per-night vector back to plain numbers, for the PRICED path.
+ *
+ * #3170 widened `composeProposedNightPrices` to `(number | null)[]` so the
+ * parked path can record a night whose price is not known. The priced path must
+ * never hold one: every amount it composes is summed into `BookingGuest.priceCents`
+ * and settled against the member's card. Rather than assert the mode and hope,
+ * this re-establishes the narrower type at the boundary, so the priced branch's
+ * arithmetic is type-checked against `number` exactly as it was before.
+ *
+ * It cannot fire — the caller passes `onUnknownRetainedNight: "refuse"`, which
+ * throws first — and it is here so that a future edit which changes that
+ * argument fails loudly at the place the money is computed instead of quietly
+ * summing a `null` to `0`.
+ */
+function requireAllPriced(
+  perNightCents: readonly (number | null)[],
+  bookingGuestId: string
+): number[] {
+  return perNightCents.map((cents, index) => {
+    if (cents === null) {
+      throw new Error(
+        `Night ${index} of guest ${bookingGuestId} reached the priced path with no amount (#3170)`
+      );
+    }
+    return cents;
+  });
+}
+
+/**
+ * The ranges the capacity check must cover for this edit, and the night the
+ * checked window starts at.
+ *
+ * ONE COMPOSITION FOR BOTH BRANCHES (`INV-SSOT`, #3170). The priced plan and the
+ * PARKED plan propose exactly the same beds — parking withholds the money, never
+ * the structural change — so a second copy of this arithmetic would be a second
+ * answer to "who is in the lodge", and the parked branch is the one that commits
+ * a stay change without settling anything. The two must agree by construction
+ * rather than by review.
+ *
+ * The per-field reasoning (#2029's check-out-day anchor, #2736's explicit night
+ * set, #2743's read of the night list rather than the pricing anchor) is stated
+ * inline where each value is built.
+ */
+function composeCapacityCoverage(
+  existing: ReadonlyArray<{
+    removedFromFuture: boolean;
+    futureNights: Date[];
+    futureStart: Date;
+    stayEnd: Date;
+    guest: { memberId?: string | null };
+  }>,
+  added: ReadonlyArray<{
+    stayStart: Date;
+    stayEnd: Date;
+    nights: Date[];
+    guest: { memberId?: string | null };
+  }>,
+  editableFrom: Date
+): { capacityGuestRanges: BookingEditGuestRangePlan["capacityGuestRanges"]; capacityRangeStart: Date } {
+  const capacityGuestRanges = [
+    ...existing
+      .filter((entry) => !entry.removedFromFuture && entry.futureNights.length > 0)
+      .map((entry) => ({
+        // #2029: anchor the checked range at the guest's corrected futureStart,
+        // not editableFrom, so the genuinely-new check-out-day night is inside
+        // the window the capacity resolver iterates (it would otherwise be
+        // invisible and overbookable). Unchanged for mid-stay / last-night.
+        stayStart: entry.futureStart,
+        stayEnd: entry.stayEnd,
+        // #2736: the window still bounds which nights are examined; the night
+        // set decides which of them this guest actually occupies. Expanding to
+        // the same nights for a contiguous guest, so no ordinary edit's capacity
+        // verdict moves.
+        nights: entry.futureNights,
+        memberId: entry.guest.memberId ?? null,
+      })),
+    ...added.map((entry) => ({
+      stayStart: entry.stayStart,
+      stayEnd: entry.stayEnd,
+      nights: entry.nights,
+      memberId: entry.guest.memberId ?? null,
+    })),
+  ];
+
+  // #2029: the capacity window must start no later than the earliest checked
+  // night. Seed at editableFrom (so it is never pushed later than today+1) and
+  // pull it back to the earliest night any included range actually OCCUPIES —
+  // which drops to the check-out-day night for such an extension, and stays
+  // editableFrom for every mid-stay edit.
+  //
+  // #2743: read off the night set, not off `range.stayStart`. That start is the
+  // guest's pricing anchor (`futureStart`), which reaches back to their own stay
+  // end so a check-out-day extension's new night is priced — and for a guest who
+  // went home a week ago it reached back a week, dragging the checked window
+  // over nights this edit puts nobody on. `checkCapacityForGuestRanges`
+  // evaluates EVERY night in `[capacityRangeStart, newCheckOut)`, so a past
+  // night that is over capacity (possible via the #1668 admin override) or under
+  // a whole-lodge hold (never admin-overridable, ADR-001 decision 5) could
+  // refuse an extension that adds nobody to it. Every range in this list is
+  // non-empty by the filter above, so `nights[0]` always exists, and it is by
+  // construction the earliest night that range can occupy — narrowing the window
+  // to it can never hide a night that IS checked.
+  const capacityRangeStart = capacityGuestRanges.reduce((earliest, range) => {
+    const firstOccupiedNight = range.nights[0];
+    return firstOccupiedNight !== undefined && firstOccupiedNight < earliest
+      ? firstOccupiedNight
+      : earliest;
+  }, editableFrom);
+
+  return { capacityGuestRanges, capacityRangeStart };
+}
+
+/**
+ * The nights of one strand that carry usable stored money, as a lock map.
+ *
+ * `storedNightPricesByKey` already decides what counts as money — it is the one
+ * home for that rule (`INV-SSOT`) — and records anything else as `null`. This
+ * only reads that verdict; it does not restate it. It exists because the parked
+ * branch must PRESERVE whatever a strand's rows can still be read for, while
+ * `soldNightPriceByGuest` is deliberately EMPTY for an unreadable strand so no
+ * priced arithmetic can touch a partial history.
+ */
+function usableStoredNightPrices(
+  storedNightPriceByKey: ReadonlyMap<string, number | null>
+): ReadonlyMap<string, number> {
+  const usable = new Map<string, number>();
+  for (const [key, priceCents] of storedNightPriceByKey) {
+    if (priceCents !== null) {
+      usable.set(key, priceCents);
+    }
+  }
+  return usable;
+}
+
 /** Sum integer cents. No float, no rounding (INV-MONEY-001). */
 function sumCents(values: readonly number[]): number {
   return values.reduce((sum, cents) => sum + cents, 0);
@@ -635,7 +839,26 @@ function composeProposedNightPrices(args: {
   soldNightPriceByKey: ReadonlyMap<string, number>;
   futureNightKeys: readonly string[];
   futurePerNightCents: readonly number[];
-}): number[] {
+  /**
+   * #3170: what to do about a RETAINED night with no stored sold price. There
+   * is no default, deliberately — the answer differs between the two callers
+   * and a default would silently give one of them the other's.
+   *
+   *  - `"refuse"` — the PRICED path. The evidence gate has already established
+   *    that every held night carries usable money, so this cannot fire; if it
+   *    ever did, the strand's history is being rewritten from something other
+   *    than itself and throwing is the only answer that invents nothing.
+   *  - `"record-as-unknown"` — the PARKED path. The edit is committing its
+   *    structural half while a person prices the money, so the night is written
+   *    as `NULL`: not known, rather than zero and rather than deleted.
+   *
+   * A NEWLY BOUGHT night is unaffected by this choice and still throws when the
+   * pass did not price it, on both paths. That night is being SOLD right now,
+   * at a price the engine produced moments ago; an unpriced one is a wiring
+   * defect, not an unknown, and the two must never collapse into each other.
+   */
+  onUnknownRetainedNight: "refuse" | "record-as-unknown";
+}): (number | null)[] {
   const newNightCents = new Map(
     args.futureNightKeys.map((key, index) => [
       key,
@@ -646,6 +869,9 @@ function composeProposedNightPrices(args: {
     if (args.heldNightKeySet.has(key)) {
       const stored = args.soldNightPriceByKey.get(key);
       if (typeof stored !== "number") {
+        if (args.onUnknownRetainedNight === "record-as-unknown") {
+          return null;
+        }
         // Unreachable on a priced edit — the evidence gate refuses such a
         // strand before this runs. A throw rather than a default, because the
         // only alternatives are inventing the number or writing a magic zero,
@@ -1057,6 +1283,59 @@ export function buildInProgressGuestRangePlan(
   }
 
 
+  // #3170: HOISTED ABOVE THE EVIDENCE GATE BELOW, which used to return before
+  // this ran. The parked branch needs the same floor to price an added guest,
+  // and one floor for both branches is the point (`INV-SSOT`). It is a `reduce`
+  // over night lists and consults no season table, so the gate's own promise —
+  // that an unpriceable edit costs no season lookup at all — is unaffected: the
+  // pricing pass itself is still skipped unless this edit adds a guest.
+  // #2756: the earliest night this edit prices for ANYBODY — the first night of
+  // the earliest future window, or the first night an added guest is admitted for.
+  // `undefined` means nobody holds a future night at all, so there is nothing to
+  // price (the refusal below usually follows).
+  //
+  // It bounds what the proposed pass covers, and the bound is load-bearing in both
+  // directions. Too high and the party count would miss a guest who holds a priced
+  // night as one of their OWN past nights, so a night the edit really is buying
+  // could miss a discount the party had earned. That needs a night before
+  // `editableFrom` to be priced at all, which is #2029's check-out-day extension
+  // — a guest whose stay ended today buys tonight while the window opens tomorrow
+  // — and a second guest whose stored nights claim that same night, which takes
+  // drifted data, since the night the extension buys is the booking's own old
+  // check-out and no undrifted guest holds it. Rare, then, but the floor makes the
+  // count right there rather than resting on the drift being absent. Too low —
+  // handing each guest their whole proposed night list, back to their check-in —
+  // and this plan would start demanding a season rate for nights nobody is
+  // repricing, so an edit to a stay whose past nights sit outside any active
+  // season, or whose age-tier rate row has since been removed, would fail where it
+  // used to succeed. A guest who went home a week ago makes that difference a week
+  // wide.
+  //
+  // The floor alone is not enough for that second direction, which is why
+  // `proposedPassNightKeys` also decides per guest: a night below a guest's OWN
+  // first priced night is in the pass for the COUNT only, so it is carried only
+  // when its price is locked and can never reach the season table. Without that,
+  // the reach-back in #2029's shape could still demand a rate for a drifted
+  // guest's past night and refuse an edit that used to work.
+  //
+  // Read off the night LISTS rather than off `newFutureStart`, which is a pricing
+  // anchor that reaches back to a departed guest's own stay end and would drag the
+  // floor back with it even though that guest buys nothing before the booking's
+  // old check-out (#2743). Every night either leg sums is at or after this floor:
+  // the new-price leg sums `futureNightKeys`, and the old-price leg's kept nights
+  // are a subset of them (`oldFutureStart` is never earlier than
+  // `newFutureStart`).
+  const pricingFloorKey = existingNightPlans.reduce<string | undefined>(
+    (earliest, entry) => {
+      const firstPricedNight = entry.futureNightKeys[0];
+      return firstPricedNight !== undefined &&
+        (earliest === undefined || firstPricedNight < earliest)
+        ? firstPricedNight
+        : earliest;
+    },
+    addGuests.length > 0 ? addedGuestNightKeys[0] : undefined
+  );
+
   // #3031 (epic #2797): CAN THIS BOOKING'S OWN HISTORY PRICE THE EDIT EXACTLY?
   //
   // Every existing guest is judged, not only the ones giving nights back, and
@@ -1106,62 +1385,136 @@ export function buildInProgressGuestRangePlan(
     );
   }
 
+  /**
+   * The structural half of a parked edit, composed once for BOTH review exits
+   * below (`INV-SSOT`, #3170).
+   *
+   * The two exits are the same situation reached at different moments — a strand
+   * whose stored rows cannot price this edit, found before composing, and one
+   * whose composed rows do not add up, found after. Both park, both commit the
+   * same beds, and both must therefore write the same rows; two copies of this
+   * would be two answers to one question.
+   */
+  const composeParkedPlan = (): ParkedEditStructuralPlan => {
+  // #3170 (epic #2797): PARK, DO NOT REFUSE. The money cannot be valued from
+  // this booking's own history, so none of it moves — but the structural
+  // change is a statement about beds, not about cents, and it commits. What
+  // follows composes exactly that and nothing else.
+  //
+  // NO PRICING PASS RUNS FOR THE EXISTING STRANDS. It is not skipped for
+  // speed: every amount it could produce would be today's rate for a night
+  // whose real price this booking cannot tell us, and #3031 deleted that
+  // machinery precisely because its output was being written into the rows the
+  // NEXT edit reads as evidence.
+  const parkedAddedPrices =
+    addGuests.length > 0
+      ? // Only an ADDED guest's nights are priced here, and only because they
+        // are genuinely being bought now (see `ParkedEditStructuralPlan`). The
+        // existing strands are in the pass for the PARTY COUNT — so the group
+        // discount an added guest qualifies for is the one the real party
+        // earns — and every price it returns for them is discarded below.
+        pricePartyNights(
+          [
+            ...existingNightPlans.map((entry) => ({
+              guest: entry.guest,
+              nightKeys:
+                pricingFloorKey === undefined
+                  ? []
+                  : proposedPassNightKeys(
+                      entry,
+                      usableStoredNightPrices(entry.storedNightPriceByKey),
+                      pricingFloorKey
+                    ),
+              lockedNightPricesByKey: usableStoredNightPrices(
+                entry.storedNightPriceByKey
+              ),
+            })),
+            ...addGuests.map((guest) => ({
+              guest,
+              nightKeys: addedGuestNightKeys,
+            })),
+          ],
+          input.seasons,
+          input.groupDiscount
+        )
+      : [];
+
+  const parkedExistingGuests: ParkedExistingGuestRange[] =
+    existingNightPlans.map((entry) => ({
+      guest: entry.guest,
+      stayStart: entry.stayStart,
+      stayEnd: entry.proposedStayEnd,
+      nights: entry.proposedNightKeys.map((key) => parseDateOnly(key)),
+      perNightCents: composeProposedNightPrices({
+        proposedNightKeys: entry.proposedNightKeys,
+        heldNightKeySet: entry.heldNightKeySet,
+        soldNightPriceByKey: usableStoredNightPrices(
+          entry.storedNightPriceByKey
+        ),
+        // No night of an existing strand is priced on this branch, so the
+        // "newly bought" arm has nothing to look up and every night that is
+        // not RETAINED-with-usable-money comes out as `null`.
+        futureNightKeys: entry.proposedNightKeys,
+        futurePerNightCents: [],
+        onUnknownRetainedNight: "record-as-unknown",
+      }).map((cents, index) =>
+        // A night this edit newly puts the strand on is unknown too, for the
+        // reason on `ParkedEditStructuralPlan`: the strand's stored total does
+        // not move, so a priced new night would put its rows out of step with
+        // its own total and make the NEXT edit unreadable as well.
+        entry.heldNightKeySet.has(entry.proposedNightKeys[index]) ? cents : null
+      ),
+      // The STORED total, untouched. How much this edit changes it is the
+      // question the OPEN task exists to answer.
+      priceCents: entry.guest.priceCents,
+      futureNights: entry.futureNightKeys.map((key) => parseDateOnly(key)),
+      futureStart: entry.newFutureStart,
+      removedFromFuture: entry.removedFromFuture,
+    }));
+
+  const parkedAddedGuests: ProposedAddedGuestRange[] = addGuests.map(
+    (guest, addedIndex) => {
+      const perNightCents = nightPricesFrom(
+        parkedAddedPrices[existingNightPlans.length + addedIndex],
+        addedGuestNightKeys
+      );
+      return {
+        guest,
+        stayStart: editableFrom,
+        stayEnd: newCheckOut,
+        nights: addedGuestNightKeys.map((key) => parseDateOnly(key)),
+        perNightCents,
+        priceCents: sumCents(perNightCents),
+      };
+    }
+  );
+
+  const { capacityGuestRanges, capacityRangeStart } = composeCapacityCoverage(
+    parkedExistingGuests,
+    parkedAddedGuests,
+    editableFrom
+  );
+    return {
+      proposedExistingGuests: parkedExistingGuests,
+      proposedAddedGuests: parkedAddedGuests,
+      remainingGuests,
+      removedGuests,
+      capacityGuestRanges,
+      capacityRangeStart,
+    };
+  };
+
   if (financialReviewOccurrences.length > 0) {
     return {
       kind: "financial_review_required",
       occurrences: financialReviewOccurrences,
+      parkedPlan: composeParkedPlan(),
     };
   }
   // Every strand is exact from here on: every night a guest already holds
   // carries a stored non-negative integer price, and those prices sum to the
   // strand's stored total. Both facts are relied on below.
 
-  // #2756: the earliest night this edit prices for ANYBODY — the first night of
-  // the earliest future window, or the first night an added guest is admitted for.
-  // `undefined` means nobody holds a future night at all, so there is nothing to
-  // price (the refusal below usually follows).
-  //
-  // It bounds what the proposed pass covers, and the bound is load-bearing in both
-  // directions. Too high and the party count would miss a guest who holds a priced
-  // night as one of their OWN past nights, so a night the edit really is buying
-  // could miss a discount the party had earned. That needs a night before
-  // `editableFrom` to be priced at all, which is #2029's check-out-day extension
-  // — a guest whose stay ended today buys tonight while the window opens tomorrow
-  // — and a second guest whose stored nights claim that same night, which takes
-  // drifted data, since the night the extension buys is the booking's own old
-  // check-out and no undrifted guest holds it. Rare, then, but the floor makes the
-  // count right there rather than resting on the drift being absent. Too low —
-  // handing each guest their whole proposed night list, back to their check-in —
-  // and this plan would start demanding a season rate for nights nobody is
-  // repricing, so an edit to a stay whose past nights sit outside any active
-  // season, or whose age-tier rate row has since been removed, would fail where it
-  // used to succeed. A guest who went home a week ago makes that difference a week
-  // wide.
-  //
-  // The floor alone is not enough for that second direction, which is why
-  // `proposedPassNightKeys` also decides per guest: a night below a guest's OWN
-  // first priced night is in the pass for the COUNT only, so it is carried only
-  // when its price is locked and can never reach the season table. Without that,
-  // the reach-back in #2029's shape could still demand a rate for a drifted
-  // guest's past night and refuse an edit that used to work.
-  //
-  // Read off the night LISTS rather than off `newFutureStart`, which is a pricing
-  // anchor that reaches back to a departed guest's own stay end and would drag the
-  // floor back with it even though that guest buys nothing before the booking's
-  // old check-out (#2743). Every night either leg sums is at or after this floor:
-  // the new-price leg sums `futureNightKeys`, and the old-price leg's kept nights
-  // are a subset of them (`oldFutureStart` is never earlier than
-  // `newFutureStart`).
-  const pricingFloorKey = existingNightPlans.reduce<string | undefined>(
-    (earliest, entry) => {
-      const firstPricedNight = entry.futureNightKeys[0];
-      return firstPricedNight !== undefined &&
-        (earliest === undefined || firstPricedNight < earliest)
-        ? firstPricedNight
-        : earliest;
-    },
-    addGuests.length > 0 ? addedGuestNightKeys[0] : undefined
-  );
 
   // #3031: THERE IS NO PRE-EDIT PRICING PASS ANY MORE, and its removal is the
   // point rather than a tidy-up.
@@ -1289,13 +1642,20 @@ export function buildInProgressGuestRangePlan(
     const futureDeltaCents = newFuturePriceCents - oldFuturePriceCents;
     const priceCents = guest.priceCents + futureDeltaCents;
 
-    const perNightCents = composeProposedNightPrices({
-      proposedNightKeys,
-      heldNightKeySet,
-      soldNightPriceByKey,
-      futureNightKeys,
-      futurePerNightCents,
-    });
+    const perNightCents = requireAllPriced(
+      composeProposedNightPrices({
+        proposedNightKeys,
+        heldNightKeySet,
+        soldNightPriceByKey,
+        futureNightKeys,
+        futurePerNightCents,
+        // The PRICED path. Every held night is exact by the gate above, so this
+        // cannot produce an unknown; asking for one would be asking to write a
+        // NULL onto an edit that is settling money against these very rows.
+        onUnknownRetainedNight: "refuse",
+      }),
+      guest.id
+    );
     // The reconciliation the docblock on `composeProposedNightPrices` derives,
     // asserted rather than assumed. It cannot fail on any stay whose stored
     // envelope agrees with its rows; it CAN fail on a strand whose rows reach
@@ -1325,8 +1685,16 @@ export function buildInProgressGuestRangePlan(
   });
 
   if (unreconciledGuestIndexes.length > 0) {
+    // #3170: this exit parks too. A strand whose composed rows do not add up is
+    // unpriceable for the same reason as one the gate caught — the difference is
+    // only WHEN it was discovered — so the structural change commits and the
+    // amount goes to a person. `composeParkedPlan` deliberately recomposes from
+    // the stored rows rather than reusing `proposedExistingGuests` above: those
+    // carry the very per-guest totals that failed to reconcile, and writing them
+    // would persist the mismatch instead of parking it.
     return {
       kind: "financial_review_required",
+      parkedPlan: composeParkedPlan(),
       occurrences: unreconciledGuestIndexes.map((index) => {
         const entry = existingNightPlans[index];
         return editFinancialReviewOccurrence({
@@ -1394,57 +1762,11 @@ export function buildInProgressGuestRangePlan(
     (sum, entry) => sum + entry.futureDeltaCents,
     0
   );
-  const capacityGuestRanges = [
-    ...proposedExistingGuests
-      .filter(
-        (entry) => !entry.removedFromFuture && entry.futureNights.length > 0
-      )
-      .map((entry) => ({
-        // #2029: anchor the checked range at the guest's corrected futureStart,
-        // not editableFrom, so the genuinely-new check-out-day night is inside
-        // the window the capacity resolver iterates (it would otherwise be
-        // invisible and overbookable). Unchanged for mid-stay / last-night.
-        stayStart: entry.futureStart,
-        stayEnd: entry.stayEnd,
-        // #2736: the window still bounds which nights are examined; the night
-        // set decides which of them this guest actually occupies. Expanding to
-        // the same nights for a contiguous guest, so no ordinary edit's capacity
-        // verdict moves.
-        nights: entry.futureNights,
-        memberId: entry.guest.memberId ?? null,
-      })),
-    ...proposedAddedGuests.map((entry) => ({
-      stayStart: entry.stayStart,
-      stayEnd: entry.stayEnd,
-      nights: entry.nights,
-      memberId: entry.guest.memberId ?? null,
-    })),
-  ];
-
-  // #2029: the capacity window must start no later than the earliest checked
-  // night. Seed at editableFrom (so it is never pushed later than today+1) and
-  // pull it back to the earliest night any included range actually OCCUPIES —
-  // which drops to the check-out-day night for such an extension, and stays
-  // editableFrom for every mid-stay edit.
-  //
-  // #2743: read off the night set, not off `range.stayStart`. That start is the
-  // guest's pricing anchor (`futureStart`), which reaches back to their own stay
-  // end so a check-out-day extension's new night is priced — and for a guest who
-  // went home a week ago it reached back a week, dragging the checked window
-  // over nights this edit puts nobody on. `checkCapacityForGuestRanges`
-  // evaluates EVERY night in `[capacityRangeStart, newCheckOut)`, so a past
-  // night that is over capacity (possible via the #1668 admin override) or under
-  // a whole-lodge hold (never admin-overridable, ADR-001 decision 5) could
-  // refuse an extension that adds nobody to it. Every range in this list is
-  // non-empty by the filter above, so `nights[0]` always exists, and it is by
-  // construction the earliest night that range can occupy — narrowing the window
-  // to it can never hide a night that IS checked.
-  const capacityRangeStart = capacityGuestRanges.reduce((earliest, range) => {
-    const firstOccupiedNight = range.nights[0];
-    return firstOccupiedNight !== undefined && firstOccupiedNight < earliest
-      ? firstOccupiedNight
-      : earliest;
-  }, editableFrom);
+  const { capacityGuestRanges, capacityRangeStart } = composeCapacityCoverage(
+    proposedExistingGuests,
+    proposedAddedGuests,
+    editableFrom
+  );
 
   return {
     kind: "priced",
