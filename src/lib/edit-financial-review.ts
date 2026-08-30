@@ -584,8 +584,17 @@ export async function findOpenEditFinancialReviewTask(
  *
  * The epic's rule is *"a second money-affecting edit is fenced when it would
  * require unresolved money as its baseline"*. This is the one place that rule is
- * spelled, so the three booking-edit services enforce the same thing rather than
- * three things that agree today (`INV-SSOT`).
+ * spelled, so every money-affecting door enforces the same thing rather than
+ * several things that agree today (`INV-SSOT`).
+ *
+ * THERE ARE FOUR DOORS, and the fourth was missed on the first pass. Three are
+ * services - the batch edit, the date edit and the single-guest removal - and the
+ * fourth is `POST /api/bookings/[id]/guests`, which does its own repricing inline
+ * in the route rather than through a service and so did not look like one. It
+ * reprices every existing guest, computes a delta against a stored total that is
+ * under review and writes the new total back, silently absorbing the very
+ * overstatement the review was holding. Count the doors by what WRITES a booking's
+ * money, never by what imports a service.
  *
  * ## Why it is needed
  *

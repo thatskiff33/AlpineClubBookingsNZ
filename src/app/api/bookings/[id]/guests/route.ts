@@ -48,6 +48,10 @@ import { ApiError as SharedApiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
+import {
+  assertNoPendingEditFinancialReview,
+  EditFinancialReviewPendingError,
+} from "@/lib/edit-financial-review";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -325,6 +329,38 @@ export async function POST(
           400
         );
       }
+
+      /**
+       * #3032 (epic #2797): the FOURTH money-affecting door, and it was the one
+       * with no fence on it.
+       *
+       * ADDING A GUEST IS UNCONDITIONALLY MONEY-AFFECTING - there is no
+       * identity-only shape here to exempt, which is why `moneyAffecting` is a
+       * literal rather than a predicate. This route reprices EVERY existing guest
+       * (`allGuestsForPricing` below), computes `priceDiffCents` against
+       * `booking.finalPriceCents`, charges on a positive delta, and then WRITES
+       * the new `finalPriceCents` back.
+       *
+       * What that does to a booking under review is worse than an ordinary
+       * compounding: an unreadable strand carries no locked night prices, so the
+       * reprice revalues it at today's rate - the #3031 defect - and the overstated
+       * total the review exists to hold gets silently absorbed into the stored
+       * figure. The admin then completes the review and credits the member against
+       * a total that has already had the same money taken out of it, so it leaves
+       * twice.
+       *
+       * PLACED LIKE THE OTHER THREE DOORS: inside the transaction, after
+       * `pg_advisory_xact_lock(1)` and `acquireLodgeCapacityLock`, after the
+       * post-lock re-read, and BEFORE any write - so a refused addition changes
+       * nothing at all. And below the 403 above, deliberately: telling a stranger
+       * that the club is reviewing a booking's money is a leak, and a 409 where a
+       * 403 belongs is a wrong answer besides.
+       */
+      await assertNoPendingEditFinancialReview({
+        bookingId,
+        moneyAffecting: true,
+        store: tx,
+      });
 
       const lodgeCapacity = await getLodgeCapacity(bookingLodgeId, tx);
       if (booking.guests.length + newGuests.length > lodgeCapacity) {
@@ -1085,6 +1121,32 @@ export async function POST(
       promoCoverage: result.promoCoverage,
     });
   } catch (err) {
+    /**
+     * #3032: the pending-review 409, ABOVE every other branch in this chain.
+     *
+     * `EditFinancialReviewPendingError` extends the SHARED `ApiError`, so the
+     * `SharedApiError` branch far below would answer it with the right status and
+     * the right sentence and NO `code` - and the surface that can offer "the club
+     * is pricing your last change" would show a bare error instead. Nothing would
+     * fail and nothing would log. It sits at the top rather than merely above that
+     * branch so no future subclass branch can be inserted in front of it.
+     */
+    /**
+     * #3032: the pending-review 409, ABOVE every other branch in this chain.
+     *
+     * `EditFinancialReviewPendingError` extends the SHARED `ApiError`, so the
+     * `SharedApiError` branch far below would answer it with the right status and
+     * the right sentence and NO `code` - and the surface that can offer "the club
+     * is pricing your last change" would show a bare error instead. Nothing would
+     * fail and nothing would log. It sits at the top rather than merely above that
+     * branch so no future subclass branch can be inserted in front of it.
+     */
+    if (err instanceof EditFinancialReviewPendingError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code },
+        { status: err.status },
+      );
+    }
     const hostingRetry = hostingCoverageParticipantRetryResponse(err);
     if (hostingRetry) return hostingRetry;
     if (err instanceof MembershipTypeBookingPolicyError) {

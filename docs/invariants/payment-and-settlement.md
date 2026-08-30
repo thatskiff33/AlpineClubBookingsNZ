@@ -1254,9 +1254,18 @@ one, check the other.
     nothing in the row claims this system moved money.
   - **While a review is OPEN, a second money-affecting edit to that booking is
     refused** (#3032, `assertNoPendingEditFinancialReview`), because pricing one
-    would mean starting from the amount under review. Identity-only edits, credit
-    elections, the price-preserving admin date shift and consent-authority
-    removals (owner decision D-14) are not fenced.
+    would mean starting from the amount under review. **All FOUR money-affecting
+    doors are fenced**: the batch edit, the date edit, the single-guest removal,
+    and `POST /api/bookings/[id]/guests`, which reprices inline in the route
+    rather than through a service and was therefore missed on the first pass —
+    it revalues an unreadable strand at today's rate and writes the new
+    `finalPriceCents` back, so a later completion credits the member against a
+    total the same money had already been taken out of. Each is called inside the
+    transaction, after the locks and the post-lock re-read, below authorisation
+    and before any write, and each surfaces the 409 with its `code` above its
+    handler's generic `ApiError` branch. Identity-only edits, credit elections,
+    the price-preserving admin date shift and consent-authority removals (owner
+    decision D-14) are not fenced.
   - **Three database constraints, because prose is not enforcement** (migration
     `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
     `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) -
