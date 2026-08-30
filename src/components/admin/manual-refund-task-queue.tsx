@@ -34,6 +34,18 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import {
+  checkStoredNightPriceRepair,
+  settlementDeltaCents,
+  type RecordedNightPrice,
+  type StoredNightPriceRepairCheck,
+  type UnpricedNightsSummary,
+} from "@/lib/stored-night-price-repair";
+import {
+  parseNightInput,
+  UnpricedNightPriceFields,
+} from "@/components/admin/unpriced-night-price-fields";
 
 const NOTE_MAX_LENGTH = 500;
 
@@ -73,6 +85,17 @@ interface ManualRefundTask {
    */
   reviewEvidence?: EditFinancialReviewEvidence | null;
   reviewEvidenceUnreadable?: boolean;
+  /**
+   * #3191: this booking's nights that carry no stored price, and the two totals
+   * the officer's figures must reconcile against.
+   *
+   * Optional on the wire and absent on every row that has none — a hand-back, a
+   * review whose guest strand was deleted by the edit, or one whose own rows are
+   * already complete. An absent field offers no boxes, which is exactly how this
+   * screen behaved before #3191, so a cached client bundle against a newer route
+   * degrades to the old behaviour rather than throwing.
+   */
+  unpricedNights?: UnpricedNightsSummary | null;
   /**
    * #3033: this row's booking belongs to the person looking at it, and still
    * exists — so they may open it as its member even without admin bookings
@@ -688,6 +711,18 @@ export function ManualRefundTaskQueue() {
    */
   const [direction, setDirection] = useState<SettlementDirection | null>(null);
   const [amountInput, setAmountInput] = useState("");
+  /**
+   * #3191: what the officer says each unpriced night sold for, as typed text
+   * keyed by lodge night.
+   *
+   * OPENS EMPTY AND IS NEVER PRE-FILLED - not from the remaining balance, not
+   * from an even split, not from the amount above. `INV-MOD-028` prohibits
+   * deriving a historical amount, and a box that arrives with a number in it is
+   * a derivation an officer can accept by pressing a button.
+   */
+  const [nightPriceInputs, setNightPriceInputs] = useState<
+    Record<string, string>
+  >({});
   const [submitting, setSubmitting] = useState(false);
   /**
    * #2668 review SF-5: the sentence for an outcome that was never read, held on
@@ -771,6 +806,72 @@ export function ManualRefundTaskQueue() {
   const reviewPricingIncomplete =
     pricingReview &&
     (direction === null || pricedAmountCents === null || pricedAmountCents <= 0);
+  /**
+   * #3195 question 1: a settlement of exactly $0.00 is refused, and the officer
+   * is told why HERE rather than after a round trip - the button is disabled, so
+   * without this they would press nothing and be told nothing, which is the bare
+   * refusal the owner's decision rejected. The sentence is the server's own
+   * (`zeroCompletionRefusal`), so the two can never say different things.
+   */
+  const zeroAmountRefusal =
+    pricingReview && pricedAmountCents === 0
+      ? zeroCompletionRefusal(true)
+      : null;
+
+  /**
+   * #3191: the per-night repair, as it stands while the officer types.
+   *
+   * Everything below is derived rather than stored, so the boxes are the only
+   * state and there is no second copy of the answer to fall out of step. The
+   * VERDICT comes from the shared checker the server runs on the same input
+   * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
+   * server then refuses, or the reverse.
+   */
+  const unpricedNights =
+    target !== null && target.task.unpricedNights
+      ? target.task.unpricedNights
+      : null;
+  const nightPriceDeltaCents =
+    target === null || target.resolution === "dismissed"
+      ? 0
+      : direction !== null && pricedAmountCents !== null
+        ? settlementDeltaCents({
+            direction,
+            amountCents: pricedAmountCents,
+          })
+        : null;
+  const nightPriceEntries: RecordedNightPrice[] = [];
+  let nightBoxesTyped = 0;
+  if (unpricedNights) {
+    for (const date of unpricedNights.dates) {
+      const raw = nightPriceInputs[date] ?? "";
+      if (raw.trim() === "") continue;
+      nightBoxesTyped += 1;
+      const cents = parseNightInput(raw);
+      if (cents !== null) nightPriceEntries.push({ date, priceCents: cents });
+    }
+  }
+  // A partial or malformed answer never reaches the checker as if it were whole:
+  // the entries are only complete when every box parsed, and the checker's own
+  // refusal covers the case where they are not (it will not fill one in).
+  const nightPriceCheck: StoredNightPriceRepairCheck | null =
+    unpricedNights && nightBoxesTyped > 0 && nightPriceDeltaCents !== null
+      ? checkStoredNightPriceRepair({
+          summary: unpricedNights,
+          entries: nightPriceEntries,
+          deltaCents: nightPriceDeltaCents,
+        })
+      : null;
+  /*
+    Blocked, not required. Leaving every box blank is a valid answer and settles
+    exactly as it did before #3191; having typed into SOME of them and not
+    reached a set of figures that adds up is not, because that is an answer the
+    server would refuse after the task had already been claimed.
+  */
+  const nightPricesBlocked =
+    unpricedNights !== null &&
+    nightBoxesTyped > 0 &&
+    (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
 
   async function submit() {
     if (!target) return;
@@ -795,6 +896,16 @@ export function ManualRefundTaskQueue() {
                   direction,
                 }
               : {}),
+            /*
+              #3191: sent only when the officer filled every box and the figures
+              reconcile. A partial answer is never posted - the button is
+              disabled behind it - and an untouched section posts nothing at all,
+              so a settle with no repair sends exactly the body it sent before
+              this issue.
+            */
+            ...(nightPriceCheck?.ok
+              ? { recordedNightPrices: nightPriceCheck.entries }
+              : {}),
           }),
         },
       );
@@ -810,6 +921,7 @@ export function ManualRefundTaskQueue() {
       setNote("");
       setDirection(null);
       setAmountInput("");
+      setNightPriceInputs({});
       await load();
     } catch {
       /*
@@ -1042,6 +1154,8 @@ export function ManualRefundTaskQueue() {
                               ? ""
                               : (task.amountCents / 100).toFixed(2),
                           );
+                          // #3191: always empty. See `nightPriceInputs`.
+                          setNightPriceInputs({});
                           setTarget({ task, resolution: "completed" });
                         }}
                       >
@@ -1065,6 +1179,7 @@ export function ManualRefundTaskQueue() {
                           setUnverified(null);
                           setDirection(null);
                           setAmountInput("");
+                          setNightPriceInputs({});
                           setTarget({ task, resolution: "dismissed" });
                         }}
                       >
@@ -1092,6 +1207,9 @@ export function ManualRefundTaskQueue() {
                 // pre-filled figure nobody priced.
                 setDirection(null);
                 setAmountInput("");
+                // #3191: figures typed for one booking's nights must never be
+                // carried onto another's, for the same reason the amount is not.
+                setNightPriceInputs({});
               }
             }}
           >
@@ -1176,8 +1294,45 @@ export function ManualRefundTaskQueue() {
                           */}
                           Example: 45.00 — how much, without a plus or minus
                         </FieldHint>
+                        {/*
+                          #3195 question 1. The confirm button is disabled at
+                          zero, so this sentence is the whole of what the officer
+                          gets to work with — and a refusal that does not name the
+                          way out is the version the owner's decision rejected.
+                        */}
+                        {zeroAmountRefusal ? (
+                          <p
+                            className="text-xs text-warning-11"
+                            data-testid="manual-refund-task-zero-amount-refusal"
+                          >
+                            {zeroAmountRefusal}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
+                  ) : null}
+                  {/*
+                    #3191. Offered on a dismissal as well as a completion, and
+                    that is not symmetry for its own sake: a parked edit whose
+                    guest kept the same nights owes nothing either way, so "no
+                    adjustment" is its ordinary ending — and if only a completion
+                    could fill the blanks in, exactly those bookings would park
+                    forever, which is the defect this issue exists to remove.
+                  */}
+                  {unpricedNights ? (
+                    <UnpricedNightPriceFields
+                      summary={unpricedNights}
+                      values={nightPriceInputs}
+                      onChange={(date, value) =>
+                        setNightPriceInputs((current) => ({
+                          ...current,
+                          [date]: value,
+                        }))
+                      }
+                      targetKnown={nightPriceDeltaCents !== null}
+                      check={nightPriceCheck}
+                      disabled={submitting || unverified !== null}
+                    />
                   ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
@@ -1251,6 +1406,14 @@ export function ManualRefundTaskQueue() {
                           control that supplies it.
                         */
                         reviewPricingIncomplete ||
+                        /*
+                          #3191: a half-filled or non-reconciling set of night
+                          prices disarms the button rather than being dropped
+                          silently. Dropping them would settle the task and lose
+                          the officer's typing; posting them would be refused
+                          after the task was already claimed.
+                        */
+                        nightPricesBlocked ||
                         (target.resolution === "completed" &&
                           !isFinancialReview(target.task) &&
                           target.task.amountCents === null) ||

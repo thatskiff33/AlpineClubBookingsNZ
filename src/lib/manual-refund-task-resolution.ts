@@ -27,6 +27,23 @@ import {
   RefundAllocationRacedError,
 } from "@/lib/payment-transactions";
 import { prisma } from "@/lib/prisma";
+// #3195: the $0 refusal is said by the settle SCREEN as well as thrown here, and
+// this module is `server-only` - so the sentence lives in a client-safe home and
+// both read it (`INV-SSOT`).
+import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
+import {
+  checkStoredNightPriceRepair,
+  settlementDeltaCents,
+  NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
+  NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
+  type RecordedNightPrice,
+  type UnpricedNightsSummary,
+} from "@/lib/stored-night-price-repair";
+import {
+  applyStoredNightPriceRepair,
+  loadUnpricedNightsSummary,
+  reviewTaskGuestId,
+} from "@/lib/stored-night-price-repair-store";
 
 /**
  * B5 (#2262) guard 4, and since #3030 the completion door of epic #2797: closing
@@ -114,6 +131,28 @@ export type ManualRefundTaskResolution =
        * is exactly the task where an unstated default is a guess.
        */
       direction: ManualRefundTaskDirection | null;
+      /**
+       * #3191: what the officer says each of this review's UNPRICED NIGHTS sold
+       * for, or null for "I am not recording those now".
+       *
+       * REQUIRED rather than optional, for the reason `confirmedAmountCents` and
+       * `direction` are: optional would let every existing call site keep the old
+       * behaviour silently, where required makes the compiler list them.
+       *
+       * NULL IS A REAL AND ORDINARY ANSWER, and that is a deliberate departure
+       * from making it mandatory. A settlement figure is not always a pure
+       * restatement of what the nights were worth - a policy-reduced hand-back or
+       * a change fee will not reconcile - and a settle screen that refused to
+       * close such a task would hold the money question open over a repair that
+       * is optional by nature. So the screen ASKS, prominently, and says what
+       * leaving it blank costs; it does not make the officer's ability to settle
+       * depend on their ability to produce a breakdown that adds up.
+       *
+       * A NON-NULL value is checked in full and written in full - there is no
+       * partial answer (`INV-MOD-028`, and `stored-night-price-repair.ts` is the
+       * home of that rule).
+       */
+      recordedNightPrices: RecordedNightPrice[] | null;
     }
   | {
       taskId: string;
@@ -121,6 +160,15 @@ export type ManualRefundTaskResolution =
       note: string | null;
       actingMemberId: string;
       confirmedAmountCents?: never;
+      /**
+       * #3191: a dismissal can record them too, and it has to be able to. A
+       * parked edit whose strand kept the same nights owes nothing either way, so
+       * "no adjustment" is its ordinary outcome - and if only a completion could
+       * fill the blanks in, exactly the bookings with nothing to settle would
+       * park forever. Nothing moves, so the figures must come to the strand's
+       * stored total unchanged.
+       */
+      recordedNightPrices: RecordedNightPrice[] | null;
       /**
        * A dismissal moves no money, so there is no direction to record and none
        * may be sent. The database says the same thing
@@ -356,8 +404,12 @@ export async function resolveManualRefundTask(
         // zero-amount task (both guard on a positive refund), and a row that
         // somehow carried one is still DISMISSABLE - which is the state it should
         // have been in.
+        //
+        // #3195 question 1 put the rule itself back to the owner, who kept it -
+        // and required the refusal to name the way out. `zeroCompletionRefusal`
+        // is where that sentence lives and why there are two of them.
         throw new ManualBookingPaymentError(
-          "A completed refund must be more than zero — if nothing is due, dismiss the task with a note instead.",
+          zeroCompletionRefusal(isEditReview),
           400
         );
       }
@@ -384,6 +436,61 @@ export async function resolveManualRefundTask(
           store: tx,
         })
       : null;
+
+    /**
+     * #3191: the per-night repair, VALIDATED BEFORE THE CLAIM and written after
+     * it - the same boundary the settlement route draws, for the same reason. A
+     * refusal from here leaves the task OPEN with its money question intact; one
+     * that fired after the claim would leave a closed task and no prices.
+     *
+     * The blanks are re-read from the database on this transaction rather than
+     * taken from what the browser was shown, and the officer's dates are checked
+     * against THOSE. A screen minutes old is exactly how a figure ends up written
+     * against a night the booking no longer holds.
+     */
+    const requestedNightPrices = input.recordedNightPrices;
+    let nightPriceRepair: {
+      bookingGuestId: string;
+      summary: UnpricedNightsSummary;
+      entries: readonly RecordedNightPrice[];
+    } | null = null;
+    if (requestedNightPrices !== null) {
+      const bookingGuestId = reviewTaskGuestId(task);
+      if (bookingGuestId === null) {
+        throw new ManualBookingPaymentError(
+          NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE,
+          409,
+        );
+      }
+      const summary = await loadUnpricedNightsSummary({
+        bookingGuestId,
+        store: tx,
+      });
+      if (summary === null) {
+        throw new ManualBookingPaymentError(
+          NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE,
+          409,
+        );
+      }
+      const check = checkStoredNightPriceRepair({
+        summary,
+        entries: requestedNightPrices,
+        // A dismissal moves no money, so it moves no total: the officer's
+        // figures then have to come to the strand's stored total exactly.
+        deltaCents: settlementDeltaCents(
+          settlement
+            ? {
+                direction: settlementDirection,
+                amountCents: settlement.amountCents,
+              }
+            : null,
+        ),
+      });
+      if (!check.ok) {
+        throw new ManualBookingPaymentError(check.message, 400);
+      }
+      nightPriceRepair = { bookingGuestId, summary, entries: check.entries };
+    }
 
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
@@ -517,6 +624,61 @@ export async function resolveManualRefundTask(
       }
     }
 
+    /**
+     * #3191: the blanks become numbers, after the claim and inside it.
+     *
+     * AUDITED AS A MONEY-AFFECTING ACT IN ITS OWN RIGHT, which #3191 requires,
+     * and as a SECOND entry rather than as metadata on the completion below. The
+     * two are different acts: one closes a task and moves money, the other
+     * rewrites what a stay is recorded as having sold for - and the second can
+     * happen on a DISMISSAL, where the completion entry says in as many words
+     * that nothing moved. Folding it in would put a price change inside a row
+     * whose summary denies one.
+     */
+    if (nightPriceRepair) {
+      const { newGuestTotalCents } = await applyStoredNightPriceRepair({
+        bookingGuestId: nightPriceRepair.bookingGuestId,
+        summary: nightPriceRepair.summary,
+        entries: nightPriceRepair.entries,
+        store: tx,
+      });
+      await createAuditLog(
+        {
+          action: "booking-payment.stored-night-price.record",
+          memberId: actingMemberId,
+          actorMemberId: actingMemberId,
+          subjectMemberId: task.booking.memberId,
+          targetId: task.bookingId,
+          entityType: "BookingGuest",
+          entityId: nightPriceRepair.bookingGuestId,
+          category: "payment",
+          severity: "important",
+          outcome: "success",
+          summary:
+            "Recorded what a booking's unpriced nights sold for while settling a financial review",
+          details: trimmedNote,
+          metadata: {
+            taskId: task.id,
+            bookingId: task.bookingId,
+            resolution,
+            // The figures themselves, night by night, because "an admin priced
+            // these" is not auditable unless the entry says what they priced
+            // them at - the same reason the completion entry carries three
+            // amounts rather than one.
+            nightPrices: nightPriceRepair.entries.map((entry) => ({
+              date: entry.date,
+              priceCents: entry.priceCents,
+            })),
+            previousGuestTotalCents:
+              nightPriceRepair.summary.storedGuestTotalCents,
+            newGuestTotalCents,
+            knownNightTotalCents: nightPriceRepair.summary.knownNightTotalCents,
+          },
+        },
+        tx,
+      );
+    }
+
     await createAuditLog(
       {
         action:
@@ -580,6 +742,12 @@ export async function resolveManualRefundTask(
       raisedAmountCents: task.raisedAmountCents,
       amountAmended: settlement?.amended ?? false,
       kind: task.kind,
+      /**
+       * #3191: how many of this booking's blank nights this decision filled in,
+       * so the operator's receipt can say it happened. Zero when none were sent,
+       * which is the ordinary case and is not a failure.
+       */
+      recordedNightPriceCount: nightPriceRepair?.entries.length ?? 0,
       /**
        * #3030: the refund this completion actually MADE, or null.
        *

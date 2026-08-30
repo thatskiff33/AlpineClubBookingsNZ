@@ -11,6 +11,8 @@ import {
   toAutoRefundedManualRefundTaskPayload,
   toOpenManualRefundTaskPayload,
 } from "@/lib/manual-refund-task-queue-payload";
+import { unpricedNightsSummariesByTaskId } from "@/lib/stored-night-price-repair-store";
+import type { UnpricedNightsSummary } from "@/lib/stored-night-price-repair";
 
 /**
  * GET /api/admin/payments/manual-refund-tasks
@@ -210,6 +212,31 @@ export async function GET() {
     ),
   ]);
 
+  /*
+    #3191: which of these reviews have unpriced nights the settle screen can
+    offer to fill in, and what those figures have to add up to. One query for the
+    whole page, keyed by task id so the payload never has to hold a guest-strand
+    id in order to find it — the redaction in `toOpenManualRefundTaskPayload`
+    would be worth nothing if the identifier came back on a neighbouring map.
+
+    FAIL-CLOSED, and on its own so it cannot take the queue with it. An empty map
+    means no row offers the repair, which is exactly what this screen did before
+    #3191 — the money work is unaffected, and a queue blanked by a failed
+    secondary read would be a far worse outcome than a repair postponed to the
+    next reload. Same reasoning as the automatic-refund list above, so it is not
+    restated on the call.
+  */
+  const unpricedNights = await unpricedNightsSummariesByTaskId({
+    tasks,
+    store: prisma,
+  }).catch((err: unknown) => {
+    logger.error(
+      { err },
+      "Failed to read unpriced night summaries for the finance queue; its rows are answered without them",
+    );
+    return new Map<string, UnpricedNightsSummary>();
+  });
+
   return NextResponse.json({
     // #3033: whether the "open the booking's payment and rate history" link is
     // offered at all. Sent as an explicit boolean, never inferred by the card
@@ -221,7 +248,11 @@ export async function GET() {
       column never crosses the wire.
     */
     tasks: tasks.map((task) =>
-      toOpenManualRefundTaskPayload(task, guard.session.user.id),
+      toOpenManualRefundTaskPayload(
+        task,
+        guard.session.user.id,
+        unpricedNights.get(task.id) ?? null,
+      ),
     ),
     // True only when the notices read itself failed. The surface says so in a
     // line of its own rather than showing an empty card, because "no automatic

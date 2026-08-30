@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/session-guards";
 // `INV-SSOT` (#3030): the one non-negative-integer-cents rule, not a fourth
 // inline `.number().int().nonnegative()`.
 import { nonNegativeCentsSchema } from "@/lib/edit-financial-review-context";
+import { recordedNightPricesSchema } from "@/lib/stored-night-price-repair";
 import {
   ManualBookingPaymentError,
   MANUAL_PAYMENT_NOTE_MAX,
@@ -29,12 +30,22 @@ const confirmedField = z.literal(true);
  * means when it posts no amount. The pricing input that will send a real figure
  * is #3033's.
  *
- * ZERO IS REFUSED (`INV-PAY-051`). "Reviewed, nothing is due" is DISMISSED, not a
- * completion at $0.00 — a $0 completion records a refund the club did not make.
- * The rule is enforced in `resolveManualRefundTask` too, which is the real
- * boundary; this refuses it a step earlier so the operator gets a validation
- * message rather than a thrown one, and so the two layers cannot drift into
- * disagreeing about what an amount may be.
+ * ZERO IS REFUSED (`INV-PAY-051`), BUT NOT HERE ANY MORE (#3195 question 1).
+ * "Reviewed, nothing is due" is DISMISSED, not a completion at $0.00 — a $0
+ * completion records a refund the club did not make. This schema used to refuse
+ * it a step earlier, on the reasoning that a validation message beat a thrown
+ * one and that two layers agreeing could not drift.
+ *
+ * The owner's 31 Aug 2026 decision kept the rule and rejected the BARE refusal
+ * that came with it, and that is what moved the check. A zod failure here answers
+ * "Invalid refund task request." with a field dump — which says nothing about
+ * dismissing, and is exactly the outcome the decision names as the worst version
+ * of this behaviour. Worse, the sentence has to name the control the officer can
+ * actually see, and those are two different controls on the two task kinds — a
+ * fact this route does not read. So the refusal belongs where the kind is known,
+ * in `zeroCompletionRefusal`, and this schema stops at non-negative whole cents.
+ * The drift the old arrangement guarded against is gone rather than managed:
+ * there is one layer refusing a zero now, not two.
  */
 const bodySchema = z.discriminatedUnion("resolution", [
   z
@@ -42,10 +53,7 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("completed"),
       note: noteField,
       confirmed: confirmedField,
-      confirmedAmountCents: nonNegativeCentsSchema
-        .positive()
-        .optional()
-        .nullable(),
+      confirmedAmountCents: nonNegativeCentsSchema.optional().nullable(),
       /**
        * #3170: WHICH WAY the confirmed amount goes. A positive magnitude plus an
        * explicit direction, never a signed amount - the sign of a money value is
@@ -62,6 +70,13 @@ const bodySchema = z.discriminatedUnion("resolution", [
         .enum(["REFUND_TO_MEMBER", "CHARGE_TO_MEMBER"])
         .optional()
         .nullable(),
+      /**
+       * #3191: what the officer says each of this review's unpriced nights sold
+       * for. Optional over HTTP and defaulted to null, which means "not
+       * recording those now" and is the body every client sent before this
+       * issue.
+       */
+      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
     })
     .strict(),
   z
@@ -69,6 +84,14 @@ const bodySchema = z.discriminatedUnion("resolution", [
       resolution: z.literal("dismissed"),
       note: noteField,
       confirmed: confirmedField,
+      /**
+       * #3191: ON A DISMISSAL TOO, and that is not symmetry for its own sake. A
+       * parked edit whose guest kept the same nights owes nothing either way, so
+       * "no adjustment" is its ordinary ending - and if only a completion could
+       * fill the blanks in, exactly those bookings would park forever, which is
+       * the defect this issue exists to remove.
+       */
+      recordedNightPrices: recordedNightPricesSchema.optional().nullable(),
     })
     .strict(),
 ]);
@@ -142,6 +165,27 @@ function completionMessage(result: {
   return `Refund recorded as paid back by hand${amended}.`;
 }
 
+/**
+ * #3191: the second half of the receipt, when the officer also said what the
+ * booking's unpriced nights sold for.
+ *
+ * Appended rather than folded into the sentences above, because it is a
+ * different claim about a different thing - one says what happened to the money,
+ * this says what the booking now records - and it has to be able to follow a
+ * DISMISSAL, which those sentences never describe. Empty when nothing was
+ * recorded, which is the ordinary case.
+ *
+ * It says what the officer gained, not what was written: "will not be sent for
+ * review again" is the outcome they were promised when they filled the boxes in,
+ * and it is the thing they would otherwise have to take on trust.
+ */
+function nightPricesRecordedMessage(count: number): string {
+  if (count === 0) return "";
+  return count === 1
+    ? " One night's price was recorded, so this booking will not be sent for review again for want of it."
+    : ` ${count} nights' prices were recorded, so this booking will not be sent for review again for want of them.`;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -178,12 +222,14 @@ export async function POST(
             actingMemberId: guard.session.user.id,
             confirmedAmountCents: parsed.data.confirmedAmountCents ?? null,
             direction: parsed.data.direction ?? null,
+            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           }
         : {
             taskId: id,
             resolution: "dismissed",
             note: parsed.data.note ?? null,
             actingMemberId: guard.session.user.id,
+            recordedNightPrices: parsed.data.recordedNightPrices ?? null,
           },
     );
     revalidatePath("/admin/payments");
@@ -191,10 +237,11 @@ export async function POST(
     return NextResponse.json({
       success: true,
       task: result,
-      message:
+      message: `${
         parsed.data.resolution === "completed"
           ? completionMessage(result)
-          : "Refund task dismissed.",
+          : "Refund task dismissed."
+      }${nightPricesRecordedMessage(result.recordedNightPriceCount)}`,
     });
   } catch (error) {
     if (error instanceof ManualBookingPaymentError) {
