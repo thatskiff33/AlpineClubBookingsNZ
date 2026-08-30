@@ -257,10 +257,14 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 48 test files and
+  `stripComments`, and since #3164 a lint rule enforces it.** 56 test files and
   one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
-  twelve minutes later in CI. **Use it; do not write a second.**
+  twelve minutes later in CI. **Use it; do not write a second.** The figure was
+  published as 48 while the module's own docblock said 53 and the tree said 53,
+  which is this ID applied to its own entry: two statements of one fact, and
+  nothing comparing them. Re-measured at #3180, after three conversions took it
+  to 56.
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164
@@ -274,13 +278,17 @@ are permanent: never renumbered, never reused.
   are two of them on purpose.** `COMMENT_STRIPPER_ALLOWLIST` is permanent: a
   different concept the canonical helper cannot express — SQL comments, a comment
   EXTRACTOR, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is
-  a **ratchet** of four files, whose length is pinned in
+  a **ratchet**, whose length is pinned in
   `ssot-comment-stripper-guard.test.ts`, so the list can shrink and cannot grow.
-- **The canonical module holds three FORMS, and a claim made about a whole list
+  It held five, then four, and since #3180 holds **one**.
+- **The canonical module holds four FORMS, and a claim made about a whole list
   has to be true of every entry on it.** `stripComments` removes comments and
   keeps strings; `stripCommentsAndStrings` also blanks string CONTENTS, which is
   what a rule needs when its own subject is discussed in prose; `stripCssComments`
-  handles the one other language sharing the block delimiter. #3164 moved the
+  handles the one other language sharing the block delimiter; and `blankLiterals`
+  (#3180) returns text of the **same length**, so a caller that reports a line
+  number, slices by index, or compares one match's position against another's
+  still points at what it named. #3164 moved the
   second form out of `xero-provider-date-boundary-census.test.ts`, where the
   #2869 review had written it — one of two instruments reading the same tree by
   different methods is exactly this ID, and a second form no other file could
@@ -296,9 +304,21 @@ are permanent: never renumbered, never reused.
   it. `advisory-lock-guard.test.ts`'s works a line at a time and reduces too; it
   stays, for its own accurate reason — a `SELECT` carve-out, because the raw SQL
   it hunts for lives inside the double-quoted literals it otherwise blanks.
-  Three of the remaining four share the offset-preserving property; the fourth
-  is named as the exception rather than covered by the sentence. The blanker
-  they wait on is #3180.
+  Three of the remaining four shared the offset-preserving property; the fourth
+  was named as the exception rather than covered by the sentence. #3180 wrote
+  the blanker and converged those three, leaving the named exception alone.
+- **Converging the three walkers found a live blind spot, and that is the
+  argument for converging at all.** Two of the three re-measured **byte-identical**
+  — every span, line number and derived population unchanged. The third did not.
+  None of the three private copies recognised a **regex literal**, so
+  `xero-contacts.ts`'s `.replace(/\//g, "")` was read as a line comment,
+  desynchronised `xero-object-url-write-guard.test.ts` for the rest of that file,
+  and hid a real `prisma.xeroSyncOperation.update(...)` from a census whose whole
+  job is to see every direct write to that model. The write-site population went
+  from **58 to 59** on conversion. The recovered site carries no `xeroObjectUrl`
+  today, so the guard was passing rather than wrong — **live but latent**, one
+  added property from being otherwise. That is the same shape #3155 removed from
+  the shared scanner, still alive in copies nobody had reason to re-read.
 - **What the guard cannot catch is stated in its own failure message**, which is
   the honest form for an inexact rule: a stripper that handles only line
   comments (indistinguishable from the URL patterns this tree is full of), one
