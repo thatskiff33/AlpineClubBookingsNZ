@@ -520,3 +520,105 @@ describe("POST /api/bookings/[id]/guests is fenced while the money is under revi
     expect(tx.manualRefundTask.findFirst).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #3166 (epic #2797): the guest-add route is the fourth edit door.
+ *
+ * It never rewrites an existing strand's night rows, so it is not the
+ * write-back mechanism the epic is mostly about. What it does is recompute
+ * `Booking.totalPriceCents` from a FULL-PARTY pass in which every existing
+ * strand is priced through the LENIENT reader — so a night whose stored price is
+ * blank prices at today's rate, lands in the new total, and the difference is
+ * billed to the member as an additional amount for a night nobody added.
+ *
+ * #3170 is what makes a blank storable, so this became reachable in the same
+ * release.
+ */
+describe("#3166 adding a guest to a booking whose history cannot be read", () => {
+  /**
+   * The strand from the finding: four nights, three priced and one BLANK — the
+   * shape a parked edit leaves behind under #3170. Its stored total is the sum
+   * of what IS known, so the only thing wrong with the booking is that one night
+   * has no price.
+   */
+  function bookingWithABlankNight() {
+    const booking = makeBooking();
+    (booking.guests as Array<Record<string, unknown>>)[0].nights = [
+      night("1", 5000),
+      night("2", 5000),
+      { stayDate: new Date("2026-08-03T00:00:00.000Z"), priceCents: null },
+      night("4", 5000),
+    ];
+    return booking;
+  }
+
+  function txWithReviewWriter(booking: ReturnType<typeof makeBooking>) {
+    const tx = makeTx(booking);
+    // `raiseEditFinancialReviewTask` is a find-then-create. Without both the
+    // park throws inside the transaction and surfaces as an opaque 500, which
+    // reads exactly like a refusal.
+    tx.manualRefundTask = {
+      ...tx.manualRefundTask,
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task-1" }),
+    } as never;
+    return tx;
+  }
+
+  it("adds the guest, leaves the booking's money alone, and raises one review task", async () => {
+    const tx = txWithReviewWriter(bookingWithABlankNight());
+    mockTransaction.mockImplementation((fn: (t: typeof tx) => unknown) => fn(tx));
+
+    const res = await (
+      await import("@/app/api/bookings/[id]/guests/route")
+    ).POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+    expect(res.status).toBe(200);
+
+    // The guest was created — parking withholds money, never the structural
+    // change.
+    expect(tx.bookingGuest.create).toHaveBeenCalledTimes(1);
+
+    // And the booking's own stored figures are written back untouched: the
+    // blank night is NOT valued at today's 8000 and folded into the total.
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalPriceCents: 20000,
+          finalPriceCents: 20000,
+        }),
+      }),
+    );
+    const body = await res.json();
+    expect(body.priceDiffCents).toBe(0);
+    expect(body.additionalAmountCents).toBe(0);
+
+    // One OPEN task, carrying no amount.
+    const create = (tx.manualRefundTask as unknown as { create: ReturnType<typeof vi.fn> })
+      .create;
+    expect(create).toHaveBeenCalledTimes(1);
+    const raised = create.mock.calls[0][0] as {
+      data: { raisedAmountCents: number | null; kind: string };
+    };
+    expect(raised.data.kind).toBe("EDIT_FINANCIAL_REVIEW");
+    expect(raised.data.raisedAmountCents).toBeNull();
+  });
+
+  it("CONTROL: the identical add on a fully readable booking still bills the new guest", async () => {
+    // Without this the case above would pass against a gate that parked EVERY
+    // guest add, which would stop the club charging for anybody.
+    const tx = txWithReviewWriter(makeBooking());
+    mockTransaction.mockImplementation((fn: (t: typeof tx) => unknown) => fn(tx));
+
+    const res = await (
+      await import("@/app/api/bookings/[id]/guests/route")
+    ).POST(guestsRequest({ guests: [NON_MEMBER_GUEST] }), params);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    // Four nights at the 8000 non-member rate for the guest actually added.
+    expect(body.priceDiffCents).toBe(32000);
+    const create = (tx.manualRefundTask as unknown as { create: ReturnType<typeof vi.fn> })
+      .create;
+    expect(create).not.toHaveBeenCalled();
+  });
+});
