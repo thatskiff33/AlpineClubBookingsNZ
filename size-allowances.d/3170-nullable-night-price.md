@@ -61,7 +61,7 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2863
+lines: 2877
 reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   money could not be valued can raise two review tasks, and the owner's 30 Aug
   2026 decision is that both contribute to a single request for the total - so
@@ -112,4 +112,11 @@ reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   check, the queued check and the restate all happen under one lock, and it is the
   only place that question can still be answered - `createXeroSupplementaryInvoice`
   overwrites the operation's payload with the Xero invoice body at dispatch, so
-  afterwards the queued amount is simply gone.
+  afterwards the queued amount is simply gone. #3181 fix round (+14): the
+  per-anchor advisory lock's docblock NAMED ITS CALLERS, deliberately, because
+  "every caller is post-commit" had already been false once and a lock-ordering
+  claim has to be checkable. #3181 added a third - the payment-recovery worker -
+  and an enumeration written to be audited is worse than useless once it is
+  silently incomplete, so the third caller is named there with the evidence that
+  it too arrives holding nothing (a status-guarded `updateMany` claim, no
+  transaction, no advisory lock, its Stripe round trip long finished).

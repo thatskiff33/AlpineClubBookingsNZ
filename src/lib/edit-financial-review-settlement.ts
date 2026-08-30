@@ -9,13 +9,16 @@ import {
 } from "@prisma/client";
 
 import { recordBookingEvent } from "@/lib/booking-events";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
+import {
+  editReviewSettlementPayment,
+  hasCapturedPayment,
+} from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
-  REVIEW_CHARGE_WRONG_KIND_MESSAGE,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
+import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -117,17 +120,22 @@ import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xe
  *
  *  - `stripe-refund` - the booking was paid by card, so the money goes back the
  *    way it came. `executeBookingModificationRefund` owns the provider call, its
- *    Stripe idempotency key (`${prefix}_${bookingModificationId}`) and its
- *    recovery enqueue. It writes the ledger allocation ITSELF, through
+ *    Stripe idempotency key (a TASK-scoped prefix plus the transaction id and
+ *    the amount, per refunded transaction) and its recovery enqueue. It writes the ledger allocation ITSELF, through
  *    `refundPaymentTransactions`, which is why this route writes none in the
  *    transaction - doing both would consume the refundable headroom twice.
  *  - `local-allocation` - a payment the club settles by hand (internet banking,
  *    or a cash hand-back). Only the ledger mirror moves, which is exactly what
  *    every pre-#3032 task did and is left byte-identical.
- *  - `account-credit` - no captured card charge behind the adjustment, so the
- *    money is returned as account credit through
+ *  - `account-credit` - no captured money behind the adjustment, so there is
+ *    nothing to reverse and the amount is returned as account credit through
  *    `createBookingModificationCredit`, whose exactly-once key is the
  *    `BookingModification` id (owner decision D-3032-1).
+ *
+ * WHICH OF THE THREE IS A QUESTION ABOUT THE BOOKING, ASKED NOW (#3194) - not
+ * about the TASK's `paymentId`, written when the review is raised and never
+ * again, so a review parked before the member paid could only ever reach
+ * `account-credit` even once their card money was in the club's account.
  *
  * `null` is the fourth outcome and means "nothing moves": a DISMISSED task, and
  * a legacy hand-back with no payment behind it.
@@ -167,6 +175,15 @@ export type EditReviewSettlementRoute =
        * cents a second time (#1031, and the reason
        * `createBookingModificationCredit` takes a payment id at all). Null when
        * there is no captured payment to allocate against.
+       *
+       * DELIBERATELY A LOOSER TEST than the one that picks this route (#3194),
+       * and NOT a stray copy of `editReviewSettlementPayment` to be converged
+       * with it: `hasCapturedPayment` alone, with no settled-status gate. A
+       * captured payment on a booking still inside its payment lifecycle now
+       * takes the card or ledger route, so what arrives here holding money is
+       * the booking that has LEFT it - cancelled, most obviously - whose cents
+       * are just as capable of being refunded twice. Matching the route gate
+       * would drop the allocation on the one shape that still needs it.
        */
       allocateAgainstPaymentId: string | null;
     }
@@ -249,13 +266,25 @@ export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
 export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
   "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
 
-/** Exactly what the route decision reads off the task, and nothing else. */
+/**
+ * Exactly what the route decision reads off the task, and nothing else.
+ *
+ * `paymentId` is the money behind the booking WHEN THE REVIEW WAS RAISED;
+ * `booking.status` and `booking.payment` are the money behind it NOW (#3194) -
+ * see `chooseEditReviewSettlementRoute` for why both are read and which wins.
+ */
 export type EditReviewSettlementTask = {
   paymentId: string | null;
   kind: ManualRefundTaskKind | null;
   reviewContext: unknown;
   payment: { source: PaymentSource } | null;
   booking: {
+    /**
+     * #3194: the booking's own lifecycle status, so the settle-time read of its
+     * captured money asks exactly the question the raise sites asked. Already
+     * selected by the caller for `hasIssuedPrimaryXeroInvoice`.
+     */
+    status: string;
     payment: {
       id: string;
       status: string;
@@ -374,7 +403,56 @@ export async function chooseEditReviewSettlementRoute({
     });
   }
 
-  if (task.paymentId !== null && task.payment?.source === PaymentSource.STRIPE) {
+  /**
+   * #3194 (epic #2797): WHERE the money can go, asked AT COMPLETION rather than
+   * read off a column frozen when the review was raised.
+   *
+   * `task.paymentId` is a snapshot: both raise sites record the booking's
+   * captured payment at that instant, and nothing backfills it. A review parked
+   * on a booking nobody had paid yet therefore carries NULL for ever - and the
+   * member CAN still pay, deliberately, because a parked change can surrender
+   * unpriceable nights while the stay itself goes ahead. So the ordinary
+   * sequence "edit parks, then the member pays by card" ended with a task whose
+   * column said there was no card, and the officer's confirmed refund could only
+   * ever become club credit, on money that arrived on a card.
+   *
+   * A task WITHOUT a payment id therefore re-asks the question here, against the
+   * booking's own row on this same transaction, through the gate the raise sites
+   * use (`editReviewSettlementPayment`, `INV-SSOT`). That answers exactly "what would
+   * have been recorded had the review been raised now", which is the point: a
+   * refund must not depend on whether the member paid before or after an
+   * unrelated edit was parked.
+   *
+   * THE STORED ID STILL WINS WHERE IT EXISTS, and re-deriving unconditionally
+   * was weighed and rejected: it would not only add the missing route, it would
+   * REMOVE routes the stored id reaches. A booking whose manual settlement was
+   * reversed, or whose status left the settled set, keeps its `paymentId` and
+   * takes the card or ledger route, where the amount is capped and an over-cap
+   * is REFUSED with the task left OPEN. Re-deriving turns each of those
+   * refusals into account credit - a quieter answer to a case an officer should
+   * be looking at. Every stale direction the stored id can take is already
+   * caught by a cap; the one it cannot recover from is the NULL, so the NULL is
+   * the only thing widened.
+   *
+   * Nothing is written and nothing is backfilled, which is what makes this
+   * idempotent by construction: a replayed completion is refused by the status
+   * claim, and a capture or webhook replay cannot duplicate a backfill that does
+   * not exist.
+   */
+  const backfilledPayment =
+    task.paymentId === null
+      ? editReviewSettlementPayment(task.booking)
+      : null;
+  const settlementPaymentId = task.paymentId ?? backfilledPayment?.id ?? null;
+  const settlementPaymentSource =
+    task.paymentId !== null
+      ? (task.payment?.source ?? null)
+      : (backfilledPayment?.source ?? null);
+
+  if (
+    settlementPaymentId !== null &&
+    settlementPaymentSource === PaymentSource.STRIPE
+  ) {
     if (!bookingModificationId) {
       throw new ManualBookingPaymentError(
         REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
@@ -386,7 +464,7 @@ export async function chooseEditReviewSettlementRoute({
     // cannot be short of `amountCents`, because the planner allocates
     // newest-first across exactly the transactions the cap totalled.
     const { slices, totalRefundableCents } = await planStripeRefundAllocation({
-      paymentId: task.paymentId,
+      paymentId: settlementPaymentId,
       amountCents,
       store,
     });
@@ -398,13 +476,13 @@ export async function chooseEditReviewSettlementRoute({
     }
     return {
       kind: "stripe-refund",
-      paymentId: task.paymentId,
+      paymentId: settlementPaymentId,
       bookingModificationId,
       allocation: slices,
     };
   }
 
-  if (task.paymentId !== null) {
+  if (settlementPaymentId !== null) {
     // Internet banking, or any non-card capture: the club moves the money by hand
     // and this records the ledger mirror of it, exactly as the legacy hand-back
     // does. The cap lives inside `applyLocalRefundAllocation`, which runs INSIDE
@@ -413,7 +491,7 @@ export async function chooseEditReviewSettlementRoute({
     // buy by hand.
     return {
       kind: "local-allocation",
-      paymentId: task.paymentId,
+      paymentId: settlementPaymentId,
       bookingModificationId,
     };
   }

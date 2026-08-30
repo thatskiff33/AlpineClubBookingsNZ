@@ -59,6 +59,17 @@ export interface PaymentLinkContext {
    * from a cached/older response still renders — the club default stands in.
    */
   lodgeName?: string;
+  /**
+   * #3194: this booking has an OPEN financial review — a saved change whose
+   * refund or charge the club is still working out.
+   *
+   * Optional on the wire for the same reason `lodgeName` is: nothing validates
+   * this payload on the way in, and a response served from an older deployment
+   * carries no such field. Absent is read as FALSE, which is exactly the page
+   * this route has always rendered — the disclosure is added by a newer server,
+   * never invented by the client.
+   */
+  financialReviewPending?: boolean;
 }
 
 type Tone = "success" | "warning" | "info";
@@ -211,5 +222,31 @@ export function NarrativeCard({
         {children}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The money-under-review disclosure, on a page that is showing the member an
+ * amount of its own (#3194, epic #2797).
+ *
+ * IT CARRIES NO WORDING. Every sentence it can render is composed in
+ * `booking-financial-review-copy.ts`, which is also where the booking-detail
+ * banner's review sentences come from — so this page and that one cannot come to
+ * disagree about one booking, which is the defect #3194 exists to close. This
+ * component owns the box and nothing else.
+ *
+ * `info`, not `warning`: nothing has gone wrong and the member is not being
+ * asked to act. The booking page reaches the same conclusion for the same
+ * state.
+ */
+export function FinancialReviewNotice({ note }: { note: string }) {
+  return (
+    <div
+      data-testid="payment-link-financial-review"
+      className="flex items-start gap-2 rounded-md border border-info-6 bg-info-3 px-3 py-2 text-sm text-info-11"
+    >
+      <Info className="h-5 w-5 shrink-0" />
+      <p>{note}</p>
+    </div>
   );
 }

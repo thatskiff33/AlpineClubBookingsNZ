@@ -198,6 +198,10 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import {
+  completeDeferredXeroSupplementaryInvoice,
+  queueXeroBookingEditSettlement,
+} from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 
@@ -3122,6 +3126,321 @@ describe("enqueueXeroSupplementaryInvoiceOperation: does the ask cover the total
           correlationKey: expect.stringContaining("booking:booking_1"),
         }),
       })
+    );
+  });
+});
+
+/**
+ * #3181: A RECOVERED ADDITIONAL PAYMENT RAISES EXACTLY ONE SUPPLEMENTARY INVOICE.
+ *
+ * The defect: the inline edit path skips the supplementary invoice while no
+ * additional PaymentIntent exists, and the recovery replay that later mints one
+ * only ever ATTACHED it to an operation already waiting. Nothing was waiting,
+ * because the inline attempt had skipped it - so the member got a collectable
+ * payment request and the club's accounts got no invoice.
+ *
+ * WHY THESE RUN AGAINST THE REAL ENQUEUE. "Exactly one" is a property of
+ * `enqueueXeroSupplementaryInvoiceOperation`'s anchor-scoped link-check ->
+ * queued-check -> write, and its dedupe DROPS A SECOND ATTEMPT SILENTLY - so a
+ * fix that queues nothing at all and a fix that queues correctly look identical
+ * to a caller-side double. The store below models the two tables that decision
+ * reads, and every assertion counts the rows really created.
+ *
+ * WHAT THEY DO NOT PROVE: that two CONCURRENT settlements serialise. That is a
+ * property of the per-anchor advisory lock and belongs to
+ * `edit-financial-review-races.realdb.test.ts`, which proves it against a real
+ * server. The replay case is sequential by construction - one cron worker, one
+ * claimed operation - so this is the right instrument for it.
+ */
+describe("a recovered additional payment raises exactly one supplementary invoice (#3181)", () => {
+  type StoredOperation = {
+    id: string;
+    localModel: string;
+    localId: string;
+    status: string;
+    requestPayload: Record<string, unknown>;
+  };
+
+  const OUTSTANDING = ["PENDING", "RUNNING", "WAITING_PAYMENT"];
+  const RESTATABLE = ["PENDING", "WAITING_PAYMENT"];
+
+  let store: StoredOperation[] = [];
+
+  /** Every supplementary-invoice row the enqueue created for this anchor. */
+  function supplementaryRowsFor(localId: string) {
+    return store.filter(
+      (row) =>
+        row.localId === localId &&
+        row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE",
+    );
+  }
+
+  /**
+   * EVERY row of any kind for this anchor, which is what a "raises nothing" case
+   * has to assert over (#3181 fix round).
+   *
+   * `supplementaryRowsFor` filters on `queueType`, so it is blind to exactly the
+   * row a wrong answer here would create: handed a reduction, the settlement
+   * dispatcher does not do nothing, it queues a MODIFICATION_CREDIT_NOTE - a
+   * refund to the member, from a function named for an invoice. Asserting the
+   * absence of one row type proved nothing about the other, and the negative-net
+   * case below passed for that reason rather than because it was right.
+   */
+  function allRowsFor(localId: string) {
+    return store.filter((row) => row.localId === localId);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store = [];
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: "inv_existing" },
+    });
+    mocks.isXeroConnected.mockResolvedValue(false);
+
+    mocks.startXeroSyncOperation.mockImplementation(
+      (args: Record<string, unknown>) => {
+        const row: StoredOperation = {
+          id: `op_${store.length + 1}`,
+          localModel: String(args.localModel),
+          localId: String(args.localId),
+          status: String(args.status ?? "PENDING"),
+          requestPayload: args.requestPayload as Record<string, unknown>,
+        };
+        store.push(row);
+        return Promise.resolve({ id: row.id });
+      },
+    );
+    mocks.findFirstOperation.mockImplementation(
+      (args: { where?: { localId?: string } }) =>
+        Promise.resolve(
+          store.find(
+            (row) =>
+              row.localId === args.where?.localId &&
+              row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE" &&
+              OUTSTANDING.includes(row.status),
+          ) ?? null,
+        ),
+    );
+    mocks.findManyOperations.mockImplementation(
+      (args: { where?: { localId?: string } }) =>
+        Promise.resolve(
+          store.filter(
+            (row) =>
+              row.localId === args.where?.localId &&
+              row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE" &&
+              RESTATABLE.includes(row.status),
+          ),
+        ),
+    );
+    mocks.updateManyOperation.mockImplementation(
+      (args: { where?: { id?: string }; data?: Record<string, unknown> }) => {
+        const row = store.find((candidate) => candidate.id === args.where?.id);
+        if (!row || !RESTATABLE.includes(row.status)) {
+          return Promise.resolve({ count: 0 });
+        }
+        row.requestPayload = args.data?.requestPayload as Record<
+          string,
+          unknown
+        >;
+        return Promise.resolve({ count: 1 });
+      },
+    );
+  });
+
+  /** The recovery replay, once the intent it was waiting for exists. */
+  function recoverIntent(paymentIntentId = "pi_recovered") {
+    return completeDeferredXeroSupplementaryInvoice({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId,
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+    });
+  }
+
+  /** The ordinary edit dispatch, whose mint either succeeded or did not. */
+  function dispatchInlineEdit(additionalPaymentIntentId: string | null) {
+    return queueXeroBookingEditSettlement({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      requiresAdditionalStripePayment: true,
+      additionalPaymentIntentId,
+    });
+  }
+
+  it("raises one invoice, waiting on the recovered intent and recording its payment", async () => {
+    await expect(recoverIntent()).resolves.toBe("covers-total");
+
+    const rows = supplementaryRowsFor("mod_1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("WAITING_PAYMENT");
+    expect(rows[0].requestPayload).toMatchObject({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_recovered",
+      waitForConfirmedAdditionalPayment: true,
+      recordPayment: true,
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+    });
+  });
+
+  it("raises no second invoice when the recovery replays", async () => {
+    await recoverIntent();
+    await recoverIntent();
+
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE REGRESSION ANCHOR. The first call is the edit whose mint failed: it must
+   * queue nothing, because there is nothing to invoice against yet. The second is
+   * the replay, which must queue the one invoice the first deferred. Make the
+   * deferral queue eagerly and the first assertion fails; remove the completion
+   * and the second does.
+   */
+  it("queues nothing while no intent exists, and the recovery then queues exactly one", async () => {
+    await dispatchInlineEdit(null);
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+
+    await recoverIntent();
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+  });
+
+  /**
+   * CONTROL: the ordinary path, whose mint succeeded, is untouched - one invoice,
+   * queued inline. A recovery replay arriving behind it finds that invoice and
+   * adds nothing.
+   */
+  it("leaves the inline path raising exactly one, and adds none behind it", async () => {
+    await dispatchInlineEdit("pi_inline");
+
+    const inlineRows = supplementaryRowsFor("mod_1");
+    expect(inlineRows).toHaveLength(1);
+    expect(inlineRows[0].requestPayload).toMatchObject({
+      paymentIntentId: "pi_inline",
+      waitForConfirmedAdditionalPayment: true,
+    });
+
+    await recoverIntent();
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+  });
+
+  /**
+   * CONTROL. An invoice that has already been SENT carries an active link on the
+   * anchor, and the enqueue refuses to queue a second behind it. `short` rather
+   * than `covers-total` is what tells the caller the difference is owed outside
+   * the invoice; reporting success here would hide it.
+   */
+  it("refuses a second invoice for an anchor that already has a sent one", async () => {
+    mocks.findFirstLink.mockResolvedValue({ id: "link_1" });
+
+    await expect(recoverIntent()).resolves.toBe("short");
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL. A booking with no primary Xero invoice has nothing to supplement, so
+   * the recovery must not invent one - `none` is not a shortfall and not a
+   * success.
+   */
+  it("raises nothing for a booking with no primary Xero invoice", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: null },
+    });
+
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: 4500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: false,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL, AND IT ASSERTS OVER EVERY ROW BECAUSE THE FIRST VERSION DID NOT.
+   *
+   * A mixed-sign edit whose net is not positive settles through the credit-note
+   * paths; the recovery must not gross-bill the fee (#1356). The earlier form of
+   * this test asserted `"none"` and zero SUPPLEMENTARY rows, and both passed
+   * while the dispatcher queued a $40 MODIFICATION_CREDIT_NOTE - a refund to the
+   * member, issued by a function called "complete the deferred supplementary
+   * invoice", reached from a replay whose whole subject is money the member OWES.
+   * A non-positive net now returns before the dispatcher, so nothing at all is
+   * queued, and `allRowsFor` is what can tell the difference.
+   */
+  it("raises nothing at all when the edit's net is not positive", async () => {
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: -4500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(allRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * The boundary itself: a net of exactly zero is not a positive delta, and it is
+   * the shape a parked review edit leaves behind (`priceDiffCents +
+   * changeFeeCents == 0`), so it is the one most likely to arrive here.
+   *
+   * IT IS NOT THIS CASE THAT HOLDS THE EARLY RETURN UP, and saying so is the
+   * honest version (#3181 delta review). Deleting the `<= 0` guard in
+   * `completeDeferredXeroSupplementaryInvoice` was measured: the not-positive
+   * test above FAILS, and this one still passes, because `-500 + 500` reaches
+   * `classifyXeroBookingEditSettlement` and falls through its own zero branch to
+   * `"none"` anyway. So this pins behaviour at the boundary and the case above is
+   * the one that bites the guard. Both are kept: a zero net must stay refused
+   * whichever layer refuses it, and the layer is free to move.
+   */
+  it("raises nothing at all when the edit's net is exactly zero", async () => {
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: -500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(allRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL for both of those: the same assertion over EVERY row still sees the
+   * one invoice a positive net raises, so "nothing at all" is a real refusal
+   * rather than an instrument that cannot see anything.
+   */
+  it("still queues exactly one row in total for a positive net", async () => {
+    await recoverIntent();
+
+    expect(allRowsFor("mod_1")).toHaveLength(1);
+    expect(allRowsFor("mod_1")[0].requestPayload.queueType).toBe(
+      "SUPPLEMENTARY_INVOICE",
     );
   });
 });

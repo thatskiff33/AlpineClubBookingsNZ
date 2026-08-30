@@ -2,63 +2,94 @@
  * The refusals epic #2797 requires wherever a price column is persisted from a
  * priced breakdown — the one home for that rule on every write point that is
  * SELLING the nights it writes, and so has no honest answer other than the
- * amount (#3031, #3167, `INV-SSOT`). Two write points are neither covered nor
- * convergeable-today; they are named below, by file, with their owner.
+ * amount (#3031, #3167, `INV-SSOT`). Two write points are outside it. They are
+ * named below with where their rule DOES live, because the reason they are
+ * outside is arity, not scope, and neither is a copy of anything here.
  *
- * ## Where the rule is STILL written out inline, and who owns each one
+ * ## The two write points this module does not cover
  *
- * This module does not yet cover every write point, and claiming it does would
- * be worse than claiming nothing: `booking-modify-plan.ts` also carries a
- * header presenting itself as the home of this rule, so a reader who trusts
- * either one edits one or two files and believes the whole system changed. As
- * of 31 Aug 2026 there are SEVEN write points of a price column from a priced
- * breakdown — the five call sites listed below, plus these two.
+ * Claiming it covered them all would be worse than claiming nothing, because a
+ * reader who trusts the claim edits one file and believes the whole system
+ * changed. As of 31 Aug 2026 there are SEVEN write points of a price column
+ * from a priced breakdown — the five call sites listed below, plus these two.
  *
  * **Recount them with this criterion or you will get a different number.** What
- * is counted is a write whose index runs over an INNER vector — `perNightCents[k]`,
- * `split[index]` — whose length has no declared relation to the loop bound. A
- * write indexed by its own enclosing `map`, bound to the very array the
- * breakdown was built from, cannot run past the end and is deliberately NOT
- * counted; `waitlist.ts:257`, `booking-date-modification-service.ts:843`,
- * `booking-modify-plan.ts:2623` and `booking-guest-removal-service.ts:959` all
- * look like write points to a bare grep and are excluded for exactly that
- * reason. That distinction is the load-bearing one, so it is stated here rather
- * than left as a judgement call:
+ * is counted is a write whose index runs over an INNER vector —
+ * `perNightCents[k]`, `split[index]` — whose length has no declared relation to
+ * the loop bound. Two shapes look like write points to a bare grep and are
+ * deliberately NOT counted, for two different reasons:
  *
- *  - **`booking-modify-plan.ts`** (`nightPriceCentsToWrite`, used by
- *    `syncGuestNights`) — NOT convergeable, and deliberately so. #3170 made it
- *    a THREE-WAY decision: an explicit `null` is the composer saying "this
- *    night's price is not known", which it honours by writing `NULL`, while
- *    `undefined` (a short or holed vector) is still a wiring defect and still
- *    throws. The helpers here are two-way by design — every path they guard is
- *    selling the night right now, so "not known" is not an answer any of them
- *    may give. Routing that site through here would need a discriminating flag
- *    on a money helper so that one caller behaves oppositely to every other,
- *    which is the contortion `INV-SSOT-001` warns against rather than the
- *    convergence it asks for. Two rules that differ in their arity are two
- *    rules. Owned by #3170 (already merged into the epic branch).
- *  - **`booking-date-modification-service.ts`** (the
- *    `tx.bookingGuestNight.createMany` inside `applyBookingDateModification`) —
- *    a genuine two-way copy of this exact predicate, differing only in what it
- *    throws: an `ApiError(..., 400)` that the date-change route turns into the
- *    member-facing "The new dates could not be priced night by night", a
- *    sentence `phase8b-booking-mods.test.ts` pins. Converging it therefore
- *    means picking a shape for a member-visible refusal rather than swapping a
- *    call. It is owned by **#3167 itself, in a follow-on round once #3166 has
- *    landed**. #3166 was asked to do it and correctly declined: this module does
- *    not exist on its branch, so it could only have written a SECOND copy of the
- *    rule it was converging. It recorded the hand-off at that site instead. The
- *    one thing the conversion must not lose is that site's `null` branch.
+ *  - a guest-total write that carries NO `?? 0`, so a short breakdown throws
+ *    rather than persisting a zero — `priceBreakdown.guests[i].priceCents` in
+ *    `waitlist.ts` and `booking-date-modification-service.ts`,
+ *    `repricedGuests.guests[index].priceCents` in
+ *    `booking-guest-removal-service.ts`, and the `for (let i = 0; …)` in
+ *    `booking-modify-plan.ts`. They are not magic-zero write points, which is
+ *    what this module is the home of.
+ *
+ *    An earlier version of this bullet excluded them as "indexed by its own
+ *    enclosing `map`, over the very array the breakdown was built from". That
+ *    was not true of the code and a reader applying it literally would have
+ *    counted EIGHT: in each of the four the loop bound and the indexed array are
+ *    different objects (`candidate.guests` against `priceBreakdown.guests`, and
+ *    so on), one is not a `map` at all, and `booking-guest-removal-service.ts`
+ *    optional-chains the very next line — so its own author did not treat that
+ *    index as guaranteed. They are related only by the single-producer
+ *    convention this header calls undeclared two paragraphs above, which is
+ *    exactly the thing a recount criterion may not lean on;
+ *  - a read of an inner vector whose length is CHECKED against the loop bound
+ *    immediately above it — `engine[index]` in `buildApprovalGuestNights`
+ *    (`booking-request-shared.ts`), fenced by `engine.length === count` and
+ *    falling back to an even split when that check fails. It is the closest
+ *    near-miss in the tree: a night price, read from a vector, by index.
+ *
+ * Those five are cited by SYMBOL. Four of them were cited by LINE until 31 Aug
+ * 2026, and all four numbers had drifted within a day of being written — which
+ * is the same reason `AGENTS.md` bans line-number citations in the invariant
+ * documents.
+ *
+ * ### Both of them are THREE-WAY, and both already share one definition
+ *
+ * `booking-modify-plan.ts` (`nightPriceCentsToWrite`, used by `syncGuestNights`)
+ * and `booking-date-modification-service.ts` (the
+ * `tx.bookingGuestNight.createMany` inside `applyBookingDateModification`) make
+ * a three-way decision, not this module's two-way one: #3170 made an explicit
+ * `null` the composer SAYING that a night's price is not known, which both
+ * honour by writing `NULL`, while `undefined` — a short or holed vector — is
+ * still a wiring defect and still throws.
+ *
+ * The helpers here are two-way by design. Every path they guard is selling the
+ * night it writes, so "not known" is not an answer any of them may give, and
+ * `requiredNightPriceCents`'s signature (`readonly number[] | undefined` to
+ * `number`) cannot express the not-known arm at all. Routing either site through
+ * here would need a discriminating flag on a money helper so that one caller
+ * behaves oppositely to every other — the contortion `INV-SSOT-001` warns
+ * against rather than the convergence it asks for. Two rules that differ in
+ * their arity are two rules.
+ *
+ * **Since #3166 both sites narrow ONE definition of the three-way rule:**
+ * `classifyNightPriceToWrite` in `stored-night-price-write.ts`. What each still
+ * spells out for itself is the FAILURE it owes its operator — an internal
+ * `Error` in the modify plan, and on the date path an `ApiError(..., 400)`
+ * whose member-facing sentence ("The new dates could not be priced night by
+ * night") `phase8b-booking-mods.test.ts` pins. That is one definition with two
+ * derivations, which `INV-SSOT-001` permits explicitly; a second DEFINITION is
+ * what it prohibits, and there is no longer one.
+ *
+ * **The #3167 follow-on round this header used to promise is discharged, and
+ * nothing was converted.** It was recorded here, and at the date site, as a
+ * two-way copy of this module's predicate awaiting a conversion once #3166
+ * landed. #3166 landed first and converged the decision itself, so by the time
+ * the round ran there was no copy left to move — only the two stale claims,
+ * which is what it fixed instead. Anyone reading this looking for the promised
+ * conversion: it is not missing, it is unnecessary.
  *
  * THE FAILURE THIS PARAGRAPH EXISTS TO PREVENT. Somebody widens the rule —
  * rejects a `NaN` or a fractional cent, or requires every refusal to name its
  * writer — reads the header that says "the one home", edits this file, and
- * ships a change covering five of the seven write points. Or, on the same
- * mistake pointed the other way: #3170 has already made an unpriceable night
- * PARK rather than refuse on the in-progress edit path, and a later change
- * doing the same for a DATE change while touching only the two files that
- * advertise themselves as the rule's home would leave the date path silently
- * refusing — quote and apply then disagreeing about one member's edit.
+ * ships a change covering five of the seven write points. The other two reach
+ * their decision through `stored-night-price-write.ts`, so a change to what a
+ * night price may BE has to visit both modules.
  *
  * ## What these enforce, and why they are not defensive padding
  *

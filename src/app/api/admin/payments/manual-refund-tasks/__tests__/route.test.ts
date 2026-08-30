@@ -498,6 +498,9 @@ describe("financial-review evidence: what may cross the wire (#3033)", () => {
       },
       bookingCheckIn: "2026-08-10",
       bookingCheckOut: "2026-08-12",
+      // #3166: what the same edit added to the party, as a count and a figure.
+      // Null on this fixture, whose edit added nobody.
+      guestsAddedByEdit: null,
     });
   });
 

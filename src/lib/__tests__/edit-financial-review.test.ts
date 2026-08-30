@@ -18,16 +18,28 @@ import {
  *
  * The RAISE must be idempotent, must leave an unknown amount genuinely unknown
  * rather than zero, and must never reopen a terminal occurrence.
+ *
+ * #3166 splits that last requirement in two, because the old tests conflated
+ * them and the conflation lost money. "Never reopen a terminal occurrence" is
+ * kept exactly. "A terminal task suppresses every later raise of the same
+ * identity" is NOT the same rule, and was wrong: an identity minted by a parked
+ * guest-add cannot move, so one settled task silenced every subsequent add on
+ * that booking for good. Every raise test here used to mock `findUnique` to
+ * `null`, so that branch was never exercised at all — the tests below
+ * deliberately do not.
  */
 
 vi.mock("server-only", () => ({}));
 
 import {
-  assertNoPendingEditFinancialReview,
   buildEditFinancialReviewReason,
   editFinancialReviewOccurrenceKey,
+} from "@/lib/edit-financial-review-occurrence";
+import {
+  assertNoPendingEditFinancialReview,
   findOpenEditFinancialReviewTask,
   raiseEditFinancialReviewTask,
+  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewError,
   EditFinancialReviewPendingError,
   EDIT_FINANCIAL_REVIEW_PENDING_CODE,
@@ -38,7 +50,7 @@ import {
   parseEditFinancialReviewContext,
   type EditFinancialReviewOccurrence,
 } from "@/lib/edit-financial-review-context";
-import { parseCalendarDate } from "@/lib/club-time";
+import { dateOnlyInstantOf, parseCalendarDate } from "@/lib/club-time";
 
 /**
  * Fixtures go through the real parser, so a typo in a test date is a test
@@ -95,6 +107,9 @@ const raiseInput = {
   bookingCheckOut: day("2026-08-04"),
   // #3032: the settlement anchor a confirmed amount closes against (D-3032-1).
   bookingModificationId: "mod-1",
+  // #3166: both required, never defaulted — see `raiseEditFinancialReviewTask`.
+  paymentId: null,
+  guestsAddedByEdit: null,
 };
 
 beforeEach(() => {
@@ -315,24 +330,163 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
     [ManualRefundTaskStatus.COMPLETED],
     [ManualRefundTaskStatus.DISMISSED],
   ])(
-    "does not reopen or duplicate an occurrence already resolved as %s - terminal means terminal",
+    "never reopens or amends an occurrence already resolved as %s - terminal means terminal",
     async (status) => {
-      mocks.findUnique.mockResolvedValue({ id: "task-done", status });
+      mocks.findUnique.mockImplementation(({ where }: never) =>
+        Promise.resolve(
+          (where as { occurrenceKey: string }).occurrenceKey.includes("#")
+            ? null
+            : { id: "task-done", status },
+        ),
+      );
 
-      const result = await raiseEditFinancialReviewTask({
+      await raiseEditFinancialReviewTask({
         ...raiseInput,
         occurrence: occurrence(),
         store: store(),
       });
 
-      expect(mocks.create).not.toHaveBeenCalled();
-      expect(result).toMatchObject({
-        taskId: "task-done",
-        created: false,
-        status,
-      });
+      // Nothing is updated, reopened or re-read: the settled row is left exactly
+      // as the officer left it. The new occurrence gets its own row instead.
+      expect(mocks.create).toHaveBeenCalledTimes(1);
+      expect(mocks.create.mock.calls[0][0].data.status).toBe(
+        ManualRefundTaskStatus.OPEN,
+      );
     },
   );
+
+  /**
+   * #3166 — THE MONEY A TERMINAL TASK USED TO SUPPRESS.
+   *
+   * These do NOT mock `findUnique` to null. That is the whole point: every
+   * earlier raise test did, so the branch that decided what a settled task means
+   * was never once exercised, and it silently answered "already raised, charge
+   * nothing" for an occurrence whose identity cannot move.
+   */
+  describe("#3166 a settled task no longer suppresses the next occurrence of the same identity", () => {
+    it.each([
+      [ManualRefundTaskStatus.COMPLETED],
+      [ManualRefundTaskStatus.DISMISSED],
+    ])(
+      "raises a fresh OPEN task under a recurrence key when the base key holds a %s one",
+      async (status) => {
+        // The identity a parked guest-add mints: no night surrendered, none
+        // added, and a parked add writes nothing to the guest's stored rows — so
+        // this key is the same on the second add as it was on the first.
+        const parkedAdd = occurrence({
+          surrenderedNightDates: [],
+          addedNightDates: [],
+        });
+        const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+        mocks.findUnique.mockImplementation(({ where }: never) =>
+          Promise.resolve(
+            (where as { occurrenceKey: string }).occurrenceKey === baseKey
+              ? { id: "task-settled", status }
+              : null,
+          ),
+        );
+
+        const result = await raiseEditFinancialReviewTask({
+          ...raiseInput,
+          occurrence: parkedAdd,
+          store: store(),
+        });
+
+        expect(mocks.create).toHaveBeenCalledTimes(1);
+        expect(mocks.create.mock.calls[0][0].data.occurrenceKey).toBe(
+          `${baseKey}#2`,
+        );
+        expect(mocks.create.mock.calls[0][0].data.amountCents).toBeNull();
+        expect(result).toMatchObject({
+          taskId: "task-new",
+          occurrenceKey: `${baseKey}#2`,
+          created: true,
+          status: ManualRefundTaskStatus.OPEN,
+        });
+      },
+    );
+
+    it("walks past every settled recurrence rather than stopping at the first, so the third add is reviewed too", async () => {
+      const parkedAdd = occurrence({
+        surrenderedNightDates: [],
+        addedNightDates: [],
+      });
+      const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+      const settled = new Set([baseKey, `${baseKey}#2`]);
+      mocks.findUnique.mockImplementation(({ where }: never) =>
+        Promise.resolve(
+          settled.has((where as { occurrenceKey: string }).occurrenceKey)
+            ? { id: "task-settled", status: ManualRefundTaskStatus.COMPLETED }
+            : null,
+        ),
+      );
+
+      await raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: parkedAdd,
+        store: store(),
+      });
+
+      expect(mocks.create.mock.calls[0][0].data.occurrenceKey).toBe(
+        `${baseKey}#3`,
+      );
+    });
+
+    it("still collapses a genuine replay, because an OPEN recurrence is returned rather than duplicated", async () => {
+      const parkedAdd = occurrence({
+        surrenderedNightDates: [],
+        addedNightDates: [],
+      });
+      const baseKey = editFinancialReviewOccurrenceKey(parkedAdd);
+      mocks.findUnique.mockImplementation(({ where }: never) => {
+        const key = (where as { occurrenceKey: string }).occurrenceKey;
+        if (key === baseKey)
+          return Promise.resolve({
+            id: "task-settled",
+            status: ManualRefundTaskStatus.COMPLETED,
+          });
+        if (key === `${baseKey}#2`)
+          return Promise.resolve({
+            id: "task-live",
+            status: ManualRefundTaskStatus.OPEN,
+          });
+        return Promise.resolve(null);
+      });
+
+      const result = await raiseEditFinancialReviewTask({
+        ...raiseInput,
+        occurrence: parkedAdd,
+        store: store(),
+      });
+
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        taskId: "task-live",
+        occurrenceKey: `${baseKey}#2`,
+        created: false,
+        status: ManualRefundTaskStatus.OPEN,
+      });
+    });
+
+    it("refuses rather than looping for ever when one identity has been settled implausibly many times", async () => {
+      mocks.findUnique.mockResolvedValue({
+        id: "task-settled",
+        status: ManualRefundTaskStatus.COMPLETED,
+      });
+
+      await expect(
+        raiseEditFinancialReviewTask({
+          ...raiseInput,
+          occurrence: occurrence(),
+          store: store(),
+        }),
+      ).rejects.toMatchObject({
+        name: "EditFinancialReviewError",
+        status: 500,
+      });
+      expect(mocks.create).not.toHaveBeenCalled();
+    });
+  });
 
   it("reports a lost race on the unique index loudly rather than swallowing it, because it cannot be recovered in place", async () => {
     mocks.create.mockRejectedValue(
@@ -500,6 +654,81 @@ describe("#3030 raise - one task per occurrence, and an unknown amount stays unk
     // The evidence the edit DESTROYS is captured; the live payment history is
     // deliberately not copied here.
     expect(JSON.stringify(written)).not.toContain("payment");
+  });
+});
+
+/**
+ * #3166 / #3194: the PARKED raise stamps the payment id the completion will
+ * settle against, and this is where that derivation is pinned on the raise side.
+ *
+ * `editReviewSettlementPayment` is one function with two callers - the raise
+ * through its id-only sibling, the completion through the row itself - and the
+ * completion's own suite already breaks on either half of its gate. That is not
+ * enough on its own: "the raise is covered transitively because it shares the
+ * function" stops being true the moment somebody adds a third caller, splits the
+ * function back in two, or inlines the predicates here for a shape the shared
+ * one does not fit. Each half is therefore asserted at THIS end too, so a change
+ * that loosens the gate reddens both ends rather than one.
+ *
+ * The stamped id is the whole reason the task carries one: a wrong answer here
+ * does not fail, it routes real money down the wrong path weeks later.
+ */
+describe("#3166/#3194 parked raise - the payment id it stamps is the shared gate's answer", () => {
+  const CAPTURED = {
+    id: "pay-1",
+    status: "SUCCEEDED",
+    amountCents: 13500,
+    refundedAmountCents: 0,
+  };
+
+  function parkedBooking(
+    payment: (typeof CAPTURED) | null,
+    status = "CONFIRMED",
+  ) {
+    return {
+      status,
+      payment,
+      checkIn: dateOnlyInstantOf(day("2026-08-01")),
+      checkOut: dateOnlyInstantOf(day("2026-08-04")),
+    };
+  }
+
+  async function stampedPaymentId(booking: ReturnType<typeof parkedBooking>) {
+    const taskIds = await raiseParkedEditFinancialReviewTasks({
+      booking,
+      guests: [{ id: "guest-1", memberId: "member-1" }],
+      addedGuests: [],
+      occurrences: [occurrence()],
+      bookingModificationId: "mod-1",
+      store: store(),
+    });
+    expect(taskIds).toEqual(["task-new"]);
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+    return mocks.create.mock.calls[0][0].data.paymentId;
+  }
+
+  it("CONTROL: a settled booking with a captured payment stamps that payment's id", async () => {
+    // Without this the pair below could both pass by always answering null,
+    // which is the failure mode that would leave every parked task credit-only.
+    expect(await stampedPaymentId(parkedBooking(CAPTURED))).toBe("pay-1");
+  });
+
+  it("MUTATION: a booking that has LEFT its payment lifecycle stamps nothing", async () => {
+    // Half one of the gate. A DRAFT or WAITLISTED booking can hold a payment row
+    // that captured money for a lifecycle it is no longer in; stamping it would
+    // point a later refund at money this booking no longer owns.
+    expect(await stampedPaymentId(parkedBooking(CAPTURED, "DRAFT"))).toBeNull();
+  });
+
+  it("MUTATION: a payment row that captured nothing stamps nothing", async () => {
+    // Half two. `Payment.source` defaults to STRIPE in the schema, so an
+    // uncaptured row on a settled booking is exactly the shape that would send a
+    // confirmed amount down the card route to refund money never received.
+    expect(
+      await stampedPaymentId(
+        parkedBooking({ ...CAPTURED, status: "PENDING" }),
+      ),
+    ).toBeNull();
   });
 });
 
