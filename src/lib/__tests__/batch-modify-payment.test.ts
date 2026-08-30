@@ -2612,6 +2612,99 @@ describe("PUT /api/bookings/[id]/modify", () => {
     }
   });
 
+  it("lets a member correct a name on a booking with an unknown night, and preserves it (#3170)", async () => {
+    // THE IDENTITY ECHO copies a booking's rows straight back on an edit that
+    // changes only a name, and it used to refuse anything that was not a number.
+    // A parked booking's rows now carry NULLs, and that edit is not
+    // money-affecting, so it passes the pending-review fence and reaches the
+    // echo — which means refusing here would refuse a member a typo correction
+    // on a booking whose amount an officer has yet to confirm.
+    //
+    // Byte-for-byte preservation is the echo's whole promise, so a row that says
+    // "not known" is preserved as that. Writing a number instead would invent the
+    // very figure the review exists to establish.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
+    try {
+      // A strand carrying a real NULL night — one a parked edit wrote earlier —
+      // held by a NON-member. Two deliberate differences from the parked fixture
+      // above:
+      //
+      //  - a member guest's name is owned by their member record and cannot be
+      //    edited on a booking at all, which is a different refusal and not the
+      //    one under test;
+      //  - the unreadable night here is `null`, not a negative. The echo's
+      //    promise is BYTE-FOR-BYTE preservation, so it echoes a negative
+      //    unchanged (repairing damaged rows is #2745's audited decision, not
+      //    this echo's) — and `null` is the value #3170 added, so `null` is what
+      //    this case has to carry.
+      const base = partiallyReadableInProgressBooking();
+      const booking = {
+        ...base,
+        guests: [
+          {
+            ...base.guests[0],
+            isMember: false,
+            memberId: null,
+            nights: base.guests[0].nights.map(
+              (night: { stayDate: Date; priceCents: number | null }) =>
+                night.priceCents === -100
+                  ? { stayDate: night.stayDate, priceCents: null }
+                  : night,
+            ),
+          },
+        ],
+      };
+      const tx = makeTx(booking);
+      mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+        fn(tx),
+      );
+
+      const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+      const request = new NextRequest(
+        "http://localhost/api/bookings/bk1/modify",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            guestUpdates: [
+              { guestId: "g1", firstName: "Alicia", lastName: "Member" },
+            ],
+          }),
+        },
+      );
+      const response = await PUT(request, {
+        params: Promise.resolve({ id: "bk1" }),
+      });
+
+      expect(response.status).toBe(200);
+      // The control: this really is the identity echo, so no pricing ran and no
+      // review task was raised — a name is not a money question.
+      expect(mockCalculateBookingPrice).not.toHaveBeenCalled();
+      expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+
+      const nightRows = (
+        tx.bookingGuestNight.createMany.mock.calls[0][0] as {
+          data: Array<{ stayDate: Date; priceCents: number | null }>;
+        }
+      ).data;
+      expect(
+        nightRows.map((row) => ({
+          date: row.stayDate.toISOString().slice(0, 10),
+          priceCents: row.priceCents,
+        })),
+      ).toEqual([
+        { date: "2026-08-20", priceCents: 2500 },
+        // Preserved as the absence it is, rather than refused and rather than
+        // filled in.
+        { date: "2026-08-21", priceCents: null },
+        { date: "2026-08-22", priceCents: 2500 },
+        { date: "2026-08-23", priceCents: 2500 },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("adds guests to an in-progress completed booking from NZ tomorrow only", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-20T12:00:00.000Z"));
