@@ -19,3 +19,19 @@
   It used to be refused.
 - Lodge capacity is still checked before such a change is accepted, and the
   club's invoice for the stay still adds up to the guest's total to the cent.
+- The office can now settle one of these reviews **in either direction**. Some
+  changes to a stay cost more than the original booking — an extra night, or
+  another person — so the member may owe the club rather than the other way
+  round. The review screen asks how much and which way, and says which on the
+  button you press. Asking for money uses the club's ordinary additional-payment
+  path: it appears on the booking as an additional payment or on the invoice, and
+  the member pays it themselves. Nothing is taken from anybody's card by that
+  screen.
+- Until now that screen could only pay money back, and it said "record an
+  adjustment" either way — so an officer who correctly worked out that the member
+  owed $200 and entered it would have sent $200 to their card instead. That is
+  now impossible: the direction has to be chosen, there is no default, and the
+  task itself records which way the money went.
+- If a booking has no card payment and no invoice to add to, the office is told
+  plainly that the money has to be collected another way, and the review stays
+  open — rather than being closed as though it had been collected.

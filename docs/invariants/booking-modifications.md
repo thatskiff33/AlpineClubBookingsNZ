@@ -1266,7 +1266,10 @@ made the two differ:
   same ranges a priced edit would be checked against — parking withholds the
   money, never the beds. The modify-quote preview parks in step, reporting a zero
   movement and the club's own sentence rather than a price, so it can never block
-  a save that would succeed;
+  a save that would succeed. THIS IS THE PATH THAT CAN PARK A PRICE INCREASE - a
+  check-out extension, or a guest added - so the review it raises may owe the CLUB
+  rather than the member. Which way a completion sends the money, and how it is
+  collected, is `INV-PAY-051`;
 - the single-guest removal, `removeBookingGuestInTransaction`
   (`src/lib/booking-guest-removal-service.ts`), reached from the guest DELETE
   route. It PARKS (#3032): the guest comes off, and the amount is held as an OPEN

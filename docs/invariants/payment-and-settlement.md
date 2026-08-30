@@ -1206,6 +1206,35 @@ one, check the other.
     completion holds no advisory lock - see `docs/CONCURRENCY_AND_LOCKING.md` for
     why that is deliberate - so the status claim is the whole single-flight
     guarantee.
+  - **A completion states WHICH WAY the money goes, and the row records it**
+    (#3170, owner decision 30 Aug 2026). Every kind older than
+    `EDIT_FINANCIAL_REVIEW` can only hand money back, so "refund task" carried the
+    direction and no column was needed. #3170 is the first child that parks an
+    edit which can move the price UP, so an officer pricing one may correctly
+    conclude the CLUB is owed. `ManualRefundTaskDirection` is therefore written
+    into `settlementDirection` inside the same status-guarded claim as the amount,
+    and the amount stays a POSITIVE magnitude on both directions - the sign of a
+    money value is never overloaded to mean a direction. An
+    `EDIT_FINANCIAL_REVIEW` completion that states no direction is refused before
+    the claim; silence on a legacy kind still means `REFUND_TO_MEMBER`, which is
+    all it can mean there, and `CHARGE_TO_MEMBER` on one is refused outright. A
+    dismissal records no direction, because nothing moved.
+  - **The charging direction is the additional-payment path, not a new
+    mechanism** (#3170). A `CHARGE_TO_MEMBER` completion re-enters
+    `createModificationAdditionalPaymentIntent` - the same function every ordinary
+    booking-edit price increase goes through - so the instrument, the PENDING
+    `ADDITIONAL` `PaymentTransaction`, the chase reminders, the member's pay link
+    and the Xero supplementary invoice's wait-for-payment are the existing ones.
+    NOTHING IS TAKEN FROM THE CARD BY THE COMPLETION: it raises the request and
+    the member pays it. The club has exactly two instruments - a captured card
+    payment, or an issued Xero invoice to add a supplementary line to - and a
+    booking with neither is REFUSED before the claim, with the task left OPEN,
+    rather than recorded as collected. Both the Stripe idempotency key and the
+    recovery operation are TASK-scoped for the reason the refund side is, with a
+    sharper consequence: `createPaymentIntent` mints, so two reviews of one edit
+    sharing a key would leave the club one instrument for two amounts. The Xero
+    leg is the same choke point with a POSITIVE `priceDiffCents`, which is the
+    only place the direction becomes a sign.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap
     is measured off the booking's captured `PaymentTransaction` rows, not off
     `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone
