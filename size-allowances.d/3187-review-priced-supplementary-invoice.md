@@ -1,0 +1,20 @@
+# File-size allowances for #3187
+
+file: src/lib/xero-booking-repair-classify.ts
+lines: 1450
+reason: the growth is one arm of the classifier learning that an edit's expected
+  supplementary invoice is not always what its `BookingModification` row says,
+  and it has to sit here because the whole point of #3187 is that the GATE and
+  the ACTION are a pair. Widening the gate alone produces a critical finding,
+  marked safe to auto-apply, whose queued action carries a net of zero and is
+  refused by the enqueue's own net guard — a repair that silently does nothing,
+  which is worse than the silence it replaced because it teaches an operator to
+  ignore the tool. So the expected ask, the payload built from it and the
+  detail reported about it are three reads of ONE object, adjacent, with the
+  paragraph saying why. Lifting the action builder into
+  `xero-booking-repair-findings.ts` beside its siblings was weighed and
+  rejected: it would put the finding and the payload that must agree with it in
+  different files, which is the drift this change exists to close. The module is
+  a single sequential `classifyBookingContext`, deliberately kept whole since
+  the #1208 split, and it was 694 lines over its 700-line budget before this
+  change.

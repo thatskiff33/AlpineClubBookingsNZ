@@ -1308,7 +1308,13 @@ one, check the other.
       settlement writes `booking.editFinancialReview.chargeShareUncollected` with
       leg `xero-invoice`. Closing the window itself would mean voiding and
       reissuing an invoice already with the member, which is a different decision
-      from this one.
+      from this one. Since #3187 the booking-vs-Xero repair tool finds that
+      shortfall STRUCTURALLY as well as through the audit row: it reads the
+      expected supplementary-invoice total from the settled review shares rather
+      than from the `BookingModification` row (which a parked edit leaves at
+      zero), so a missing invoice is queued for the settled total and one that
+      went out short is reported as `XERO_AMOUNT_MISMATCH` for a person to
+      correct.
     - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
       recovery replay re-derives the total through the same sync the inline
       completion uses, and that sync reports which of four things happened

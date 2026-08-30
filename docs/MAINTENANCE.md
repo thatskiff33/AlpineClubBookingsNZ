@@ -776,6 +776,27 @@ CREATED on 30 June was covered — it was not. Re-run any sweep whose check-in
 dates mattered; the created/updated/modified findings in an archived report can
 be taken at face value.
 
+**Booking edits priced by a financial review (#3187).** When an edit's money
+cannot be worked out from the booking's own history, the change is saved and the
+amount is parked for an officer to confirm. The booking's stored totals do not
+move, so the change record itself says "nothing owed" and the tool used to skip
+those bookings entirely. It now reads the settled amount off the completed
+review tasks instead. Two things follow for an operator:
+
+- a `MISSING_SUPPLEMENTARY_INVOICE` finding on such a booking reports the total
+  the reviews settled to (its `editReviewChargeCents` detail), and its
+  `QUEUE_SUPPLEMENTARY_INVOICE` action queues an invoice for that total;
+- an invoice that already went out billing LESS than the settled total shows up
+  as `XERO_AMOUNT_MISMATCH`, which is manual-review only. That is the known
+  window where a second review share is settled after the invoice has been
+  picked up for sending; check the invoice, bill or correct the difference by
+  hand, and record what was done.
+
+A repaired invoice is raised with the payment state the member is actually in:
+unpaid where the club is asking through internet banking, held until the card
+clears where a card request is outstanding, and paid where the card has already
+been captured. Do not assume a queued repair invoice records a payment.
+
 Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
