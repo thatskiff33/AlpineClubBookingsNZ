@@ -1051,15 +1051,29 @@ const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
  * with no other lock family, so no ordering cycle is possible. The Xero round
  * trip happens later, in the outbox worker, entirely outside this transaction.
  *
- * THE TWO CALLERS, NAMED, because "every caller is post-commit" was not true and
- * a lock-ordering claim has to be checkable. The settlement callers reach it
- * post-commit through a fire-and-forget `queueXeroBookingEditSettlement`,
- * holding nothing. The booking-vs-Xero REPAIR PASS
- * (`xero-booking-repair-passes.ts`, `QUEUE_SUPPLEMENTARY_INVOICE`) calls it
- * DIRECTLY. The conclusion is unchanged, and for a stronger reason than "they
- * are all post-commit": that pass is an operator-driven admin/CLI action which
- * opens no transaction of its own and holds no advisory lock, so it too arrives
- * holding nothing. This remains a single-lock holder either way.
+ * THE THREE CALLERS, NAMED, because "every caller is post-commit" was not true
+ * and a lock-ordering claim has to be checkable. An enumeration written to be
+ * audited is worse than useless once it is silently incomplete, so a new caller
+ * belongs in this list before it belongs in the tree.
+ *
+ *   1. The SETTLEMENT callers reach it post-commit through a fire-and-forget
+ *      `queueXeroBookingEditSettlement`, holding nothing.
+ *   2. The booking-vs-Xero REPAIR PASS (`xero-booking-repair-passes.ts`,
+ *      `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY. That pass is an
+ *      operator-driven admin/CLI action which opens no transaction of its own
+ *      and holds no advisory lock, so it too arrives holding nothing.
+ *   3. The PAYMENT-RECOVERY WORKER (#3181,
+ *      `processCreateAdditionalPaymentIntentOperation` ->
+ *      `completeDeferredXeroSupplementaryInvoice`), raising the supplementary
+ *      invoice a failed mint deferred. It claims its recovery row with a
+ *      status-guarded `updateMany` rather than a transaction, and every write it
+ *      makes is its own short statement, so it holds neither a transaction nor an
+ *      advisory lock when it arrives - and its Stripe round trip has completed
+ *      long before this line.
+ *
+ * The conclusion is unchanged, and for a stronger reason than "they are all
+ * post-commit": none of the three holds anything. This remains a single-lock
+ * holder either way.
  *
  * ONE THING THIS TRANSACTION TAKES AWAY, recorded because it is easy to miss:
  * `startXeroSyncOperation` below runs on `tx`, and its P2002 fallback - re-read

@@ -289,6 +289,20 @@ export async function enqueueBookingModificationRefundRecovery({
  * nothing that is right and makes the wrong thing unrepresentable. `bookingId`
  * and `paymentId` stay, because a repeat cannot change either and refreshing them
  * costs nothing.
+ *
+ * #3181: `hadIssuedXeroInvoice` IS REQUIRED, AND IT IS THE EDIT'S ANSWER, NOT THE
+ * REPLAY'S. The replay raises the supplementary invoice the edit deferred, and
+ * whether an edit had a primary invoice to supplement is a fact about the moment
+ * it dispatched - a booking whose primary invoice is minted AFTER the edit gets
+ * billed for the edit by that invoice, so a replay re-deriving `true` hours later
+ * would queue a second ask for the same money. A required argument rather than an
+ * optional one because every caller already holds the value it fed
+ * `queueXeroBookingEditSettlement`, and an omission would be indistinguishable
+ * from a recorded `false` (`INV-SSOT`: unrepresentable beats policed). It is
+ * written on `create` ONLY, for the same reason `amountCents` is: a colliding
+ * second caller for one debt must not rewrite a fact the cron may already be
+ * acting on, and first-writer-wins keeps the EARLIEST edit-time answer, which is
+ * the conservative one.
  */
 export async function enqueueAdditionalPaymentIntentRecovery({
   bookingId,
@@ -296,6 +310,7 @@ export async function enqueueAdditionalPaymentIntentRecovery({
   idempotencyKey,
   amountCents,
   stripeIdempotencyKey,
+  hadIssuedXeroInvoice,
   store = prisma,
 }: {
   bookingId: string;
@@ -311,6 +326,13 @@ export async function enqueueAdditionalPaymentIntentRecovery({
   idempotencyKey: string;
   amountCents: number;
   stripeIdempotencyKey: string;
+  /**
+   * Whether this booking's PRIMARY Xero invoice had already been issued when the
+   * edit dispatched - `hasIssuedPrimaryXeroInvoice`, as the edit itself read it.
+   * `null` only from the recovery replay's own re-entry, where the row already
+   * exists and this value is therefore never written.
+   */
+  hadIssuedXeroInvoice: boolean | null;
   store?: PaymentRecoveryStore;
 }) {
   return store.paymentRecoveryOperation.upsert({
@@ -322,6 +344,7 @@ export async function enqueueAdditionalPaymentIntentRecovery({
       paymentId,
       paymentIntentId: stripeIdempotencyKey,
       amountCents,
+      hadIssuedXeroInvoice,
       idempotencyKey,
       nextRetryAt: new Date(),
     },
@@ -1642,6 +1665,18 @@ async function processBookingModificationRefundOperation(
 }
 
 /**
+ * WHAT THE DEFERRED SUPPLEMENTARY INVOICE ATTEMPT DID (#3181).
+ *
+ * Three answers rather than a nullable outcome, because the caller has to tell
+ * "the enqueue answered" from "there was nothing to ask" from "the ask failed" -
+ * and on the review fork those three lead to three different records.
+ */
+type DeferredSupplementaryInvoiceAttempt =
+  | { status: "queued"; outcome: XeroSupplementaryInvoiceEnqueueOutcome }
+  | { status: "not-recorded" }
+  | { status: "failed" };
+
+/**
  * RAISE THE SUPPLEMENTARY INVOICE THE EDIT PATH DEFERRED, now that the intent it
  * was waiting for exists (#3181, epic #2797).
  *
@@ -1660,6 +1695,23 @@ async function processBookingModificationRefundOperation(
  * completed edit-financial-review charge bills the combined total re-derived from
  * its settled shares. Everything after "which figure" is identical.
  *
+ * `hadIssuedXeroInvoice` IS THE EDIT'S ANSWER, READ BACK - NEVER THIS MOMENT'S.
+ * The two differ, and the difference double-bills. A booking whose primary Xero
+ * invoice had not been minted when the edit committed has NOTHING to supplement,
+ * so the edit queued nothing; the primary invoice, minted later by its own
+ * outbox operation from the booking's CURRENT state, then bills the edit itself.
+ * A replay re-reading `payment.xeroInvoiceId` hours later would find it set,
+ * classify a supplementary invoice, and raise a second ask for money the primary
+ * invoice already carries. So the value is frozen on the recovery row at enqueue
+ * time and read back here - which is also what makes the convergence claim below
+ * true rather than merely asserted.
+ *
+ * `null` means the row predates that column: not recorded, therefore not
+ * answerable, therefore NOT RAISED. The asymmetry is the argument - an invoice
+ * this pass fails to raise is surfaced by the booking-vs-Xero repair pass as a
+ * critical, one-click `MISSING_SUPPLEMENTARY_INVOICE`, while a duplicate invoice
+ * it raises in error is surfaced by nobody and lands on the member.
+ *
  * BEST-EFFORT, AND NOT A RETRY, which is the one thing here that is not obvious.
  * Throwing would hand the row to `failPaymentRecoveryOperation` and buy a retry -
  * except that on the ordinary fork the retry cannot work: the replay has by then
@@ -1675,7 +1727,10 @@ async function processBookingModificationRefundOperation(
  * modification with a primary invoice and no supplementary invoice as a finding
  * and offers `QUEUE_SUPPLEMENTARY_INVOICE`, built from the same two components
  * this function passes. The log line names the anchor an operator needs to run
- * it.
+ * it. THAT ARGUMENT COVERS THE ORDINARY FORK ONLY - a parked review charge's
+ * `BookingModification` can carry a zero net, which the repair pass's
+ * `netAmountCents > 0` gate never looks at - so the review fork writes its own
+ * durable record and does not rely on this one.
  */
 async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
   operationId: string;
@@ -1684,9 +1739,21 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
   paymentIntentId: string;
   priceDiffCents: number;
   changeFeeCents: number;
-  hasIssuedXeroInvoice: boolean;
+  hadIssuedXeroInvoice: boolean | null;
   originalPaymentStatus: PaymentStatus | string | null;
-}): Promise<XeroSupplementaryInvoiceEnqueueOutcome | null> {
+}): Promise<DeferredSupplementaryInvoiceAttempt> {
+  if (params.hadIssuedXeroInvoice === null) {
+    logger.warn(
+      {
+        operationId: params.operationId,
+        bookingId: params.bookingId,
+        bookingModificationId: params.bookingModificationId,
+        paymentIntentId: params.paymentIntentId,
+      },
+      "Recovered additional payment carries no record of whether its edit had an issued Xero invoice - no supplementary invoice was raised, and the booking-vs-Xero repair pass can queue it for this booking modification",
+    );
+    return { status: "not-recorded" };
+  }
   // Dynamic import: keeps the Xero outbox's provider-client import graph out of
   // every module that imports this worker, exactly as the two dynamic imports
   // below it do for their own modules.
@@ -1694,15 +1761,16 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
     "@/lib/xero-booking-edit-settlement"
   );
   try {
-    return await completeDeferredXeroSupplementaryInvoice({
+    const outcome = await completeDeferredXeroSupplementaryInvoice({
       bookingId: params.bookingId,
       bookingModificationId: params.bookingModificationId,
       paymentIntentId: params.paymentIntentId,
       priceDiffCents: params.priceDiffCents,
       changeFeeCents: params.changeFeeCents,
-      hasIssuedXeroInvoice: params.hasIssuedXeroInvoice,
+      hasIssuedXeroInvoice: params.hadIssuedXeroInvoice,
       originalPaymentStatus: params.originalPaymentStatus,
     });
+    return { status: "queued", outcome };
   } catch (err) {
     logger.error(
       {
@@ -1716,7 +1784,7 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
       },
       "Failed to queue the Xero supplementary invoice a recovered additional payment was deferring - the booking-vs-Xero repair pass can queue it for this booking modification",
     );
-    return null;
+    return { status: "failed" };
   }
 }
 
@@ -1772,13 +1840,14 @@ async function processCreateAdditionalPaymentIntentOperation(
         member: {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
-        // #3181: `xeroInvoiceId` and `status` join the select because the
-        // deferred supplementary invoice this replay now raises is classified
-        // from them - an edit with no primary invoice has nothing to supplement.
+        // #3181: `status` joins the select because the deferred supplementary
+        // invoice this replay now raises is classified partly from it (the
+        // primary invoice's local paid/refunded state). Whether an invoice
+        // EXISTS to supplement is deliberately NOT read here: that is the edit's
+        // answer, frozen on the recovery row.
         payment: {
           select: {
             stripeCustomerId: true,
-            xeroInvoiceId: true,
             status: true,
           },
         },
@@ -1812,6 +1881,12 @@ async function processCreateAdditionalPaymentIntentOperation(
             stripeCustomerId: booking.payment?.stripeCustomerId ?? null,
           }
         : null,
+      // #3181: the settlement's own answer, read back off this row. The sync
+      // writes it onward only into an enqueue that cannot fire (this row already
+      // exists), so passing it is honesty rather than plumbing - but a re-derived
+      // value here would be a second, disagreeing answer in the one place the
+      // frozen one exists to prevent.
+      hasIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
     });
     if (synced.paymentIntentId) {
       await attachPaymentIntentToWaitingSupplementaryInvoiceOperations({
@@ -1837,38 +1912,97 @@ async function processCreateAdditionalPaymentIntentOperation(
        * which that same decision demoted to advisory. No change fee: the fee, if
        * any, belongs to the structural edit that raised the review, and its own
        * dispatch billed it.
+       *
+       * NOT ON AN ALREADY-PAID ASK. `already-paid` is the sync saying this edit's
+       * request was captured before the replay reached it - its webhook has fired
+       * and cannot fire again. A supplementary invoice queued WAITING_PAYMENT
+       * against that intent is a row nothing will ever release, cancelled by the
+       * 14-day reaper with no invoice raised at all - and while it sits there it
+       * makes the operator's signal WORSE, not better: the repair pass reads an
+       * anchor carrying a live-but-unretryable operation as
+       * `BLOCKED_BY_XERO_OPERATION` (warning, not auto-appliable, no action
+       * offered, reported as waiting for a Stripe payment that has already
+       * happened) instead of the critical, one-click
+       * `MISSING_SUPPLEMENTARY_INVOICE` it would otherwise raise. The share that
+       * could not join the ask already has its durable record, written by the
+       * sync on the `payment-request` leg.
        */
-      const outcome = await raiseDeferredSupplementaryInvoiceForRecoveredIntent({
-        operationId: operation.id,
-        bookingId: operation.bookingId,
-        bookingModificationId,
-        paymentIntentId: synced.paymentIntentId,
-        priceDiffCents: synced.totalCents,
-        changeFeeCents: 0,
-        hasIssuedXeroInvoice: Boolean(booking.payment?.xeroInvoiceId),
-        originalPaymentStatus: booking.payment?.status ?? null,
-      });
-      if (outcome) {
-        // The same record the inline dispatch writes, through the same function:
-        // `short` is the enqueue saying this edit's invoice had already left the
-        // queue and could not be raised to the settled total, which is money the
-        // club has to bill by hand. Deciding what counts as short belongs to that
-        // function, not to two callers (#3170).
-        const { recordShortEditReviewChargeInvoice } = await import(
-          "@/lib/edit-financial-review-charge-request"
+      if (synced.outcome === "already-paid") {
+        logger.warn(
+          {
+            operationId: operation.id,
+            bookingId: operation.bookingId,
+            bookingModificationId,
+            paymentIntentId: synced.paymentIntentId,
+          },
+          "Recovered edit-financial-review charge was already paid - no supplementary Xero invoice was queued against it, and the booking-vs-Xero repair pass can queue one for this booking modification",
         );
-        await recordShortEditReviewChargeInvoice({
-          outcome,
-          bookingId: operation.bookingId,
-          bookingModificationId,
-          memberId: booking.member?.id ?? null,
-          totalCents: synced.totalCents,
-        }).catch((err) =>
-          logger.error(
-            { err, operationId: operation.id, bookingModificationId },
-            "Failed to record a short Xero supplementary invoice for a recovered edit-financial-review charge",
-          ),
-        );
+      } else {
+        const attempt =
+          await raiseDeferredSupplementaryInvoiceForRecoveredIntent({
+            operationId: operation.id,
+            bookingId: operation.bookingId,
+            bookingModificationId,
+            paymentIntentId: synced.paymentIntentId,
+            priceDiffCents: synced.totalCents,
+            changeFeeCents: 0,
+            hadIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
+            originalPaymentStatus: booking.payment?.status ?? null,
+          });
+        const {
+          recordShortEditReviewChargeInvoice,
+          recordUncollectedEditReviewChargeShare,
+        } = await import("@/lib/edit-financial-review-charge-request");
+        if (attempt.status === "queued") {
+          // The same record the inline dispatch writes, through the same
+          // function: `short` is the enqueue saying this edit's invoice had
+          // already left the queue and could not be raised to the settled total,
+          // which is money the club has to bill by hand. Deciding what counts as
+          // short belongs to that function, not to two callers (#3170).
+          await recordShortEditReviewChargeInvoice({
+            outcome: attempt.outcome,
+            bookingId: operation.bookingId,
+            bookingModificationId,
+            memberId: booking.member?.id ?? null,
+            totalCents: synced.totalCents,
+          }).catch((err) =>
+            logger.error(
+              { err, operationId: operation.id, bookingModificationId },
+              "Failed to record a short Xero supplementary invoice for a recovered edit-financial-review charge",
+            ),
+          );
+        } else {
+          /**
+           * #3181 fix round: THE REVIEW FORK CANNOT FALL BACK ON THE REPAIR PASS,
+           * so it leaves its own record.
+           *
+           * A parked edit's `BookingModification` carries only the readable
+           * strands' money, so an edit whose ONLY money-affecting strand was the
+           * parked one has `priceDiffCents + changeFeeCents == 0` - and the
+           * booking-vs-Xero repair pass gates its missing-supplementary finding
+           * on `netAmountCents > 0`, so it never looks. Without this an officer
+           * settles at $230, the member pays it, and the club's only account of
+           * the charge is a `logger.error` in a stream nobody reads. `INV-PAY`:
+           * every path that settles a share without producing a request leaves a
+           * durable trace, and a log line is not one.
+           */
+          await recordUncollectedEditReviewChargeShare({
+            leg: "xero-invoice",
+            cause: "ask-not-raised",
+            bookingId: operation.bookingId,
+            bookingModificationId,
+            memberId: booking.member?.id ?? null,
+            derivedTotalCents: synced.totalCents,
+            // No ask exists to be short of, so there is no figure to compare
+            // against - the same refusal to invent one the `short` record makes.
+            requestedTotalCents: null,
+          }).catch((err) =>
+            logger.error(
+              { err, operationId: operation.id, bookingModificationId },
+              "Failed to record an unraised Xero supplementary invoice for a recovered edit-financial-review charge",
+            ),
+          );
+        }
       }
     }
     /**
@@ -2045,7 +2179,9 @@ async function processCreateAdditionalPaymentIntentOperation(
         paymentIntentId: pi.id,
         priceDiffCents: modification.priceDiffCents,
         changeFeeCents: modification.changeFeeCents,
-        hasIssuedXeroInvoice: Boolean(payment.xeroInvoiceId),
+        // The EDIT's answer, frozen on this row when the mint failed. Re-reading
+        // `payment.xeroInvoiceId` here is the double-bill the helper describes.
+        hadIssuedXeroInvoice: operation.hadIssuedXeroInvoice,
         originalPaymentStatus: payment.status,
       });
     } else {

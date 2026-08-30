@@ -272,6 +272,24 @@ export async function restateEditReviewChargeSupplementaryInvoice({
 export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
 
 /**
+ * WHY the settled share never reached that ask, which is a different question
+ * from which ask it was and needs a different sentence (#3181).
+ *
+ *   * `ask-closed` - an ask EXISTS and could not take this share. The card
+ *     request was already paid; the supplementary invoice was already claimed
+ *     for sending. The club is short by the difference.
+ *   * `ask-not-raised` - NO ask was made at all. The recovery replay that owed
+ *     this edit a supplementary invoice could not queue one, so the accounts hold
+ *     nothing for the charge rather than holding too little.
+ *
+ * Three of the four combinations are produced today: the card leg only ever
+ * closes (its ask is the intent, which exists by the time this can happen), and
+ * the accounting leg does both. The fourth is not refused, because a leg/cause
+ * pair is a description of what happened rather than a claim about what can.
+ */
+export type UncollectedEditReviewChargeCause = "ask-closed" | "ask-not-raised";
+
+/**
  * The accounting leg's half of that record, decided from the enqueue's own
  * verdict (#3170 fix round, F2).
  *
@@ -306,6 +324,8 @@ export async function recordShortEditReviewChargeInvoice({
   if (outcome !== "short") return false;
   await recordUncollectedEditReviewChargeShare({
     leg: "xero-invoice",
+    // `short` is by definition an ask that exists and could not be raised.
+    cause: "ask-closed",
     bookingId,
     bookingModificationId,
     memberId,
@@ -344,6 +364,7 @@ export async function recordShortEditReviewChargeInvoice({
  */
 export async function recordUncollectedEditReviewChargeShare({
   leg,
+  cause,
   bookingId,
   bookingModificationId,
   memberId,
@@ -351,6 +372,13 @@ export async function recordUncollectedEditReviewChargeShare({
   requestedTotalCents,
 }: {
   leg: UncollectedEditReviewChargeLeg;
+  /**
+   * #3181: whether the ask existed and could not take the share, or was never
+   * made. Required rather than defaulted: `ask-closed` was the only case when
+   * this function was written, and a default would have quietly told an officer
+   * that an invoice they do not have bills too little.
+   */
+  cause: UncollectedEditReviewChargeCause;
   bookingId: string;
   bookingModificationId: string;
   memberId: string | null;
@@ -371,9 +399,11 @@ export async function recordUncollectedEditReviewChargeShare({
     requestedTotalCents === null
       ? null
       : Math.max(derivedTotalCents - requestedTotalCents, 0);
+  const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
   logger.warn(
     {
       leg,
+      cause,
       bookingId,
       bookingModificationId,
       derivedTotalCents,
@@ -381,7 +411,9 @@ export async function recordUncollectedEditReviewChargeShare({
     },
     leg === "payment-request"
       ? "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand"
-      : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
+      : invoiceNeverRaised
+        ? "Edit-financial-review supplementary invoice could not be queued at all - the whole settled total must be billed by hand"
+        : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
   );
   try {
     await createAuditLog({
@@ -396,13 +428,18 @@ export async function recordUncollectedEditReviewChargeShare({
       summary:
         leg === "payment-request"
           ? `A settled review share of ${formatCents(shortfallCents ?? derivedTotalCents)} could not be added to this booking change's payment request`
-          : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
+          : invoiceNeverRaised
+            ? `No Xero invoice was raised for this booking change's settled total of ${formatCents(derivedTotalCents)}`
+            : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
         leg === "payment-request"
           ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
-          : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
+          : invoiceNeverRaised
+            ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it, but no Xero supplementary invoice could be raised for the charge at all - so the club's accounts hold no record of it, rather than an out-of-date one. Raise the invoice by hand, or run the booking-vs-Xero repair for this booking, and record what was done.`
+            : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
       metadata: {
         leg,
+        cause,
         bookingModificationId,
         derivedTotalCents,
         requestedTotalCents,

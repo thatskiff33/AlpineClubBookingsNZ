@@ -28,6 +28,21 @@ export type BookingModificationPaymentContext = {
   paymentId: string | null;
   additionalAmountCents: number;
   hasSucceededPayment: boolean;
+  /**
+   * #3181: whether this booking's PRIMARY Xero invoice had already been issued
+   * when this edit dispatched. Read only when the mint FAILS, to freeze the
+   * edit's own answer on the recovery row - the replay that later raises the
+   * deferred supplementary invoice must bill what the edit decided, not what is
+   * true when the cron reaches it. Required rather than optional so a new caller
+   * cannot omit it into a silent `false` (`INV-SSOT`).
+   *
+   * `null` ONLY from the recovery replay's own re-entry, where the recovery row
+   * already exists and this value is therefore never written. It is not a third
+   * answer to the question; it is "the row that carries the answer is already
+   * there". Every ordinary edit path passes the boolean it fed
+   * `queueXeroBookingEditSettlement`.
+   */
+  hasIssuedXeroInvoice: boolean | null;
   paymentCustomerId: string | null;
   memberEmail: string;
   memberName: string;
@@ -260,6 +275,9 @@ export async function createModificationAdditionalPaymentIntent({
         ),
       amountCents: result.additionalAmountCents,
       stripeIdempotencyKey: idempotencyKey,
+      // #3181: the EDIT's answer, frozen here because this is the last moment it
+      // is known. The replay reads it back rather than re-deriving one.
+      hadIssuedXeroInvoice: result.hasIssuedXeroInvoice,
     }).catch((enqueueErr) =>
       logger.error(
         { err: enqueueErr, bookingId },

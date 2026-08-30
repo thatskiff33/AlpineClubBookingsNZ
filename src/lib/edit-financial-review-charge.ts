@@ -166,6 +166,15 @@ export type EditReviewChargeRoute =
       bookingModificationId: string;
       paymentId: string;
       member: EditReviewChargeMember;
+      /**
+       * #3181: whether this booking's PRIMARY Xero invoice had already been
+       * issued when the route was chosen - carried rather than re-read, because
+       * a mint failure freezes it on the recovery row and the replay bills what
+       * the settlement decided rather than what is true when the cron arrives.
+       * Only the card route carries it: the `invoice` route mints no intent, so
+       * it enqueues no recovery row for a replay to read.
+       */
+      hasIssuedXeroInvoice: boolean;
     }
   | {
       kind: "additional-charge";
@@ -383,6 +392,10 @@ export async function chooseEditReviewChargeRoute({
       collectVia: "stripe",
       bookingModificationId,
       paymentId: bookingPayment.id,
+      // #3181: this function's own argument, carried forward rather than
+      // re-derived downstream, so the charge and any replay of it answer the
+      // same question with the same value.
+      hasIssuedXeroInvoice,
       member: {
         id: member.id,
         email: member.email,
@@ -445,11 +458,22 @@ export async function syncEditFinancialReviewChargeRequest({
   bookingModificationId,
   paymentId,
   member,
+  hasIssuedXeroInvoice,
 }: {
   bookingId: string;
   bookingModificationId: string;
   paymentId: string;
   member: EditReviewChargeMember | null;
+  /**
+   * #3181: the EDIT's answer to "did this booking already have a primary Xero
+   * invoice", carried in rather than derived here. Frozen on the recovery row
+   * when the mint fails, so the replay raises the supplementary invoice the edit
+   * would have raised rather than one the passage of time invented. `null` from
+   * the recovery replay's own re-entry, where the row already exists and this
+   * value is therefore never written - it is not a third answer, it is "the row
+   * that would carry it is already there".
+   */
+  hasIssuedXeroInvoice: boolean | null;
 }): Promise<EditReviewChargeSyncResult> {
   const totalCents = await sumEditReviewChargeSharesCents({
     bookingId,
@@ -484,6 +508,8 @@ export async function syncEditFinancialReviewChargeRequest({
         // and its own call, and the `leg` is what tells the two apart in the
         // audit list.
         leg: "payment-request",
+        // The ask exists and is paid: closed, not missing (#3181).
+        cause: "ask-closed",
         bookingId,
         bookingModificationId,
         memberId: member?.id ?? null,
@@ -563,6 +589,8 @@ export async function syncEditFinancialReviewChargeRequest({
       memberName: member?.name ?? "",
       memberId: member?.id ?? "",
       bookingModificationId,
+      // #3181: carried, not re-read. See this function's parameter docblock.
+      hasIssuedXeroInvoice,
     },
     // #3170: the request's identity in the ledger. A later share finds this row
     // by exact match on it, which is why it is built rather than spelled.
@@ -613,6 +641,9 @@ export async function syncEditFinancialReviewChargeRequest({
       amountCents: totalCents,
       stripeIdempotencyKey:
         buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+      // #3181: NOT advisory. The replay reads this back to decide whether the
+      // edit had an invoice to supplement at all.
+      hadIssuedXeroInvoice: hasIssuedXeroInvoice,
     });
     return { outcome: "not-raised", paymentIntentId: null, totalCents };
   }
@@ -660,6 +691,7 @@ export async function executeEditReviewCharge({
       bookingModificationId: route.bookingModificationId,
       paymentId: route.paymentId,
       member: route.member,
+      hasIssuedXeroInvoice: route.hasIssuedXeroInvoice,
     });
   } catch (err) {
     // Only the UPDATE arm reaches here: the mint arm is
@@ -685,6 +717,9 @@ export async function executeEditReviewCharge({
         buildEditFinancialReviewAdditionalIntentStripeKey(
           route.bookingModificationId,
         ),
+      // #3181: NOT advisory - the replay's answer to "was there an invoice to
+      // supplement" is this value and nothing it can re-derive.
+      hadIssuedXeroInvoice: route.hasIssuedXeroInvoice,
     }).catch((enqueueErr) =>
       logger.error(
         { err: enqueueErr, bookingId, taskId },

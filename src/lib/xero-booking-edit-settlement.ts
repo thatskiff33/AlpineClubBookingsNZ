@@ -327,6 +327,20 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  * exactly the arrangement a first-time-successful mint would have produced,
  * rather than on a second arrangement that has to be kept in step with it.
  *
+ * THAT CONVERGENCE IS ONLY TRUE BECAUSE `hasIssuedXeroInvoice` IS THE EDIT'S OWN
+ * ANSWER, and it is worth saying why, because the obvious implementation breaks
+ * it silently. Re-deriving the flag from the payment row at replay time is a
+ * DIFFERENT question - "does this booking have a primary invoice NOW" - and on a
+ * booking whose primary invoice was still queued when the edit committed the two
+ * answers differ. There the edit classified `none` and queued nothing, correctly,
+ * because the primary invoice reads the booking's CURRENT state when the worker
+ * finally mints it and therefore bills the edit itself. A replay deriving `true`
+ * would add a supplementary invoice on top of that, and the club would record
+ * more income than the booking is worth plus a receivable nobody owes. So the
+ * caller freezes the value on the recovery row (`PaymentRecoveryOperation.
+ * hadIssuedXeroInvoice`) at enqueue time and passes it back in here; this
+ * function never reads it for itself, and must not start.
+ *
  * ONE INVOICE, AND THIS IS WHY IT CANNOT BE TWO. It never asks "does this edit
  * already have an invoice going out". `enqueueXeroSupplementaryInvoiceOperation`
  * answers that under its per-anchor advisory lock, refusing an anchor that
@@ -337,12 +351,23 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  * replay path has to be.
  *
  * `requiresAdditionalStripePayment` is TRUE rather than a parameter, and the
- * reason is checkable rather than a convention. A
- * `CREATE_ADDITIONAL_PAYMENT_INTENT` recovery row exists only because a mint was
- * attempted and failed, and the only branch that skips the invoice is the one
- * where an additional Stripe payment was required and no intent existed. Where
- * the inline dispatch took the OTHER branch it queued an unpaid invoice, and this
- * call then finds that operation and queues nothing.
+ * guarantee is the ARGUMENT IN HAND, not the row that led here. An earlier draft
+ * of this paragraph argued from the recovery row - "it exists only because a mint
+ * was attempted and failed" - and that is false: `syncEditFinancialReviewCharge
+ * Request` enqueues one when its `hasSucceededPayment`/`paymentId` guard answers
+ * false on the re-read, which returns BEFORE its `try` with nothing attempted at
+ * all. Reasoning from the row is therefore reasoning from something that is not
+ * true.
+ *
+ * The real guarantee is narrower and holds unconditionally: `paymentIntentId` is
+ * a REQUIRED, non-null argument, so by the time this function runs a live
+ * additional PaymentIntent exists for this edit. An additional intent IS the card
+ * route - it is minted only against a captured Stripe payment - so the invoice
+ * must wait for that intent to confirm and must record its payment when it does,
+ * which is exactly what this flag plus `additionalPaymentIntentId` select. A
+ * caller with no intent has nothing to pass and cannot reach here; where the
+ * inline dispatch instead queued an UNPAID invoice, this call finds that
+ * operation under the enqueue's per-anchor lock and queues nothing.
  *
  * THE DATE/NARRATION LEGS ARE DELIBERATELY FALSE. A failed mint does not stop the
  * edit's own dispatch, which already ran them when the edit committed; claiming
@@ -351,6 +376,16 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
  * recovery of a collectable is not the place to decide a booking needs its first
  * invoice.
  *
+ * A NON-POSITIVE NET RETURNS BEFORE THE DISPATCHER, and that guard is the point
+ * of this paragraph rather than an aside. Handed a reduction, the dispatcher does
+ * not do nothing - it classifies `modification-credit-note` and queues a REFUND
+ * to the member. A function called "complete the deferred supplementary invoice",
+ * reached only from a replay whose whole subject is money the member OWES, must
+ * not be able to issue one; today no caller can reach it with a reduction, and
+ * making that unrepresentable is cheaper than a rule saying they must not
+ * (`INV-SSOT`). The refund paths are `queueXeroBookingEditSettlement`'s to
+ * dispatch, from the edit that decided on a refund.
+ *
  * Returns the enqueue's own verdict so the caller can record a `short` ask. It
  * does not catch: the caller owns what a failure to queue means for the recovery
  * operation it is processing.
@@ -358,6 +393,9 @@ export interface CompleteDeferredXeroSupplementaryInvoiceInput {
 export async function completeDeferredXeroSupplementaryInvoice(
   input: CompleteDeferredXeroSupplementaryInvoiceInput
 ): Promise<XeroSupplementaryInvoiceEnqueueOutcome> {
+  if (input.priceDiffCents + input.changeFeeCents <= 0) {
+    return "none";
+  }
   const settled = await queueXeroBookingEditSettlement({
     bookingId: input.bookingId,
     bookingModificationId: input.bookingModificationId,

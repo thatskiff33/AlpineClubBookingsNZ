@@ -2056,6 +2056,7 @@ describe("payment recovery worker", () => {
         idempotencyKey: "payment_recovery_additional_intent_mod-9",
         amountCents: 3000,
         stripeIdempotencyKey: "mod_guest_bk1_mod-9",
+        hadIssuedXeroInvoice: true,
       });
 
       expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
@@ -2099,6 +2100,7 @@ describe("payment recovery worker", () => {
         idempotencyKey: "edit_financial_review_additional_intent_recovery_task-1",
         amountCents: 3000,
         stripeIdempotencyKey: "edit_financial_review_additional_task-1",
+        hadIssuedXeroInvoice: true,
       });
 
       const call = mockPaymentRecoveryUpsert.mock.calls[0][0] as {

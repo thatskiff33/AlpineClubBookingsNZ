@@ -1027,6 +1027,9 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       name: "Grace Hopper",
       stripeCustomerId: "cus_1",
     },
+    // #3181: the EDIT's answer, carried in so a mint failure can freeze it on
+    // the recovery row rather than leave the replay to re-derive one.
+    hasIssuedXeroInvoice: true,
   };
 
   beforeEach(() => {
