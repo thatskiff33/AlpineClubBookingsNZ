@@ -148,7 +148,9 @@ type ProposedGuestPricingInput = {
 };
 
 type ProposedRemainingGuest = {
-  guest: BookingGuest & { nights?: { stayDate: Date; priceCents?: number }[] };
+  // #3170: `priceCents` is nullable — see `LoadedBookingForModify`, which these
+  // rows are lifted from, for what each of undefined / null / a number means.
+  guest: BookingGuest & { nights?: { stayDate: Date; priceCents?: number | null }[] };
   stayStart: Date;
   stayEnd: Date;
   nights?: Date[];
@@ -174,7 +176,14 @@ type ProposedRemainingGuest = {
  * through to current policy instead of inverting the charge.
  */
 export function lockedNightPricesForGuest(guest: {
-  nights?: { stayDate: Date; priceCents?: number }[];
+  // #3170: a null here is a night whose sold price is not known, which
+  // `isNonNegativeIntegerCents` already classifies exactly like an absent row
+  // and an unusable one — no lock, so the night falls through to current
+  // policy. That is the right answer for this LENIENT reader, whose whole
+  // contract is "a night the edit is BUYING prices at current policy"; a path
+  // whose money depends on the history being complete asks
+  // `storedSoldPriceEvidenceForGuest` instead and gets a verdict.
+  nights?: { stayDate: Date; priceCents?: number | null }[];
 }): Array<{ stayDate: Date; priceCents: number }> {
   return (guest.nights ?? []).flatMap((night) =>
     isNonNegativeIntegerCents(night.priceCents)

@@ -198,7 +198,14 @@ export type LoadedBookingForModify = Booking & {
   // Guests carry their explicit night set (issue #713) so an edit preserves the
   // gaps of guests that are not being changed and re-syncs only edited guests.
   guests: Array<
-    BookingGuest & { nights?: { stayDate: Date; priceCents?: number }[] }
+    BookingGuest & {
+      // #3170: `priceCents` distinguishes three things and every reader has to
+      // keep them apart. `undefined` means the SELECT did not ask for the price;
+      // `null` means the row says the price is NOT KNOWN (a night a parked edit
+      // committed without valuing); a number is the stored sold price, and 0 is
+      // a real one (a comped night). `?? 0` on this field is prohibited.
+      nights?: { stayDate: Date; priceCents?: number | null }[];
+    }
   >;
   payment: Payment | null;
   member: Member;
