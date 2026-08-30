@@ -1352,7 +1352,13 @@ one, check the other.
       processor's own "a later edit superseded this one" check would read that row
       as a supersession - so a retry would complete having done nothing. The
       booking-vs-Xero repair pass classifies the resulting divergence and offers
-      `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two components.
+      `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two components. That
+      argument binds EVERY `await` after that write, not only the enqueue call
+      (#3181 fix round): the settlement module's dynamic import sits inside the
+      catch, because a module that fails to load throws like a call that fails,
+      and the read of the edit's signed components happens BEFORE the mint, where
+      a transient database failure is still a real retry rather than a replay that
+      supersedes itself.
     - **The replay bills the EDIT's answer to "was there an invoice to
       supplement", never the answer that is true when the cron arrives** (#3181
       fix round). These differ, and the difference double-bills. A booking whose
