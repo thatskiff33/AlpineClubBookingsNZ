@@ -396,26 +396,27 @@ describe("INV-SSOT-004: the two lists say what they are", () => {
   /*
     THE RATCHET, PINNED.
 
-    Four files still walk source with their own comment-aware scanner. Three of
-    them report offsets into the ORIGINAL text — a line number, or a slice taken
-    from the unstripped source — and `stripComments` preserves newlines but not
-    columns while `stripCommentsAndStrings` replaces each string with a
-    two-character `""`, so neither can serve a walker without moving what it
-    points at. Their remedy is a third form in the canonical module (#3180): a
-    blanker that replaces every comment and string with spaces of the SAME
-    LENGTH. The fourth, `advisory-lock-guard.test.ts`, is on the list for a
-    different reason its own entry states, and the preamble in `eslint.config.mjs`
-    says so rather than claiming the property for all four.
+    ONE file still walks source with its own comment-aware scanner, and it is
+    the one that never had the property the other entries shared.
+    `advisory-lock-guard.test.ts` works a LINE at a time and keeps every
+    double-quoted literal containing `SELECT`, because the raw SQL it hunts for
+    lives inside those while the prose it must ignore does not. A carve-out by
+    CONTENT is not a form the canonical module should grow, so it converges on
+    the shared blanker PLUS a caller-side filter — a different job, deferred by
+    #3180 rather than done half way.
 
-    It was five until #3164's fix round converged
-    `family-group-role-retirement.test.ts`'s `codeOnly` onto the canonical second
-    form. This number may go DOWN and may not go up: a fifth file needing an entry
-    here is a fifth copy, which is the thing the rule refuses.
+    It was five. #3164's fix round converged
+    `family-group-role-retirement.test.ts` onto the canonical second form, and
+    #3180 added `blankLiterals` — a form that replaces every comment and every
+    literal's contents with spaces of the SAME LENGTH, so offsets, columns and
+    line numbers all survive — and converged the three walkers that were waiting
+    on it. This number may go DOWN and may not go up: a second file needing an
+    entry here is a second copy, which is the thing the rule refuses.
   */
   it("keeps the unconverged list a ratchet", () => {
     expect(
       UNCONVERGED_COMMENT_SCANNERS.length,
-      "#3164 left four. If you are adding a fifth, converge it instead: the canonical module is `./support/strip-comments`, it holds three forms, and if what you need is the offset-preserving blanker, add that FORM there (#3180) rather than a private one here.",
-    ).toBeLessThanOrEqual(4);
+      "#3180 left one. If you are adding a second, converge it instead: the canonical module is `./support/strip-comments`, it holds FOUR forms, and if what you need is offsets preserved through the strip, that is `blankLiterals` rather than a private one here.",
+    ).toBeLessThanOrEqual(1);
   });
 });

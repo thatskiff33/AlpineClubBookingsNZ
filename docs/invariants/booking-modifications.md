@@ -55,7 +55,21 @@ booking CANCELLED after the modification completes the operation WITHOUT
 minting an intent — cancellation already tore down its additional intents, and
 recovery must never resurrect a retired collectable or re-arm the parked
 supplementary Xero operation for money that must not be captured (the
-stale-WAITING_PAYMENT reaper retires that op).
+stale-WAITING_PAYMENT reaper retires that op). A replay that DOES mint also
+completes the accounting half the inline attempt deferred (#3181): it points any
+already-waiting supplementary Xero operation at the recovered intent AND raises
+the invoice for edits where the inline dispatch queued none, because an edit with
+no intent has nothing to invoice against and skips the queue entirely. Without
+that, the deferral had no later; the member could pay a request the club's
+accounts had never recorded. It bills the `BookingModification`'s own signed
+components, so an automatic completion and an operator's
+`QUEUE_SUPPLEMENTARY_INVOICE` repair bill the same figure, and it queues no
+second invoice because the anchor-scoped enqueue owns that decision. Whether the
+edit HAD an invoice to supplement is the edit's own answer, frozen on the
+recovery row (`PaymentRecoveryOperation.hadIssuedXeroInvoice`) rather than
+re-derived at replay time: a booking whose primary invoice is minted after the
+edit is billed for the edit BY that invoice, so a re-derivation would raise a
+second ask for the same money. Not recorded means not raised.
 
 ## INV-MOD-004
 

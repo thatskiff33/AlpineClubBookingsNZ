@@ -3,7 +3,7 @@
  * preserved, plus the two other forms a scanner in this tree ever needs.
  *
  * THE ONE DEFINITION IN THE TREE, and since #3164 a rule ENFORCES that rather
- * than review doing it: 53 test files and one CI script import this module, and
+ * than review doing it: 56 test files and one CI script import this module, and
  * `ssot/no-local-comment-stripper` in `eslint.config.mjs` reports a second
  * scanner wherever one is written, in the editor.
  *
@@ -15,26 +15,33 @@
  * rule keys on what a function DOES, and why the count above roughly doubled
  * without a single new census being written.
  *
- * THREE FORMS LIVE HERE, and that is the point of the module rather than an
+ * FOUR FORMS LIVE HERE, and that is the point of the module rather than an
  * accident of where things landed. `stripComments` keeps strings and removes
  * comments; `stripCommentsAndStrings` (#3164 moved it here from the Xero census
  * that wrote it) also blanks the CONTENTS of every string, so a rule cannot fire
  * on prose inside a quoted example; `stripCssComments` reads CSS, the one other
- * language sharing JavaScript's block delimiter. A caller picks a form. It does
- * not write a fourth.
+ * language sharing JavaScript's block delimiter; and `blankLiterals` (#3180)
+ * returns text of the SAME LENGTH, so a caller that reports a line number or
+ * slices by index still points at what it named. A caller picks a form. It does
+ * not write a fifth.
+ *
+ * WHICH ONE, in a sentence: `stripComments` if you want the code as text and
+ * will grep it; `stripCommentsAndStrings` if the rule's own subject gets
+ * discussed in prose; `blankLiterals` if you are a WALKER and an offset is your
+ * answer; `stripCssComments` if the file is CSS.
  *
  * Two lists in `eslint.config.mjs` say what is not a copy.
  * `COMMENT_STRIPPER_ALLOWLIST` holds the scanners that are a different CONCEPT —
  * SQL comments, a comment EXTRACTOR, and the guard's own fixture file.
- * `UNCONVERGED_COMMENT_SCANNERS` is a ratchet of four files. THREE of them walk
- * source and report offsets into the ORIGINAL text, which no form here can
- * serve: the first preserves newlines but not columns, and the second replaces
- * each string with a two-character `""`. The form that would serve those three
- * is an offset-preserving blanker (#3180), and it belongs HERE when it is
- * written rather than three more times out there. The fourth entry does not
- * share that property and its own reason says so — a list's shared sentence has
- * to be true of every row, or the row it is false about is the one nobody
- * re-reads.
+ * `UNCONVERGED_COMMENT_SCANNERS` is a ratchet, and #3180 took it from four files
+ * to one. The three it converged walked source and reported offsets into the
+ * ORIGINAL text, which neither of the first two forms can serve: one preserves
+ * newlines but not columns, the other replaces each string with a two-character
+ * `""`. `blankLiterals` is the form they were waiting on, and it was written
+ * HERE rather than three more times out there. The one entry left never shared
+ * that property; its own reason says what it needs instead, because a list's
+ * shared sentence has to be true of every row or the row it is false about is
+ * the one nobody re-reads.
  *
  * It is shared rather than copied for a reason that cost this repository a real
  * blind spot (#3123). `club-time-escape-hatch-census.test.ts` strips comments
@@ -503,4 +510,174 @@ function scanCode(
  */
 export function stripCommentsAndStrings(source: string): string {
   return scanCode(source, 0, false).code;
+}
+
+// ---------------------------------------------------------------------------
+// THE OFFSET-PRESERVING FORM: for a WALKER, which reports positions rather than
+// text
+// ---------------------------------------------------------------------------
+
+/**
+ * A template literal, from its opening backtick, blanked in place.
+ *
+ * The backtick and every `${` / `}` survive at their own offsets; the literal
+ * TEXT becomes spaces; a `${ … }` interpolation is CODE and is walked, because a
+ * `$transaction(` written inside one opens a real transaction.
+ */
+function blankTemplateLiteral(source: string, start: number): ScanResult {
+  let out = "`";
+  let index = start + 1;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\\") {
+      out += blanked(source, index, index + 2);
+      index += 2;
+      continue;
+    }
+    if (char === "\n") {
+      out += "\n";
+      index += 1;
+      continue;
+    }
+    if (char === "`") {
+      return { code: `${out}\``, next: index + 1 };
+    }
+    if (char === "$" && source[index + 1] === "{") {
+      const inner = blankCode(source, index + 2, true);
+      out += `\${${inner.code}`;
+      index = inner.next;
+      continue;
+    }
+    out += " ";
+    index += 1;
+  }
+  return { code: out, next: index };
+}
+
+/** `source[from..to)` with everything but its newlines turned into spaces. */
+function blanked(source: string, from: number, to: number): string {
+  let out = "";
+  for (let index = from; index < to && index < source.length; index += 1) {
+    out += source[index] === "\n" ? "\n" : " ";
+  }
+  return out;
+}
+
+/**
+ * Code, from `start`, with every comment and every literal's CONTENTS replaced
+ * by spaces, one character for one character.
+ *
+ * `stopAtCloseBrace` is a template interpolation, exactly as in {@link scanCode}
+ * — but this one EMITS the closing brace before it returns, because a form whose
+ * whole promise is that offsets do not move cannot swallow a character.
+ */
+function blankCode(
+  source: string,
+  start: number,
+  stopAtCloseBrace: boolean,
+): ScanResult {
+  let out = "";
+  let index = start;
+  let depth = 0;
+
+  while (index < source.length) {
+    const character = source[index];
+    const next = source[index + 1];
+
+    if (character === "/" && next === "/") {
+      const newline = source.indexOf("\n", index);
+      const end = newline === -1 ? source.length : newline;
+      out += blanked(source, index, end);
+      index = end;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const close = source.indexOf("*/", index + 2);
+      const end = close === -1 ? source.length : close + 2;
+      out += blanked(source, index, end);
+      index = end;
+      continue;
+    }
+    if (character === "`") {
+      const template = blankTemplateLiteral(source, index);
+      out += template.code;
+      index = template.next;
+      continue;
+    }
+    // A regex literal keeps its opening `/` and loses everything after it. This
+    // is the one place this form is DELIBERATELY less faithful than
+    // `stripComments`, which copies a regex through verbatim: every caller here
+    // is counting brackets, and `/^\(/` or `/[)]/` would move a boundary.
+    if (character === "/" && startsRegexLiteral(out, next ?? "")) {
+      const end = endOfRegexLiteral(source, index);
+      out += "/" + blanked(source, index + 1, end);
+      index = end;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      let cursor = index + 1;
+      while (cursor < source.length) {
+        if (source[cursor] === "\\") {
+          cursor += 2;
+          continue;
+        }
+        // An UNTERMINATED literal ends at the line end rather than running to
+        // the end of the file, and the direction of that choice is the point:
+        // an odd apostrophe in JSX prose blanks the rest of its own line, not
+        // the rest of the file. A walker handed a blanked file finds nothing
+        // and its census passes over nothing.
+        if (source[cursor] === "\n" || source[cursor] === character) break;
+        cursor += 1;
+      }
+      const closed = source[cursor] === character;
+      const contentEnd = Math.min(cursor, source.length);
+      out += character + blanked(source, index + 1, contentEnd);
+      if (closed) out += character;
+      index = closed ? cursor + 1 : cursor;
+      continue;
+    }
+    if (stopAtCloseBrace) {
+      if (character === "{") depth += 1;
+      else if (character === "}") {
+        if (depth === 0) return { code: `${out}}`, next: index + 1 };
+        depth -= 1;
+      }
+    }
+    out += character;
+    index += 1;
+  }
+
+  return { code: out, next: index };
+}
+
+/**
+ * Source of the SAME LENGTH, with every comment blanked and every literal's
+ * contents blanked, so that every offset, column and line number still points
+ * at what it did.
+ *
+ * WHICH FORM TO PICK, in one sentence each. Use {@link stripComments} when you
+ * want the code as TEXT and will grep it. Use {@link stripCommentsAndStrings}
+ * when a rule's own subject is discussed in prose that must not fire it. Use
+ * THIS one when you are a WALKER: when you report a line number, slice by
+ * index, or compare one match's position against another's, because those are
+ * the callers the other two silently break — the first preserves newlines but
+ * not columns, and the second replaces each string with a two-character `""`.
+ *
+ * Delimiters survive and contents do not, which is what lets a walker still see
+ * that an argument was there: `create({ xeroObjectUrl: "https://x" })` comes
+ * back with the quotes in place and nothing between them, so an argument reader
+ * finds an empty string rather than a hole where a `,` used to be. Blanking the
+ * delimiters too — which `lock-bound-club-zone-outside-transaction.test.ts` did
+ * before #3180 — costs that and buys nothing, since a blanked body already
+ * contains no needle.
+ *
+ * It is the offset-preserving property that makes the three converted censuses
+ * safe to build on it, and it is worth stating what they got for free. None of
+ * the three private copies recognised a REGEX LITERAL, so each carried the
+ * defect #3155 removed from the shared scanner: `.replace(/\//g, "_")` reads as
+ * a line comment and the rest of the line disappears. Every one of the three
+ * scans `src/`, where that shape is live.
+ */
+export function blankLiterals(source: string): string {
+  return blankCode(source, 0, false).code;
 }

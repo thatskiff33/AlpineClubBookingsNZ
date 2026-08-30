@@ -167,14 +167,15 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { syncEditFinancialReviewChargeRequest } from "@/lib/edit-financial-review-charge";
+import { recordUncollectedEditReviewChargeShare } from "@/lib/edit-financial-review-charge-request";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
-  syncEditFinancialReviewChargeRequest,
-} from "@/lib/edit-financial-review-charge";
+} from "@/lib/edit-financial-review-charge-refusals";
 /**
  * NOT mocked. These keys ARE the exactly-once boundary of a charge, so they are
  * asserted against the real builders rather than against a stub that could agree
@@ -1031,6 +1032,9 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       name: "Grace Hopper",
       stripeCustomerId: "cus_1",
     },
+    // #3181: the EDIT's answer, carried in so a mint failure can freeze it on
+    // the recovery row rather than leave the replay to re-derive one.
+    hasIssuedXeroInvoice: true,
   };
 
   beforeEach(() => {
@@ -1363,6 +1367,76 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
         action: "booking.editFinancialReview.chargeShareUncollected",
       }),
     );
+  });
+
+  /**
+   * #3181 fix round: THE THIRD CAUSE HAS TO SAY SOMETHING DIFFERENT, because
+   * following `ask-not-raised`'s instruction on this row BILLS THE MEMBER TWICE.
+   *
+   * A recovery row enqueued before `hadIssuedXeroInvoice` existed carries NULL,
+   * and NULL is the club saying it cannot tell whether the edit had a primary
+   * Xero invoice to supplement. If it did not, the primary invoice - minted later
+   * from the booking's current state - bills the charge itself, so raising a
+   * supplementary by hand asks for the same $230 a second time. Called directly
+   * rather than through the dispatch because no dispatch produces this cause: it
+   * comes from the recovery replay, which `payment-recovery.test.ts` covers.
+   */
+  it("tells an officer to run the repair, NOT to raise an invoice, when the owing is unknown", async () => {
+    await recordUncollectedEditReviewChargeShare({
+      leg: "xero-invoice",
+      cause: "ask-owed-unknown",
+      bookingId: "booking-1",
+      bookingModificationId: "mod-1",
+      memberId: "member-1",
+      derivedTotalCents: 23000,
+      requestedTotalCents: null,
+    });
+
+    const row = mocks.createAuditLog.mock.calls
+      .map((call) => call[0] as { action: string; summary: string; details: string; metadata: Record<string, unknown> })
+      .find(
+        (entry) =>
+          entry.action === "booking.editFinancialReview.chargeShareUncollected",
+      )!;
+    expect(row.metadata).toMatchObject({
+      leg: "xero-invoice",
+      cause: "ask-owed-unknown",
+    });
+    expect(row.summary).toContain("$230.00");
+    // It says the owing is unrecorded, never that no invoice was raised for a
+    // charge that needed one - which is the `ask-not-raised` sentence.
+    expect(row.summary).toContain("not recorded");
+    expect(row.details).toContain("bill the member twice");
+    expect(row.details).toContain("booking-vs-Xero repair");
+    expect(row.details).not.toContain("Raise the invoice by hand");
+  });
+
+  /**
+   * CONTROL for that: `ask-not-raised` - an invoice WAS owed and the queue
+   * refused it - still says raise it by hand. Without this the two causes could
+   * be collapsed onto the cautious sentence, and an officer with a genuinely
+   * missing invoice would be told to go and look rather than to raise it.
+   */
+  it("still tells an officer to raise it by hand when an invoice was owed", async () => {
+    await recordUncollectedEditReviewChargeShare({
+      leg: "xero-invoice",
+      cause: "ask-not-raised",
+      bookingId: "booking-1",
+      bookingModificationId: "mod-1",
+      memberId: "member-1",
+      derivedTotalCents: 23000,
+      requestedTotalCents: null,
+    });
+
+    const row = mocks.createAuditLog.mock.calls
+      .map((call) => call[0] as { action: string; summary: string; details: string })
+      .find(
+        (entry) =>
+          entry.action === "booking.editFinancialReview.chargeShareUncollected",
+      )!;
+    expect(row.summary).toContain("No Xero invoice was raised");
+    expect(row.details).toContain("Raise the invoice by hand");
+    expect(row.details).not.toContain("bill the member twice");
   });
 
   /**

@@ -153,6 +153,7 @@ import { POST as submitBookingRequest } from "@/app/api/booking-requests/route";
 import { GET as verifyBookingRequestRoute } from "@/app/api/booking-requests/verify/[token]/route";
 import { POST as quoteBookingRequest } from "@/app/api/booking-requests/quote/route";
 import { GET as getBookingRequestSettingsRoute } from "@/app/api/booking-requests/settings/route";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { GET as getPayLink } from "@/app/api/pay/[token]/route";
 import { POST as createPayPaymentIntent } from "@/app/api/pay/[token]/payment-intent/route";
 import { POST as refreshPayLink } from "@/app/api/pay/[token]/refresh/route";
@@ -794,6 +795,27 @@ describe("GET /api/pay/[token]", () => {
 
     const wrongToken = await payRequest("c".repeat(64));
     expect(wrongToken.status).toBe(404);
+  });
+
+  /*
+    #3194 (epic #2797): this route is where the "is this booking's money still
+    with the office" read happens, and it must be THE canonical read.
+
+    `payment-link.ts` cannot do it - the helper carries `import "server-only"`
+    and that module is deliberately importable outside a React server. So the
+    route hands it down, and this asserts it hands down the real helper rather
+    than a second `where` clause that agrees today and drifts tomorrow
+    (`INV-SSOT`). Identity, not shape: a lookalike stub would satisfy
+    `typeof === "function"`.
+  */
+  it("hands the context builder the canonical financial-review read", async () => {
+    mockedGetPaymentLinkContext.mockResolvedValue({} as never);
+
+    await payRequest(VALID_TOKEN);
+
+    expect(mockedGetPaymentLinkContext).toHaveBeenCalledWith(VALID_TOKEN, {
+      readOpenFinancialReview: bookingHasOpenFinancialReview,
+    });
   });
 });
 
