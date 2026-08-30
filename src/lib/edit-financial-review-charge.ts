@@ -226,6 +226,17 @@ export const REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE =
  * meets an invoice already with the member. Refused loudly, with the money still
  * owed and the task still open, rather than queued into a dedupe that would
  * silently drop it.
+ *
+ * A FAILED request is included DELIBERATELY, and the call is close enough to be
+ * worth writing down. A declined card leaves the Stripe intent in
+ * `requires_payment_method`, which Stripe would still let us raise the amount on
+ * - so this is stricter than the provider requires. It is refused because the
+ * LOCAL row says FAILED, and reviving it would mean flipping that row back to
+ * PENDING: `mapAdditionalSummaryStatus` reports FAILED to the payment summary,
+ * the stale-WAITING_PAYMENT reaper retires this edit's Xero operation 24 hours
+ * after the failure, and a resurrection would have to reason about both. A
+ * refusal with the money still owed and the task still open is the honest answer
+ * until somebody needs the other one.
  */
 export const REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE =
   "The club has already asked the member for this booking change, and that request can no longer be changed. Collect this amount another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
@@ -273,7 +284,10 @@ export async function chooseEditReviewChargeRoute({
   // The same test `applyPaymentAdjustments` uses to decide whether an ordinary
   // price increase mints an intent: a CAPTURED payment whose source is the card.
   // `Payment.source` alone is not enough - its schema DEFAULT is STRIPE, so a
-  // hand-settled booking carries it with nothing captured behind it.
+  // hand-settled booking carries it with nothing captured behind it. A MEMBER is
+  // part of the test rather than a fallback: minting needs somebody to bill, and
+  // a booking with none has no card route - it falls to the invoice route, or to
+  // the no-instrument refusal below.
   const canChargeCard =
     hasCapturedPayment(bookingPayment) &&
     bookingPayment?.source === PaymentSource.STRIPE &&
