@@ -304,13 +304,19 @@ describe("EditBookingPanel — a promo-code change the edit could not carry (#31
 
   it("holds the panel open after the save EVEN THOUGH the preview said the same thing", async () => {
     // This is the whole difference from the coverage notice above, which the
-    // panel deliberately suppresses when it repeats the preview. Here the
-    // preview and the save say the same thing by construction — the edit parks
-    // for the same reason both times — so suppressing a repeat would suppress
-    // this notice always, and the member would be closed out on a partial save
-    // with nothing on screen.
+    // panel deliberately suppresses when the save repeats what the preview
+    // already said. Here the edit parks for the same reason both times, so a
+    // suppression rule would suppress this notice essentially always and close
+    // the member out on a partial save with nothing on screen.
+    //
+    // The save's own sentence is fed back as the PREVIEW's too, byte for byte.
+    // That is deliberate and slightly artificial: in production the two differ
+    // by tense alone ("will not be applied" / "was not applied"), which would
+    // let a comparison creep in and never fire, so a realistic pair would leave
+    // this test passing whether the rule held or not. Identical strings are what
+    // make the absence of a comparison observable.
     const onDone = vi.fn();
-    quotePromoChangeMessage = PROMO_CHANGE_PREVIEW;
+    quotePromoChangeMessage = PROMO_CHANGE_SAVED;
     quoteCoverageMessage = null;
     modifyResponse = () =>
       jsonResponse({
