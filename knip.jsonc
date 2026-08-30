@@ -26,21 +26,15 @@
     "scripts/branding/generate-calendar-icons.mjs",
     // Invoked from scripts/codex/run-next-issue.sh + docs, never imported.
     "scripts/codex/create-review-issues.mjs",
-    "scripts/codex/issue-to-prompt.mjs",
-    // Documented operator CLI (docs/MAINTENANCE.md, docs/xero/ARCHITECTURE.md).
-    "scripts/xero-booking-repair.ts",
-    // Documented operator CLI (#2901, docs/xero/ARCHITECTURE.md → "Repairing
-    // Stripe refund-note links"; invoked via `npx tsx`, never imported).
-    "scripts/xero-refund-note-link-repair.ts",
-    // Documented operator CLI (docs/MAINTENANCE.md, docs/DOMAIN_INVARIANTS.md,
-    // docs/STATE_MACHINES.md; invoked via `npx tsx`, never imported).
-    "scripts/backfill-orphaned-applied-credits.ts",
-    // Documented read-only operator CLI (docs/MAINTENANCE.md, #1597; invoked via
-    // `npx tsx`, never imported). Audits under-cleared IB hold-expiry invoices.
-    "scripts/audit-ib-hold-clearing.ts",
-    // Documented read-only diagnostic CLI (docs/guides/calendar.md; invoked via
-    // `npx tsx`, never imported). Explains a member's calendar edit access.
-    "scripts/diagnose-calendar-access.ts"
+    "scripts/codex/issue-to-prompt.mjs"
+    // NOTE: the five documented operator CLIs listed here until #2850 —
+    // xero-booking-repair, xero-refund-note-link-repair,
+    // backfill-orphaned-applied-credits, audit-ib-hold-clearing and
+    // diagnose-calendar-access — no longer need an entry. Each is now
+    // published as an npm script so the operator does not have to remember
+    // `--conditions=react-server`, and knip's package.json plugin reaches
+    // them through those scripts. Left in place, the patterns made knip
+    // report five redundant entries and exit 1.
     // NOTE: scripts/diagnostics/generate-knowledge-bundle.ts (AID-3, #2372) does
     // NOT need an entry — knip's package.json plugin already reaches it through
     // the `diagnostics:bundle` npm script.
