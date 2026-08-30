@@ -1,0 +1,77 @@
+-- #3170 (epic #2797): make "what this night was sold for is not known" a real
+-- stored value.
+--
+-- WHY. A booking edit whose money cannot be valued from the booking's own
+-- stored history is now COMMITTED and PARKED: the structural change lands and
+-- the amount is held as an OPEN EDIT_FINANCIAL_REVIEW task for a person to
+-- price. Committing such an edit means rewriting a guest's BookingGuestNight
+-- rows, including the nights that guest is KEEPING -- and for a strand whose
+-- history cannot be read there is no honest number for those. The column was
+-- NOT NULL, so "leave it blank" was not representable, and the three ways out
+-- were all bad: invent the number (epic #2797 prohibits it outright), write a
+-- magic zero (a comped night legitimately stores 0, so a zero is a real
+-- financial statement -- #3031 deleted the last one), or delete the rows (which
+-- would let an edit that never touched a guest erase that guest's price
+-- history, irreversibly). The owner decided on 30 Aug 2026 to make the unknown
+-- storable instead: honest by construction, and the same move this epic made
+-- everywhere else -- make the wrong thing unrepresentable rather than policed.
+--
+-- ONE STATEMENT. A catalog metadata flip on pg_attribute.attnotnull. It writes
+-- no heap, rewrites no row, and touches no index: every existing
+-- BookingGuestNight row is byte-identical afterwards, so
+-- check-data-migration-verification.sh demands no fixture.
+--
+-- NOTHING IS BACKFILLED AND NOTHING IS REPRICED. Epic #2797 is forward-only.
+-- The rows the two historical even-split backfills wrote
+-- (20260704150000_backfill_booking_guest_nights and
+-- 20260810010000_backfill_booking_request_guest_nights) keep their values
+-- exactly as they stand; what those values mean is settled by INV-MOD-028's
+-- reconciliation rule, not by this migration.
+--
+-- THE NON-NEGATIVE CHECK STAYS AND STAYS CORRECT.
+-- "BookingGuestNight_price_nonnegative" (added NOT VALID by
+-- 20260819130000_manual_refund_task_edit_financial_review) is CHECK
+-- ("priceCents" >= 0). A SQL CHECK is satisfied when its expression is UNKNOWN,
+-- so a NULL passes it -- which is what is wanted here: NULL is not a negative
+-- amount, it is the absence of one. A stored 0 is still a real sold price (a
+-- comped night) and is still admitted; the distinction between 0 and NULL is
+-- the entire point of this change.
+--
+-- IDEMPOTENT: ALTER COLUMN ... DROP NOT NULL is a no-op when the column is
+-- already nullable, so a replay succeeds rather than raising.
+--
+-- LOCK IMPACT: a brief ACCESS EXCLUSIVE lock on "BookingGuestNight" for the
+-- catalog update only -- no table scan, no rewrite, no index build, so its
+-- duration does not grow with the table (657 rows at the 11 Aug audit). It
+-- takes no other lock and joins no advisory-lock cohort; INV-LOCK-001 and
+-- INV-LOCK-002 are unaffected because this migration composes no application
+-- writer. Run it in the normal deploy window and let the deploy guard stop on
+-- lock timeout.
+--
+-- OLD-CODE COMPATIBLE, FORWARD, WITH ONE BOUNDED DRAIN INTERACTION.
+-- Forward the statement itself is safe: DROP NOT NULL only widens what the
+-- column MAY hold and removes no value any old read expects, so the draining
+-- blue/green colour keeps reading every existing row as the required Int its
+-- generated client declares. The bounded interaction is the same shape as
+-- 20260819130000's: only the NEW colour ever writes a NULL here, and only on a
+-- parked edit, which is rare and needs a booking whose stored rows already do
+-- not reconcile. If the new colour parks an edit during the drain and an
+-- old-colour read then loads that guest's nights, the old Prisma client can
+-- raise a transient runtime error on the unexpected NULL for that one guest.
+-- It is bounded to the drain window, moves no money, corrupts no data, and
+-- reads correctly the instant the old colour is gone; every pre-existing row is
+-- unaffected throughout.
+--
+-- REVERSE: NOT CLEAN ONCE A NULL EXISTS, and this file will not pretend
+-- otherwise. Re-adding NOT NULL requires a full validating scan and FAILS while
+-- any NULL row is present -- and there is no honest automatic repair, because
+-- the value a NULL stands for is precisely the number nobody knew. Rolling this
+-- back therefore means: drain the new colour so nothing can park a further
+-- edit; resolve or dismiss every OPEN EDIT_FINANCIAL_REVIEW task so a person
+-- has supplied the missing amounts; then confirm zero NULL rows
+--   SELECT count(*) FROM "BookingGuestNight" WHERE "priceCents" IS NULL;
+-- before running ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" SET
+-- NOT NULL. If NULLs remain, the rollback is BLOCKED until a person prices
+-- them; deleting them to unblock it would destroy the very evidence this change
+-- exists to preserve.
+ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" DROP NOT NULL;

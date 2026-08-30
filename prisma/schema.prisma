@@ -2088,7 +2088,15 @@ model BookingGuestNight {
   id             String   @id @default(cuid())
   bookingGuestId String
   stayDate       DateTime @db.Date
-  priceCents     Int
+  // #3170 (epic #2797): NULLABLE, and the null is a first-class value rather
+  // than a gap. It means "what this night was sold for is NOT KNOWN" - never
+  // zero, never an estimate, never a row that was deleted to hide the question.
+  // Written only by a parked edit, which commits the structural change and
+  // holds the money as an OPEN EDIT_FINANCIAL_REVIEW task for a person to
+  // price. Every reader treats it as an ABSENCE of evidence (the same answer it
+  // already gives a missing row), and `?? 0` on this column is prohibited
+  // outright: a comped night stores 0, and 0 is a real sold price.
+  priceCents     Int?
   createdAt      DateTime @default(now())
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
