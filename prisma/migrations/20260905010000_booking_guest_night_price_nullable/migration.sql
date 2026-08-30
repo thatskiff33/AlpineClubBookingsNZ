@@ -52,26 +52,63 @@
 -- Forward the statement itself is safe: DROP NOT NULL only widens what the
 -- column MAY hold and removes no value any old read expects, so the draining
 -- blue/green colour keeps reading every existing row as the required Int its
--- generated client declares. The bounded interaction is the same shape as
--- 20260819130000's: only the NEW colour ever writes a NULL here, and only on a
--- parked edit, which is rare and needs a booking whose stored rows already do
--- not reconcile. If the new colour parks an edit during the drain and an
--- old-colour read then loads that guest's nights, the old Prisma client can
--- raise a transient runtime error on the unexpected NULL for that one guest.
--- It is bounded to the drain window, moves no money, corrupts no data, and
--- reads correctly the instant the old colour is gone; every pre-existing row is
--- unaffected throughout.
+-- generated client declares. The bounded interaction: only the NEW colour ever
+-- writes a NULL here, and only on a parked edit or on the identity echo that
+-- rewrites one, both of which need a booking whose stored rows already do not
+-- reconcile. If the new colour parks such an edit while the old colour is still
+-- draining, an old-colour read of that guest's nights meets a NULL its generated
+-- client declares as a required Int.
 --
--- REVERSE: NOT CLEAN ONCE A NULL EXISTS, and this file will not pretend
--- otherwise. Re-adding NOT NULL requires a full validating scan and FAILS while
--- any NULL row is present -- and there is no honest automatic repair, because
--- the value a NULL stands for is precisely the number nobody knew. Rolling this
--- back therefore means: drain the new colour so nothing can park a further
--- edit; resolve or dismiss every OPEN EDIT_FINANCIAL_REVIEW task so a person
--- has supplied the missing amounts; then confirm zero NULL rows
+-- THE BLAST RADIUS OF THAT READ IS WIDER THAN "one guest", and this file says so
+-- rather than borrowing 20260819130000's bound. That migration could write
+-- "touches an admin-only surface" and mean it. This one cannot: the readers that
+-- pull every scalar of the nights relation (`include: { nights: true }`) fail the
+-- WHOLE request on one NULL row, and several of them are member-facing money
+-- routes -
+--   src/app/api/payments/create-payment-intent/route.ts
+--   src/app/api/payments/charge-saved-method/route.ts
+--   src/app/api/payments/switch-to-internet-banking/route.ts
+--   src/app/api/bookings/[id]/confirm-draft/route.ts
+--   src/app/api/bookings/[id]/waitlist-confirm/route.ts
+--   src/app/api/bookings/[id]/confirm-pending-guests/route.ts
+--   src/app/api/admin/bookings/[id]/force-confirm/route.ts
+--   src/app/api/admin/bookings/[id]/capacity-hold/route.ts
+-- and one of them is booking-wide over a DATE RANGE, so a single NULL anywhere
+-- in the window fails the entire report:
+--   src/app/api/admin/reports/route.ts
+-- All of it is still bounded to the drain window, moves no money, corrupts no
+-- data, and reads correctly the instant the old colour is gone; every
+-- pre-existing row is unaffected throughout. What it is NOT is admin-only, and
+-- an operator planning the deploy should know that before they read the ledger
+-- row's `yes`.
+--
+-- REVERSE: A ONE-WAY DOOR ONCE A NULL EXISTS. Re-adding NOT NULL requires a full
+-- validating scan and FAILS while any NULL row is present, and there is no
+-- honest automatic repair, because the value a NULL stands for is precisely the
+-- number nobody knew.
+--
+-- AN EARLIER DRAFT OF THIS BLOCK TOLD THE OPERATOR TO WORK THE REVIEW QUEUE
+-- FIRST, AND THAT WAS WRONG. Resolving or dismissing an EDIT_FINANCIAL_REVIEW
+-- task writes an amount, a direction, a settlement and an audit entry to
+-- "ManualRefundTask" and the payment ledger; it writes NOTHING to
+-- "BookingGuestNight". Every writer of that table is a booking-modification,
+-- booking-request or waitlist reprice - none of them is reachable from review
+-- resolution - so an operator who worked the entire queue and then ran the count
+-- below would find it unchanged, at the step both this file and the ledger row
+-- had told them was the way out.
+--
+-- WHAT IS ACTUALLY TRUE. Nothing in the product clears a NULL on purpose. The
+-- only paths that replace one with a number are a later date modification,
+-- booking-request re-quote or waitlist reprice that happens to reprice that
+-- guest's nights - which is a repricing, not a recovery of the sold price, and
+-- is the very guess this change exists to stop. So rolling back means one of:
+--   (a) restore from a backup taken before this migration, or
+--   (b) hand-write the missing amounts into "BookingGuestNight" from the club's
+--       own records, guest by guest, with the OPEN review tasks and their
+--       captured reviewContext evidence as the worklist,
+-- and only then
 --   SELECT count(*) FROM "BookingGuestNight" WHERE "priceCents" IS NULL;
--- before running ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" SET
--- NOT NULL. If NULLs remain, the rollback is BLOCKED until a person prices
--- them; deleting them to unblock it would destroy the very evidence this change
--- exists to preserve.
+--   ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" SET NOT NULL;
+-- If NULLs remain the rollback is BLOCKED. Deleting them to unblock it would
+-- destroy the very evidence this change exists to preserve.
 ALTER TABLE "BookingGuestNight" ALTER COLUMN "priceCents" DROP NOT NULL;

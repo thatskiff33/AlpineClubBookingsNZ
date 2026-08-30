@@ -2761,6 +2761,30 @@ enum ManualRefundTaskKind {
   EDIT_FINANCIAL_REVIEW
 }
 
+/// #3170 (epic #2797): WHICH WAY a completed task's money went.
+///
+/// Every kind that existed before this one can only ever hand money BACK, so
+/// "refund task" said the direction on its own and no column was needed. The
+/// `EDIT_FINANCIAL_REVIEW` kind broke that: #3170 is the first change that parks
+/// an edit which can move the price UP - a check-out extension, or a guest added
+/// - so an officer pricing one may conclude the CLUB is owed. A row recording
+/// `amountCents = 20000` with no direction cannot say whether $200 was paid back
+/// or collected, and those are opposite claims about the club's money.
+///
+/// NULLABLE on the model: null on every OPEN row (nobody has decided yet), on
+/// every DISMISSED row (nothing moved, so there is no direction to record) and on
+/// every row completed before this column existed. It is written once, by the
+/// completion, inside the same status-fenced claim as the amount.
+enum ManualRefundTaskDirection {
+  /// The club owes the member. The pre-#3170 behaviour of every task, and still
+  /// the only direction a legacy kind may take.
+  REFUND_TO_MEMBER
+  /// The member owes the club. Collected through the ordinary additional-payment
+  /// path (a Stripe additional PaymentIntent on a card booking, a supplementary
+  /// Xero invoice otherwise) - never by a fourth settlement mechanism.
+  CHARGE_TO_MEMBER
+}
+
 model ManualRefundTask {
   id        String @id @default(cuid())
   bookingId String
@@ -2829,6 +2853,16 @@ model ManualRefundTask {
   /// existed, and the booking/edit dates. The payment and rate history is NOT
   /// copied here: the admin surface links to the booking's own, which is live.
   reviewContext       Json?
+  /// #3170 (epic #2797): which way this completion's money went. See
+  /// `ManualRefundTaskDirection`.
+  ///
+  /// TWO CHECKS BACK IT, and they are deliberately different strengths
+  /// (migration 20260906010000). `ManualRefundTask_direction_only_when_completed`
+  /// is VALIDATED - the column is new, so the population it polices is provably
+  /// empty. `ManualRefundTask_completed_edit_review_has_direction` is NOT VALID,
+  /// because rows completed before this column existed carry no direction and
+  /// must stay legal; it constrains every row written from here on.
+  settlementDirection ManualRefundTaskDirection?
   reason              String                 @db.VarChar(500)
   status              ManualRefundTaskStatus @default(OPEN)
   completedByMemberId String?
