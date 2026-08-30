@@ -1464,7 +1464,16 @@ describe("the settings card and the evaluator use one set of words (#2576 §12)"
     const body = source.slice(open + 1, close);
     const entries: Record<string, string> = {};
     for (const match of body.matchAll(
-      /(\w+):\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+),/g,
+      // The join between literals is REQUIRED here, not optional. Written as
+      // `(?:"..."\s*\+?\s*)+` the repeated group can match a bare `""`, so a run
+      // of adjacent literals gives the engine several ways to divide the same
+      // text and it backtracks exponentially — CodeQL js/redos, high severity,
+      // raised against this line. This form reads one literal, then zero or more
+      // genuinely-joined literals: unambiguous, one parse or none. It matches the
+      // same strings. Worth fixing even in a test, because this census reads
+      // every file in the tree, so a pathological one would hang CI rather than
+      // fail it.
+      /(\w+):\s*("(?:[^"\\]|\\.)*"(?:\s*\+\s*"(?:[^"\\]|\\.)*")*),/g,
     )) {
       entries[match[1]] = match[2]
         .split(/"\s*\+\s*"/)
