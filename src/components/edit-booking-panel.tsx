@@ -1395,14 +1395,9 @@ export function EditBookingPanel({
         typeof data?.promoCoverage?.message === "string"
           ? (data.promoCoverage.message as string)
           : null;
-      if (
-        savedCoverageMessage &&
-        savedCoverageMessage !== (quote?.promoCoverage?.message ?? null)
-      ) {
-        setSavedPromoCoverage(savedCoverageMessage);
-        router.refresh();
-        return;
-      }
+      const holdForCoverage =
+        savedCoverageMessage !== null &&
+        savedCoverageMessage !== (quote?.promoCoverage?.message ?? null);
 
       // #3179: the edit saved without the promo-code change it carried. Always
       // held, never compared against the preview — see the state's own note.
@@ -1410,8 +1405,18 @@ export function EditBookingPanel({
         typeof data?.promoChangeNotApplied?.message === "string"
           ? (data.promoChangeNotApplied.message as string)
           : null;
+
+      // BOTH are set before either return, and the two conditions are evaluated
+      // together rather than as a chain of early exits. The save cannot produce
+      // both today — a parked edit re-runs no cap, so it has no coverage split
+      // to report — but an early return on the first would silently swallow the
+      // second if that ever changed, which is the exact class of bug this whole
+      // change exists to remove.
+      if (holdForCoverage) setSavedPromoCoverage(savedCoverageMessage);
       if (savedPromoChangeMessage) {
         setSavedPromoChangeNotApplied(savedPromoChangeMessage);
+      }
+      if (holdForCoverage || savedPromoChangeMessage) {
         router.refresh();
         return;
       }
