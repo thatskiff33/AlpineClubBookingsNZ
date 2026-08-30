@@ -7,6 +7,7 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 import type { BookingPaymentRecord } from "./xero-booking-repair-types";
+import { isEditReviewChargeRequestRow } from "@/lib/edit-financial-review-charge-shape";
 
 interface RepairPaymentTransaction {
   kind: PaymentTransactionKind;
@@ -194,4 +195,85 @@ export function getOutstandingCapturedRefundAmountCents(
   return getCapturedRepairTransactions(payment).reduce((sum, transaction) => {
     return sum + Math.max(transaction.amountCents - transaction.refundedAmountCents, 0);
   }, 0);
+}
+
+
+/**
+ * HOW A REPAIRED FINANCIAL-REVIEW INVOICE MUST TREAT PAYMENT (#3187).
+ *
+ * `enqueueXeroSupplementaryInvoiceOperation` defaults `recordPayment` to TRUE,
+ * because its original caller captured the member's card BEFORE queueing. That
+ * default is wrong for a completed financial review, and wrong in the dangerous
+ * direction: on the internet-banking route the supplementary invoice IS the ask
+ * and nothing has been paid, so recording a Stripe bank payment against it would
+ * assert money the club does not hold and quietly break bank reconciliation.
+ * Queueing a repair invoice that lies about payment is worse than queueing none.
+ *
+ * So the plan is derived the way the live settlement derives it
+ * (`xero-booking-edit-settlement.ts` -> `recordPayment: requiresAdditionalStripePayment
+ * ? Boolean(waitForPaymentIntentId) : false`), from the ONE ledger row that is
+ * this edit's combined charge request:
+ *
+ *   * NO request row - the internet-banking route, or an intent that was never
+ *     minted. Raise the invoice UNPAID.
+ *   * A CAPTURED request - the member has paid. Record the payment, and do not
+ *     wait for a confirmation that has already happened; a `WAITING_PAYMENT`
+ *     operation queued after its own release ran would never be released.
+ *   * An OUTSTANDING request with an intent - the ordinary card arrangement.
+ *     Park the invoice on that intent, exactly as the live path does.
+ *   * An OUTSTANDING request with NO intent - nothing to park on, so raise it
+ *     unpaid and let an operator record the payment when the card clears. The
+ *     live path refuses to queue at all here; a repair run that has found the
+ *     invoice missing is later and better informed, and an unpaid invoice is
+ *     recoverable where a false payment is not.
+ */
+export type EditReviewChargeInvoicePaymentPlan = {
+  recordPayment: boolean;
+  waitForConfirmedAdditionalPayment: boolean;
+  paymentIntentId: string | null;
+};
+
+export function planEditReviewChargeInvoicePayment(
+  payment: BookingPaymentRecord | null | undefined,
+  bookingModificationId: string
+): EditReviewChargeInvoicePaymentPlan {
+  // Newest first, matching `findEditReviewChargeRequest`'s own
+  // `orderBy: { createdAt: "desc" }` rather than trusting the select's order.
+  const request =
+    (payment?.transactions ?? [])
+      .filter((transaction) =>
+        isEditReviewChargeRequestRow(transaction, bookingModificationId)
+      )
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ??
+    null;
+
+  if (!request) {
+    return {
+      recordPayment: false,
+      waitForConfirmedAdditionalPayment: false,
+      paymentIntentId: null,
+    };
+  }
+
+  if (isCapturedRepairPaymentStatus(request.status)) {
+    return {
+      recordPayment: true,
+      waitForConfirmedAdditionalPayment: false,
+      paymentIntentId: request.stripePaymentIntentId,
+    };
+  }
+
+  if (request.stripePaymentIntentId) {
+    return {
+      recordPayment: true,
+      waitForConfirmedAdditionalPayment: true,
+      paymentIntentId: request.stripePaymentIntentId,
+    };
+  }
+
+  return {
+    recordPayment: false,
+    waitForConfirmedAdditionalPayment: false,
+    paymentIntentId: null,
+  };
 }

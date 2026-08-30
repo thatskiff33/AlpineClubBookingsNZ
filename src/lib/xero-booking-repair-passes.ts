@@ -319,15 +319,46 @@ async function applyQueuedAction(
       return;
     }
     case "QUEUE_SUPPLEMENTARY_INVOICE": {
-      const result = await deps.enqueueXeroSupplementaryInvoiceOperation({
-        bookingId: String(action.payload.bookingId),
-        bookingModificationId:
-          typeof action.payload.bookingModificationId === "string"
-            ? action.payload.bookingModificationId
-            : undefined,
-        priceDiffCents: Number(action.payload.priceDiffCents),
-        changeFeeCents: Number(action.payload.changeFeeCents),
-      });
+      /**
+       * #3187: the payment half of the ask travels WITH it.
+       *
+       * The enqueue defaults `recordPayment` to true, which is right for the
+       * arm this action was built for - an ordinary price increase whose card
+       * was captured before the invoice was queued - and wrong for a booking
+       * edit priced by a completed financial review, where the invoice may BE
+       * the unpaid ask. The classifier decides that from the ledger
+       * (`planEditReviewChargeInvoicePayment`) and puts its answer on the
+       * payload; an action carrying no answer keeps the enqueue's own defaults,
+       * so nothing the tool already repaired changes behaviour.
+       */
+      const recordPayment =
+        typeof action.payload.recordPayment === "boolean"
+          ? action.payload.recordPayment
+          : undefined;
+      const waitForConfirmedAdditionalPayment =
+        typeof action.payload.waitForConfirmedAdditionalPayment === "boolean"
+          ? action.payload.waitForConfirmedAdditionalPayment
+          : undefined;
+      const paymentIntentId =
+        typeof action.payload.paymentIntentId === "string"
+          ? action.payload.paymentIntentId
+          : undefined;
+      const result = await deps.enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId: String(action.payload.bookingId),
+          bookingModificationId:
+            typeof action.payload.bookingModificationId === "string"
+              ? action.payload.bookingModificationId
+              : undefined,
+          priceDiffCents: Number(action.payload.priceDiffCents),
+          changeFeeCents: Number(action.payload.changeFeeCents),
+        },
+        {
+          recordPayment,
+          waitForConfirmedAdditionalPayment,
+          paymentIntentId,
+        }
+      );
       action.status = result.queueOperationId ? "queued" : "skipped";
       action.resultMessage = result.message;
       return;
