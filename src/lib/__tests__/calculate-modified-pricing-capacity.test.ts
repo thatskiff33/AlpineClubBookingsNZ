@@ -613,6 +613,71 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     ).toEqual([RATE, RATE]);
     expect(occurrences[0].storedEvidence.guestTotalCents).toBe(1001);
   });
+
+  it("still checks capacity for an edit it cannot price, and refuses when the beds are not there (#3170)", async () => {
+    // #3170 turned this branch from a refusal into a PARK: the structural change
+    // now commits. That makes the capacity check load-bearing here for the first
+    // time — beds are not money, and an edit that puts people in the lodge on
+    // nights nobody has checked would overbook it. The planner used to return
+    // the review verdict before the capacity block ran, which was safe only
+    // while the edit was then thrown away.
+    h.checkCapacityForGuestRanges.mockResolvedValue(OVER_CAPACITY);
+
+    const drifted = sparseArgs(RATE);
+    await expect(
+      calculateModifiedPricing(NO_DISCOUNT_TX, {
+        ...drifted,
+        booking: {
+          ...(drifted.booking as unknown as {
+            guests: Array<{ priceCents: number }>;
+          }),
+          guests: [
+            {
+              ...(drifted.booking as unknown as {
+                guests: Array<Record<string, unknown>>;
+              }).guests[0],
+              priceCents: 1001,
+            },
+          ],
+        } as never,
+      }),
+    ).rejects.toThrow(/Not enough beds available/);
+
+    // The control, and it is what makes the assertion above mean something: the
+    // capacity resolver was asked about THE PARKED PLAN's ranges, not skipped
+    // and not asked about the booking's stored ones.
+    expect(h.checkCapacityForGuestRanges).toHaveBeenCalledTimes(1);
+  });
+
+  it("parks the same edit when the beds ARE there", async () => {
+    // The other half of the pair. Without it, the case above would also pass on
+    // a planner that had started refusing every unpriceable edit outright again.
+    h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
+
+    const drifted = sparseArgs(RATE);
+    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, {
+      ...drifted,
+      booking: {
+        ...(drifted.booking as unknown as {
+          guests: Array<{ priceCents: number }>;
+        }),
+        guests: [
+          {
+            ...(drifted.booking as unknown as {
+              guests: Array<Record<string, unknown>>;
+            }).guests[0],
+            priceCents: 1001,
+          },
+        ],
+      } as never,
+    });
+
+    expect(result.kind).toBe("financial_review_required");
+    if (result.kind !== "financial_review_required") return;
+    // And it comes back with the beds, so the caller can commit the structural
+    // half — which is the whole difference between parking and refusing.
+    expect(result.parkedPlan.proposedExistingGuests).toHaveLength(1);
+  });
 });
 
 // #2743: an edit sells only the nights it creates. The sparse suite asserts that
