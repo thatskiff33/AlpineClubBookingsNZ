@@ -817,6 +817,23 @@ saying which it is:
   sweep later. If the same booking keeps reporting this, the retry itself has
   stopped making progress — that is the thing to investigate.
 
+  **Read this before you re-run the sweep, because the answer changes once the
+  retry gives up.** The retry is not infinite. When it exhausts its attempts it
+  is marked failed, an admin payment-failure alert is raised, and nothing will
+  replay it. At that point this tool stops deferring: the same booking now
+  reports `MISSING_SUPPLEMENTARY_INVOICE` at **critical** severity, safe to
+  auto-apply — and applying it queues an invoice for the settled total with **no
+  payment recorded and no card request behind it**. The member is left holding a
+  Xero receivable they were never asked for and cannot pay through this
+  application; someone has to collect it another way (internet banking, or a
+  fresh ask) and record the payment against that invoice by hand.
+
+  That is the deliberate choice, and it is the right way round: an unpaid
+  invoice can be collected, where an invoice falsely marked paid quietly
+  overstates the Stripe clearing account and stops anyone chasing the money. But
+  it is the operator's call to understand before running `--apply` on a booking
+  whose retry has failed, not a repair that finishes the job on its own.
+
 Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.

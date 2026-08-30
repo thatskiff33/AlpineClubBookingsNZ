@@ -446,6 +446,23 @@ export function classifyBookingContext(
               editReviewPaymentPlan.reason === "capture-short-of-ask"
                 ? "A completed financial review priced this booking edit above what the member's card actually took, and no supplementary Xero invoice exists - the difference is owed outside any invoice, so raise it by hand."
                 : "A completed financial review priced this booking edit as money owed, but its card request has not been raised yet and its recovery is still owed - no supplementary Xero invoice can be raised until that replay runs.";
+            /**
+             * TWO PARKED EDITS ON ONE BOOKING, hitting the same reason, COLLAPSE
+             * to one action, and that is a deliberate choice rather than an
+             * oversight (#3187 fix round, nit).
+             *
+             * `buildManualReviewAction` keys on the booking and the reason text,
+             * and these two summaries carry no modification id - so a booking
+             * with two parked edits both short of their ask produces one action
+             * for both. Nothing is LOST: each edit still raises its own finding
+             * carrying its own `modificationId`, and `MARK_MANUAL_REVIEW` does
+             * nothing when applied, so the only cost is that the action COUNT
+             * under-reports while the finding count does not. Left as it is
+             * because it is the convention every other manual-review arm in this
+             * file already follows, including the amount-mismatch arm below;
+             * making this one arm's key unique would be a second convention for
+             * a counter, which is a worse trade than the counter.
+             */
             const manualAction = addAction(
               actionMap,
               buildManualReviewAction(booking.id, summary)

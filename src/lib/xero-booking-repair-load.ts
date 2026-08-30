@@ -56,6 +56,26 @@ type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
  * way, so a terminal row must not hold the repair tool off forever. SUCCEEDED
  * means the intent exists, and the request row it minted answers the question
  * on its own.
+ *
+ * WHAT "NOT FOREVER" COSTS, stated rather than implied (#3187 fix round). Once
+ * the row is FAILED this tool stops deferring and will queue the invoice
+ * UNPAID, and completing it closes the anchor: there is no `WAITING_PAYMENT`
+ * row left, so `releaseXeroSupplementaryInvoiceOperationsForPaymentIntent` has
+ * nothing to act on ever again. If a LATER share is then settled on the same
+ * edit and its mint succeeds, a live PaymentIntent exists against an invoice
+ * that was raised unpaid and has already been sent - the member can pay the
+ * card while Xero reads unpaid permanently and the Stripe clearing account
+ * stays short.
+ *
+ * That is accepted, not solved, and it is accepted because the alternative is
+ * deferring the repair of every failed mint forever - permanent silence on
+ * money that is genuinely owed. It is also VISIBLE rather than silent since
+ * #3181: the later share's own dispatch finds the existing anchor, the enqueue
+ * returns `short` rather than queueing a second invoice, and
+ * `recordShortEditReviewChargeInvoice` writes the durable audit row an officer
+ * can find. Visible is not fixed; an operator who applies this arm on a booking
+ * whose retry has failed is taking on a receivable to collect and record by
+ * hand, which `docs/MAINTENANCE.md` says in the operator's own words.
  */
 const OPEN_PAYMENT_RECOVERY_STATUSES = [
   PaymentRecoveryOperationStatus.PENDING,
