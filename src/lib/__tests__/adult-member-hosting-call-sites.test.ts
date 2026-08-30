@@ -1,12 +1,14 @@
 // #2569 — the hosting policy's call sites, read off the real source files.
 //
-// ENFORCES INV-HOST-020 and INV-HOST-030
-// (`docs/invariants/adult-member-hosting.md`), both of which name this file:
+// ENFORCES INV-HOST-020, INV-HOST-030 and INV-HOST-043
+// (`docs/invariants/adult-member-hosting.md`), all of which name this file:
 // INV-HOST-020 pins the school/organisation REVIEW_ONLY exemption to one site
-// tree-wide, and INV-HOST-030 asserts who uses each confirming seam and that no
-// confirming write uses neither. The census assertions for those two repeat the
-// id in their failure message, so whoever trips one is handed the rule rather
-// than having to go and find it (#2691).
+// tree-wide, INV-HOST-030 asserts who uses each confirming seam and that no
+// confirming write uses neither, and INV-HOST-043 (#3037) pins Group Trip
+// identity to the two authoritative columns and keeps the container's status
+// out of the coverage sets. The census assertions for those repeat the id in
+// their failure message, so whoever trips one is handed the rule rather than
+// having to go and find it (#2691).
 //
 // WHY STRUCTURAL AND NOT BEHAVIOURAL. Four of this issue's requirements are claims
 // about a SET OF FILES rather than about an answer, and a behavioural test of the
@@ -41,6 +43,19 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+import {
+  ADULT_MEMBER_HOST_SCOPES,
+  type AdultMemberHostScope,
+} from "@/lib/booking-policy-exceptions";
+import {
+  ADULT_MEMBER_HOST_SCOPE_DESCRIPTIONS,
+  ADULT_MEMBER_HOST_SCOPE_LABELS,
+  DEFAULT_ADULT_MEMBER_HOST_SCOPES,
+  hostScopeEnabled,
+  type AdultMemberHostScopeSet,
+} from "@/lib/policies/adult-member-hosting";
 
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -82,11 +97,14 @@ function readRepoCode(relativePath: string): string {
   const key = relativePath.split(path.sep).join("/");
   const cached = repoCodeCache.get(key);
   if (cached !== undefined) return cached;
-  const code = readRepoFile(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  // THE SHARED STRIPPER, not a local one (#3132/#3155, `INV-SSOT-001`). This
+  // file used to blank block comments with a regex and then drop whole lines
+  // beginning `//` or `*`, which misses a TRAILING comment on a line of code —
+  // so a census asserting an identifier is absent could be satisfied by, or
+  // tripped by, prose sitting after real code. Seventeen scanners were converged
+  // onto `stripComments` for exactly that reason and a fresh copy regresses it;
+  // four of the assertions below are new instruments, so they converge too.
+  const code = stripComments(readRepoFile(relativePath));
   repoCodeCache.set(key, code);
   return code;
 }
@@ -207,6 +225,10 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
     expect(declared).toEqual([
       "hostScopeSameBooking",
       "hostScopeSameBookingOwner",
+      // #3037 (epic #2943). Read off the schema and asserted here as well, so
+      // adding a scope column without threading it through the loader's select
+      // fails at the one place that can see both.
+      "hostScopeSameGroupTrip",
     ]);
 
     const loader = readRepoCode("src/lib/adult-member-hosting-review.ts");
@@ -223,6 +245,217 @@ describe("one authoritative evaluator and one resolver (#2569 §6, §7)", () => 
       .map((match) => match[1])
       .sort();
     expect(selected).toEqual(declared);
+  });
+
+  it("selects the same host-scope columns in every other narrowed policy read", () => {
+    // The assertion above pins the ONE loader every booking write path goes
+    // through. It is not the only narrowed read of this table, and the other
+    // three fail in quieter ways than a booking write does: a missing column in
+    // the reconciliation projection makes a scope-only policy edit queue no
+    // re-evaluation at all (both sides of the before/after comparison read "did
+    // not decide"), one in config transfer exports a scope set that is not the
+    // stored one, and one in the public booking-rules read publishes a sentence
+    // describing a rule the club is not applying. None of the three is a
+    // typecheck error, for the same `Pick<PrismaClient, ...>` reason.
+    const schema = readRepoFile("prisma/schema.prisma");
+    const declared = [
+      ...new Set(
+        [...schema.matchAll(/^\s*(hostScope\w+)\s+Boolean\?/gm)].map(
+          (match) => match[1],
+        ),
+      ),
+    ].sort();
+
+    // Matched over the WHOLE comment-stripped file rather than a sliced window,
+    // and de-duplicated. Each of these files holds exactly one narrowed read of
+    // this table, and a window delimited by the next `},` is not robust here:
+    // the public-content read carries a ternary `where` whose own braces close
+    // before the select begins, so a window-based sweep silently found nothing
+    // and the assertion passed on an empty list. A whole-file set states the
+    // claim that matters — this file names exactly the declared scope columns,
+    // no fewer (a quiet wrong answer) and none that the schema has dropped (a
+    // runtime Prisma validation failure).
+    for (const file of [
+      "src/lib/adult-member-hosting-policy-reconciliation.ts",
+      "src/lib/config-transfer/categories/adult-member-hosting.ts",
+      "src/lib/public-page-content-tokens.ts",
+    ]) {
+      const source = readRepoCode(file);
+      const selected = [
+        ...new Set(
+          [...source.matchAll(/(hostScope\w+):\s*true/g)].map(
+            (match) => match[1],
+          ),
+        ),
+      ].sort();
+      expect(selected, file).toEqual(declared);
+    }
+  });
+});
+
+describe("canonical Group Trip identity (#3037, epic #2943)", () => {
+  // The owner's contract names the two authoritative columns and forbids one
+  // other by name, and both halves are structural claims a behavioural test of
+  // today's call sites cannot make: it passes just as green the day a new site
+  // resolves grouping from the wrong relationship.
+
+  it("DEFINES Group Trip identity in exactly one module, and lets anyone call it", () => {
+    // Every later child of the epic - the cross-booking evaluator (#3038), the
+    // reconciliation writers (#3039) and the kiosk/admin payloads (#3040) -
+    // consumes this one definition. A second resolver would give identical
+    // answers right up to the day the two disagree about a joined booking whose
+    // container was closed, which is the exact case the contract calls out.
+    //
+    // ONE DEFINITION IS THE CLAIM; one CALLER is not, and asserting the latter
+    // is what this census used to do. Today `group-trip-identity.ts` is the only
+    // file that names these functions simply because nothing calls them yet, so
+    // the assertion was vacuous — and worse than vacuous, because #3038's first
+    // legitimate call would have red-lighted a guard that had never proved
+    // anything. Pinning the `export function` sites states the real rule and
+    // leaves the callers free.
+    for (const definition of [
+      "export function groupTripIdentityOf(",
+      "export function groupTripIdentityForJoin(",
+      "export function groupTripMembershipWhere(",
+      "export function groupTripCoverageSourceWhere(",
+      "export function groupTripCoverageDependentWhere(",
+    ]) {
+      expect(
+        sourceFilesNaming(definition),
+        `INV-HOST-043 (docs/invariants/adult-member-hosting.md): ` +
+          `${definition}…) belongs to src/lib/group-trip-identity.ts and ` +
+          "nowhere else. A second definition gives identical answers right up " +
+          "to the day the two disagree about a joined booking whose container " +
+          "was closed.",
+      ).toEqual(["src/lib/group-trip-identity.ts"]);
+    }
+    // And nowhere else builds the MEMBERSHIP FILTER by hand. Pinning the bare
+    // relation names would be the wrong instrument: `group-booking.ts` and the
+    // booking detail page legitimately select `groupBookingAsOrganiser` for the
+    // organiser card, and neither is resolving hosting identity. What a second
+    // copy would have to spell is the group-id filter on the join relation, so
+    // that is what is pinned.
+    expect(sourceFilesNaming("groupBookingJoin: { is: { groupBookingId:")).toEqual(
+      ["src/lib/group-trip-identity.ts"],
+    );
+  });
+
+  it("names relations and fields the schema really declares", () => {
+    // THE CLAIM `GROUP_TRIP_IDENTITY_SELECT`'s docblock makes, which until now
+    // nothing checked. Prisma does NOT typecheck `select` keys through the
+    // hand-written `Pick<PrismaClient, ...>` interfaces the hosting paths use, so
+    // a relation or column name that drifts from the schema is a RUNTIME
+    // validation failure on a booking write path with a green typecheck — and
+    // the identity test pins the constant against a copy of itself, which cannot
+    // see that drift at all. This reads the schema.
+    const schema = readRepoFile("prisma/schema.prisma");
+
+    // The two relations the select traverses, on Booking.
+    expect(schema).toMatch(
+      /^\s*groupBookingAsOrganiser\s+GroupBooking\?/m,
+    );
+    expect(schema).toMatch(/^\s*groupBookingJoin\s+GroupBookingJoin\?/m);
+
+    // The two fields it reads through them: GroupBooking.id, and the join row's
+    // own groupBookingId. `GroupBookingJoin.bookingId` is what makes the join
+    // side resolvable at all, so it is pinned here too even though the select
+    // does not name it.
+    const model = (name: string) => {
+      const start = schema.indexOf(`model ${name} {`);
+      expect(start, name).toBeGreaterThan(-1);
+      return schema.slice(start, schema.indexOf("\n}", start));
+    };
+    expect(model("GroupBooking")).toMatch(/^\s*id\s+String\s+@id/m);
+    expect(model("GroupBookingJoin")).toMatch(/^\s*groupBookingId\s+String/m);
+    expect(model("GroupBookingJoin")).toMatch(/^\s*bookingId\s+String\?/m);
+
+    // And the forbidden identity source really is a Booking column, so the
+    // guard below is refusing something that exists rather than a typo.
+    expect(model("Booking")).toMatch(/^\s*parentBookingId\s+String\?/m);
+  });
+
+  it("never resolves Group Trip identity from parentBookingId", () => {
+    // `Booking.parentBookingId` is the #738 split-booking relationship. It is
+    // neither necessary nor sufficient for Group Trip membership - two bookings
+    // in one Group Trip have no such link, and a split pair in no Group Trip has
+    // one - so reading grouping off it produces a sibling set that is wrong in
+    // both directions. The module that owns group identity must not name it.
+    const identity = readRepoCode("src/lib/group-trip-identity.ts");
+    expect(
+      identity,
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): Group Trip " +
+        "identity is GroupBooking.organiserBookingId and " +
+        "GroupBookingJoin.bookingId. Booking.parentBookingId is the #738 " +
+        "split-booking relationship — neither necessary nor sufficient — so " +
+        "reading grouping off it produces a sibling set wrong in both directions.",
+    ).not.toContain("parentBookingId");
+    // And the canonical columns really are the two the contract names.
+    expect(identity).toContain("groupBookingAsOrganiser");
+    expect(identity).toContain("groupBookingJoin");
+  });
+
+  it("keeps the group container's status out of the whole identity module", () => {
+    // A CLOSED or CANCELLED GroupBooking governs JOINING, not cover: a still-live
+    // individual booking can hold an adult who is genuinely travelling with the
+    // party, so filtering the source or dependent set on container status would
+    // silently strip cover from compliant bookings and silently drop bookings
+    // that still need reconciling. Whether a booking is really happening is
+    // decided on `Booking.status`, through the canonical lifecycle helper.
+    //
+    // TWO WAYS THIS GUARD USED TO BE A FALSE GREEN, both fixed here.
+    //
+    // It matched `/groupBooking\s*:\s*\{[^}]*status/`, and no relation in this
+    // schema is called `groupBooking`: they are `groupBookingAsOrganiser` and
+    // `groupBookingJoin`, neither of which that pattern can match, because
+    // `groupBooking` is immediately followed by a letter rather than a colon. A
+    // real container-status filter written the way Prisma requires passed it.
+    //
+    // And it sliced the file from `groupTripCoverageSourceWhere` downwards,
+    // which sits BELOW `groupTripMembershipWhere` — the one builder both
+    // coverage sets compose. A container-status gate added there, which would
+    // have poisoned both, was not scanned at all.
+    //
+    // The claim is stronger and simpler than either: the identity module names
+    // no status of any kind. It cannot, now that the lifecycle question belongs
+    // entirely to the shared coverage envelope, so anything reintroducing one —
+    // under any relation name, in any builder, in any helper — trips this.
+    const containerStatusRule =
+      "INV-HOST-043 (docs/invariants/adult-member-hosting.md): " +
+      "GroupBooking.status governs JOINING, not cover. A still-live individual " +
+      "booking can hold an adult who is genuinely travelling with the party, so " +
+      "filtering either coverage set on the container's status strips cover " +
+      "from compliant bookings and drops bookings that still need reconciling. " +
+      "Whether a booking is really happening is decided on Booking.status, " +
+      "through the shared coverage envelope.";
+    const identity = readRepoCode("src/lib/group-trip-identity.ts");
+    expect(identity, containerStatusRule).not.toMatch(/status/i);
+    expect(identity, containerStatusRule).not.toContain("GroupBookingStatus");
+    expect(identity, containerStatusRule).not.toContain("CANCELLED");
+    // The lifecycle filter is delegated rather than dropped: both builders go
+    // through the shared envelope, which reads `Booking.status` off the
+    // canonical helper. Without this the assertion above would also pass on a
+    // module that had simply stopped filtering by booking status at all.
+    expect(identity).toContain("coverageEnvelopeWhere(");
+    expect(identity).toContain("coverageDependentEnvelopeWhere(");
+
+    // And the envelope itself is about bookings, never about containers, so the
+    // rule cannot be reintroduced one module along either.
+    const envelope = readRepoCode(
+      "src/lib/adult-member-hosting-coverage-envelope.ts",
+    );
+    expect(envelope).not.toContain("groupBooking");
+    expect(envelope).not.toContain("GroupBooking");
+    expect(envelope).toContain("hostingCoverageSourceBookingFilter(");
+  });
+
+  it("never selects the group joinCode", () => {
+    // The group's join credential. The epic's privacy contract keeps it out of
+    // every payload and every tier, and identity resolution has no use for it -
+    // so the module that every consumer reads group identity through must not
+    // put it within reach of one.
+    expect(readRepoCode("src/lib/group-trip-identity.ts")).not.toContain(
+      "joinCode",
+    );
   });
 });
 
@@ -1193,5 +1426,111 @@ describe("the participant fence stays switched ON where a suite claims it (#2623
         "returns first) while every test stays green — the #2675 bypass, " +
         "restored by one word. Use ENFORCED or ADMIN_REVIEW_REQUIRED.",
     ).toEqual([]);
+  });
+});
+
+
+describe("the settings card and the evaluator use one set of words (#2576 §12)", () => {
+  // THE GUARD THE COMPONENT'S OWN DOCBLOCK PROMISED, which did not exist. It
+  // said "the route tests assert the two agree"; nothing did, and the card
+  // therefore carried a free-standing second copy of every scope label and
+  // description. That is exactly the drift `INV-SSOT-002` is about: the words an
+  // admin ticks a box against would stop matching the words the config-transfer
+  // guide and the officer-facing surfaces use, and no test anywhere would care.
+  //
+  // Importing the constants into the component is genuinely blocked — it is a
+  // client component and `policies/adult-member-hosting.ts` imports a Prisma
+  // VALUE, which cannot cross into the browser bundle. So the copy stays and is
+  // POLICED, which is the weaker of the two `INV-SSOT` options and is used here
+  // only because the stronger one is unavailable.
+
+  const CARD = "src/components/admin/booking-policies/adult-member-hosting-section.tsx";
+
+  /**
+   * A `Record<key, "string">` literal from the card, as a map.
+   *
+   * Parsed off disk rather than imported because the constants are module-local
+   * to a client component. Comment-stripped first, so a label quoted in prose
+   * cannot satisfy the assertion — the failure mode a raw-text scanner has in
+   * this repository, where defects are documented at the site that removed them.
+   */
+  function cardRecord(name: string): Record<string, string> {
+    const source = readRepoCode(CARD);
+    const start = source.indexOf(`const ${name}`);
+    expect(start, name).toBeGreaterThan(-1);
+    const open = source.indexOf("{", source.indexOf("=", start));
+    const close = source.indexOf("\n}", open);
+    expect(close, name).toBeGreaterThan(open);
+    const body = source.slice(open + 1, close);
+    const entries: Record<string, string> = {};
+    for (const match of body.matchAll(
+      // The join between literals is REQUIRED here, not optional. Written as
+      // `(?:"..."\s*\+?\s*)+` the repeated group can match a bare `""`, so a run
+      // of adjacent literals gives the engine several ways to divide the same
+      // text and it backtracks exponentially — CodeQL js/redos, high severity,
+      // raised against this line. This form reads one literal, then zero or more
+      // genuinely-joined literals: unambiguous, one parse or none. It matches the
+      // same strings. Worth fixing even in a test, because this census reads
+      // every file in the tree, so a pathological one would hang CI rather than
+      // fail it.
+      /(\w+):\s*("(?:[^"\\]|\\.)*"(?:\s*\+\s*"(?:[^"\\]|\\.)*")*),/g,
+    )) {
+      entries[match[1]] = match[2]
+        .split(/"\s*\+\s*"/)
+        .join("")
+        .replace(/^"|"$/g, "")
+        .replace(/\\"/g, '"');
+    }
+    return entries;
+  }
+
+  /**
+   * The scope-set FIELD that switches on `scope`, derived rather than hand-listed.
+   *
+   * `hostScopeEnabled`'s switch is exhaustive over the scope union, so turning
+   * one field on at a time and asking which scope it enables recovers the
+   * pairing without a second mapping for somebody to forget. A hand-written map
+   * here would be the very duplication this block exists to refuse.
+   */
+  const allOff = Object.fromEntries(
+    Object.keys(DEFAULT_ADULT_MEMBER_HOST_SCOPES).map((key) => [key, false]),
+  ) as unknown as AdultMemberHostScopeSet;
+
+  function fieldFor(scope: AdultMemberHostScope): string {
+    const fields = Object.keys(allOff).filter((key) =>
+      hostScopeEnabled({ ...allOff, [key]: true } as AdultMemberHostScopeSet, scope),
+    );
+    expect(fields, scope).toHaveLength(1);
+    return fields[0];
+  }
+
+  it("shows every scope the evaluator has, and no others", () => {
+    const expected = ADULT_MEMBER_HOST_SCOPES.map(fieldFor).sort();
+    expect(Object.keys(cardRecord("HOST_SCOPE_LABELS")).sort()).toEqual(expected);
+    expect(Object.keys(cardRecord("HOST_SCOPE_DESCRIPTIONS")).sort()).toEqual(
+      expected,
+    );
+    // The render order is a separate literal and has to stay total too, or a new
+    // scope is saveable through the API and invisible on the card.
+    const order = readRepoCode(CARD).slice(
+      readRepoCode(CARD).indexOf("const HOST_SCOPE_ORDER"),
+    );
+    for (const scope of ADULT_MEMBER_HOST_SCOPES) {
+      expect(order.slice(0, order.indexOf("] as const")), scope).toContain(
+        `"${fieldFor(scope)}"`,
+      );
+    }
+  });
+
+  it("uses the evaluator's exact label and description for each scope", () => {
+    const labels = cardRecord("HOST_SCOPE_LABELS");
+    const descriptions = cardRecord("HOST_SCOPE_DESCRIPTIONS");
+    for (const scope of ADULT_MEMBER_HOST_SCOPES) {
+      const field = fieldFor(scope);
+      expect(labels[field], scope).toBe(ADULT_MEMBER_HOST_SCOPE_LABELS[scope]);
+      expect(descriptions[field], scope).toBe(
+        ADULT_MEMBER_HOST_SCOPE_DESCRIPTIONS[scope],
+      );
+    }
   });
 });

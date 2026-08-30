@@ -218,6 +218,7 @@ export async function loadAdultMemberHostingPolicy(
       // selected set against the schema for that reason.
       hostScopeSameBooking: true,
       hostScopeSameBookingOwner: true,
+      hostScopeSameGroupTrip: true,
     },
   });
   return resolveAdultMemberHostingPolicy(rows, effectiveLodgeId);

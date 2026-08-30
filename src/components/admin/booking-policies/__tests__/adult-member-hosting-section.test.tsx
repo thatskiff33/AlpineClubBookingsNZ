@@ -315,8 +315,63 @@ describe("adult-member hosting settings card (#2364)", () => {
     expect(JSON.parse(String(put[1]!.body))).toEqual({
       mode: "ADMIN_REVIEW_REQUIRED",
       capacityMode: "HOLD",
-      hostScopes: { sameBooking: true, sameBookingOwner: true },
+      // #3037. The card sends the COMPLETE set, including the scope it did not
+      // tick. Omitting it would leave the route to interpret silence, which is
+      // the guess this card avoids one field higher up by sending `null` rather
+      // than omitting `hostScopes` for the inherit option.
+      hostScopes: {
+        sameBooking: true,
+        sameBookingOwner: true,
+        sameGroupTrip: false,
+      },
       version: 4,
+    });
+  });
+
+  it("offers Group Trip coverage as a third independent, off-by-default box (#3037)", async () => {
+    const fetchMock = await renderWith(async (url, init) => {
+      if (init?.method === "PUT") {
+        return json({
+          ...CONFIGURED_CLUB,
+          hostScopes: {
+            sameBooking: true,
+            sameBookingOwner: false,
+            sameGroupTrip: true,
+          },
+          version: 5,
+        });
+      }
+      return json(CONFIGURED_CLUB);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    const groupTrip = screen.getByLabelText(
+      /Another booking in the same Group Trip/,
+    ) as HTMLInputElement;
+    // Off, and inert while the scope inherits — the same two-step the other
+    // boxes follow, so an admin cannot enable cross-account cover by accident.
+    expect(groupTrip.checked).toBe(false);
+    expect(groupTrip.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/Adult members who count/), {
+      target: { value: "CUSTOM" },
+    });
+    expect(groupTrip.disabled).toBe(false);
+    // It is genuinely independent: ticking it alone is a valid, saveable set.
+    fireEvent.click(
+      screen.getByLabelText(/Eligible adult member on the same booking/),
+    );
+    fireEvent.click(groupTrip);
+    fireEvent.click(screen.getByRole("button", { name: /Save Hosting Policy/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Adult-member hosting policy saved/)).toBeTruthy(),
+    );
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+    expect(JSON.parse(String(put[1]!.body)).hostScopes).toEqual({
+      sameBooking: false,
+      sameBookingOwner: false,
+      sameGroupTrip: true,
     });
   });
 

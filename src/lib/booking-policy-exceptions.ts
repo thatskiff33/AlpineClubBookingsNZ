@@ -134,10 +134,22 @@ export type QualifyingHostsForNight = {
  *    the same night (#2576). One account's own split bookings covering each other,
  *    and nothing wider: not `createdById`, not a shared email, not a Family Group
  *    link, not `parentBookingId` alone, and never another account's booking.
+ *  - `SAME_GROUP_TRIP` — an eligible adult member attending another eligible
+ *    booking in the SAME GROUP TRIP, at the same lodge on the same night (#3037,
+ *    epic #2943). The first scope that can cross accounts, which is why it is
+ *    OFF by default and why the identity it turns on is narrow and canonical:
+ *    `GroupBooking.organiserBookingId` and `GroupBookingJoin.bookingId`, resolved
+ *    in one place (`group-trip-identity.ts`) and NEVER `Booking.parentBookingId`,
+ *    which is a different relationship and would produce wrong sibling sets.
  *
- * TWO SCOPES, AND THESE TWO (owner decisions, 3 Aug 2026). The spec named three,
- * and both of the others were settled out of the product model before any of them
- * shipped:
+ * APPENDED, NEVER REORDERED. This list is iterated to sort `coveredByScopes` and
+ * `enabledHostScopes` onto a frozen violation snapshot, and two evaluations of the
+ * same facts must produce byte-identical snapshots — so inserting a value ahead of
+ * an existing one would rewrite the bytes of snapshots nobody edited.
+ *
+ * THREE SCOPES NOW; TWO OF THE ORIGINAL SPEC'S ARE STILL REMOVED (owner decisions,
+ * 3 Aug 2026). The #2569 spec named three and both of the others were settled out
+ * of the product model before any of them shipped:
  *
  *  - `ANY_MEMBER_AT_LODGE` is REMOVED (#2575). Letting one booking become
  *    compliant because an unrelated adult member happens to be staying at the same
@@ -151,7 +163,10 @@ export type QualifyingHostsForNight = {
  * Neither is deferred or dormant: there is deliberately no hidden, refused or
  * reserved value for either anywhere in the database or the application, so a
  * future lane cannot switch one on by editing a registry. Rebuilding either would
- * mean re-deciding it.
+ * mean re-deciding it. `SAME_GROUP_TRIP` is not a revival of either: it is not
+ * "any member at the lodge" (an unrelated member at the same lodge still supplies
+ * nothing) and it is not a nomination workflow (there is no invitation, acceptance
+ * or host search — the Group Trip already exists as a real, joined relationship).
  *
  * Declared here, beside the violation shape that reports them, so the evaluator,
  * the policy row, the admin route and the frozen snapshot all name one list.
@@ -159,6 +174,7 @@ export type QualifyingHostsForNight = {
 export const ADULT_MEMBER_HOST_SCOPES = [
   "SAME_BOOKING",
   "SAME_BOOKING_OWNER",
+  "SAME_GROUP_TRIP",
 ] as const;
 
 export type AdultMemberHostScope = (typeof ADULT_MEMBER_HOST_SCOPES)[number];

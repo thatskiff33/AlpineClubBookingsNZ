@@ -5,6 +5,7 @@ import { clubToday, dateOnlyInstantOf, requireCalendarDate } from "@/lib/club-ti
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
 import { eachDateOnlyInRange, formatDateOnly } from "@/lib/date-only";
 import {
+  enabledHostScopeList,
   resolveAdultMemberHostingPolicy,
   type ResolvedAdultMemberHostingPolicy,
 } from "@/lib/policies/adult-member-hosting";
@@ -24,6 +25,11 @@ export const HOSTING_POLICY_RECONCILIATION_SELECT = {
   version: true,
   hostScopeSameBooking: true,
   hostScopeSameBookingOwner: true,
+  // #3037. A policy edit that only turns Group Trip cover on or off still changes
+  // which bookings are compliant, so it has to reach `incidentPolicyChanged` — an
+  // omitted column here would read as "this row did not decide" on BOTH sides of
+  // the before/after comparison and the edit would queue no re-evaluation at all.
+  hostScopeSameGroupTrip: true,
 } as const;
 
 export type HostingPolicyReconciliationSnapshot = {
@@ -35,6 +41,7 @@ export type HostingPolicyReconciliationSnapshot = {
   version: number;
   hostScopeSameBooking: boolean | null;
   hostScopeSameBookingOwner: boolean | null;
+  hostScopeSameGroupTrip: boolean | null;
 };
 
 type HostingPolicyReconciliationDb = Pick<
@@ -57,10 +64,18 @@ function incidentPolicyChanged(
 ): boolean {
   const before = incidentMaterialPolicy(beforeRows, lodgeId);
   const after = incidentMaterialPolicy(afterRows, lodgeId);
+  // THE WHOLE SCOPE SET, COMPARED AS A SET (#3037). This used to name the two
+  // #2569 booleans one at a time, and a third scope therefore arrived silently
+  // invisible: an admin who toggled ONLY Group Trip cover got a correct write and
+  // a correct version bump and ZERO queue rows, so no incident opened, refreshed
+  // or closed under the rule they had just changed. `enabledHostScopeList`
+  // filters `ADULT_MEMBER_HOST_SCOPES` in its own fixed order, so the joined
+  // lists are equal exactly when the enabled sets are, and a fourth scope is
+  // compared here the day it is added rather than the day somebody remembers.
   return (
     before.mode !== after.mode ||
-    before.hostScopes.sameBooking !== after.hostScopes.sameBooking ||
-    before.hostScopes.sameBookingOwner !== after.hostScopes.sameBookingOwner
+    enabledHostScopeList(before.hostScopes).join(",") !==
+      enabledHostScopeList(after.hostScopes).join(",")
   );
 }
 

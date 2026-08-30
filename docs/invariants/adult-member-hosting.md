@@ -697,3 +697,64 @@ compliant indefinitely.
   somebody reasoning about the other one, both reads order by `checkIn` then `id` so
   the truncation is reproducible rather than whatever 25 rows Postgres returned, and
   `warnIfCoverageDependentCeilingBound` logs owner and lodge when it binds.
+
+## Optional Group Trip cover (#3037, epic #2943)
+
+### INV-HOST-041
+
+- **`SAME_GROUP_TRIP` is a third, optional host scope, and it is OFF unless a
+  club turns it on.** It is APPENDED to `ADULT_MEMBER_HOST_SCOPES` and never
+  inserted ahead of an existing value: `enabledHostScopeList` iterates that
+  constant to sort `coveredByScopes` and `enabledHostScopes` onto frozen
+  violation snapshots, so a reordering would rewrite the bytes of snapshots
+  nobody edited and reopen decided reviews. The built-in default is unchanged —
+  same-booking only — so a club that upgrades and changes nothing gets
+  byte-identical answers, including the member-facing sentence and the material
+  identity key. Enforced by `src/lib/__tests__/group-trip-identity.test.ts`,
+  whose failure messages carry this id.
+
+### INV-HOST-042
+
+- **The Group Trip column is deliberately NOT part of the all-or-none scope
+  CHECK, and NULL on a decided row means OFF rather than inherit.**
+  `INV-HOST-014` binds `hostScopeSameBooking` and `hostScopeSameBookingOwner` to
+  all-null or all-set; `hostScopeSameGroupTrip` is bound only to "never set on a
+  row that did not decide the pair". Widening the all-or-none rule to three
+  columns would refuse a draining previous colour's policy INSERT, which names
+  only the two columns it knows, and a backfill cannot help because it fixes the
+  rows that exist rather than the ones the old colour is still writing. So
+  `rowHasHostScopes` tests the pair alone and `rowHostScopes` reads the third
+  column with `=== true`: a row written before this migration, or by the previous
+  colour during a deploy, keeps the scope set it decided with Group Trip cover
+  simply off. The weaker CHECK is the best rule available, not a complete one:
+  an old-colour UPDATE that returns a row the new colour had decided to
+  "inherit" nulls only the pair, leaves the Group Trip column set beneath it and
+  is refused with 23514. No constraint tying the column to the pair can avoid
+  that, it fails closed on one row rather than half-writing a policy, and the
+  only UPDATE-safe alternative — no constraint at all — readmits the shape that
+  has no reading. Enforced by `src/lib/__tests__/group-trip-identity.test.ts`
+  (the decided-row-with-NULL case) and by the config-transfer suite, which pins
+  that a legacy decided row does not round-trip as a spurious change.
+
+### INV-HOST-043
+
+- **Group Trip identity is `GroupBooking.organiserBookingId` and
+  `GroupBookingJoin.bookingId`, resolved in one module, and the container's own
+  status governs joining rather than cover.** `src/lib/group-trip-identity.ts` is
+  the single home, and `Booking.parentBookingId` is forbidden as an identity
+  source: it is the #738 split-booking relationship, neither necessary nor
+  sufficient for Group Trip membership, so reading grouping off it produces a
+  sibling set that is wrong in both directions. `GroupBooking.status`
+  (`OPEN`/`CLOSED`/`CANCELLED`) decides whether new bookings may join; a CLOSED
+  container is the normal state of a settled party and a cancelled container does
+  not cancel the joiners' own bookings, so filtering the source or dependent set
+  on it would strip cover from live compliant bookings and drop bookings that
+  still need reconciling. Whether a booking is really happening stays a question
+  about `Booking.status`. Identity is also available PRE-PERSIST for a join —
+  `groupTripIdentityForJoin` takes it from the container the joiner redeemed a
+  code for — because both join paths must answer the hosting rule before the
+  `Booking` row exists. The separate paid-up-adult lockout
+  (`PAID_UP_ADULT_MEMBER_REQUIRED`) remains per-booking and is not widened across
+  a Group Trip. Enforced structurally by
+  `src/lib/__tests__/adult-member-hosting-call-sites.test.ts` and
+  `src/lib/__tests__/group-trip-identity.test.ts`.
