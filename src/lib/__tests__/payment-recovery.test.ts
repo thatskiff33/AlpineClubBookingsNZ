@@ -39,6 +39,7 @@ const {
   mockCompleteDeferredSupplementaryInvoice,
   mockRecordShortEditReviewChargeInvoice,
   mockRecordUncollectedEditReviewChargeShare,
+  settlementModuleLoadFailure,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
   mockPaymentRecoveryFindUnique: vi.fn(),
@@ -85,6 +86,15 @@ const {
     .mockResolvedValue("covers-total"),
   mockRecordShortEditReviewChargeInvoice: vi.fn().mockResolvedValue(false),
   mockRecordUncollectedEditReviewChargeShare: vi.fn().mockResolvedValue(undefined),
+  /**
+   * #3181 fix round: arms a failure to LOAD the settlement module, as distinct
+   * from a failure of the call inside it. The worker reaches that module through
+   * `await import`, and an import can throw - a module whose own top level
+   * throws, a build that cannot resolve the chunk. Read through a getter on the
+   * mocked namespace so the throw lands on the same destructuring line the worker
+   * really executes, which is the line that used to sit outside the `try`.
+   */
+  settlementModuleLoadFailure: { current: null as Error | null },
 }));
 
 /**
@@ -166,8 +176,13 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
  * not on the paths that should not.
  */
 vi.mock("@/lib/xero-booking-edit-settlement", () => ({
-  completeDeferredXeroSupplementaryInvoice: (...args: unknown[]) =>
-    mockCompleteDeferredSupplementaryInvoice(...args),
+  get completeDeferredXeroSupplementaryInvoice() {
+    if (settlementModuleLoadFailure.current) {
+      throw settlementModuleLoadFailure.current;
+    }
+    return (...args: unknown[]) =>
+      mockCompleteDeferredSupplementaryInvoice(...args);
+  },
 }));
 
 vi.mock("@/lib/edit-financial-review-charge-request", () => ({
@@ -260,6 +275,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
 describe("payment recovery worker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    settlementModuleLoadFailure.current = null;
     mockPaymentRecoveryFindMany.mockImplementation(
       (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
         // resetStaleProcessingOperations queries for exhausted PROCESSING rows.
@@ -2102,6 +2118,71 @@ describe("payment recovery worker", () => {
         expect(result.succeeded).toBe(1);
         expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
       });
+
+      /**
+       * #3181 fix round: THE MODIFICATION READ HAPPENS WHERE A THROW IS STILL A
+       * RETRY, and this test is about WHERE, not about whether.
+       *
+       * Reading the edit's signed components is a plain database query, and a
+       * plain database query can fail transiently. Below the
+       * `upsertPaymentIntentTransaction` that throw is unrecoverable in the exact
+       * way this file's docblock spells out: the ADDITIONAL row now exists, so on
+       * the next pass the "a LATER edit superseded this one" check finds the row
+       * THIS replay wrote, reads it as a supersession, and completes the
+       * operation having done nothing at all. A $50 guest add collected with no
+       * invoice behind it, and a recovery row reading SUCCEEDED.
+       *
+       * So the read is hoisted above the mint, and the two assertions below are
+       * what pin it there: the operation is left retryable, and NOTHING has been
+       * written that a retry would trip over. Move the read back down and the
+       * second assertion fails, because the transaction is written before the
+       * read that throws.
+       */
+      it("retries without writing anything when the modification read fails", async () => {
+        primeQueue(additionalIntentOperation());
+        mockPaymentFindUnique.mockResolvedValue(paymentWithIssuedInvoice());
+        mockBookingModificationFindUnique.mockRejectedValueOnce(
+          new Error("database connection reset"),
+        );
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ succeeded: 0, retried: 1, failed: 0 });
+        // Nothing a second pass could mistake for a later edit's collectable.
+        expect(mockUpsertPaymentIntentTransaction).not.toHaveBeenCalled();
+        // And no provider round trip paid for on the way to the failure.
+        expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+      });
+
+      /**
+       * #3181 fix round: A MODULE THAT FAILS TO LOAD IS A FAILURE TO QUEUE, not
+       * an escape hatch out of this worker.
+       *
+       * The settlement module is reached through `await import`, and that line
+       * used to sit OUTSIDE the `try` whose `catch` turns a failed enqueue into a
+       * recorded one. An import throws like anything else - a chunk that will not
+       * resolve, a module whose own top level fails - and the throw escaped into
+       * `failPaymentRecoveryOperation`, buying the retry the docblock explains
+       * cannot work. The operation must close on its actual job (the intent, which
+       * was minted) with the invoice recorded as unraised.
+       */
+      it("still closes the operation when the settlement module cannot be loaded", async () => {
+        primeQueue(additionalIntentOperation());
+        mockPaymentFindUnique.mockResolvedValue(paymentWithIssuedInvoice());
+        settlementModuleLoadFailure.current = new Error(
+          "Cannot find module '@/lib/xero-booking-edit-settlement'",
+        );
+
+        const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+        expect(result).toMatchObject({ succeeded: 1, retried: 0, failed: 0 });
+        expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledTimes(1);
+        expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: { paymentIntentId: "pi_recovered" },
+          }),
+        );
+      });
     });
 
     it("enqueues exactly one recovery row per booking modification", async () => {
@@ -2780,11 +2861,22 @@ describe("edit-financial-review charge recovery (#3170)", () => {
   });
 
   /**
-   * The same trace for the other way of raising nothing: a row enqueued before
-   * the edit's answer was recorded is not guessed at, and silence about a charge
-   * the member has been asked for is exactly what this issue removed.
+   * The same trace for the other way of raising nothing, UNDER A DIFFERENT CAUSE,
+   * and the difference is the point (#3181 delta review).
+   *
+   * A row enqueued before the edit's answer was recorded is not guessed at, and
+   * silence about a charge the member has been asked for is exactly what this
+   * issue removed - but the two silences are not the same fact. `ask-not-raised`
+   * tells an officer, in the audit body, that no invoice could be raised and to
+   * raise one by hand. That is right when an invoice was owed and the queue
+   * refused it. It is WRONG here: a NULL row is the club saying it cannot tell
+   * whether an invoice was owed, and on a booking whose primary Xero invoice had
+   * not been minted when the edit committed that invoice bills the charge itself
+   * - so a hand-raised supplementary is a second ask for the same money.
+   * `ask-owed-unknown` says that, and names the booking-vs-Xero repair pass as
+   * the instrument that can actually answer it.
    */
-  it("records the unraised invoice when the edit's answer was never recorded", async () => {
+  it("records the unraised invoice under an unknown-owing cause when the edit's answer was never recorded", async () => {
     const operation = chargeOperation({ hadIssuedXeroInvoice: null });
     mockPaymentRecoveryFindUnique.mockResolvedValue(operation);
     mockPaymentRecoveryFindMany.mockImplementation(
@@ -2800,7 +2892,29 @@ describe("edit-financial-review charge recovery (#3170)", () => {
 
     expect(mockCompleteDeferredSupplementaryInvoice).not.toHaveBeenCalled();
     expect(mockRecordUncollectedEditReviewChargeShare).toHaveBeenCalledWith(
-      expect.objectContaining({ cause: "ask-not-raised", derivedTotalCents: 23000 }),
+      expect.objectContaining({
+        cause: "ask-owed-unknown",
+        derivedTotalCents: 23000,
+      }),
+    );
+  });
+
+  /**
+   * CONTROL for that split: the enqueue THROWING still files `ask-not-raised`.
+   * An invoice was owed - the row froze `hadIssuedXeroInvoice: true` - and the
+   * queue refused it, so raising one by hand is the right instruction and the
+   * cause that carries it is the right cause. Without this control, collapsing
+   * both outcomes onto `ask-owed-unknown` would pass the test above.
+   */
+  it("still records a throw under the invoice-was-owed cause", async () => {
+    mockCompleteDeferredSupplementaryInvoice.mockRejectedValueOnce(
+      new Error("outbox unavailable"),
+    );
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockRecordUncollectedEditReviewChargeShare).toHaveBeenCalledWith(
+      expect.objectContaining({ cause: "ask-not-raised" }),
     );
   });
 
