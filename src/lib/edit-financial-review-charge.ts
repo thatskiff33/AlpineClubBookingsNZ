@@ -479,6 +479,11 @@ export async function syncEditFinancialReviewChargeRequest({
       // this repository is the audit log. Written before the return, so the
       // trace exists whether or not anybody is watching a log stream.
       await recordUncollectedEditReviewChargeShare({
+        // The CARD leg: the member's additional PaymentIntent is paid, so the
+        // share could not be added to it. The accounting leg has its own window
+        // and its own call, and the `leg` is what tells the two apart in the
+        // audit list.
+        leg: "payment-request",
         bookingId,
         bookingModificationId,
         memberId: member?.id ?? null,

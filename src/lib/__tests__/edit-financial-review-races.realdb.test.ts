@@ -15,6 +15,15 @@
  *     status-guarded `updateMany` on `OPEN`. Whether that really excludes a
  *     concurrent completion is a question about row locks and READ COMMITTED
  *     re-evaluation, which only a real server answers.
+ *  3. **One booking edit sends exactly ONE supplementary Xero invoice** (#3170).
+ *     Two officers settling the two review tasks of one edit both derive a total
+ *     and both reach `enqueueXeroSupplementaryInvoiceOperation`; the per-anchor
+ *     `pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'),
+ *     hashtext(<anchor>))` is what makes the second FIND the first's operation
+ *     and raise it instead of queueing a rival. A unit test with a pass-through
+ *     `$transaction` double proves the lock STATEMENT was issued and the lookup
+ *     shape was right; it cannot prove two settlements serialise, which is the
+ *     property that stops the member being billed twice for one edit.
  *
  * ## Both proofs are FORCED, not raced
  *
@@ -55,6 +64,13 @@ const LODGE_ID = "race-3032-lodge";
 const BOOKING_ID = "race-3032-booking";
 const GUEST_ID = "race-3032-guest";
 const MODIFICATION_ID = "race-3032-modification";
+/**
+ * #3170: the supplementary-invoice enqueue refuses a booking with no primary
+ * Xero invoice, so this suite's booking needs a real `Payment` carrying one.
+ * Namespaced like everything else here, because the scratch database is shared.
+ */
+const PAYMENT_ID = "race-3032-payment";
+const XERO_INVOICE_ID = "race-3032-xero-invoice";
 
 /**
  * Fixed stay dates. The frozen test clock pins "today" at 2026-07-01, so these
@@ -202,6 +218,13 @@ let observerClient: PrismaClient;
           ],
         },
       });
+      // #3170: the supplementary-invoice enqueue writes `XeroSyncOperation` rows
+      // under a partial unique index on the correlation key. Leaving one behind
+      // would make the NEXT run of the enqueue case find it and skip the write it
+      // exists to force - a race proof that passes vacuously.
+      await prisma.xeroSyncOperation.deleteMany({
+        where: { localId: { in: [MODIFICATION_ID, BOOKING_ID] } },
+      });
     }
 
     /** Every fixture row this suite owns, deepest child first. */
@@ -210,6 +233,7 @@ let observerClient: PrismaClient;
       await prisma.bookingModification.deleteMany({
         where: { id: MODIFICATION_ID },
       });
+      await prisma.payment.deleteMany({ where: { id: PAYMENT_ID } });
       await prisma.bookingGuest.deleteMany({ where: { id: GUEST_ID } });
       await prisma.booking.deleteMany({ where: { id: BOOKING_ID } });
       await prisma.lodge.deleteMany({ where: { id: LODGE_ID } });
@@ -349,6 +373,28 @@ let observerClient: PrismaClient;
           modificationType: "BATCH_MODIFY",
           previousData: {},
           newData: {},
+        },
+      });
+      // #3170: carries the ISSUED primary invoice the supplementary one
+      // supplements. Without it the enqueue returns "no original Xero invoice"
+      // and the lock case below would prove nothing.
+      //
+      // PENDING, and that is load-bearing twice over. It is the honest shape of
+      // the route this issue's charge direction exists for - an internet-banking
+      // booking whose invoice is out and unpaid, where the supplementary invoice
+      // IS the ask. And it keeps `hasCapturedPayment` false, so the two
+      // completion cases above still take the account-credit route they were
+      // written against: a SUCCEEDED payment here gives the credit an
+      // `allocateAgainstPaymentId` with no captured transactions behind it, and
+      // both of those proofs fail on a cap that has nothing to do with them.
+      await prisma.payment.create({
+        data: {
+          id: PAYMENT_ID,
+          bookingId: BOOKING_ID,
+          amountCents: 20000,
+          status: "PENDING",
+          source: "INTERNET_BANKING",
+          xeroInvoiceId: XERO_INVOICE_ID,
         },
       });
     }, 60_000);
@@ -555,6 +601,123 @@ let observerClient: PrismaClient;
       expect(credits[0].amountCents).toBe(4500);
       expect(credits[0].memberId).toBe(MEMBER_ID);
       expect(credits[0].type).toBe("BOOKING_MODIFICATION_REFUND");
+    });
+
+    /**
+     * #3170 FIX ROUND: THE PER-ANCHOR LOCK REALLY SERIALISES TWO SETTLEMENTS.
+     *
+     * The failure it closes lost real money rather than merely duplicating work.
+     * Two officers settle the two review tasks of ONE edit; both derive a combined
+     * total, both reach the enqueue, both find nothing queued for the anchor, and
+     * both queue - and because the queued-operation lookup used to dedupe on a
+     * `correlationKey` BUILT FROM THE AMOUNT, $200 and $230 were two different
+     * keys and neither found the other. `createXeroSupplementaryInvoice` has no
+     * active-link guard of its own and its provider idempotency key also embeds
+     * the amount, so that is two Xero invoices to the member totalling $430 for a
+     * $230 edit.
+     *
+     * FORCED, not raced, exactly like the two cases above: a third connection
+     * holds the production key and both enqueues are proven queued behind it
+     * before it is released.
+     */
+    it("FORCES the two-settlement interleaving: two enqueues of ONE edit queue on the per-anchor key and produce exactly one invoice", async () => {
+      await clearReviewRunState();
+
+      const { enqueueXeroSupplementaryInvoiceOperation } = await import(
+        "@/lib/xero-operation-outbox"
+      );
+
+      const lockHeld = deferred();
+      const releaseLock = deferred();
+      let holderPid = 0;
+      let holderError: unknown;
+
+      // The production key, spelled the way the module spells it. A literal here
+      // rather than an import is deliberate: this is the assertion that the
+      // NAMESPACE and the ANCHOR are what the enqueue contends on, so computing
+      // it from the same constant the code uses would make it agree with itself.
+      const holder = lockHolderClient
+        .$transaction(
+          async (tx) => {
+            const rows = await tx.$queryRaw<
+              Array<{ pid: number }>
+            >`SELECT pg_backend_pid()::int AS pid`;
+            holderPid = rows[0]?.pid ?? 0;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(${MODIFICATION_ID}))`;
+            lockHeld.resolve();
+            await releaseLock.promise;
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        )
+        .catch((error: unknown) => {
+          holderError = error;
+          lockHeld.resolve();
+        });
+      await lockHeld.promise;
+      if (holderError) {
+        throw new Error(
+          `The lock-holder connection could not hold the supplementary-invoice key: ${String(holderError)}`,
+        );
+      }
+
+      // The two officers' settlements, at $200 and at the $230 combined total.
+      // DIFFERENT AMOUNTS on purpose: identical ones would be deduped by the
+      // amount-derived correlation key alone, so a passing test would prove
+      // nothing about the lock or the anchor-scoped lookup.
+      const enqueue = (priceDiffCents: number) =>
+        enqueueXeroSupplementaryInvoiceOperation({
+          bookingId: BOOKING_ID,
+          bookingModificationId: MODIFICATION_ID,
+          priceDiffCents,
+          changeFeeCents: 0,
+        });
+
+      const first = enqueue(20000);
+      const second = enqueue(23000);
+
+      await waitForBlockedBy(
+        holderPid,
+        2,
+        "Neither settlement queued on the per-anchor supplementary-invoice key, so the enqueue's " +
+          "link-check -> queued-check -> write is no longer serialised and ONE booking edit could send the member " +
+          "TWO Xero invoices (docs/CONCURRENCY_AND_LOCKING.md, INV-PAY).",
+      );
+
+      releaseLock.resolve();
+      await holder;
+
+      const results = await Promise.all([first, second]);
+
+      // Exactly ONE operation, found by both.
+      const operations = await prisma.xeroSyncOperation.findMany({
+        where: {
+          localModel: "BookingModification",
+          localId: MODIFICATION_ID,
+          queueType: "SUPPLEMENTARY_INVOICE",
+        },
+        select: { id: true, status: true, requestPayload: true },
+      });
+      expect(operations).toHaveLength(1);
+      expect(new Set(results.map((result) => result.queueOperationId)).size).toBe(
+        1,
+      );
+      expect(results[0].queueOperationId).toBe(operations[0].id);
+
+      // And it bills the LARGER total, whichever settlement got the lock first:
+      // the loser either raises the winner's operation to $230, or is the stale
+      // $200 that must not lower a $230 ask.
+      const payload = operations[0].requestPayload as {
+        priceDiffCents: number;
+        changeFeeCents: number;
+      };
+      expect(payload.priceDiffCents + payload.changeFeeCents).toBe(23000);
+
+      // Both callers are told the ask covers what they asked for, so neither
+      // records a shortfall the club does not actually have.
+      expect(results.map((result) => result.outcome)).toEqual([
+        "covers-total",
+        "covers-total",
+      ]);
     });
 
     it("a replay of a COMPLETED occurrence reopens nothing and issues no second credit", async () => {

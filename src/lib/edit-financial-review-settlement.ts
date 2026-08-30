@@ -16,7 +16,10 @@ import {
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
-import { restateEditReviewChargeSupplementaryInvoice } from "@/lib/edit-financial-review-charge-request";
+import {
+  recordUncollectedEditReviewChargeShare,
+  restateEditReviewChargeSupplementaryInvoice,
+} from "@/lib/edit-financial-review-charge-request";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -626,6 +629,8 @@ export async function executeEditReviewSettlement({
   // how the Xero leg lost the second $30 - a second invoice for an anchor that
   // already has an active one is refused quietly, not raised.
   const xeroAmountCents = isCharge ? chargeTotalCents : amountCents;
+  const chargeMemberId =
+    route?.kind === "additional-charge" ? (route.member?.id ?? null) : null;
   if (xeroAnchorId && xeroAmountCents) {
     // Restate the invoice this edit ALREADY has queued rather than queueing a
     // second. Nothing to restate is the FIRST share's answer, and the enqueue
@@ -641,6 +646,23 @@ export async function executeEditReviewSettlement({
     ) {
       return { stripeRefundId, additionalPaymentIntentId };
     }
+    /**
+     * FIRE-AND-FORGET, BUT NOT FIRE-AND-FORGET-THE-ANSWER (#3170 fix round, F2).
+     *
+     * The dispatch stays off the request's critical path - a Xero outage must
+     * never undo a completion whose money question is already settled - but its
+     * RESULT is now read instead of discarded. `supplementaryInvoice: "short"`
+     * means this edit's invoice had already been claimed for sending, or already
+     * sent, so the enqueue correctly refused to queue a second one behind it and
+     * the combined total is NOT what will be billed.
+     *
+     * That is the accounting twin of the card leg's already-paid race, and until
+     * now it was the quieter of the two: the card side wrote an audit row, while
+     * the accounting side produced nothing at all - not even a log line, because
+     * the enqueue's message returned into a discarded call. On the
+     * internet-banking route the supplementary invoice IS the ask, so "quiet"
+     * meant a settled share that no invoice and no record ever mentioned.
+     */
     void queueXeroBookingEditSettlement({
       bookingId,
       bookingModificationId: xeroAnchorId,
@@ -676,12 +698,28 @@ export async function executeEditReviewSettlement({
       requiresAdditionalStripePayment:
         isCharge && route.collectVia === "stripe",
       additionalPaymentIntentId,
-    }).catch((err) =>
-      logger.error(
-        { err, bookingId, taskId },
-        "Failed to queue Xero settlement for a completed edit financial review",
-      ),
-    );
+    })
+      .then(async (queued) => {
+        if (!isCharge || queued.supplementaryInvoice !== "short") return;
+        await recordUncollectedEditReviewChargeShare({
+          leg: "xero-invoice",
+          bookingId,
+          bookingModificationId: xeroAnchorId,
+          memberId: chargeMemberId,
+          derivedTotalCents: xeroAmountCents,
+          // Unknowable by design: the outbox handler overwrites the operation's
+          // payload with the Xero invoice body when it sends, so the figure the
+          // invoice actually bills is no longer on the row. The record says
+          // "short of this total" rather than inventing the difference.
+          requestedTotalCents: null,
+        });
+      })
+      .catch((err) =>
+        logger.error(
+          { err, bookingId, taskId },
+          "Failed to queue Xero settlement for a completed edit financial review",
+        ),
+      );
   } else if (route && hasIssuedXeroInvoice) {
     // An edit-review completion that moved money on a booking with an issued
     // invoice but carries no anchor to correct it against. The card,

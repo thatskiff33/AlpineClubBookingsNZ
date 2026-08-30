@@ -149,7 +149,12 @@ beforeEach(() => {
   });
   mocks.enqueueEditFinancialReviewRefundRecovery.mockResolvedValue({ id: "rec-1" });
   mocks.markEditFinancialReviewRefundRecoverySucceeded.mockResolvedValue({ count: 1 });
-  mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
+  // The real dispatcher answers with the classification PLUS what the accounting
+  // ask did about it (#3170 fix round, F2). Every fixture here is a REFUND, which
+  // queues a credit note rather than a supplementary invoice.
+  mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+    supplementaryInvoice: "none",
+  });
 });
 
 describe("resolveManualRefundTask", () => {

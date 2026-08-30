@@ -15,6 +15,7 @@ import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-con
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
+import { formatCents } from "@/lib/utils";
 import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-outbox";
 
 /**
@@ -240,39 +241,84 @@ export async function restateEditReviewChargeSupplementaryInvoice({
 }
 
 /**
+ * WHICH ASK a settled share failed to join. There are two, they fail in
+ * different windows, and an officer reading the audit log has to be told which
+ * one so they know what to do next.
+ *
+ *   * `payment-request` - the card side. The member's additional PaymentIntent
+ *     was already PAID when this share arrived, so the amount could not be added
+ *     to it. The member owes the club the difference.
+ *   * `xero-invoice` - the accounting side. This edit's supplementary invoice had
+ *     already been claimed for sending, or already sent, so it bills the earlier
+ *     figure. On the internet-banking route that invoice IS the ask, so this is
+ *     money the club has not asked for; on the card route the card request is
+ *     correct and it is the books that are short.
+ */
+export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
+
+/**
  * The durable, officer-findable record that a settled share could not be added to
  * this edit's request.
  *
- * #3170 fix round (F5). `logger.warn` is not a queue: nobody goes looking through
- * a log stream for money the club is owed. The audit log is the record an officer
- * can actually find, and it is where every other money decision on this booking
- * already is.
+ * #3170 fix round (F5, widened in F2). `logger.warn` is not a queue: nobody goes
+ * looking through a log stream for money the club is owed. The audit log is the
+ * record an officer can actually find, and it is where every other money decision
+ * on this booking already is.
+ *
+ * ONE WRITE SITE FOR BOTH LEGS, deliberately. The card race and the accounting
+ * race are the same fact about the same edit - a settled share that met an ask it
+ * could not join - and splitting them would put the same money story in two
+ * shapes an officer has to learn separately. The `leg` chooses the prose; the
+ * action, category and severity are one answer.
+ *
+ * THE FIGURE IS IN THE PROSE, not only in the metadata. Audit prose is what an
+ * officer reads in the list, and a summary saying "an amount" over a metadata
+ * blob saying which one is a record they have to open twice.
  *
  * Best-effort and never rethrown: a settlement whose money question is already
  * answered must not be undone because an audit insert failed. The log line stays
  * as the second line.
  */
 export async function recordUncollectedEditReviewChargeShare({
+  leg,
   bookingId,
   bookingModificationId,
   memberId,
   derivedTotalCents,
   requestedTotalCents,
 }: {
+  leg: UncollectedEditReviewChargeLeg;
   bookingId: string;
   bookingModificationId: string;
   memberId: string | null;
   derivedTotalCents: number;
-  requestedTotalCents: number;
+  /**
+   * What the ask actually holds, when that is knowable.
+   *
+   * The card leg reads it straight off the `ADDITIONAL` ledger row. The
+   * accounting leg CANNOT: `createXeroSupplementaryInvoice` overwrites the
+   * operation's `requestPayload` with the Xero invoice body at dispatch, so once
+   * the row has been claimed the amount it was queued with is gone. Null says
+   * "short by an amount this record cannot state" rather than inventing one -
+   * the same refusal to guess a figure the whole epic is built on.
+   */
+  requestedTotalCents: number | null;
 }) {
+  const shortfallCents =
+    requestedTotalCents === null
+      ? null
+      : Math.max(derivedTotalCents - requestedTotalCents, 0);
   logger.warn(
     {
+      leg,
       bookingId,
       bookingModificationId,
       derivedTotalCents,
       requestedTotalCents,
     },
-    "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
+    leg === "payment-request"
+      ? "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand"
+      : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
   );
   try {
     await createAuditLog({
@@ -285,19 +331,24 @@ export async function recordUncollectedEditReviewChargeShare({
       severity: "important",
       outcome: "failure",
       summary:
-        "A settled review share could not be added to this booking change's payment request",
+        leg === "payment-request"
+          ? `A settled review share of ${formatCents(shortfallCents ?? derivedTotalCents)} could not be added to this booking change's payment request`
+          : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
-        "An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so the extra amount was not added to it. Collect this amount another way and record what was collected.",
+        leg === "payment-request"
+          ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
+          : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
       metadata: {
+        leg,
         bookingModificationId,
         derivedTotalCents,
         requestedTotalCents,
-        uncollectedCents: Math.max(derivedTotalCents - requestedTotalCents, 0),
+        uncollectedCents: shortfallCents,
       },
     });
   } catch (err) {
     logger.error(
-      { err, bookingId, bookingModificationId },
+      { err, leg, bookingId, bookingModificationId },
       "Failed to record the audit trace for an uncollected edit-financial-review charge share",
     );
   }

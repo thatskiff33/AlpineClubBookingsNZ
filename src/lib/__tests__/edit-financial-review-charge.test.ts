@@ -341,8 +341,25 @@ beforeEach(() => {
     restated: 0,
     alreadyCovering: 0,
   });
-  mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
+  // The real dispatcher answers with the classification PLUS what the accounting
+  // ask actually did about it. `none` is "no supplementary invoice is involved",
+  // which is what every fixture here means unless it says otherwise.
+  mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+    supplementaryInvoice: "none",
+  });
 });
+
+/**
+ * The Xero leg is dispatched fire-and-forget, so its `.then` lands on a
+ * microtask AFTER the settlement has returned. Flushing here is what makes the
+ * assertions about it deterministic rather than dependent on how many awaits
+ * happen to follow the dispatch.
+ */
+async function flushDispatch() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("a completed review that asks the member for money (#3170)", () => {
   it("raises ONE charge, through the same additional-payment path an ordinary price increase uses", async () => {
@@ -1149,6 +1166,10 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
         outcome: "failure",
         entityId: "booking-1",
         metadata: expect.objectContaining({
+          // WHICH ask could not take the share. The accounting leg has its own
+          // window and writes the same action, so without this an officer cannot
+          // tell a card shortfall from an invoice one.
+          leg: "payment-request",
           bookingModificationId: "mod-1",
           derivedTotalCents: 23000,
           requestedTotalCents: 20000,
@@ -1156,6 +1177,14 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
         }),
       }),
     );
+    // THE FIGURE IS IN THE PROSE, not only in the metadata (#3170 fix round, nit
+    // 5). The audit list shows the summary; a row that says "an amount" makes an
+    // officer open the metadata to find out whether it matters.
+    const row = mocks.createAuditLog.mock.calls[0][0];
+    expect(row.summary).toContain("$30.00");
+    expect(row.details).toContain("$30.00");
+    expect(row.details).toContain("$230.00");
+    expect(row.details).toContain("$200.00");
   });
 
   /**
@@ -1186,5 +1215,171 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
       mocks.createModificationAdditionalPaymentIntent,
     ).not.toHaveBeenCalled();
     expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3170 FIX ROUND, F2: THE ACCOUNTING LEG LEAVES A TRACE TOO.
+ *
+ * The card leg's already-paid race wrote an audit row. Its accounting twin wrote
+ * NOTHING - not even a log line, because the enqueue's "already queued" message
+ * returned into a discarded `void queueXeroBookingEditSettlement(...)` call. On
+ * the internet-banking route the supplementary invoice IS the ask, so "nothing"
+ * meant a settled share that no invoice and no record ever mentioned: the club is
+ * owed money and nobody can find out.
+ *
+ * The window is real and it is not the one previously documented. A settlement
+ * that restates too late is refused by the status guard, correctly, and falls
+ * through to the ordinary enqueue - which finds the invoice already claimed for
+ * sending (RUNNING) or already sent, refuses to queue a second one, and reports
+ * `short`.
+ */
+describe("a share that could not join the Xero invoice (#3170 fix round, F2)", () => {
+  function settleSecondShare(overrides: Record<string, unknown> = {}) {
+    return resolveManualRefundTask({
+      taskId: "task-2",
+      resolution: "completed",
+      note: "the second strand, priced from the same rate card",
+      actingMemberId: "admin-2",
+      confirmedAmountCents: 3000,
+      direction: "CHARGE_TO_MEMBER",
+      ...overrides,
+    } as Parameters<typeof resolveManualRefundTask>[0]);
+  }
+
+  beforeEach(() => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      cardReviewTask({
+        id: "task-2",
+        reviewContext: reviewContext({
+          occurrence: {
+            ...reviewContext().occurrence,
+            bookingGuestId: "guest-2",
+          },
+        }),
+      }),
+    );
+    mocks.paymentTransactionFindFirst.mockResolvedValue(chargeRequestRow());
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare(),
+      settledShare({ id: "task-2", amountCents: 3000 }),
+    ]);
+    // Too late to restate: the outbox has the row.
+    mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
+      restated: 0,
+      alreadyCovering: 0,
+    });
+  });
+
+  it("writes the durable record when the invoice could not be raised to the total", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "short",
+    });
+
+    await settleSecondShare();
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+        category: "payment",
+        outcome: "failure",
+        entityId: "booking-1",
+        subjectMemberId: "member-1",
+        metadata: expect.objectContaining({
+          leg: "xero-invoice",
+          bookingModificationId: "mod-1",
+          derivedTotalCents: 23000,
+          // Unknowable, and said so rather than guessed: the outbox handler
+          // overwrites the operation's payload with the Xero invoice body when
+          // it sends, so what the invoice bills is no longer on the row.
+          requestedTotalCents: null,
+          uncollectedCents: null,
+        }),
+      }),
+    );
+    const row = mocks.createAuditLog.mock.calls
+      .map((call) => call[0] as { action: string; summary: string; details: string })
+      .find(
+        (entry) =>
+          entry.action === "booking.editFinancialReview.chargeShareUncollected",
+      )!;
+    expect(row.summary).toContain("$230.00");
+    // The prose has to serve BOTH routes, because the same shortfall means
+    // different things on each.
+    expect(row.details).toContain("internet banking");
+    expect(row.details).toContain("card");
+  });
+
+  /**
+   * THE CONTROL, and the reason this is not just "audit every settlement". A
+   * dispatch that raised or queued the invoice at the combined total leaves no
+   * row - if it did, the rows that mean something would be buried in the ones
+   * that do not.
+   */
+  it("writes NO such record when the invoice covers the combined total", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "covers-total",
+    });
+
+    await settleSecondShare();
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+      }),
+    );
+  });
+
+  /**
+   * A SECOND CONTROL, on the other axis. `none` means no supplementary invoice
+   * is involved at all - nothing positive to bill, or no primary invoice to
+   * supplement - so there is no ask for a share to fall short of.
+   */
+  it("writes NO such record when no supplementary invoice is involved", async () => {
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "none",
+    });
+
+    await settleSecondShare();
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+      }),
+    );
+  });
+
+  /**
+   * A THIRD CONTROL, and the one that stops this firing on the wrong direction.
+   * A REFUND settles its own amount and queues a credit note; `short` cannot
+   * describe it, and a row saying the club is owed money would be exactly
+   * backwards.
+   */
+  it("writes NO such record for a refund, whatever the dispatch reports", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(
+      refundableCardReviewTask({ id: "task-2" }),
+    );
+    mocks.planStripeRefundAllocation.mockResolvedValue({
+      slices: [{ paymentTransactionId: "ptx-1", amountCents: 3000 }],
+      totalRefundableCents: 15000000,
+    });
+    mocks.refundPaymentTransactions.mockResolvedValue({
+      refunds: [{ refundId: "re_2" }],
+    });
+    mocks.queueXeroBookingEditSettlement.mockResolvedValue({
+      supplementaryInvoice: "short",
+    });
+
+    await settleSecondShare({ direction: "REFUND_TO_MEMBER" });
+    await flushDispatch();
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+      }),
+    );
   });
 });
