@@ -362,7 +362,19 @@ function makeTx(
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
-    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
+    // #3032: `findUnique` and `create` are the raise's find-then-create pair.
+    // `findUnique` resolving null means "this occurrence is not on file", so a
+    // parked removal takes the create branch; a test that wants a REPLAY points
+    // it at an existing row instead.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve({ id: "task-raised", status: "OPEN" }),
+        ),
+    },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod-1" }) },
     // Not a quote-priced booking: no booking request holds or converted to it.
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -689,23 +701,27 @@ describe("consentAuthority grants nothing on the paths that already existed", ()
   });
 });
 
-describe("a consent removal is never blocked by unpriceable history (D-14, #3031)", () => {
-  // #3031 added an evidence gate to this function: unless EVERY strand on the
-  // booking reconciles, the removal is refused as `FINANCIAL_REVIEW_REQUIRED`
-  // rather than credited from a number nobody can support (INV-MOD-028).
+describe("an unpriceable removal parks its money instead of inventing it (#3032, D-14)", () => {
+  // WHAT CHANGED HERE, AND WHY THE OLD ASSERTIONS ARE NOT SIMPLY DELETED.
   //
-  // A CONSENT REMOVAL IS EXEMPT, and this pair is what says so. D-14 is a direct
-  // owner decision: a decline or an expiry must ALWAYS be able to take its
-  // target off the booking. Refusing one does not merely inconvenience the
-  // member, it traps them — the refusal rolls back the status-guarded claim with
-  // `consentStatus` already written terminal, and the claim requires PENDING, so
-  // nothing can retry. And because the gate judges every strand, the member
-  // would be trapped by SOMEBODY ELSE's rows.
+  // #3031 added an evidence gate to this function: unless every strand on the
+  // booking reconciles, the removal was REFUSED as `FINANCIAL_REVIEW_REQUIRED`
+  // rather than credited from a number nobody can support (INV-MOD-028). That
+  // refusal was an interim, and #3031 said so — it exempted a consent removal
+  // from the gate because owner decision D-14 says a decline or an expiry must
+  // ALWAYS be able to take its target off the booking, and left a hand-off block
+  // naming this issue as the one that parks the money.
   //
-  // Asserted DIFFERENTIALLY on one fixture, for the same reason the DRAFT case
-  // below is: the same guest, the same booking, the same unpriceable companion,
-  // going two ways according to who is asking. Nothing else in this suite would
-  // fail if the exemption were deleted.
+  // #3032 discharges it. There is no refusal on either path any more: EVERY
+  // unpriceable removal now commits structurally and raises an OPEN review task
+  // for a person to price. So the case that used to pin the 409 for an owner now
+  // pins the parking, which is the same fixture asserting the behaviour that
+  // replaced the one it was written for — and the consent cases below assert
+  // what D-14 was always about, which is that the member comes OFF.
+  //
+  // The differential is preserved and is now about the EVIDENCE rather than
+  // about the refusal: the same removal on a booking whose rows DO reconcile
+  // settles normally and raises nothing.
   function unpriceableCompanionBooking(targetConsent: ConsentStatus) {
     const booking = makeBooking({ targetConsent });
     // The companion carries money with no per-night record at all: a booking
@@ -716,7 +732,7 @@ describe("a consent removal is never blocked by unpriceable history (D-14, #3031
     return booking;
   }
 
-  it("takes a declining member off even when another guest's rows cannot be priced", async () => {
+  it("takes a declining member off, and parks the money rather than settling it", async () => {
     const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
 
     const result = await remove(tx, {
@@ -725,13 +741,51 @@ describe("a consent removal is never blocked by unpriceable history (D-14, #3031
       consentAuthority: authority("CONSENT_DECLINE"),
     });
 
+    // The structural half: the guest is off the booking. This is D-14, and it is
+    // the half that must never be held behind a pricing question.
     expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
       where: { id: TARGET_GUEST },
     });
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
+
+    // The money half: parked, not settled and not invented.
+    expect(result.financialReviewPending).toBe(true);
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
+    expect(result.financialReviewTaskIds).toEqual(["task-raised"]);
+    expect(result.priceDiffCents).toBe(0);
+    expect(result.refundAmountCents).toBe(0);
+    expect(result.accountCreditAmountCents).toBe(0);
+    expect(result.additionalAmountCents).toBe(0);
+    expect(result.xeroRefundAmountCents).toBe(0);
+    expect(result.xeroAdditionalAmountCents).toBe(0);
+
+    // The task is RAISED WITH NO AMOUNT. Null is "not yet known"; a zero here
+    // would be a financial statement the club has not made (epic #2797).
+    const raised = tx.manualRefundTask.create.mock.calls[0][0].data;
+    expect(raised.amountCents).toBeNull();
+    expect(raised.raisedAmountCents).toBeNull();
+    expect(raised.kind).toBe("EDIT_FINANCIAL_REVIEW");
+    expect(raised.status).toBe("OPEN");
+
+    // Owner decision D-3032-1: the anchor a confirmed amount settles against is
+    // THIS removal's own `BookingModification` row, carried on the context and
+    // deliberately not on the occurrence.
+    expect(raised.reviewContext.bookingModificationId).toBe("mod-1");
+    expect(raised.reviewContext.occurrence).not.toHaveProperty(
+      "bookingModificationId",
+    );
+
+    // And the booking's stored money did not move. Reducing the total would mean
+    // knowing by how much, which is the question under review.
+    const written = tx.booking.update.mock.calls[0][0].data;
+    expect(written.totalPriceCents).toBe(24000);
+    expect(written.finalPriceCents).toBe(24000);
+    // Nothing was repriced, so no remaining strand had its price overwritten.
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
+    expect(tx.payment.update).not.toHaveBeenCalled();
   });
 
-  it("lets the expiry sweep through on the same booking", async () => {
+  it("lets the expiry sweep through on the same booking, parking it the same way", async () => {
     // The sweep has no actor at all, so a refusal here would leave the row
     // PENDING-claimed-then-rolled-back for ever and hold its bed with it.
     const tx = makeTx(unpriceableCompanionBooking("EXPIRED"));
@@ -743,27 +797,57 @@ describe("a consent removal is never blocked by unpriceable history (D-14, #3031
     });
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(result.financialReviewPending).toBe(true);
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses the SAME removal on the SAME booking when the owner asks for it", async () => {
-    // The control. Without it the two cases above would pass just as well if the
-    // gate had never been added to this function at all.
+  it("parks the SAME removal on the SAME booking when the OWNER asks for it", async () => {
+    // This case used to pin the interim 409. It now pins what replaced it: an
+    // ordinary owner removal of an unpriceable booking is no longer refused, and
+    // the guest comes off exactly as they do on the consent paths above.
     const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
 
-    await expect(
-      remove(tx, { guestId: TARGET_GUEST, actorMemberId: OWNER }),
-    ).rejects.toMatchObject({
-      code: "FINANCIAL_REVIEW_REQUIRED",
-      status: 409,
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: OWNER,
     });
-    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
+      where: { id: TARGET_GUEST },
+    });
+    expect(result.financialReviewPending).toBe(true);
+    expect(result.priceDiffCents).toBe(0);
   });
 
-  it("still refuses an owner removal it CAN price, only on the money", async () => {
-    // And the other half of the control: the owner path is not refused in
-    // general. Every strand on the untouched fixture reconciles, so the same
-    // owner removal goes through — which is what makes the refusal above about
-    // the evidence rather than about the actor.
+  it("raises no second task when the same occurrence is already on file", async () => {
+    // A replay — the retried request, or a second lane that got there first. The
+    // find-then-create pair under the global lock returns the existing task, and
+    // the removal still completes rather than failing on a unique violation that
+    // would roll the structural change back with it.
+    const tx = makeTx(unpriceableCompanionBooking("DECLINED"));
+    tx.manualRefundTask.findUnique.mockResolvedValue({
+      id: "task-already-open",
+      status: "OPEN",
+    });
+
+    const result = await remove(tx, {
+      guestId: TARGET_GUEST,
+      actorMemberId: TARGET,
+      consentAuthority: authority("CONSENT_DECLINE"),
+    });
+
+    expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(result.financialReviewTaskIds).toEqual(["task-already-open"]);
+    expect(result.financialReviewPending).toBe(true);
+  });
+
+  it("settles normally, and raises nothing, when the booking CAN be priced", async () => {
+    // The control, and the whole differential. Every strand on the untouched
+    // fixture reconciles, so the same removal takes the ordinary path: the
+    // booking's total moves, and no review task is raised at all. Without this
+    // the cases above would pass just as well if the park had been made
+    // unconditional.
     const tx = makeTx(makeBooking({ targetConsent: "DECLINED" }));
 
     const result = await remove(tx, {
@@ -772,6 +856,13 @@ describe("a consent removal is never blocked by unpriceable history (D-14, #3031
     });
 
     expect(result.removedGuest.id).toBe(TARGET_GUEST);
+    expect(result.financialReviewPending).toBe(false);
+    expect(result.financialReviewTaskIds).toEqual([]);
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+    expect(result.priceDiffCents).toBeLessThan(0);
+    expect(tx.booking.update.mock.calls[0][0].data.totalPriceCents).toBeLessThan(
+      24000,
+    );
   });
 });
 

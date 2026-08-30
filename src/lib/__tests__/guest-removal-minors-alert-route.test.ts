@@ -292,7 +292,18 @@ function buildTx(
     // #3032: the pending-review fence reads this under the booking-edit locks.
     // Empty by default - no financial review is open - so every pre-#3032 test
     // asserts exactly what it asserted before.
-    manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
+    // #3032: `findUnique` and `create` are the raise's find-then-create pair on
+    // the occurrence-key index. Null means "not on file", so a parked removal
+    // takes the create branch.
+    manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve({ id: "task_1", status: "OPEN" }),
+        ),
+    },
     bookingModification: {
       create: vi.fn().mockResolvedValue({ id: "mod_1" }),
     },
@@ -376,9 +387,9 @@ beforeEach(() => {
   mocks.sendAdminMinorsOnlyReviewAlert.mockResolvedValue(undefined);
 });
 
-describe("DELETE guest removal - unpriceable stored history (#3031, epic #2797)", () => {
+describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)", () => {
   /**
-   * The gate that makes the credit exact, driven through the REAL service.
+   * The park, driven through the REAL service and the REAL route.
    *
    * A removal gives back every night the departing guest holds, so the credit is
    * historical money. This path never computed it directly: it reprices the
@@ -388,9 +399,15 @@ describe("DELETE guest removal - unpriceable stored history (#3031, epic #2797)"
    * TODAY's rate - and all of that movement was reported as the departing
    * guest's credit.
    *
-   * Disarming the gate is not visible to a source census (the symbol is still
+   * #3031 answered that by REFUSING the removal, and said in as many words that
+   * the refusal was an interim. #3032 replaces it with the epic's real answer:
+   * the removal succeeds, and the money is held as an OPEN review task. So this
+   * case now asserts a 200 where it used to assert a 409, and the substance of
+   * what it was protecting is unchanged and is asserted harder - NO MONEY MOVES.
+   *
+   * Disarming the park is not visible to a source census (the symbol is still
    * there) or to the mocked pricer beside it, so it has to be asserted on
-   * BEHAVIOUR: the route refuses, and no money moves.
+   * BEHAVIOUR.
    */
   function stripStoredNightPrices(guests: Guest[]) {
     return {
@@ -410,40 +427,121 @@ describe("DELETE guest removal - unpriceable stored history (#3031, epic #2797)"
     };
   }
 
-  it("refuses the removal, and moves no money, when no row records a price", async () => {
+  it("removes the guest and parks the money when no row records a price", async () => {
+    const tx = buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]));
     mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
-      cb(buildTx([ADULT, CHILD], stripStoredNightPrices([ADULT, CHILD]))),
+      cb(tx),
     );
 
     const res = await DELETE(makeRequest(), {
       params: Promise.resolve({ id: "b1", guestId: "g-child" }),
     });
 
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    // The machine-readable code the edit panel branches on, echoed above the
-    // generic ApiError branch that would have dropped it.
-    expect(body.code).toBe("FINANCIAL_REVIEW_REQUIRED");
-    // Member-facing wording: no estimate, no `$0`, and nothing that reads as
-    // the member's fault.
-    expect(body.error).toMatch(/nothing has been changed yet/i);
+    // The structural half committed: the request succeeded and the guest row is
+    // gone. This is the headline requirement - save the booking change.
+    expect(res.status).toBe(200);
+    expect(tx.bookingGuest.delete).toHaveBeenCalledWith({
+      where: { id: "g-child" },
+    });
 
-    // And the refusal is BEFORE any settlement: no refund, no credit, no
-    // lifecycle transition. A guessed amount that never moves is still a
-    // guessed amount, but one that moves is the failure this epic exists for.
-    expect(mocks.applyPaymentAdjustments).not.toHaveBeenCalled();
-    expect(mocks.applyLifecycleTransitions).not.toHaveBeenCalled();
-    expect(mocks.sendBookingModifiedEmail).not.toHaveBeenCalled();
+    // ONE TASK PER UNREADABLE STRAND, and this fixture has two of them: it is a
+    // whole booking predating `BookingGuestNight`, so NEITHER guest's rows can be
+    // read. That is the shape the raise commits to - the occurrence key is minted
+    // per strand, so per strand is what "exactly one" can mean idempotently, and
+    // a booking with one unreadable strand (the ordinary case) raises exactly one
+    // task. Asserted as the count it is rather than loosened to `toHaveBeenCalled`,
+    // because a change from two to one here would be a real change of behaviour.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    // Spelled out rather than inferred from the mock, whose `calls` are `any[]`:
+    // an inferred row would make every assertion below vacuously true.
+    type RaisedTaskRow = {
+      kind: string;
+      status: string;
+      amountCents: number | null;
+      raisedAmountCents: number | null;
+      occurrenceKey: string;
+      reviewContext: {
+        bookingModificationId: string | null;
+        occurrence: {
+          bookingGuestId: string;
+          surrenderedNightDates: string[];
+        };
+      };
+    };
+    const raisedRows: RaisedTaskRow[] =
+      tx.manualRefundTask.create.mock.calls.map(
+        (call: unknown[]) => (call[0] as { data: RaisedTaskRow }).data,
+      );
+    for (const raised of raisedRows) {
+      expect(raised.kind).toBe("EDIT_FINANCIAL_REVIEW");
+      expect(raised.status).toBe("OPEN");
+      // Null is "not yet known". Zero is a financial statement the club has not
+      // made, and epic #2797 rejects it by name.
+      expect(raised.amountCents).toBeNull();
+      expect(raised.raisedAmountCents).toBeNull();
+      // D-3032-1: anchored to this removal's own modification row.
+      expect(raised.reviewContext.bookingModificationId).toBe("mod_1");
+      // The anchor is deliberately NOT part of the occurrence, which is what the
+      // key is hashed from - otherwise a replay of one edit would hash
+      // differently from the first attempt and raise a second task.
+      expect(raised.reviewContext.occurrence).not.toHaveProperty(
+        "bookingModificationId",
+      );
+    }
+    // Two strands, two DIFFERENT keys - not one occurrence written twice.
+    expect(new Set(raisedRows.map((row) => row.occurrenceKey)).size).toBe(2);
+    // And exactly one of them is the guest who actually left: only their strand
+    // surrenders nights, which is the strand carrying the money.
+    const surrendering = raisedRows.filter(
+      (row) => row.reviewContext.occurrence.surrenderedNightDates.length > 0,
+    );
+    expect(surrendering).toHaveLength(1);
+    expect(surrendering[0].reviewContext.occurrence.bookingGuestId).toBe(
+      "g-child",
+    );
+
+    // AND NO MONEY MOVED. The settlement leg ran with a zero delta and no
+    // options, so there is no refund, no credit and no Xero adjustment; the
+    // provider calls the route makes after the commit were never reached.
+    expect(mocks.applyPaymentAdjustments).toHaveBeenCalledTimes(1);
+    const settled = mocks.applyPaymentAdjustments.mock.calls[0][1];
+    expect(settled.priceDiffCents).toBe(0);
+    expect(settled.changeFeeCents).toBe(0);
+    // The settlement OPTIONS were never even computed: the park skips the
+    // cancellation-policy tier outright, which is what stops a refund basis
+    // being derived from a total the review has not confirmed.
+    expect(mocks.calculateModificationSettlementOptions).not.toHaveBeenCalled();
+    // The route calls the refund and additional-charge helpers unconditionally
+    // after the commit, so the proof that nothing moves is what they are HANDED,
+    // not whether they were reached: each one short-circuits on a zero amount
+    // (`executeBookingModificationRefund` returns early on
+    // `pendingRefundAmountCents <= 0`).
+    expect(mocks.executeBookingModificationRefund).toHaveBeenCalledTimes(1);
+    const refundArgs = mocks.executeBookingModificationRefund.mock.calls[0][0];
+    expect(refundArgs.result.pendingRefundAmountCents).toBe(0);
+    expect(refundArgs.result.refundAmountCents).toBe(0);
+    expect(refundArgs.result.accountCreditAmountCents).toBe(0);
+    expect(refundArgs.result.additionalAmountCents).toBe(0);
+    expect(refundArgs.result.xeroRefundAmountCents).toBe(0);
+    expect(refundArgs.result.xeroAdditionalAmountCents).toBe(0);
+    // The booking's own stored money is untouched: reducing it would mean
+    // knowing by how much, which is the question under review.
+    const written = tx.booking.update.mock.calls[0][0].data;
+    expect(written.totalPriceCents).toBe(8000);
+    expect(written.finalPriceCents).toBe(8000);
   });
 
-  it("still removes the guest when every strand's rows reconcile", async () => {
+  it("settles normally, and raises nothing, when every strand's rows reconcile", async () => {
     // The control: the same removal on the ordinary fixture, whose rows carry
-    // what each night was sold for. Without this the case above could pass on a
-    // route that refuses everything.
+    // what each night was sold for. Without it the case above could pass on a
+    // route that parked every removal - which would be the same defect in the
+    // other direction, a club never settling anything automatically again.
     const res = await runRemoval("g-child", [ADULT, CHILD]);
 
     expect(res.status).toBe(200);
     expect(mocks.applyPaymentAdjustments).toHaveBeenCalled();
+    const settled = mocks.applyPaymentAdjustments.mock.calls[0][1];
+    expect(settled.priceDiffCents).not.toBe(0);
   });
 });
 
