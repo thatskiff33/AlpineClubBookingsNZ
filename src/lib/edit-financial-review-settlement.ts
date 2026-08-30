@@ -120,8 +120,8 @@ import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xe
  *
  *  - `stripe-refund` - the booking was paid by card, so the money goes back the
  *    way it came. `executeBookingModificationRefund` owns the provider call, its
- *    Stripe idempotency key (`${prefix}_${bookingModificationId}`) and its
- *    recovery enqueue. It writes the ledger allocation ITSELF, through
+ *    Stripe idempotency key (a TASK-scoped prefix plus the transaction id and
+ *    the amount, per refunded transaction) and its recovery enqueue. It writes the ledger allocation ITSELF, through
  *    `refundPaymentTransactions`, which is why this route writes none in the
  *    transaction - doing both would consume the refundable headroom twice.
  *  - `local-allocation` - a payment the club settles by hand (internet banking,
