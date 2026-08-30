@@ -1,24 +1,11 @@
 /**
- * THE BUILD REFUSES THIS MODULE IN A BROWSER BUNDLE (`INV-OPS-013`, #2850).
- *
- * `import "server-only"` below is not decoration. Next raises a build error the
- * moment any `"use client"` module reaches a module that carries it, at any
- * depth, and it prints the import chain — so a client component that imports
- * this file, or anything that imports this file, fails `next build` rather than
- * shipping NextAuth's configuration, `bcrypt`, the credential callbacks and the
- * database client to every visitor.
- * `scripts/ci/server-only-boundary-selftest.mjs` proves that mechanism is still
- * live by planting exactly such a component and asserting the real production
- * build refuses it.
- *
- * Its sibling `@/lib/prisma` is NOT marked, and the reason is measured rather
- * than assumed: fourteen operator CLI entrypoints statically reach it, and
- * `server-only` throws at import under plain Node, so marking it would abort
- * `npm run setup`, `npm run db:seed` and the Xero/credit repair tools. That is
- * `cli-server-only-reach-census.test.ts` (CT-5, #2869) — an invariant of this
- * repository, not an oversight. Nothing here reaches this module from a CLI
- * root (measured: zero of the census's thirty-three), which is exactly why this
- * one can be marked and that one cannot.
+ * `import "server-only"` makes the production build REFUSE this module in a
+ * browser bundle, at any depth (`INV-OPS-013`, #2850): a `"use client"` module
+ * that reaches NextAuth's configuration, `bcrypt` and the credential callbacks
+ * fails `next build` with the import chain printed.
+ * `scripts/ci/server-only-boundary-selftest.mjs` plants exactly that and proves
+ * the build still catches it. `@/lib/prisma` is deliberately NOT marked — see
+ * `docs/invariants/operations.md` → `INV-OPS-013` for the measured reason.
  */
 import "server-only";
 

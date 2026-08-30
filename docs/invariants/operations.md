@@ -239,9 +239,17 @@ rules first written here. #2765 extended it with the measured-audience half.
   `@/lib/session`, `@/lib/email`, `@/lib/xero`, `@/lib/stripe`, `@/lib/env`,
   `next/headers`, `server-only` or a Node built-in from a `"use client"` file
   ships database access, credential handling or filesystem code to every
-  visitor. Two of those fail the Next build already; `@/lib/prisma` and
-  `@/lib/auth` do NOT, because neither imports `server-only` — those are the ones
-  that would ship silently.
+  visitor. `next/headers` and `server-only` fail the Next build by themselves,
+  and since #2850 so does `@/lib/auth`, which now carries
+  `import "server-only"`. The rest do not: `@/lib/prisma`, `@/lib/audit`,
+  `@/lib/email`, `@/lib/xero` and `@/lib/stripe` are all reachable from
+  operator CLI entrypoints, for the measured reason set out below, so they are
+  the ones that would ship silently were the two source-level guards to miss
+  them.
+
+  (`@/lib/session` and `@/lib/env` are named in the census's list but no such
+  files exist today. They stay listed deliberately, so that creating one
+  starts out protected rather than starting out invisible.)
 
   **"Reaches", not "imports", and the two words are enforced by two different
   mechanisms.** A re-export (`export { prisma } from …`, `export * from …`) and a
@@ -256,7 +264,7 @@ rules first written here. #2765 extended it with the measured-audience half.
   exempt and stays exempt: it is erased before a bundle exists and cannot carry
   anything into it.
 
-  Enforced twice:
+  Enforced three ways, and one of them is the bundler (#2850):
 
   - **direct edges** by `.semgrep/rules/acb-client-server-boundary.yml` in the
     `Static analysis gate`, with must-fail and must-pass fixtures in
@@ -264,24 +272,45 @@ rules first written here. #2765 extended it with the measured-audience half.
   - **transitive reach** by
     `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the
     real import graph from every `"use client"` module and reports the shortest
-    path it found. It runs in the required `verify` check.
+    path it found. It runs in the required `verify` check, and it carries **no
+    allowlist**: the one edge it used to name was removed in #2851 and the
+    exemption mechanism went with it, so re-introducing one is a visible design
+    change rather than a one-line diff;
+  - **the production build itself**, for the 107 modules that carry
+    `import "server-only"`. Next refuses the whole chain and prints it, which is
+    the only one of the three that is not our own regular expression.
+    `scripts/ci/server-only-boundary-selftest.mjs` runs last in `verify`: it
+    plants a `"use client"` page reaching `@/lib/auth` through an ordinary
+    intermediate module and requires the real build to go red **for the boundary
+    reason**, not merely to go red. That distinction is load-bearing — seeding
+    that import also drags Prisma's `pg` driver into the browser layer, so the
+    build fails either way, and a gate keyed on the exit code would pass with
+    Next's rule switched off. Measured: with the marker present the self-test
+    passes; with it removed the build still fails on `dns`/`fs`/`net`/`tls`, and
+    the self-test fails saying the failure is not attributable.
 
-  What is **not** enforced, so that the wording here matches the mechanism:
-  neither guard is the bundler. The build-time answer Next.js provides —
-  `import "server-only"` in the leaf module, which makes the compiler refuse the
-  whole chain — is not applied to `@/lib/prisma` or `@/lib/auth`, because
-  `server-only` throws when evaluated outside a React Server Component and 122
-  test files already carry `vi.mock("server-only", …)` for the modules that have
-  it today. Adding it would put that requirement on essentially every test in the
-  repository.
+  **Which modules carry the marker, and why `@/lib/prisma` does not.** This is
+  measured rather than preferred. `server-only` throws at import under plain
+  Node, and **fourteen** operator CLI entrypoints statically reach
+  `@/lib/prisma` — `npm run setup`, `npm run db:seed`, `npm run config:self-heal`,
+  the finance and Xero repair tools. Marking it would abort all fourteen at
+  startup with an error message about React that names nothing the operator did,
+  which is exactly what `cli-server-only-reach-census.test.ts` (CT-5, #2869)
+  exists to prevent — a `server-only` edge added for a route's benefit already
+  killed the `E2E multi-lodge` gate that way (#3056). `@/lib/club-time-zone-env`
+  and `@/lib/environment-role*` are excluded for the same reason. `@/lib/auth`
+  IS marked because zero of the CLI census's thirty-three roots reach it.
 
-  Measured at 527eb74fc: 432 `"use client"` modules in `src/`, **zero** direct
-  imports of any listed module or Node built-in, and **one** transitive edge —
-  `src/lib/booking-exception-requests.ts` imports `node:crypto` for
-  `computeProposalHash` and four client components import values from it. That
-  edge is named in the census's `KNOWN_EDGES` with its reason; nothing new joins
-  that list without the same explanation, and `@/lib/prisma` and `@/lib/auth` are
-  never exemptable at all.
+  The cost that used to be cited here — "122 test files already carry
+  `vi.mock("server-only", ...)`, so adding it would put that requirement on
+  essentially every test" — was **wrong**, and worth recording as wrong.
+  `vitest.setup.ts` has stubbed the marker globally for every test file since
+  0e278396d (22 Jul 2026), three weeks before that sentence was written. The
+  full suite with the marker on six protected roots reported **zero**
+  `server-only` failures. The real obstacle was always the CLI invariant above.
+
+  Measured on this tree: 478 `"use client"` modules in `src/`, **zero** direct
+  imports of any listed module or Node built-in, and **zero** transitive edges.
 
 ## INV-OPS-002
 

@@ -13,17 +13,31 @@ import { describe, expect, it } from "vitest";
  * import would, and no regex over a single file can know that.
  *
  * Next.js does have a build-time answer — `import "server-only"` in the leaf
- * module makes the compiler refuse the whole chain — and that remains the better
- * long-term fix. It is not this pull request's change to make: `server-only`
- * throws when evaluated outside a React Server Component, this suite runs in
- * Node, and 122 test files already carry `vi.mock("server-only", …)` for the
- * modules that have it today. Putting it on `@/lib/prisma` would put that
- * requirement on essentially every test in the repository, and the only proof
- * the change was safe would be a full `next build`.
+ * module makes the compiler refuse the whole chain — and since #2850 this
+ * repository uses it, proven by a real production build in
+ * `scripts/ci/server-only-boundary-selftest.mjs`. It does not make this census
+ * redundant, because it cannot be applied everywhere: `server-only` throws at
+ * import under plain Node, and fourteen operator CLI entrypoints statically
+ * reach `@/lib/prisma`, so marking it would abort `npm run setup`,
+ * `npm run db:seed` and the Xero/credit repair tools —
+ * `cli-server-only-reach-census.test.ts` (CT-5, #2869) is the invariant that
+ * forbids exactly that. `@/lib/club-time-zone-env` and
+ * `@/lib/environment-role*` are out for the same reason. `@/lib/auth` is in,
+ * because no CLI root reaches it.
  *
- * So the reach is asserted here instead, where it is cheap and where it runs
- * inside the REQUIRED `verify` check. This walks the real import graph from
- * every `"use client"` module and fails with the shortest path it found.
+ * The reason recorded here before #2850 was different and was WRONG: that 122
+ * test files carry `vi.mock("server-only", …)` and marking `@/lib/prisma` would
+ * put that on every test. `vitest.setup.ts` has stubbed the marker globally for
+ * every test file since 22 Jul 2026, three weeks before that sentence was
+ * written, and the full suite with the marker on six protected roots reported
+ * zero `server-only` failures. A cost nobody re-measured had been keeping a
+ * guard off for a year.
+ *
+ * So this census carries the modules the build cannot, and carries every module
+ * cheaply, inside the REQUIRED `verify` check. It walks the real import graph
+ * from every `"use client"` module and fails with the shortest path it found.
+ * `@/lib/session` and `@/lib/env` below name no file that exists; they stay so
+ * that creating one starts out protected rather than starting out invisible.
  */
 
 const SRC = path.resolve(process.cwd(), "src");

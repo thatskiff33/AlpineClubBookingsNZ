@@ -946,14 +946,28 @@ Residual risks to keep visible:
   nothing in the repository controls it. Every one of this repository's 88
   `nosemgrep` annotations except one serves THAT scan — see
   `docs/MAINTENANCE.md` → "Two Semgrep scans run per pull request".
-- The client/server boundary is enforced at two depths and neither is the
-  bundler. `.semgrep/rules/acb-client-server-boundary.yml` reports a DIRECT
-  import in the required static-analysis gate, and
-  `src/lib/__tests__/client-server-boundary-census.test.ts` walks the transitive
-  import graph in `verify`. The Next.js mechanism that would enforce it in the
-  BUILD — `import "server-only"` in `@/lib/prisma` and `@/lib/auth` — is not
-  applied, because it throws outside a React Server Component and 122 test files
-  already mock it for the modules that carry it today.
+- The client/server boundary is enforced at three depths, and one of them IS
+  the bundler (#2850). `.semgrep/rules/acb-client-server-boundary.yml` reports
+  a DIRECT import in the required static-analysis gate;
+  `src/lib/__tests__/client-server-boundary-census.test.ts` walks the
+  transitive import graph in `verify`, with no allowlist; and
+  `import "server-only"` makes the real production build refuse the whole
+  chain for the 107 modules that carry it, `@/lib/auth` among them.
+  `scripts/ci/server-only-boundary-selftest.mjs` plants a `"use client"` page
+  reaching `@/lib/auth` and requires that build to go red for the boundary
+  reason specifically, so the mechanism cannot lapse unnoticed.
+- **`@/lib/prisma` is covered by the first two and NOT by the build**, which
+  is the residual worth knowing. `server-only` throws at import under plain
+  Node, and fourteen operator CLI entrypoints — `npm run setup`,
+  `npm run db:seed`, the Xero and credit repair tools — statically
+  reach `@/lib/prisma`. Marking it would abort every one of them, which is
+  what `cli-server-only-reach-census.test.ts` (CT-5, #2869) exists to prevent
+  after a `server-only` edge added for a route's benefit killed
+  `E2E multi-lodge` (#3056). `@/lib/club-time-zone-env` and
+  `@/lib/environment-role*` are excluded for the same reason. Closing that
+  gap means running every operator CLI under Node's `react-server` resolution
+  condition, which is an owner decision rather than a build-configuration
+  change.
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 
