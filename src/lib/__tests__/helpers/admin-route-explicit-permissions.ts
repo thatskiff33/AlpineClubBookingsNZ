@@ -459,6 +459,58 @@ export function extractRouteGates(source: string): RouteGates {
   return { methods, gates };
 }
 
+/**
+ * Handlers that call `requireAdmin` MORE THAN ONCE, as `"METHOD /pathname"`.
+ *
+ * The reader takes the FIRST `requireAdmin(` in a handler body, which is right
+ * when a later call narrows further and wrong if a later call widens. Nothing
+ * in the parse can tell those apart, so instead of guessing, every handler with
+ * more than one guard is surfaced here and pinned by
+ * `admin-route-authorization-proof.test.ts` against the reviewed list below.
+ *
+ * A new multi-guard handler therefore fails the suite and has to be argued for,
+ * the same way `REVIEWED_PERMISSION_DIVERGENCES` and `SIDE_EFFECTING_GETS`
+ * work. That is the difference between a stated limit and a silent one: the
+ * reader still cannot tell narrowing from widening, but it can no longer be
+ * quietly wrong about a handler nobody looked at.
+ */
+export function handlersWithMultipleGuards(): string[] {
+  const found: string[] = [];
+  for (const file of adminApiRouteFiles) {
+    const bodies = extractMethodBodies(stripComments(fs.readFileSync(file, "utf8")));
+    for (const [method, body] of Object.entries(bodies)) {
+      const calls = (body ?? "").match(/\brequireAdmin\s*\(/g);
+      if (calls && calls.length > 1) {
+        found.push(`${method} ${toResolverPathname(file)}`);
+      }
+    }
+  }
+  return found.sort();
+}
+
+/**
+ * The reviewed multi-guard handlers, with why taking the first call is safe.
+ *
+ * `POST /api/admin/xero/import-members` guards twice: an unqualified
+ * `requireAdmin()` (path-inferred `finance`) admits the request, and a second
+ * `requireAdmin({ area: "membership", level: "edit" })` gates only the branch
+ * that supplies a `membershipTypeId`. The second call NARROWS, so the first is
+ * the admission gate and the reader's verdict is the honest one.
+ */
+export const REVIEWED_MULTI_GUARD_HANDLERS = [
+  // A method body is sliced to the next `export`, so a module-level helper
+  // defined AFTER a handler falls inside that handler's slice. `GET` guards
+  // itself at the top of its own body; the second call belongs to the
+  // `requireFullAdmin()` helper below it, which the mutating verbs use. The
+  // reader takes the FIRST call, which is GET's own, so the reported gate is
+  // right. Listed because the count is real even though the second guard is
+  // not GET's — and because the day a handler stops guarding itself and
+  // inherits a following helper's call is the day this entry has to be
+  // re-argued.
+  "GET /api/admin/integrations/credentials",
+  "POST /api/admin/xero/import-members",
+] as const;
+
 /** Resolver pathname -> the gates its `route.ts` declares. */
 export const adminApiRouteGates: ReadonlyMap<string, RouteGates> = new Map(
   adminApiRouteFiles.map(

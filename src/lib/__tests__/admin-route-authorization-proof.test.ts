@@ -149,6 +149,8 @@ import {
 } from "@/lib/__tests__/helpers/admin-route-enumeration";
 import {
   adminApiRouteGates,
+  handlersWithMultipleGuards,
+  REVIEWED_MULTI_GUARD_HANDLERS,
   type ExplicitAdminPermission,
   type HttpMethod,
 } from "@/lib/__tests__/helpers/admin-route-explicit-permissions";
@@ -633,6 +635,14 @@ describe("the explicit permission each handler passes is reviewed (#2975)", () =
 // adding it to `EDIT_ON_GET_PREFIXES` — changes who can load the screen that
 // calls it, which is a product decision outside #2975's scope. What this issue
 // owes is that the gap is NAMED rather than implied away.
+//
+// WHAT COUNTS, since "changes server state" would otherwise sweep in more than
+// is useful: a GET that writes DOMAIN state — a row somebody can later act on,
+// or an account somebody can log in with. Audit rows written BY a read are
+// excluded on purpose. `members/export` and `promo-codes/[id]/redemptions` both
+// write an audit entry on GET; that is the read recording itself, which is the
+// behaviour we want rather than a side effect to be gated away, and listing
+// them here would bury the one entry that matters in noise.
 // ---------------------------------------------------------------------------
 const SIDE_EFFECTING_GETS: Array<{
   pathname: string;
@@ -673,6 +683,22 @@ describe("side-effecting GETs are named rather than implied away (#2975)", () =>
     expect(SIDE_EFFECTING_GETS.filter((entry) => !entry.gatedAtEdit)).toHaveLength(
       1,
     );
+  });
+});
+
+/**
+ * The reader takes the FIRST `requireAdmin` in a handler body. That is correct
+ * when a later call narrows and WRONG if a later call widens, and no parse can
+ * tell those apart — so every handler with more than one guard is pinned here
+ * and has to be argued for, rather than being taken on trust because nobody
+ * looked. Same shape as SIDE_EFFECTING_GETS and REVIEWED_PERMISSION_DIVERGENCES
+ * above: the limit is stated AND drift-guarded, not just documented.
+ */
+describe("multi-guard handlers are reviewed rather than assumed to narrow (#2975)", () => {
+  it("pins every handler that calls requireAdmin more than once", () => {
+    expect(handlersWithMultipleGuards()).toEqual([
+      ...REVIEWED_MULTI_GUARD_HANDLERS,
+    ]);
   });
 });
 

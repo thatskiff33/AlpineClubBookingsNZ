@@ -160,12 +160,20 @@ const GUARD_MUST_PERFORM = [
  * stopped resolving the requirement and just answered `true` would leave the
  * guard calling it, this census green, and every admin page open to every
  * admitted administrator.
+ *
+ * `LEVEL_RANK` is in this list and is the reason the list is not just the four
+ * helpers. Resolving a requirement and then IGNORING it is the same defect as
+ * not resolving it: a body that calls all four helpers and returns `true`
+ * satisfies a name-only census while opening every page. The comparison is
+ * what turns a resolved requirement into an answer, so it is named here
+ * explicitly rather than left implied by the helpers around it.
  */
 const ADMISSION_HELPER_MUST_PERFORM = [
   "isAnyAdminAdmissionPath",
   "isConsolidatedFeesPath",
   "canAccessConsolidatedFeesPage",
   "getAdminRouteRequirement",
+  "LEVEL_RANK",
 ] as const;
 
 /**
@@ -299,10 +307,13 @@ describe("the admin security preamble has exactly one implementation (#2378)", (
       permissions.indexOf("\nexport ", start + 1),
     );
     for (const symbol of ADMISSION_HELPER_MUST_PERFORM) {
+      // `LEVEL_RANK` is a lookup table, not a call, so it is matched as an
+      // index rather than with a trailing paren. Everything else is invoked.
+      const performed = symbol === "LEVEL_RANK" ? `${symbol}[` : `${symbol}(`;
       expect(
         body,
         `canOpenAdminPath no longer performs "${symbol}" — an import alone is not performing it`,
-      ).toContain(`${symbol}(`);
+      ).toContain(performed);
     }
   });
 
