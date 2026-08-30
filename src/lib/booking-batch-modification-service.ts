@@ -75,6 +75,10 @@ import {
   resolveCreditElectionUpdate,
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
+import {
+  describePromoChangeNotApplied,
+  type PromoChangeNotAppliedNotice,
+} from "@/lib/promo-change-not-applied";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -121,6 +125,10 @@ type BatchModificationTransactionResult =
     // #2390: set only when a usage cap stopped the promotion reaching somebody
     // on the repriced booking; null means everyone it applies to is covered.
     promoCoverage: PromoCoverageNotice | null;
+    // #3179: set only when this edit carried a promo-code change it could not
+    // honour and dropped. Null means nothing the member asked for was left
+    // undone — never "there was no promo code".
+    promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
     choreWarnings: string[];
     datesChanged: boolean;
     adminOverride: boolean;
@@ -176,6 +184,9 @@ export type BatchModificationResponse = {
   promoRemoved: boolean;
   promoChanged: boolean;
   promoCoverage: PromoCoverageNotice | null;
+  // #3179: the promo-code change this edit dropped, in the member's own words.
+  // The panel holds itself open on it rather than closing on a silent partial.
+  promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
   choreWarnings: string[];
   // #2266: the stored credit election (#2265) after this edit, so the panel
   // can confirm what was remembered without a second fetch.
@@ -886,7 +897,16 @@ export async function modifyBookingBatch({
      * not applied is a real gap and belongs to whichever change fixes it for both
      * branches at once.
      */
-    const promo = pricePreservingModification || pricingResult.kind !== "priced"
+    /**
+     * ONE predicate for "this edit did not run the promotion engine", read
+     * twice below: once to stub the promotion figures, once to tell the member
+     * what that cost them (#3179). Two expressions for one question is the
+     * defect `INV-SSOT` names, and it is the exact shape #2978 and #3032 each
+     * had to unpick on the two predicates a few dozen lines above this one.
+     */
+    const promoEngineSkipped =
+      pricePreservingModification || pricingResult.kind !== "priced";
+    const promo = promoEngineSkipped
       ? {
           newDiscountCents: booking.discountCents,
           newPromoAdjustmentCents: booking.promoAdjustmentCents,
@@ -906,6 +926,45 @@ export async function modifyBookingBatch({
           guestNightRates: pricingResult.guestNightRates,
           todayAtClub,
         });
+
+    /**
+     * #3179 (epic #2797): THE PART OF THE REQUEST THIS EDIT DID NOT DO, said
+     * out loud.
+     *
+     * The stub above keeps the booking's stored promotion figures. When the
+     * request ALSO carried a promo-code change, that change is dropped - the
+     * edit still returns 200 and the booking still changes, so without this the
+     * member is handed a success for something that half happened. The owner's
+     * decision on #3179 is to save what can be honoured and warn clearly about
+     * what cannot; this is the warning, and every surface downstream reads this
+     * one value (`INV-SSOT`).
+     *
+     * Null in the ordinary case, and null on a price-preserving echo, where a
+     * promo change cannot arrive at all: `promoCode`/`removePromoCode` make a
+     * request STRUCTURAL, which is what `pricePreservingModification` excludes.
+     * The call is still made unconditionally on the stub branch rather than
+     * fenced on that reasoning, so that if the exclusion ever moves the member
+     * is told instead of silenced.
+     *
+     * WHICH REASON. `dates.isInProgressEdit` and not the pricing branch: on a
+     * stay already under way both surfaces refuse a promo change outright
+     * (`resolveTargetDates`, and the matching block in the modify-quote route),
+     * so that arm is defence in depth and its wording must still be true if a
+     * refusal is ever relaxed. The reachable case is the other one - a
+     * pre-check-in edit whose money parked for review (#3166, `INV-MOD-028`),
+     * where the member edit panel does show the promo card.
+     */
+    const promoChangeNotApplied = promoEngineSkipped
+      ? describePromoChangeNotApplied({
+          requestedPromoCode: input.promoCode,
+          removePromoCodeRequested: Boolean(input.removePromoCode),
+          currentPromoCode: booking.promoRedemption?.promoCode?.code,
+          reason: dates.isInProgressEdit
+            ? "STAY_IN_PROGRESS"
+            : "AMOUNT_UNDER_REVIEW",
+          phase: "saved",
+        })
+      : null;
 
     // #3170: on a parked edit the booking's stored final price is written back
     // unchanged rather than recomposed from the parked promotion figures. The
@@ -1195,6 +1254,12 @@ export async function modifyBookingBatch({
           ...(promo.promoCoverage
             ? { promoCoverageNote: promo.promoCoverage.message }
             : {}),
+          // #3179: and the same for a promo-code change this edit could not
+          // carry. The booking's own timeline replays it, so "why is the code
+          // still on it?" has an answer months later.
+          ...(promoChangeNotApplied
+            ? { promoChangeNotAppliedNote: promoChangeNotApplied.message }
+            : {}),
           settlementMethod: payments.settlementMethod,
           accountCreditAmountCents: payments.accountCreditAmountCents,
           policyRetainedAmountCents: payments.policyRetainedAmountCents,
@@ -1313,6 +1378,7 @@ export async function modifyBookingBatch({
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
       promoCoverage: promo.promoCoverage,
+      promoChangeNotApplied,
       choreWarnings,
       datesChanged: dates.datesChanged,
       adminOverride,
@@ -1539,6 +1605,7 @@ export async function modifyBookingBatch({
       promoRemoved: result.promoRemoved,
       promoChanged: result.promoChanged,
       promoCoverage: result.promoCoverage,
+      promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
     };
@@ -1564,6 +1631,7 @@ export async function modifyBookingBatch({
       promoRemoved: result.promoRemoved,
       promoChanged: result.promoChanged,
       promoCoverage: result.promoCoverage,
+      promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
       deferredPostCommit: async () => {
@@ -1601,6 +1669,10 @@ async function dispatchBatchPostTransactionSideEffects({
     promoRemoved: result.promoRemoved,
     promoChanged: result.promoChanged,
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    // #3179: the audit trail carries the dropped promo-code change too, so an
+    // officer answering "I asked for a discount and did not get it" can see
+    // exactly what the member was told and when.
+    promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     updatedGuestCount: result.guestNameUpdates.length,
     guestIdentityChanged: result.guestIdentityChanged,
     // #2266: the stored credit election (#2265) after this edit — audited
@@ -1769,6 +1841,10 @@ async function dispatchBatchPostTransactionSideEffects({
     // #2390: if a usage cap stopped the promotion reaching somebody this edit
     // added, the email says so in the same words the member saw on screen.
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    // #3179: and if the edit could not carry a promo-code change, the email
+    // says THAT in the same words too. The email is the durable copy: a member
+    // who closed the panel without reading the banner still has this.
+    promoChangeNotAppliedNote: result.promoChangeNotApplied?.message ?? null,
     financialReviewPending,
     lodgeId: result.booking.lodgeId,
   }).catch((err) =>

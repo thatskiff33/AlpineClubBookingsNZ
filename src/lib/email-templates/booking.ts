@@ -448,6 +448,10 @@ export function bookingModifiedTemplate(params: {
   // #2390: see bookingModificationSummaryRows — it renders as one more change
   // row, so the HTML and the flat body stay identical.
   promoCoverageNote?: string | null;
+  // #3179: same mechanism, different fact — the promo-code change this edit
+  // saved without. One more change row, so the HTML and the flat body cannot be
+  // the ones to disagree about what the member asked for.
+  promoChangeNotAppliedNote?: string | null;
   /**
    * #3033 (epic #2797): this change saved and its refund or credit could not be
    * worked out from what the booking has stored, so the club is deciding it.
@@ -486,6 +490,7 @@ export function bookingModifiedTemplate(params: {
     paymentReference,
     xeroInvoiceNumber,
     promoCoverageNote,
+    promoChangeNotAppliedNote,
     financialReviewPending,
   } = params;
 
@@ -503,6 +508,7 @@ export function bookingModifiedTemplate(params: {
     newFinalPriceCents,
     changeFeeCents,
     promoCoverageNote,
+    promoChangeNotAppliedNote,
   }).map((row) => ({
     label: escapeHtml(row.label),
     value: escapeHtml(row.value),

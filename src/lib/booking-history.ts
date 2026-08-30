@@ -142,19 +142,27 @@ function isRemovedGuest(
 }
 
 /**
- * The plain-English promo-coverage sentence a reprice stored on its own
- * modification record (#2390), or null when the promotion covered everybody.
+ * A plain-English sentence an edit stored on its own modification record for the
+ * member to read later, or null when that edit had nothing to say.
+ *
+ * Two keys use it: `promoCoverageNote`, the promotion-cap split a reprice
+ * explained at the time (#2390), and `promoChangeNotAppliedNote`, the
+ * promo-code change an edit saved without (#3179). One reader rather than two,
+ * because both are the same thing — the exact words the member was shown,
+ * replayed verbatim (`INV-SSOT`).
+ *
  * Read defensively: `newData` is free-form JSON, and every modification written
- * before this existed simply has no such key.
+ * before either key existed simply does not have it.
  */
-function promoCoverageNoteOf(
-  modification: BookingHistoryModification
+function memberFacingNoteOf(
+  modification: BookingHistoryModification,
+  key: "promoCoverageNote" | "promoChangeNotAppliedNote"
 ): string | null {
   const next =
     modification.newData && typeof modification.newData === "object"
       ? (modification.newData as Record<string, unknown>)
       : {};
-  const note = next.promoCoverageNote;
+  const note = next[key];
   return typeof note === "string" && note.trim().length > 0 ? note : null;
 }
 
@@ -450,9 +458,24 @@ export function buildBookingHistoryItems({
     // edit added, the reprice recorded the exact sentence the member was shown
     // at the time. Replayed verbatim so the booking's own summary, the edit
     // preview and the modification email all tell the one story.
-    const promoCoverageNote = promoCoverageNoteOf(modification);
+    const promoCoverageNote = memberFacingNoteOf(
+      modification,
+      "promoCoverageNote"
+    );
     if (promoCoverageNote) {
       detailParts.push(promoCoverageNote);
+    }
+
+    // #3179: and the promo-code change this edit could not carry, replayed the
+    // same way and for the same reason — the member read this sentence at the
+    // edit, so the booking's own record has to say it in those words too. A
+    // modification written before #3179 simply has no such key.
+    const promoChangeNotAppliedNote = memberFacingNoteOf(
+      modification,
+      "promoChangeNotAppliedNote"
+    );
+    if (promoChangeNotAppliedNote) {
+      detailParts.push(promoChangeNotAppliedNote);
     }
 
     /*
