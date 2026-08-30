@@ -158,6 +158,11 @@ function createDependencies(state: {
   // club. Empty for every pre-existing test, which is what makes those tests
   // the control for this change.
   editReviewChargeShares?: any[];
+  // #3187 fix round: CREATE_ADDITIONAL_PAYMENT_INTENT recovery rows, whatever
+  // their status. The loader asks for the open ones only, and the mock below
+  // applies that filter itself so a test can prove a terminally FAILED row does
+  // NOT hold the repair off.
+  editReviewChargeIntentRecoveries?: any[];
 }) {
   const links = state.links ?? [];
   const operations = state.operations ?? [];
@@ -304,7 +309,24 @@ function createDependencies(state: {
       // #1491: booking-cancel card-path refund decisions (matched by exact
       // booking_cancel_refund_recovery_<id> keys in the loader).
       paymentRecoveryOperation: {
-        findMany: vi.fn().mockResolvedValue(state.cancellationRefundRecoveryOperations ?? []),
+        // Two callers now, and they must not answer each other's question: the
+        // #1491 cancellation arm matches exact booking_cancel_refund_recovery_
+        // keys, the #3187 arm matches exact edit-review intent-recovery keys and
+        // open statuses only. The mock discriminates the way the real table
+        // would rather than returning one list to both.
+        findMany: vi.fn().mockImplementation(async ({ where }: any) => {
+          if (where?.type !== "CREATE_ADDITIONAL_PAYMENT_INTENT") {
+            return state.cancellationRefundRecoveryOperations ?? [];
+          }
+
+          const keys: string[] = where.idempotencyKey?.in ?? [];
+          const statuses: string[] = where.status?.in ?? [];
+          return (state.editReviewChargeIntentRecoveries ?? []).filter(
+            (operation: any) =>
+              keys.includes(operation.idempotencyKey) &&
+              statuses.includes(operation.status)
+          );
+        }),
       },
       // #3187: the settled charge shares a parked booking edit's money lives on.
       manualRefundTask: {
@@ -442,6 +464,62 @@ describe("runBookingXeroRepair", () => {
     );
     expect(bookingReport.actions.map((action) => action.type)).toContain(
       "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+
+    /**
+     * #3187 CONTROL, and the boundary that change turns on.
+     *
+     * A modification with no financial review contributes NO payment plan, so
+     * the queued payload must carry none of the payment keys and the enqueue
+     * keeps its own `recordPayment: true` default - correct here, because this
+     * arm was built for a price increase whose card was captured BEFORE the
+     * invoice was queued. Read by eye that boundary held; nothing guarded it,
+     * and deleting the `editReviewChargeCents > 0` gate in the classifier left
+     * all 46 tests passing while turning this booking's invoice UNPAID - a late
+     * change fee sitting outstanding in Xero against money already banked.
+     */
+    const queueAction = bookingReport.actions.find(
+      (action) => action.type === "QUEUE_SUPPLEMENTARY_INVOICE"
+    );
+    expect(queueAction?.payload).not.toHaveProperty("recordPayment");
+    expect(queueAction?.payload).not.toHaveProperty(
+      "waitForConfirmedAdditionalPayment"
+    );
+    expect(queueAction?.payload).not.toHaveProperty("paymentIntentId");
+  });
+
+  it("CONTROL: applying an ordinary price increase passes the enqueue no payment overrides (#3187)", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_1",
+          bookingId: "booking_1",
+          modificationType: "DATE_CHANGE",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    // Every override undefined, so `enqueueXeroSupplementaryInvoiceOperation`
+    // falls through to the defaults it has always applied here. The payload
+    // assertion above proves the classifier put nothing there; this proves the
+    // apply path does not invent anything either.
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingModificationId: "mod_1" }),
+      {
+        recordPayment: undefined,
+        waitForConfirmedAdditionalPayment: undefined,
+        paymentIntentId: undefined,
+      }
     );
   });
 
@@ -2795,6 +2873,52 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     };
   }
 
+  /**
+   * The combined `ADDITIONAL` charge request an edit's settled review shares
+   * mint - one row per EDIT, never one per share (#3170), which is why the
+   * repair tool can read this edit's payment state off a single row.
+   */
+  function reviewChargeTransaction(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "txn_review",
+      paymentId: "payment_1",
+      kind: "ADDITIONAL",
+      source: "STRIPE",
+      stripePaymentIntentId: "pi_review",
+      amountCents: 4000,
+      refundedAmountCents: 0,
+      status: "PENDING",
+      paymentMethodId: "pm_123",
+      reason: "edit_financial_review_charge_mod_parked",
+      createdAt: new Date("2026-05-02T01:00:00Z"),
+      updatedAt: new Date("2026-05-02T01:00:00Z"),
+      ...overrides,
+    };
+  }
+
+  /** A parked edit whose payment carries exactly that one charge request. */
+  function bookingWithReviewCharge(overrides: Record<string, unknown> = {}) {
+    const basePayment = makeBooking().payment;
+    return makeBooking({
+      modifications: [parkedModification()],
+      payment: {
+        ...basePayment,
+        transactions: [reviewChargeTransaction(overrides)],
+      },
+    });
+  }
+
+  /** The recovery row a FAILED intent mint leaves behind (#3170). */
+  function intentMintRecovery(overrides: Record<string, unknown> = {}) {
+    return {
+      bookingId: "booking_1",
+      idempotencyKey:
+        "edit_financial_review_additional_intent_recovery_mod_parked",
+      status: "PENDING",
+      ...overrides,
+    };
+  }
+
   function supplementaryLink(amountCents: number | null) {
     return {
       id: "link_supp",
@@ -2907,29 +3031,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
   });
 
   it("records payment on the repaired invoice once the review's card charge has been captured", async () => {
-    const basePayment = makeBooking().payment;
-    const booking = makeBooking({
-      modifications: [parkedModification()],
-      payment: {
-        ...basePayment,
-        transactions: [
-          {
-            id: "txn_review",
-            paymentId: "payment_1",
-            kind: "ADDITIONAL",
-            source: "STRIPE",
-            stripePaymentIntentId: "pi_review",
-            amountCents: 4000,
-            refundedAmountCents: 0,
-            status: "SUCCEEDED",
-            paymentMethodId: "pm_123",
-            reason: "edit_financial_review_charge_mod_parked",
-            createdAt: new Date("2026-05-02T01:00:00Z"),
-            updatedAt: new Date("2026-05-02T01:00:00Z"),
-          },
-        ],
-      },
-    });
+    const booking = bookingWithReviewCharge({ status: "SUCCEEDED" });
     const deps = createDependencies({
       bookings: [booking],
       editReviewChargeShares: [settledShare()],
@@ -2955,29 +3057,7 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
   });
 
   it("parks the repaired invoice on an outstanding review card request instead of pre-recording it", async () => {
-    const basePayment = makeBooking().payment;
-    const booking = makeBooking({
-      modifications: [parkedModification()],
-      payment: {
-        ...basePayment,
-        transactions: [
-          {
-            id: "txn_review",
-            paymentId: "payment_1",
-            kind: "ADDITIONAL",
-            source: "STRIPE",
-            stripePaymentIntentId: "pi_review",
-            amountCents: 4000,
-            refundedAmountCents: 0,
-            status: "PENDING",
-            paymentMethodId: "pm_123",
-            reason: "edit_financial_review_charge_mod_parked",
-            createdAt: new Date("2026-05-02T01:00:00Z"),
-            updatedAt: new Date("2026-05-02T01:00:00Z"),
-          },
-        ],
-      },
-    });
+    const booking = bookingWithReviewCharge({ status: "PENDING" });
     const deps = createDependencies({
       bookings: [booking],
       editReviewChargeShares: [settledShare()],
@@ -3028,6 +3108,163 @@ describe("runBookingXeroRepair - booking edits priced by a financial review (#31
     expect(finding?.details.mismatches).toEqual([
       expect.objectContaining({ amountCents: 4000 }),
     ]);
+  });
+
+  it("does NOT record payment when the card took LESS than the settled total - it routes the shortfall to a person", async () => {
+    /**
+     * The failure this closes, end to end. Two shares, $40 and $20. The first
+     * settles and mints a $40 request; the member pays it in the window before
+     * the second share syncs, so that sync returns `already-paid` and records
+     * the uncollected $20 as an audit row. Both tasks are COMPLETED, so the ask
+     * derives to $60 while the ledger row is SUCCEEDED at $40.
+     *
+     * Deciding `recordPayment` from the row's STATUS alone queued a $60 invoice
+     * AND booked a $60 Stripe receipt for it. The club holds $40: the clearing
+     * account overstates by $20, the invoice reads paid in full, and the member
+     * still owes $20 that nothing chases.
+     */
+    const booking = bookingWithReviewCharge({
+      status: "SUCCEEDED",
+      amountCents: 4000,
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [
+        settledShare({ id: "task_1", amountCents: 4000 }),
+        settledShare({ id: "task_2", amountCents: 2000 }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.safeToAutoApply).toBe(false);
+    expect(finding?.details).toMatchObject({
+      netAmountCents: 6000,
+      editReviewChargeCents: 6000,
+      capturedAmountCents: 4000,
+      editReviewPaymentReason: "capture-short-of-ask",
+    });
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("defers when the review's card request was never minted and its recovery is still owed", async () => {
+    /**
+     * "No charge request row" has TWO causes that look identical in the ledger
+     * and need opposite handling: the internet-banking route (raise it unpaid,
+     * covered above) and a PaymentIntent mint that failed at the provider. The
+     * live settlement queues NOTHING in the second case and leaves it to the
+     * recovery replay; a repair run that raised an unpaid invoice there would
+     * claim the anchor the replay needs, and nothing would ever mark that
+     * invoice paid once the card cleared - the release only touches
+     * WAITING_PAYMENT operations, and this one would be COMPLETED.
+     */
+    const booking = makeBooking({ modifications: [parkedModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+      editReviewChargeIntentRecoveries: [intentMintRecovery()],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+    expect(finding?.severity).toBe("manual_review");
+    expect(finding?.safeToAutoApply).toBe(false);
+    expect(finding?.details).toMatchObject({
+      editReviewPaymentReason: "intent-mint-awaiting-recovery",
+    });
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("CONTROL: a TERMINALLY FAILED intent recovery does not defer the repair forever", async () => {
+    // Nothing will replay a FAILED row, so holding the invoice off it would be
+    // permanent silence. The #1491 cancellation arm treats FAILED the same way.
+    const booking = makeBooking({ modifications: [parkedModification()] });
+    const deps = createDependencies({
+      bookings: [booking],
+      editReviewChargeShares: [settledShare()],
+      editReviewChargeIntentRecoveries: [intentMintRecovery({ status: "FAILED" })],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const finding = report.passes[0].bookings[0].findings.find(
+      (candidate) => candidate.code === "MISSING_SUPPLEMENTARY_INVOICE"
+    );
+    expect(finding?.severity).toBe("critical");
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ recordPayment: false })
+    );
+  });
+
+  it("CONTROL: a share raised on one booking cannot price ANOTHER booking's edit", async () => {
+    /**
+     * The anchor is read out of a stored JSON context, and a context naming a
+     * modification on a different booking must contribute to nothing. Summing
+     * the sweep's shares globally instead of per booking would let this one row
+     * conjure a $50 invoice against booking two, which nobody settled.
+     */
+    const basePayment = makeBooking().payment;
+    const bookingOne = makeBooking({
+      modifications: [parkedModification({ id: "mod_parked_1" })],
+    });
+    const bookingTwo = makeBooking({
+      id: "booking_2",
+      payment: {
+        ...basePayment,
+        id: "payment_2",
+        xeroInvoiceId: "inv_primary_2",
+        xeroInvoiceNumber: "INV-002",
+      },
+      modifications: [
+        parkedModification({ id: "mod_parked_2", bookingId: "booking_2" }),
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [bookingOne, bookingTwo],
+      editReviewChargeShares: [
+        settledShare({
+          id: "task_cross",
+          bookingId: "booking_1",
+          amountCents: 5000,
+          reviewContext: reviewContext({
+            bookingModificationId: "mod_parked_2",
+          }),
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    for (const bookingReport of report.passes[0].bookings) {
+      expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+        "MISSING_SUPPLEMENTARY_INVOICE"
+      );
+    }
+    expect(deps.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
   });
 
   it("CONTROL: a review that is fully invoiced raises no finding", async () => {
