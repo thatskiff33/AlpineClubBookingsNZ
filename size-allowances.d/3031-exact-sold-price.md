@@ -15,7 +15,7 @@ would be rebuilt in a fortnight, which is the case
 `size-allowances.d/README.md` names as an allowance rather than a split.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1805
+lines: 1823
 reason: the file that must NOT be split, and the file's own header says why in a
   way this change strengthens. `booking-guest-profile-gates.test.ts` compares
   string indexes WITHIN a single file to prove the pipeline stays in one place,
@@ -33,19 +33,19 @@ reason: the file that must NOT be split, and the file's own header says why in a
   it and records the removals at the sites they were at. The review round pulled
   it DOWN 42 lines against the first draft, by moving the duplicated occurrence
   builder, night-price projection and calendar-date narrowing into
-  `stored-sold-price-evidence.ts`. #3170 round (+338): the planner composes the STRUCTURAL half of an edit it cannot value - which beds, on which nights, with what on each - so the batch path commits and parks instead of refusing. One shared capacity-coverage function, extracted so the priced and parked plans cannot propose different beds; one required argument on the night-price composer, with no default because the two callers need opposite answers; and the paragraphs saying why a parked edit prices an ADDED guest and not an existing strand's new night. Every input is local state of this function.
+  `stored-sold-price-evidence.ts`. #3170 round (+338): the planner composes the STRUCTURAL half of an edit it cannot value - which beds, on which nights, with what on each - so the batch path commits and parks instead of refusing. One shared capacity-coverage function, extracted so the priced and parked plans cannot propose different beds; one required argument on the night-price composer, with no default because the two callers need opposite answers; and the paragraphs saying why a parked edit prices an ADDED guest and not an existing strand's new night. Every input is local state of this function. #3170 fix round (+18): the paragraph reconciling two positions that look contradictory - why a parked write blanks a damaged negative night row while the identity echo in the same change preserves one byte for byte - and the cost that difference carries.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2685
+lines: 2703
 reason: `PricingResult` becomes a discriminated union, so the priced fields move
   behind `PricedModification` and every reader narrows once — plus
   `requiredNightPriceCents`, the refusal that replaces `perNightCents[k] ?? 0`
   in the writer that BECOMES the booking's sold-price history. Splitting this
   file is specifically forbidden by its own header and by
-  `booking-guest-profile-gates.test.ts`, which compares positions inside it. #3170 round (+195): the write itself. `syncGuestNights` now tells an explicit "not known" from a vector that is merely SHORT - writing NULL for the first and still throwing on the second - and that docblock is longer than the code it guards, because it is the paragraph a later reader is most likely to delete as redundant and the one whose loss turns every future wiring defect into a silently unpriced night.
+  `booking-guest-profile-gates.test.ts`, which compares positions inside it. #3170 round (+195): the write itself. `syncGuestNights` now tells an explicit "not known" from a vector that is merely SHORT - writing NULL for the first and still throwing on the second - and that docblock is longer than the code it guards, because it is the paragraph a later reader is most likely to delete as redundant and the one whose loss turns every future wiring defect into a silently unpriced night. #3170 fix round (+18): the write-site docblock named ONE producer of a blank night price and claimed it only ever fired for a night the guest already held. Both were false against this same change, and it is the paragraph the reasoning above argues nobody may delete - a later reader trusting it could add a held-night assertion and silently revert the parked path to a refusal. It now names both producers and both arms.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1774
+lines: 1795
 reason: the apply path narrows the pricing result once and refuses the review
   branch inside the transaction, so the structural change rolls back with it;
   plus the identity-only echo's `?? 0` becoming a refusal. The comment weight is
@@ -62,7 +62,7 @@ reason: the apply path narrows the pricing result once and refuses the review
   per-night integer that an unreadable strand does not have — and the three ways
   to supply one are money decisions rather than implementation choices. Twenty-one
   lines is what it takes to leave that open question stated instead of leaving the
-  next lane to re-derive it, or worse, to assume it was an oversight. #3170 round (+135): the branch that makes the epic's promise true on the busiest edit path - the change commits and the money parks. Every money door is closed individually (reprice, promotion, change fee, settlement options, refund, credit, Xero delta, stored totals), each with the sentence saying it is a decision rather than an omission, and the raise sits after the booking-modification row because it anchors to it. The branch's position inside the locked transaction is its safety property, so none of it can move.
+  next lane to re-derive it, or worse, to assume it was an oversight. #3170 round (+135): the branch that makes the epic's promise true on the busiest edit path - the change commits and the money parks. Every money door is closed individually (reprice, promotion, change fee, settlement options, refund, credit, Xero delta, stored totals), each with the sentence saying it is a decision rather than an omission, and the raise sits after the booking-modification row because it anchors to it. The branch's position inside the locked transaction is its safety property, so none of it can move. #3170 fix round (+21): why a promo-code change dropped on a parked edit is a stated limit of the whole in-progress edit path rather than a defect of the parked branch - the priced branch beside it answers identically, and fixing one alone would put the two into disagreement about the same member request.
 
 file: src/lib/booking-guest-removal-service.ts
 lines: 1359

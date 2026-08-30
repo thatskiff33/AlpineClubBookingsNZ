@@ -10,7 +10,12 @@ import {
 
 import { recordBookingEvent } from "@/lib/booking-events";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
+import {
+  chooseEditReviewChargeRoute,
+  executeEditReviewCharge,
+  REVIEW_CHARGE_WRONG_KIND_MESSAGE,
+  type EditReviewChargeRoute,
+} from "@/lib/edit-financial-review-charge";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -18,11 +23,7 @@ import {
   buildBookingModificationRefundMetadata,
   markEditFinancialReviewRefundRecoverySucceeded,
 } from "@/lib/payment-recovery";
-import {
-  buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey,
-  buildEditFinancialReviewAdditionalIntentStripeKey,
-  buildEditFinancialReviewRefundStripeKeyPrefix,
-} from "@/lib/payment-recovery-keys";
+import { buildEditFinancialReviewRefundStripeKeyPrefix } from "@/lib/payment-recovery-keys";
 import {
   planStripeRefundAllocation,
   refundPaymentTransactions,
@@ -169,49 +170,13 @@ export type EditReviewSettlementRoute =
        */
       allocateAgainstPaymentId: string | null;
     }
-  | {
-      /**
-       * #3170: the direction that did not exist before this issue - the MEMBER
-       * owes the CLUB.
-       *
-       * It is the third route's charging half rather than a fourth mechanism.
-       * `createModificationAdditionalPaymentIntent` is the same function every
-       * booking edit's price increase already goes through, so the instrument, the
-       * `ADDITIONAL` PaymentTransaction row, the chase reminders, the member's
-       * pay link and the Xero supplementary invoice's wait-for-payment are all the
-       * existing ones. NOTHING IS TAKEN FROM THE CARD HERE: the completion mints
-       * the request and the member pays it, exactly as they would for an ordinary
-       * extension.
-       */
-      kind: "additional-charge";
-      bookingModificationId: string;
-      /**
-       * How the club will ask for the money, decided from the booking's own
-       * payment rather than offered as a choice - the same test
-       * `applyPaymentAdjustments` uses to decide whether an ordinary price
-       * increase mints an intent or lands on an invoice.
-       *
-       * `stripe` when the booking has a CAPTURED card payment: an additional
-       * PaymentIntent is minted against it. `invoice` otherwise, which is the
-       * internet-banking booking: no intent exists to mint, so the supplementary
-       * Xero invoice is the ask and the club's existing additional-payment
-       * chasing carries it.
-       */
-      collectVia: "stripe" | "invoice";
-      /**
-       * The booking's payment row, when there is one to hang an `ADDITIONAL`
-       * transaction off. Null only on the `invoice` route for a booking with no
-       * payment row at all.
-       */
-      paymentId: string | null;
-      /** Read inside the completion transaction, for `findOrCreateCustomer`. */
-      member: {
-        id: string;
-        email: string;
-        name: string;
-        stripeCustomerId: string | null;
-      } | null;
-    };
+  /**
+   * #3170: the direction that did not exist before this issue - the MEMBER owes
+   * the CLUB. Defined in `edit-financial-review-charge.ts`, which is the whole
+   * of what a charge is; the three routes above are the whole of what a refund
+   * is; and this union is the one place that picks between them.
+   */
+  | EditReviewChargeRoute;
 
 /**
  * Raised when the review carries no `BookingModification` to settle against -
@@ -281,46 +246,6 @@ export const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
  * with nothing captured down the card path; the refundable total this cap is
  * measured against is zero there, so the same refusal catches it.
  */
-/**
- * #3170: the officer said the CLUB is owed, on a task kind that can only ever
- * mean the club owes the MEMBER.
- *
- * The three pre-#2797 kinds are all hand-backs by definition - a cancelled
- * cash-settled booking, a late capture on a deleted booking, the record of a
- * capture Stripe already refunded. There is no shape of any of them in which the
- * member owes money, so a charge direction on one is a mistake rather than an
- * unusual case, and it is refused before anything is claimed.
- */
-export const REVIEW_CHARGE_WRONG_KIND_MESSAGE =
-  "This task is money the club owes the member, so it cannot be used to collect money from them. If the member owes the club for a booking change, make that change on the booking itself.";
-
-/**
- * #3170: the officer said the club is owed, and there is no way to ask for it.
- *
- * The club collects a price increase in exactly two ways: an additional card
- * payment against a captured Stripe payment, or a supplementary invoice on a
- * booking that already has one. A booking with neither has no instrument at all -
- * inventing one here would be the fourth settlement mechanism the epic forbids,
- * and pretending the money was collected would be the "claims money moved"
- * failure `INV-PAY-051` exists to stop.
- *
- * Refused BEFORE the claim, so the task stays OPEN and still holds the money
- * question.
- */
-export const REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE =
-  "There is no card payment on this booking and no invoice to add this to, so the club cannot ask for the money automatically. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
-
-/**
- * #3170: a charge with no `BookingModification` to hang it on.
- *
- * The same anchor the refund side needs, and needed for the same reason plus one
- * more: the supplementary invoice that corrects an issued Xero invoice is queued
- * against that row, so a charge with no anchor would collect money the club's
- * accounts never show as owed. Told plainly rather than guessed at.
- */
-export const REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE =
-  "This review is not linked to the booking change it came from, so the club cannot ask for the money automatically. Collect it another way, then dismiss this task with a note recording what was collected and how - the note is the record that the money was settled outside the system.";
-
 export const REVIEW_REFUND_EXCEEDS_CAPTURED_MESSAGE =
   "That is more than this booking's card payment can give back - check the amount against the booking's payment history, or hand the money back another way and dismiss this task with a note saying what was done.";
 
@@ -436,53 +361,16 @@ export async function chooseEditReviewSettlementRoute({
 
   if (direction === ManualRefundTaskDirection.CHARGE_TO_MEMBER) {
     // #3170. Everything below this block hands money BACK; this is the one arm
-    // that asks for it, and it is deliberately a separate arm rather than a flag
-    // threaded through the refund routes - a charge shares none of their
-    // machinery (no allocation, no cap against captured cash, no credit anchor)
-    // and mixing them is how a wrong-direction movement gets one branch away
-    // from a right one.
-    if (!bookingModificationId) {
-      throw new ManualBookingPaymentError(
-        REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
-        409,
-      );
-    }
-    // The same test `applyPaymentAdjustments` uses to decide whether an ordinary
-    // price increase mints an intent: a CAPTURED payment whose source is the
-    // card. `Payment.source` alone is not enough - its schema DEFAULT is STRIPE,
-    // so a hand-settled booking carries it with nothing captured behind it.
-    const bookingPayment = task.booking.payment;
-    const canChargeCard =
-      hasCapturedPayment(bookingPayment) &&
-      bookingPayment?.source === PaymentSource.STRIPE;
-    // An ISSUED Xero invoice is the other instrument: on an internet-banking
-    // booking the supplementary invoice IS the ask, and the club's
-    // additional-payment chasing carries it from there. It has to be ISSUED
-    // rather than merely possible - with no invoice to add to,
-    // `classifyXeroBookingEditSettlement` takes its `none` branch, so the
-    // completion would move nothing at all while recording that the club had
-    // collected the money.
-    if (!canChargeCard && !hasIssuedXeroInvoice) {
-      throw new ManualBookingPaymentError(
-        REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
-        409,
-      );
-    }
-    const member = task.booking.member;
-    return {
-      kind: "additional-charge",
+    // that asks for it, and it delegates rather than branching inline. A charge
+    // shares none of the refund machinery - no allocation, no cap against
+    // captured cash, no credit anchor - and the strongest guard against a charge
+    // quietly taking a refund path is that the two share no code at all.
+    return chooseEditReviewChargeRoute({
       bookingModificationId,
-      collectVia: canChargeCard ? "stripe" : "invoice",
-      paymentId: bookingPayment?.id ?? null,
-      member: member
-        ? {
-            id: member.id,
-            email: member.email,
-            name: `${member.firstName} ${member.lastName}`,
-            stripeCustomerId: bookingPayment?.stripeCustomerId ?? null,
-          }
-        : null,
-    };
+      bookingPayment: task.booking.payment,
+      member: task.booking.member,
+      hasIssuedXeroInvoice,
+    });
   }
 
   if (task.paymentId !== null && task.payment?.source === PaymentSource.STRIPE) {
@@ -679,42 +567,14 @@ export async function executeEditReviewSettlement({
    * Stripe answers with the original intent rather than a second one.
    */
   let additionalPaymentIntentId: string | null = null;
-  if (route?.kind === "additional-charge" && route.collectVia === "stripe") {
-    const chargeAmountCents = amountCents ?? 0;
-    const minted = await createModificationAdditionalPaymentIntent({
+  if (route?.kind === "additional-charge") {
+    additionalPaymentIntentId = await executeEditReviewCharge({
       bookingId,
-      result: {
-        // Only the fields the minter reads. The rest of
-        // `BookingModificationPaymentContext` describes a refund it will not make
-        // (`pendingRefundAmountCents` 0) and a settlement it does not choose.
-        pendingRefundAmountCents: 0,
-        paymentId: route.paymentId,
-        additionalAmountCents: chargeAmountCents,
-        // The route already established a CAPTURED card payment on this booking;
-        // saying so again here is what lets the minter's own guard stay the one
-        // definition of "there is a card to charge".
-        hasSucceededPayment: true,
-        paymentCustomerId: route.member?.stripeCustomerId ?? null,
-        memberEmail: route.member?.email ?? "",
-        memberName: route.member?.name ?? "",
-        memberId: route.member?.id ?? actingMemberId,
-        bookingModificationId: route.bookingModificationId,
-      },
-      reason: "edit_financial_review_charge",
-      // TASK-scoped, not modification-scoped, and for a sharper reason than the
-      // refund side's: `createPaymentIntent` MINTS. Two reviews of one edit
-      // sharing a key would have Stripe answer the second with the FIRST intent,
-      // leaving the club one instrument for two amounts - collectable once, while
-      // both tasks read as settled.
-      idempotencyKey: buildEditFinancialReviewAdditionalIntentStripeKey(taskId),
-      // Task-scoped for the same reason, and because the recovery row is where a
-      // colliding key would rewrite an amount.
-      recoveryIdempotencyKey:
-        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(taskId),
-      failureMessage:
-        "Failed to create the additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
+      taskId,
+      actingMemberId,
+      route,
+      amountCents: amountCents ?? 0,
     });
-    additionalPaymentIntentId = minted.additionalPaymentIntentId ?? null;
   }
 
   if (route?.kind === "account-credit") {

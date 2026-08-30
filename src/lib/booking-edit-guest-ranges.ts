@@ -1462,6 +1462,24 @@ export function buildInProgressGuestRangePlan(
         stayStart: entry.stayStart,
         stayEnd: entry.proposedStayEnd,
         nights: entry.proposedNightKeys.map((key) => parseDateOnly(key)),
+        // WHY THIS BLANKS A DAMAGED NEGATIVE ROW WHILE THE IDENTITY ECHO KEEPS
+        // ONE, because the two look contradictory and are not. The echo
+        // (`buildIdentityOnlyPricing`) runs on a NAME CORRECTION: it changes
+        // nothing structural, so it writes each stored value back byte for byte,
+        // a stored `-100` included - repairing a damaged row is #2745's audited
+        // decision and not an echo's to take. This runs on a STRUCTURAL change
+        // that rewrites the strand's night rows, so it has to decide a value for
+        // every night, and under INV-MOD-028 a negative is an ABSENCE of money
+        // rather than an amount. Writing `-100` back would re-assert as money a
+        // figure the evidence rules have already ruled out; `null` says what is
+        // true, which is that nobody knows.
+        //
+        // THE COST, STATED: the raw `-100` does not survive the parked write, and
+        // the occurrence evidence cannot carry it either - `StoredNightPriceEvidence`
+        // is non-negative-or-null by schema, and widening it would move the
+        // occurrence key of every future review. The audit trail and backups are
+        // where a damaged figure is recoverable from; the row is not.
+        //
         // NO PRICED NIGHTS ARE SUPPLIED, and that is the decision rather than an
         // omission: a night this edit newly puts the strand on is unknown too,
         // because the strand's stored total is frozen by the park — pricing that

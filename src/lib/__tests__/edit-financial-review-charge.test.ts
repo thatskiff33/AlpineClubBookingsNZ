@@ -109,7 +109,7 @@ import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
 import {
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
-} from "@/lib/edit-financial-review-settlement";
+} from "@/lib/edit-financial-review-charge";
 /**
  * NOT mocked. These two keys ARE the exactly-once boundary of a charge, so they
  * are asserted against the real builders rather than against a stub that could

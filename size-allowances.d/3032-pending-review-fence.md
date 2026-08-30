@@ -23,7 +23,7 @@ than ridden in on a money-correctness fix. Each was over budget independently of
 this change and stays over it by the same margin plus its one call.
 
 file: src/lib/payment-recovery.ts
-lines: 1961
+lines: 1977
 reason: one more durable-recovery pair - enqueue and happy-path close - for the
   completed edit-financial-review refund, in the file where all nine of its
   siblings live. The alternative was reusing the modification-scoped pair, and
@@ -32,7 +32,7 @@ reason: one more durable-recovery pair - enqueue and happy-path close - for the
   upsert overwrites `amountCents` and `stripeKeyPrefix`. Putting a tenth pair
   anywhere but beside the other nine is how the next reader misses that they are
   a family with one shared upsert. The module was 1,181 lines over budget before
-  this change.
+  this change. #3170 (+16): the additional-intent recovery enqueue takes its dedup key as a required argument instead of deriving it from the modification, so a review-completion charge can scope its own to the TASK - one edit can raise two review tasks over one BookingModification row - and its upsert no longer rewrites an existing debt's amount.
 
 file: src/lib/payment-transactions.ts
 lines: 1152

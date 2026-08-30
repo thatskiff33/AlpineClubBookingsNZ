@@ -870,6 +870,27 @@ export async function modifyBookingBatch({
     // money, never the beds — so both members carry it.
     const capacityOverridden = pricingResult.capacityOverridden;
 
+    /**
+     * #3170, on a question a reviewer raised and the answer being NO CHANGE.
+     *
+     * A member who asks to apply or remove a promo code in the same request as a
+     * parked edit has that part of their request dropped: the stub below keeps
+     * the booking's stored promotion figures and reports `promoRemoved: false`,
+     * `promoChanged: false` over an HTTP 200.
+     *
+     * That is not something parking introduced. `applyPromoCodeChanges` returns
+     * exactly this shape for EVERY in-progress plan, priced or parked - an
+     * in-progress edit reuses prices already agreed and re-runs no promotion cap
+     * - so the parked branch behaves identically to the priced branch beside it.
+     * Making the parked case alone refuse, or alone report, would put the two
+     * in-progress branches into disagreement about the same member request, on a
+     * child whose scope is the money that could not be valued.
+     *
+     * So it is recorded here as a stated limit of the in-progress edit path
+     * rather than fixed in this branch. Telling the member their promo change was
+     * not applied is a real gap and belongs to whichever change fixes it for both
+     * branches at once.
+     */
     const promo = pricePreservingModification || pricingResult.kind !== "priced"
       ? {
           newDiscountCents: booking.discountCents,

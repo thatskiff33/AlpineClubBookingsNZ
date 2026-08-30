@@ -2344,12 +2344,30 @@ export async function applyGuestChanges(
    *
    *  - **A number** — the price. Written as it stands. `0` included: a comped
    *    night is a real sold price and is not the same as an unknown one.
-   *  - **`null` — an explicit statement that the price is NOT KNOWN.** Only one
-   *    composer ever produces it (`composeProposedNightPrices`), and only for a
-   *    night the guest ALREADY HELD whose stored row carried no usable money —
-   *    a night this edit is KEEPING, not buying. There is no honest number for
-   *    such a night, so `NULL` is written and a person prices it from the OPEN
-   *    `EDIT_FINANCIAL_REVIEW` task the same edit raises.
+   *  - **`null` — an explicit statement that the price is NOT KNOWN.** There is
+   *    no honest number for such a night, so `NULL` is written and a person
+   *    prices it from the OPEN `EDIT_FINANCIAL_REVIEW` task the same edit
+   *    raises.
+   *
+   *    TWO PRODUCERS, AND NEITHER IS LIMITED TO A NIGHT THE GUEST ALREADY HELD.
+   *    Being exact about this matters more than it looks: an earlier draft of
+   *    this paragraph said "only one composer, and only for a night the guest
+   *    already held", and a later reader trusting it could add a held-night
+   *    assertion here — or narrow the argument to a held-night map — which every
+   *    parked edit that EXTENDS a strand would then throw inside the transaction,
+   *    silently reverting #3170's headline path to a refusal.
+   *
+   *      - `composeProposedNightPrices` in `record-as-unknown` mode, from BOTH
+   *        of its arms. The held arm returns `null` for a retained night whose
+   *        stored row carried no usable money. The NOT-held arm returns `null`
+   *        too, and on the parked path it does so for every such night: the
+   *        parked call site passes an EMPTY future-night list on purpose, because
+   *        a strand whose total is frozen is not buying anything, so a night the
+   *        edit newly puts it on is unknown as well.
+   *      - `buildIdentityOnlyPricing` (`booking-batch-modification-service.ts`),
+   *        which echoes a strand's stored night prices back unchanged on a
+   *        name-only correction — including the blanks, byte for byte. It
+   *        creates no new blank; it declines to repair one.
    *  - **`undefined` — no statement at all**, because the vector is SHORTER than
    *    the night list (or has a hole). Nobody decided anything about this night;
    *    the breakdown is simply malformed. That is a wiring defect in whoever

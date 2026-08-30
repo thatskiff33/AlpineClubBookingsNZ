@@ -46,3 +46,16 @@ reason: a guest holding a night whose price is not known falls back to the
   guest's total only by partitioning every night held. The growth is the
   narrowing predicate and the paragraph naming that failure, which has to sit on
   the branch it prevents.
+
+file: src/lib/xero-invoice-rounding-audit.ts
+lines: 787
+reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
+  consumer twice over - its arithmetic added an unknown night as 0 and collapsed
+  the run minimum to 0, and it had stopped replaying the builder, which now sends
+  a guest with any unknown night down the whole-stay branch. The growth is one
+  filter spelt the same way as the builder's plus the paragraph saying why the
+  branch has to match, which belongs on the mapper it guards: this module's whole
+  promise is that it reproduces the builder byte for byte, and a reader who
+  cannot see that the two branch alike will re-introduce the divergence. The
+  module was already over its 700-line budget before this change and is a single
+  cohesive diagnostic - splitting a replay in half is how the halves drift.
