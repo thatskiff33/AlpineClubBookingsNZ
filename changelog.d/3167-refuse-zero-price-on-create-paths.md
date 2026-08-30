@@ -16,9 +16,16 @@
   the same thing booking edits have done since the price-history work earlier in
   this epic. Nothing an operator does day to day changes.
 
-  Two further places that write the same kind of money — approving a booking
-  request, and repricing a booking when a waitlist offer goes out — never had
-  that fall back to zero, but each was checking for the missing price in its own
-  words. They now ask the same one question the other three ask, so the rule is
-  written down once and a later change to it cannot reach some of these places
-  and miss others. Nothing about what either of them does changes.
+  Two further places that write the same kind of money were also brought into
+  line — approving a booking request, and repricing a booking when a waitlist
+  offer goes out. Neither ever fell back to zero, but they got there differently:
+  the waitlist reprice was already checking for a missing price in its own words,
+  while the booking-request approval was not checking at all — it simply could
+  not be handed a short list. Both now ask the same one question the other three
+  ask, so the rule is written down once and a later change to it cannot reach
+  some of these places and miss others.
+
+  Nothing an operator or a member sees changes at either. The approval writer's
+  behaviour on a fault it cannot currently reach does move — it now stops with a
+  sentence naming itself, instead of failing three layers further down with a
+  database complaint about a missing column.

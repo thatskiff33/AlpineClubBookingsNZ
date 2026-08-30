@@ -12,7 +12,18 @@
  * header presenting itself as the home of this rule, so a reader who trusts
  * either one edits one or two files and believes the whole system changed. As
  * of 31 Aug 2026 there are SEVEN write points of a price column from a priced
- * breakdown — the five call sites listed below, plus these two:
+ * breakdown — the five call sites listed below, plus these two.
+ *
+ * **Recount them with this criterion or you will get a different number.** What
+ * is counted is a write whose index runs over an INNER vector — `perNightCents[k]`,
+ * `split[index]` — whose length has no declared relation to the loop bound. A
+ * write indexed by its own enclosing `map`, bound to the very array the
+ * breakdown was built from, cannot run past the end and is deliberately NOT
+ * counted; `waitlist.ts:257`, `booking-date-modification-service.ts:843`,
+ * `booking-modify-plan.ts:2623` and `booking-guest-removal-service.ts:959` all
+ * look like write points to a bare grep and are excluded for exactly that
+ * reason. That distinction is the load-bearing one, so it is stated here rather
+ * than left as a judgement call:
  *
  *  - **`booking-modify-plan.ts`** (`nightPriceCentsToWrite`, used by
  *    `syncGuestNights`) — NOT convergeable, and deliberately so. #3170 made it
@@ -138,9 +149,9 @@ export function requiredNightPriceCents(
 /**
  * The amount priced for guest `index` of a per-guest price split.
  *
- * The guest-total counterpart of `requiredNightPriceCents`, for the one writer
- * that persists `BookingGuest.priceCents` from a split rather than a night
- * vector. Same rule, same reason: a zero here is a real price for a stay, and a
+ * The guest-total counterpart of `requiredNightPriceCents`, for the two writers
+ * that persist `BookingGuest.priceCents` from a split rather than a night
+ * vector — the bed hold at quote time and the shared approval guest writer. Same rule, same reason: a zero here is a real price for a stay, and a
  * split shorter than the guest list is a caller defect.
  *
  * @param writer Human-readable name of the persistence site, for the error.
