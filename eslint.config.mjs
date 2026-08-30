@@ -1545,8 +1545,8 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
 ];
 
 /**
- * The comment-aware SCANNERS that #3164 measured and did not converge, with the
- * work each is waiting on.
+ * The comment-aware SCANNERS that have been measured and not converged, with
+ * the work each is waiting on.
  *
  * THIS IS A RATCHET, NOT AN ALLOWLIST, and the difference is the whole reason it
  * is a second list. Every entry above is a different CONCEPT that the canonical
@@ -1557,53 +1557,30 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
  * to be added here is a new copy, which is exactly what this rule exists to
  * refuse.
  *
- * WHAT THREE OF THE FOUR HAVE IN COMMON — and the fourth is named, because a
- * blanket claim that is false for one entry is worse than no claim. The first
- * three produce no REDUCED text. They WALK source, counting brackets to find a
- * call's argument list or blanking a region to spaces in place, stepping over
- * comments and strings on the way so a brace or a quote inside prose cannot
- * derail the walk. Every offset they report is an offset into the ORIGINAL
- * text, which is what a reported line number is made of. `stripComments`
- * preserves newlines but not columns, and `stripCommentsAndStrings` replaces
- * each string with a two-character `""`, so neither can serve a walker without
- * moving what it points at.
+ * IT WAS FIVE, THEN FOUR, AND IS NOW ONE. #3164's fix round converged
+ * `family-group-role-retirement.test.ts` onto the canonical second form. #3180
+ * wrote the offset-preserving blanker the other three were waiting on —
+ * `blankLiterals`, a fourth FORM in the canonical module — and converged
+ * `lock-bound-club-zone-outside-transaction.test.ts`,
+ * `payment-link-expiry-club-zone.test.ts` and
+ * `xero-object-url-write-guard.test.ts` onto it. Two of the three re-measured
+ * byte-identical; the third did not, and what it found is recorded in its own
+ * file: none of the three private copies recognised a REGEX LITERAL, so
+ * `xero-contacts.ts`'s `.replace(/\//g, "")` desynchronised that census for the
+ * rest of the file and hid a real `xeroSyncOperation.update` from it. Live, and
+ * latent only because the hidden write happened not to carry the column.
  *
- * `advisory-lock-guard.test.ts` is NOT one of those three, and its own entry
- * says what it is instead. An earlier draft of this preamble claimed the
- * property for all five; measured, it was false for two of them — the other
- * being `family-group-role-retirement.test.ts`'s `codeOnly`, which genuinely
- * did produce reduced text and has since been converged onto the canonical
- * second form. Only the per-file reasons are load-bearing; a shared sentence is
- * a convenience and has to earn it.
- *
- * THE REMEDY FOR THE THREE IS A THIRD FORM IN THE CANONICAL MODULE (#3180) — a
- * blanker that replaces every comment and string with spaces of the same length,
- * so that offsets, columns and line numbers all survive, and they walk the
- * blanked text instead of re-implementing the lexer. That is a design change to
- * the canonical module plus three conversions with their own censuses to
- * re-measure, which is a separate piece of work from this one and is filed as
- * such.
+ * ONE ENTRY IS LEFT, and it is the one that never shared the offset-preserving
+ * property. Its own reason says what it needs instead. A list of one does not
+ * need a shared sentence, and this preamble deliberately does not invent one:
+ * the previous version of this text claimed a property for all five entries
+ * that was false for two of them, which is how a row nobody re-reads survives.
  */
 export const UNCONVERGED_COMMENT_SCANNERS = [
   {
-    file: "src/lib/__tests__/lock-bound-club-zone-outside-transaction.test.ts",
-    reason:
-      "Two: `spansForOpener` walks brackets from a call opener to its matching close, stepping over comments and strings, and reports the line it started on; `blankCommentsAndStrings` blanks both to spaces with every offset preserved.",
-  },
-  {
-    file: "src/lib/__tests__/payment-link-expiry-club-zone.test.ts",
-    reason:
-      "`transactionCallbackSpans` — the same bracket walk over `$transaction(`, with the same reported line number. It and the entry above are near-identical and are the clearest argument for the shared blanker.",
-  },
-  {
-    file: "src/lib/__tests__/xero-object-url-write-guard.test.ts",
-    reason:
-      "An in-place blanker that keeps the string DELIMITERS and blanks only the contents, so `readCallArguments` can walk the result and still see where each argument started.",
-  },
-  {
     file: "src/lib/__tests__/advisory-lock-guard.test.ts",
     reason:
-      "THE ODD ONE OUT, and the preamble above says so rather than covering it. `codeOnly` DOES produce reduced text — it returns `null` for a whole-line comment and blanks double-quoted literals in place — so it is not offset-preserving and the shared property is not why it is here. It is here for its own reason, which is exact: it works a LINE at a time, and it blanks every double-quoted literal EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those while the prose it must ignore does not. A carve-out by CONTENT is not a form the canonical module should grow. It converges on the blanker plus a caller-side filter, which is the same #3180 the other three wait on and a different conversion.",
+      "It needs a CALLER-SIDE FILTER, not a shared stripper, and #3180 deferred it for that reason rather than converging it half way. `codeOnly` produces reduced text — it returns `null` for a whole-line comment and blanks double-quoted literals in place — so the offset-preserving blanker the other three moved onto does not by itself convert it. It works a LINE at a time, and it blanks every double-quoted literal EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those while the prose it must ignore does not. A carve-out by CONTENT is not a form the canonical module should grow, and `blankLiterals` would blank exactly the `SELECT` literals this census counts — dropping pinned inventory numbers rather than leaving them alone. Converging it means blanking with the shared form and then restoring the SQL literals by span, which needs the blanker to report spans it deliberately does not.",
   },
 ];
 
