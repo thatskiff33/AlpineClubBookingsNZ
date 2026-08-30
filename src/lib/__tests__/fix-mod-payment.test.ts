@@ -84,6 +84,12 @@ vi.mock("@/lib/prisma", () => ({
       // Empty by default - no review is open - so every pre-#3032
       // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
+      // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
+      // path parks. Present on every double rather than only the parking cases,
+      // because a missing model here throws inside the transaction and surfaces
+      // as an opaque 400 — which is how a park looks exactly like a refusal.
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task-1" }),
     },
     bookingModification: { create: mockBookingModCreate },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -331,7 +337,19 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
         */
         stayStart: new Date("2026-08-01"),
         stayEnd: new Date("2026-08-03"),
-        nights: [],
+        /*
+          #3166: the two nights this guest holds, carrying what they were sold
+          for and summing to the stored 5000. The date path is now judged on
+          exact stored sold-price evidence, so an EMPTY list is a strand with no
+          readable history at all and every date change on it PARKS for financial
+          review — which is the gate working, not the settlement question this
+          suite is about. Cases that mean to describe unreadable history override
+          this deliberately below.
+        */
+        nights: [
+          { stayDate: new Date("2026-08-01"), priceCents: 2500 },
+          { stayDate: new Date("2026-08-02"), priceCents: 2500 },
+        ],
         // No consent was ever needed for an ordinary guest, and `null` is one of
         // the two values `isOperationallyPresentConsent` treats as present (D-12).
         consentStatus: null,
@@ -471,6 +489,12 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
       // Empty by default - no review is open - so every pre-#3032
       // assertion in this file means exactly what it meant before.
       findMany: vi.fn().mockResolvedValue([]),
+      // #3166: the two calls `raiseEditFinancialReviewTask` makes when the date
+      // path parks. Present on every double rather than only the parking cases,
+      // because a missing model here throws inside the transaction and surfaces
+      // as an opaque 400 — which is how a park looks exactly like a refusal.
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({ id: "task-1" }),
     },
     bookingModification: { create: vi.fn().mockResolvedValue({ id: "mod1" }) },
     bookingRequest: { findFirst: vi.fn().mockResolvedValue(null) },
