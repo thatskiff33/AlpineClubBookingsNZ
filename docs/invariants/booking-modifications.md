@@ -1302,11 +1302,25 @@ row now all carry ONE sentence, composed in
 change happen; applying a promotion to a stay whose money is already with a
 person is separate work, and money-shaped enough to deserve its own review.
 
-A stay already **under way** never reaches that sentence, because both surfaces
-refuse a promo change on one outright - `resolveTargetDates` on the save, and the
-`isInProgressEdit` block in the modify-quote route, with "Promo code changes are
-not available for in-progress bookings". The copy module still carries wording
-for that case, so relaxing either refusal cannot re-open the silence.
+A stay already **under way** produces that sentence too, and today it always
+comes out empty. Both surfaces refuse a promo change on an in-progress stay
+outright — `resolveTargetDates` on the save, and the `isInProgressEdit` block in
+the modify-quote route, with "Promo code changes are not available for
+in-progress bookings" — so there is never anything to report. They build the
+notice on that branch regardless, because wording nothing calls for warns nobody:
+**relaxing either refusal cannot re-open the silence**, which is the whole reason
+the in-progress arm exists.
+
+That wiring reads a flag the promotion helper itself sets
+(`PromoChangeResult.promoEngineRan`) rather than the caller's pricing branch,
+because THERE ARE TWO STUBS. The batch service stubs the promotion figures for a
+price-preserving echo and for a parked edit; `applyPromoCodeChanges` stubs them
+again, internally, for any in-progress plan. An in-progress edit that prices
+normally takes neither of the caller's branches, calls the helper, and receives
+the stub — so a predicate written at the call site would have covered the parked
+branch and left that one silent.
+
+**The five paths that park**, and what is peculiar to each:
 
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote

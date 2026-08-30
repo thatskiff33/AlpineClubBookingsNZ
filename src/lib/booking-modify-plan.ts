@@ -1990,6 +1990,23 @@ export type PromoChangeResult = {
   // #2390: set only when a usage cap stopped the promotion reaching somebody on
   // the repriced booking; null means everyone it applies to is covered.
   promoCoverage: PromoCoverageNotice | null;
+  /**
+   * #3179: whether the promotion engine actually ran for this edit.
+   *
+   * `false` means every figure above is the booking's own, carried across
+   * untouched — so a `promoCode` or `removePromoCode` the request carried was
+   * DROPPED, and the member is owed a sentence saying so. It is not derivable
+   * from `promoRemoved`/`promoChanged`: those are both `false` on an ordinary
+   * edit that asked for no promo change at all.
+   *
+   * It is reported by the function that decides to skip, rather than
+   * re-derived by the caller from the pricing branch, because the caller cannot
+   * see the in-progress stub below and re-deriving it is two expressions for
+   * one question (`INV-SSOT`). A future change that makes an in-progress edit
+   * honour a promo change flips this flag at the same time, and the notice
+   * disappears on its own.
+   */
+  promoEngineRan: boolean;
 };
 
 /**
@@ -2108,6 +2125,12 @@ export async function applyPromoCodeChanges(
       promoChanged: false,
       // An in-progress plan reuses prices already agreed; it re-runs no cap.
       promoCoverage: null,
+      // #3179: THE SECOND STUB. The batch service has one of its own for a
+      // price-preserving echo and a parked edit; this is the other, and a
+      // caller reading the pricing branch alone cannot see it. Saying so here
+      // is what lets the save build the member's notice on this branch too, so
+      // relaxing the in-progress refusals above cannot re-open the silence.
+      promoEngineRan: false,
     };
   }
 
@@ -2301,6 +2324,7 @@ export async function applyPromoCodeChanges(
     promoRemoved,
     promoChanged,
     promoCoverage,
+    promoEngineRan: true,
   };
 }
 

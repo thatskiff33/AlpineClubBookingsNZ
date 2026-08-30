@@ -877,36 +877,32 @@ export async function modifyBookingBatch({
     const capacityOverridden = pricingResult.capacityOverridden;
 
     /**
-     * #3170, on a question a reviewer raised and the answer being NO CHANGE.
+     * #3170 asked whether a parked edit should carry a promo-code change, and
+     * the answer was that it should not carry it but MUST NOT SWALLOW IT.
+     * #3179 is where that second half was built.
      *
-     * A member who asks to apply or remove a promo code in the same request as a
-     * parked edit has that part of their request dropped: the stub below keeps
-     * the booking's stored promotion figures and reports `promoRemoved: false`,
-     * `promoChanged: false` over an HTTP 200.
+     * A member who asks to apply or remove a promo code in the same request as
+     * a parked edit has that part of their request dropped: the stub below
+     * keeps the booking's stored promotion figures and reports
+     * `promoRemoved: false`, `promoChanged: false` over an HTTP 200. Parking
+     * did not introduce that - `applyPromoCodeChanges` returns the same shape
+     * for EVERY in-progress plan, priced or parked, because an in-progress edit
+     * reuses prices already agreed and re-runs no promotion cap.
      *
-     * That is not something parking introduced. `applyPromoCodeChanges` returns
-     * exactly this shape for EVERY in-progress plan, priced or parked - an
-     * in-progress edit reuses prices already agreed and re-runs no promotion cap
-     * - so the parked branch behaves identically to the priced branch beside it.
-     * Making the parked case alone refuse, or alone report, would put the two
-     * in-progress branches into disagreement about the same member request, on a
-     * child whose scope is the money that could not be valued.
+     * So the fix is the one both branches share: the promotion is still not
+     * re-run on either, and the member is TOLD on both. `promoEngineRan` below
+     * is what makes that one answer rather than two.
      *
-     * So it is recorded here as a stated limit of the in-progress edit path
-     * rather than fixed in this branch. Telling the member their promo change was
-     * not applied is a real gap and belongs to whichever change fixes it for both
-     * branches at once.
+     * THIS PREDICATE IS NOT THAT ANSWER, and naming it accurately is the point.
+     * It decides only whether the promotion figures are stubbed HERE. The other
+     * stub is inside `applyPromoCodeChanges` itself, on an in-progress plan,
+     * where this expression is `false` and the engine still does not run - so
+     * reading this to decide what the member is told would have covered one of
+     * the two branches and left the other silent.
      */
-    /**
-     * ONE predicate for "this edit did not run the promotion engine", read
-     * twice below: once to stub the promotion figures, once to tell the member
-     * what that cost them (#3179). Two expressions for one question is the
-     * defect `INV-SSOT` names, and it is the exact shape #2978 and #3032 each
-     * had to unpick on the two predicates a few dozen lines above this one.
-     */
-    const promoEngineSkipped =
+    const promoFiguresStubbedHere =
       pricePreservingModification || pricingResult.kind !== "priced";
-    const promo = promoEngineSkipped
+    const promo = promoFiguresStubbedHere
       ? {
           newDiscountCents: booking.discountCents,
           newPromoAdjustmentCents: booking.promoAdjustmentCents,
@@ -915,6 +911,11 @@ export async function modifyBookingBatch({
           // A price-preserving modification re-runs no cap, so it cannot change
           // who the promotion covers.
           promoCoverage: null,
+          // #3179: this branch runs no promotion at all. The type on
+          // `PromoChangeResult` is what forces this literal to answer the same
+          // question the function does, so the notice below cannot be built off
+          // a predicate that knows about only one of the two stubs.
+          promoEngineRan: false,
         }
       : await applyPromoCodeChanges(tx, {
           booking,
@@ -939,10 +940,19 @@ export async function modifyBookingBatch({
      * what cannot; this is the warning, and every surface downstream reads this
      * one value (`INV-SSOT`).
      *
+     * READ OFF `promo.promoEngineRan`, NOT off the pricing branch. There are
+     * TWO stubs, not one: the literal above, and `applyPromoCodeChanges`' own
+     * in-progress early return. An in-progress edit that PRICES normally takes
+     * neither `pricePreservingModification` nor the parked branch, so a
+     * predicate built here would call the engine, receive the stubbed figures
+     * back, and build no notice - the one branch this warning most needs to
+     * cover if the in-progress refusals are ever relaxed. The flag comes from
+     * whichever code decided to skip, which is the only place that knows.
+     *
      * Null in the ordinary case, and null on a price-preserving echo, where a
      * promo change cannot arrive at all: `promoCode`/`removePromoCode` make a
      * request STRUCTURAL, which is what `pricePreservingModification` excludes.
-     * The call is still made unconditionally on the stub branch rather than
+     * The call is still made unconditionally on the skipped branch rather than
      * fenced on that reasoning, so that if the exclusion ever moves the member
      * is told instead of silenced.
      *
@@ -950,12 +960,14 @@ export async function modifyBookingBatch({
      * stay already under way both surfaces refuse a promo change outright
      * (`resolveTargetDates`, and the matching block in the modify-quote route),
      * so that arm is defence in depth and its wording must still be true if a
-     * refusal is ever relaxed. The reachable case is the other one - a
-     * pre-check-in edit whose money parked for review (#3166, `INV-MOD-028`),
-     * where the member edit panel does show the promo card.
+     * refusal is ever relaxed - which is exactly why it has to be WIRED and not
+     * merely written. The reachable case is the other one - a pre-check-in edit
+     * whose money parked for review (#3166, `INV-MOD-028`), where the member
+     * edit panel does show the promo card.
      */
-    const promoChangeNotApplied = promoEngineSkipped
-      ? describePromoChangeNotApplied({
+    const promoChangeNotApplied = promo.promoEngineRan
+      ? null
+      : describePromoChangeNotApplied({
           requestedPromoCode: input.promoCode,
           removePromoCodeRequested: Boolean(input.removePromoCode),
           currentPromoCode: booking.promoRedemption?.promoCode?.code,
@@ -963,8 +975,7 @@ export async function modifyBookingBatch({
             ? "STAY_IN_PROGRESS"
             : "AMOUNT_UNDER_REVIEW",
           phase: "saved",
-        })
-      : null;
+        });
 
     // #3170: on a parked edit the booking's stored final price is written back
     // unchanged rather than recomposed from the parked promotion figures. The
