@@ -167,14 +167,14 @@ vi.mock("@/lib/member-credit", () => ({
 }));
 
 import { resolveManualRefundTask } from "@/lib/manual-refund-task-resolution";
+import { syncEditFinancialReviewChargeRequest } from "@/lib/edit-financial-review-charge";
 import {
   REVIEW_CHARGE_ANCHOR_MISSING_MESSAGE,
   REVIEW_CHARGE_NO_INSTRUMENT_MESSAGE,
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
-  syncEditFinancialReviewChargeRequest,
-} from "@/lib/edit-financial-review-charge";
+} from "@/lib/edit-financial-review-charge-refusals";
 /**
  * NOT mocked. These keys ARE the exactly-once boundary of a charge, so they are
  * asserted against the real builders rather than against a stub that could agree

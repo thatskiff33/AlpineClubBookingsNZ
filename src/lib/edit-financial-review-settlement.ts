@@ -13,9 +13,9 @@ import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import {
   chooseEditReviewChargeRoute,
   executeEditReviewCharge,
-  REVIEW_CHARGE_WRONG_KIND_MESSAGE,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
+import { REVIEW_CHARGE_WRONG_KIND_MESSAGE } from "@/lib/edit-financial-review-charge-refusals";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
