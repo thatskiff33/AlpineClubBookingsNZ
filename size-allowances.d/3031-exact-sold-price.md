@@ -65,8 +65,14 @@ reason: the apply path narrows the pricing result once and refuses the review
   next lane to re-derive it, or worse, to assume it was an oversight.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1302
-reason: the evidence gate, which is the whole of E10: a removal's credit was
+lines: 1359
+reason: #3032's delta round added the rule that a parked removal always records
+  the DEPARTING strand, readable or not — the filter used to skip it for being
+  exact, and since nothing settles on a parked removal and the delete destroys
+  its night rows, that lost the departing member's refund entirely. The lines are
+  the two-branch occurrence build and the block explaining the loss, which has to
+  sit at the filter it fixes. Beneath that, the evidence gate, which is the whole
+  of E10: a removal's credit was
   derived as the difference between two repricings of the REMAINING guests, so a
   remaining guest with no stored price was revalued at today's rate and that
   movement landed inside the departing guest's credit. The gate has to sit in
@@ -134,8 +140,11 @@ reason: the same one branch, for the same reason, on the removal route.
   dead branch back.
 
 file: src/lib/waitlist.ts
-lines: 1379
-reason: the offer-time reprice writes the per-night rows it prices. It moved
+lines: 1380
+reason: one line of the growth is #3032's correction to this docblock's claim
+  that a later removal "would be refused" — it parks. Docblock claims are
+  contracts here, and a stale one at the site that explains why the write exists
+  is the shape that survives longest. The rest: the offer-time reprice writes the per-night rows it prices. It moved
   `BookingGuest.priceCents` and never touched `BookingGuestNight` — zero
   references in the file — so after a rate change the rows summed to the old
   total while the guest carried the new one, and every later edit on that

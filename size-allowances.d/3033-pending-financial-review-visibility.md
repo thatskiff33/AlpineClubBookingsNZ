@@ -22,8 +22,13 @@ reason: this is where the whole admin half of the feature lands — the two
   change's own subject, not as a line-count tidy-up ridden in on a money-copy fix.
 
 file: src/lib/email/booking.ts
-lines: 1539
-reason: the growth is the composed money note in `sendBookingModifiedEmail` —
+lines: 1545
+reason: #3032's delta round added the `moneyAlreadyMoved` answer at this
+  composition site: two of the settlement note's arms are past tense about money,
+  and beside either of them "Nothing has been refunded or charged for it yet" is
+  a flat contradiction in one email about one change. The question is answered
+  where the two notes are composed, which is here. The rest is the composed money
+  note in `sendBookingModifiedEmail` —
   a review sentence rendered ALONGSIDE the settlement sentence rather than
   instead of it, which is what stops a member being told there is nothing to do
   while an additional payment goes uncollected. It has to sit in the sender that

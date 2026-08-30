@@ -10,8 +10,19 @@ allowance that already owns them (`3031-exact-sold-price.md` and
 here. This route is the one path no live allowance covers.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1202
-reason: making `financialReviewPending` a required parameter on the modified
+lines: 1264
+reason: TWO additions, and the second is the larger one. The pending-review
+  FENCE: this route is the fourth money-affecting door and had no fence on
+  it, so an edit priced against a total under review, absorbed the
+  overstatement into the stored `finalPriceCents` and let the same money
+  leave twice at completion. The fence must run inside this transaction,
+  after both locks and the post-lock re-read and below the 403, which is
+  this function; most of its lines are the docblock saying what this route
+  does to a booking under review, because "reprices inline in the route
+  rather than through a service" is exactly why it was missed. Its 409
+  branch is answered at the top of the catch chain because the error
+  extends the shared `ApiError` and the generic branch drops the code.
+  And, from the earlier round: making `financialReviewPending` a required parameter on the modified
   email enumerated every caller, and this route was the fifth — the one no
   hand-written list of call sites held. The fourteen lines are one read of
   whether the club is still working out an amount on this booking, the value

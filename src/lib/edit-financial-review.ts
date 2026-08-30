@@ -533,18 +533,13 @@ function occurrenceKeyViolation(
  * What "this booking's money is still under review" MEANS, as a `where`
  * fragment, and the one definition of it (`INV-SSOT`).
  *
- * Two readers ask that question and they are imported side by side into the same
- * services: this module's `findOpenEditFinancialReviewTask`, which is the FENCE
- * and runs on the caller's transaction client under the booking-edit locks, and
- * `booking-financial-review-visibility.ts`, which is the member-facing and admin
- * VISIBILITY read and runs on the global client after the commit. The client, the
- * moment, the shape returned and the number of bookings asked about all differ,
- * which is why they are two functions - but the predicate is one idea, and
- * spelling it twice is how a later narrowing (a third status, a second kind) ends
- * up applying to the banner and not to the fence, or the other way round.
- *
- * It lives HERE, with the module that mints the kind, rather than beside either
- * reader.
+ * Two readers ask that question, side by side in the same services: the FENCE
+ * below, on the caller's transaction client under the booking-edit locks, and
+ * `booking-financial-review-visibility.ts`, on the global client after the
+ * commit. Client, moment and shape all differ, so they stay two functions - but
+ * the predicate is one idea, and spelling it twice is how a later narrowing
+ * reaches the banner and not the fence. It lives here, with the module that
+ * mints the kind.
  */
 export const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
   kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,

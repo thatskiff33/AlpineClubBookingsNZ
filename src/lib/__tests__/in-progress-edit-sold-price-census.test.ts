@@ -472,8 +472,16 @@ describe("lenient locked-night reader census (#3031, E6)", () => {
       /(?<!function\s)\bstoredSoldPriceEvidenceForGuest\s*\(/,
     );
     const lenientCall = source.search(LENIENT_LOCK_CALL_ONCE);
+    // #3032: the verdict is derived from `strandEvidence` - the strict twin's
+    // per-strand answers - rather than from the length of the occurrence list it
+    // used to be counted off. The two came apart when a parked removal started
+    // recording the DEPARTING strand even where that strand's own rows are exact:
+    // the occurrence list is no longer "the unreadable ones", so counting it is
+    // no longer the same question as "is anything unreadable". Matched on the
+    // derivation, so a verdict computed from something other than the gate's
+    // answers fails here.
     const verdict = source.search(
-      /const parkedFinancialReview = unpriceableStrands\.length > 0;/,
+      /const parkedFinancialReview =\s*strandEvidence\.some\(/,
     );
     const fence = source.search(/if \(!parkedFinancialReview\) \{/);
     const repriceCall = /await priceBookingGuestsWithMembershipTypePolicy\s*\(/;
