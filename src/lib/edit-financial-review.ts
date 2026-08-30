@@ -124,6 +124,15 @@ const OCCURRENCE_KEY_VERSION = "v1";
  * reviewed by anybody. Including the stored evidence distinguishes the two,
  * because the first edit changed it.
  *
+ * THAT IS NECESSARY AND WAS NOT SUFFICIENT (#3166). It rests on the edit
+ * changing the evidence, and the pre-check-in guest-add parks WITHOUT changing
+ * any of the material above - no night is surrendered, none is added, and a
+ * parked add writes nothing to `BookingGuest` or `BookingGuestNight`, so the
+ * identity is stable across every repeat. `findFreeOccurrenceSlot` is what makes
+ * a settled task stop suppressing the next occurrence; read its docblock for the
+ * money that was walking out of the door and why the ordinal sits outside this
+ * digest rather than inside it.
+ *
  * ## Why NOT the `BookingGuestNight` row ids, which is the obvious answer
  *
  * Row ids would distinguish that case cleanly and were rejected on measurement:
@@ -190,6 +199,123 @@ export function editFinancialReviewOccurrenceKey(
 }
 
 /**
+ * How many times ONE occurrence identity may recur before the raise refuses.
+ *
+ * Not a policy limit - it is a runaway guard on the walk below, which is the
+ * only unbounded loop in this module. Fifty settled reviews of the identical
+ * structural edit on one booking is not a club's booking history, it is a
+ * defect, and looping for ever against the database is a worse way to find out.
+ */
+const MAX_OCCURRENCE_RECURRENCES = 50;
+
+/**
+ * The stored key for the `n`th time one occurrence identity has come round.
+ *
+ * The first is the digest itself, so every key already on file keeps matching
+ * its row and the pinned digest in `edit-financial-review.test.ts` is still the
+ * key a first raise writes. Later ones carry a `#n` suffix OUTSIDE the digest,
+ * which is what keeps the "recompute the key from `reviewContext` and check it"
+ * property the key's own docblock claims: recomputing yields the base, and the
+ * row's key is the base plus an optional recurrence suffix.
+ */
+function occurrenceKeyForRecurrence(
+  baseOccurrenceKey: string,
+  recurrence: number,
+): string {
+  return recurrence === 1
+    ? baseOccurrenceKey
+    : `${baseOccurrenceKey}#${recurrence}`;
+}
+
+/**
+ * #3166: WHERE THIS RAISE GOES - the open task already holding this occurrence,
+ * or the first free key for a new one.
+ *
+ * ## The money this closes
+ *
+ * The find-then-create this replaces matched on the base key REGARDLESS OF
+ * STATUS, so a task that had been completed or dismissed suppressed every later
+ * raise of the same occurrence identity for ever. The key's own docblock names
+ * that failure ("the raise finds a terminal row, declines to create anything,
+ * and the second adjustment is never reviewed by anybody") and answers it by
+ * putting the guest's stored evidence in the hash - which works only when the
+ * edit CHANGES that evidence.
+ *
+ * #3166 makes an occurrence that changes nothing the ordinary case, on the
+ * busiest door in the product. Adding a guest surrenders no nights and adds
+ * none, and a parked add writes nothing to `BookingGuest` or
+ * `BookingGuestNight` - so the key is a pure function of the unchanged stored
+ * evidence, and settling a task never moves it. Worked through: add a $320
+ * guest to a booking whose history cannot be read, park, an officer prices and
+ * completes the task; add a second $320 guest, and the raise finds the COMPLETED
+ * row, creates nothing, and every downstream reader is filtered on OPEN - so
+ * there is no banner, no email flag, and no fence on the third add. Ten guests
+ * over a season is $3,200 the club never sees and never hears about.
+ *
+ * ## What "already raised" now means
+ *
+ * An OPEN task, and only an OPEN task. That is the state a replay must collapse
+ * into, and a replay is the only thing the dedup was ever for: a raise and the
+ * edit that caused it share one transaction, so a retry can only ever find its
+ * predecessor's task OPEN or find nothing at all. A TERMINAL task is not a
+ * replay - it is a question somebody already answered, and the edit in front of
+ * us is asking a new one.
+ *
+ * ## Why a suffix rather than widening the hashed material
+ *
+ * `bookingModificationId` is the obvious discriminator and is the wrong one: a
+ * retried edit writes a NEW modification row, so hashing it would make every
+ * retry a fresh task and lose the replay dedup this walk exists to keep. The
+ * recurrence ordinal is not part of the occurrence's identity at all - it is
+ * which turn of that identity this is - so it belongs beside the digest rather
+ * than inside it, and `OCCURRENCE_KEY_VERSION` does not move.
+ *
+ * TERMINAL ROWS ARE NEVER TOUCHED. Nothing here reopens, amends or re-reads a
+ * settled task; the audit of what an officer decided the first time stays
+ * exactly as they left it, and the new question gets its own row. A booking
+ * legitimately holding more than one review is already the model
+ * (`booking-financial-review-visibility.ts` says so in as many words).
+ *
+ * Walked one indexed unique lookup at a time rather than with a `startsWith`
+ * scan, because `occurrenceKey`'s btree serves equality under any collation and
+ * a prefix `LIKE` does not. The realistic depth is one.
+ */
+async function findFreeOccurrenceSlot(
+  store: Prisma.TransactionClient,
+  baseOccurrenceKey: string,
+): Promise<
+  | {
+      kind: "open";
+      occurrenceKey: string;
+      task: { id: string; status: ManualRefundTaskStatus };
+    }
+  | { kind: "free"; occurrenceKey: string }
+> {
+  for (
+    let recurrence = 1;
+    recurrence <= MAX_OCCURRENCE_RECURRENCES;
+    recurrence += 1
+  ) {
+    const occurrenceKey = occurrenceKeyForRecurrence(
+      baseOccurrenceKey,
+      recurrence,
+    );
+    const existing = await store.manualRefundTask.findUnique({
+      where: { occurrenceKey },
+      select: { id: true, status: true },
+    });
+    if (!existing) return { kind: "free", occurrenceKey };
+    if (existing.status === ManualRefundTaskStatus.OPEN) {
+      return { kind: "open", occurrenceKey, task: existing };
+    }
+  }
+  throw new EditFinancialReviewError(
+    `This booking edit's financial review has already been raised and settled ${MAX_OCCURRENCE_RECURRENCES} times for the identical change; it will not be raised again automatically.`,
+    500,
+  );
+}
+
+/**
  * The operator prose on the task.
  *
  * A builder rather than free text at the call site, so every raised task reads
@@ -234,17 +360,28 @@ export function buildEditFinancialReviewReason(
 /** What became of a raise. */
 export type RaiseEditFinancialReviewResult = {
   taskId: string;
+  /**
+   * The key the returned task is actually stored under.
+   *
+   * The occurrence digest for the first turn of an identity, and the digest plus
+   * a `#n` recurrence suffix afterwards (#3166) - so a caller that wants to find
+   * this row again must use THIS value rather than re-deriving the digest.
+   */
   occurrenceKey: string;
   /**
    * True only when THIS call inserted the row. False means the occurrence was
-   * already on file - a replay - and `status` says what has since become of it.
+   * already OPEN on file - a replay - and nothing further was written.
    */
   created: boolean;
   /**
-   * The occurrence's status now. `OPEN` on a fresh raise or a replay of one
-   * still awaiting pricing; `COMPLETED` or `DISMISSED` when the occurrence was
-   * already resolved, in which case this call deliberately did nothing: those
-   * states are terminal for that occurrence and a replay must not reopen them.
+   * The status of the task this call returns, which since #3166 is always
+   * `OPEN`: either a row just inserted, or a replay of one still awaiting
+   * pricing. A COMPLETED or DISMISSED task is terminal and is never reopened,
+   * amended or returned here - it also no longer SUPPRESSES a later occurrence
+   * of the same identity, which is the money `findFreeOccurrenceSlot` closes.
+   *
+   * Typed as the enum rather than the literal because terminal-versus-open is
+   * the caller's question to ask, not a shape to hard-code around.
    */
   status: ManualRefundTaskStatus;
 };
@@ -396,7 +533,7 @@ export async function raiseEditFinancialReviewTask({
     );
   }
 
-  const occurrenceKey = editFinancialReviewOccurrenceKey(occurrence);
+  const baseOccurrenceKey = editFinancialReviewOccurrenceKey(occurrence);
 
   // `INV-LOCK-001` / `INV-LOCK-002`: the global settlement cohort key, taken
   // before the find-then-create below, which is what makes that pair atomic.
@@ -404,18 +541,16 @@ export async function raiseEditFinancialReviewTask({
   // module's header for why the unique index is not the primary fence.
   await store.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-  const existing = await store.manualRefundTask.findUnique({
-    where: { occurrenceKey },
-    select: { id: true, status: true },
-  });
-  if (existing) {
+  const slot = await findFreeOccurrenceSlot(store, baseOccurrenceKey);
+  if (slot.kind === "open") {
     return {
-      taskId: existing.id,
-      occurrenceKey,
+      taskId: slot.task.id,
+      occurrenceKey: slot.occurrenceKey,
       created: false,
-      status: existing.status,
+      status: slot.task.status,
     };
   }
+  const occurrenceKey = slot.occurrenceKey;
 
   const reviewContext: EditFinancialReviewContext = {
     version: 1,
