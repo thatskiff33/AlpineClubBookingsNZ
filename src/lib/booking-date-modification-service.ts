@@ -846,11 +846,22 @@ export async function modifyBookingDates({
         const nightDates = priceBreakdown.guests[i].nightDates ?? [];
         if (nightDates.length > 0) {
           await tx.bookingGuestNight.createMany({
-            data: nightDates.map((stayDate, k) => ({
-              bookingGuestId: g.id,
-              stayDate,
-              priceCents: priceBreakdown.guests[i].perNightCents[k] ?? 0,
-            })),
+            data: nightDates.map((stayDate, k) => {
+              // #3031: NO `?? 0`. These rows ARE the booking's sold-price
+              // history from here on, and a default would write a magic zero
+              // onto a real night — an amount epic #2797 prohibits, and one a
+              // later edit would read back as evidence the member paid nothing
+              // for it. A per-night vector shorter than the night list is a
+              // defect in whoever built the breakdown, so refuse.
+              const priceCents = priceBreakdown.guests[i].perNightCents[k];
+              if (typeof priceCents !== "number") {
+                throw new ApiError(
+                  "The new dates could not be priced night by night",
+                  400,
+                );
+              }
+              return { bookingGuestId: g.id, stayDate, priceCents };
+            }),
           });
         }
       }),

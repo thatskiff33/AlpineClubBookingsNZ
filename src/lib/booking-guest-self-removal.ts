@@ -45,15 +45,27 @@ export type GuestSelfRemovalEligibility = {
  * The self-removal rule, evaluated server-side and shared by every surface that
  * offers (or explains the absence of) the action.
  *
- * One refusal stays server-only: a SETTLED booking whose reduction needs an
- * explicit refund-vs-account-credit election, which the owner (not a departing
- * guest) must make. Predicting it would mean knowing the price delta of
- * removing this guest, and that is the full repricing pass — season rates,
- * group discount, promo revalidation — which only runs inside the removal
- * transaction. Guessing from "has a captured payment" would hide the action
- * from members the server would in fact allow (a cancellation tier that
- * returns nothing needs no election), so the page shows the action and the
- * card surfaces the service's plain-English 400 verbatim if it is refused.
+ * TWO refusals stay server-only, and for the same reason: both need facts this
+ * predicate is not given.
+ *
+ * The first is a SETTLED booking whose reduction needs an explicit
+ * refund-vs-account-credit election, which the owner (not a departing guest)
+ * must make. Predicting it would mean knowing the price delta of removing this
+ * guest, and that is the full repricing pass — season rates, group discount,
+ * promo revalidation — which only runs inside the removal transaction. Guessing
+ * from "has a captured payment" would hide the action from members the server
+ * would in fact allow (a cancellation tier that returns nothing needs no
+ * election), so the page shows the action and the card surfaces the service's
+ * plain-English 400 verbatim if it is refused.
+ *
+ * The second is #3031's evidence gate (INV-MOD-028): the booking's stored
+ * sold-price rows cannot price the credit exactly, so the club has to confirm
+ * the amount. Predicting it would mean loading every guest's
+ * `BookingGuestNight` rows on every surface that offers the action — including
+ * the member-night guard, which runs inside a booking-write transaction and must
+ * not add a per-conflict query. Its 409 carries its own member-facing sentence
+ * and is surfaced the same way. Both are DECLINED-with-an-explanation rather
+ * than a silently missing control, which is the property that matters.
  *
  * The quote-priced refusal (`isQuotePricedBooking`) IS predictable — one
  * indexed lookup — and callers that can afford it pass `isQuotePriced`. It

@@ -29,6 +29,7 @@ import {
 import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
+  type InProgressGuestRangePlanResult,
 } from "@/lib/booking-edit-guest-ranges";
 import {
   cleanupChoreAssignmentsForDateChange,
@@ -101,6 +102,10 @@ import {
   type MemberGuestConsentWritePlanEntry,
 } from "@/lib/member-guest-add-policy";
 import {
+  isNonNegativeIntegerCents,
+  type FinancialReviewRequired,
+} from "@/lib/edit-financial-review-context";
+import {
   isOperationallyPresentConsent,
   type MemberGuestAddActor,
   type MemberGuestConsentColumns,
@@ -153,12 +158,26 @@ type ProposedRemainingGuest = {
  * The guest's stored per-night prices, usable as `lockedNightPrices` (#1036).
  * Rows loaded without `priceCents` (or legacy guests without night rows)
  * yield no locks, so those nights price at current season rates.
+ *
+ * LENIENT BY DESIGN, and it stays that way: a night with no lock is a night the
+ * edit is BUYING, and current policy is the right price for it. The strict twin
+ * for a night an edit gives BACK is `storedSoldPriceEvidenceForGuest`
+ * (INV-MOD-028), which returns a verdict rather than a best effort.
+ *
+ * What is NOT lenient is what counts as money. This used to lock any
+ * `typeof === "number"`, so a NEGATIVE stored row — representable, and
+ * pre-#2744 arithmetic could write one — was handed to pricing as the price of
+ * the night, on the guest-add and date-change paths. A negative row is not a
+ * cheap night; it is a row that cannot be money, and it is classified as an
+ * absence of usable evidence everywhere else in this epic. One predicate decides
+ * that here too (`isNonNegativeIntegerCents`, `INV-SSOT`), so the night falls
+ * through to current policy instead of inverting the charge.
  */
 export function lockedNightPricesForGuest(guest: {
   nights?: { stayDate: Date; priceCents?: number }[];
 }): Array<{ stayDate: Date; priceCents: number }> {
   return (guest.nights ?? []).flatMap((night) =>
-    typeof night.priceCents === "number"
+    isNonNegativeIntegerCents(night.priceCents)
       ? [{ stayDate: night.stayDate, priceCents: night.priceCents }]
       : [],
   );
@@ -1198,7 +1217,12 @@ export async function loadActiveSeasonRates(
   return toSeasonRateData(seasons);
 }
 
-export type PricingResult = {
+/**
+ * A modification that priced. Every numeric field lives HERE and nowhere else,
+ * which is what makes `PricingResult`'s review branch incapable of yielding an
+ * amount (#3031, epic #2797).
+ */
+export type PricedModification = {
   inProgressPlan: BookingEditGuestRangePlan | null;
   // Admin override (issue #1668): true when the target nights were over lodge
   // capacity and the admin confirmed the overbooking. Always false on the
@@ -1239,6 +1263,25 @@ export type PricingResult = {
 };
 
 /**
+ * What pricing a modification answers with (#3031, epic #2797): a priced result,
+ * or the honest statement that the exact adjustment cannot be read from this
+ * booking's own stored sold-price history.
+ *
+ * A DISCRIMINATED UNION RATHER THAN NULLABLE NUMBERS. The review branch carries
+ * no `newTotalPriceCents`, no `priceBreakdown` and no `inProgressPlan`, so there
+ * is no ADJUSTMENT a caller could default to zero — the epic prohibits a magic
+ * zero, and the cheapest enforcement is a shape in which one cannot be written.
+ * What it does carry is `occurrences[].storedEvidence`: the stored history as it
+ * stands, which is evidence for a person and never an amount to move. See
+ * `InProgressGuestRangePlanResult` for why that distinction is worth stating.
+ * Quote and apply consume this same type, which is the issue's own parity
+ * requirement.
+ */
+export type PricingResult =
+  | ({ kind: "priced" } & PricedModification)
+  | FinancialReviewRequired;
+
+/**
  * The per-night breakdown for one guest of an in-progress edit, in the shape the
  * rest of this file consumes: the nights they hold, what each is worth, and
  * their total.
@@ -1248,9 +1291,11 @@ export type PricingResult = {
  * the average, and `lockedNightPricesForGuest` handed that average to the next
  * edit as the price the member was deemed to have paid (#2744). The plan now
  * computes each night's real amount itself, alongside the price it charges for
- * them, so there is nothing left to split here; the even split survives inside
- * the plan as the fallback for a guest whose stored total cannot be reconciled
- * with their rows (`composeProposedNightPrices`).
+ * them, so there is nothing left to split here. Nor is there anywhere else:
+ * #3031 deleted the even split from the plan too, where it had survived as the
+ * fallback for a guest whose stored total could not be reconciled with their
+ * rows. That case is `financial_review_required` now — the fallback's output was
+ * becoming the evidence the NEXT edit read as a sold price (INV-MOD-028).
  *
  * Integer cents throughout, and `perNightCents` sums to `priceCents` exactly —
  * which is what keeps the Xero lines, rebuilt per contiguous run with
@@ -1483,9 +1528,11 @@ export async function calculateModifiedPricing(
     // needs the plan first, so the same failure surfaced as an unmapped error on
     // apply while the preview returned a clean 400. Preview and apply now agree on
     // the refusal as well as on the price.
+    let planResult: InProgressGuestRangePlanResult;
     try {
-      inProgressPlan = buildInProgressGuestRangePlan({
+      planResult = buildInProgressGuestRangePlan({
         booking: {
+          id: booking.id,
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           totalPriceCents: booking.totalPriceCents,
@@ -1514,6 +1561,19 @@ export async function calculateModifiedPricing(
       );
       throw new ApiError("No season rate found for the requested dates", 400);
     }
+    if (planResult.kind === "financial_review_required") {
+      // #3031: STOP HERE, and return nothing numeric. The capacity check below
+      // and every price after it would be work done toward an adjustment this
+      // booking's history cannot support, and the epic's answer to that is a
+      // person rather than an estimate. Returned rather than thrown so the
+      // caller's own type system forces the case to be handled — the apply path
+      // turns it into a refusal today and into #3032's park-the-money flow next.
+      return {
+        kind: "financial_review_required",
+        occurrences: planResult.occurrences,
+      };
+    }
+    inProgressPlan = planResult.plan;
   }
 
   const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
@@ -1596,7 +1656,7 @@ export async function calculateModifiedPricing(
     }
   }
 
-  let priceBreakdown: PricingResult["priceBreakdown"];
+  let priceBreakdown: PricedModification["priceBreakdown"];
   try {
     priceBreakdown = inProgressPlan
       ? {
@@ -1642,6 +1702,7 @@ export async function calculateModifiedPricing(
       }));
 
   return {
+    kind: "priced",
     inProgressPlan,
     capacityOverridden,
     newTotalPriceCents,
@@ -2078,7 +2139,7 @@ export async function applyGuestChanges(
         consentColumns?: MemberGuestConsentColumns;
       }
     >;
-    priceBreakdown: PricingResult["priceBreakdown"];
+    priceBreakdown: PricedModification["priceBreakdown"];
     inProgressPlan: BookingEditGuestRangePlan | null;
     /**
      * The resolved other-club rate election (Other Lodges epic), straight off the
@@ -2114,6 +2175,27 @@ export async function applyGuestChanges(
   // plan expanded its envelope, so this deleted a sparse guest's rows and wrote
   // back a continuous run, filling the gap for good. The plan now carries the
   // night list (INV-MOD-025) and this is the only writer that needs to know.
+  /**
+   * The amount priced for night `index` of `guest`'s breakdown (#3031).
+   *
+   * Throws rather than defaulting. The alternative — a zero — is a real
+   * financial number written into `BookingGuestNight.priceCents`, which is the
+   * only record of what a night was sold for.
+   */
+  const requiredNightPriceCents = (
+    guest: BreakdownGuest | undefined,
+    index: number,
+    stayDate: Date,
+  ): number => {
+    const cents = guest?.perNightCents[index];
+    if (typeof cents !== "number") {
+      throw new Error(
+        `No priced amount for the night of ${stayDate.toISOString()} (#3031)`,
+      );
+    }
+    return cents;
+  };
+
   const syncGuestNights = async (
     bookingGuestId: string,
     bg: BreakdownGuest | undefined,
@@ -2127,7 +2209,14 @@ export async function applyGuestChanges(
         data: nightDates.map((stayDate, k) => ({
           bookingGuestId,
           stayDate,
-          priceCents: bg?.perNightCents[k] ?? 0,
+          // #3031: NO `?? 0`. This is the write that BECOMES the booking's
+          // sold-price history, so a default here would put a magic zero on a
+          // real night — a number epic #2797 prohibits outright, and one the
+          // next edit would read back as evidence that the member paid nothing.
+          // A per-night vector shorter than the night list is a wiring defect in
+          // whoever built the breakdown, and refusing is the only answer that
+          // does not invent money.
+          priceCents: requiredNightPriceCents(bg, k, stayDate),
         })),
       });
       return {
