@@ -514,6 +514,11 @@ export async function executeEditReviewSettlement({
       // or the party changed here would queue a second, redundant invoice update.
       datesChanged: false,
       guestIdentityChanged: false,
+      // `"credit"` picks the UNAPPLIED modification credit note and anything else
+      // picks the ordinary one, so this reads as a two-way discriminator rather
+      // than a claim about the instrument: an internet-banking hand-back is not a
+      // card refund, but the club DID return the money, so it takes the same
+      // ordinary credit note a card refund does.
       settlementMethod: route?.kind === "account-credit" ? "credit" : "card",
       settlementAmountCents: amountCents,
     }).catch((err) =>
