@@ -103,17 +103,39 @@ interface HostingDraft {
  * force rather than from an arbitrary default the admin never chose — and so
  * ticking one extra box does not silently drop the club's other choices.
  */
+/**
+ * Fill in every scope the build knows about, whatever the server sent.
+ *
+ * A response from a previous colour omits `sameGroupTrip` (#3037), and an
+ * omitted checkbox is not the same thing as an unticked one once the value is
+ * sent BACK: the card's save is deliberately explicit — it sends `null` rather
+ * than omitting `hostScopes`, so the route never has to guess what silence meant
+ * — and a partial set would reintroduce exactly that guess one field lower down.
+ * Normalising on the way in means the card always sends a complete set.
+ */
+function normaliseScopeSet(
+  scopes: AdultMemberHostScopeSetValue,
+): AdultMemberHostScopeSetValue {
+  return {
+    sameBooking: scopes.sameBooking,
+    sameBookingOwner: scopes.sameBookingOwner,
+    sameGroupTrip: scopes.sameGroupTrip === true,
+  }
+}
+
 function customScopeStartingPoint(
   policy: AdultMemberHostingPolicy,
 ): AdultMemberHostScopeSetValue {
-  return policy.hostScopes ?? policy.effective.hostScopes
+  return normaliseScopeSet(policy.hostScopes ?? policy.effective.hostScopes)
 }
 
 function toDraft(policy: AdultMemberHostingPolicy): HostingDraft {
   return {
     mode: policy.mode,
     capacityMode: policy.capacityMode ?? "",
-    hostScopes: policy.hostScopes,
+    hostScopes: policy.hostScopes
+      ? normaliseScopeSet(policy.hostScopes)
+      : null,
     version: policy.configured ? policy.version : null,
     configured: policy.configured,
   }
