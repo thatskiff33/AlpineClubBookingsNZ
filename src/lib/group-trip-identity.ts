@@ -1,9 +1,10 @@
 import { Prisma } from "@prisma/client";
 
 import {
-  ACTIVE_BOOKING_STATUSES,
-  hostingCoverageSourceBookingFilter,
-} from "@/lib/booking-status";
+  coverageDependentEnvelopeWhere,
+  coverageEnvelopeWhere,
+  type CoverageEnvelopeBooking,
+} from "@/lib/adult-member-hosting-coverage-envelope";
 
 /**
  * The one answer to "which Group Trip does this booking or join belong to?"
@@ -28,8 +29,11 @@ import {
  * pair that is in no Group Trip has one. Reading grouping off it would produce a
  * sibling set that is wrong in both directions, which is why the owner's contract
  * names the two authoritative columns and forbids that one. Nothing in this file
- * mentions `parentBookingId`, and `group-trip-identity.test.ts` asserts that no
- * source file resolves group identity from it.
+ * mentions `parentBookingId`, and `adult-member-hosting-call-sites.test.ts`
+ * asserts that — reading this module off disk, alongside its census of every
+ * other hosting call site. (`group-trip-identity.test.ts` is the behavioural
+ * suite and makes no such claim; the attribution here used to name it, which is
+ * the kind of docblock promise `INV-SSOT` treats as a contract.)
  *
  * **2. THE CONTAINER'S STATUS GOVERNS JOINING, NOT COVER.** `GroupBooking.status`
  * (`OPEN` / `CLOSED` / `CANCELLED`) decides whether NEW bookings may join the
@@ -75,7 +79,10 @@ export interface GroupTripIdentity {
  * `Pick<PrismaClient, ...>` interfaces the hosting paths use: a column or relation
  * name that drifts from the schema is a runtime validation failure on a booking
  * write path with a green typecheck. One constant means one place to be right,
- * and the census test reads the schema to prove it still is.
+ * and `adult-member-hosting-call-sites.test.ts` reads `prisma/schema.prisma` to
+ * prove it still is — which is a claim this docblock made before anything
+ * checked it, the identity suite having only compared the constant with a copy
+ * of itself.
  *
  * `joinCode` IS NEVER SELECTED HERE, and must never be added. It is the group's
  * join credential; the epic's privacy contract keeps it out of every payload and
@@ -89,15 +96,24 @@ export const GROUP_TRIP_IDENTITY_SELECT = {
 /**
  * What `GROUP_TRIP_IDENTITY_SELECT` produces, as a structural type.
  *
- * Both relations are optional as well as nullable so a caller holding a WIDER
- * row — or a test double written before #3037 — still satisfies it and resolves
- * to "no Group Trip", which is the safe direction: a booking wrongly read as
- * ungrouped supplies and consumes no cross-booking cover, so the rule falls back
- * to exactly its pre-#3037 answer.
+ * BOTH FIELDS ARE REQUIRED, and nullable rather than optional. Nullable is the
+ * DATA: a booking in no Group Trip has neither relation. Optional would be
+ * something else entirely — permission for a caller to omit the `select` — and
+ * omitting it resolves to "no Group Trip" SILENTLY.
+ *
+ * That direction is safe for a coverage SOURCE (a booking wrongly read as
+ * ungrouped supplies no cross-booking cover, so the rule falls back to its
+ * pre-#3037 answer) and it is the WRONG direction for a DEPENDENT, which this
+ * same module builds: a booking wrongly read as ungrouped is a booking nobody
+ * re-evaluates, so a genuinely stranded booking is never reconciled and never
+ * escalated. One module cannot make the omission safe in both directions, so it
+ * makes the omission IMPOSSIBLE instead: with the fields required, a call site
+ * that forgot `GROUP_TRIP_IDENTITY_SELECT` is a compile error rather than a
+ * quiet wrong answer. Unrepresentable beats policed (`INV-SSOT`).
  */
 export interface GroupTripIdentityRow {
-  groupBookingAsOrganiser?: { id: string } | null;
-  groupBookingJoin?: { groupBookingId: string } | null;
+  groupBookingAsOrganiser: { id: string } | null;
+  groupBookingJoin: { groupBookingId: string } | null;
 }
 
 /**
@@ -195,39 +211,29 @@ export function groupTripMembershipWhere(
 /**
  * The booking being evaluated, as the two builders below need it.
  *
- * `id` is nullable ON PURPOSE: the pre-persist create path has no booking id to
- * exclude, and a builder that demanded one would force that caller to invent a
- * sentinel. A null id simply adds no exclusion clause, which is right — a row
- * that does not exist cannot match the query.
+ * The shared envelope's own input type under this module's name, so a Group Trip
+ * caller has one import rather than two and the two scopes cannot drift to
+ * different notions of "the booking being evaluated". Its `id` is nullable ON
+ * PURPOSE — see `CoverageEnvelopeBooking` for why the pre-persist paths need
+ * that.
  */
-export interface GroupTripCoverageBooking {
-  id: string | null;
-  lodgeId: string;
-  checkIn: Date;
-  checkOut: Date;
-}
+export type GroupTripCoverageBooking = CoverageEnvelopeBooking;
 
 /**
  * Bookings whose attendance may cover `booking`'s non-member guest-nights under
  * `SAME_GROUP_TRIP`.
  *
- * The same four-clause shape as `sameBookingOwnerCoverageSourceWhere` (#2576),
- * with the relationship clause swapped and NOTHING else loosened — that symmetry
- * is deliberate, because the two scopes are OR-ed per night by one evaluator and
- * a scope with its own quietly different lodge, date or status rules would be a
- * second definition of coverage:
+ * ONE RELATIONSHIP CLAUSE INSIDE THE SHARED ENVELOPE. The Group Trip membership
+ * clause is this scope's own (§1); everything else — the same lodge, not this
+ * booking, an overlapping half-open date range and the eligible-source lifecycle
+ * filter — is `coverageEnvelopeWhere`, the same function `SAME_BOOKING_OWNER`
+ * calls. The two scopes are OR-ed per night by ONE evaluator, so a scope with its
+ * own quietly different lodge, date or status rules would be a second definition
+ * of coverage. That symmetry used to be two copies plus a docblock asking
+ * somebody to keep them equal, which is the arrangement `INV-SSOT-002` refuses.
  *
- *  - the Group Trip — canonical membership, above (§1).
- *  - `lodgeId` — the exact same lodge. An adult at Lodge A on Friday cannot cover
- *    Lodge B on Friday, so this is an equality and never a fan-out.
- *  - the eligible-source filter — genuinely confirmed active attendance only, read
- *    off the canonical lifecycle helper in `booking-status.ts`. Note what this is
- *    NOT: it is `Booking.status`, not `GroupBooking.status` (§2).
- *  - a half-open date OVERLAP — `checkOut` is the morning nobody stays, so a
- *    source arriving on this booking's checkout day, or leaving on its arrival
- *    day, shares no night and is excluded. Per-NIGHT matching still happens in the
- *    evaluator on the participants' own `BookingGuestNight` rows; this clause only
- *    keeps the read bounded and is a coarse envelope test, not the coverage rule.
+ * Note what the lifecycle filter is NOT: it is `Booking.status`, never
+ * `GroupBooking.status` (§2).
  *
  * WHY THIS IS BOUNDED. `GroupBookingJoin` is indexed on `groupBookingId` and
  * `GroupBooking.organiserBookingId` is unique, so the relation clause resolves to
@@ -248,21 +254,15 @@ export function groupTripCoverageSourceWhere(
   options: { historical?: boolean } = {},
 ): Prisma.BookingWhereInput {
   // Composed with `AND` rather than spread flat, unlike its same-owner sibling.
-  // The membership clause is an `OR`, and `hostingCoverageSourceBookingFilter` is
-  // a helper this module does not own: were it ever to grow an `OR` of its own, a
-  // flat spread would silently drop one of the two — dropping the status filter
-  // would admit cancelled bookings as cover, and dropping the membership filter
-  // would admit the whole lodge. `AND` cannot lose a clause that way.
+  // The membership clause is an `OR`, and the envelope is a helper this module
+  // does not own: were either to carry an `OR` at the same level, a flat spread
+  // would silently keep only the last — dropping the lifecycle filter would admit
+  // cancelled bookings as cover, and dropping the membership filter would admit
+  // the whole lodge. `AND` cannot lose a clause that way.
   return {
     AND: [
-      hostingCoverageSourceBookingFilter(options),
+      coverageEnvelopeWhere(booking, options),
       groupTripMembershipWhere(identity),
-      {
-        lodgeId: booking.lodgeId,
-        ...(booking.id === null ? {} : { id: { not: booking.id } }),
-        checkIn: { lt: booking.checkOut },
-        checkOut: { gt: booking.checkIn },
-      },
     ],
   };
 }
@@ -271,24 +271,20 @@ export function groupTripCoverageSourceWhere(
  * Bookings whose own compliance may DEPEND on `booking`'s attendance — the set
  * #3039 has to re-evaluate when this booking's rows change.
  *
- * The mirror of the source builder, with the one deliberate difference its
- * same-owner sibling also carries: the status set is the wider
- * `ACTIVE_BOOKING_STATUSES`, not the eligible-source set. A dependent is any
- * booking the rule would judge, and the rule judges a `PAYMENT_PENDING` or
- * `AWAITING_REVIEW` booking too — those cannot SUPPLY cover, but they certainly
- * NEED it. These statuses are not all capacity-holding, so this is a policy cohort
- * rather than a bed-hold claim.
+ * The mirror of the source builder: the same membership clause, wrapped in
+ * `coverageDependentEnvelopeWhere` instead. That envelope carries the one
+ * deliberate difference — the wider `ACTIVE_BOOKING_STATUSES` cohort, because the
+ * rule judges a `PAYMENT_PENDING` or `AWAITING_REVIEW` booking too — and the
+ * reasoning for it, and for the deliberately absent guest-composition filter.
+ * Both are stated once, there.
  *
- * NO GUEST-COMPOSITION FILTER, on purpose, for the reason the same-owner builder
- * records: the SQL for "has a participant the rule treats as a non-member guest"
- * is not `memberId IS NULL` — it also covers a member-linked row whose Member is
- * inactive, cancelled or archived — so expressing it here would be a second copy
- * of `participantIsNonMemberGuest` written in Prisma filters, and the failure
- * direction is the bad one. A drifted copy MISSES a dependent, which means no
- * reconciliation and no escalation for a booking that really was stranded; a copy
- * that is merely too wide costs one idempotent reconciliation that writes nothing.
- * The group, lodge and night clauses are what make the set small, and they are all
- * here.
+ * `AND`, NEVER A FLAT SPREAD, and here that is not hypothetical. The membership
+ * clause IS an `OR` today, so spreading it beside an envelope that ever grew an
+ * `OR` of its own would drop group membership outright and turn #3039's
+ * reconciliation fan-out into every active booking at the lodge on those nights.
+ * The source builder above already composed under `AND` for exactly this reason;
+ * this one used to spread flat, which is the hazard its sibling's comment
+ * describes and this one did not follow.
  *
  * AND STILL NO `GroupBooking.status` (§2). Closing or cancelling the container
  * changes no booking's cover, so it must not change who is re-evaluated either —
@@ -300,12 +296,9 @@ export function groupTripCoverageDependentWhere(
   identity: GroupTripIdentity,
 ): Prisma.BookingWhereInput {
   return {
-    ...groupTripMembershipWhere(identity),
-    lodgeId: booking.lodgeId,
-    deletedAt: null,
-    status: { in: [...ACTIVE_BOOKING_STATUSES] },
-    ...(booking.id === null ? {} : { id: { not: booking.id } }),
-    checkIn: { lt: booking.checkOut },
-    checkOut: { gt: booking.checkIn },
+    AND: [
+      coverageDependentEnvelopeWhere(booking),
+      groupTripMembershipWhere(identity),
+    ],
   };
 }

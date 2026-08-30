@@ -127,12 +127,30 @@ describe("canonical Group Trip identity", () => {
     expect(sameGroupTrip(proposed, groupTripIdentityOf(joinerRow))).toBe(true);
   });
 
-  it("treats a wider row that names neither relation as ungrouped", () => {
-    // A caller holding a booking loaded without `GROUP_TRIP_IDENTITY_SELECT`
-    // resolves to "no Group Trip", which is the safe direction: it supplies and
-    // consumes no cross-booking cover, so the rule falls back to exactly its
-    // pre-#3037 answer rather than to an invented sibling set.
-    expect(groupTripIdentityOf({})).toBeNull();
+  it("treats a row that names neither relation as ungrouped", () => {
+    // A booking that really is in no Group Trip: both relations present and
+    // null. It supplies and consumes no cross-booking cover, so the rule falls
+    // back to exactly its pre-#3037 answer.
+    expect(
+      groupTripIdentityOf({
+        groupBookingAsOrganiser: null,
+        groupBookingJoin: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("refuses at COMPILE TIME a row that simply omitted the select", () => {
+    // The distinction the row type exists to draw, and why the fields are
+    // required-and-nullable rather than optional. "In no Group Trip" is data and
+    // is the test above. "I forgot GROUP_TRIP_IDENTITY_SELECT" is a WIRING BUG,
+    // and resolving it silently to "no Group Trip" is only safe in one of the two
+    // directions this module serves: a source read errs towards flagging, but a
+    // DEPENDENT read that misses a booking means nobody reconciles a genuinely
+    // stranded one. So the omission is a type error instead of a quiet answer.
+    // @ts-expect-error — a row that omits the relations is not a GroupTripIdentityRow.
+    groupTripIdentityOf({});
+    // @ts-expect-error — half of the select is still an omission.
+    groupTripIdentityOf({ groupBookingJoin: null });
   });
 });
 
@@ -155,21 +173,23 @@ describe("the sibling sets the later children read", () => {
     // that could widen the read beyond one travelling party.
     expect(groupTripCoverageSourceWhere(BOOKING, identity)).toEqual({
       AND: [
+        // The shared envelope, which SAME_BOOKING_OWNER builds from the same
+        // function — so the two scopes cannot drift to different lodge, date or
+        // lifecycle rules while one evaluator ORs them per night.
         {
           status: { in: [...HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES] },
           deletedAt: null,
+          lodgeId: BOOKING.lodgeId,
+          id: { not: BOOKING.id },
+          checkIn: { lt: BOOKING.checkOut },
+          checkOut: { gt: BOOKING.checkIn },
         },
+        // This scope's own relationship, and the only clause it owns.
         {
           OR: [
             { groupBookingAsOrganiser: { is: { id: GROUP } } },
             { groupBookingJoin: { is: { groupBookingId: GROUP } } },
           ],
-        },
-        {
-          lodgeId: BOOKING.lodgeId,
-          id: { not: BOOKING.id },
-          checkIn: { lt: BOOKING.checkOut },
-          checkOut: { gt: BOOKING.checkIn },
         },
       ],
     });
@@ -181,10 +201,12 @@ describe("the sibling sets the later children read", () => {
       identity,
     );
     const clauses = where.AND as Record<string, unknown>[];
-    expect(clauses[2]).not.toHaveProperty("id");
+    expect(clauses[0]).not.toHaveProperty("id");
     // Everything else is identical: the pre-persist read is the same read, minus
     // an exclusion of a row that cannot exist.
-    expect(clauses[2]).toEqual({
+    expect(clauses[0]).toEqual({
+      status: { in: [...HOSTING_COVERAGE_SOURCE_BOOKING_STATUSES] },
+      deletedAt: null,
       lodgeId: BOOKING.lodgeId,
       checkIn: { lt: BOOKING.checkOut },
       checkOut: { gt: BOOKING.checkIn },
@@ -193,17 +215,39 @@ describe("the sibling sets the later children read", () => {
 
   it("keeps the dependent set on the wider active statuses", () => {
     const where = groupTripCoverageDependentWhere(BOOKING, identity);
+    const clauses = where.AND as Record<string, unknown>[];
+    const envelope = clauses[0] as {
+      status: { in: BookingStatus[] };
+      deletedAt: null;
+      id: unknown;
+    };
     // A dependent is any booking the rule would JUDGE, which includes bookings
     // that cannot themselves supply cover — they still need it. So this set is
     // strictly wider than the source set above, and asserting that relationship
     // is what stops somebody "tidying" the two into one constant.
-    const statuses = (where.status as { in: BookingStatus[] }).in;
+    const statuses = envelope.status.in;
     expect(statuses).toEqual(expect.arrayContaining([BookingStatus.CONFIRMED]));
     expect(statuses).toContain(BookingStatus.PAYMENT_PENDING);
     expect(statuses).not.toContain(BookingStatus.CANCELLED);
-    expect(where.OR).toEqual(groupTripMembershipWhere(identity).OR);
-    expect(where.deletedAt).toBeNull();
-    expect(where.id).toEqual({ not: BOOKING.id });
+    expect(envelope.deletedAt).toBeNull();
+    expect(envelope.id).toEqual({ not: BOOKING.id });
+    expect(clauses[1]).toEqual(groupTripMembershipWhere(identity));
+  });
+
+  it("composes the dependent set under AND, so no OR can swallow another", () => {
+    // THE BUG THIS PINS. The membership clause IS an `OR`, and this builder used
+    // to spread it flat beside the envelope's own keys. Any `OR` the envelope
+    // ever grows — a widened dependent cohort, a soft-delete variant — would then
+    // have replaced group membership outright, and the failure is silent: the
+    // fan-out becomes EVERY active booking at that lodge on those nights, which
+    // is exactly the lodge-wide sweep #2575 rejected. The source builder already
+    // composed under `AND`; this asserts both do.
+    const where = groupTripCoverageDependentWhere(BOOKING, identity);
+    expect(Object.keys(where)).toEqual(["AND"]);
+    expect(where.OR).toBeUndefined();
+    expect(
+      Object.keys(groupTripCoverageSourceWhere(BOOKING, identity)),
+    ).toEqual(["AND"]);
   });
 
   it("excludes a sibling at another lodge or on non-overlapping nights", () => {
@@ -211,7 +255,7 @@ describe("the sibling sets the later children read", () => {
     // wrong is a cross-lodge or cross-week cover claim: an adult at Lodge A on
     // Friday cannot supervise Lodge B on Friday.
     const where = groupTripCoverageSourceWhere(BOOKING, identity);
-    const envelope = (where.AND as Record<string, unknown>[])[2];
+    const envelope = (where.AND as Record<string, unknown>[])[0];
     expect(envelope.lodgeId).toBe("lodge-1");
     // Half-open: a source arriving on this booking's checkout morning shares no
     // night with it.

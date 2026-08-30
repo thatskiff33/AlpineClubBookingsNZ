@@ -42,6 +42,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 function readRepoFile(relativePath: string): string {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
@@ -82,11 +84,14 @@ function readRepoCode(relativePath: string): string {
   const key = relativePath.split(path.sep).join("/");
   const cached = repoCodeCache.get(key);
   if (cached !== undefined) return cached;
-  const code = readRepoFile(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  // THE SHARED STRIPPER, not a local one (#3132/#3155, `INV-SSOT-001`). This
+  // file used to blank block comments with a regex and then drop whole lines
+  // beginning `//` or `*`, which misses a TRAILING comment on a line of code —
+  // so a census asserting an identifier is absent could be satisfied by, or
+  // tripped by, prose sitting after real code. Seventeen scanners were converged
+  // onto `stripComments` for exactly that reason and a fresh copy regresses it;
+  // four of the assertions below are new instruments, so they converge too.
+  const code = stripComments(readRepoFile(relativePath));
   repoCodeCache.set(key, code);
   return code;
 }
@@ -281,18 +286,74 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
   // today's call sites cannot make: it passes just as green the day a new site
   // resolves grouping from the wrong relationship.
 
-  it("resolves Group Trip identity in exactly one module", () => {
+  it("DEFINES Group Trip identity in exactly one module, and lets anyone call it", () => {
     // Every later child of the epic - the cross-booking evaluator (#3038), the
     // reconciliation writers (#3039) and the kiosk/admin payloads (#3040) -
     // consumes this one definition. A second resolver would give identical
     // answers right up to the day the two disagree about a joined booking whose
     // container was closed, which is the exact case the contract calls out.
-    expect(sourceFilesNaming("groupTripIdentityOf(")).toEqual([
-      "src/lib/group-trip-identity.ts",
-    ]);
-    expect(sourceFilesNaming("groupTripMembershipWhere(")).toEqual([
-      "src/lib/group-trip-identity.ts",
-    ]);
+    //
+    // ONE DEFINITION IS THE CLAIM; one CALLER is not, and asserting the latter
+    // is what this census used to do. Today `group-trip-identity.ts` is the only
+    // file that names these functions simply because nothing calls them yet, so
+    // the assertion was vacuous — and worse than vacuous, because #3038's first
+    // legitimate call would have red-lighted a guard that had never proved
+    // anything. Pinning the `export function` sites states the real rule and
+    // leaves the callers free.
+    for (const definition of [
+      "export function groupTripIdentityOf(",
+      "export function groupTripIdentityForJoin(",
+      "export function groupTripMembershipWhere(",
+      "export function groupTripCoverageSourceWhere(",
+      "export function groupTripCoverageDependentWhere(",
+    ]) {
+      expect(sourceFilesNaming(definition), definition).toEqual([
+        "src/lib/group-trip-identity.ts",
+      ]);
+    }
+    // And nowhere else builds the MEMBERSHIP FILTER by hand. Pinning the bare
+    // relation names would be the wrong instrument: `group-booking.ts` and the
+    // booking detail page legitimately select `groupBookingAsOrganiser` for the
+    // organiser card, and neither is resolving hosting identity. What a second
+    // copy would have to spell is the group-id filter on the join relation, so
+    // that is what is pinned.
+    expect(sourceFilesNaming("groupBookingJoin: { is: { groupBookingId:")).toEqual(
+      ["src/lib/group-trip-identity.ts"],
+    );
+  });
+
+  it("names relations and fields the schema really declares", () => {
+    // THE CLAIM `GROUP_TRIP_IDENTITY_SELECT`'s docblock makes, which until now
+    // nothing checked. Prisma does NOT typecheck `select` keys through the
+    // hand-written `Pick<PrismaClient, ...>` interfaces the hosting paths use, so
+    // a relation or column name that drifts from the schema is a RUNTIME
+    // validation failure on a booking write path with a green typecheck — and
+    // the identity test pins the constant against a copy of itself, which cannot
+    // see that drift at all. This reads the schema.
+    const schema = readRepoFile("prisma/schema.prisma");
+
+    // The two relations the select traverses, on Booking.
+    expect(schema).toMatch(
+      /^\s*groupBookingAsOrganiser\s+GroupBooking\?/m,
+    );
+    expect(schema).toMatch(/^\s*groupBookingJoin\s+GroupBookingJoin\?/m);
+
+    // The two fields it reads through them: GroupBooking.id, and the join row's
+    // own groupBookingId. `GroupBookingJoin.bookingId` is what makes the join
+    // side resolvable at all, so it is pinned here too even though the select
+    // does not name it.
+    const model = (name: string) => {
+      const start = schema.indexOf(`model ${name} {`);
+      expect(start, name).toBeGreaterThan(-1);
+      return schema.slice(start, schema.indexOf("\n}", start));
+    };
+    expect(model("GroupBooking")).toMatch(/^\s*id\s+String\s+@id/m);
+    expect(model("GroupBookingJoin")).toMatch(/^\s*groupBookingId\s+String/m);
+    expect(model("GroupBookingJoin")).toMatch(/^\s*bookingId\s+String\?/m);
+
+    // And the forbidden identity source really is a Booking column, so the
+    // guard below is refusing something that exists rather than a typo.
+    expect(model("Booking")).toMatch(/^\s*parentBookingId\s+String\?/m);
   });
 
   it("never resolves Group Trip identity from parentBookingId", () => {
@@ -308,21 +369,50 @@ describe("canonical Group Trip identity (#3037, epic #2943)", () => {
     expect(identity).toContain("groupBookingJoin");
   });
 
-  it("keeps the group container's status out of both coverage where-builders", () => {
+  it("keeps the group container's status out of the whole identity module", () => {
     // A CLOSED or CANCELLED GroupBooking governs JOINING, not cover: a still-live
     // individual booking can hold an adult who is genuinely travelling with the
     // party, so filtering the source or dependent set on container status would
     // silently strip cover from compliant bookings and silently drop bookings
     // that still need reconciling. Whether a booking is really happening is
     // decided on `Booking.status`, through the canonical lifecycle helper.
+    //
+    // TWO WAYS THIS GUARD USED TO BE A FALSE GREEN, both fixed here.
+    //
+    // It matched `/groupBooking\s*:\s*\{[^}]*status/`, and no relation in this
+    // schema is called `groupBooking`: they are `groupBookingAsOrganiser` and
+    // `groupBookingJoin`, neither of which that pattern can match, because
+    // `groupBooking` is immediately followed by a letter rather than a colon. A
+    // real container-status filter written the way Prisma requires passed it.
+    //
+    // And it sliced the file from `groupTripCoverageSourceWhere` downwards,
+    // which sits BELOW `groupTripMembershipWhere` — the one builder both
+    // coverage sets compose. A container-status gate added there, which would
+    // have poisoned both, was not scanned at all.
+    //
+    // The claim is stronger and simpler than either: the identity module names
+    // no status of any kind. It cannot, now that the lifecycle question belongs
+    // entirely to the shared coverage envelope, so anything reintroducing one —
+    // under any relation name, in any builder, in any helper — trips this.
     const identity = readRepoCode("src/lib/group-trip-identity.ts");
-    const builders = identity.slice(
-      identity.indexOf("export function groupTripCoverageSourceWhere("),
+    expect(identity).not.toMatch(/status/i);
+    expect(identity).not.toContain("GroupBookingStatus");
+    expect(identity).not.toContain("CANCELLED");
+    // The lifecycle filter is delegated rather than dropped: both builders go
+    // through the shared envelope, which reads `Booking.status` off the
+    // canonical helper. Without this the assertion above would also pass on a
+    // module that had simply stopped filtering by booking status at all.
+    expect(identity).toContain("coverageEnvelopeWhere(");
+    expect(identity).toContain("coverageDependentEnvelopeWhere(");
+
+    // And the envelope itself is about bookings, never about containers, so the
+    // rule cannot be reintroduced one module along either.
+    const envelope = readRepoCode(
+      "src/lib/adult-member-hosting-coverage-envelope.ts",
     );
-    expect(builders).not.toMatch(/groupBooking\s*:\s*\{[^}]*status/);
-    expect(builders).not.toContain("GroupBookingStatus");
-    expect(builders).not.toContain("CANCELLED");
-    expect(builders).toContain("hostingCoverageSourceBookingFilter(");
+    expect(envelope).not.toContain("groupBooking");
+    expect(envelope).not.toContain("GroupBooking");
+    expect(envelope).toContain("hostingCoverageSourceBookingFilter(");
   });
 
   it("never selects the group joinCode", () => {
