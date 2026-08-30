@@ -855,6 +855,10 @@ export default async function BookingDetailPage({
     refundRequests: booking.refundRequests,
     auditLogs: bookingAuditLogs,
     duplicateCaptureRefunds,
+    // #3033: the same flag the banner above is built from, so the timeline's
+    // priced modification row and the banner cannot disagree about whether this
+    // booking's money is settled.
+    financialReviewPending,
   });
 
   // #2266: the edit panel's account-credit card (its own card above the
