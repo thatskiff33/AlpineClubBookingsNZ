@@ -27,6 +27,7 @@ import {
 // migration carried this file past its 500-line route-page budget. See that
 // file's header for why an allowance was not the answer.
 import {
+  FinancialReviewNotice,
   formatLinkExpiry,
   formatStayDay,
   NarrativeCard,
@@ -35,6 +36,16 @@ import {
   type PaymentLinkContext,
   type PaymentRecovery,
 } from "./pay-link-presentation";
+/*
+  #3194 (epic #2797): the sentences a member reads when their saved change is
+  still being priced. Imported, never restated — the booking-detail banner
+  composes the same ones, and two surfaces holding their own copy of a claim
+  about a member's money is the defect this closes (`INV-SSOT`).
+*/
+import {
+  financialReviewNote,
+  financialReviewNoteBesideAnAmount,
+} from "@/lib/booking-financial-review-copy";
 
 export default function PayByLinkPage() {
   const club = useClubIdentity();
@@ -238,24 +249,68 @@ export default function PayByLinkPage() {
 
   if (!context) return null;
 
+  /*
+    #3194: the club is still working out an amount on this booking. Every branch
+    below either renders `context.narrative` — which the server has already
+    composed with the review sentences in it — or, where the branch renders a
+    card of its own instead, shows the notice explicitly. There is no branch on
+    this page that can reach a member without telling them.
+  */
+  const financialReviewPending = context.financialReviewPending === true;
+
   // A completed card payment lands here before the page is re-fetched.
   if (paymentComplete || context.state === "paid") {
-    const narrative: Narrative =
-      context.state === "paid"
-        ? context.narrative
-        : {
-            state: "paid",
-            headline: "Payment received",
-            message: `Thanks ${context.firstName} — your payment is complete.`,
-            // #2919: name the booking's OWN lodge, not the club default. The two
-            // "contact us if this link fails" lines above stay club-level on
-            // purpose — those are about the club, not about a stay.
-            nextStep: `Your booking with ${context.lodgeName ?? club.lodgeName} is confirmed. We look forward to seeing you.`,
-          };
-    return <NarrativeCard narrative={narrative} tone="success" />;
+    const serverNarrative = context.state === "paid";
+    const narrative: Narrative = serverNarrative
+      ? context.narrative
+      : {
+          state: "paid",
+          headline: "Payment received",
+          message: `Thanks ${context.firstName} — your payment is complete.`,
+          // #2919: name the booking's OWN lodge, not the club default. The two
+          // "contact us if this link fails" lines above stay club-level on
+          // purpose — those are about the club, not about a stay.
+          nextStep: `Your booking with ${context.lodgeName ?? club.lodgeName} is confirmed. We look forward to seeing you.`,
+        };
+    return (
+      <NarrativeCard narrative={narrative} tone="success">
+        {/*
+          #3194: the member has just paid IN THIS SESSION, so the context on
+          screen predates the payment and the card above is composed here rather
+          than by the server. A booking under review reaches this branch — a
+          CONFIRMED-unpaid booking can carry an open review and still be paid —
+          and without this notice the last thing it would say is "your booking is
+          confirmed, we look forward to seeing you", which is the same false
+          reassurance in a different sentence.
+
+          `moneyAlreadyMoved: false` is a fact, not a default: what moved here is
+          the booking's OWN price, which the member just paid. Nothing has been
+          refunded or charged FOR THE CHANGE, and a parked review settles nothing
+          by construction.
+
+          Not shown when the server supplied the narrative (`state === "paid"`),
+          because the server composes the review sentences into it already and
+          this would say them twice.
+        */}
+        {!serverNarrative && financialReviewPending ? (
+          <FinancialReviewNotice
+            note={financialReviewNote({ moneyAlreadyMoved: false })}
+          />
+        ) : null}
+      </NarrativeCard>
+    );
   }
 
-  if (context.state === "expired_payable") {
+  /*
+    #3194: `canRequestFreshLink`, not `state === "expired_payable"`. On a booking
+    under review the state is the WORDING state (`financial_review_pending`)
+    while the link is still expired-but-payable, and the member still needs the
+    button that emails them a new one. This field is the link's own fact and is
+    identical to the old test on every booking that is not under review. The
+    narrative rendered here is the server's, which already carries the review
+    sentences.
+  */
+  if (context.canRequestFreshLink) {
     return (
       <NarrativeCard narrative={context.narrative} tone="info">
         {refreshState === "sent" ? (
@@ -279,9 +334,17 @@ export default function PayByLinkPage() {
     );
   }
 
-  if (context.state !== "payable" || !context.payable) {
-    // bumped / cancelled / declined / under_review / unknown — a clear,
-    // specific message with a concrete next step.
+  /*
+    #3194: `!context.payable`, not `state !== "payable"`, for the same reason as
+    the branch above — `payable` is present exactly when this link can still take
+    money, which a review does not change. Identical to the old test on every
+    booking that is not under review.
+  */
+  if (!context.payable) {
+    // bumped / cancelled / declined / under_review / financial_review_pending /
+    // unknown — a clear, specific message with a concrete next step, and on a
+    // reviewed booking the narrative the server composed carries the review
+    // sentences, so no separate notice is needed here.
     const tone = toneForState(context.state);
     const showRebook =
       context.state === "bumped" ||
@@ -322,6 +385,18 @@ export default function PayByLinkPage() {
             {formatLinkExpiry(payable.expiresAt, clubTime)}.
           </p>
         </div>
+
+        {/*
+          #3194: directly under the amount, because the first sentence of the
+          note is about that amount — the change being priced is not inside it.
+          Above the pay controls rather than below them, so it is read before the
+          member decides, and the controls stay armed: this booking's own price is
+          genuinely due, and hiding the button would cost them the booking when
+          the hold expired without moving a cent of the money under review.
+        */}
+        {financialReviewPending ? (
+          <FinancialReviewNotice note={financialReviewNoteBesideAnAmount()} />
+        ) : null}
 
         <FocusedActionError
           id="payment-link-recovery-error"
