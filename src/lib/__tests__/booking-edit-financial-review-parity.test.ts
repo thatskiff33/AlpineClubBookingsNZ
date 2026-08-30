@@ -527,6 +527,54 @@ describe("#3031 no magic zero reaches a night row", () => {
     expect(created).toEqual([]);
   });
 
+  it("writes NULL where the breakdown SAYS the price is not known (#3170)", async () => {
+    // THE OTHER HALF OF THE DISTINCTION the case above pins, and the two must be
+    // read together: a vector that is SHORT is a wiring defect and throws, while
+    // an explicit `null` is a composer's deliberate statement that the night's
+    // price is not known and is stored as `NULL`.
+    //
+    // Collapsing them would be the defect in either direction. Treating a short
+    // vector as "unknown" would turn every future wiring bug into a silently
+    // unpriced night; treating an explicit null as a defect would make it
+    // impossible to commit a parked edit at all, which is what #3170 exists to
+    // allow.
+    const { applyGuestChanges } = await import("@/lib/booking-modify-plan");
+    const { tx, created } = writeDouble();
+
+    await applyGuestChanges(tx, {
+      bookingId: "bk-parity",
+      newCheckIn: D(HELD[0]),
+      newCheckOut: D("2026-08-23"),
+      removedGuests: [],
+      remainingGuests: [],
+      proposedRemainingGuests: [],
+      normalizedAddGuests: undefined,
+      priceBreakdown: {
+        guests: [
+          {
+            priceCents: 3 * RATE,
+            // Same LENGTH as the night list — nothing is missing. The middle
+            // night's price is stated to be unknown.
+            perNightCents: [RATE, null, RATE],
+            nightDates: HELD.map((night) => D(night)),
+          },
+        ],
+      },
+      inProgressPlan: {
+        proposedExistingGuests: [PLAN_ENTRY],
+        proposedAddedGuests: [],
+      } as never,
+    });
+
+    const rows = created[0] as Array<{ stayDate: Date; priceCents: number | null }>;
+    expect(rows.map((row) => row.priceCents)).toEqual([RATE, null, RATE]);
+    // Said separately, because `toEqual` would also pass on a 0 if someone
+    // later relaxed the expectation: a stored 0 is a real sold price (a comped
+    // night), so 0 can never stand in for "not known".
+    expect(rows[1].priceCents).toBeNull();
+    expect(rows[1].priceCents).not.toBe(0);
+  });
+
   it("writes the priced amounts when the breakdown is complete", async () => {
     // The control, so the case above cannot pass on a function that always
     // throws.
