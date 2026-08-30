@@ -240,6 +240,20 @@ export function editFinancialReviewOccurrence(args: {
  * prices, and the invariant is: **a parked edit never destroys a number the
  * system could have known.**
  *
+ * ## Not only the departing strand (#3166)
+ *
+ * A removal is one of three ways a parked edit destroys an exact strand's
+ * evidence, and it was the only one this was raised for at first. The other two
+ * are the ordinary pre-check-in edit: a strand that gives nights BACK has the
+ * price stored against each of them deleted (both night writers delete every row
+ * and recreate only the proposed ones), and a strand that GAINS nights against a
+ * frozen stored total stops reconciling — it becomes
+ * `PARTIAL_STORED_NIGHT_PRICES` and is unpriceable for good. Both destroy real
+ * money evidence just as finally as a delete does, and neither is recoverable
+ * from `BookingModification.previousData`, which keeps booking-level totals and
+ * no per-night price at all. `preCheckInEditEvidence` decides which of the three
+ * applies; this builder does not care which.
+ *
  * ## Why it is a separate function rather than a `cause` argument
  *
  * The cause is not a choice the caller gets to make. `COUNTERPART_STRAND_UNREADABLE`
@@ -424,7 +438,13 @@ export type PreCheckInEditStrand = {
   }> | null;
   /** The nights this strand ends up holding. Empty for a strand being removed. */
   proposedNightDates: ReadonlyArray<Date | string>;
-  /** True when the edit deletes this strand's rows outright (a removal). */
+  /**
+   * True when the edit deletes this strand's rows outright (a removal).
+   *
+   * NOT the only way a parked edit destroys an exact strand's evidence, and not
+   * the test for whether one is recorded — shortening and extending do it too.
+   * See `evidenceDestroyed` in `preCheckInEditEvidence`.
+   */
   rowsDestroyed?: boolean;
 };
 
@@ -457,9 +477,10 @@ export type PreCheckInEditStrand = {
  * ## What it returns, and what it deliberately does not
  *
  * `occurrences` is EMPTY when every strand is exact — the edit prices normally.
- * A single unusable strand parks the whole edit, and then every removed strand
- * whose own rows WERE readable is recorded too, so a parked edit never destroys
- * a number the system could have known. There is no amount anywhere in here.
+ * A single unusable strand parks the whole edit, and then every OTHER strand
+ * whose own rows were readable and whose evidence this edit destroys is recorded
+ * too — removed, shortened or extended — so a parked edit never destroys a
+ * number the system could have known. There is no amount anywhere in here.
  *
  * `soldNightPriceByGuestId` carries, per strand, the stored integer against each
  * night it holds — usable rows only, from either verdict, so a PARTIAL strand
@@ -529,7 +550,31 @@ export function preCheckInEditEvidence(args: {
       );
       continue;
     }
-    if (strand.rowsDestroyed) {
+    /**
+     * Does this parked edit DESTROY what this exact strand's rows say?
+     *
+     * Three ways, and only the first was covered when #3166 first shipped:
+     *
+     *  - its rows are deleted outright (a removal);
+     *  - it gives nights BACK. `syncGuestNights` and the date path both delete
+     *    every one of its rows and recreate only the proposed ones, so the price
+     *    stored against each surrendered night stops existing - and
+     *    `BookingModification.previousData` keeps booking-level totals, never
+     *    per-night prices;
+     *  - it GAINS nights while its stored total is frozen. Every new night is
+     *    written `NULL`, so a strand that reconciled exactly before the edit no
+     *    longer does afterwards: it becomes `PARTIAL_STORED_NIGHT_PRICES` and is
+     *    unpriceable for good, with real money owed and nothing recording what
+     *    the strand used to be worth.
+     *
+     * A strand whose night set does not move keeps every row byte for byte, so
+     * there is nothing to record and it raises nothing.
+     */
+    const evidenceDestroyed =
+      strand.rowsDestroyed === true ||
+      surrenderedNightDates.length > 0 ||
+      addedNightDates.length > 0;
+    if (evidenceDestroyed) {
       destroyedButReadable.push(
         counterpartStrandReviewOccurrence({
           bookingId: args.bookingId,

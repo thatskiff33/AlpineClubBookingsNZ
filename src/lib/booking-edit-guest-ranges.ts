@@ -28,6 +28,7 @@ import type {
 } from "@/lib/edit-financial-review-context";
 import {
   classifyStoredSoldPriceEvidence,
+  counterpartStrandReviewOccurrence,
   editFinancialReviewOccurrence,
   storedNightPricesByKey,
   unusableStoredSoldPriceEvidence,
@@ -1370,6 +1371,15 @@ export function buildInProgressGuestRangePlan(
   // all.
   const financialReviewOccurrences: EditFinancialReviewOccurrence[] = [];
   /**
+   * #3166: exact strands whose stored evidence THIS parked edit destroys.
+   *
+   * Appended below only when the edit actually parks, so they can never make an
+   * otherwise-priceable edit park — they are a record of what was lost, not a
+   * reason to stop. The pre-check-in twin (`preCheckInEditEvidence`) splits its
+   * lists the same way and for the same reason.
+   */
+  const destroyedButReadable: EditFinancialReviewOccurrence[] = [];
+  /**
    * Per existing guest, in booking order: what each night they hold was sold
    * for. Every value is a stored integer — this map is the ONLY source of a
    * historical amount below, and it is empty for a strand the gate rejected.
@@ -1388,6 +1398,35 @@ export function buildInProgressGuestRangePlan(
       )
     );
     if (verdict.kind === "exact") {
+      /**
+       * #3166: an exact strand this edit takes nights from, or puts new nights
+       * on, is about to stop being readable — and nothing else in the database
+       * would remember what it said.
+       *
+       * `composeParkedPlan` below deletes every one of this strand's night rows
+       * and recreates only the proposed ones: a surrendered night's stored price
+       * simply stops existing, and an added night is written `NULL` against a
+       * frozen stored total, which turns a strand that reconciled exactly into
+       * `PARTIAL_STORED_NIGHT_PRICES` — unpriceable for good.
+       * `BookingModification.previousData` keeps booking-level totals and no
+       * per-night price at all, so without this the money is gone with no record
+       * that it ever existed. A strand whose night set does not move keeps every
+       * row byte for byte and raises nothing.
+       */
+      const surrendered = surrenderedNightDatesOf(entry);
+      const added = addedNightDatesOf(entry);
+      if (surrendered.length > 0 || added.length > 0) {
+        destroyedButReadable.push(
+          counterpartStrandReviewOccurrence({
+            bookingId: input.booking.id,
+            bookingGuestId: entry.guest.id,
+            evidence: verdict,
+            guestTotalCents: entry.guest.priceCents,
+            surrenderedNightDates: surrendered,
+            addedNightDates: added,
+          })
+        );
+      }
       continue;
     }
     financialReviewOccurrences.push(
@@ -1400,6 +1439,11 @@ export function buildInProgressGuestRangePlan(
         addedNightDates: addedNightDatesOf(entry),
       })
     );
+  }
+  // Only when the edit parks. An exact strand losing or gaining nights is a
+  // record of destroyed evidence, never on its own a reason to withhold money.
+  if (financialReviewOccurrences.length > 0) {
+    financialReviewOccurrences.push(...destroyedButReadable);
   }
 
   /**

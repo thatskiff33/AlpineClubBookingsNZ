@@ -3059,10 +3059,36 @@ describe("#2756 the group discount on a stay already under way", () => {
     // there is no valuation - and the season with no member rate row is never
     // consulted either, so the old "No rate found" throw stays gone.
     const occurrences = reviewOf(extendWithSeasons(driftedGuest(null)));
+    // #3166: the five on-check-out-day strands are recorded TOO, and that is a
+    // defect fix rather than noise. This edit extends the booking's check-out,
+    // so each of them gains 2026-08-22 and 2026-08-23 — nights the parked plan
+    // writes NULL against a frozen stored total. A strand that reconciled
+    // exactly before the edit is therefore PARTIAL_STORED_NIGHT_PRICES after it
+    // and unpriceable for ever, with $70 a night owed on each of five guests and
+    // — before this — nothing anywhere recording that they had ever been exact.
+    // `BookingModification.previousData` keeps booking-level totals only.
     expect(occurrences.map((occurrence) => occurrence.bookingGuestId)).toEqual([
       "d1",
+      "n1",
+      "n2",
+      "n3",
+      "n4",
+      "n5",
     ]);
     expect(occurrences[0].cause).toBe("NO_STORED_NIGHT_PRICES");
+    expect(occurrences.slice(1).map((occurrence) => occurrence.cause)).toEqual(
+      Array(5).fill("COUNTERPART_STRAND_UNREADABLE"),
+    );
+    // Their real per-night prices travel with them, which is the whole point:
+    // this is the only copy of them that survives the edit.
+    expect(occurrences[1].storedEvidence.nightPrices).toEqual([
+      { date: "2026-08-20", priceCents: 7000 },
+      { date: "2026-08-21", priceCents: 7000 },
+    ]);
+    expect(occurrences[1].addedNightDates).toEqual([
+      "2026-08-22",
+      "2026-08-23",
+    ]);
 
     // With a stored price for it, the same night joins the count without any season
     // lookup — a lock short-circuits the rate — so the party is six on the 22nd and
