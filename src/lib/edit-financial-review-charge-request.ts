@@ -281,13 +281,27 @@ export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
  *   * `ask-not-raised` - NO ask was made at all. The recovery replay that owed
  *     this edit a supplementary invoice could not queue one, so the accounts hold
  *     nothing for the charge rather than holding too little.
+ *   * `ask-owed-unknown` - the club does not know whether an ask was owed, and
+ *     says so rather than guessing (#3181 fix round). A recovery row enqueued
+ *     before `hadIssuedXeroInvoice` existed carries NULL, and the replay's whole
+ *     position on NULL is that it cannot tell whether the edit had a primary
+ *     invoice to supplement. It must not borrow `ask-not-raised`'s sentence,
+ *     which tells an officer to raise the invoice by hand: on a booking whose
+ *     primary invoice had not been minted when the edit committed, that invoice
+ *     bills the charge itself, and raising a second one BILLS THE MEMBER TWICE.
+ *     The instrument here is the booking-vs-Xero repair pass, which compares the
+ *     booking against Xero and can answer the question this record cannot.
  *
- * Three of the four combinations are produced today: the card leg only ever
- * closes (its ask is the intent, which exists by the time this can happen), and
- * the accounting leg does both. The fourth is not refused, because a leg/cause
- * pair is a description of what happened rather than a claim about what can.
+ * Four of the six combinations are produced today: the card leg only ever closes
+ * (its ask is the intent, which exists by the time this can happen), and the
+ * accounting leg produces all three. The rest are not refused, because a
+ * leg/cause pair is a description of what happened rather than a claim about
+ * what can.
  */
-export type UncollectedEditReviewChargeCause = "ask-closed" | "ask-not-raised";
+export type UncollectedEditReviewChargeCause =
+  | "ask-closed"
+  | "ask-not-raised"
+  | "ask-owed-unknown";
 
 /**
  * The accounting leg's half of that record, decided from the enqueue's own
@@ -400,6 +414,8 @@ export async function recordUncollectedEditReviewChargeShare({
       ? null
       : Math.max(derivedTotalCents - requestedTotalCents, 0);
   const invoiceNeverRaised = leg === "xero-invoice" && cause === "ask-not-raised";
+  const invoiceOwedUnknown =
+    leg === "xero-invoice" && cause === "ask-owed-unknown";
   logger.warn(
     {
       leg,
@@ -411,9 +427,11 @@ export async function recordUncollectedEditReviewChargeShare({
     },
     leg === "payment-request"
       ? "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand"
-      : invoiceNeverRaised
-        ? "Edit-financial-review supplementary invoice could not be queued at all - the whole settled total must be billed by hand"
-        : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
+      : invoiceOwedUnknown
+        ? "Edit-financial-review charge carries no record of whether a supplementary Xero invoice was owed - none was raised, and only the booking-vs-Xero repair pass can say whether one is missing"
+        : invoiceNeverRaised
+          ? "Edit-financial-review supplementary invoice could not be queued at all - the whole settled total must be billed by hand"
+          : "Edit-financial-review supplementary invoice had already left the queue before its combined total could be raised - the difference must be billed by hand",
   );
   try {
     await createAuditLog({
@@ -428,15 +446,19 @@ export async function recordUncollectedEditReviewChargeShare({
       summary:
         leg === "payment-request"
           ? `A settled review share of ${formatCents(shortfallCents ?? derivedTotalCents)} could not be added to this booking change's payment request`
-          : invoiceNeverRaised
-            ? `No Xero invoice was raised for this booking change's settled total of ${formatCents(derivedTotalCents)}`
-            : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
+          : invoiceOwedUnknown
+            ? `Whether a Xero invoice was owed for this booking change's settled total of ${formatCents(derivedTotalCents)} is not recorded`
+            : invoiceNeverRaised
+              ? `No Xero invoice was raised for this booking change's settled total of ${formatCents(derivedTotalCents)}`
+              : `This booking change's Xero invoice could not be raised to the settled total of ${formatCents(derivedTotalCents)}`,
       details:
         leg === "payment-request"
           ? `An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so ${formatCents(shortfallCents ?? derivedTotalCents)} was not added to it. The reviews settled to ${formatCents(derivedTotalCents)} in total and the member was asked for ${formatCents(requestedTotalCents ?? 0)}. Collect the difference another way and record what was collected.`
-          : invoiceNeverRaised
-            ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it, but no Xero supplementary invoice could be raised for the charge at all - so the club's accounts hold no record of it, rather than an out-of-date one. Raise the invoice by hand, or run the booking-vs-Xero repair for this booking, and record what was done.`
-            : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
+          : invoiceOwedUnknown
+            ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it. Whether a Xero supplementary invoice was owed for the charge was never recorded, so none was raised - and one may not have been needed: if the booking's main Xero invoice had not yet been sent when the change was made, that invoice bills this charge itself, and adding a supplementary invoice on top would bill the member twice. Do not raise one by hand on the strength of this note. Run the booking-vs-Xero repair for this booking, which compares the booking against Xero and will say whether an invoice is actually missing, and record what was done.`
+            : invoiceNeverRaised
+              ? `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The member has been asked for it, but no Xero supplementary invoice could be raised for the charge at all - so the club's accounts hold no record of it, rather than an out-of-date one. Raise the invoice by hand, or run the booking-vs-Xero repair for this booking, and record what was done.`
+              : `An admin settled a booking-change review as money the member owes the club, and the reviews for that change now total ${formatCents(derivedTotalCents)}. The Xero supplementary invoice for the change had already been picked up for sending, so it bills the earlier, smaller figure and could not be raised. If the member is paying by internet banking that invoice is the ask, so this is money the club has not asked for; if they are paying by card the card request is correct and it is the Xero invoice that is short. Check the invoice, bill or correct the difference by hand, and record what was done.`,
       metadata: {
         leg,
         cause,

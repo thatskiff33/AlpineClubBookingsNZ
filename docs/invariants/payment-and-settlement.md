@@ -1384,7 +1384,14 @@ one, check the other.
       gate never looks at it. It writes `booking.editFinancialReview.
       chargeShareUncollected` on the `xero-invoice` leg with cause
       `ask-not-raised` - distinct from `ask-closed`, which is an invoice that
-      exists and bills too little.
+      exists and bills too little, and from `ask-owed-unknown`, which is a
+      recovery row predating `hadIssuedXeroInvoice` and therefore a case where
+      the club cannot tell whether an invoice was owed at all. The three carry
+      DIFFERENT officer instructions and that is why they are three: telling an
+      officer to raise an invoice by hand when the booking's primary invoice may
+      already bill the charge is how the same money gets asked for twice, so
+      `ask-owed-unknown` names the booking-vs-Xero repair pass as the instrument
+      and says not to raise one on the strength of the note.
     - **Every path that settles a share without producing a request leaves a
       durable trace.** A `logger.warn` is not one: nobody goes looking through a
       log stream for money the club is owed. The mint refusing before its own `try`

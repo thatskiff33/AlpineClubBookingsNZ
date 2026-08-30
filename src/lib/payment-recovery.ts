@@ -1754,13 +1754,22 @@ async function raiseDeferredSupplementaryInvoiceForRecoveredIntent(params: {
     );
     return { status: "not-recorded" };
   }
-  // Dynamic import: keeps the Xero outbox's provider-client import graph out of
-  // every module that imports this worker, exactly as the two dynamic imports
-  // below it do for their own modules.
-  const { completeDeferredXeroSupplementaryInvoice } = await import(
-    "@/lib/xero-booking-edit-settlement"
-  );
   try {
+    // Dynamic import: keeps the Xero outbox's provider-client import graph out of
+    // every module that imports this worker, exactly as the two dynamic imports
+    // below it do for their own modules.
+    //
+    // INSIDE the try, and that is load-bearing rather than tidy (#3181 fix
+    // round). A module that fails to load throws exactly like a call that fails,
+    // and this function's whole contract is that it does not throw - the docblock
+    // above argues at length that a throw from here cannot retry, because the
+    // ordinary fork's replay has already written its ADDITIONAL transaction and
+    // the next pass would read that row as a supersession and complete having
+    // done nothing. An `await import` sitting outside the catch is precisely the
+    // throw that argument does not cover.
+    const { completeDeferredXeroSupplementaryInvoice } = await import(
+      "@/lib/xero-booking-edit-settlement"
+    );
     const outcome = await completeDeferredXeroSupplementaryInvoice({
       bookingId: params.bookingId,
       bookingModificationId: params.bookingModificationId,
@@ -1988,7 +1997,25 @@ async function processCreateAdditionalPaymentIntentOperation(
            */
           await recordUncollectedEditReviewChargeShare({
             leg: "xero-invoice",
-            cause: "ask-not-raised",
+            /**
+             * #3181 fix round: THE TWO NON-QUEUED OUTCOMES ARE DIFFERENT FACTS,
+             * and filing them under one cause tells an officer to do something
+             * that can bill the member twice.
+             *
+             * `failed` is "an invoice was owed and the queue refused it" - raise
+             * it by hand. `not-recorded` is the row predating
+             * `hadIssuedXeroInvoice`, where the whole position taken above is
+             * that the club CANNOT TELL whether one was owed: if this booking's
+             * primary Xero invoice had not been minted when the edit committed,
+             * that invoice bills the charge itself and a hand-raised
+             * supplementary is a second ask for the same money. Only the
+             * booking-vs-Xero repair pass can answer it, and
+             * `ask-owed-unknown`'s officer text says exactly that.
+             */
+            cause:
+              attempt.status === "not-recorded"
+                ? "ask-owed-unknown"
+                : "ask-not-raised",
             bookingId: operation.bookingId,
             bookingModificationId,
             memberId: booking.member?.id ?? null,
@@ -2084,6 +2111,34 @@ async function processCreateAdditionalPaymentIntentOperation(
     return;
   }
 
+  /**
+   * #3181: THE EDIT'S SIGNED COMPONENTS, READ BEFORE ANYTHING IS WRITTEN.
+   *
+   * They are only needed at the very bottom of this function, to bill the
+   * supplementary invoice the inline dispatch deferred - but the read has to
+   * happen HERE, and the position is the point (#3181 fix round). Below the
+   * `upsertPaymentIntentTransaction` this replay is about to perform, a transient
+   * database error on this one query throws into `failPaymentRecoveryOperation`,
+   * and the retry it buys cannot work: the ADDITIONAL transaction now exists, so
+   * the "a LATER edit superseded this one" check above would find the row THIS
+   * replay wrote, read it as a supersession, and complete the operation having
+   * done nothing at all. A $50 guest add would be collected with no invoice
+   * behind it and the recovery row would read SUCCEEDED.
+   *
+   * Read here instead and a throw costs nothing: no intent has been minted, no
+   * transaction row written, and the next attempt re-runs the whole replay -
+   * which is a real retry, not a self-supersession. Nothing between here and the
+   * bill writes these two columns, so the value is the same one the old position
+   * read. Wrapping the late read in its own `catch` was the alternative; it
+   * degrades a transient blip to a manual repair, where this recovers by itself.
+   */
+  const modificationToBill = bookingModificationId
+    ? await prisma.bookingModification.findUnique({
+        where: { id: bookingModificationId },
+        select: { priceDiffCents: true, changeFeeCents: true },
+      })
+    : null;
+
   const member = payment.booking.member;
   let customerId = payment.stripeCustomerId ?? undefined;
   if (!customerId) {
@@ -2167,18 +2222,15 @@ async function processCreateAdditionalPaymentIntentOperation(
    * what the booking-vs-Xero repair pass reads for the same invoice.
    */
   if (bookingModificationId) {
-    const modification = await prisma.bookingModification.findUnique({
-      where: { id: bookingModificationId },
-      select: { priceDiffCents: true, changeFeeCents: true },
-    });
-    if (modification) {
+    // Read above the mint, deliberately: see the hoist's own comment.
+    if (modificationToBill) {
       await raiseDeferredSupplementaryInvoiceForRecoveredIntent({
         operationId: operation.id,
         bookingId: operation.bookingId,
         bookingModificationId,
         paymentIntentId: pi.id,
-        priceDiffCents: modification.priceDiffCents,
-        changeFeeCents: modification.changeFeeCents,
+        priceDiffCents: modificationToBill.priceDiffCents,
+        changeFeeCents: modificationToBill.changeFeeCents,
         // The EDIT's answer, frozen on this row when the mint failed. Re-reading
         // `payment.xeroInvoiceId` here is the double-bill the helper describes.
         hadIssuedXeroInvoice: operation.hadIssuedXeroInvoice,

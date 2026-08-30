@@ -3405,6 +3405,15 @@ describe("a recovered additional payment raises exactly one supplementary invoic
    * The boundary itself: a net of exactly zero is not a positive delta, and it is
    * the shape a parked review edit leaves behind (`priceDiffCents +
    * changeFeeCents == 0`), so it is the one most likely to arrive here.
+   *
+   * IT IS NOT THIS CASE THAT HOLDS THE EARLY RETURN UP, and saying so is the
+   * honest version (#3181 delta review). Deleting the `<= 0` guard in
+   * `completeDeferredXeroSupplementaryInvoice` was measured: the not-positive
+   * test above FAILS, and this one still passes, because `-500 + 500` reaches
+   * `classifyXeroBookingEditSettlement` and falls through its own zero branch to
+   * `"none"` anyway. So this pins behaviour at the boundary and the case above is
+   * the one that bites the guard. Both are kept: a zero net must stay refused
+   * whichever layer refuses it, and the layer is free to move.
    */
   it("raises nothing at all when the edit's net is exactly zero", async () => {
     await expect(
