@@ -1548,19 +1548,28 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
  * The comment-aware SCANNERS that have been measured and not converged, with
  * the work each is waiting on.
  *
+ * THIS LIST IS EMPTY, AND EMPTY IS ITS FINISHED STATE — not a gap somebody has
+ * yet to fill. Every scanner in this tree now reads source through
+ * `src/lib/__tests__/support/strip-comments.ts`, so there is no second copy of
+ * the lexer left to converge and nothing here to wait on. What the list still
+ * DOES is refuse: `ssot-comment-stripper-guard.test.ts` pins its length at
+ * zero, so the next file that would need an entry cannot get one. That file is
+ * a new copy, which is the thing this rule exists to refuse — the answer is to
+ * converge it, or, if it truly is a different CONCEPT, to argue that case on
+ * `COMMENT_STRIPPER_ALLOWLIST` above, where the bar is permanent rather than
+ * provisional.
+ *
  * THIS IS A RATCHET, NOT AN ALLOWLIST, and the difference is the whole reason it
  * is a second list. Every entry above is a different CONCEPT that the canonical
- * helper cannot express and never will. Every entry here does something the
- * canonical module could express and does not offer YET, so each one is a filed
- * piece of work rather than a settled exception. `ssot-comment-stripper-guard.test.ts`
- * pins the length, so the list can shrink and cannot grow: a new file that needs
- * to be added here is a new copy, which is exactly what this rule exists to
- * refuse.
+ * helper cannot express and never will. Every entry here did something the
+ * canonical module COULD express and did not offer yet, so each one was a filed
+ * piece of work rather than a settled exception. That is why this list could
+ * reach zero and that one cannot.
  *
- * IT WAS FIVE, THEN FOUR, AND IS NOW ONE. #3164's fix round converged
- * `family-group-role-retirement.test.ts` onto the canonical second form. #3180
- * wrote the offset-preserving blanker the other three were waiting on —
- * `blankLiterals`, a fourth FORM in the canonical module — and converged
+ * IT WAS FIVE, THEN FOUR, THEN ONE, AND IS NOW NONE. #3164's fix round
+ * converged `family-group-role-retirement.test.ts` onto the canonical second
+ * form. #3180 wrote the offset-preserving blanker the next three were waiting
+ * on — `blankLiterals`, a fourth FORM in the canonical module — and converged
  * `lock-bound-club-zone-outside-transaction.test.ts`,
  * `payment-link-expiry-club-zone.test.ts` and
  * `xero-object-url-write-guard.test.ts` onto it. Two of the three re-measured
@@ -1570,19 +1579,19 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
  * rest of the file and hid a real `xeroSyncOperation.update` from it. Live, and
  * latent only because the hidden write happened not to carry the column.
  *
- * ONE ENTRY IS LEFT, and it is the one that never shared the offset-preserving
- * property. Its own reason says what it needs instead. A list of one does not
- * need a shared sentence, and this preamble deliberately does not invent one:
- * the previous version of this text claimed a property for all five entries
- * that was false for two of them, which is how a row nobody re-reads survives.
+ * #3196 took the last one, `advisory-lock-guard.test.ts`, which never shared the
+ * offset-preserving property and could not be converged by #3180 for a reason
+ * of its own: it hunts raw SQL, which lives inside string literals, while the
+ * prose it must ignore lives inside string literals too. A blanker that
+ * suppressed both would have dropped its pinned lock inventory. The remedy was
+ * `blankLiteralsWithSpans` — the same blanking, reporting the runs it blanked —
+ * so the census restores the raw statements it can name and the SQL policy
+ * stays at the one caller that has one. Re-measured across the tree, the two
+ * scanners disagree about the masked TEXT of 2,154 of 2,157 non-test files and
+ * agree exactly, file by file, on all three things the census counts: 122
+ * advisory sites, 20 row-lock statements, one mint of the per-lodge key.
  */
-export const UNCONVERGED_COMMENT_SCANNERS = [
-  {
-    file: "src/lib/__tests__/advisory-lock-guard.test.ts",
-    reason:
-      "It needs a CALLER-SIDE FILTER, not a shared stripper, and #3180 deferred it for that reason rather than converging it half way. `codeOnly` produces reduced text — it returns `null` for a whole-line comment and blanks double-quoted literals in place — so the offset-preserving blanker the other three moved onto does not by itself convert it. It works a LINE at a time, and it blanks every double-quoted literal EXCEPT the ones containing `SELECT`, because the raw SQL it hunts for lives inside those while the prose it must ignore does not. A carve-out by CONTENT is not a form the canonical module should grow, and `blankLiterals` would blank exactly the `SELECT` literals this census counts — dropping pinned inventory numbers rather than leaving them alone. Converging it means blanking with the shared form and then restoring the SQL literals by span, which needs the blanker to report spans it deliberately does not.",
-  },
-];
+export const UNCONVERGED_COMMENT_SCANNERS = [];
 
 // The delimiters are built from character codes rather than written out, so no
 // function in this rule contains a literal comment delimiter and the rule

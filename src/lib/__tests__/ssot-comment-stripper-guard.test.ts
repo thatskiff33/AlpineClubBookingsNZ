@@ -394,29 +394,35 @@ describe("INV-SSOT-004: the two lists say what they are", () => {
   });
 
   /*
-    THE RATCHET, PINNED.
+    THE RATCHET, PINNED — AND IT IS NOW EMPTY.
 
-    ONE file still walks source with its own comment-aware scanner, and it is
-    the one that never had the property the other entries shared.
-    `advisory-lock-guard.test.ts` works a LINE at a time and keeps every
-    double-quoted literal containing `SELECT`, because the raw SQL it hunts for
-    lives inside those while the prose it must ignore does not. A carve-out by
-    CONTENT is not a form the canonical module should grow, so it converges on
-    the shared blanker PLUS a caller-side filter — a different job, deferred by
-    #3180 rather than done half way.
+    Zero is the finished state, so the assertion is an equality rather than a
+    ceiling: there is nothing left to converge, and the only way this list moves
+    is somebody adding a copy. It was five. #3164's fix round converged
+    `family-group-role-retirement.test.ts` onto the canonical second form; #3180
+    added `blankLiterals` — every comment and every literal's contents replaced
+    by spaces of the SAME LENGTH, so offsets, columns and line numbers all
+    survive — and converged the three walkers waiting on it; #3196 added
+    `blankLiteralsWithSpans`, which reports the runs it blanked, and took the
+    last entry, `advisory-lock-guard.test.ts`. That one needed the spans because
+    it hunts raw SQL, which lives inside string literals, while the prose it
+    must ignore lives inside string literals too — so it restores the literals
+    it can name as statements and the SQL policy stays at that one caller
+    instead of becoming a rule inside a general-purpose helper.
 
-    It was five. #3164's fix round converged
-    `family-group-role-retirement.test.ts` onto the canonical second form, and
-    #3180 added `blankLiterals` — a form that replaces every comment and every
-    literal's contents with spaces of the SAME LENGTH, so offsets, columns and
-    line numbers all survive — and converged the three walkers that were waiting
-    on it. This number may go DOWN and may not go up: a second file needing an
-    entry here is a second copy, which is the thing the rule refuses.
+    AN EMPTY LIST STILL DOES WORK, which is the thing to understand before
+    deleting it. It is what makes "there is no second scanner" a checked fact
+    rather than a claim, and it is where a reviewer looks first when somebody
+    proposes one. A file that needs an entry here is a second copy: converge it,
+    or — if it is genuinely a different CONCEPT rather than the same one done
+    again — argue that on `COMMENT_STRIPPER_ALLOWLIST`, where the bar is
+    permanent and the reason has to say why the canonical helper can never
+    express it.
   */
   it("keeps the unconverged list a ratchet", () => {
     expect(
       UNCONVERGED_COMMENT_SCANNERS.length,
-      "#3180 left one. If you are adding a second, converge it instead: the canonical module is `./support/strip-comments`, it holds FOUR forms, and if what you need is offsets preserved through the strip, that is `blankLiterals` rather than a private one here.",
-    ).toBeLessThanOrEqual(1);
+      "#3196 took this to zero, and zero is where it stays. If you are adding an entry, converge instead: the canonical module is `./support/strip-comments`, it holds FIVE forms, and the two that exist for a walker are `blankLiterals` (offsets preserved) and `blankLiteralsWithSpans` (offsets preserved, plus the runs it blanked, for a caller that must restore some of them). If yours is a different CONCEPT rather than the same scanner again, it belongs on COMMENT_STRIPPER_ALLOWLIST with a reason that says why.",
+    ).toBe(0);
   });
 });
