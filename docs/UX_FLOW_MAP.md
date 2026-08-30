@@ -574,18 +574,34 @@ and an unscoped version cancels them.
 
 The banner does **not** displace a cancellation, a release or a decline. Those
 describe what happened to the booking, which is the more important truth, and the
-review wording assumes a stay that is still going ahead. It does displace the paid
-narrative, whose "nothing more to do" is exactly the false reassurance this issue
-exists to remove.
+review wording assumes a stay that is still going ahead.
 
-It does **not** displace a payable one either — it is added to it. `PAYABLE_STATUSES`
-covers CONFIRMED, and a CONFIRMED-unpaid booking renders the member's **Complete
-Payment** card, so returning the review narrative outright put *"there is nothing
-you need to do"* directly beside a card asking for money. A payable booking with a
-review keeps its amount due and its instruction to pay, and gains the review's
-sentences plus the fact that joins them: the unpriced adjustment is not part of
-the figure being asked for. Gating the review branch to PAID would have resolved
-the contradiction by deleting the disclosure.
+It does **not** displace a payable narrative either — it is added to it.
+`PAYABLE_STATUSES` covers CONFIRMED, and a CONFIRMED-unpaid booking renders the
+member's **Complete Payment** card, so returning the review narrative outright put
+*"there is nothing you need to do"* directly beside a card asking for money. A
+payable booking with a review keeps its amount due and its instruction to pay, and
+gains the review's sentences plus the fact that joins them: the unpriced
+adjustment is not part of the figure being asked for. Gating the review branch to
+PAID would have resolved the contradiction by deleting the disclosure.
+
+**And it does not displace a paid one (#3194).** #3033 replaced that narrative
+outright, which removed *"nothing more to do"* — the false reassurance the epic is
+aimed at — but removed *"we've received your payment of $360.00 on 12 Aug"* along
+with it. That is the only sentence in the product that answers *"did my payment go
+through?"*, and on the emailed payment link the narrative is the whole page, so a
+member who paid by internet banking and opened the link to check was told nothing
+about their payment at all. A paid booking under review now keeps its
+confirmation, gains the same review sentences beside it, and has only the banned
+next step replaced: *"there is nothing you need to do about that change. We'll be
+in touch once the amount is confirmed."*
+
+The figure it keeps is money the club **has**, read off a durable payment event.
+The epic's no-amount rule is about the reviewed change's amount, which nobody
+knows; the bridging sentence says out loud that the two are different amounts,
+exactly as it does beside a payable narrative's *"$120.00 is due"*. The standalone
+review wording, where no amount of any kind appears, is what a booking that is
+neither payable nor paid still reads.
 
 **On the emailed payment link** (`/pay/<token>`), the member reads the same
 thing. Until #3194 they did not: that helper is `server-only`, the page is a
@@ -595,6 +611,14 @@ read as paid, was told there was nothing more to do, while the booking's own pag
 said the money was with the office. The route handler now does the read and hands
 it down, and the sentences come from `booking-financial-review-copy.ts` rather
 than from a second set written for this page.
+
+A paid booking under review reaches this page through the **server's** narrative
+rather than the confirmation the page composes for a payment made on it, so both
+halves have to be in that narrative: the payment confirmed, and the review
+disclosed. `getPaymentLinkContext` loads the link structurally, so an already-used
+link still renders; and a redirect-based card method returns to this same URL and
+re-fetches. Same member, same booking, seconds apart — the page must not confirm
+the payment on the way in and forget it on the way back.
 
 The page keeps taking money. Its payment card is its own — dates, guests, amount
 due, link expiry — so it shows the review half on its own from

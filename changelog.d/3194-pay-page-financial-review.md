@@ -11,8 +11,17 @@
   because both take those sentences from one file. A booking whose money is
   being worked out is told the club is doing so, that nothing has been refunded
   or charged for it yet, and that there is nothing they need to do about that
-  change — with no figure of any kind, because the figure is the thing nobody
-  knows yet.
+  change — and never a figure for that change, because the figure is the thing
+  nobody knows yet.
+
+  **A member who has already paid is still told their payment arrived.** Their
+  page keeps *"we've received your payment of $360.00 on 12 Aug — your stay is
+  confirmed"*, and the review sentences are added underneath it; only *"nothing
+  more to do"* goes. Without that, the one page whose whole purpose is a payment
+  had nothing at all to say about it — which is the same defect this entry is
+  about, wearing different words. The amount kept is money the club has, not the
+  amount being worked out, and the wording says in as many words that the two are
+  different.
 
   **The member can still pay, and every way to pay stays open.** A change can
   give back nights that cannot be priced while adding nights that price
