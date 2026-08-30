@@ -102,11 +102,11 @@ reason: #3032's delta round added the rule that a parked removal always records
   not.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 2018
+lines: 2047
 reason: eleven lines. `perNightCents[k] ?? 0` becomes a refusal in the writer
   that persists the new range's night rows — a magic zero there is a real sold
   price of nothing on a real night, which the next edit reads back as evidence.
-  Merged forward: #3032's fence on the date path. One file, one allowance. #3166 round (+185): the date path parks. It read night prices through the LENIENT reader, so a night recorded as "not known" got no lock, was repriced at today's rate and was written back as a real integer - the one route by which a blank could turn back into a guess, and it opened the moment an earlier review was settled. The change is not liftable: `parked` gates the total, the promotion block, the change fee, the settlement options, the credit clamp, the per-guest write and the night-row write, each of which is a separate money door in this one function, and the task raise has to sit after the `BookingModification` row it anchors to. The growth is those seven guards plus the paragraph naming the window, which belongs at the gate because nothing about the old code looked wrong.
+  Merged forward: #3032's fence on the date path. One file, one allowance. #3166 round (+185): the date path parks. It read night prices through the LENIENT reader, so a night recorded as "not known" got no lock, was repriced at today's rate and was written back as a real integer - the one route by which a blank could turn back into a guess, and it opened the moment an earlier review was settled. The change is not liftable: `parked` gates the total, the promotion block, the change fee, the settlement options, the credit clamp, the per-guest write and the night-row write, each of which is a separate money door in this one function, and the task raise has to sit after the `BookingModification` row it anchors to. The growth is those seven guards plus the paragraph naming the window, which belongs at the gate because nothing about the old code looked wrong. (+29): the stated hand-off of this file's inline missing-price refusal to #3167's `required-price-cents`, which cannot be imported from this branch because that module is on a sibling lane that has not merged. Writing a second copy of the module would be a second definition of the rule being converged, so the site records instead which caller it will be and what the conversion must not lose.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
 lines: 2244

@@ -1006,6 +1006,27 @@ export async function modifyBookingDates({
               // that the price is NOT KNOWN, which is storable and is stored.
               // Only the parked composer above produces one; a short vector from
               // the pricing engine still throws.
+              //
+              // NOT YET ROUTED THROUGH THE SHARED REFUSAL, and that is a stated
+              // hand-off rather than an oversight (`INV-SSOT`). #3167 lifts this
+              // predicate into `@/lib/required-price-cents` and converges the
+              // copies in `booking-modify-plan.ts`, `waitlist.ts`,
+              // `booking-create-guests.ts` and `booking-request-quotes.ts`. That
+              // module does not exist on this branch — #3167 is a sibling lane,
+              // unmerged — so importing it here would not compile, and writing a
+              // second copy of the module would be a second definition of the
+              // very rule being converged. #3167 merges after #3166 in the
+              // epic's own order and therefore has this shape in front of it:
+              // THIS SITE IS ITS FOURTH CALLER, and the null branch above must
+              // survive the conversion.
+              //
+              // What that ordering must not lose: someone later making an
+              // unpriceable date change PARK instead of refuse would edit the
+              // shared module and `booking-modify-plan.ts`, both of which
+              // advertise themselves as the rule's home, and this path would
+              // silently keep the old refusal — so quote and apply would
+              // disagree about one edit, which is the parity this epic keeps
+              // re-fixing.
               const priceCents = perNightCents[k];
               if (priceCents === null) {
                 return { bookingGuestId: g.id, stayDate, priceCents: null };
@@ -1415,18 +1436,26 @@ async function dispatchDatePostTransactionSideEffects({
   if (member) {
     /*
       #3032 (epic #2797): whether the club is still working out an amount on
-      this booking as the email is written. See the identical read on the batch
-      path for why this is the booking's current state rather than something
-      this edit decided - a date change dispatches no review of its own, so
-      there is nothing of this edit's to carry out. Same reader as the
-      booking-detail banner and the My Bookings row (`INV-SSOT`).
+      this booking as the email is written. The booking's CURRENT state rather
+      than something this edit decided, read through the same
+      `bookingHasOpenFinancialReview` the booking-detail banner and the My
+      Bookings row use, so the email and the page the member clicks through to
+      cannot disagree (`INV-SSOT`).
 
-      In practice the pending-review fence above (`moneyAffecting: true`) turns
-      away any repricing date change while a review is open, so today this is
-      false whenever the standard path emails at all. It is READ rather than
-      assumed because that is a fact about the fence, not about the member's
-      money, and a later change to either would silently make a hard-coded
-      `false` a lie.
+      #3166 CHANGED WHAT THIS READ FINDS, and the paragraph that used to sit
+      here said the opposite. It said a date change "dispatches no review of its
+      own, so there is nothing of this edit's to carry out", and that a review
+      was therefore never open when this path emailed. Both were true of #3032's
+      date path and are false of this one: an unpriceable date change now parks
+      and raises a task inside the transaction that just committed, so this read
+      finds THIS edit's own review and the member is told about it in the same
+      email that tells them their dates moved. That is the intended outcome — it
+      is why the read was never hard-coded — but a stale claim at a live read
+      site is how the next reader concludes the branch is dead.
+
+      The pending-review fence above (`moneyAffecting: true`) still turns away a
+      SECOND repricing date change while a review is open, so what this cannot
+      find is a review some earlier edit left open.
     */
     const financialReviewPending = await bookingHasOpenFinancialReview(
       result.booking.id,

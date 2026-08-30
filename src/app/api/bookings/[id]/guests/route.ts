@@ -1181,11 +1181,18 @@ export async function POST(
     if (member && notifyMember !== false) {
       /*
         #3032 (epic #2797): whether the club is still working out an amount on
-        this booking as the email is written. Adding a guest raises no review of
-        its own, so - as on the batch and date paths - the honest value is the
-        booking's current state, read through the same
-        `bookingHasOpenFinancialReview` the booking-detail banner and the My
-        Bookings row use, so the email and the page agree (`INV-SSOT`).
+        this booking as the email is written. The booking's CURRENT state, read
+        through the same `bookingHasOpenFinancialReview` the booking-detail
+        banner and the My Bookings row use, so the email and the page the member
+        clicks through to cannot disagree (`INV-SSOT`).
+
+        #3166: this used to say "adding a guest raises no review of its own",
+        and that is no longer true. An add to a booking whose price history
+        cannot be read now parks and raises a task inside the transaction that
+        just committed, so this read finds THIS edit's own review and the member
+        is told in the same email that tells them the guest was added. Left as a
+        live read rather than a hard-coded value precisely so a change like this
+        one could not make it a lie.
       */
       const financialReviewPending = await bookingHasOpenFinancialReview(
         result.booking.id,

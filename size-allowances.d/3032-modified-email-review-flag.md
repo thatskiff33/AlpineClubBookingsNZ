@@ -10,7 +10,7 @@ allowance that already owns them (`3031-exact-sold-price.md` and
 here. This route is the one path no live allowance covers.
 
 file: src/app/api/bookings/[id]/guests/route.ts
-lines: 1381
+lines: 1388
 reason: TWO additions, and the second is the larger one. The pending-review
   FENCE: this route is the fourth money-affecting door and had no fence on
   it, so an edit priced against a total under review, absorbed the
@@ -33,4 +33,4 @@ reason: TWO additions, and the second is the larger one. The pending-review
   lifting the whole post-commit dispatch out of a 1,200-line route handler is a
   refactor of its own that would touch every guest-add path and its tests. The
   file was 938 lines over its 250-line budget independently of this change and
-  stays over it by that margin plus fourteen. #3166 round (+117): this route is the fourth edit door in the money sense too. It rewrites no existing strand's night rows, but it recomputed the booking total from a full-party pass in which a night recorded as "not known" priced at today's rate, and billed the member the difference as an additional amount for a night nobody added. The gate, the frozen total, the frozen promotion figures and the task raise all have to run inside this one transaction function, between the locks it holds and the `BookingModification` the task anchors to, and the worked example belongs at the gate because the defect is invisible from the arithmetic.
+  stays over it by that margin plus fourteen. #3166 round (+117): this route is the fourth edit door in the money sense too. It rewrites no existing strand's night rows, but it recomputed the booking total from a full-party pass in which a night recorded as "not known" priced at today's rate, and billed the member the difference as an additional amount for a night nobody added. The gate, the frozen total, the frozen promotion figures and the task raise all have to run inside this one transaction function, between the locks it holds and the `BookingModification` the task anchors to, and the worked example belongs at the gate because the defect is invisible from the arithmetic. (+7): the review-pending read beside the modified email carried a docblock saying "adding a guest raises no review of its own", which this change makes false; a stale claim at a live read site is how the next reader concludes the branch is dead.
