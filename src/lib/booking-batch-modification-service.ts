@@ -77,8 +77,8 @@ import {
 } from "@/lib/booking-credit-election";
 import type { PromoCoverageNotice } from "@/lib/promo-cap-coverage";
 import {
+  capturedBookingPayment,
   hasCapturedPayment,
-  isSettledBookingStatus,
 } from "@/lib/booking-payment-state";
 import { prisma } from "@/lib/prisma";
 import {
@@ -1248,18 +1248,20 @@ export async function modifyBookingBatch({
       const memberIdByGuestId = new Map(
         booking.guests.map((guest) => [guest.id, guest.memberId ?? null]),
       );
-      // The captured money behind this booking, and the reason the task carries
-      // a payment id at all: `chooseEditReviewSettlementRoute` reads it to
-      // decide whether a confirmed amount goes back to the card, is mirrored as
-      // a hand-settled allocation, or becomes account credit. Gated on a
-      // CAPTURED payment in a settled status — the same test
+      // The captured money behind this booking AS IT STANDS NOW, and the reason
+      // the task carries a payment id at all: `chooseEditReviewSettlementRoute`
+      // reads it to decide whether a confirmed amount goes back to the card, is
+      // mirrored as a hand-settled allocation, or becomes account credit. Gated
+      // on a CAPTURED payment in a settled status — the same test
       // `applyPaymentAdjustments` uses — so a booking with nothing taken carries
       // null and cannot be routed to a refund of money never received.
-      const settledPaymentId =
-        isSettledBookingStatus(booking.status) &&
-        hasCapturedPayment(booking.payment)
-          ? (booking.payment?.id ?? null)
-          : null;
+      //
+      // #3194: through the ONE derivation (`INV-SSOT`), which the completion
+      // path now asks the same question of. This value is a snapshot of THIS
+      // MOMENT and nothing keeps it current: a member who pays after this runs
+      // leaves it null for ever, which is why the completion re-asks rather than
+      // trusting it — see `chooseEditReviewSettlementRoute`.
+      const settledPaymentId = capturedBookingPayment(booking)?.id ?? null;
       for (const occurrence of parked.occurrences) {
         await raiseEditFinancialReviewTask({
           occurrence,

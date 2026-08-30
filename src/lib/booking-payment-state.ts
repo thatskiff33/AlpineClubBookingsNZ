@@ -104,3 +104,40 @@ export function getRemainingRefundableCents(
     0
   );
 }
+
+/**
+ * #3194 (epic #2797): the booking's OWN captured money, or `null` when it has
+ * none — the ONE derivation of that question, and the reason it is here.
+ *
+ * It answers "is there money behind this booking that a refund could come out
+ * of?", and it answers it the way the whole settlement surface already does: the
+ * booking is inside its payment lifecycle AND the payment row has actually
+ * captured something. Neither half is sufficient on its own.
+ * `Payment.source` defaults to `STRIPE` in the schema, so a hand-settled booking
+ * carries that column with nothing captured behind it; and a DRAFT or WAITLISTED
+ * booking can hold a `PENDING` payment row that has never taken a cent.
+ *
+ * ONE HOME, and it exists because there were two identical copies with
+ * near-identical comments (`INV-SSOT`): the guest-removal service and the batch
+ * modification service each derived the payment id a parked edit's review task
+ * is raised with, and #3194 needed the same question asked a THIRD time — at
+ * COMPLETION, by `chooseEditReviewSettlementRoute`, on a booking that may have
+ * been paid since the review was raised. Three spellings of one rule is exactly
+ * the shape `INV-SSOT` calls the defect, and the third spelling is the one where
+ * disagreeing with the other two sends a member's refund to the wrong place.
+ *
+ * Returns the PAYMENT rather than its id, because the completion path needs its
+ * `source` as well and re-reading the same row through a second accessor would
+ * reintroduce the disagreement this removes.
+ */
+export function capturedBookingPayment<
+  T extends { id: string; status: string; amountCents?: number | null },
+>(booking: {
+  status: string;
+  payment: T | null | undefined;
+}): T | null {
+  return isSettledBookingStatus(booking.status) &&
+    hasCapturedPayment(booking.payment)
+    ? (booking.payment ?? null)
+    : null;
+}

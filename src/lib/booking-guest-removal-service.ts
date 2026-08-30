@@ -54,10 +54,7 @@ import {
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
-import {
-  hasCapturedPayment,
-  isSettledBookingStatus,
-} from "@/lib/booking-payment-state";
+import { capturedBookingPayment } from "@/lib/booking-payment-state";
 import {
   assertNoPendingEditFinancialReview,
   raiseEditFinancialReviewTask,
@@ -1095,18 +1092,20 @@ export async function removeBookingGuestInTransaction({
         guest.memberId ?? null,
       ]),
     );
-    // The captured money behind this booking, and the reason the task carries a
-    // payment id at all: `chooseEditReviewSettlementRoute` reads it to decide
-    // whether a confirmed amount goes back to the card, is mirrored as a
-    // hand-settled allocation, or becomes account credit. Gated on a CAPTURED
-    // payment in a settled status - the same test `applyPaymentAdjustments` uses
-    // - so a booking with nothing taken carries null and cannot be routed to a
-    // refund of money that was never received.
-    const settledPaymentId =
-      isSettledBookingStatus(booking.status) &&
-      hasCapturedPayment(booking.payment)
-        ? (booking.payment?.id ?? null)
-        : null;
+    // The captured money behind this booking AS IT STANDS NOW, and the reason
+    // the task carries a payment id at all: `chooseEditReviewSettlementRoute`
+    // reads it to decide whether a confirmed amount goes back to the card, is
+    // mirrored as a hand-settled allocation, or becomes account credit. Gated on
+    // a CAPTURED payment in a settled status - the same test
+    // `applyPaymentAdjustments` uses - so a booking with nothing taken carries
+    // null and cannot be routed to a refund of money that was never received.
+    //
+    // #3194: through the ONE derivation (`INV-SSOT`), which the completion path
+    // now asks the same question of. This value is a snapshot of THIS MOMENT and
+    // nothing keeps it current: a member who pays after this runs leaves it
+    // null for ever, which is why the completion re-asks rather than trusting it
+    // - see `chooseEditReviewSettlementRoute`.
+    const settledPaymentId = capturedBookingPayment(booking)?.id ?? null;
     for (const occurrence of unpriceableStrands) {
       const raised = await raiseEditFinancialReviewTask({
         occurrence,
