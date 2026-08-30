@@ -12,7 +12,10 @@ import {
 } from "@/lib/payment-recovery-contract";
 import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import {
+  FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+  FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
   financialReviewNoteBesideAnAmount,
 } from "@/lib/booking-financial-review-copy";
@@ -617,14 +620,24 @@ describe("public payment page discloses money held for review", () => {
     financialReviewPending: true,
   };
 
+  /*
+    A booking that reads as PAID with a review open, as the SERVER composes it
+    (#3194 review). This is the shape `buildPaidWithFinancialReviewNarrative`
+    returns: the payment confirmed, the change disclosed beside it, and the
+    "nothing more to do" next step replaced.
+
+    The fixture is deliberately the real composition rather than a stand-in,
+    because this branch renders the server's narrative whole - if it ever stopped
+    doing so, the payment confirmation would vanish from the page silently.
+  */
   const paidUnderReview = {
     ...payableContext,
     state: "financial_review_pending",
     narrative: {
       state: "financial_review_pending",
-      headline: "Your booking change is saved",
-      message: `Thanks Riley - the change to your booking has been saved. ${FINANCIAL_REVIEW_WORKING_IT_OUT}`,
-      nextStep: FINANCIAL_REVIEW_NOTHING_TO_DO,
+      headline: "Payment received",
+      message: `Thanks Riley - we've received your payment of $125.00 on 20 Jun 2026. Your stay from 1 Sept 2026 to 3 Sept 2026 is confirmed. ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+      nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
     },
     payable: null,
     financialReviewPending: true,
@@ -670,13 +683,69 @@ describe("public payment page discloses money held for review", () => {
     installContextFetch(paidUnderReview);
     render(<PayByLinkPage />);
 
-    expect(
-      await screen.findByText("Your booking change is saved"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
     expect(document.body.textContent).toContain(
       FINANCIAL_REVIEW_WORKING_IT_OUT,
     );
     expect(document.body.textContent).not.toMatch(/nothing more to do/i);
+  });
+
+  /*
+    THE OTHER HALF OF THE SAME QUESTION, and the one this page had been failing.
+
+    A member who paid by internet banking, or who came back through Stripe's
+    return URL after a redirect-based method, is handed the SERVER's narrative
+    rather than the card the page composes for an in-session payment. Asserting
+    only that "nothing more to do" is absent would have passed on a page that
+    said nothing about the payment at all - which is what this branch used to do,
+    on the one page whose entire purpose is that payment.
+  */
+  it("confirms the payment as well as the review on the server-supplied path", async () => {
+    installContextFetch(paidUnderReview);
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    // The payment is answered for: how much, and when.
+    expect(document.body.textContent).toContain(
+      "we've received your payment of $125.00 on 20 Jun 2026",
+    );
+    // And the review is disclosed in the same card, with the sentence that keeps
+    // the figure above it from reading as the amount under review.
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(document.body.textContent).toContain(FINANCIAL_REVIEW_NOTHING_TO_DO);
+    expect(document.body.textContent).toContain(
+      FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
+    );
+  });
+
+  it("CONTROL: the same paid booking with no review still confirms the payment", async () => {
+    installContextFetch({
+      ...payableContext,
+      state: "paid",
+      narrative: {
+        state: "paid",
+        headline: "Payment received",
+        message:
+          "Thanks Riley - we've received your payment of $125.00 on 20 Jun 2026. Your stay from 1 Sept 2026 to 3 Sept 2026 is confirmed.",
+        nextStep:
+          "Nothing more to do - we'll see you at the lodge. You can view the full booking details any time from your bookings page.",
+      },
+      payable: null,
+    });
+    render(<PayByLinkPage />);
+
+    expect(await screen.findByText("Payment received")).toBeInTheDocument();
+    expect(document.body.textContent).toContain(
+      "we've received your payment of $125.00 on 20 Jun 2026",
+    );
+    expect(screen.queryByTestId("payment-link-financial-review")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      FINANCIAL_REVIEW_WORKING_IT_OUT,
+    );
+    // The unreviewed page keeps its own reassurance, which is true for it.
+    expect(document.body.textContent).toMatch(/nothing more to do/i);
   });
 
   /*

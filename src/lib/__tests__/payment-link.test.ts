@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { BookingEventType, BookingStatus, PaymentStatus } from "@prisma/client";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -495,6 +495,86 @@ describe("getPaymentLinkContext under an open financial review", () => {
     ).not.toContain("$");
   });
 
+  /*
+    THE QUESTION THIS PAGE EXISTS TO ANSWER: "did my payment go through?"
+
+    The case above has no payment event, so the paid narrative names no figure
+    and the page loses nothing by it. This one is the real member: they paid by
+    internet banking, the club recorded it, and they opened the link to check.
+    `getPaymentLinkContext` reads through `loadPaymentLinkRecord`, so a link
+    already marked used still renders - and `PaymentForm` returns to this same URL
+    after a redirect-based method, so the page is re-fetched seconds after paying
+    on it.
+
+    Before #3194's fix the whole page was the standalone review narrative, which
+    says nothing about a payment: same member, same booking, minutes apart, the
+    payment confirmed on the way in and unmentioned on the way back.
+  */
+  it("still confirms the payment on a PAID booking under review", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+    mockedBookingEventFindMany.mockResolvedValue([
+      {
+        type: BookingEventType.MEMBER_PAID,
+        occurredAt: new Date("2026-06-20T02:00:00.000Z"),
+        amountCents: 12000,
+        reason: null,
+        snapshot: null,
+      },
+    ] as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, {
+      readOpenFinancialReview: reviewReader(true),
+    });
+
+    expect(context.state).toBe("financial_review_pending");
+    expect(context.narrative.headline).toBe("Payment received");
+    expect(context.narrative.message).toContain(
+      "we've received your payment of $120.00",
+    );
+    // And the review is disclosed in the same breath, with the sentence that
+    // keeps the two amounts apart.
+    expect(context.narrative.message).toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(context.narrative.message).toContain(FINANCIAL_REVIEW_WORKING_IT_OUT);
+    expect(
+      `${context.narrative.message} ${context.narrative.nextStep}`,
+    ).not.toMatch(/nothing more to do/i);
+    // Exactly one figure: money the club HAS. No amount is invented for the
+    // change, which is the thing nobody knows yet.
+    expect(context.narrative.message.match(/\$/g)).toHaveLength(1);
+  });
+
+  it("CONTROL: the same paid booking with no review says only that it is paid", async () => {
+    mockedFindUnique.mockResolvedValue(
+      baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
+    );
+    mockedUpdate.mockResolvedValue({} as never);
+    mockedBookingEventFindMany.mockResolvedValue([
+      {
+        type: BookingEventType.MEMBER_PAID,
+        occurredAt: new Date("2026-06-20T02:00:00.000Z"),
+        amountCents: 12000,
+        reason: null,
+        snapshot: null,
+      },
+    ] as never);
+
+    const context = await getPaymentLinkContext(RAW_TOKEN, noReview());
+
+    expect(context.state).toBe("paid");
+    expect(context.narrative.message).toContain(
+      "we've received your payment of $120.00",
+    );
+    expect(context.narrative.message).not.toContain(
+      FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(context.narrative.nextStep).toMatch(/nothing more to do/i);
+  });
+
   it("CONTROL: the same PAID booking with no open review is unchanged", async () => {
     mockedFindUnique.mockResolvedValue(
       baseLink({ booking: baseBooking({ status: BookingStatus.PAID }) }) as never,
@@ -596,14 +676,23 @@ describe("getPaymentLinkContext under an open financial review", () => {
   });
 
   /*
-    THE ANTI-DRIFT PIN, and the reason this issue exists at all.
+    WHAT THIS CHECKS, EXACTLY (renamed in review, #3194): that this module hands
+    the review answer to the shared resolver and then adds NO WORDING OF ITS OWN.
+    Both sides below are the same pure function over the same facts, so it is a
+    pin on `payment-link.ts`, not on the booking-detail page - it renders none of
+    that page and would not notice a change to it.
 
-    Both surfaces resolve ONE pure function over the same facts. This asserts the
-    payment link's narrative is identical to the one the booking-detail page
-    builds for the same booking under the same review - so the two pages cannot
-    come to say different things, however either is edited later.
+    It is kept rather than deleted because the second assertion gives it teeth:
+    the same resolver asked WITHOUT the review returns something different, so a
+    payment link that stopped threading the flag - or that composed its own
+    sentences on top - fails here rather than passing on a tautology.
+
+    The claim the acceptance criteria actually rest on, that the two SURFACES
+    cannot come to say different things, is held by
+    `booking-financial-review-copy.test.ts`, which derives what each narrative
+    adds and pins the pay page's own composition against it.
   */
-  it("says exactly what the booking-detail page says about the same booking", async () => {
+  it("hands the review flag to the shared resolver and adds no wording of its own", async () => {
     const booking = baseBooking({ status: BookingStatus.PAID });
     mockedFindUnique.mockResolvedValue(baseLink({ booking }) as never);
     mockedUpdate.mockResolvedValue({} as never);
@@ -612,9 +701,8 @@ describe("getPaymentLinkContext under an open financial review", () => {
       readOpenFinancialReview: reviewReader(true),
     });
 
-    const bookingDetailNarrative = resolveBookingNarrative({
+    const resolverInput = {
       club: bindClubTime(requireClubTimeZone("Pacific/Auckland")),
-      financialReviewPending: true,
       booking: {
         status: booking.status,
         finalPriceCents: booking.finalPriceCents,
@@ -626,9 +714,16 @@ describe("getPaymentLinkContext under an open financial review", () => {
         adminReviewReason: null,
       },
       events: [],
-    });
+    };
 
-    expect(context.narrative).toEqual(bookingDetailNarrative);
+    expect(context.narrative).toEqual(
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: true }),
+    );
+    // The flag really reached it: the same facts without the review resolve to
+    // different wording, so this cannot pass on a dropped flag.
+    expect(context.narrative).not.toEqual(
+      resolveBookingNarrative({ ...resolverInput, financialReviewPending: false }),
+    );
   });
 });
 

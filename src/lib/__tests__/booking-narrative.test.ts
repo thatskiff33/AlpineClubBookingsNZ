@@ -436,17 +436,27 @@ describe("resolveBookingNarrative", () => {
  * #3033 (epic #2797) — the member is told their change saved and the money is
  * with the club, without being told a number that does not exist.
  *
- * MUTATION PROOF. Print `finalPriceCents` (or any amount) in the message and
- * "names no amount at all" fails. Name it `under_review` and "does not collide
- * with the admin approval queue" fails. Check the flag after the PAID branch and
- * "outranks the paid narrative" fails; check it before the cancellation branch
- * and "does not outrank a cancellation" fails. Default the flag to true and
- * "says nothing about review unless the caller says so" fails. Put a cause, a
- * diagnostic word or a member-blaming clause in the copy and "uses no internal
- * vocabulary and blames nobody" fails. Return the review narrative outright for
- * a payable booking — the original shape of this branch — and "does not tell an
- * unpaid booking there is nothing to do" fails on both the amount due and the
- * unscoped sentence.
+ * MUTATION PROOF. Print `finalPriceCents` (or any amount) in the standalone
+ * message and "names no amount at all" fails. Name it `under_review` and "does
+ * not collide with the admin approval queue" fails. Check the flag after the
+ * PAID branch and "outranks the paid narrative" fails; check it before the
+ * cancellation branch and "does not outrank a cancellation" fails. Default the
+ * flag to true and "says nothing about review unless the caller says so" fails.
+ * Put a cause, a diagnostic word or a member-blaming clause in the copy and
+ * "uses no internal vocabulary and blames nobody" fails. Return the review
+ * narrative outright for a payable booking — the original shape of this branch —
+ * and "does not tell an unpaid booking there is nothing to do" fails on both the
+ * amount due and the unscoped sentence.
+ *
+ * #3194 ADDED THE PAID COMPOSITION and its own proofs. Return the standalone
+ * narrative for a PAID booking — the shape #3033 shipped — and "confirms the
+ * payment it has received" fails on the headline and on every sentence about the
+ * money that arrived. Append to the paid next step instead of replacing it and
+ * the same test fails on "nothing more to do". Drop the bridging sentence and it
+ * fails on "not part of that figure", which is the one clause that keeps the
+ * figure on screen from reading as the amount under review. Invent an amount for
+ * the change and "names ONLY the amount it has already received" fails on the
+ * count.
  */
 describe("a stay change that saved while its money is still being worked out (#3033)", () => {
   const REVIEW = {
@@ -460,8 +470,26 @@ describe("a stay change that saved while its money is still being worked out (#3
     financialReviewPending: true,
   };
 
+  /*
+    THE STANDALONE REVIEW NARRATIVE, on a booking that is neither payable nor
+    paid.
+
+    Since #3194 the payable and paid branches COMPOSE the review sentences onto
+    their own, so the standalone wording - where D1's four rules are stated in
+    full and where "no amount appears at all" is absolute - is what a DRAFT,
+    WAITLISTED or WAITLIST_OFFERED booking reaches. This fixture keeps those
+    rules pinned to the function they govern rather than to whichever status
+    happened to reach it.
+  */
+  const REVIEW_ALONE = {
+    club: CLUB,
+    booking: booking({ status: "WAITLISTED" }),
+    events: [],
+    financialReviewPending: true,
+  };
+
   it("confirms the saved change first, and says the club is working the amount out", () => {
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW_ALONE);
 
     expect(result.state).toBe("financial_review_pending");
     expect(result.headline).toBe("Your booking change is saved");
@@ -476,7 +504,7 @@ describe("a stay change that saved while its money is still being worked out (#3
     // would put an authoritative-looking figure beside a sentence saying the
     // figure is unknown. `$` is asserted absent rather than a specific number,
     // so any amount reaching this copy trips it.
-    const result = resolveBookingNarrative(REVIEW);
+    const result = resolveBookingNarrative(REVIEW_ALONE);
 
     expect(result.message).not.toContain("$");
     expect(result.nextStep).not.toContain("$");
@@ -487,6 +515,93 @@ describe("a stay change that saved while its money is still being worked out (#3
     expect(result.message.replace("1 Aug 2026 to 3 Aug 2026", "")).not.toMatch(
       /[0-9]/,
     );
+  });
+
+  /*
+    #3194: THE PAID BOOKING KEEPS THE ANSWER TO "DID MY PAYMENT GO THROUGH?"
+
+    #3033 returned the standalone narrative here, which removed "nothing more to
+    do" and, with it, the only sentence in the product that tells a member their
+    money arrived. On the public payment link that narrative IS the page, so a
+    member who paid by internet banking and opened the link to check got no
+    answer about the payment at all.
+  */
+  it("confirms the payment it has received, and discloses the review beside it", () => {
+    const result = resolveBookingNarrative(REVIEW);
+
+    expect(result.state).toBe("financial_review_pending");
+    expect(result.headline).toBe("Payment received");
+    expect(result.message).toContain("we've received your payment of $120.00");
+    expect(result.message).toContain("2 Jul 2026");
+    expect(result.message).toContain("1 Aug 2026 to 3 Aug 2026");
+    // Both halves in one message: the payment is confirmed, and the change's
+    // amount is said to sit outside it.
+    expect(result.message).toMatch(/not part of that figure/i);
+    expect(result.message).toMatch(/working out what that change means/i);
+    expect(result.message).toMatch(/nothing has been refunded or charged/i);
+    // The next step is replaced rather than appended, because the paid one opens
+    // with the sentence this issue is named after.
+    expect(result.nextStep).not.toMatch(/nothing more to do/i);
+    expect(result.nextStep).toContain(
+      "There is nothing you need to do about that change.",
+    );
+    expect(result.nextStep).toContain(
+      "We'll be in touch once the amount is confirmed.",
+    );
+  });
+
+  it("names ONLY the amount it has already received, never one for the change", () => {
+    // The $120.00 that appears is money the club HAS, read off a durable payment
+    // event - not the post-edit total the standalone narrative refuses, and not
+    // a guess at the adjustment. Exactly one figure, so a second one appearing
+    // trips this.
+    const result = resolveBookingNarrative(REVIEW);
+
+    expect(result.message.match(/\$/g)).toHaveLength(1);
+    expect(result.message).not.toMatch(/\$0\.00/);
+    expect(result.nextStep).not.toContain("$");
+  });
+
+  it("still confirms a stay that needed no payment, and still discloses the review", () => {
+    // The other arm of the paid narrative: no payment event, so no figure. The
+    // stay confirmation survives, and the review sentences are what warn the
+    // member that an amount is nonetheless coming.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "PAID" }),
+      events: [],
+      financialReviewPending: true,
+    });
+
+    expect(result.headline).toBe("Booking confirmed");
+    expect(result.message).toContain("No payment was required.");
+    expect(result.message).toMatch(/working out what that change means/i);
+    expect(result.message).not.toContain("$");
+    expect(result.nextStep).not.toMatch(/nothing more to do/i);
+  });
+
+  it("composes onto a COMPLETED booking too, not only a PAID one", () => {
+    const result = resolveBookingNarrative({
+      ...REVIEW,
+      booking: booking({ status: "COMPLETED" }),
+    });
+
+    expect(result.state).toBe("financial_review_pending");
+    expect(result.message).toContain("we've received your payment of $120.00");
+    expect(result.nextStep).not.toMatch(/nothing more to do/i);
+  });
+
+  it("CONTROL: the same PAID booking with no review keeps its own narrative whole", () => {
+    const result = resolveBookingNarrative({
+      ...REVIEW,
+      financialReviewPending: false,
+    });
+
+    expect(result.state).toBe("paid");
+    expect(result.message).toContain("we've received your payment of $120.00");
+    expect(result.message).not.toMatch(/not part of that figure/i);
+    expect(result.nextStep).toMatch(/nothing more to do/i);
+    expect(result.nextStep).toContain("from your bookings page");
   });
 
   it("says nothing has moved, and never that settlement is complete", () => {

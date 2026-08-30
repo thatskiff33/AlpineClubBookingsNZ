@@ -290,7 +290,11 @@ export default function PayByLinkPage() {
 
           Not shown when the server supplied the narrative (`state === "paid"`),
           because the server composes the review sentences into it already and
-          this would say them twice.
+          this would say them twice. That pairing does not arise from this
+          repository's own server at all — a reviewed booking resolves to
+          `financial_review_pending`, never to `paid` — but nothing validates
+          this payload on the way in, so the guard stays rather than relying on
+          that.
         */}
         {!serverNarrative && financialReviewPending ? (
           <FinancialReviewNotice
@@ -345,6 +349,13 @@ export default function PayByLinkPage() {
     // unknown — a clear, specific message with a concrete next step, and on a
     // reviewed booking the narrative the server composed carries the review
     // sentences, so no separate notice is needed here.
+    //
+    // A PAID booking under review lands HERE rather than in the paid branch
+    // above, because its wording state is the review's. That is the path a
+    // member takes when they paid by internet banking, or when a redirect-based
+    // card method returns them to this URL and the page re-fetches — so the
+    // narrative it renders has to confirm the payment as well as disclose the
+    // review, and since #3194 it does (`buildPaidWithFinancialReviewNarrative`).
     const tone = toneForState(context.state);
     const showRebook =
       context.state === "bumped" ||

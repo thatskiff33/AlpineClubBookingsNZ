@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { BookingEventType } from "@prisma/client";
+
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
   FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
+  FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
   financialReviewNote,
   financialReviewNoteBesideAnAmount,
@@ -13,21 +16,21 @@ import { resolveBookingNarrative } from "@/lib/booking-narrative";
 import { bindClubTime, requireClubTimeZone } from "@/lib/club-time";
 
 /**
- * #3194 (epic #2797): THE TWO SURFACES CANNOT COME TO DISAGREE.
+ * #3194 (epic #2797): THE SURFACES CANNOT COME TO DISAGREE.
  *
- * The booking-detail page renders the composed narrative, which appends the
- * review sentences to a payable one across two paragraphs. The public
- * payment-link page renders its own payment card, so it cannot use that
- * composed message and takes the review half on its own from
+ * The booking-detail page renders the composed narrative, which says the review
+ * sentences beside a payable or a paid one across two paragraphs. The public
+ * payment-link page renders its own payment card, so it cannot use that composed
+ * message and takes the review half on its own from
  * `financialReviewNoteBesideAnAmount`.
  *
- * That is two compositions, and two compositions of one claim about a member's
- * money is exactly the drift #3194 exists to close. What makes it safe is that
- * both are built from the same five constants, and this file is what holds them
- * to it: it DERIVES what the narrative appends, by resolving the same booking
- * with the review open and closed and subtracting, then asserts the pay page's
- * note is that, sentence for sentence and in order. Neither can be reworded
- * alone.
+ * That is three compositions, and three compositions of one claim about a
+ * member's money is exactly the drift #3194 exists to close. What makes it safe
+ * is that all three are built from the same five constants, and this file is
+ * what holds them to it: it DERIVES what each narrative adds, by resolving the
+ * same booking with the review open and closed and subtracting, then asserts the
+ * pay page's note is that, sentence for sentence and in order. None can be
+ * reworded alone.
  */
 
 const CLUB = bindClubTime(requireClubTimeZone("Pacific/Auckland"));
@@ -43,11 +46,37 @@ const PAYABLE_BOOKING = {
   adminReviewReason: null,
 };
 
+/**
+ * The same booking PAID, with the durable event that proves it. The paid
+ * narrative names the amount off this event, so the composition under review has
+ * a real figure in front of the member — which is the case the bridging sentence
+ * exists for.
+ */
+const PAID_BOOKING = { ...PAYABLE_BOOKING, status: "PAID" };
+const PAID_EVENTS = [
+  {
+    type: BookingEventType.MEMBER_PAID,
+    occurredAt: new Date("2026-06-20T02:00:00.000Z"),
+    amountCents: 12000,
+    reason: null,
+    snapshot: null,
+  },
+];
+
 function narrative(financialReviewPending: boolean) {
   return resolveBookingNarrative({
     club: CLUB,
     booking: PAYABLE_BOOKING,
     events: [],
+    financialReviewPending,
+  });
+}
+
+function paidNarrative(financialReviewPending: boolean) {
+  return resolveBookingNarrative({
+    club: CLUB,
+    booking: PAID_BOOKING,
+    events: PAID_EVENTS,
     financialReviewPending,
   });
 }
@@ -69,9 +98,63 @@ function reviewAddendum(): string {
   return `${addedToMessage} ${addedToNextStep}`;
 }
 
+/**
+ * The same derivation for the PAID composition (#3194), and the one structural
+ * difference between the two: its `message` is appended to, but its `nextStep`
+ * is REPLACED, because the paid one opens with "Nothing more to do" — the
+ * sentence this issue is named after. So what the review adds is everything
+ * after the paid message plus the whole of the new next step.
+ */
+function paidReviewAddendum(): string {
+  const without = paidNarrative(false);
+  const withReview = paidNarrative(true);
+
+  // The premise, asserted rather than assumed: the control really is the paid
+  // narrative, really does name the amount received, and really does carry the
+  // banned sentence this composition drops.
+  expect(without.state).toBe("paid");
+  expect(without.message).toContain("$120.00");
+  expect(without.nextStep).toMatch(/nothing more to do/i);
+
+  expect(withReview.message.startsWith(`${without.message} `)).toBe(true);
+  expect(withReview.nextStep).not.toMatch(/nothing more to do/i);
+
+  const addedToMessage = withReview.message.slice(without.message.length + 1);
+  return `${addedToMessage} ${withReview.nextStep}`;
+}
+
 describe("financial-review copy has one home", () => {
   it("gives the payment-link page exactly the sentences the booking page adds", () => {
     expect(financialReviewNoteBesideAnAmount()).toBe(reviewAddendum());
+  });
+
+  it("says the same five sentences beside a payment already received", () => {
+    expect(financialReviewNoteBesideAnAmount()).toBe(paidReviewAddendum());
+  });
+
+  /*
+    The long form of the in-touch promise is the short one plus an invitation,
+    not a second wording of it (#3194). Rewording either half of the shared
+    clause has to move both, which is what this asserts: the long form is the
+    short form with its full stop swapped for the invitation.
+  */
+  it("builds the long in-touch sentence out of the short one", () => {
+    const clause = FINANCIAL_REVIEW_WILL_BE_IN_TOUCH.replace(/\.$/, "");
+
+    expect(FINANCIAL_REVIEW_WILL_BE_IN_TOUCH.endsWith(".")).toBe(true);
+    expect(FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK.startsWith(`${clause} —`)).toBe(
+      true,
+    );
+    // And the review-pending narrative says the long one rather than a third
+    // copy of the same promise.
+    expect(
+      resolveBookingNarrative({
+        club: CLUB,
+        booking: { ...PAYABLE_BOOKING, status: "WAITLISTED" },
+        events: [],
+        financialReviewPending: true,
+      }).nextStep,
+    ).toContain(FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK);
   });
 
   it("says the five sentences in the order a member reads them", () => {
