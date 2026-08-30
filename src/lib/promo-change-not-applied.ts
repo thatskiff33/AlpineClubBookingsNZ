@@ -26,13 +26,34 @@
  * wants to soften any of this edits these strings, once, and every surface
  * follows.
  *
- * It is deliberately NOT a `BOOKING_MESSAGE_KEYS` entry (the admin-editable
- * booking-message registry). Those are rendered by a screen that fetches message
+ * ## THIS WORDING IS DEVELOPER-EDITABLE, NOT ADMIN-EDITABLE, and that is a
+ * divergence from how the constraint on the issue was phrased
+ *
+ * Stated here plainly rather than left to be discovered, because the issue asks
+ * for a copy module "a different club must be able to soften WITHOUT A CODE
+ * CHANGE", and editing this file IS a code change. What a club gets is one
+ * place to change, reviewed and shipped like any other change; what it does not
+ * get is an admin screen with a text box.
+ *
+ * That is deliberate, and it is what its two siblings do. `promo-cap-coverage.ts`
+ * (#2390) and `booking-financial-review-copy.ts` (#3033) are both plain modules
+ * composing sentences onto these same screens and this same email, and neither
+ * is admin-editable. Making this one the exception would put three sentences
+ * that appear in the same paragraph under two different editing models, which is
+ * a worse inconsistency than the one it removes: an officer softening this
+ * sentence in an admin screen would find the two beside it unchanged and
+ * unreachable.
+ *
+ * The mechanism it is NOT is `BOOKING_MESSAGE_KEYS`, the admin-editable
+ * booking-message registry. Those are rendered by a screen that fetches message
  * bodies; this sentence is composed per-request from the member's own request
  * and travels on the quote and the save response, which is what
  * `promoCapCoverageMessage` does beside it. Registering the edit panel as a
  * message-render surface to make one sentence editable would be a much larger
- * change than the one the issue asks for.
+ * change than the one the issue asks for, and would move only this sentence.
+ *
+ * If a club does want all three admin-editable, that is one piece of work over
+ * the three modules rather than a carve-out for this one.
  *
  * ## Why the reason is a parameter and not a fixed sentence
  *
@@ -94,15 +115,65 @@ export function promoChangeNotAppliedHeading(phase: PromoChangePhase): string {
 /** The label the email and the history use for the row that carries it. */
 export const PROMO_CHANGE_NOT_APPLIED_LABEL = "Promo code not applied";
 
+/**
+ * WHAT IS STILL TRUE OF THE CODE ALREADY ON THE BOOKING, which is the half a
+ * fixed sentence got wrong.
+ *
+ * `describePromoChangeNotApplied` deliberately reports an APPLY even when the
+ * requested code is the one already on the booking — see its own note. That
+ * decision is right, and the sentence has to be adapted to it: telling a member
+ * who re-sent `SPRING24` that "the code has not been used, so it is still
+ * available for another booking" is FALSE twice over. The redemption is still on
+ * their booking and the discount is still in the total they are looking at.
+ *
+ * Three shapes, and each says what is true of BOTH codes involved:
+ *
+ *  - `resent` — the requested code is the one already on the booking (the panel
+ *    reaches this through Remove followed by re-entering the same code to change
+ *    who it covers, which sends `promoCode` with no `removePromoCode`). Nothing
+ *    moved: the code, its discount and its beneficiaries are exactly as they
+ *    were.
+ *  - `swap` — a different code is already on the booking. The NEW one was not
+ *    used and is still free; the OLD one is still there and still discounting
+ *    the total on screen, which a sentence naming only the new code leaves the
+ *    member to guess at.
+ *  - neither — no promotion on the booking, which is the plain case.
+ */
+type PromoChangeShape = "resent" | "swap" | "plain";
+
+function normaliseCode(code: string | null | undefined): string {
+  return code?.trim().toUpperCase() ?? "";
+}
+
+function shapeOf(
+  requested: PromoChangeRequested,
+  promoCode: string,
+  currentPromoCode: string | null | undefined,
+): PromoChangeShape {
+  if (requested === "remove") return "plain";
+  const current = normaliseCode(currentPromoCode);
+  if (!current) return "plain";
+  return current === normaliseCode(promoCode) ? "resent" : "swap";
+}
+
 function headlineOf(
   requested: PromoChangeRequested,
   phase: PromoChangePhase,
   promoCode: string,
+  shape: PromoChangeShape,
 ): string {
   if (requested === "remove") {
     return phase === "saved"
       ? `Promo code ${promoCode} was not removed from this booking.`
       : `Promo code ${promoCode} will not be removed from this booking.`;
+  }
+  if (shape === "resent") {
+    // "Promo code SPRING24 was not applied" would be misread as "you have no
+    // discount" by a member who still has one. What did not happen is their
+    // CHANGE to it.
+    return phase === "saved"
+      ? `Your change to promo code ${promoCode} was not applied to this booking.`
+      : `Your change to promo code ${promoCode} will not be applied to this booking.`;
   }
   return phase === "saved"
     ? `Promo code ${promoCode} was not applied to this booking.`
@@ -115,10 +186,23 @@ function reasonOf(reason: PromoChangeNotAppliedReason): string {
     : "This change is with the club to price, and a promotional code cannot be added or taken off while that is happening.";
 }
 
-function consequenceOf(requested: PromoChangeRequested): string {
-  return requested === "remove"
-    ? "The price still includes it, and the code stays on this booking rather than being free to use on another one."
-    : "The price does not include a discount for it, and the code has not been used, so it is still available for another booking.";
+function consequenceOf(
+  requested: PromoChangeRequested,
+  shape: PromoChangeShape,
+  currentPromoCode: string | null | undefined,
+): string {
+  if (requested === "remove") {
+    return "The price still includes it, and the code stays on this booking rather than being free to use on another one.";
+  }
+  if (shape === "resent") {
+    return "The code stays on this booking exactly as it was, and the price still includes its discount. Who it covers has not changed either.";
+  }
+  const unused =
+    "The price does not include a discount for it, and the code has not been used, so it is still available for another booking.";
+  if (shape === "swap") {
+    return `${unused} Promo code ${normaliseCode(currentPromoCode)} stays on this booking as it was, and the price still includes its discount.`;
+  }
+  return unused;
 }
 
 function closingOf(phase: PromoChangePhase): string {
@@ -139,12 +223,20 @@ export function promoChangeNotAppliedMessage(input: {
   reason: PromoChangeNotAppliedReason;
   promoCode: string;
   phase: PromoChangePhase;
+  /**
+   * The code on the booking right now, when there is one. It changes what is
+   * TRUE of the price the member is looking at, not merely how the sentence
+   * reads — omitting it on a booking that carries a promotion produces a
+   * message that states two false things. See `shapeOf`.
+   */
+  currentPromoCode?: string | null;
 }): string {
-  const { requested, reason, promoCode, phase } = input;
+  const { requested, reason, promoCode, phase, currentPromoCode } = input;
+  const shape = shapeOf(requested, promoCode, currentPromoCode);
   return [
-    headlineOf(requested, phase, promoCode),
+    headlineOf(requested, phase, promoCode, shape),
     reasonOf(reason),
-    consequenceOf(requested),
+    consequenceOf(requested, shape, currentPromoCode),
     closingOf(phase),
   ].join(" ");
 }
@@ -215,6 +307,10 @@ export function describePromoChangeNotApplied(input: {
       reason,
       promoCode: requestedCode,
       phase,
+      // REQUIRED here, not decorative: this is the arm that reports a resent or
+      // swapped code, and without it the sentence tells a member holding a live
+      // discount that their code is unused and free for another booking.
+      currentPromoCode: current,
     }),
   };
 }

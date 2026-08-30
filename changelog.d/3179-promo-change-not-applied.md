@@ -13,11 +13,15 @@
   own history so the office can see months later exactly what the member was
   told.
 
-  The rest of the change — the dates, the people — still saves exactly as it did.
-  The code itself is untouched and is still available to use on another booking,
-  and a member who asked to remove one is told it is still on this booking. What
-  a member is told is written in one place, so a club that wants to soften the
-  wording changes it once and every screen and email follows.
+  The rest of the change — the dates, the people — still saves exactly as it did,
+  and the message says exactly what became of each code involved. A code that was
+  never applied is still free to use on another booking. A member who asked to
+  REMOVE one is told it is still on this booking. A member who re-entered the
+  code they already had is told it stays exactly as it was, discount and all,
+  rather than being told it is unused — and where one code was being swapped for
+  another, the message names both, so nobody is left wondering why their total
+  still shows a discount. What a member is told is written in one place, so
+  softening the wording is one edit that every screen and email follows.
 
   This closes the silence; it does not make the promotional code apply. Applying
   a promotion to a stay whose amount is already with somebody to check is a
