@@ -635,6 +635,24 @@ jobs:
       - name: Check the build's cached-route set
         run: node scripts/ci/check-website-prerender-manifest.mjs
 
+      # LAST in this job, and both halves of that are deliberate (#2850).
+      #
+      # It runs after the build because it needs one: it plants a `"use client"`
+      # page that transitively reaches `@/lib/auth` and requires the REAL
+      # production build to refuse it, which is the bundler-level proof of
+      # `INV-OPS-013` that a source-graph census cannot give. Turbopack's cache
+      # is warm by then and `--debug-build-paths` narrows the compile to the
+      # planted route, so it costs seconds rather than another full build.
+      #
+      # It runs after the two checks above because it CLOBBERS `.next`, which
+      # they read. And it needs the `Build` step to have passed to mean
+      # anything: that is the clean half of the pair — build green with no
+      # fixture, red with one. Same shape as `Prove the secret scanner still
+      # fails on a planted secret` in the secret-scan job, and for the same
+      # reason: a guard that cannot go red looks exactly like a clean repository.
+      - name: Prove the server-only boundary still refuses a seeded client import
+        run: node scripts/ci/server-only-boundary-selftest.mjs
+
   migration-drift:
     name: Migration drift check
     runs-on: ubuntu-latest
