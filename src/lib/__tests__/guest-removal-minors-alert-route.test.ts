@@ -531,6 +531,39 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(written.finalPriceCents).toBe(8000);
   });
 
+  it("hands the fence's own machine code back to the caller, not a bare 409", async () => {
+    // The refusal that DOES still reach this route: an earlier edit on this
+    // booking is under review, so a second money-affecting removal would have to
+    // price against an amount nobody has confirmed.
+    //
+    // This case replaced the one that pinned `FINANCIAL_REVIEW_REQUIRED` here.
+    // That branch is unreachable now - an unpriceable removal is parked, not
+    // refused - and deleting it left the fence falling through to the generic
+    // `ApiError` branch, which drops `code`. The preview route already surfaced
+    // this code, so the two doors were about to disagree about one refusal.
+    const tx = buildTx([ADULT, CHILD], preEditBooking([ADULT, CHILD]));
+    tx.manualRefundTask.findFirst.mockResolvedValue({
+      id: "task-open",
+      occurrenceKey: "occ-1",
+      amountCents: null,
+      raisedAmountCents: null,
+      reviewContext: null,
+    });
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(tx),
+    );
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("EDIT_FINANCIAL_REVIEW_PENDING");
+    // Refused before anything was written, and before anything was parked.
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+    expect(tx.manualRefundTask.create).not.toHaveBeenCalled();
+  });
+
   it("settles normally, and raises nothing, when every strand's rows reconcile", async () => {
     // The control: the same removal on the ordinary fixture, whose rows carry
     // what each night was sold for. Without it the case above could pass on a

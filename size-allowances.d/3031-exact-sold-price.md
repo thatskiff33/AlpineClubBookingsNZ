@@ -113,14 +113,25 @@ reason: the preview consumes the same discriminated result as the save and
   One file, one allowance.
 
 file: src/app/api/bookings/[id]/modify/route.ts
-lines: 490
+lines: 503
 reason: one error branch, above the generic `ApiError` branch that would
   otherwise drop the machine-readable code — the same shape and the same
   ordering rule as the four refusal branches already beside it.
+  Raise-trigger round (+13): a second branch of exactly that shape, for the
+  pending-review FENCE. It was falling through to the generic branch and losing
+  its code, while the preview route already surfaced it — so quote and apply
+  disagreed about one refusal, which is the parity this epic requires of them.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
-lines: 522
+lines: 534
 reason: the same one branch, for the same reason, on the removal route.
+  Raise-trigger round (+12): that branch is REPLACED rather than added to. An
+  unpriceable removal is no longer refused — it is parked — and DELETE is the
+  only handler in this file, so the `FINANCIAL_REVIEW_REQUIRED` catch became dead
+  code claiming a behaviour the route does not have. What took its place is the
+  fence branch, which does still arrive here and was losing its code. The growth
+  is the note saying which one went and why, so the next reader does not add the
+  dead branch back.
 
 file: src/lib/waitlist.ts
 lines: 1379

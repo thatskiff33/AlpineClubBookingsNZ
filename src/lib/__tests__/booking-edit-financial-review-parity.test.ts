@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 const h = vi.hoisted(() => ({
   checkCapacityForGuestRanges: vi.fn(),
@@ -297,6 +299,58 @@ describe("#3031 quote and apply consume one discriminated result", () => {
     // member's fault - the stored history is the club's record, not theirs.
     expect(refusal.message).toMatch(/nothing has been changed yet/i);
     expect(refusal.message).not.toMatch(/\$|corrupt|invalid|error|your data/i);
+  });
+});
+
+describe("#3032 every door that can raise the fence surfaces its code", () => {
+  /**
+   * The pending-review fence (`assertNoPendingEditFinancialReview`) refuses a
+   * second money-affecting edit with a 409 and a machine code. Three routes can
+   * raise it — the preview, the save, and the guest removal — and a member can
+   * meet the SAME refusal through any of them.
+   *
+   * WHY THIS IS A SOURCE SCAN. The property is an ORDERING one:
+   * `EditFinancialReviewPendingError` extends `ApiError`, so a handler's generic
+   * `ApiError` branch will happily catch it and answer with the right status,
+   * the right sentence, and NO `code`. Nothing fails, nothing logs, and the panel
+   * that would have offered "the club is pricing your last change" shows a bare
+   * error instead. That is precisely the shape a behavioural test on the happy
+   * path cannot see, and it was live on two of these three routes until #3032
+   * removed the branch that had been sitting above the generic one for a
+   * different error.
+   *
+   * The DELETE route additionally has a real behavioural proof in
+   * `guest-removal-minors-alert-route.test.ts`; this is the census that stops the
+   * other two drifting away from it.
+   */
+  const DOORS = [
+    "src/app/api/bookings/[id]/modify-quote/route.ts",
+    "src/app/api/bookings/[id]/modify/route.ts",
+    "src/app/api/bookings/[id]/guests/[guestId]/route.ts",
+  ];
+
+  it.each(DOORS)("%s answers with the code, above the generic branch", (door) => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), door), "utf8");
+
+    // The code itself, not merely the error class: a branch that caught the
+    // error and answered without `code` would satisfy an `instanceof` check.
+    const code = source.search(
+      /EDIT_FINANCIAL_REVIEW_PENDING_CODE|"EDIT_FINANCIAL_REVIEW_PENDING"|err\.code/,
+    );
+    expect(code, `${door} must surface the fence's machine code`).toBeGreaterThan(-1);
+
+    const pendingBranch = source.search(
+      /instanceof EditFinancialReviewPendingError|EDIT_FINANCIAL_REVIEW_PENDING_CODE/,
+    );
+    const genericBranch = source.search(/err instanceof ApiError/);
+    expect(pendingBranch, `${door} must handle the fence explicitly`).toBeGreaterThan(-1);
+    if (genericBranch > -1) {
+      expect(
+        pendingBranch,
+        `${door}: the fence branch must precede the generic ApiError branch, ` +
+          "which would otherwise swallow it and drop the code",
+      ).toBeLessThan(genericBranch);
+    }
   });
 });
 

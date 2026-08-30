@@ -10,7 +10,7 @@ import {
   readHostingCoverageOverride,
 } from "@/lib/adult-member-hosting-same-owner";
 import { ApiError } from "@/lib/api-error";
-import { BookingEditFinancialReviewRequiredError } from "@/lib/booking-modify-validation";
+import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
@@ -495,12 +495,24 @@ export async function DELETE(
         { status: err.status },
       );
     }
-    // #3031 (epic #2797): the removal is structurally fine but the exact credit
-    // cannot be read from this booking's stored sold-price history. MUST stay
-    // above the generic `ApiError` branch - this error extends ApiError, and
-    // that branch would drop the machine-readable code the edit panel needs to
-    // say what happens next rather than showing a bare failure.
-    if (err instanceof BookingEditFinancialReviewRequiredError) {
+    // #3032 (epic #2797): this booking's LAST edit is still under financial
+    // review, so a second money-affecting removal would have to price against
+    // the amount nobody has confirmed yet. MUST stay above the generic
+    // `ApiError` branch - this error extends ApiError, and that branch would
+    // drop the machine-readable code the edit panel needs to say what happens
+    // next rather than showing a bare failure.
+    //
+    // THIS REPLACED THE `FINANCIAL_REVIEW_REQUIRED` BRANCH, which #3031 put here
+    // and #3032 made unreachable from this route: an unpriceable removal is no
+    // longer refused, it is committed and its money parked
+    // (`removeBookingGuestInTransaction`), and DELETE is the only handler in this
+    // file. A catch for an error that can no longer arrive is dead code claiming
+    // a behaviour the route does not have, so it is gone rather than left as
+    // defence in depth. What DOES still reach here is the fence above - and it
+    // was falling through to the generic branch and losing its code, which the
+    // preview route (`modify-quote`) already surfaces, so the two doors
+    // disagreed about the same refusal.
+    if (err instanceof EditFinancialReviewPendingError) {
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: err.status },
