@@ -100,7 +100,10 @@ nothing is refused, and so is any other name — including a bundle written agai
 the withdrawn `ANY_MEMBER_AT_LODGE` or `NOMINATED_HOST` options, which are no longer
 part of the product. Blank
 round-trips as blank, so exporting and re-importing a club that has never touched
-the setting changes nothing. Bundles are accepted only at the exact format version
+the setting changes nothing — and so does an explicit set, including one saved
+before `SAME_GROUP_TRIP` existed. A club that chose its scopes under an earlier
+release exports the set it really means and re-imports as **unchanged** rather
+than as an edit nobody made. Bundles are accepted only at the exact format version
 that wrote them, so an older bundle is refused outright rather than importing this
 column as empty.
 
