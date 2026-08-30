@@ -271,7 +271,7 @@ describe("resolvePaymentLink", () => {
  * issue is removing, not something to reintroduce as a convenience.
  */
 function reviewReader(answer: boolean) {
-  return vi.fn(async (_bookingId: string) => answer);
+  return vi.fn<(bookingId: string) => Promise<boolean>>(async () => answer);
 }
 
 const noReview = () => ({ readOpenFinancialReview: reviewReader(false) });
