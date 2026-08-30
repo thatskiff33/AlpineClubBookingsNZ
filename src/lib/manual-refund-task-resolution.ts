@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   BookingEventType,
+  ManualRefundTaskDirection,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
 } from "@prisma/client";
@@ -95,6 +96,24 @@ export type ManualRefundTaskResolution =
       note: string | null;
       actingMemberId: string;
       confirmedAmountCents: number | null;
+      /**
+       * #3170: WHICH WAY the money goes, and it is REQUIRED on every completion
+       * for the same reason `confirmedAmountCents` is - optional would let every
+       * existing call site keep the old behaviour silently, where required makes
+       * the compiler list them.
+       *
+       * Before this issue the direction was implicit in the word "refund", and
+       * that implicitness was the hazard: this child is the first to park an edit
+       * that can move the price UP, so an officer reading the evidence can
+       * correctly conclude the club is owed - and every settlement route was
+       * refund-shaped, so acting on that conclusion sent the money the wrong way.
+       *
+       * NULL means REFUND_TO_MEMBER and is accepted only on the legacy kinds,
+       * which cannot mean anything else. An `EDIT_FINANCIAL_REVIEW` completion
+       * must state it: a task whose whole nature is "nobody could work this out"
+       * is exactly the task where an unstated default is a guess.
+       */
+      direction: ManualRefundTaskDirection | null;
     }
   | {
       taskId: string;
@@ -102,6 +121,12 @@ export type ManualRefundTaskResolution =
       note: string | null;
       actingMemberId: string;
       confirmedAmountCents?: never;
+      /**
+       * A dismissal moves no money, so there is no direction to record and none
+       * may be sent. The database says the same thing
+       * (`ManualRefundTask_direction_only_when_completed`).
+       */
+      direction?: never;
     };
 
 /**
@@ -154,6 +179,8 @@ export async function resolveManualRefundTask(
   }
   const confirmedAmountCents =
     resolution === "completed" ? input.confirmedAmountCents : null;
+  const requestedDirection =
+    resolution === "completed" ? (input.direction ?? null) : null;
   if (
     confirmedAmountCents !== null &&
     !isNonNegativeIntegerCents(confirmedAmountCents)
@@ -195,6 +222,19 @@ export async function resolveManualRefundTask(
         booking: {
           select: {
             memberId: true,
+            // #3170: the CHARGE direction mints an additional PaymentIntent
+            // through the same helper every ordinary price increase uses, and
+            // that helper needs a Stripe customer. Read here, under the same
+            // transaction as everything else, rather than re-queried after the
+            // commit.
+            member: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            },
             // #3032: the booking's own status and its primary Xero invoice id,
             // for `hasIssuedPrimaryXeroInvoice`. A completion that moves money on
             // a booking whose invoice was issued has to correct that invoice, or
@@ -207,6 +247,11 @@ export async function resolveManualRefundTask(
                 amountCents: true,
                 refundedAmountCents: true,
                 xeroInvoiceId: true,
+                // #3170: a charge routes on the BOOKING's payment rather than the
+                // task's - the task's payment is the one money would come back
+                // OUT of, and a charge has none.
+                source: true,
+                stripeCustomerId: true,
               },
             },
           },
@@ -245,6 +290,17 @@ export async function resolveManualRefundTask(
         throw new ManualBookingPaymentError(
           "Say what evidence this amount was priced from — a note is required.",
           400
+        );
+      }
+      if (isEditReview && requestedDirection === null) {
+        // #3170: an edit-review completion must SAY which way the money goes.
+        // Every other kind is a hand-back by its own definition, so silence there
+        // means REFUND_TO_MEMBER and always has; here silence would be a guess on
+        // the one task type whose whole nature is that nobody could work the
+        // figure out. Refused before anything is claimed, so the task stays OPEN.
+        throw new ManualBookingPaymentError(
+          "Say whether this amount is owed to the member or owed to the club — a review cannot be closed without it.",
+          400,
         );
       }
       if (confirmedAmountCents === null) {
@@ -313,10 +369,18 @@ export async function resolveManualRefundTask(
     // "pretends money moved" failure `INV-PAY-051` forbids; a refusal from here
     // leaves the row untouched and still OPEN. The rules, the three routes and
     // the two refusals live in `edit-financial-review-settlement.ts`.
+    // #3170: NULL means REFUND_TO_MEMBER, which is what every kind older than
+    // EDIT_FINANCIAL_REVIEW can mean and nothing else. An edit review has already
+    // been refused above if it did not say.
+    const settlementDirection =
+      requestedDirection ?? ManualRefundTaskDirection.REFUND_TO_MEMBER;
+    const hasIssuedXeroInvoice = hasIssuedPrimaryXeroInvoice(task.booking);
     const settlementRoute: EditReviewSettlementRoute | null = settlement
       ? await chooseEditReviewSettlementRoute({
           task,
           amountCents: settlement.amountCents,
+          hasIssuedXeroInvoice,
+          direction: settlementDirection,
           store: tx,
         })
       : null;
@@ -337,7 +401,19 @@ export async function resolveManualRefundTask(
         // "reviewed, and this system moved no money for this occurrence", and
         // writing a zero there would be the magic value this epic exists to
         // remove.
-        ...(settlement ? { amountCents: settlement.amountCents } : {}),
+        ...(settlement
+          ? {
+              amountCents: settlement.amountCents,
+              // #3170: written inside the SAME status-fenced claim as the amount,
+              // for the same reason - a direction applied separately from the
+              // status it belongs to is a direction that can be applied twice, or
+              // to a row somebody else already closed. A dismissal writes none:
+              // nothing moved, so there is no direction, and
+              // `ManualRefundTask_direction_only_when_completed` says so in the
+              // database too.
+              settlementDirection,
+            }
+          : {}),
       },
     });
     if (claimed.count === 0) {
@@ -486,6 +562,11 @@ export async function resolveManualRefundTask(
             settlementRoute && settlementRoute.kind !== "local-allocation"
               ? settlementRoute.bookingModificationId
               : null,
+          // #3170: WHICH WAY, recorded beside the route. The route says how the
+          // money travelled and the direction says who ended up with it, and
+          // "additional-charge" is the only route where those two answers differ
+          // from every entry written before this issue.
+          settlementDirection: settlement ? settlementDirection : null,
         },
       },
       tx
@@ -539,12 +620,14 @@ export async function resolveManualRefundTask(
        */
       settlementRoute,
       settlementAmountCents: settlement?.amountCents ?? null,
+      /** #3170: which way this completion sent the money, or null on a dismissal. */
+      settlementDirection: settlement ? settlementDirection : null,
       memberId: task.booking.memberId,
       /**
        * #3032: the two facts the post-commit Xero dispatch needs, read under the
        * same transaction as everything else rather than re-queried afterwards.
        */
-      hasIssuedXeroInvoice: hasIssuedPrimaryXeroInvoice(task.booking),
+      hasIssuedXeroInvoice,
       bookingPaymentStatus: task.booking.payment?.status ?? null,
       status:
         resolution === "completed"
@@ -571,15 +654,16 @@ export async function resolveManualRefundTask(
    * there" is one question; this module is the DOOR - validate, claim, audit -
    * and it ends at the commit.
    */
-  const stripeRefundId = await executeEditReviewSettlement({
-    bookingId: result.bookingId,
-    taskId: result.taskId,
-    actingMemberId,
-    route: result.settlementRoute,
-    amountCents: result.settlementAmountCents,
-    hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
-    bookingPaymentStatus: result.bookingPaymentStatus,
-  });
+  const { stripeRefundId, additionalPaymentIntentId } =
+    await executeEditReviewSettlement({
+      bookingId: result.bookingId,
+      taskId: result.taskId,
+      actingMemberId,
+      route: result.settlementRoute,
+      amountCents: result.settlementAmountCents,
+      hasIssuedXeroInvoice: result.hasIssuedXeroInvoice,
+      bookingPaymentStatus: result.bookingPaymentStatus,
+    });
 
-  return { ...result, stripeRefundId };
+  return { ...result, stripeRefundId, additionalPaymentIntentId };
 }

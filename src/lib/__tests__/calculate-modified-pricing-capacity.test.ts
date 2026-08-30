@@ -613,6 +613,105 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     ).toEqual([RATE, RATE]);
     expect(occurrences[0].storedEvidence.guestTotalCents).toBe(1001);
   });
+
+  it("still checks capacity for an edit it cannot price, and refuses when the beds are not there (#3170)", async () => {
+    // #3170 turned this branch from a refusal into a PARK: the structural change
+    // now commits. That makes the capacity check load-bearing here for the first
+    // time — beds are not money, and an edit that puts people in the lodge on
+    // nights nobody has checked would overbook it. The planner used to return
+    // the review verdict before the capacity block ran, which was safe only
+    // while the edit was then thrown away.
+    h.checkCapacityForGuestRanges.mockResolvedValue(OVER_CAPACITY);
+
+    const drifted = sparseArgs(RATE);
+    await expect(
+      calculateModifiedPricing(NO_DISCOUNT_TX, {
+        ...drifted,
+        booking: {
+          ...(drifted.booking as unknown as {
+            guests: Array<{ priceCents: number }>;
+          }),
+          guests: [
+            {
+              ...(drifted.booking as unknown as {
+                guests: Array<Record<string, unknown>>;
+              }).guests[0],
+              priceCents: 1001,
+            },
+          ],
+        } as never,
+      }),
+    ).rejects.toThrow(/Not enough beds available/);
+
+    /*
+      The control, and it is what makes the assertion above mean something: the
+      capacity resolver was asked about THE PARKED PLAN's ranges.
+
+      A CALL COUNT ALONE DOES NOT SAY THAT, and asserting only the count is how
+      this pair came to be a guard that could not fail. Mutating the plan
+      selection to `const capacityPlan = inProgressPlan;` drops the parked branch
+      and falls through to the envelope call - `newCheckIn` as the range start and
+      `policyAdjustedGuestsForPricing` as the ranges - which is the pre-#2736
+      shape, still exactly one call, and the whole suite stayed green.
+
+      So the ARGUMENTS are what is pinned. Two things distinguish the parked
+      plan's ranges from the envelope's, and both are load-bearing:
+        - the range starts at `editableFrom`, not at the booking's check-in, so
+          nights already spent are not re-checked (#2029's capacityRangeStart);
+        - the range carries an EXPLICIT night set, so the sparse guest's gap at
+          08-21 is not silently occupied and #2029's check-out-day extension
+          night IS.
+    */
+    expect(h.checkCapacityForGuestRanges).toHaveBeenCalledTimes(1);
+    const [lodgeId, rangeStart, rangeEnd, proposed] =
+      h.checkCapacityForGuestRanges.mock.calls[0];
+    expect(lodgeId).toBe("lodge-1");
+    // The envelope start a reverted planner would pass is 2026-08-20, so pinning
+    // the start to 08-21 already excludes it - a second, negative assertion of
+    // the same fact adds nothing but a line to keep in step.
+    expect(rangeStart).toEqual(D("2026-08-21"));
+    expect(rangeEnd).toEqual(D("2026-08-25"));
+    expect(proposed).toEqual([
+      {
+        stayStart: D("2026-08-21"),
+        stayEnd: D("2026-08-25"),
+        // 08-21 is the guest's gap and is absent; 08-24 is the extension's
+        // newly-occupied night and is present.
+        nights: [D("2026-08-22"), D("2026-08-23"), D("2026-08-24")],
+        memberId: "m1",
+      },
+    ]);
+  });
+
+  it("parks the same edit when the beds ARE there", async () => {
+    // The other half of the pair. Without it, the case above would also pass on
+    // a planner that had started refusing every unpriceable edit outright again.
+    h.checkCapacityForGuestRanges.mockResolvedValue(AVAILABLE);
+
+    const drifted = sparseArgs(RATE);
+    const result = await calculateModifiedPricing(NO_DISCOUNT_TX, {
+      ...drifted,
+      booking: {
+        ...(drifted.booking as unknown as {
+          guests: Array<{ priceCents: number }>;
+        }),
+        guests: [
+          {
+            ...(drifted.booking as unknown as {
+              guests: Array<Record<string, unknown>>;
+            }).guests[0],
+            priceCents: 1001,
+          },
+        ],
+      } as never,
+    });
+
+    expect(result.kind).toBe("financial_review_required");
+    if (result.kind !== "financial_review_required") return;
+    // And it comes back with the beds, so the caller can commit the structural
+    // half — which is the whole difference between parking and refusing.
+    expect(result.parkedPlan.proposedExistingGuests).toHaveLength(1);
+  });
 });
 
 // #2743: an edit sells only the nights it creates. The sparse suite asserts that
@@ -733,7 +832,7 @@ describe("calculateModifiedPricing in-progress departed guest (#2743)", () => {
     // had gone home.
     expect(gone.nightDates).toEqual([D("2026-08-18"), D("2026-08-19")]);
     expect(gone.priceCents).toBe(2 * RATE);
-    expect(gone.perNightCents.reduce((a, b) => a + b, 0)).toBe(gone.priceCents);
+    expect(gone.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(gone.priceCents);
     // The guest who is actually there is untouched.
     expect(present.nightDates).toEqual([
       D("2026-08-18"), D("2026-08-19"), D("2026-08-20"), D("2026-08-21"),
@@ -882,7 +981,7 @@ describe("calculateModifiedPricing in-progress per-night prices (#2744)", () => 
       D("2026-08-24"),
     ]);
     expect(guest.perNightCents).toEqual([LOW, LOW, HIGH, HIGH]);
-    expect(guest.perNightCents.reduce((a, b) => a + b, 0)).toBe(guest.priceCents);
+    expect(guest.perNightCents.reduce<number>((a, b) => a + (b ?? Number.NaN), 0)).toBe(guest.priceCents);
     expect(result.newTotalPriceCents).toBe(2 * LOW + 2 * HIGH);
     // Xero rebuilds its lines per contiguous run of equal price, so the runs
     // have to multiply back out: 2 x LOW and 2 x HIGH, no phantom balance.

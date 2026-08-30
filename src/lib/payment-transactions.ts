@@ -60,7 +60,14 @@ function normalizeRefundStatus(status: string | null | undefined) {
   return status ?? "unknown";
 }
 
-function isCapturedTransactionStatus(status: PaymentStatus) {
+/**
+ * #3170 exported this. "Has this transaction's money actually been taken?" had
+ * three inline spellings in this file and a fourth was about to be written in
+ * `edit-financial-review-charge.ts`, which has to know whether an edit's combined
+ * charge request has already been PAID before it lets another share be added to
+ * it. `INV-SSOT`: one definition, imported.
+ */
+export function isCapturedTransactionStatus(status: PaymentStatus) {
   return CAPTURED_TRANSACTION_STATUSES.has(status);
 }
 
