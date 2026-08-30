@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   bookingManagementAuthorizationRole,
-  canViewAdminHref,
+  canOpenAdminPath,
   canViewAdminHrefWithMatrix,
   financeAccessLevelFromMatrix,
   getAdminPermissionLevel,
@@ -704,11 +704,32 @@ describe("admin route requirements", () => {
       level: "view",
     });
     expect(
-      canViewAdminHref({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
+      canOpenAdminPath({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/page-content"),
     ).toBe(true);
     expect(
-      canViewAdminHref({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/members"),
+      canOpenAdminPath({ accessRoles: ["ADMIN_CONTENT"] }, "/admin/members"),
     ).toBe(false);
+  });
+
+  it("resolves the two adjudicated admission special cases (#2975)", () => {
+    // The fee console admits on view of EITHER bookings or finance (#1933), and
+    // the map's own `bookings` prefix would refuse a finance-only grid.
+    const financeOnly = { accessRoles: ["FINANCE_USER" as const] };
+    expect(canOpenAdminPath(financeOnly, "/admin/fees")).toBe(true);
+    expect(canOpenAdminPath(financeOnly, "/admin/bookings")).toBe(false);
+
+    // ADR-002 §1 admission: any ONE area opens the Diagnostics shell, and the
+    // map resolves that path to `overview`, which a finance-only grid lacks.
+    expect(canOpenAdminPath(financeOnly, "/admin/ai-diagnostics")).toBe(true);
+    expect(canOpenAdminPath(financeOnly, "/admin/dashboard")).toBe(false);
+    expect(canOpenAdminPath({ accessRoles: [] }, "/admin/ai-diagnostics")).toBe(
+      false,
+    );
+
+    // A path the map cannot resolve is refused, not defaulted.
+    expect(canOpenAdminPath({ accessRoles: ["ADMIN" as const] }, "/dashboard")).toBe(
+      false,
+    );
   });
 
   it("maps mutating admin API methods to edit access", () => {

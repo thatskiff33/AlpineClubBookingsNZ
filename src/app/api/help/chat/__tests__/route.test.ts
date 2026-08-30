@@ -68,6 +68,11 @@ vi.mock("@/lib/observability-bridge", () => ({
   reportAiError: mocks.reportAiError,
 }));
 
+import type { AdminPermissionArea } from "@/lib/admin-permissions";
+import {
+  accessRoleDefinitionGrid,
+  type AccessRoleGridLevel,
+} from "@/lib/__tests__/helpers/access-role-definition-grid";
 import { POST } from "../route";
 
 function makeRequest(body: unknown, raw?: string) {
@@ -242,25 +247,20 @@ describe("POST /api/help/chat — gate order (each early exit leaves the provide
 
 /**
  * Sign the request's member in with a real access-role grid, joined exactly as
- * the route's own `select` asks for it.
+ * the route's own `select` asks for it. The definition row comes from the shared
+ * builder so its all-`NONE` baseline is DERIVED from `ADMIN_PERMISSION_AREAS`: a
+ * hand-written baseline leaves a newly added area `undefined` rather than `NONE`,
+ * and every "refused everywhere else" assertion quietly stops covering it.
  */
-function signInWithGrid(levels: Partial<Record<string, "NONE" | "VIEW" | "EDIT">>) {
+function signInWithGrid(
+  levels: Partial<Record<`${AdminPermissionArea}Level`, AccessRoleGridLevel>>,
+) {
   mocks.memberFindUnique.mockResolvedValue({
     accessRoles: [
       {
         role: null,
         roleDefinitionId: "def-1",
-        roleDefinition: {
-          id: "def-1",
-          overviewLevel: "NONE",
-          bookingsLevel: "NONE",
-          membershipLevel: "NONE",
-          financeLevel: "NONE",
-          lodgeLevel: "NONE",
-          contentLevel: "NONE",
-          supportLevel: "NONE",
-          ...levels,
-        },
+        roleDefinition: accessRoleDefinitionGrid(levels, "def-1"),
       },
     ],
   });

@@ -1,11 +1,15 @@
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   getAdminRouteRequirement,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
 import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
+import {
+  adminApiRouteFiles,
+  adminPageFiles,
+  toRepoRelative,
+  toResolverPathname,
+} from "@/lib/__tests__/helpers/admin-route-enumeration";
 
 // ---------------------------------------------------------------------------
 // Admin route-map drift guard (issue #1322).
@@ -40,71 +44,32 @@ import { FEATURE_ROUTE_RULES } from "@/config/feature-routes";
 //     is narrower: "nothing lands in the overview catch-all unnoticed."
 // ---------------------------------------------------------------------------
 
-function walkFiles(dir: string, leaf: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) return walkFiles(entryPath, leaf);
-    return entry.name === leaf ? [entryPath] : [];
-  });
-}
-
-// Turn an app-router file path into the URL pathname the route maps resolve.
-// Route groups like "(admin)" are stripped, and dynamic segments ("[id]",
-// "[...slug]") are substituted with a concrete placeholder so prefix and
-// pattern (e.g. [^/]+) matching behaves like a real request.
-function toPathname(absFile: string): string {
-  const rel = path.relative(path.join(process.cwd(), "src/app"), absFile);
-  const parts = rel.split(path.sep);
-  parts.pop(); // drop the page.tsx / route.ts leaf
-  const segments = parts
-    .filter((seg) => !(seg.startsWith("(") && seg.endsWith(")")))
-    .map((seg) => (/^\[.*\]$/.test(seg) ? "sample" : seg));
-  return `/${segments.join("/")}`;
-}
-
-function relative(absFile: string): string {
-  return path.relative(process.cwd(), absFile).split(path.sep).join("/");
-}
-
 /**
- * Every admin PAGE, from whichever route group it lives in.
+ * The enumeration is SHARED (#2975), not walked again here.
  *
- * This used to walk `src/app/(admin)` alone, which quietly assumed admin pages only
- * ever live in that one group.
+ * Three suites needed "every admin page and every `/api/admin` route" and each
+ * had written its own walk. The walks were identical; the pathname builders were
+ * not — two substituted `x123` for a dynamic segment and this one substituted
+ * `sample`. Nothing was broken by that, but `getAdminRouteRequirement` matches by
+ * literal prefix as well as by pattern, so the moment a prefix matched one
+ * placeholder and not the other, two suites enumerating "the same" tree would
+ * resolve different areas and only one of them would go red.
  *
- * NO ADMIN PAGE LIVES OUTSIDE `(admin)` TODAY, so this is hardening rather than a
- * fix — but the assumption was briefly false and nothing said so. A revision of
- * AID-7 (#2378) put the Diagnostics page in its own `(diagnostics)` group, and this
- * guard went silent for it in BOTH halves: the page could have landed in the
- * `overview` catch-all unnoticed, and its feature-route prefix was reported as
- * matching no file. That revision was withdrawn — the page now sits under `(admin)`
- * like every other admin page — but the blindness it exposed was real.
- *
- * A route group is a rendering concern; this guard is a permissions concern. Tying
- * the second to the first made "add a route group" a way to leave the guard without
- * anybody deciding to. The walk now covers every `(group)/admin/**` page, so if that
- * ever happens again it is picked up rather than remembered.
+ * Sharing the enumeration costs no independence: the enumeration is not the
+ * assertion here — the `overview` catch-all is — and each suite still states its
+ * own expectation about the paths it is handed. `helpers/admin-route-enumeration.ts`
+ * carries the walk, the placeholder and the reason pages come from EVERY route
+ * group rather than only `(admin)`.
  */
-const adminPageFiles = fs
-  .readdirSync(path.join(process.cwd(), "src/app"), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name.startsWith("("))
-  .flatMap((group) =>
-    walkFiles(
-      path.join(process.cwd(), "src/app", group.name, "admin"),
-      "page.tsx",
-    ),
-  )
-  .sort();
-const adminApiFiles = walkFiles(
-  path.join(process.cwd(), "src/app/api/admin"),
-  "route.ts",
-).sort();
 
 type AdminRoute = { file: string; rel: string; pathname: string };
 
-const adminRoutes: AdminRoute[] = [...adminPageFiles, ...adminApiFiles].map(
-  (file) => ({ file, rel: relative(file), pathname: toPathname(file) }),
+const adminRoutes: AdminRoute[] = [...adminPageFiles, ...adminApiRouteFiles].map(
+  (file) => ({
+    file,
+    rel: toRepoRelative(file),
+    pathname: toResolverPathname(file),
+  }),
 );
 
 // ---------------------------------------------------------------------------
@@ -128,17 +93,22 @@ const OVERVIEW_ALLOWLIST: Record<string, string> = {
   // enforces its own area on drill-in.
   "/api/admin/pending-counts":
     "Cross-area read-only badge counts for the sidebar; spans all areas, so overview view is correct.",
-  // The AI Diagnostics workspace shell (AID-7, #2378). `overview` is the CORRECT
-  // requirement here and not a workaround, which is worth stating because it looks
-  // like one: owner decision Q6 is that any admitted administrator may OPEN the
-  // workspace, and that the shell must not itself become a `support:view`
-  // permission. Opening it grants no evidence — every tool invocation re-derives the
-  // acting admin's areas server-side and refuses what they may not read, and the
-  // detailed readiness panel on this very page is already gated on `support:view`.
-  // Gating the shell instead would hide the "who can fix this" message from exactly
-  // the admins who need to read it.
+  // The AI Diagnostics workspace shell (AID-7, #2378). It resolves to `overview`
+  // here, and that is the area the SIDEBAR and command palette use for the link —
+  // but since #2975 it is no longer what ADMITS the page. Owner decision Q6 and
+  // ADR-002 §1 say any admitted administrator may open the workspace, and #2984
+  // ended the coincidence that made `overview:view` a fair spelling of that: portal
+  // standing became any one of the seven areas, so the shipped Finance Viewer grid
+  // is an admitted admin holding no `overview` at all. `canOpenAdminPath` now
+  // admits this path on admission (`ANY_ADMIN_ADMISSION_PATHS`), which is the
+  // explicit named predicate ADR-002 §1 asks for.
+  //
+  // The shell still exposes nothing: every tool invocation re-derives the acting
+  // admin's areas server-side, the readiness panel on this page is tiered on
+  // `support:view`, and the budget card refuses without it. Gating the shell would
+  // hide the "who can fix this" message from exactly the admins who need to read it.
   "/admin/ai-diagnostics":
-    "AI Diagnostics workspace shell; any admitted admin may open it (owner decision #2378 Q6) and per-tool area checks gate every read, so overview view is correct.",
+    "AI Diagnostics workspace shell; admitted on ADMISSION rather than on this area (ADR-002 §1) and per-tool area checks gate every read, so landing on overview here is correct and harmless.",
 };
 
 // State-changing GET endpoints (EDIT_ON_GET_PREFIXES in admin-permissions.ts).
@@ -156,7 +126,7 @@ describe("admin route-map drift guard (#1322)", () => {
     // Sanity floor so a broken walk (wrong dir, zero matches) can never make
     // the coverage assertions vacuously pass.
     expect(adminPageFiles.length).toBeGreaterThan(40);
-    expect(adminApiFiles.length).toBeGreaterThan(100);
+    expect(adminApiRouteFiles.length).toBeGreaterThan(100);
   });
 
   it("maps every admin page and /api/admin route to a specific area or an allowlisted overview route", () => {

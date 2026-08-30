@@ -100,6 +100,17 @@ export type RequireAdminMockOptions = {
  * guard, over the REAL path-to-permission map, for every admin page and
  * `/api/admin` route discovered on disk. Assert domain behaviour here; do not
  * assert authorization here.
+ *
+ * ## THAT APPROXIMATION GOT WIDER IN THIS RELEASE, and a reader deserves to know
+ *
+ * `hasAdminPortalAccess` excluded `finance` until #2984; it now counts all seven
+ * areas. So across the ~60 suites that use this helper, any assertion of the form
+ * "a finance-only role is refused this bare-`requireAdmin()` route" is now being
+ * made against a WIDER mock than it was written against, and would pass whether
+ * or not the real guard refused. Nothing in production changed for those routes —
+ * the real guard has always inferred their requirement from the path and never
+ * consulted this function — but a test that suddenly proves less should say so
+ * rather than let its reader assume the strength it used to have.
  */
 export async function evaluateRequireAdminMock(
   options: RequireAdminMockOptions | undefined,
