@@ -20,7 +20,7 @@ import {
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
 import { clubTime, clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
 import {
@@ -36,17 +36,13 @@ import {
 } from "@/lib/booking-modification-settlement";
 import {
   assertNoPendingEditFinancialReview,
-  raiseEditFinancialReviewTask,
+  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
 import {
   preCheckInEditEvidence,
   preservedNightPrices,
   type PreCheckInEditStrand,
 } from "@/lib/stored-sold-price-evidence";
-import {
-  hasCapturedPayment,
-  isSettledBookingStatus,
-} from "@/lib/booking-payment-state";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   acquireLodgeCapacityLock,
@@ -1152,41 +1148,21 @@ export async function modifyBookingDates({
      * Raised AFTER the `BookingModification` row exists, because the task
      * settles against that record — the same anchoring the batch path and the
      * removal path use, so a confirmed amount reaches the settlement machinery
-     * by one route rather than three.
+     * by one route rather than four.
      *
-     * `raisedAmountCents` IS NULL AND MUST STAY NULL. The amount is not zero and
-     * not estimated; it is unknown, which is the whole point of the epic.
+     * The raise ITSELF - the settlement payment id, the strand's member, the
+     * null amount, and the booking's PRE-EDIT dates so the task describes the
+     * stay the unreadable evidence belongs to - is
+     * `raiseParkedEditFinancialReviewTasks`, stated once there (#3166,
+     * `INV-SSOT`).
      */
-    if (parked) {
-      const memberIdByGuestId = new Map(
-        booking.guests.map((guest) => [guest.id, guest.memberId ?? null]),
-      );
-      // The captured money behind this booking, gated on a CAPTURED payment in a
-      // settled status — the same test `applyPaymentAdjustments` uses — so a
-      // booking with nothing taken carries null and a confirmed amount cannot be
-      // routed to a refund of money never received.
-      const settledPaymentId =
-        isSettledBookingStatus(booking.status) &&
-        hasCapturedPayment(booking.payment)
-          ? (booking.payment?.id ?? null)
-          : null;
-      for (const occurrence of dateEditEvidence.occurrences) {
-        await raiseEditFinancialReviewTask({
-          occurrence,
-          guestMemberId:
-            memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-          // The booking's dates AS THEY WERE, so the task describes the stay the
-          // unreadable evidence belongs to rather than the one this edit moved
-          // it to.
-          bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-          bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-          bookingModificationId: bookingModification.id,
-          paymentId: settledPaymentId,
-          raisedAmountCents: null,
-          store: tx,
-        });
-      }
-    }
+    await raiseParkedEditFinancialReviewTasks({
+      booking,
+      guests: booking.guests,
+      occurrences: dateEditEvidence.occurrences,
+      bookingModificationId: bookingModification.id,
+      store: tx,
+    });
 
     if (accountCreditAmountCents > 0) {
       await createBookingModificationCredit(

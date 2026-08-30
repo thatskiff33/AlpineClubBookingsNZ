@@ -54,13 +54,9 @@ import {
 } from "@/lib/stored-sold-price-evidence";
 import {
   assertNoPendingEditFinancialReview,
-  raiseEditFinancialReviewTask,
+  raiseParkedEditFinancialReviewTasks,
   EditFinancialReviewPendingError,
 } from "@/lib/edit-financial-review";
-import {
-  hasCapturedPayment,
-  isSettledBookingStatus,
-} from "@/lib/booking-payment-state";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -103,7 +99,7 @@ import {
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { clubTime } from "@/lib/club-time/server";
-import { calendarDateOfDateOnlyInstant, dateOnlyInstantOf } from "@/lib/club-time";
+import { dateOnlyInstantOf } from "@/lib/club-time";
 import {
   assertBookingNotQuotePriced,
   lockedNightPricesForGuest,
@@ -992,32 +988,18 @@ export async function POST(
        * edit, the date change and the removal use, so a confirmed amount reaches
        * settlement by one route rather than four.
        *
-       * `raisedAmountCents` IS NULL AND MUST STAY NULL: the amount is not zero
-       * and not estimated, it is unknown.
+       * The raise ITSELF - the settlement payment id, the strand's member, the
+       * null amount - is `raiseParkedEditFinancialReviewTasks`, stated once
+       * there rather than four times across the four parked doors (`INV-SSOT`).
+       * A no-op when this add priced normally.
        */
-      if (parked) {
-        const memberIdByGuestId = new Map(
-          booking.guests.map((guest) => [guest.id, guest.memberId ?? null]),
-        );
-        const settledPaymentId =
-          isSettledBookingStatus(booking.status) &&
-          hasCapturedPayment(booking.payment)
-            ? (booking.payment?.id ?? null)
-            : null;
-        for (const occurrence of addEvidence.occurrences) {
-          await raiseEditFinancialReviewTask({
-            occurrence,
-            guestMemberId:
-              memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-            bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-            bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-            bookingModificationId: bookingModification.id,
-            paymentId: settledPaymentId,
-            raisedAmountCents: null,
-            store: tx,
-          });
-        }
-      }
+      await raiseParkedEditFinancialReviewTasks({
+        booking,
+        guests: booking.guests,
+        occurrences: addEvidence.occurrences,
+        bookingModificationId: bookingModification.id,
+        store: tx,
+      });
 
       return {
         booking: updatedBooking,

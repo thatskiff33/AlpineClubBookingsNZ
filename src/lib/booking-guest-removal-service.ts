@@ -55,12 +55,8 @@ import {
 } from "@/lib/booking-modify";
 import type { SupersededPrimaryPaymentIntent } from "@/lib/booking-payment-cleanup";
 import {
-  hasCapturedPayment,
-  isSettledBookingStatus,
-} from "@/lib/booking-payment-state";
-import {
   assertNoPendingEditFinancialReview,
-  raiseEditFinancialReviewTask,
+  raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
 import {
   counterpartStrandReviewOccurrence,
@@ -1052,7 +1048,7 @@ export async function removeBookingGuestInTransaction({
    * booking row, the `BookingModification` anchor and these tasks either all
    * commit or none of them do - which is the first of the two failure modes the
    * issue names ("saving the booking change but losing the fact that money still
-   * needs review"). `raiseEditFinancialReviewTask` re-takes
+   * needs review"). `raiseParkedEditFinancialReviewTasks` re-takes
    * `pg_advisory_xact_lock(1)`, which this function took as its FIRST lock at the
    * top; a transaction-scoped advisory lock is re-entrant, so that costs nothing
    * and adds no ordering edge (`INV-LOCK-002` still reads global -> lodge here).
@@ -1083,48 +1079,20 @@ export async function removeBookingGuestInTransaction({
    * pretend is a payment. Dismissing it no longer discards anything, because the
    * departing guest's money is on its own task.
    *
-   * `raisedAmountCents` IS NULL AND MUST STAY NULL. The amount is not zero and
-   * not estimated - it is unknown, which is the whole point of the epic. A
-   * number here would be the guess the review exists to avoid.
+   * The raise ITSELF - the settlement payment id, the strand's member, the null
+   * amount - is `raiseParkedEditFinancialReviewTasks`, and is stated once there
+   * rather than four times across the four parked doors (#3166, `INV-SSOT`).
    */
-  const financialReviewTaskIds: string[] = [];
-  if (parkedFinancialReview) {
-    const memberIdByGuestId = new Map(
-      [guestToRemove, ...booking.guests].map((guest) => [
-        guest.id,
-        guest.memberId ?? null,
-      ]),
-    );
-    // The captured money behind this booking, and the reason the task carries a
-    // payment id at all: `chooseEditReviewSettlementRoute` reads it to decide
-    // whether a confirmed amount goes back to the card, is mirrored as a
-    // hand-settled allocation, or becomes account credit. Gated on a CAPTURED
-    // payment in a settled status - the same test `applyPaymentAdjustments` uses
-    // - so a booking with nothing taken carries null and cannot be routed to a
-    // refund of money that was never received.
-    const settledPaymentId =
-      isSettledBookingStatus(booking.status) &&
-      hasCapturedPayment(booking.payment)
-        ? (booking.payment?.id ?? null)
-        : null;
-    for (const occurrence of unpriceableStrands) {
-      const raised = await raiseEditFinancialReviewTask({
-        occurrence,
-        guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
-        bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
-        bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
-        // Owner decision D-3032-1: the anchor a confirmed amount settles
-        // against. This removal's own row, written immediately above, so the
-        // credit or refund that eventually moves is keyed to the edit that
-        // caused it rather than to a second history row minted at completion.
-        bookingModificationId: bookingModification.id,
-        paymentId: settledPaymentId,
-        raisedAmountCents: null,
-        store: tx,
-      });
-      financialReviewTaskIds.push(raised.taskId);
-    }
-  }
+  const financialReviewTaskIds = await raiseParkedEditFinancialReviewTasks({
+    booking,
+    // The DEPARTING strand is raised for too, and its row is not in the
+    // booking's remaining guest list - so it is named here explicitly.
+    guests: [guestToRemove, ...booking.guests],
+    // Already empty when this removal did not park (see its own comment).
+    occurrences: unpriceableStrands,
+    bookingModificationId: bookingModification.id,
+    store: tx,
+  });
 
   if (paymentImpact.accountCreditAmountCents > 0) {
     await createBookingModificationCredit(

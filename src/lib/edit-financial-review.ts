@@ -16,7 +16,14 @@ import {
   type EditFinancialReviewOccurrence,
 } from "@/lib/edit-financial-review-context";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
-import type { CalendarDate } from "@/lib/club-time";
+import {
+  editReviewSettlementPaymentId,
+  type EditReviewSettlementPayment,
+} from "@/lib/booking-payment-state";
+import {
+  calendarDateOfDateOnlyInstant,
+  type CalendarDate,
+} from "@/lib/club-time";
 
 /**
  * #3030 (epic #2797): raise the durable "this booking edit is valid, but the
@@ -463,7 +470,7 @@ export async function raiseEditFinancialReviewTask({
   bookingCheckOut,
   bookingModificationId,
   reason,
-  paymentId = null,
+  paymentId,
   raisedAmountCents = null,
   store,
 }: {
@@ -488,13 +495,23 @@ export async function raiseEditFinancialReviewTask({
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
   reason?: string;
   /**
-   * A captured payment this adjustment sits against, or null. Null is the
-   * ordinary case here and is not a gap: owner decision D2 made `paymentId`
-   * optional precisely because a credit owed back for a surrendered night need
+   * A captured payment this adjustment sits against, or null. Null is an
+   * ordinary answer and is not a gap: owner decision D2 made `paymentId`
+   * nullable precisely because a credit owed back for a surrendered night need
    * not sit against any one captured payment, and completing such a task writes
    * no refund allocation.
+   *
+   * REQUIRED rather than defaulted (#3166), for the reason
+   * `bookingModificationId` beside it already gives: `chooseEditReviewSettlementRoute`
+   * reads this to decide whether a confirmed amount goes back to the card, is
+   * mirrored as a hand-settled allocation, or becomes account credit — so a
+   * caller that quietly inherited `null` would have its refund silently
+   * re-routed to credit, and the failure would surface only when an admin closed
+   * the task, long after the edit committed. Derive it through
+   * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTasks` below
+   * does that for you and is what every production caller uses.
    */
-  paymentId?: string | null;
+  paymentId: string | null;
   /**
    * What the task is RAISED with, written once and never amended.
    *
@@ -629,6 +646,94 @@ export async function raiseEditFinancialReviewTask({
     }
     throw error;
   }
+}
+
+/**
+ * #3166: THE PARKED EDIT'S WHOLE RAISE, in one place, for all four doors.
+ *
+ * Every parked path used to write this block out by hand: the same
+ * `settledPaymentId` computation, the same `memberIdByGuestId` map, the same
+ * loop over the edit's occurrences with the same five constant arguments. Four
+ * copies of ONE fact — *which captured payment a parked edit's review settles
+ * against, and which member owns the strand it names*. The drift had already
+ * started before this function existed: two copies explained that
+ * `chooseEditReviewSettlementRoute` is what reads the payment id, and two did
+ * not, so a reader landing on the wrong copy could not see why the value
+ * matters. `INV-SSOT`.
+ *
+ * ## What the payment id decides, which is why it is not incidental
+ *
+ * `chooseEditReviewSettlementRoute` reads it at COMPLETION to decide whether a
+ * confirmed amount goes back to the card, is mirrored as a hand-settled
+ * allocation, or becomes account credit. Getting it wrong does not fail — it
+ * routes real money down the wrong path, weeks later, in front of an admin who
+ * has no way to tell. It is derived here through
+ * `editReviewSettlementPaymentId`, the one home for that rule.
+ *
+ * ## `raisedAmountCents` IS NULL AND CANNOT BE ANYTHING ELSE
+ *
+ * Not exposed as an argument at all, so no caller can pass a number. A parked
+ * edit's amount is unknown, which is the whole point of the epic; zero is a real
+ * financial decision and a computed figure is the guess the review exists to
+ * avoid. Unrepresentable beats policed.
+ *
+ * Call it inside the caller's transaction, after the locks and after the
+ * `BookingModification` row exists — the returned task ids are in occurrence
+ * order.
+ */
+export async function raiseParkedEditFinancialReviewTasks({
+  booking,
+  guests,
+  occurrences,
+  bookingModificationId,
+  store,
+}: {
+  /**
+   * The booking AS IT WAS before this edit. Its dates are what the task
+   * describes, so the review names the stay the unreadable evidence belongs to
+   * rather than the one the edit moved it to.
+   */
+  booking: {
+    status: string;
+    payment: EditReviewSettlementPayment;
+    checkIn: Date;
+    checkOut: Date;
+  };
+  /**
+   * Every strand an occurrence can name, INCLUDING one this edit is deleting —
+   * the single-guest removal raises for the departing guest, whose row is not in
+   * the booking's remaining guest list.
+   */
+  guests: readonly { id: string; memberId?: string | null }[];
+  occurrences: readonly EditFinancialReviewOccurrence[];
+  /**
+   * Owner decision D-3032-1: THIS edit's own `BookingModification`, so the
+   * credit or refund that eventually moves is keyed to the change that caused it
+   * rather than to a second history row minted at completion.
+   */
+  bookingModificationId: string | null;
+  store: Prisma.TransactionClient;
+}): Promise<string[]> {
+  if (occurrences.length === 0) return [];
+  const memberIdByGuestId = new Map(
+    guests.map((guest) => [guest.id, guest.memberId ?? null]),
+  );
+  const paymentId = editReviewSettlementPaymentId(booking);
+  const taskIds: string[] = [];
+  for (const occurrence of occurrences) {
+    const raised = await raiseEditFinancialReviewTask({
+      occurrence,
+      guestMemberId: memberIdByGuestId.get(occurrence.bookingGuestId) ?? null,
+      bookingCheckIn: calendarDateOfDateOnlyInstant(booking.checkIn),
+      bookingCheckOut: calendarDateOfDateOnlyInstant(booking.checkOut),
+      bookingModificationId,
+      paymentId,
+      raisedAmountCents: null,
+      store,
+    });
+    taskIds.push(raised.taskId);
+  }
+  return taskIds;
 }
 
 /**
