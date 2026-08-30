@@ -14,6 +14,7 @@ import { expectRecoveryAlertToHoldFocus } from "@/lib/__tests__/helpers/focus";
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
   FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
@@ -614,7 +615,7 @@ describe("public payment page discloses money held for review", () => {
     narrative: {
       state: "financial_review_pending",
       headline: "Complete your payment",
-      message: `Payment is due. ${financialReviewNoteBesideAnAmount()}`,
+      message: `Payment is due. ${financialReviewNoteBesideAnAmount({ amountPredatesTheChange: true })}`,
       nextStep: "Pay now.",
     },
     financialReviewPending: true,
@@ -656,7 +657,23 @@ describe("public payment page discloses money held for review", () => {
     render(<PayByLinkPage />);
 
     const notice = await screen.findByTestId("payment-link-financial-review");
-    expect(notice).toHaveTextContent(financialReviewNoteBesideAnAmount());
+    expect(notice).toHaveTextContent(
+      financialReviewNoteBesideAnAmount({ amountPredatesTheChange: true }),
+    );
+    /*
+      #3194 fix round: the card renders "Amount due", which is
+      `booking.finalPriceCents` - and both services that can park an edit write
+      that column back UNCHANGED while saving the new dates and deleting the
+      departing guest's row. So the figure directly above this notice is the
+      price from BEFORE the member's change, and the notice has to say so rather
+      than only that the change's amount is outside it. A member who reads the
+      figure as settled and pays it overpays by exactly the amount nobody could
+      work out.
+    */
+    expect(notice).toHaveTextContent(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+    expect(notice).not.toHaveTextContent(FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE);
 
     // The amount and both payment routes survive. Disarming them would cost the
     // member the booking when the hold expired, while moving none of the money
@@ -711,8 +728,15 @@ describe("public payment page discloses money held for review", () => {
     );
     // And the review is disclosed in the same card, with the sentence that keeps
     // the figure above it from reading as the amount under review.
+    //
+    // CONTROL for the payable case above: this figure is money the club HAS
+    // RECEIVED, read off a durable payment event, so a parked edit cannot make
+    // it out of date and the stale-amount sentence would be false here.
     expect(document.body.textContent).toContain(
       FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(document.body.textContent).not.toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
     );
     expect(document.body.textContent).toContain(FINANCIAL_REVIEW_NOTHING_TO_DO);
     expect(document.body.textContent).toContain(

@@ -682,7 +682,15 @@ describe("a stay change that saved while its money is still being worked out (#3
     expect(result.nextStep).toMatch(/pay by card or internet banking/i);
     // And the review facts are added rather than substituted.
     expect(result.message).toMatch(/working out what that change means/i);
-    expect(result.message).toMatch(/not part of that figure/i);
+    /*
+      #3194 fix round: the STALE-amount sentence, not "not part of that figure".
+      The "$120.00 is due" above it is `booking.finalPriceCents`, which a parked
+      edit writes back UNCHANGED while saving the new dates - so it is the price
+      from before this member's change, and saying only that the change's amount
+      sits outside it would leave them believing the rest of it is settled.
+    */
+    expect(result.message).toMatch(/does not yet reflect the change you made/i);
+    expect(result.message).not.toMatch(/not part of that figure/i);
     // The narrowed sentence: scoped to the change, so it cannot cancel the
     // instruction to pay sitting in the same next step.
     expect(result.nextStep).toContain(

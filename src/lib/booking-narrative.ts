@@ -51,6 +51,7 @@ import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-
 import {
   FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
   FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK,
@@ -426,7 +427,8 @@ function buildPayableNarrative(
  *  - the adjustment is described as something the club is working out, never as
  *    something that has happened. No verb here is in the past tense about money;
  *  - NO AMOUNT APPEARS AT ALL. Not `$0`, not an estimate, not the booking's
- *    `finalPriceCents` — which the structural edit has already updated, so
+ *    `finalPriceCents` — which a parked edit writes back UNCHANGED, so it is the
+ *    total from BEFORE the change while the dates around it are the new ones, so
  *    printing it would put a stale, authoritative-looking figure beside a
  *    sentence saying the figure is unknown;
  *  - nothing internal and nothing about the member: no cause, no diagnostic
@@ -472,8 +474,12 @@ function buildFinancialReviewPendingNarrative(
  * in-code argument for the placement only ever considered PAID.
  *
  * Composed rather than gated to PAID, because both facts are true and the
- * member needs both: the booking's own price is due and payable, and separately
- * an adjustment for a change is unpriced. Gating the review branch to PAID
+ * member needs both: the booking's stored price is still due and this link can
+ * still take it, and separately an adjustment for a change is unpriced. That
+ * stored price is the PRE-change one — a parked edit writes it back unchanged —
+ * which is why the review half opens with
+ * `FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE` rather than with the sentence
+ * the paid composition uses (#3194 fix round). Gating the review branch to PAID
  * would have fixed the contradiction by removing the disclosure, which is the
  * opposite of what this issue is for — the member would pay, and hear nothing
  * about the money they may be owed.
@@ -519,8 +525,10 @@ function buildFinancialReviewPendingNarrative(
  * not the post-edit `finalPriceCents` that
  * {@link buildFinancialReviewPendingNarrative} refuses. Saying it out loud is
  * the point of this branch. `FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE` then states
- * the relationship between the two amounts explicitly, exactly as it does beside
- * the payable narrative's "$120.00 is due".
+ * the relationship between the two amounts explicitly. The payable narrative
+ * needs a DIFFERENT sentence beside its "$120.00 is due" — that figure is the
+ * booking's stored total, which a parked edit leaves at its pre-change value, so
+ * it is stale as well as incomplete (#3194 fix round).
  *
  * It is composed even on the no-payment-was-required arm, where the "figure" is
  * nothing at all. That reads a little loosely, and it is still the right
@@ -555,6 +563,12 @@ function buildPaidWithFinancialReviewNarrative(
     // check, and "Your booking change is saved" above a payment they are trying
     // to confirm would bury it.
     headline: paid.headline,
+    // #3194 fix round: this one KEEPS "not part of that figure", and the payable
+    // composition beside it does not. The figure here is money the club has
+    // already received, read off a durable payment event — a parked edit cannot
+    // make that out of date, so there is nothing stale to disclose. The figure
+    // there is the booking's stored total, which a parked edit leaves at its
+    // pre-change value.
     message: `${paid.message} ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
     nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
   };
@@ -573,7 +587,14 @@ function buildPayableWithFinancialReviewNarrative(
     // still that it is unpaid, and "Your booking change is saved" at the top of
     // a screen asking for payment would bury it.
     headline: payable.headline,
-    message: `${payable.message} ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    // #3194 fix round: the STALE-amount sentence, not "not part of that figure".
+    // `payable.message` has just said "$120.00 is due", and that is
+    // `booking.finalPriceCents` — which a parked edit writes back UNCHANGED while
+    // saving the new dates. So the amount above this clause is the price from
+    // before the member's change, and saying only that the change's amount sits
+    // outside it leaves them believing the rest of it is settled. See
+    // `FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE`.
+    message: `${payable.message} ${FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
     nextStep: `${payable.nextStep} ${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
   };
 }

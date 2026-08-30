@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { BookingEventType } from "@prisma/client";
 
 import {
+  FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
   FINANCIAL_REVIEW_NOTHING_MOVED,
   FINANCIAL_REVIEW_NOTHING_TO_DO,
   FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
@@ -125,11 +126,72 @@ function paidReviewAddendum(): string {
 
 describe("financial-review copy has one home", () => {
   it("gives the payment-link page exactly the sentences the booking page adds", () => {
-    expect(financialReviewNoteBesideAnAmount()).toBe(reviewAddendum());
+    expect(
+      financialReviewNoteBesideAnAmount({ amountPredatesTheChange: true }),
+    ).toBe(reviewAddendum());
   });
 
   it("says the same five sentences beside a payment already received", () => {
-    expect(financialReviewNoteBesideAnAmount()).toBe(paidReviewAddendum());
+    expect(
+      financialReviewNoteBesideAnAmount({ amountPredatesTheChange: false }),
+    ).toBe(paidReviewAddendum());
+  });
+
+  /*
+    THE TWO KINDS OF AMOUNT GET DIFFERENT OPENING SENTENCES, and this is the
+    fix-round finding the whole change turns on (#3194).
+
+    An amount still DUE is `booking.finalPriceCents`, and both services that can
+    park an edit write that column back UNCHANGED while saving the new dates and
+    deleting the departing guest's row. So the figure beside these sentences is
+    the price from BEFORE the member's change, under the change's own dates. It
+    must say so.
+
+    An amount already RECEIVED is read off a durable payment event and a parked
+    edit cannot make it out of date, so it keeps the sentence that says only that
+    the change's amount sits outside it.
+  */
+  it("tells a member the amount they are being asked to pay predates their change", () => {
+    const due = financialReviewNoteBesideAnAmount({
+      amountPredatesTheChange: true,
+    });
+
+    expect(due.startsWith(FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE)).toBe(
+      true,
+    );
+    expect(due).not.toContain(FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE);
+  });
+
+  it("MUTATION: does not tell a member their RECEIVED payment is out of date", () => {
+    // The control for the case above. A payment that arrived is a settled fact;
+    // saying it "does not yet reflect the change" would be false and would read
+    // as the club disputing money it already has.
+    const received = financialReviewNoteBesideAnAmount({
+      amountPredatesTheChange: false,
+    });
+
+    expect(received.startsWith(FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE)).toBe(true);
+    expect(received).not.toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
+    );
+  });
+
+  /*
+    And the two compositions differ in EXACTLY that one sentence, derived rather
+    than restated. Everything after the opener is one shared tail, so a reword of
+    any of the four remaining clauses still moves both surfaces together.
+  */
+  it("differs between the two only in its opening sentence", () => {
+    const due = financialReviewNoteBesideAnAmount({
+      amountPredatesTheChange: true,
+    });
+    const received = financialReviewNoteBesideAnAmount({
+      amountPredatesTheChange: false,
+    });
+
+    expect(
+      due.slice(FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE.length),
+    ).toBe(received.slice(FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE.length));
   });
 
   /*
@@ -158,7 +220,9 @@ describe("financial-review copy has one home", () => {
   });
 
   it("says the five sentences in the order a member reads them", () => {
-    expect(financialReviewNoteBesideAnAmount()).toBe(
+    expect(
+      financialReviewNoteBesideAnAmount({ amountPredatesTheChange: false }),
+    ).toBe(
       [
         FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
         FINANCIAL_REVIEW_WORKING_IT_OUT,
@@ -176,15 +240,21 @@ describe("financial-review copy has one home", () => {
     wrong here as a guess would be.
   */
   it("names no amount and claims no money has moved", () => {
-    const note = financialReviewNoteBesideAnAmount();
-    expect(note).not.toContain("$");
-    expect(note).not.toMatch(/\d/);
-    // The only past-tense money verb the note is allowed is a NEGATED one:
-    // "Nothing has been refunded or charged for it yet". Anything else would be
-    // a claim that money moved, which for a parked review is never true.
-    for (const sentence of note.split(". ")) {
-      if (/has been/.test(sentence)) {
-        expect(sentence.startsWith("Nothing has been")).toBe(true);
+    // BOTH compositions, because the stale-amount opener is a second sentence
+    // standing next to a figure and is under exactly the same rules.
+    for (const amountPredatesTheChange of [true, false]) {
+      const note = financialReviewNoteBesideAnAmount({
+        amountPredatesTheChange,
+      });
+      expect(note).not.toContain("$");
+      expect(note).not.toMatch(/\d/);
+      // The only past-tense money verb the note is allowed is a NEGATED one:
+      // "Nothing has been refunded or charged for it yet". Anything else would
+      // be a claim that money moved, which for a parked review is never true.
+      for (const sentence of note.split(". ")) {
+        if (/has been/.test(sentence)) {
+          expect(sentence.startsWith("Nothing has been")).toBe(true);
+        }
       }
     }
   });
@@ -205,6 +275,9 @@ describe("financial-review copy has one home", () => {
     );
     expect(financialReviewNote({ moneyAlreadyMoved: false })).not.toContain(
       FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    );
+    expect(financialReviewNote({ moneyAlreadyMoved: false })).not.toContain(
+      FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE,
     );
   });
 

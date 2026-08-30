@@ -399,14 +399,30 @@ export default function PayByLinkPage() {
 
         {/*
           #3194: directly under the amount, because the first sentence of the
-          note is about that amount — the change being priced is not inside it.
+          note is about that amount.
+
+          `amountPredatesTheChange: true` is a FACT about this card, not a
+          default. "Amount due" above is `booking.finalPriceCents`, and both
+          services that can park an edit write that column back UNCHANGED while
+          saving the new dates and deleting the departing guest's row — so this
+          card shows a post-edit stay beside a pre-edit price. A member who reads
+          it as settled and pays it overpays by exactly the amount nobody could
+          work out. The note says so in as many words.
+
           Above the pay controls rather than below them, so it is read before the
-          member decides, and the controls stay armed: this booking's own price is
-          genuinely due, and hiding the button would cost them the booking when
-          the hold expired without moving a cent of the money under review.
+          member decides — and the controls stay armed. A parked change can
+          surrender nights nobody can value while the stay itself goes ahead, and
+          this link is the only way an unregistered guest can pay at all, so
+          hiding the button would cost them the booking when the hold expired
+          without moving a cent of the money under review. What the note removes
+          is the false reassurance, not the ability to pay.
         */}
         {financialReviewPending ? (
-          <FinancialReviewNotice note={financialReviewNoteBesideAnAmount()} />
+          <FinancialReviewNotice
+            note={financialReviewNoteBesideAnAmount({
+              amountPredatesTheChange: true,
+            })}
+          />
         ) : null}
 
         <FocusedActionError

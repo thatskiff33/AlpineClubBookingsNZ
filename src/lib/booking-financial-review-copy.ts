@@ -25,11 +25,13 @@
  * From the epic and this issue, and each is visible in the wording rather than
  * assumed:
  *
- *  - NO AMOUNT APPEARS, in any of them. Not `$0`, not an estimate, not the
- *    booking's own post-edit total — which the structural edit has already
- *    updated, so printing it beside these sentences would put an
- *    authoritative-looking figure next to a statement that the figure is
- *    unknown;
+ *  - NO AMOUNT APPEARS, in any of them. Not `$0`, not an estimate, and above all
+ *    not the booking's own stored total — which on a parked edit is the total
+ *    from BEFORE the change, written back unchanged by both parking services
+ *    (`booking-guest-removal-service.ts`, `booking-batch-modification-service.ts`)
+ *    while the dates and the guest rows around it move. Printing it beside these
+ *    sentences would put an authoritative-looking figure next to a statement that
+ *    the figure is unknown, and the figure would be out of date as well;
  *  - no verb here is in the past tense about money. The club is *working it
  *    out*; nothing *has been* refunded or charged;
  *  - nothing internal and nothing about the member: no cause, no diagnostic
@@ -79,19 +81,69 @@ export const FINANCIAL_REVIEW_NOTHING_TO_DO =
  * amount is the thing nobody knows yet.
  *
  * MOVED HERE FROM `booking-narrative.ts` (#3194), which composed it inline while
- * it had one caller. It now has three — the payable-with-review narrative, the
- * paid-with-review narrative, and the public payment-link page's own payment
- * card, which renders its amount itself and so cannot use a composed banner
- * message — and a sentence three surfaces say about one member's money belongs
- * in one file (`INV-SSOT`).
+ * it had one caller.
  *
- * "That figure" is therefore whichever amount the surface has just shown:
- * money due, money received, or the "no payment was required" that stands in
- * for one. In every case the claim is the same and it is the claim that
- * matters — the change's amount is not inside it.
+ * "That figure" is money the club HAS — a payment already received, or the "no
+ * payment was required" that stands in for one. The claim is exact there: what
+ * arrived is a settled historical fact, and the change's amount is a separate,
+ * unknown one that sits outside it.
+ *
+ * IT IS NOT THE SENTENCE FOR AN AMOUNT STILL DUE, and the fix round of #3194
+ * moved that case off it. There the figure is the booking's stored total, which
+ * a parked edit leaves at its PRE-change value — so "not part of that figure" is
+ * true about the change and quietly wrong about the figure, which reads as the
+ * settled price for the dates and guests shown beside it.
+ * {@link FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE} is that sentence, and
+ * {@link financialReviewNoteBesideAnAmount} is where the two are chosen between.
  */
 export const FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE =
   "You have also made a change to this booking whose amount is not part of that figure.";
+
+/**
+ * THE FIGURE BESIDE THIS SENTENCE IS OUT OF DATE, said out loud (#3194).
+ *
+ * For a surface showing an amount the member is being asked TO PAY. It is the
+ * booking's stored total, and on a parked edit that total is the one from BEFORE
+ * the change: both services that can park an edit write `finalPriceCents` back
+ * unchanged, deliberately, so nothing settles on a change whose money nobody
+ * could work out. What they do NOT write back are the dates and the guest rows —
+ * the departing guest's row is deleted, the new dates are saved — so the payment
+ * card puts a post-edit stay beside a pre-edit price and looks entirely settled.
+ *
+ * A member reading that pays it, and overpays by exactly the amount nobody could
+ * compute. The club can still put that right, and this sentence is what stops
+ * them being surprised by it.
+ *
+ * ## Why this is not {@link FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE}
+ *
+ * That sentence says the change's amount is not INSIDE the figure, which is true
+ * here — and it implies the figure is otherwise the settled price for what is on
+ * screen, which is not. Beside money already RECEIVED it is exactly right: a
+ * payment that arrived is a historical fact, complete in itself, and an unpriced
+ * change genuinely sits outside it and always will. Beside money still DUE it is
+ * the smaller half of the truth. So the two sentences split by which kind of
+ * amount they stand next to, rather than one covering both.
+ *
+ * ## What it does and does not promise
+ *
+ * It does NOT say "don't pay". The controls stay armed on purpose: a parked
+ * change can surrender nights nobody can value while the booking's own stay is
+ * still going ahead, an unregistered guest has no other way to pay, and a hold
+ * that expires costs the member the booking. What it removes is the false
+ * reassurance that the number is final.
+ *
+ * It also carries "the change you made", so the clauses composed after it —
+ * {@link FINANCIAL_REVIEW_NOTHING_TO_DO} and the rest, which all say "that
+ * change" — have something to refer back to. That is the same job
+ * {@link FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} does in the composition it opens.
+ *
+ * Everything else the member needs to hear is already a constant here and is
+ * composed after it rather than restated: that the club is working the amount
+ * out, that nothing has moved yet, that there is nothing for them to do, and
+ * that the club will be in touch before anything is charged or refunded.
+ */
+export const FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE =
+  "This amount does not yet reflect the change you made to this booking.";
 
 /**
  * The club closes the loop; the member does not have to chase it — the ONE
@@ -200,14 +252,46 @@ export function financialReviewNote({
  * to say different things about one member's money, which is the whole of what
  * #3194 is closing.
  *
- * No parameter, unlike {@link financialReviewNote}: this surface composes no
- * settlement note beside it and never can — a review parks with nothing
- * settled, and this page has no refund or credit sentence of its own to
- * contradict.
+ * ## Why it takes WHICH KIND OF AMOUNT, and why that is not a style choice
+ *
+ * The two surfaces that show a figure show two different KINDS of figure, and
+ * only one of them is out of date.
+ *
+ * An amount already RECEIVED is a historical fact read off a durable payment
+ * event. Nothing about a parked edit can change what arrived, so
+ * {@link FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} is the whole truth beside it.
+ *
+ * An amount still DUE is the booking's stored `finalPriceCents`, and a parked
+ * edit writes that back UNCHANGED while saving the new dates and deleting the
+ * departing guest's row. So it is the price of the stay as it was BEFORE the
+ * change, sitting under the change's own dates and guest count, looking settled.
+ * A member who pays it overpays. That figure needs
+ * {@link FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE}, which says so.
+ *
+ * REQUIRED, with no default, for the same reason `moneyAlreadyMoved` is: a
+ * fourth surface has to answer the question rather than inherit a silent
+ * "received", which is the answer that hides a stale price (`INV-SSOT`,
+ * "prefer unrepresentable over policed").
+ *
+ * There is no settlement-note parameter, unlike {@link financialReviewNote}:
+ * these surfaces compose no settlement note beside them and never can — a review
+ * parks with nothing settled, so there is no refund or credit sentence of their
+ * own to contradict.
  */
-export function financialReviewNoteBesideAnAmount(): string {
+export function financialReviewNoteBesideAnAmount({
+  amountPredatesTheChange,
+}: {
+  /**
+   * Whether the amount this surface has just shown is the booking's stored total
+   * — which a parked edit leaves at its pre-change value — rather than money the
+   * club has already received.
+   */
+  amountPredatesTheChange: boolean;
+}): string {
   return [
-    FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
+    amountPredatesTheChange
+      ? FINANCIAL_REVIEW_AMOUNT_PREDATES_THE_CHANGE
+      : FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
     FINANCIAL_REVIEW_WORKING_IT_OUT,
     FINANCIAL_REVIEW_NOTHING_MOVED,
     FINANCIAL_REVIEW_NOTHING_TO_DO,
