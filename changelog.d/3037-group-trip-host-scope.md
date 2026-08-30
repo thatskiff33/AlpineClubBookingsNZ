@@ -25,4 +25,14 @@
   `booking-policies/adult-member-hosting.csv` accepts a third name,
   `SAME_GROUP_TRIP`, alongside `SAME_BOOKING` and `SAME_BOOKING_OWNER`. A cell
   that does not name it leaves the option off, so an existing bundle imports
-  exactly as it always did.
+  exactly as it always did — and re-importing a bundle exported from an
+  installation that upgraded is correctly reported as "unchanged" rather than as
+  an edit nobody made.
+
+- **The public fee-and-policy page now describes the adult-cover rule a club
+  actually applies (#3037).** A club that had switched on more than one way for
+  an adult to count could still see the narrowest sentence published — "asked to
+  stay with an adult member on the same booking" — while applying something
+  wider. The page and the message a member sees when a booking is short of cover
+  now answer that question the same way, in one place, so the two cannot drift
+  apart again as further options are added.

@@ -1927,6 +1927,18 @@ home, `src/lib/group-trip-identity.ts`: `GroupBooking.organiserBookingId` and
 the container's own `GroupBooking.status`, which governs joining rather than
 cover.
 
+Each cross-booking scope is ONE RELATIONSHIP CLAUSE INSIDE ONE SHARED ENVELOPE.
+`src/lib/adult-member-hosting-coverage-envelope.ts` owns what every scope must
+answer identically — the same lodge, not this booking, an overlapping half-open
+date range, `deletedAt`, and the source-versus-dependent status split — while
+each scope module contributes only its own relationship (`Booking.memberId` for
+`SAME_BOOKING_OWNER`, the two group relations for `SAME_GROUP_TRIP`). The
+scopes are OR-ed per night by one evaluator, so a scope carrying its own quietly
+different lodge, date or status rule would be a second definition of coverage;
+that envelope was written twice before #3037 and is now written once
+(`INV-SSOT-002`). A scope whose relationship is an `OR` composes under `AND`
+rather than by spreading, or one filter silently replaces the other.
+
 The evaluator in `src/lib/policies/adult-member-hosting.ts` is pure: it takes a
 resolved consequence/scope set and participant facts stamped with the scope by
 which they may qualify, then returns the frozen
