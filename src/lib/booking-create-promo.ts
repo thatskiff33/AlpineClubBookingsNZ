@@ -43,6 +43,25 @@ export interface ResolvedPromo {
     | null;
 }
 
+/**
+ * Map selected guest indexes to booking-guest ids, for the booking-CREATE path.
+ *
+ * There is a second form of this on the booking-MODIFICATION path —
+ * `targetBookingGuestIdsForSelectedIndexes` in `promo-stored-guest-targets.ts`,
+ * which #3131 converged five copies into. The two are the same algorithm and
+ * differ in exactly one thing: which key the index is read through. Here it is
+ * `BookingGuest.id`; there it is a rate row's `bookingGuestId`.
+ *
+ * They were deliberately NOT unified (#3163, owner decision 30 Aug 2026).
+ * `INV-SSOT-001` permits a second *form* of one fact and warns against
+ * contorting a helper to serve two shapes — and the accessor argument that would
+ * unify these is exactly that contortion, paid for on this money path (which
+ * takes a row lock for update) in exchange for no behaviour change.
+ *
+ * **So if you change what this does, change the other one too.** That is the
+ * cost of the decision, and it is why these two point at each other rather than
+ * relying on someone remembering.
+ */
 export function getPromoTargetBookingGuestIds(
   bookingGuests: BookingGuest[],
   selectedGuestIndexes: number[] | undefined

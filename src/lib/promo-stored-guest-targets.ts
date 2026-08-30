@@ -118,6 +118,20 @@ export function selectedIndexesForStoredGuestTargets(
  * "this promotion is not guest-scoped" through to `redeemPromoCode`, which
  * writes no target rows for it. An index pointing at a guest with no id yet is
  * dropped.
+ *
+ * There is a second form of this on the booking-CREATE path —
+ * `getPromoTargetBookingGuestIds` in `booking-create-promo.ts`. Same algorithm,
+ * differing in exactly one thing: which key the index is read through. Here it
+ * is a rate row's `bookingGuestId`; there it is `BookingGuest.id`.
+ *
+ * They were deliberately NOT unified (#3163, owner decision 30 Aug 2026),
+ * because the accessor argument that would unify them is the contortion
+ * `INV-SSOT-001` warns about, bought on a money path for no behaviour change.
+ *
+ * **So if you change what this does, change the other one too.** Five copies of
+ * this rule were converged into this module by #3131 and one of those five had
+ * already diverged; the sixth survives on purpose, and these two point at each
+ * other so that stays a decision rather than an accident.
  */
 export function targetBookingGuestIdsForSelectedIndexes(
   guestNightRates: Array<{ bookingGuestId?: string | null }>,

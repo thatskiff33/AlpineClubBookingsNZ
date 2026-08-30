@@ -74,6 +74,23 @@ are permanent: never renumbered, never reused.
   server-side scope decision; the admin promo-codes client still reads the same
   default inline twice, which is recorded in `promo-guest-scope.ts` rather than
   left silent, and waits on the server/client boundary work in #2850/#2851.
+- **The sixth instance, and the decision to keep it — this is what the
+  permitted-second-form carve-out looks like in practice.** #3163 found the same
+  index-to-id mapping a sixth time, on the booking-**create** path
+  (`getPromoTargetBookingGuestIds` in `booking-create-promo.ts`). The two bodies
+  are the same algorithm and differ in exactly one thing: which key the index is
+  read through — `BookingGuest.id` on the create path,
+  `guestNightRates[].bookingGuestId` on the modification path. The owner decided
+  on 30 Aug 2026 to **keep both and cross-reference them**, over unifying through
+  a key accessor or normalising the input at the call site. The reasoning is the
+  rule's own carve-out: a helper contorted to serve two shapes becomes the thing
+  nobody may change, and the accessor argument is exactly that contortion — paid
+  for on the booking-create money path, which takes a row lock for update, in
+  exchange for no behaviour gain. **The cost is stated rather than hidden:** the
+  duplication survives, and a cross-reference is a reminder rather than a
+  structure, which this repository normally rejects. It is a deliberate
+  exception, not the general rule, and the two sites point at each other so a
+  future editor of one meets the other.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
