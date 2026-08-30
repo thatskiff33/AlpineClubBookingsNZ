@@ -16,10 +16,6 @@ import {
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
   type EditReviewChargeRoute,
 } from "@/lib/edit-financial-review-charge";
-import {
-  recordUncollectedEditReviewChargeShare,
-  restateEditReviewChargeSupplementaryInvoice,
-} from "@/lib/edit-financial-review-charge-request";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { ManualBookingPaymentError } from "@/lib/payment-reconciliation";
@@ -33,7 +29,7 @@ import {
   refundPaymentTransactions,
   type RefundAllocationSlice,
 } from "@/lib/payment-transactions";
-import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { dispatchEditReviewXeroSettlement } from "@/lib/edit-financial-review-xero-leg";
 
 /**
  * #3032 (epic #2797): WHERE a confirmed review amount goes when the task is
@@ -601,138 +597,26 @@ export async function executeEditReviewSettlement({
 
   /**
    * The Xero leg, which the issue's "through the existing canonical settlement
-   * path" includes.
+   * path" includes: the officer's direction becomes a signed delta, an invoice
+   * this edit already has queued is raised rather than duplicated, and a share
+   * the accounting ask could not take is recorded. It lives in
+   * `edit-financial-review-xero-leg.ts` because those three are one decision
+   * about one edit's one invoice, while everything above here is money MOVING.
    *
-   * Every edit-time settlement in this repository computes an
-   * `xeroRefundAmountCents` and dispatches it; a completion that moved money on
-   * all three routes and dispatched nothing would leave a booking with an issued
-   * invoice showing a total the club no longer holds - and unlike a local ledger
-   * slip, nothing later reconciles it. Routed through the SAME choke point the
-   * three booking-edit services use, so the credit-note shape, the outbox
-   * idempotency (an active `MODIFICATION_CREDIT_NOTE` link on the anchor, plus a
-   * correlation key) and the connected-instance kick are the existing ones rather
-   * than a second dispatch.
-   *
-   * The anchor is null for a DISMISSED task (no route) and for every pre-#3032
-   * task kind: those are raised for cancelled cash-settled bookings whose Xero
-   * side the cancellation path already handled, so a credit note here would be a
-   * second, contradictory correction of the same money.
-   *
-   * Best-effort and after the commit, matching every other caller: a Xero outage
-   * must not undo a completion whose money has already moved.
+   * Awaited, but nothing inside it holds the request open: the dispatch itself
+   * is fire-and-forget, exactly as it was inline.
    */
-  const xeroAnchorId = route?.bookingModificationId ?? null;
-  const isCharge = route?.kind === "additional-charge";
-  // #3170: a refund bills this task's own share; a CHARGE bills the edit's
-  // combined total, because there is one supplementary invoice per edit and it
-  // has to match the one request the member is asked to pay. Sending the share is
-  // how the Xero leg lost the second $30 - a second invoice for an anchor that
-  // already has an active one is refused quietly, not raised.
-  const xeroAmountCents = isCharge ? chargeTotalCents : amountCents;
-  const chargeMemberId =
-    route?.kind === "additional-charge" ? (route.member?.id ?? null) : null;
-  if (xeroAnchorId && xeroAmountCents) {
-    // Restate the invoice this edit ALREADY has queued rather than queueing a
-    // second. Nothing to restate is the FIRST share's answer, and the enqueue
-    // below is its path.
-    if (
-      isCharge &&
-      (await restateEditReviewChargeSupplementaryInvoice({
-        bookingId,
-        taskId,
-        bookingModificationId: xeroAnchorId,
-        totalCents: xeroAmountCents,
-      }))
-    ) {
-      return { stripeRefundId, additionalPaymentIntentId };
-    }
-    /**
-     * FIRE-AND-FORGET, BUT NOT FIRE-AND-FORGET-THE-ANSWER (#3170 fix round, F2).
-     *
-     * The dispatch stays off the request's critical path - a Xero outage must
-     * never undo a completion whose money question is already settled - but its
-     * RESULT is now read instead of discarded. `supplementaryInvoice: "short"`
-     * means this edit's invoice had already been claimed for sending, or already
-     * sent, so the enqueue correctly refused to queue a second one behind it and
-     * the combined total is NOT what will be billed.
-     *
-     * That is the accounting twin of the card leg's already-paid race, and until
-     * now it was the quieter of the two: the card side wrote an audit row, while
-     * the accounting side produced nothing at all - not even a log line, because
-     * the enqueue's message returned into a discarded call. On the
-     * internet-banking route the supplementary invoice IS the ask, so "quiet"
-     * meant a settled share that no invoice and no record ever mentioned.
-     */
-    void queueXeroBookingEditSettlement({
-      bookingId,
-      bookingModificationId: xeroAnchorId,
-      createdByMemberId: actingMemberId,
-      hasIssuedXeroInvoice,
-      originalPaymentStatus: bookingPaymentStatus,
-      // #3170: the SIGN is the direction, and it is the only place the direction
-      // becomes a number. A refund reaches the credit-note branch; a charge
-      // reaches the supplementary-invoice branch, which is the same branch an
-      // ordinary price increase takes. `amountCents` itself is a positive
-      // magnitude on both.
-      priceDiffCents: isCharge ? xeroAmountCents : -xeroAmountCents,
-      changeFeeCents: 0,
-      // The structural edit that raised this review queued its own narration
-      // update when it committed. This is the money leg alone; claiming the dates
-      // or the party changed here would queue a second, redundant invoice update.
-      datesChanged: false,
-      guestIdentityChanged: false,
-      // `"credit"` picks the UNAPPLIED modification credit note and anything else
-      // picks the ordinary one, so this reads as a two-way discriminator rather
-      // than a claim about the instrument: an internet-banking hand-back is not a
-      // card refund, but the club DID return the money, so it takes the same
-      // ordinary credit note a card refund does.
-      settlementMethod: route?.kind === "account-credit" ? "credit" : "card",
-      // Read only on the reduction branch (`settlementAmountCents ?? Math.abs`),
-      // so a charge passes null and lets the positive delta speak for itself
-      // rather than handing the credit-note arm an amount it must not use.
-      settlementAmountCents: isCharge ? null : xeroAmountCents,
-      // #3170: the supplementary invoice waits for the additional payment when
-      // there is one to wait for, which is the ordinary price-increase
-      // arrangement. On the `invoice` route no intent exists and the
-      // supplementary invoice IS the ask, so it is raised unpaid.
-      requiresAdditionalStripePayment:
-        isCharge && route.collectVia === "stripe",
-      additionalPaymentIntentId,
-    })
-      .then(async (queued) => {
-        if (!isCharge || queued.supplementaryInvoice !== "short") return;
-        await recordUncollectedEditReviewChargeShare({
-          leg: "xero-invoice",
-          bookingId,
-          bookingModificationId: xeroAnchorId,
-          memberId: chargeMemberId,
-          derivedTotalCents: xeroAmountCents,
-          // Unknowable by design: the outbox handler overwrites the operation's
-          // payload with the Xero invoice body when it sends, so the figure the
-          // invoice actually bills is no longer on the row. The record says
-          // "short of this total" rather than inventing the difference.
-          requestedTotalCents: null,
-        });
-      })
-      .catch((err) =>
-        logger.error(
-          { err, bookingId, taskId },
-          "Failed to queue Xero settlement for a completed edit financial review",
-        ),
-      );
-  } else if (route && hasIssuedXeroInvoice) {
-    // An edit-review completion that moved money on a booking with an issued
-    // invoice but carries no anchor to correct it against. The card,
-    // account-credit and (since #3170) additional-charge routes all refuse before
-    // the claim when the anchor is missing, so only the hand-settled route can
-    // reach here - and its money HAS moved, so
-    // refusing now is not available. Say so loudly instead of leaving the
-    // divergence silent: an operator has to correct that invoice by hand.
-    logger.warn(
-      { bookingId, taskId },
-      "Edit financial review settled by hand with no BookingModification anchor - the Xero invoice must be corrected manually",
-    );
-  }
+  await dispatchEditReviewXeroSettlement({
+    bookingId,
+    taskId,
+    actingMemberId,
+    route,
+    amountCents,
+    chargeTotalCents,
+    hasIssuedXeroInvoice,
+    bookingPaymentStatus,
+    additionalPaymentIntentId,
+  });
 
   return { stripeRefundId, additionalPaymentIntentId };
 }

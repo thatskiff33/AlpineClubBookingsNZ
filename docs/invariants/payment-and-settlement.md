@@ -1284,14 +1284,31 @@ one, check the other.
       two Xero invoices, $430 billed for a $230 edit. That shape was introduced by
       the combining (each share used to queue its own amount and the concurrent
       case summed correctly) and is closed by it.
+    - **A restate that WRITES is a restate that goes out.** The outbox worker used
+      to read an operation's payload from its SCAN and claim the row only when its
+      loop reached it, one Xero round trip per row later. In that window the row is
+      still PENDING, so a restate matched, wrote, and honestly reported that it had
+      restated - while the send used the scanned figure and the caller returned
+      early believing the combined total was billed. On the internet-banking route,
+      where the supplementary invoice IS the ask, that invoiced $200 of a $230 edit
+      and left the $30 existing nowhere. `processQueuedXeroOutboxOperations` now
+      re-reads `requestPayload` after its claim commits; RUNNING is outside the
+      restatable set, so a restate either lands and is sent or matches nothing and
+      reports zero, with no third outcome.
     - **What the accounting leg does NOT guarantee, stated rather than implied.** A
-      restate can still arrive too late to land: the outbox worker reads an
-      operation's payload from its scan and only then claims the row, so a restate
-      in that window is correctly refused by the status-guarded write and the
-      invoice goes out at the earlier figure. The shortfall is recorded, nothing is
-      overwritten behind an ask already going out, and no second invoice is raised.
-      Closing that window means making the worker re-read its payload after the
-      claim, which is a change to every outbox queue type.
+      restate can still arrive too late to land AT ALL. Once the worker has claimed
+      the operation it is RUNNING, and once the invoice has been sent the anchor
+      carries an active `SUPPLEMENTARY_INVOICE` link; a share settled after either
+      point meets an ask that has left the building. The enqueue then refuses to
+      queue a second invoice behind the first - correct, because two invoices for
+      one edit is the failure this all exists to remove - so the invoice bills the
+      earlier figure and the club collects the difference by hand. That is a
+      recoverable shortfall rather than lost money only because it is RECORDED:
+      `enqueueXeroSupplementaryInvoiceOperation` returns `outcome: "short"` and the
+      settlement writes `booking.editFinancialReview.chargeShareUncollected` with
+      leg `xero-invoice`. Closing the window itself would mean voiding and
+      reissuing an invoice already with the member, which is a different decision
+      from this one.
     - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
       recovery replay re-derives the total through the same sync the inline
       completion uses, and that sync reports which of four things happened
@@ -1306,8 +1323,11 @@ one, check the other.
     - **Every path that settles a share without producing a request leaves a
       durable trace.** A `logger.warn` is not one: nobody goes looking through a
       log stream for money the club is owed. The mint refusing before its own `try`
-      writes the recovery row, and the paid-in-flight race writes an audit row
-      (`booking.editFinancialReview.chargeShareUncollected`, category `payment`)
+      writes the recovery row, and BOTH already-closed races - the card request
+      already paid, and the Xero invoice already gone - write an audit row
+      (`booking.editFinancialReview.chargeShareUncollected`, category `payment`,
+      with a `leg` of `payment-request` or `xero-invoice` in its metadata and its
+      prose)
       naming the shortfall, so an officer can find what has to be collected by
       hand.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap

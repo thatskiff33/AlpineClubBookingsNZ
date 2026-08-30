@@ -55,5 +55,14 @@
   as the first, the member still gets exactly one invoice, for the combined
   total, and an amount already asked for is never revised downwards.
 - Where a settled amount genuinely cannot be added to the bill — because the
-  member paid it seconds earlier — that is now written into the club's audit
-  record, naming the shortfall, so somebody can find it and collect it.
+  member paid it seconds earlier, or because the club's invoice for the change
+  had already been sent — that is now written into the club's audit record,
+  naming the amount and saying which of the two it was, so somebody can find it
+  and collect it. The invoice case previously left no trace of any kind, not
+  even a log line, and on a booking paid by internet banking the invoice IS the
+  bill — so a second settled amount could end up asked for nowhere at all.
+- When a second amount is settled while the club's invoice for that change is
+  still waiting to be sent, the invoice now goes out for the combined total.
+  Previously the raise could be written to a job the background sender had
+  already picked up and was about to send, so the invoice went out at the
+  earlier figure while the office was told the full amount had been billed.

@@ -1181,6 +1181,8 @@ describe("what the sync reports, and the trace it leaves (#3170 fix round)", () 
     // 5). The audit list shows the summary; a row that says "an amount" makes an
     // officer open the metadata to find out whether it matters.
     const row = mocks.createAuditLog.mock.calls[0][0];
+    // Names the CARD ask, and the amount that was not added to it.
+    expect(row.summary).toContain("payment request");
     expect(row.summary).toContain("$30.00");
     expect(row.details).toContain("$30.00");
     expect(row.details).toContain("$230.00");
@@ -1304,7 +1306,13 @@ describe("a share that could not join the Xero invoice (#3170 fix round, F2)", (
         (entry) =>
           entry.action === "booking.editFinancialReview.chargeShareUncollected",
       )!;
+    // Names the ASK that fell short, not only the figure. Both legs write the
+    // same action, so a summary that could equally describe the card request
+    // sends an officer to check the wrong thing - and a probe that swapped this
+    // arm's summary for the card one passed until this line existed.
+    expect(row.summary).toContain("Xero invoice");
     expect(row.summary).toContain("$230.00");
+    expect(row.summary).not.toContain("payment request");
     // The prose has to serve BOTH routes, because the same shortfall means
     // different things on each.
     expect(row.details).toContain("internet banking");

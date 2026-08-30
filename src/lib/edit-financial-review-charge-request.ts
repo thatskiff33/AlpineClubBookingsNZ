@@ -16,7 +16,10 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { buildEditFinancialReviewChargeReason } from "@/lib/payment-recovery-keys";
 import { formatCents } from "@/lib/utils";
-import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-outbox";
+import {
+  restatePendingSupplementaryInvoiceAmount,
+  type XeroSupplementaryInvoiceEnqueueOutcome,
+} from "@/lib/xero-operation-outbox";
 
 /**
  * #3170 (epic #2797): WHAT ONE BOOKING EDIT'S SINGLE CHARGE REQUEST IS, and what
@@ -205,11 +208,23 @@ export async function sumEditReviewChargeSharesCents({
  *     that under a per-anchor advisory lock and scoped to the anchor rather than
  *     to the amount, so a second settlement racing this one finds the first
  *     invoice and raises it instead of queueing its own.
- *   * NOT guaranteed: that a restate always lands. The outbox worker reads an
- *     operation's payload from its scan before it claims the row, so a restate
- *     arriving in that window is correctly refused and the invoice goes out at
- *     the earlier figure. The shortfall is recorded; nothing is overwritten
- *     behind a send, and no second invoice is raised.
+ *   * A restate that WRITES is a restate that GOES OUT. The outbox worker used
+ *     to read an operation's payload from its scan and claim the row a Xero
+ *     round trip later; in that window the row is still PENDING, so a restate
+ *     matched, wrote, and reported success while the send used the scanned
+ *     figure - and this function's caller returned early believing the combined
+ *     total was billed. The worker now re-reads after the claim, so `restated`
+ *     means what it says (#3170 fix round, F1).
+ *   * NOT guaranteed: that a restate can land AT ALL. Once the worker has
+ *     claimed the operation it is RUNNING, and once the invoice has been sent
+ *     the anchor carries an active `SUPPLEMENTARY_INVOICE` link; a share settled
+ *     after either point meets an ask that has left the building. This function
+ *     then reports nothing restated, the caller falls through to the ordinary
+ *     enqueue, and the enqueue refuses to queue a second invoice - correctly,
+ *     but the invoice bills the earlier figure and the difference has to be
+ *     collected by hand. The enqueue says so in its `outcome`, and the
+ *     settlement writes the audit row below with leg `xero-invoice`, so the
+ *     shortfall is a record an officer can find rather than a silence.
  *
  * Best-effort: a Xero outage must not undo a completion whose money question is
  * already settled, so a failure is logged and treated as "nothing restated". The
@@ -255,6 +270,54 @@ export async function restateEditReviewChargeSupplementaryInvoice({
  *     correct and it is the books that are short.
  */
 export type UncollectedEditReviewChargeLeg = "payment-request" | "xero-invoice";
+
+/**
+ * The accounting leg's half of that record, decided from the enqueue's own
+ * verdict (#3170 fix round, F2).
+ *
+ * `short` is the enqueue saying it found an invoice for this edit and could NOT
+ * raise it: the outbox has claimed the operation, or it has already been sent.
+ * Refusing to queue a second invoice behind it is right - two invoices for one
+ * edit is the failure this round removed - but the invoice then bills the earlier
+ * figure and the club collects the difference by hand, so the difference has to
+ * be findable.
+ *
+ * It lives HERE rather than at the dispatch site because the question and its
+ * answer are one idea: `covers-total` and `none` are silence, `short` is a
+ * record, and a caller re-deriving that mapping is how the two legs come to
+ * disagree about what counts as a shortfall.
+ *
+ * Returns whether a record was written, so a test can tell "no shortfall" from
+ * "never asked".
+ */
+export async function recordShortEditReviewChargeInvoice({
+  outcome,
+  bookingId,
+  bookingModificationId,
+  memberId,
+  totalCents,
+}: {
+  outcome: XeroSupplementaryInvoiceEnqueueOutcome;
+  bookingId: string;
+  bookingModificationId: string;
+  memberId: string | null;
+  totalCents: number;
+}): Promise<boolean> {
+  if (outcome !== "short") return false;
+  await recordUncollectedEditReviewChargeShare({
+    leg: "xero-invoice",
+    bookingId,
+    bookingModificationId,
+    memberId,
+    derivedTotalCents: totalCents,
+    // Unknowable by design: the outbox handler overwrites the operation's
+    // payload with the Xero invoice body when it sends, so the figure the invoice
+    // actually bills is no longer on the row. The record says "short of this
+    // total" rather than inventing the difference.
+    requestedTotalCents: null,
+  });
+  return true;
+}
 
 /**
  * The durable, officer-findable record that a settled share could not be added to

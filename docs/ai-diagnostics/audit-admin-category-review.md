@@ -628,8 +628,12 @@ board image upload writer (`communication` 20 → 21, 459 → 460). The upstream
 merge then brought the club-time and environment-safety writers with it
 (`admin` 102 → 104, 460 → 462). Since then #3170 added the uncollected
 review-share record (`payment` 37 → 38, 462 → 463): a settled share that could
-not be added to a booking change's already-paid request is money the club is owed
-and nobody can find, and it was a log line rather than a record until then. That
+not be added to a booking change's ask is money the club is owed and nobody can
+find, and it was a log line rather than a record until then. ONE write site
+serves both asks — the card request already paid, and the Xero supplementary
+invoice already sent — because they are the same fact about the same edit; a
+`leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
+what tells an officer which one to go and fix. That
 is the figure above, and it was taken from `npm run audit:census` on the merged
 tree rather than by adding one branch's delta to the other's total. The category
 values sum to 462 rather than 463 because one site forwards its category rather

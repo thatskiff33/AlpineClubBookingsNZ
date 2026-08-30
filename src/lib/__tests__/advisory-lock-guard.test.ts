@@ -923,13 +923,20 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // fences nothing before the first invoice exists, so the lock is what makes
   // "one invoice per edit" true rather than asserted.
   //
-  // COUNTERPARTS AND ORDER. Single-lock holder, composing with no other family:
-  // every caller reaches it post-commit through a fire-and-forget
-  // `queueXeroBookingEditSettlement`, holding nothing, so no ordering cycle is
-  // possible and no counterpart writer takes it. Held for the milliseconds of the
-  // link-check -> queued-check -> raise-or-create transaction; the Xero round trip
-  // happens later, in the outbox worker, entirely outside it. Inventory row and
-  // stated residual in docs/CONCURRENCY_AND_LOCKING.md.
+  // COUNTERPARTS AND ORDER. Single-lock holder, composing with no other family,
+  // and no counterpart writer takes it. TWO callers, and "every caller is
+  // post-commit" was not one of them: the edit-settlement callers reach it
+  // post-commit through a fire-and-forget `queueXeroBookingEditSettlement`, while
+  // the booking-vs-Xero repair pass (`xero-booking-repair-passes.ts`,
+  // `QUEUE_SUPPLEMENTARY_INVOICE`) calls it DIRECTLY. The no-cycle conclusion
+  // stands for a stronger reason than the one first written down: that pass is an
+  // operator-driven admin/CLI action which opens no transaction of its own and
+  // holds no advisory lock, so it too arrives holding nothing. Held for the
+  // milliseconds of the link-check -> queued-check -> raise-or-create transaction;
+  // the Xero round trip happens later, in the outbox worker, entirely outside it.
+  // Inventory row and stated residual in docs/CONCURRENCY_AND_LOCKING.md; the
+  // serialisation itself is proven against real PostgreSQL by
+  // `edit-financial-review-races.realdb.test.ts`.
   "src/lib/xero-operation-outbox.ts": 1,
 };
 

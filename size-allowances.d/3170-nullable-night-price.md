@@ -61,7 +61,7 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2711
+lines: 2863
 reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   money could not be valued can raise two review tasks, and the owner's 30 Aug
   2026 decision is that both contribute to a single request for the total - so
@@ -91,9 +91,25 @@ reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   `updateMany`, the never-lower comparison on the invoice's NET, a per-anchor
   advisory lock around the enqueue's link-check -> queued-check -> write, an
   anchor-scoped lookup replacing the amount-scoped one, and the paragraphs
-  stating what is now guaranteed and the one window that is not - the outbox
-  worker reads a payload at its scan and claims it afterwards, so a restate in
-  that window is refused and the invoice goes out at the earlier figure. All of
+  stating what is now guaranteed and the one window that is not. All of
   it has to sit on the two functions it governs: this is the single definition of
   "does this booking change already have an invoice going out", and a caller-side
   copy is what let the two answers disagree in the first place.
+  Fix round 4 (+96): the window fix round 2 wrote down was not the one that
+  existed. The outbox worker read each operation's payload from its SCAN and
+  claimed the row a Xero round trip later, so a restate landing in that window
+  MATCHED the still-PENDING row, wrote, and honestly reported that it had
+  restated - while the send used the scanned figure and its caller returned early
+  believing the combined total was billed. On the internet-banking route, where
+  the supplementary invoice IS the ask, that invoiced $200 of a $230 edit and left
+  the $30 existing nowhere. The growth is a post-claim re-read of
+  `requestPayload` in `processQueuedXeroOutboxOperations` with the paragraph
+  explaining why the ORDER is the whole point, and a `covers-total | short | none`
+  verdict on the enqueue's return so the settlement can tell an invoice raised to
+  the total from one that had already left the queue - the `message` beside it is
+  prose for an operator's repair report and nothing could branch on it. Both
+  belong here for the same reason the rest does: the enqueue is where the link
+  check, the queued check and the restate all happen under one lock, and it is the
+  only place that question can still be answered - `createXeroSupplementaryInvoice`
+  overwrites the operation's payload with the Xero invoice body at dispatch, so
+  afterwards the queued amount is simply gone.
