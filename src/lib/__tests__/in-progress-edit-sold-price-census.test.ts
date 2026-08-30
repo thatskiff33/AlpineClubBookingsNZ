@@ -617,6 +617,32 @@ const PRE_CHECK_IN_GATE_SITES = [
     ],
   },
   {
+    file: "src/lib/booking-batch-modification-service.ts",
+    what: "the BATCH SAVE — the fourth raise door, and the only one that does not ask the gate itself. It inherits the verdict from calculateModifiedPricing, so what has to be measured here is that it KEEPS that verdict, writes the parked rows rather than the priced ones, and raises.",
+    markers: [
+      {
+        // Not `preCheckInEditEvidence` — this door never calls it. The gate it
+        // inherits is the one inside `calculateModifiedPricing`, so the marker
+        // is that call, and everything after it is what this file does with the
+        // answer.
+        label: "the gate is inherited from calculateModifiedPricing, not re-derived here",
+        pattern: /await calculateModifiedPricing\s*\(/,
+      },
+      {
+        label: "its answer is kept, not discarded",
+        pattern: /const parked =\s*pricingResult\.kind === "financial_review_required"/,
+      },
+      {
+        label: "the rows written are the PARKED ones, never the priced pass's",
+        pattern: /pricingResult\.parkedGuestRows/,
+      },
+      {
+        label: "an unusable strand is PARKED, not merely noted",
+        pattern: /await raiseParkedEditFinancialReviewTasks\s*\(/,
+      },
+    ],
+  },
+  {
     file: "src/app/api/bookings/[id]/guests/route.ts",
     what: "the GUEST ADD, which recomputed the booking's total from a full-party pass in which a blank night priced at today's rate.",
     markers: [
@@ -651,17 +677,26 @@ describe("pre-check-in exact-evidence gate census (#3166)", () => {
       // "must come after" means an occurrence genuinely follows — rather than
       // the first match in the file, which for these files is the in-progress
       // branch's own parked exit several thousand characters earlier.
+      //
+      // The cursor advances past the END of the match it just made, never one
+      // character into it. Advancing by 1 would let a marker satisfy "after the
+      // previous one" by matching the SAME text again from its second
+      // character, which is only harmless while every pattern here happens to
+      // be distinct — and that is a property of today's markers rather than of
+      // the walk. `match` is used instead of `search` for exactly that: the
+      // length of what matched is the thing the walk needs and `search` cannot
+      // report it.
       let previous = 0;
       let previousLabel = "";
       for (const marker of site.markers) {
-        const offset = source.slice(previous).search(marker.pattern);
+        const found = source.slice(previous).match(marker.pattern);
         expect(
-          offset,
+          found?.index ?? -1,
           previousLabel === ""
             ? `${site.file}: ${marker.label} — ${site.what}`
             : `${site.file}: "${marker.label}" must appear, and after "${previousLabel}" — ${site.what}`,
         ).toBeGreaterThan(-1);
-        previous += offset + 1;
+        previous += (found?.index ?? 0) + (found?.[0].length ?? 0);
         previousLabel = marker.label;
       }
     },
