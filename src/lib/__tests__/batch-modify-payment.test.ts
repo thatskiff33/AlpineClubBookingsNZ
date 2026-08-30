@@ -2646,11 +2646,17 @@ describe("PUT /api/bookings/[id]/modify", () => {
             ...base.guests[0],
             isMember: false,
             memberId: null,
-            nights: base.guests[0].nights.map(
-              (night: { stayDate: Date; priceCents: number | null }) =>
-                night.priceCents === -100
-                  ? { stayDate: night.stayDate, priceCents: null }
-                  : night,
+            // `makeBooking`'s declared guest type does not carry `nights` — the
+            // fixture builder attaches them — so the read is spelled out here
+            // rather than left to inference.
+            nights: (
+              base.guests[0] as unknown as {
+                nights: Array<{ stayDate: Date; priceCents: number | null }>;
+              }
+            ).nights.map((night) =>
+              night.priceCents === -100
+                ? { stayDate: night.stayDate, priceCents: null }
+                : night,
             ),
           },
         ],
