@@ -52,11 +52,14 @@ export interface ResolvedPromo {
  * differ in exactly one thing: which key the index is read through. Here it is
  * `BookingGuest.id`; there it is a rate row's `bookingGuestId`.
  *
- * They were deliberately NOT unified (#3163, owner decision 30 Aug 2026).
- * `INV-SSOT-001` permits a second *form* of one fact and warns against
- * contorting a helper to serve two shapes — and the accessor argument that would
- * unify these is exactly that contortion, paid for on this money path (which
- * takes a row lock for update) in exchange for no behaviour change.
+ * They were deliberately NOT unified (#3163). That was the recommended default,
+ * taken by an orchestrator session under the owner's 30 Aug 2026 instruction to
+ * proceed autonomously and record decisions for later review — it is NOT an
+ * owner decision read at source, and it stands only until the owner says
+ * otherwise. `INV-SSOT-001` permits a second *form* of one fact and warns
+ * against contorting a helper to serve two shapes, and the accessor argument
+ * that would unify these is exactly that contortion, bought on the
+ * booking-create money path for no behaviour change.
  *
  * **So if you change what this does, change the other one too.** That is the
  * cost of the decision, and it is why these two point at each other rather than

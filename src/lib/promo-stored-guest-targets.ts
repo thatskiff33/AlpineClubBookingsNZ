@@ -124,12 +124,15 @@ export function selectedIndexesForStoredGuestTargets(
  * differing in exactly one thing: which key the index is read through. Here it
  * is a rate row's `bookingGuestId`; there it is `BookingGuest.id`.
  *
- * They were deliberately NOT unified (#3163, owner decision 30 Aug 2026),
- * because the accessor argument that would unify them is the contortion
- * `INV-SSOT-001` warns about, bought on a money path for no behaviour change.
+ * They were deliberately NOT unified (#3163) — the recommended default, taken
+ * by an orchestrator session under the owner's 30 Aug 2026 instruction to
+ * proceed autonomously and record decisions for later review, rather than an
+ * owner decision read at source. The accessor argument that would unify them is
+ * the contortion `INV-SSOT-001` warns about, bought on the booking-create money
+ * path for no behaviour change.
  *
  * **So if you change what this does, change the other one too.** Five copies of
- * this rule were converged into this module by #3131 and one of those five had
+ * this module's rule were converged into it by #3131 and one of those five had
  * already diverged; the sixth survives on purpose, and these two point at each
  * other so that stays a decision rather than an accident.
  */

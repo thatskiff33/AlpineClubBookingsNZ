@@ -74,23 +74,39 @@ are permanent: never renumbered, never reused.
   server-side scope decision; the admin promo-codes client still reads the same
   default inline twice, which is recorded in `promo-guest-scope.ts` rather than
   left silent, and waits on the server/client boundary work in #2850/#2851.
-- **The sixth instance, and the decision to keep it — this is what the
-  permitted-second-form carve-out looks like in practice.** #3163 found the same
+- **The sixth instance, and the decision to keep it.** #3163 found the same
   index-to-id mapping a sixth time, on the booking-**create** path
   (`getPromoTargetBookingGuestIds` in `booking-create-promo.ts`). The two bodies
   are the same algorithm and differ in exactly one thing: which key the index is
   read through — `BookingGuest.id` on the create path,
-  `guestNightRates[].bookingGuestId` on the modification path. The owner decided
-  on 30 Aug 2026 to **keep both and cross-reference them**, over unifying through
-  a key accessor or normalising the input at the call site. The reasoning is the
-  rule's own carve-out: a helper contorted to serve two shapes becomes the thing
-  nobody may change, and the accessor argument is exactly that contortion — paid
-  for on the booking-create money path, which takes a row lock for update, in
-  exchange for no behaviour gain. **The cost is stated rather than hidden:** the
-  duplication survives, and a cross-reference is a reminder rather than a
-  structure, which this repository normally rejects. It is a deliberate
-  exception, not the general rule, and the two sites point at each other so a
-  future editor of one meets the other.
+  `guestNightRates[].bookingGuestId` on the modification path. The call was to
+  **keep both and cross-reference them**, over two alternatives.
+
+  *Unifying through a key accessor* was rejected as the contortion this rule
+  warns about: a helper reshaped to serve two callers becomes the thing nobody
+  may change. *Normalising the input at the call site* — mapping
+  `BookingGuest[]` into `{ bookingGuestId }` rows, an idiom already used at
+  `waitlist.ts` and `booking-batch-modification-service.ts` — is **not** a
+  contortion and was not rejected as one. It was judged not worth the churn: it
+  costs an allocation and a shape-shim on the booking-create money path, and it
+  moves the difference between the two rather than removing it. That is a
+  weaker reason than the first, and it is recorded as the weaker reason it is.
+
+  **This is a deliberate exception, not the general rule, and not the carve-out
+  two bullets above.** That carve-out permits one definition with two
+  derivations from it. Here there is no single definition either function
+  derives from — there are two definitions of one fact, which is the very shape
+  `INV-SSOT-001` names as the failure ("two places that must both be edited to
+  change one fact"). The duplication survives and a cross-reference is a
+  reminder rather than a structure, which this repository normally rejects. The
+  two sites point at each other so a future editor of one meets the other; that
+  is mitigation, not a fix.
+
+  **On the provenance of this decision:** it was the recommended default, taken
+  by an orchestrator session under the owner's 30 Aug 2026 instruction to
+  proceed autonomously and record decisions for later review. There is no owner
+  comment on #3163 to read at source. It stands until the owner overturns it,
+  and anyone wanting to unify these later needs no further permission than that.
 - **Deliberately not enforced by a registry.** A canonical-homes registry
   (concept → owning module, checked by a census test) was considered and
   **declined by the owner on 26 Aug 2026**: too much ongoing maintenance for the
