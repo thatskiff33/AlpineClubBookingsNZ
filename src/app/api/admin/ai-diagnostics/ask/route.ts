@@ -47,13 +47,13 @@ import { DIAGNOSTICS_ANSWER_BOUNDS } from "@/lib/diagnostics/answer/prompt";
  * THE GATE ORDER, and what each one is for. Nothing below may be reordered without
  * re-deciding the reason it sits where it does:
  *
- *   1. ADMISSION      any admitted administrator (owner decision Q6), encoded as
- *                     `overview:view` — the level every admin access-role grid
- *                     carries, and the same default `guardAdminLayout` applies to an
- *                     admin path with no more specific rule. The shell must NOT
- *                     become a `support:view` permission, and every tool re-derives
- *                     its own areas at invocation. Opening this route grants zero
- *                     evidence access.
+ *   1. ADMISSION      any admitted administrator (owner decision Q6, ADR-002 §1),
+ *                     encoded as `permission: "any-admin"` — the guard's own
+ *                     "holds at least one of the seven areas" rule, which is the
+ *                     predicate ADR-002 §1 asks for. The shell must NOT become a
+ *                     `support:view` permission, and every tool re-derives its own
+ *                     areas at invocation. Opening this route grants zero evidence
+ *                     access.
  *   2. RATE LIMITS    per-IP then per-admin, BEFORE the body is parsed, so an
  *                     unparseable or oversized body is still throttled. Diagnostics
  *                     has its OWN limiters, not page help's: one question is several
@@ -239,24 +239,24 @@ function blocked(
 }
 
 export async function POST(request: Request) {
-  // 1. ADMISSION — any admitted administrator (owner decision Q6).
+  // 1. ADMISSION — any admitted administrator (owner decision Q6, ADR-002 §1).
   //
-  //    `overview:view` IS "any admitted admin", not a permission carve-out: every
-  //    admin access-role grid carries it, and it is the same default requirement
-  //    `guardAdminLayout` applies to an admin path with no more specific rule —
-  //    including `/admin/ai-diagnostics` itself, which deliberately falls to the
-  //    overview catch-all (see `admin-permissions.ts`, OVERVIEW_ALLOWLIST).
+  //    `"any-admin"` is `hasAdminPortalAccess`: view or better on AT LEAST ONE of
+  //    the seven areas, word for word the admission predicate ADR-002 §1 ratified
+  //    on #2370. It returns no evidence whatsoever; every tool re-derives the
+  //    caller's own areas from the database at invocation.
   //
-  //    The first cut of this route wrote `permission: false`, believing that meant
-  //    "any admitted admin". It meant Full Admin only: with no requirement,
-  //    `requireAdmin` falls through to `hasAdminAccess`, the literal `ADMIN` role —
-  //    so every scoped admin the layout had already shown the Diagnostics tab to
-  //    got a 403 their client could only report as a network fault, and the
-  //    per-invocation area checks (the actual security boundary) were never
-  //    exercised by anyone who did not already hold every area.
-  const guard = await requireAdmin({
-    permission: { area: "overview", level: "view" },
-  });
+  //    TWO EARLIER SPELLINGS OF "ANY ADMITTED ADMIN" WERE BOTH WRONG, in opposite
+  //    directions, and both showed the same scoped admin a 403 their client could
+  //    only report as a network fault. `permission: false` means Full Admin only
+  //    (`requireAdmin` falls through to `hasAdminAccess`, the literal `ADMIN`
+  //    role), so the per-invocation area checks — the actual security boundary —
+  //    were exercised by nobody who did not already hold every area. Its
+  //    replacement, `{ area: "overview", level: "view" }`, rested on every admin
+  //    grid carrying `overview`; #2984 abolished that premise, so the shipped
+  //    "Finance Viewer" grid holds none — and since the layout hands the
+  //    Diagnostics tab to every admitted admin, that 403 became its NORMAL path.
+  const guard = await requireAdmin({ permission: "any-admin" });
   if (!guard.ok) return guard.response;
   const actingMemberId = guard.session.user.id;
 

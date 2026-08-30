@@ -245,10 +245,22 @@ export function resolveEffectiveAdminNotificationPreferences(
 /**
  * Who belongs on the Recipients grid (#2548, owner decision 2 Aug 2026): every
  * admin-portal user, not just Full Admins — scoped officers and holders of
- * definition-backed custom roles included. Finance-only roles have no portal
- * access but can still own finance alerts, so they qualify on their categories
- * instead. A member with portal access but no matching categories (a read-only
- * admin) still appears, with the grid explaining why nothing is available.
+ * definition-backed custom roles included. A member with portal access but no
+ * matching categories (a read-only admin) still appears, with the grid
+ * explaining why nothing is available.
+ *
+ * The second arm is no longer reachable on its own and is kept deliberately.
+ * It was written because finance-only roles had no portal standing yet owned
+ * the finance alerts; #2984 gave them that standing, so `hasAdminPortalAccess`
+ * now covers them and the category arm adds nobody today. It stays because the
+ * two conditions are independent claims — "is an administrator" and "owns an
+ * alert category" — and a club that builds a custom grid the portal check ever
+ * stops recognising must not silently lose its alerts.
+ *
+ * This widens who is LISTED, never who is MAILED. Every send still resolves
+ * through `resolveEffectiveAdminNotificationPreferences`, which masks each
+ * category by the recipient's own area, so a finance-view-only member appears
+ * on the roster with nothing switchable and receives nothing.
  */
 export function isAdminNotificationRecipient(
   input: AdminPermissionInput,
