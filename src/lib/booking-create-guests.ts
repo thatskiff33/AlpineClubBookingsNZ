@@ -19,6 +19,7 @@ import {
   type CalendarDate,
 } from "@/lib/club-time";
 import { addDaysDateOnly, formatDateOnly } from "@/lib/date-only";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import type { GuestNightInput } from "@/lib/booking-guest-stay-ranges";
 import {
   type BookingGuestInput,
@@ -191,7 +192,26 @@ export function buildGuestCreateData(
       nights: {
         create: nightDates.map((stayDate, k) => ({
           stayDate,
-          priceCents: priced.perNightCents[k] ?? 0,
+          // #3167 (epic #2797): NO `?? 0`. These rows BECOME the booking's
+          // sold-price history the moment it is created, and a zero written
+          // because a vector came up short is indistinguishable ever after from
+          // a genuine free night — so it never reads as the caller bug it is.
+          //
+          // The #3167 census found this UNREACHABLE on every current caller, on
+          // the same STRUCTURAL invariant as the add-guest route:
+          // `calculateBookingPrice` builds `perNightCents` and `nightDates` in
+          // one loop that pushes exactly once per iteration, both halves are
+          // returned from the same closure, and the loop above iterates the
+          // other half of that same object. All five call sites of this function
+          // pass an engine breakdown. The invariant is real but unenforced — the
+          // breakdown type declares no length relation — and this is what
+          // enforces it.
+          priceCents: requiredNightPriceCents(
+            priced.perNightCents,
+            k,
+            stayDate,
+            "the booking-create guest writer"
+          ),
         })),
       },
     };

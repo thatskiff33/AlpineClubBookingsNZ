@@ -22,6 +22,7 @@ import {
   type OtherLodgeRateElection,
 } from "@/lib/booking-other-lodge-rate";
 import logger from "@/lib/logger";
+import { requiredNightPriceCents } from "@/lib/required-price-cents";
 import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
@@ -2175,26 +2176,11 @@ export async function applyGuestChanges(
   // plan expanded its envelope, so this deleted a sparse guest's rows and wrote
   // back a continuous run, filling the gap for good. The plan now carries the
   // night list (INV-MOD-025) and this is the only writer that needs to know.
-  /**
-   * The amount priced for night `index` of `guest`'s breakdown (#3031).
-   *
-   * Throws rather than defaulting. The alternative — a zero — is a real
-   * financial number written into `BookingGuestNight.priceCents`, which is the
-   * only record of what a night was sold for.
-   */
-  const requiredNightPriceCents = (
-    guest: BreakdownGuest | undefined,
-    index: number,
-    stayDate: Date,
-  ): number => {
-    const cents = guest?.perNightCents[index];
-    if (typeof cents !== "number") {
-      throw new Error(
-        `No priced amount for the night of ${stayDate.toISOString()} (#3031)`,
-      );
-    }
-    return cents;
-  };
+  // #3167: the refusal this write needs now lives in
+  // `@/lib/required-price-cents`, because three more writers on the create and
+  // add paths need exactly the same rule and a money refusal copied four times
+  // is four things to keep in step (`INV-SSOT`). Moved unchanged apart from
+  // taking the vector rather than the breakdown guest, and naming the writer.
 
   const syncGuestNights = async (
     bookingGuestId: string,
@@ -2216,7 +2202,12 @@ export async function applyGuestChanges(
           // A per-night vector shorter than the night list is a wiring defect in
           // whoever built the breakdown, and refusing is the only answer that
           // does not invent money.
-          priceCents: requiredNightPriceCents(bg, k, stayDate),
+          priceCents: requiredNightPriceCents(
+            bg?.perNightCents,
+            k,
+            stayDate,
+            "the booking-edit guest-night sync",
+          ),
         })),
       });
       return {
