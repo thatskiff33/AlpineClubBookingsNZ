@@ -48,6 +48,10 @@ import {
   EDIT_FINANCIAL_REVIEW_PENDING_MESSAGE,
   findOpenEditFinancialReviewTask,
 } from "@/lib/edit-financial-review";
+import {
+  preCheckInEditEvidence,
+  type PreCheckInEditStrand,
+} from "@/lib/stored-sold-price-evidence";
 import type { MinimumStayViolation } from "@/lib/booking-policies";
 import {
   assertCheckInClearsXeroLockDate,
@@ -1569,24 +1573,30 @@ export async function POST(
           );
   }
 
-  // #3170: the parked preview. Taken the moment the beds are settled and before
-  // a single cent is computed — everything below prices the edit, and this
-  // booking's history cannot support a price.
-  //
-  // EVERY MONEY FIELD IS THE BOOKING'S OWN STORED FIGURE, and the three deltas
-  // are zero because the booking's money does not move on this save, not
-  // because zero was chosen as the adjustment. `settlementOptions` is null, so
-  // the panel offers no card-or-credit election for a movement that is not
-  // happening, and `promoValidation` is null because no promotion is re-run.
-  if (parkedPlan) {
+  /**
+   * The parked preview, composed once and returned from BOTH review exits
+   * (`INV-SSOT`, #3166).
+   *
+   * EVERY MONEY FIELD IS THE BOOKING'S OWN STORED FIGURE, and the three deltas
+   * are zero because the booking's money does not move on this save, not
+   * because zero was chosen as the adjustment. `settlementOptions` is null, so
+   * the panel offers no card-or-credit election for a movement that is not
+   * happening, and `promoValidation` is null because no promotion is re-run.
+   *
+   * Two exits reach it. The in-progress planner's park is decided before a
+   * single cent is computed; the pre-check-in one (#3166) is decided after the
+   * ordinary pricing pass, because that pass is what says which nights each
+   * strand ends up holding. Both are the same answer to the member and must
+   * therefore be the same payload — a second literal here is how the two
+   * previews would come to differ from each other, and from the save.
+   */
+  const parkedQuoteResponse = (causes: readonly string[]) => {
     logger.info(
       {
         bookingId,
         // The CAUSES only. Which nights and what was stored against them is
         // evidence for an admin on the review task (#3030), not log fodder.
-        causes: planResult?.kind === "financial_review_required"
-          ? planResult.occurrences.map((occurrence) => occurrence.cause)
-          : [],
+        causes,
       },
       "Booking modification quote parks its money for financial review",
     );
@@ -1623,6 +1633,21 @@ export async function POST(
             })),
           }),
     });
+  };
+
+  // #3170: the parked preview for a stay already under way. Taken the moment
+  // the beds are settled and before a single cent is computed — everything
+  // below prices the edit, and this booking's history cannot support a price.
+  //
+  // THE CAPACITY CHECK STILL RUNS FIRST, on the parked plan, for the same
+  // reason it does on the save: beds are not money, and the member must be told
+  // "no beds" before they are told "an officer will confirm the amount".
+  if (parkedPlan) {
+    return parkedQuoteResponse(
+      planResult?.kind === "financial_review_required"
+        ? planResult.occurrences.map((occurrence) => occurrence.cause)
+        : [],
+    );
   }
 
   // Calculate new total price
@@ -1674,6 +1699,70 @@ export async function POST(
       { error: "No season rate found for the requested dates" },
       { status: 400 }
     );
+  }
+
+  /**
+   * #3166: THE PREVIEW HALF OF THE PRE-CHECK-IN GATE, and the parity requirement
+   * is why it cannot be left to the save.
+   *
+   * `calculateModifiedPricing` now judges every existing strand of a
+   * not-yet-started booking and PARKS the edit when one of them cannot be priced
+   * from its own history. A preview that went on quoting a price for that edit
+   * would show the member a refund or a charge the save will not make — the same
+   * disagreement #3170 removed in the opposite direction, and the one thing
+   * INV-MOD-028 says quote and apply may never have.
+   *
+   * It is judged HERE, after the pricing pass and against
+   * `priceBreakdown.guests[i].nightDates`, for exactly the reason the save
+   * judges it there: that array is the night set the edit really proposes, and a
+   * second derivation of it would be a second answer to a question already
+   * answered (`INV-SSOT`). The two surfaces read the same input in the same
+   * order, so they cannot disagree about which strands are unreadable.
+   */
+  if (!inProgressPlan && priceBreakdown) {
+    const storedGuestById = new Map(
+      booking.guests.map((guest) => [guest.id, guest]),
+    );
+    const previewStrands: PreCheckInEditStrand[] = [];
+    guestsForPricing.forEach((guest, index) => {
+      const bookingGuestId = guest.bookingGuestId;
+      if (!bookingGuestId) return;
+      const stored = storedGuestById.get(bookingGuestId);
+      if (!stored) return;
+      previewStrands.push({
+        bookingGuestId,
+        guestTotalCents: stored.priceCents,
+        stayStart: stored.stayStart,
+        stayEnd: stored.stayEnd,
+        nights: stored.nights,
+        proposedNightDates: priceBreakdown.guests[index]?.nightDates ?? [],
+      });
+    });
+    for (const guest of booking.guests) {
+      if (!removeSet.has(guest.id)) continue;
+      previewStrands.push({
+        bookingGuestId: guest.id,
+        guestTotalCents: guest.priceCents,
+        stayStart: guest.stayStart,
+        stayEnd: guest.stayEnd,
+        nights: guest.nights,
+        proposedNightDates: [],
+        // The save DELETES a removed strand's rows, so a readable one leaving a
+        // parked edit is recorded here too — the preview and the save must agree
+        // on how many reviews the member is about to cause.
+        rowsDestroyed: true,
+      });
+    }
+    const previewEvidence = preCheckInEditEvidence({
+      bookingId: booking.id,
+      booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
+      strands: previewStrands,
+    });
+    if (previewEvidence.occurrences.length > 0) {
+      return parkedQuoteResponse(
+        previewEvidence.occurrences.map((occurrence) => occurrence.cause),
+      );
+    }
   }
 
   // --- Build itemized changes ---
