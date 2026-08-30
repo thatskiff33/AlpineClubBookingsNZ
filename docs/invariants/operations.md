@@ -280,7 +280,7 @@ rules first written here. #2765 extended it with the measured-audience half.
     allowlist**: the one edge it used to name was removed in #2851 and the
     exemption mechanism went with it, so re-introducing one is a visible design
     change rather than a one-line diff;
-  - **the production build itself**, for the 114 modules that carry
+  - **the production build itself**, for every module that carries
     `import "server-only"`. Next refuses the whole chain and prints it, which is
     the only one of the three that is not our own regular expression.
     `scripts/ci/server-only-boundary-selftest.mjs` runs last in `verify`: it
@@ -341,11 +341,33 @@ rules first written here. #2765 extended it with the measured-audience half.
   argument, and fails when a command that reaches a marked module is published
   without the condition.
 
+  **The three modules that stay unmarked, and the reason that is now RETIRED.**
   `@/lib/club-time-zone-env`, `@/lib/environment-role-declaration` and
-  `@/lib/environment-role` remain deliberately unmarked. The condition would
-  make them safe to mark, but that is a separate judgement about modules whose
-  whole purpose is reading `process.env` on the server, and it was left to be
-  decided rather than taken as a side effect of this change.
+  `@/lib/environment-role` carry no marker. Every copy of that reason used to
+  say a `tsx` entrypoint reaching them would abort if they did, and **that is no
+  longer true** (#3186). Measured on this tree: every CLI root that reaches any
+  of the three also reaches `server-only` through `@/lib/prisma`, and every
+  published invocation of all fourteen such roots carries
+  `--conditions=react-server`, under which the marker resolves to an empty
+  module. Marking them would abort nothing. Do not repeat the retired reason,
+  and do not read "unmarked" as "cannot be marked".
+
+  They stay unmarked because marking them is a decision taken on its own
+  evidence rather than as a side effect of a boundary change. A static walk says
+  it is safe; being sure needs a full E2E and measurement-stack run, because
+  these are the modules a command-line tool reads its environment through — and
+  what `environment-role*` answers is whether the club's REAL members get
+  emailed (`INV-CONFIG-003`). Getting that wrong is not a build error, it is a
+  mailout from a copy of the site.
+
+  Until that decision is taken they are kept off the browser graph the way they
+  always were: by being NAMED as forbidden leaves in both halves of this
+  invariant — `FORBIDDEN_MODULES` in
+  `src/lib/__tests__/client-server-boundary-census.test.ts`, and the `$MOD`
+  alternation in `.semgrep/rules/acb-client-server-boundary.yml`. Both are FIXED
+  LEAF LISTS: a module in neither is protected by neither, however firmly its own
+  docblock says otherwise. **This paragraph is the one home for that reasoning**;
+  everywhere else points here rather than restating it.
 
   The cost that used to be cited here — "122 test files already carry
   `vi.mock("server-only", ...)`, so adding it would put that requirement on
@@ -356,7 +378,13 @@ rules first written here. #2765 extended it with the measured-audience half.
   `server-only` failures. The real obstacle was always the CLI invariant above,
   and the answer to it was a resolution flag rather than a refactor.
 
-  Measured on this tree: 479 `"use client"` modules in `src/`, **zero** direct
+  Counting the marked modules, if you ever need the number:
+  `grep -rlE '^import "server-only";$' src/`. An unanchored `grep -rl` answers
+  with fifteen more, because that many files only NAME the import inside a
+  docblock explaining this invariant — which is where the figure this page used
+  to carry came from, and why it is not carried any more.
+
+  Measured on this tree: 478 `"use client"` modules in `src/`, **zero** direct
   imports of any listed module or Node built-in, and **zero** transitive edges;
   14 of the CLI census's 33 roots reach `server-only`, and every published way
   of running each of them carries the condition.

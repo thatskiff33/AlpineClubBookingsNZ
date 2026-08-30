@@ -64,11 +64,12 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  * there is no rule that adds new ones automatically, so a module that is not
  * named here is not protected by this census however plainly its own docblock
  * says it is. `@/lib/club-time-zone-env` (#2989) is here for that reason: it
- * reads `process.env.TZ` and is deliberately NOT marked `server-only`. Two of
- * its callers are `tsx` entrypoints, which #2850's `--conditions=react-server`
- * would now let it survive — but marking a module whose entire job is reading
- * the environment on the server is a judgement of its own, not a side effect of
- * a boundary change, so it was left unmarked and left here. Next inlines
+ * reads `process.env.TZ` and is deliberately NOT marked `server-only`. Its
+ * `tsx` callers would survive the marker now that they carry
+ * `--conditions=react-server` (#2850), so the "an entrypoint would abort"
+ * reason those docblocks used to give is RETIRED; it is unmarked as a decision
+ * instead, recorded once in `docs/invariants/operations.md` -> `INV-OPS-013`,
+ * "The three modules that stay unmarked", and not restated here. Next inlines
  * `NEXT_PUBLIC_*` into the browser bundle, so a
  * `"use client"` component importing it would silently answer from the
  * BUILD-TIME `NEXT_PUBLIC_TZ` rather than from the running server — the
@@ -79,9 +80,10 @@ const EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
  *
  * `@/lib/environment-role-declaration` and `@/lib/environment-role` (#3034,
  * epic #2986) are here for the same reason and a sharper one. Neither is
- * `server-only` — `setup-readiness-db.ts` reaches the resolver from the `tsx`
- * entrypoint `npm run setup:check`, and the same "not as a side effect"
- * judgement above applies — and the
+ * `server-only` — `setup-readiness-db.ts` reaches the resolver from the
+ * `npm run setup:check` entrypoint, which carries the condition and would
+ * survive the marker, and the same deliberate-decision answer above applies —
+ * and the
  * declaration module reads `process.env.APP_ENVIRONMENT_ROLE`. A client
  * component importing it would answer from whatever the bundler inlined at
  * build time for a NON-public variable, which is `undefined`: the browser would
@@ -328,10 +330,11 @@ describe("INV-OPS-013: no client module reaches server-only code, at any depth",
  *
  * `scripts/ci/server-only-boundary-selftest.mjs` proves the production build
  * refuses a client component reaching `@/lib/auth` or `@/lib/prisma`, because
- * those are the two roots its fixture imports. Four more modules carry the same
- * marker — `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and `@/lib/xero` — and
- * nothing checked that they still did. Measured: delete the marker from all
- * four and every boundary suite in this repository stays green.
+ * those are the two roots its fixture imports. The other four roots this
+ * invariant names — `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
+ * `@/lib/xero` — carry the same marker, and nothing checked that they still
+ * did. Measured: delete it from all four and every boundary suite in this
+ * repository stays green.
  *
  * So the list of marked roots lives in the self-test beside the two it plants,
  * and this asserts each entry still carries the statement. The two lists cannot
@@ -354,7 +357,7 @@ function carriesMarker(text: string): boolean {
   return MARKER_LINE.test(text.replace(/\r\n/g, "\n"));
 }
 
-describe("INV-OPS-013: every marked module still carries the marker", () => {
+describe("INV-OPS-013: the six marked roots still carry the marker", () => {
   it("names six roots, all of which exist", () => {
     // Non-vacuity, in the one shape that would make the assertion below pass by
     // checking nothing: a rename, a deletion, or a truncated list. The count is

@@ -96,7 +96,7 @@ export const FIXTURE_BRIDGE = `./${FIXTURE_DIR.split(path.sep).join("/")}/bridge
 export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 
 /**
- * The statement, exactly. Every marked root carries this line and nothing
+ * The statement, exactly. Every marked module carries this line and nothing
  * looser: fifteen files in this repository merely NAME `import "server-only"`
  * inside a docblock explaining the boundary, so a substring search would count
  * a paragraph about the marker as the marker itself.
@@ -104,15 +104,17 @@ export const PROTECTED_ROOTS = ["./src/lib/auth.ts", "./src/lib/prisma.ts"];
 export const MARKER_STATEMENT = 'import "server-only";';
 
 /**
- * EVERY module that carries `MARKER_STATEMENT`, which is a longer list than the
- * two the fixture plants.
+ * The six `INV-OPS-013` ROOTS that carry `MARKER_STATEMENT` — the modules a
+ * browser bundle must never reach, which is a longer list than the two the
+ * fixture plants. NOT every file in the tree carrying the marker: a hundred and
+ * twelve do, and they are covered because they sit behind these.
  *
  * `PROTECTED_ROOTS` above is what this gate can prove with a build: the fixture
  * imports those two, so those two are the ones Turbopack is made to complain
- * about. That left the other four marked roots pinned by nothing — a reviewer
- * deleted `import "server-only"` from `@/lib/audit`, `@/lib/email`,
- * `@/lib/stripe` and `@/lib/xero` and every boundary suite stayed green, which
- * is the same silent-green shape this whole file exists to prevent.
+ * about. That left the other four roots pinned by nothing — a reviewer deleted
+ * `import "server-only"` from `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and
+ * `@/lib/xero` and every boundary suite stayed green, which is the same
+ * silent-green shape this whole file exists to prevent.
  *
  * So the list lives here, beside the two the build plants, and
  * `src/lib/__tests__/client-server-boundary-census.test.ts` asserts every entry

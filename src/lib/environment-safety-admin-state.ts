@@ -13,12 +13,16 @@ import "server-only";
  * question of its own: what may travel to a browser.
  *
  * `server-only` HERE and not on `environment-role.ts`, which is the split worth
- * understanding rather than copying blindly. The resolver has to stay importable
- * from the `tsx` `npm run setup` entrypoint (through `setup-readiness-db.ts`), so
- * it cannot carry `server-only`. This module has no such caller — it exists to
- * build a browser payload — so it takes the compiler-enforced guarantee, and the
- * panel that consumes the payload declares the same types itself rather than
- * importing them from here.
+ * understanding rather than copying blindly. The reason used to be that the
+ * resolver has to stay importable from a `tsx` entrypoint (through
+ * `setup-readiness-db.ts`) and so COULD NOT carry the marker. Since #2850 it
+ * could: `npm run setup:check` runs with `--conditions=react-server`, under
+ * which the marker is inert. It stays unmarked as a deliberate decision instead
+ * — see `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked".
+ * This module has no command-line caller at all — it exists to build a browser
+ * payload — so it takes the compiler-enforced guarantee with no such question to
+ * answer, and the panel that consumes the payload declares the same types itself
+ * rather than importing them from here.
  *
  * WHAT IS DELIBERATELY NOT ON THE PAYLOAD: the changer's email (see
  * `MEMBER_NAME_SELECT`), the raw environment beyond the one refused value the

@@ -952,7 +952,7 @@ Residual risks to keep visible:
   `src/lib/__tests__/client-server-boundary-census.test.ts` walks the
   transitive import graph in `verify`, with no allowlist; and
   `import "server-only"` makes the real production build refuse the whole
-  chain for the 114 modules that carry it, `@/lib/auth` and `@/lib/prisma`
+  chain for every module that carries it, `@/lib/auth` and `@/lib/prisma`
   among them. `scripts/ci/server-only-boundary-selftest.mjs` plants a
   `"use client"` page reaching both and requires that build to go red for the
   boundary reason specifically, attributed to each root, so the mechanism
@@ -970,9 +970,11 @@ Residual risks to keep visible:
   documented money-repair commands became npm scripts that carry it for the
   operator, and CT-5 now fails when a command reaching a marked module is
   published without it. `@/lib/club-time-zone-env` and
-  `@/lib/environment-role*` stay unmarked — the condition would make marking
-  them possible, but that is a separate judgement and was not taken as a side
-  effect.
+  `@/lib/environment-role*` stay unmarked — the condition makes marking them
+  possible, so the old "an entrypoint would abort" reason is retired, and they
+  are unmarked as a deliberate decision instead. That reasoning has one home:
+  `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay
+  unmarked".
 - The repo does not yet publish signed image attestations or SBOM artifacts.
   Current image provenance is protected PR checks plus commit-SHA GHCR tags.
 

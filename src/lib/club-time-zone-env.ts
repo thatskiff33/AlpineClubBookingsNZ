@@ -21,10 +21,16 @@
  * only thing standing between that and a real split-brain was nobody having
  * imported it yet.
  *
- * This module is equally NOT marked `server-only`, and that is not an oversight:
- * two of its four callers are the `tsx` entrypoints (`npm run config:self-heal`
- * and `npm run setup`), which a `server-only` import would abort. It is kept off
- * the client graph by being NAMED as a forbidden leaf in both halves of
+ * This module is equally NOT marked `server-only`, and that is a decision
+ * rather than an obstacle. The reason recorded here used to be that two of its
+ * four callers are `tsx` entrypoints (`npm run config:self-heal` and
+ * `npm run setup:check`) that a `server-only` import would abort. Since #2850
+ * those commands run with `--conditions=react-server`, under which the marker
+ * resolves to an empty module, so THAT REASON IS RETIRED and marking this
+ * module is technically possible. It is deliberately not done, for reasons that
+ * live in one place and are not restated here: see `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked".
+ * Meanwhile it is kept off the client graph by being NAMED as a forbidden leaf
+ * in both halves of
  * `INV-OPS-013`: `FORBIDDEN_MODULES` in
  * `src/lib/__tests__/client-server-boundary-census.test.ts`, which walks the real
  * import graph out of every `"use client"` module, and the `$MOD` alternation in

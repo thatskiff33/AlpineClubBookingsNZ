@@ -59,9 +59,14 @@
  * copy is about to email real members — and it taking effect. If a future
  * optimiser wants one, that window is the thing to argue about first.
  *
- * NOT `server-only`, on purpose: `setup-readiness-db.ts` imports this and is
- * itself imported by the `tsx` entrypoint `npm run setup`, which a `server-only`
- * import would abort. It is kept off the client bundle graph by being named a
+ * NOT `server-only`, on purpose — but not for the reason this line used to
+ * give. `setup-readiness-db.ts` imports this and is itself imported by the
+ * `tsx` entrypoint `npm run setup:check`, which a `server-only` import once
+ * would have aborted; since #2850 that command carries
+ * `--conditions=react-server` and the marker is inert under it, so THAT REASON
+ * IS RETIRED and marking this module is technically possible. Why it is
+ * deliberately not done lives in one place: see
+ * `docs/invariants/operations.md` -> `INV-OPS-013`, "The three modules that stay unmarked". It is kept off the client bundle graph by being named a
  * forbidden leaf in both halves of `INV-OPS-013` — see
  * `environment-role-declaration.ts`'s docblock for the two lists and why being
  * in neither means being protected by neither.

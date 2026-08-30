@@ -3,7 +3,7 @@
  * browser bundle, at any depth (`INV-OPS-013`, #2850). Operator CLIs reach it
  * under plain Node, where that marker would throw at import, so every `tsx`
  * invocation that reaches it runs with `--conditions=react-server` — which
- * resolves `server-only` to an empty module. `cli-server-only-reach-census.ts`
+ * resolves `server-only` to an empty module. `cli-server-only-reach-census.test.ts`
  * enforces that pairing; `docs/invariants/operations.md` carries the reasoning.
  */
 import "server-only";

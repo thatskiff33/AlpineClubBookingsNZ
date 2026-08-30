@@ -613,7 +613,12 @@ were off by two orders of magnitude.
 ### Run these through `npm run`, never `npx tsx`
 
 Every repair tool below is published as an `npm run` command, and that is the
-only spelling to copy into a runbook or a terminal. The reason is not tidiness.
+spelling to copy unless a runbook explicitly gives you another one. (One does:
+`docs/INDUCTION_BASELINE_RUNBOOK.md` runs the baseline inside the Compose
+`migrate` service, where the npm wrapper is not available, so it spells the
+command `./node_modules/.bin/tsx --conditions=react-server ...` in full. That is
+correct and supported — what is never correct is a bare `npx tsx`.) The reason
+is not tidiness.
 `@/lib/prisma`, `@/lib/audit`, `@/lib/email`, `@/lib/xero` and `@/lib/stripe`
 each carry `import "server-only"` (`INV-OPS-013`, #2850), which is what makes
 the production build refuse to ship any of them to a member's browser. That
