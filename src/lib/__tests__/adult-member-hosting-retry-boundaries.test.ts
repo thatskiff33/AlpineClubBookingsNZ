@@ -4,17 +4,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { hostingCoverageParticipantRetryResponse } from "@/lib/adult-member-hosting-retry-response";
+
+import { stripComments } from "./support/strip-comments";
 import {
   HOSTING_COVERAGE_RETRY_CODE,
   HOSTING_COVERAGE_RETRY_MESSAGE,
 } from "@/lib/adult-member-hosting-queue-participants";
 
 function readRepoCode(relativePath: string): string {
-  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*)/.test(line))
-    .join("\n");
+  return stripComments(readFileSync(path.resolve(process.cwd(), relativePath), "utf8"));
 }
 
 function sourceFilesNaming(identifier: string): string[] {

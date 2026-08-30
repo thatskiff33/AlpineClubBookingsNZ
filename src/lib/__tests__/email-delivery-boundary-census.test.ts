@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "@/lib/__tests__/support/strip-comments";
+
 import {
   composeFiles,
   composeServices,
@@ -130,17 +132,11 @@ function filesMatching(pattern: RegExp): string[] {
  * somebody wrote "we do not call createTransport here" in a docblock, which is a
  * false positive that teaches its reader to ignore the census.
  */
-function withoutTypeScriptComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
-}
-
 /** {@link filesMatching}, over code with comments stripped. */
 function codeFilesMatching(pattern: RegExp): string[] {
   return SCAN_ROOTS.flatMap((root) => walk(root))
     .filter((file) =>
-      pattern.test(withoutTypeScriptComments(readFileSync(file, "utf8"))),
+      pattern.test(stripComments(readFileSync(file, "utf8"))),
     )
     .map(repoRelative)
     .sort();
@@ -412,9 +408,7 @@ describe("email delivery boundary census (INV-CONFIG-004)", () => {
         they deliberately QUOTE the wrong sentence in order to explain why it is
         wrong.
       */
-      const stripped = source
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^[ \t]*\/\/.*$/gm, "");
+      const stripped = stripComments(source);
       const start = stripped.indexOf("function describeWithheldEmail");
       expect(start, `${file} should still define describeWithheldEmail`).toBeGreaterThan(-1);
       const rest = stripped.slice(start + 1);
