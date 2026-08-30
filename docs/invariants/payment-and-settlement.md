@@ -1351,6 +1351,71 @@ one, check the other.
       it re-enqueues is the row being replayed, whose upsert deliberately does not
       reset `status`; so a replay that closed unconditionally marked the operation
       SUCCEEDED having minted nothing.
+    - **A recovered ask raises the accounting invoice the inline attempt
+      deferred** (#3181). The inline settlement SKIPS the supplementary invoice
+      while an additional Stripe payment is required and no intent exists yet -
+      correctly, because there is nothing to invoice against - and defers to the
+      intent's recovery replay. The replay only ATTACHED a recovered intent to an
+      operation already WAITING_PAYMENT, and on exactly the edits that skipped
+      there is no such operation, so the deferred invoice was never raised at all:
+      the member had a collectable request and the club's accounts had no record
+      of the charge. The replay now completes the deferral by re-entering the same
+      settlement dispatcher with the intent set, on BOTH of its forks - an ordinary
+      edit bills the `BookingModification`'s signed components, a review charge
+      bills the combined total the sync re-derived. It queues no second invoice
+      because it asks no second question: the anchor-scoped, advisory-locked
+      decision above is the only one, which also makes the replay safe to run
+      twice. A failure to queue is recorded and NOT retried, because by that point
+      the replay has written this edit's `ADDITIONAL` transaction and the
+      processor's own "a later edit superseded this one" check would read that row
+      as a supersession - so a retry would complete having done nothing. The
+      booking-vs-Xero repair pass classifies the resulting divergence and offers
+      `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two components. That
+      argument binds EVERY `await` after that write, not only the enqueue call
+      (#3181 fix round): the settlement module's dynamic import sits inside the
+      catch, because a module that fails to load throws like a call that fails,
+      and the read of the edit's signed components happens BEFORE the mint, where
+      a transient database failure is still a real retry rather than a replay that
+      supersedes itself.
+    - **The replay bills the EDIT's answer to "was there an invoice to
+      supplement", never the answer that is true when the cron arrives** (#3181
+      fix round). These differ, and the difference double-bills. A booking whose
+      primary Xero invoice had not been minted when the edit committed has nothing
+      to supplement, so the edit correctly queues nothing - and the primary
+      invoice, minted later by its own outbox operation from the booking's CURRENT
+      state, then bills the edit itself. A replay re-reading `payment.xeroInvoiceId`
+      hours later finds it set and raises a supplementary invoice for money the
+      primary invoice already carries: on a $500 booking with a $50 guest add, $600
+      of Xero income and a $50 receivable nobody owes, and only because the mint
+      failed. So the edit-time value is frozen on the recovery row
+      (`PaymentRecoveryOperation.hadIssuedXeroInvoice`) and read back; NULL means
+      "not recorded" and raises nothing, because a missing invoice is surfaced by
+      the repair pass as a critical one-click finding and a duplicate one is
+      surfaced by nobody.
+    - **A replay raises no invoice against an ask that was already paid** (#3181
+      fix round). Its webhook has fired and cannot fire again, so a supplementary
+      invoice queued WAITING_PAYMENT on that intent is never released and is
+      cancelled by the 14-day reaper with no invoice raised. While it sits there it
+      makes the operator's signal WORSE: the repair pass reads the anchor as
+      `BLOCKED_BY_XERO_OPERATION` - warning, not auto-appliable, no action, reported
+      as waiting for a payment that has already happened - instead of the critical,
+      one-click `MISSING_SUPPLEMENTARY_INVOICE`.
+    - **The review fork's failure to raise leaves its own durable record** (#3181
+      fix round), rather than relying on the repair pass the ordinary fork relies
+      on. A parked edit's `BookingModification` carries only the readable strands'
+      money, so an edit whose only money-affecting strand was the parked one has
+      `priceDiffCents + changeFeeCents == 0` and the pass's `netAmountCents > 0`
+      gate never looks at it. It writes `booking.editFinancialReview.
+      chargeShareUncollected` on the `xero-invoice` leg with cause
+      `ask-not-raised` - distinct from `ask-closed`, which is an invoice that
+      exists and bills too little, and from `ask-owed-unknown`, which is a
+      recovery row predating `hadIssuedXeroInvoice` and therefore a case where
+      the club cannot tell whether an invoice was owed at all. The three carry
+      DIFFERENT officer instructions and that is why they are three: telling an
+      officer to raise an invoice by hand when the booking's primary invoice may
+      already bill the charge is how the same money gets asked for twice, so
+      `ask-owed-unknown` names the booking-vs-Xero repair pass as the instrument
+      and says not to raise one on the strength of the note.
     - **Every path that settles a share without producing a request leaves a
       durable trace.** A `logger.warn` is not one: nobody goes looking through a
       log stream for money the club is owed. The mint refusing before its own `try`
