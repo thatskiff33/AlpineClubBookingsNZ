@@ -135,21 +135,47 @@ const STATIC_IMPORT =
 const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 /**
- * A `tsx` command: the binary, then the rest of its arguments on that line.
- * The arguments are TOKENISED below rather than parsed by this pattern, which
- * is the whole point — an earlier version encoded the flag shape in the regex,
- * and `tsx --conditions react-server foo.ts` (the space spelling, which is
- * equally safe) then matched NOTHING and vanished from the census instead of
- * being judged. A sweep that silently drops the invocation it cannot parse is
- * worse than no sweep, because it reads as a pass.
+ * The `tsx` binary, and NOTHING ELSE — the arguments are read from the text
+ * after it rather than captured here, and that is the whole point.
+ *
+ * An earlier version encoded the flag shape in the regex, and
+ * `tsx --conditions react-server foo.ts` (the space spelling, equally safe)
+ * then matched NOTHING and vanished from the census instead of being judged.
+ * The version after that captured `((?:[ \t]+\S+)+)` — every argument to the
+ * end of the line — which was greedy: the FIRST `tsx` on a line swallowed a
+ * SECOND one, `matchAll` resumed past it, and only the first command was ever
+ * judged. Measured: appending `; npx tsx scripts/xero-booking-repair.ts` to the
+ * seed line in `scripts/e2e-stack.sh` — a swept file — left this census green,
+ * an unflagged publication of the money-repair CLI that reaches `@/lib/prisma`,
+ * `@/lib/audit`, `@/lib/email`, `@/lib/stripe` and `@/lib/xero`.
+ *
+ * Matching the binary alone fixes that by construction: every occurrence gets
+ * its own scan, so two commands on one line are two invocations with two
+ * independent answers about the flag. A sweep that silently drops the
+ * invocation it cannot parse is worse than no sweep, because it reads as a
+ * pass.
  *
  * The lookbehind lets `./node_modules/.bin/tsx scripts/x.ts` match — the
  * induction runbook's spelling, which runs inside the Compose `migrate` service
  * where the npm wrapper is not the published form — while excluding a filename
  * that merely ends in `.tsx`, and excluding `--loader:.tsx=tsx`, where the
- * esbuild transpile script names the loader rather than the runner.
+ * esbuild transpile script names the loader rather than the runner. The
+ * lookahead requires whitespace after the binary, which is what makes it a
+ * COMMAND WORD rather than a substring: without it the scan below latched onto
+ * `['tsx','ts']` in a docblock and reported the next file named after it.
  */
-const TSX_COMMAND = /(?<![\w.=:-])tsx((?:[ \t]+\S+)+)/g;
+const TSX_BINARY = /(?<![\w.=:-])tsx(?=[ \t])/g;
+
+/**
+ * Where one command ends and the next begins.
+ *
+ * Splitting on these before matching is belt to the lookahead's braces: it
+ * stops one command's argument scan running on into the next command's tokens,
+ * which would let `tsx --conditions=react-server && npx tsx seed.ts` read the
+ * FIRST command's flag as excusing the second. Newlines are here for the same
+ * reason, and a Markdown table's `|` cell separator happens to fall out of it.
+ */
+const COMMAND_SEPARATOR = /\r?\n|&&|\|\||;|\|/;
 
 /**
  * The quoting a token arrives wrapped in, which is not part of the argument.
@@ -273,6 +299,44 @@ function filesIn(directory: string, extension: string): string[] {
     .sort();
 }
 
+/** Files anywhere under one directory whose NAME matches, recursively. */
+function filesNamed(directory: string, pattern: RegExp): string[] {
+  const absolute = path.join(REPO_ROOT, directory);
+  if (!existsSync(absolute)) return [];
+  const out: string[] = [];
+  const visit = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".next") continue;
+        visit(full);
+      } else if (pattern.test(entry.name)) {
+        out.push(full);
+      }
+    }
+  };
+  visit(absolute);
+  return out.sort();
+}
+
+/**
+ * A container definition. Both kinds run commands, and a `tsx` line in one is
+ * as published as a line in a shell script: `docker-compose.yml` is what a new
+ * contributor brings the stack up with, and the Compose `migrate` service is
+ * where the induction runbook's own commands are executed.
+ */
+const CONTAINER_FILE = /^(Dockerfile[\w.-]*|docker-compose[\w.-]*\.ya?ml)$/;
+
+/**
+ * A Vitest file, which is not a published command.
+ *
+ * This census's own fixtures spell out the raw `npx tsx …` form on purpose —
+ * proving the extractor still sees it is the point of them — so sweeping test
+ * files would make the census fail on its own evidence. `walk()` above excludes
+ * them from the CLI roots for the same reason.
+ */
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+
 function cliRoots(): string[] {
   const roots: string[] = [];
   for (const directory of CLI_ROOT_DIRECTORIES) {
@@ -318,9 +382,29 @@ function invocationSources(): string[] {
     ...CLI_ROOTS,
     ...filesUnder("scripts", ".sh"),
     ...filesUnder("measurement", ".sh"),
-    ...filesIn(".github/workflows", ".yml"),
+    // `.mjs`, which publishes commands exactly as a shell script does and was
+    // NOT swept until #3186. The proof it needed to be: this pull request
+    // hand-corrected `npx tsx prisma/seed.ts` to the flagged form in
+    // `measurement/phase2/bin/self-test.mjs`, and a reviewer put that one line
+    // back with the census staying green.
+    ...filesUnder("scripts", ".mjs").filter((file) => !TEST_FILE.test(file)),
+    ...filesUnder("measurement", ".mjs").filter((file) => !TEST_FILE.test(file)),
+    // Recursively, and both spellings of the extension. The workflows are flat
+    // and all `.yml` today; a composite action lives under `.github/actions`,
+    // and a `.yaml` file or a nested directory would otherwise join the tree
+    // unswept and nobody would notice, which is how `e2e/setup` was missed.
+    ...filesUnder(".github/workflows", ".yml"),
+    ...filesUnder(".github/workflows", ".yaml"),
+    ...filesUnder(".github/actions", ".yml"),
+    ...filesUnder(".github/actions", ".yaml"),
+    ...filesNamed(".", CONTAINER_FILE),
+    ...filesNamed("measurement", CONTAINER_FILE),
     ...filesIn(".", ".md"),
+    ...filesIn(".github", ".md"),
     ...filesUnder("docs", ".md"),
+    // Changelog fragments are read by operators at release time and describe
+    // the commands a release changed, so a raw one here is a published raw one.
+    ...filesUnder("changelog.d", ".md"),
     path.join(REPO_ROOT, "package.json"),
     path.join(REPO_ROOT, "prisma.config.ts"),
   ].filter((file) => existsSync(file));
@@ -367,24 +451,32 @@ function tokensRequestReactServer(tokens: string[]): boolean {
 function extractInvocations(source: string, raw: string): Invocation[] {
   const found: Invocation[] = [];
   // Join shell line continuations first, so a command wrapped across lines is
-  // read as the one command it is rather than losing its entrypoint.
+  // read as the one command it is rather than losing its entrypoint. Then split
+  // into one segment per command, so no scan can run past a separator.
   const text = raw.replace(/\\\r?\n[ \t]*/g, " ");
-  for (const match of text.matchAll(TSX_COMMAND)) {
-    const tokens = match[1]
-      .trim()
-      .split(/\s+/)
-      .map((token) => token.replace(TOKEN_EDGE_PUNCTUATION, ""));
-    const entryIndex = tokens.findIndex((token) =>
-      TSX_ENTRYPOINT_TOKEN.test(token),
-    );
-    // No file argument at all: prose about `tsx`, or a flag-only command.
-    // Nothing to judge, and nothing this census can say about it.
-    if (entryIndex === -1) continue;
-    found.push({
-      source,
-      entry: tokens[entryIndex].replace(/^\.\//, ""),
-      hasCondition: tokensRequestReactServer(tokens.slice(0, entryIndex)),
-    });
+  for (const segment of text.split(COMMAND_SEPARATOR)) {
+    // Every occurrence of the binary, each scanned independently from where it
+    // sits. Two `tsx` commands in one segment are two invocations; the greedy
+    // single-capture version this replaced reported only the first.
+    for (const match of segment.matchAll(TSX_BINARY)) {
+      const tokens = segment
+        .slice(match.index + match[0].length)
+        .trim()
+        .split(/\s+/)
+        .map((token) => token.replace(TOKEN_EDGE_PUNCTUATION, ""))
+        .filter((token) => token.length > 0);
+      const entryIndex = tokens.findIndex((token) =>
+        TSX_ENTRYPOINT_TOKEN.test(token),
+      );
+      // No file argument at all: prose about `tsx`, or a flag-only command.
+      // Nothing to judge, and nothing this census can say about it.
+      if (entryIndex === -1) continue;
+      found.push({
+        source,
+        entry: tokens[entryIndex].replace(/^\.\//, ""),
+        hasCondition: tokensRequestReactServer(tokens.slice(0, entryIndex)),
+      });
+    }
   }
   return found;
 }
@@ -448,9 +540,21 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
     // — the commands this whole change publishes — contributed nothing and a
     // script stripped of its flag passed.
     // No `.yml` here: every workflow runs its tooling through `npm run`, so
-    // there is genuinely no direct `tsx` line in one today. They are still
+    // there is genuinely no direct `tsx` line in one today. Same for the
+    // container definitions and the changelog fragments. They are all still
     // swept, so the day one appears it is judged like any other.
-    for (const suffix of ["package.json", "prisma.config.ts", ".sh", ".md"]) {
+    //
+    // `.mjs` IS here (#3186). It is the class this sweep was blind to while a
+    // hand-corrected line in `measurement/phase2/bin/self-test.mjs` was the
+    // only thing keeping a raw seed command out of the tree, and a reviewer
+    // reverted that line with this census staying green.
+    for (const suffix of [
+      "package.json",
+      "prisma.config.ts",
+      ".sh",
+      ".md",
+      ".mjs",
+    ]) {
       expect(
         INVOCATIONS.filter((invocation) => invocation.source.endsWith(suffix)),
         `the sweep found no tsx invocation in any \`${suffix}\` file, so that ` +
@@ -585,6 +689,94 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
       extractInvocations(
         "scripts/synthetic.ts",
         "  npm run xero:booking-repair -- --apply",
+      ),
+    ).toEqual([]);
+  });
+
+  it("judges every `tsx` command on a line, not just the first", () => {
+    // The blind spot #3186 closed, kept as a fixture because it reads as a
+    // pass: the pattern used to capture every argument to the end of the line,
+    // so the FIRST command swallowed the second and `matchAll` resumed past it.
+    // Measured on the real tree — appending this exact command to the seed line
+    // in `scripts/e2e-stack.sh` left the census green, publishing the
+    // money-repair CLI without the flag.
+    expect(
+      extractInvocations(
+        "scripts/synthetic.sh",
+        "npx tsx --conditions=react-server prisma/seed.ts; " +
+          "npx tsx scripts/xero-booking-repair.ts",
+      ),
+    ).toEqual([
+      {
+        source: "scripts/synthetic.sh",
+        entry: "prisma/seed.ts",
+        hasCondition: true,
+      },
+      {
+        source: "scripts/synthetic.sh",
+        entry: "scripts/xero-booking-repair.ts",
+        hasCondition: false,
+      },
+    ]);
+
+    // Every separator, and the ordinary prose case with no separator at all.
+    for (const joiner of [" && ", " || ", " | ", "; ", " or "]) {
+      const both = extractInvocations(
+        "scripts/synthetic.sh",
+        `npx tsx --conditions=react-server prisma/seed.ts${joiner}npx tsx scripts/xero-booking-repair.ts`,
+      );
+      expect(both.map((invocation) => invocation.hasCondition), joiner).toEqual([
+        true,
+        false,
+      ]);
+    }
+
+    // And the flag on the FIRST command must not excuse a second that lacks
+    // one, which is the failure mode a single greedy match produced.
+    expect(
+      extractInvocations(
+        "scripts/synthetic.sh",
+        "npx tsx --conditions=react-server && npx tsx prisma/seed.ts",
+      ),
+    ).toEqual([
+      {
+        source: "scripts/synthetic.sh",
+        entry: "prisma/seed.ts",
+        hasCondition: false,
+      },
+    ]);
+  });
+
+  it("does not read a word ending in `tsx` as the runner", () => {
+    // The false positive the whitespace lookahead exists to stop, found while
+    // making the scan per-occurrence: `scripts/lib/file-size-budget.ts` has a
+    // docblock listing esbuild loader names, and without the lookahead the scan
+    // started at `tsx` inside that list and reported the next file named on the
+    // line as though somebody had published a command to run it.
+    expect(
+      extractInvocations(
+        "scripts/synthetic.ts",
+        "// `['tsx','ts','jsx','js']` and `next.config.ts` override nothing",
+      ),
+    ).toEqual([]);
+    // The two spellings that must keep matching, either side of that.
+    expect(
+      extractInvocations(
+        "docs/synthetic.md",
+        "./node_modules/.bin/tsx --conditions=react-server scripts/induction-baseline.ts",
+      ),
+    ).toEqual([
+      {
+        source: "docs/synthetic.md",
+        entry: "scripts/induction-baseline.ts",
+        hasCondition: true,
+      },
+    ]);
+    // The esbuild loader argument names the loader, not the runner.
+    expect(
+      extractInvocations(
+        "scripts/synthetic.ts",
+        "npx -y esbuild vendor/generate.tsx --loader:.tsx=tsx --outfile=out.mjs",
       ),
     ).toEqual([]);
   });
