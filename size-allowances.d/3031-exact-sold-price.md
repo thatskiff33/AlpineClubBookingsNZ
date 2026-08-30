@@ -36,7 +36,7 @@ reason: the file that must NOT be split, and the file's own header says why in a
   `stored-sold-price-evidence.ts`.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2522
+lines: 2490
 reason: `PricingResult` becomes a discriminated union, so the priced fields move
   behind `PricedModification` and every reader narrows once — plus
   `requiredNightPriceCents`, the refusal that replaces `perNightCents[k] ?? 0`
@@ -54,7 +54,7 @@ reason: the apply path narrows the pricing result once and refuses the review
   lane re-deriving it.
 
 file: src/lib/booking-guest-removal-service.ts
-lines: 1148
+lines: 1108
 reason: the evidence gate, which is the whole of E10: a removal's credit was
   derived as the difference between two repricings of the REMAINING guests, so a
   remaining guest with no stored price was revalued at today's rate and that
@@ -68,13 +68,13 @@ reason: the evidence gate, which is the whole of E10: a removal's credit was
   it would otherwise break is seventy lines further down the same function.
 
 file: src/lib/booking-date-modification-service.ts
-lines: 1817
+lines: 1777
 reason: eleven lines. `perNightCents[k] ?? 0` becomes a refusal in the writer
   that persists the new range's night rows — a magic zero there is a real sold
   price of nothing on a real night, which the next edit reads back as evidence.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2083
+lines: 2050
 reason: the preview consumes the same discriminated result as the save and
   refuses with the same code and sentence, which is the issue's own quote/apply
   parity requirement. It cannot be lifted out without moving the plan call with
