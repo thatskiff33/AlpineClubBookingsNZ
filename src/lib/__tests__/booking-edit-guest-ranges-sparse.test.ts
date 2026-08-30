@@ -1432,10 +1432,11 @@ describe("#2736 a sparse stay", () => {
 
       // AND ONCE EACH. `g1` is in both lists here — exact at the gate with a
       // night set that moves, so it is a destroyed-evidence strand too, and
-      // unpriceable once composed. A naive concatenation emits it twice with two
-      // different causes and two different night sets, which hash to two keys
-      // and raise TWO review tasks for one guest. The unpriceable occurrence is
-      // the one that survives, because it says why no money moved.
+      // unpriceable once composed. A naive concatenation emits it twice, under
+      // the same booking, strand, night sets and stored evidence, differing in
+      // `cause` alone — which is enough to hash to two occurrence keys and raise
+      // TWO review tasks for one guest. The unpriceable occurrence is the one
+      // that survives, because it says why no money moved.
       expect(
         occurrences.filter((occurrence) => occurrence.bookingGuestId === "g1"),
       ).toHaveLength(1);

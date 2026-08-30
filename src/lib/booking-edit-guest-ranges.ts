@@ -1459,10 +1459,12 @@ export function buildInProgressGuestRangePlan(
    * A strand the caller has already named is NOT appended again. The two lists
    * genuinely overlap at the second exit - a strand can be exact at the gate
    * with a moving night set (so `destroyedButReadable`) and still fail to
-   * reconcile once composed (so unpriceable) - and two occurrences for one
-   * strand carry different causes and different night sets, so they hash to
-   * different keys and raise TWO tasks for one guest. The unpriceable occurrence
-   * wins, because it is the one that says why no money moved.
+   * reconcile once composed (so unpriceable). Both occurrences would carry the
+   * same booking, the same strand, the same night sets and the same stored
+   * evidence, and differ in `cause` alone - which is enough, because `cause` is
+   * part of the occurrence key's material (`edit-financial-review-occurrence.ts`).
+   * So they hash to two keys and raise TWO tasks for one guest. The unpriceable
+   * occurrence wins, because it is the one that says why no money moved.
    */
   const parkedOccurrences = (
     unpriceable: readonly EditFinancialReviewOccurrence[]
