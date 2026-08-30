@@ -462,3 +462,209 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     ).not.toBeDisabled();
   });
 });
+
+/**
+ * #3191: the settle screen asks what a booking's unpriced nights sold for, and
+ * #3195: the $0 refusal says what to do instead.
+ *
+ * MUTATION PROOF. Pre-fill a night box from the remaining balance and "fills
+ * nothing in" fails. Enable the confirm button on a half-filled set and "will
+ * not settle a half-answered set of nights" fails. Drop the zero sentence and
+ * "explains a $0 settlement instead of just refusing to move" fails. Render the
+ * section on a row that has no blanks and "asks nothing where there is nothing
+ * to fill in" fails.
+ */
+const REVIEW_WITH_BLANKS = {
+  ...REVIEW_TASK,
+  unpricedNights: {
+    dates: ["2026-08-11", "2026-08-12"],
+    knownNightTotalCents: 6000,
+    storedGuestTotalCents: 12000,
+  },
+};
+
+function nightBox(date: string) {
+  return screen.getByLabelText(
+    date === "2026-08-11" ? "11 Aug 2026" : "12 Aug 2026",
+  );
+}
+
+async function openSettleDialog(task: unknown, control: string) {
+  await renderQueue({ tasks: [task], viewerCanViewBookings: true });
+  fireEvent.click(screen.getByRole("button", { name: control }));
+  await waitFor(() =>
+    expect(screen.getByTestId("unpriced-night-price-fields")).toBeInTheDocument(),
+  );
+}
+
+function postBody(fetchMock: { mock: { calls: unknown[][] } }) {
+  const post = fetchMock.mock.calls.find((call) => call[1] !== undefined);
+  return JSON.parse((post?.[1] as { body: string }).body) as Record<
+    string,
+    unknown
+  >;
+}
+
+describe("recording what the unpriced nights sold for (#3191)", () => {
+  it("asks nothing where there is nothing to fill in", async () => {
+    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record the adjustment" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("unpriced-night-price-fields"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fills nothing in, and cannot state a target until the settlement is known", async () => {
+    await openSettleDialog(REVIEW_WITH_BLANKS, "Record the adjustment");
+
+    // Nothing is offered as a starting figure. A box that arrives with a number
+    // in it is a derivation an officer can accept by pressing a button, which is
+    // exactly what INV-MOD-028 forbids.
+    expect(nightBox("2026-08-11")).toHaveValue("");
+    expect(nightBox("2026-08-12")).toHaveValue("");
+    expect(
+      screen.getByTestId("unpriced-night-price-target-unknown"),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the same boxes on the no-adjustment path, where most parked stays end", async () => {
+    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
+
+    expect(nightBox("2026-08-11")).toBeInTheDocument();
+    // Nothing moves, so the target is known immediately: the nights make up the
+    // difference between what is already priced and the stored total.
+    expect(
+      screen.queryByTestId("unpriced-night-price-target-unknown"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("will not settle a half-answered set of nights", async () => {
+    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
+    fireEvent.change(screen.getByLabelText("Note (required)"), {
+      target: { value: "Nothing owed either way." },
+    });
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "60.00" } });
+
+    expect(
+      screen.getByRole("button", { name: "Close with no adjustment" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByTestId("unpriced-night-price-reconciliation"),
+    ).toHaveTextContent(/every night listed, or leave them all blank/);
+  });
+
+  it("settles once the figures add up, and posts exactly what was typed", async () => {
+    const fetchMock = stubLoad({
+      tasks: [REVIEW_WITH_BLANKS],
+      viewerCanViewBookings: true,
+    });
+    render(<ManualRefundTaskQueue />);
+    await waitFor(() =>
+      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("unpriced-night-price-fields"),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Note (required)"), {
+      target: { value: "Nothing owed either way." },
+    });
+    // $120.00 stored, $60.00 already priced, nothing moving: $60.00 to place.
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "25.00" } });
+
+    const confirm = screen.getByRole("button", {
+      name: "Close with no adjustment",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(1),
+    );
+    expect(postBody(fetchMock).recordedNightPrices).toEqual([
+      { date: "2026-08-11", priceCents: 3500 },
+      { date: "2026-08-12", priceCents: 2500 },
+    ]);
+  });
+
+  it("posts no night prices at all when the boxes were left alone", async () => {
+    // THE CONTROL. Leaving them blank must send the body this screen sent before
+    // #3191, so an officer who cannot produce a breakdown is never held up.
+    const fetchMock = stubLoad({
+      tasks: [REVIEW_WITH_BLANKS],
+      viewerCanViewBookings: true,
+    });
+    render(<ManualRefundTaskQueue />);
+    await waitFor(() =>
+      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("unpriced-night-price-fields"),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Note (required)"), {
+      target: { value: "Nothing owed either way." },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close with no adjustment" }),
+    );
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.length).toBeGreaterThan(1),
+    );
+    expect(postBody(fetchMock).recordedNightPrices).toBeUndefined();
+  });
+});
+
+describe("a $0 settlement is refused in words that help (#3195)", () => {
+  it("explains a $0 settlement instead of just refusing to move", async () => {
+    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record the adjustment" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "0.00" },
+    });
+
+    const refusal = await screen.findByTestId(
+      "manual-refund-task-zero-amount-refusal",
+    );
+    // It names the control the officer can actually see on this row.
+    expect(refusal).toHaveTextContent(/close the review with no adjustment/);
+    expect(
+      screen.getByRole("button", { name: "Settle the review" }),
+    ).toBeDisabled();
+  });
+
+  it("says nothing about zero when a real amount is typed", async () => {
+    // THE CONTROL: the sentence is about a zero, not a standing warning.
+    await renderQueue({ tasks: [REVIEW_TASK], viewerCanViewBookings: true });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Record the adjustment" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Amount")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Amount"), {
+      target: { value: "45.00" },
+    });
+
+    expect(
+      screen.queryByTestId("manual-refund-task-zero-amount-refusal"),
+    ).not.toBeInTheDocument();
+  });
+});

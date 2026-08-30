@@ -20,6 +20,11 @@ const mocks = vi.hoisted(() => ({
   manualRefundTaskFindUnique: vi.fn(),
   manualRefundTaskUpdateMany: vi.fn(),
   memberCreditFindUnique: vi.fn(),
+  // #3191: the guest strand the per-night repair reads and writes, on the same
+  // transaction as the claim.
+  bookingGuestFindUnique: vi.fn(),
+  bookingGuestUpdateMany: vi.fn(),
+  bookingGuestNightUpdateMany: vi.fn(),
   applyLocalRefundAllocation: vi.fn(),
   createAuditLog: vi.fn(),
   recordBookingEvent: vi.fn(),
@@ -112,6 +117,14 @@ const tx = {
   memberCredit: {
     findUnique: (...a: unknown[]) => mocks.memberCreditFindUnique(...a),
   },
+  // #3191: the strand whose blank nights a settle may fill in.
+  bookingGuest: {
+    findUnique: (...a: unknown[]) => mocks.bookingGuestFindUnique(...a),
+    updateMany: (...a: unknown[]) => mocks.bookingGuestUpdateMany(...a),
+  },
+  bookingGuestNight: {
+    updateMany: (...a: unknown[]) => mocks.bookingGuestNightUpdateMany(...a),
+  },
 };
 
 beforeEach(() => {
@@ -155,6 +168,21 @@ beforeEach(() => {
   mocks.queueXeroBookingEditSettlement.mockResolvedValue({
     supplementaryInvoice: "none",
   });
+  /*
+    #3191: by default the strand has ONE blank night out of two, so a settle that
+    sends figures has something to fill in. Every write reports one row claimed;
+    the race cases override that.
+  */
+  mocks.bookingGuestFindUnique.mockResolvedValue({
+    id: "guest-1",
+    priceCents: 10_000,
+    nights: [
+      { stayDate: new Date("2026-08-01T00:00:00.000Z"), priceCents: 4_000 },
+      { stayDate: new Date("2026-08-02T00:00:00.000Z"), priceCents: null },
+    ],
+  });
+  mocks.bookingGuestUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.bookingGuestNightUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("resolveManualRefundTask", () => {
@@ -1272,5 +1300,205 @@ describe("#3032 - routing a confirmed review amount through canonical settlement
     expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
     expect(mocks.applyLocalRefundAllocation).not.toHaveBeenCalled();
     expect(mocks.enqueueEditFinancialReviewRefundRecovery).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3191 (epic #2797): settling a review also records what its unpriced nights
+ * sold for.
+ *
+ * What these cases are about is the ORDER and the CONDITIONS, which is what this
+ * module owns - the arithmetic and the fences are proved in
+ * `stored-night-price-repair.test.ts` against the data they change. The property
+ * that matters here is the one every writer on this path shares: a refusal
+ * happens BEFORE the claim, so the task is left OPEN, and a write happens AFTER
+ * it, so a lost claim writes nothing.
+ */
+describe("recording per-night amounts while settling (#3191)", () => {
+  const nightPrices = [{ date: "2026-08-02" as const, priceCents: 6_000 }];
+
+  it("writes the nights, re-bases the strand, and audits it as its own act", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the 2024 rate card the member was quoted from.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 4_500,
+      direction: "REFUND_TO_MEMBER",
+      // The one blank night has to absorb exactly what is left: the strand is
+      // stored at $100.00, $45.00 of it is going back to the member, and $40.00
+      // of it is already on the other night. $15.00.
+      recordedNightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+    });
+
+    expect(mocks.bookingGuestNightUpdateMany).toHaveBeenCalledWith({
+      where: {
+        bookingGuestId: "guest-1",
+        stayDate: new Date("2026-08-02T00:00:00.000Z"),
+        priceCents: null,
+      },
+      data: { priceCents: 1_500 },
+    });
+    expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 5_500 },
+    });
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.stored-night-price.record",
+        category: "payment",
+        severity: "important",
+        entityType: "BookingGuest",
+        entityId: "guest-1",
+        metadata: expect.objectContaining({
+          previousGuestTotalCents: 10_000,
+          newGuestTotalCents: 5_500,
+          nightPrices: [{ date: "2026-08-02", priceCents: 1_500 }],
+        }),
+      }),
+      tx,
+    );
+  });
+
+  it("records them on a DISMISSAL too, where nothing moves and the total does not", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "dismissed",
+      note: "Nothing owed either way; the nights were already paid for.",
+      actingMemberId: "admin-1",
+      recordedNightPrices: nightPrices,
+    });
+
+    expect(mocks.bookingGuestUpdateMany).toHaveBeenCalledWith({
+      where: { id: "guest-1", priceCents: 10_000 },
+      data: { priceCents: 10_000 },
+    });
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.stored-night-price.record",
+        metadata: expect.objectContaining({ resolution: "dismissed" }),
+      }),
+      tx,
+    );
+  });
+
+  it("refuses figures that do not reconcile BEFORE the task is claimed", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "dismissed",
+        note: "Nothing owed either way.",
+        actingMemberId: "admin-1",
+        recordedNightPrices: [{ date: "2026-08-02", priceCents: 5_999 }],
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    // The task is untouched and still OPEN, so its money question survives.
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a task with no strand to price rather than guessing one", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      ...editReviewTask(),
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      amountCents: 9_000,
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "cash handed back",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 9_000,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: nightPrices,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("settles exactly as before when no figures are sent", async () => {
+    // THE CONTROL. Leaving the boxes blank is a valid answer, and it must reach
+    // the strand not at all - a settle that read or wrote the guest rows anyway
+    // would make this an every-settle change rather than an opt-in repair.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await resolveManualRefundTask({
+      taskId: "task-1",
+      resolution: "completed",
+      note: "Priced from the booking's payment history.",
+      actingMemberId: "admin-1",
+      confirmedAmountCents: 4_500,
+      direction: "REFUND_TO_MEMBER",
+      recordedNightPrices: null,
+    });
+
+    expect(mocks.bookingGuestFindUnique).not.toHaveBeenCalled();
+    expect(mocks.bookingGuestNightUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.bookingGuestUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.createAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking-payment.stored-night-price.record",
+      }),
+      tx,
+    );
+  });
+
+  it("refuses a $0 settlement in words that name the control to use instead (#3195)", async () => {
+    mocks.manualRefundTaskFindUnique.mockResolvedValue(editReviewTask());
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Nothing owed.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 0,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toThrow(/close the review with no adjustment instead/);
+    expect(mocks.manualRefundTaskUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("names DISMISS rather than 'no adjustment' on a legacy hand-back (#3195)", async () => {
+    // THE CONTROL for the sentence above: the two kinds carry differently-named
+    // controls, and naming the wrong one is the same dead end as saying nothing.
+    //
+    // Raised with NO amount, which #2971 made representable on a hand-back: a
+    // legacy row that already carries one refuses a differing figure as a stale
+    // screen first, so that path never reaches the zero rule at all.
+    mocks.manualRefundTaskFindUnique.mockResolvedValue({
+      id: "task-1",
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      amountCents: null,
+      raisedAmountCents: null,
+      kind: ManualRefundTaskKind.CANCELLED_BOOKING_HAND_BACK,
+      status: ManualRefundTaskStatus.OPEN,
+      payment: { source: PaymentSource.INTERNET_BANKING },
+      reviewContext: null,
+      booking: { memberId: "member-1", status: "CANCELLED", payment: null },
+    });
+
+    await expect(
+      resolveManualRefundTask({
+        taskId: "task-1",
+        resolution: "completed",
+        note: "Nothing owed.",
+        actingMemberId: "admin-1",
+        confirmedAmountCents: 0,
+        direction: "REFUND_TO_MEMBER",
+        recordedNightPrices: null,
+      }),
+    ).rejects.toThrow(/dismiss the task with a note instead/);
   });
 });

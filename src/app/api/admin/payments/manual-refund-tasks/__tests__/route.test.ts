@@ -38,6 +38,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
   manualRefundTaskFindMany: vi.fn(),
+  // #3191: the strands whose blank night prices the queue offers to fill in.
+  bookingGuestFindMany: vi.fn(),
   loggerError: vi.fn(),
   hasAdminAreaAccess: vi.fn(),
 }));
@@ -49,6 +51,7 @@ vi.mock("@/lib/admin-permissions", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     manualRefundTask: { findMany: mocks.manualRefundTaskFindMany },
+    bookingGuest: { findMany: mocks.bookingGuestFindMany },
   },
 }));
 vi.mock("@/lib/logger", () => ({
@@ -184,6 +187,9 @@ beforeEach(() => {
   mocks.manualRefundTaskFindMany
     .mockResolvedValueOnce([OPEN_ROW])
     .mockResolvedValueOnce([AUTO_ROW]);
+  // #3191: no strand has a blank night unless a case says otherwise, which is
+  // the ordinary shape — most rows in this queue offer nothing to fill in.
+  mocks.bookingGuestFindMany.mockResolvedValue([]);
 });
 
 describe("GET manual-refund-tasks (#2262, #2750)", () => {
@@ -648,5 +654,93 @@ describe("the booking link an owner holds regardless of admin access (#3033)", (
       deletedAt: true,
     });
     expect(autoRefunded.select.booking.select).not.toHaveProperty("memberId");
+  });
+});
+
+/**
+ * #3191: the nights a review's guest holds with no stored price, and the two
+ * totals the officer's figures have to reconcile against.
+ *
+ * MUTATION PROOF. Send the summary keyed by guest rather than by task and "keeps
+ * the guest-strand id off the wire" fails; drop the `.catch` around the read and
+ * "answers the queue without them when the strand read fails" fails.
+ */
+describe("unpriced nights on a review row (#3191)", () => {
+  const STRAND = {
+    id: "guest-strand-1",
+    priceCents: 12000,
+    nights: [
+      { stayDate: new Date("2026-08-10T00:00:00.000Z"), priceCents: 6000 },
+      { stayDate: new Date("2026-08-11T00:00:00.000Z"), priceCents: null },
+    ],
+  };
+
+  beforeEach(() => {
+    mocks.manualRefundTaskFindMany
+      .mockReset()
+      .mockResolvedValueOnce([REVIEW_ROW])
+      .mockResolvedValueOnce([]);
+  });
+
+  it("sends the blank nights and the totals they must reconcile to", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([STRAND]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: { unpricedNights: Record<string, unknown> | null }[];
+    };
+
+    expect(body.tasks[0].unpricedNights).toEqual({
+      dates: ["2026-08-11"],
+      knownNightTotalCents: 6000,
+      storedGuestTotalCents: 12000,
+    });
+  });
+
+  it("keeps the guest-strand id off the wire even while sending its nights", async () => {
+    mocks.bookingGuestFindMany.mockResolvedValue([STRAND]);
+
+    const serialised = JSON.stringify(await (await GET()).json());
+
+    expect(serialised).toContain("unpricedNights");
+    expect(serialised).not.toContain("guest-strand-1");
+    expect(serialised).not.toContain("bookingGuestId");
+  });
+
+  it("offers nothing where the strand has no blank night", async () => {
+    // THE CONTROL. A row with nothing to repair must send null rather than an
+    // empty list, because the screen renders the section on presence alone.
+    mocks.bookingGuestFindMany.mockResolvedValue([
+      {
+        ...STRAND,
+        nights: [
+          { stayDate: new Date("2026-08-10T00:00:00.000Z"), priceCents: 6000 },
+          { stayDate: new Date("2026-08-11T00:00:00.000Z"), priceCents: 6000 },
+        ],
+      },
+    ]);
+
+    const body = (await (await GET()).json()) as {
+      tasks: { unpricedNights: unknown }[];
+    };
+    expect(body.tasks[0].unpricedNights).toBeNull();
+  });
+
+  it("answers the queue without them when the strand read fails", async () => {
+    /*
+      Fail-closed and on its own. The money work on this card is unaffected by a
+      repair it cannot offer, and blanking the queue over a secondary read would
+      take a list of money the club owes members off the screen.
+    */
+    mocks.bookingGuestFindMany.mockRejectedValue(new Error("boom"));
+
+    const response = await GET();
+    const body = (await response.json()) as {
+      tasks: { id: string; unpricedNights: unknown }[];
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.tasks).toHaveLength(1);
+    expect(body.tasks[0].unpricedNights).toBeNull();
+    expect(mocks.loggerError).toHaveBeenCalled();
   });
 });
