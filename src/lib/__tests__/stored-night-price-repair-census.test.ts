@@ -22,7 +22,7 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  * has none, so it is precisely where an accidental reconstruction would undo the
  * epic".
  *
- * So this file asks two questions of the tree itself:
+ * So this file asks three questions of the tree itself:
  *
  *  1. **Who may turn an existing `BookingGuestNight` row's price into a
  *     number?** Exactly one module. Every other production writer of that table
@@ -35,7 +35,15 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  *     A division, a rounding, a split helper, an averaging pass. It should not:
  *     the officer's figures are added up and compared, never derived. A `?? 0` is
  *     included because a defaulted zero is the magic value this epic exists to
- *     remove.
+ *     remove. "This feature" means the three feature files AND the whole of the
+ *     settle screen, minus one published five-line money-display exemption -
+ *     see `SCOPED_FILE` for what a marked night-price REGION was measured to be
+ *     worth instead.
+ *  3. **Can anything outside this feature reach the figure a remainder fill
+ *     needs?** `unpricedNightTargetCents` is the single definition of what the
+ *     blanks must come to, and a module holding that number can subtract the
+ *     officer's typing from it. Question 2 stops the arithmetic being lifted one
+ *     LINE out of the scanned code; this stops it being lifted one MODULE out.
  *
  * ## Why the source is read with comments and strings STRIPPED
  *
@@ -63,7 +71,8 @@ import { stripCommentsAndStrings } from "@/lib/__tests__/support/strip-comments"
  * exemptions on day one, and an exemption list for an operator is the shape
  * that rots fastest. It would also be trivially evaded - `>>`, a `reduce`, a
  * helper one module away - because the property is about the RESULT, not about
- * the spelling.
+ * the spelling. (The last of those three is what question 3 above closes: the
+ * helper can still be written, but it cannot get the target.)
  *
  * So that half is a BEHAVIOUR test and not a regex:
  * `manual-refund-task-queue-financial-review.test.tsx` -> "no control on this
