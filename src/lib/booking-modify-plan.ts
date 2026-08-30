@@ -108,6 +108,11 @@ import {
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
+  preCheckInEditEvidence,
+  preservedNightPrices,
+  type PreCheckInEditStrand,
+} from "@/lib/stored-sold-price-evidence";
+import {
   isOperationallyPresentConsent,
   type MemberGuestAddActor,
   type MemberGuestConsentColumns,
@@ -1316,7 +1321,34 @@ export type PricingResult =
    * there is still nothing here a caller could read an adjustment off.
    */
   | (FinancialReviewRequired & {
-      parkedPlan: ParkedEditStructuralPlan;
+      /**
+       * The in-progress planner's structural plan, or `null` when the parked
+       * edit is a PRE-CHECK-IN one (#3166) and the ordinary writer branch of
+       * `applyGuestChanges` is what commits it. It is the writer selector, and
+       * `parkedGuestRows` below is what that writer is handed either way — so
+       * no caller has to know which kind of park it is holding in order to
+       * write the right rows.
+       */
+      parkedPlan: ParkedEditStructuralPlan | null;
+      /**
+       * #3166: the guest rows a parked edit writes, ALWAYS PRESENT and always
+       * sparse-capable, in the order the writer indexes — every existing
+       * remaining strand in booking order, then every added guest in request
+       * order. Composed here rather than at the call site so the in-progress
+       * park and the pre-check-in park cannot compose it two different ways
+       * (`INV-SSOT`).
+       *
+       * It carries NO booking-level total, exactly as
+       * `ParkedEditStructuralPlan` does not: what this edit does to the
+       * booking's money is the question the OPEN review task exists to answer.
+       */
+      parkedGuestRows: {
+        guests: Array<{
+          priceCents: number;
+          perNightCents: (number | null)[];
+          nightDates: Date[];
+        }>;
+      };
       capacityOverridden: boolean;
     });
 
@@ -1750,6 +1782,7 @@ export async function calculateModifiedPricing(
       kind: "financial_review_required",
       occurrences: parkedOccurrences,
       parkedPlan,
+      parkedGuestRows: parkedPriceBreakdown(parkedPlan),
       capacityOverridden,
     };
   }
@@ -1783,6 +1816,137 @@ export async function calculateModifiedPricing(
       throw error;
     }
     throw new ApiError("No season rate found for the requested dates", 400);
+  }
+
+  /**
+   * #3166 (epic #2797): THE SAME EVIDENCE GATE, ON THE PATH MEMBERS ACTUALLY
+   * USE — every edit to a booking that has not started yet.
+   *
+   * Until this existed the gate above ran only for a stay already under way, so
+   * the same booking with the same defect in its data got opposite answers
+   * depending on which side of check-in the edit landed on — and the wrong
+   * answer was the common case. The ordinary pricing pass just above values any
+   * night without a usable stored row at today's season rate, and
+   * `syncGuestNights` then writes that number into `BookingGuestNight.priceCents`,
+   * where the NEXT edit reads it back as evidence of what the member paid. That
+   * write-back is the corruption mechanism this epic exists to remove; it is not
+   * merely a wrong figure for one edit.
+   *
+   * ## Why it is judged HERE, after the pricing pass rather than before it
+   *
+   * Because the pass is what decides which nights each strand ends up holding,
+   * and the gate must judge THE EDIT THAT WILL BE WRITTEN rather than a second
+   * derivation of it: `priceBreakdown.guests[i].nightDates` is the array
+   * `syncGuestNights` consumes. Re-deriving the night set here would be a second
+   * answer to a question already answered (`INV-SSOT`), and a divergence between
+   * the two would be silent.
+   *
+   * The cost is stated rather than hidden: unlike the in-progress branch, an
+   * unpriceable pre-check-in edit still pays for a season lookup, and a booking
+   * whose nights fall outside every active season still throws
+   * "No season rate found" from the pass above instead of parking. Both are
+   * exactly what this path did before, so neither is a regression — and pricing
+   * first is what lets an ADDED guest be charged the real current rate on a
+   * parked edit, which is the one amount a parked edit legitimately produces.
+   *
+   * ## What the amounts become
+   *
+   * Nothing computed above reaches the database on this branch. Each existing
+   * strand keeps its stored `BookingGuest.priceCents` and every night it can
+   * still account for, byte for byte; every other night is written `NULL`. An
+   * added guest keeps the price they are genuinely being charged. The booking's
+   * own totals do not move, no promotion is re-run, no change fee is charged and
+   * no settlement option is computed — the caller reads all of that off the
+   * `financial_review_required` branch, exactly as it does for an in-progress
+   * park.
+   */
+  if (!inProgressPlan) {
+    const storedGuestById = new Map(
+      booking.guests.map((guest) => [guest.id, guest]),
+    );
+    const removeSetForEvidence = new Set(removeGuestIds ?? []);
+    const strands: PreCheckInEditStrand[] = [];
+    guestsForPricing.forEach((guest, index) => {
+      const bookingGuestId = guest.bookingGuestId;
+      if (!bookingGuestId) return;
+      const stored = storedGuestById.get(bookingGuestId);
+      if (!stored) return;
+      strands.push({
+        bookingGuestId,
+        guestTotalCents: stored.priceCents,
+        stayStart: stored.stayStart,
+        stayEnd: stored.stayEnd,
+        nights: stored.nights,
+        proposedNightDates: priceBreakdown.guests[index]?.nightDates ?? [],
+      });
+    });
+    for (const guest of booking.guests) {
+      if (!removeSetForEvidence.has(guest.id)) continue;
+      strands.push({
+        bookingGuestId: guest.id,
+        guestTotalCents: guest.priceCents,
+        stayStart: guest.stayStart,
+        stayEnd: guest.stayEnd,
+        nights: guest.nights,
+        proposedNightDates: [],
+        // The ordinary writer branch DELETES a removed guest's row, and its
+        // night rows cascade with it — so an exact strand leaving a parked edit
+        // is the one place a number the system could have known is about to
+        // stop existing.
+        rowsDestroyed: true,
+      });
+    }
+    const evidence = preCheckInEditEvidence({
+      bookingId: booking.id,
+      booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
+      strands,
+    });
+    if (evidence.occurrences.length > 0) {
+      return {
+        kind: "financial_review_required",
+        occurrences: evidence.occurrences,
+        // NULL, and that is the writer selector: this edit commits through the
+        // ordinary branch of `applyGuestChanges`, which is the branch that
+        // knows about member links, consent columns, other-club flags and
+        // guest removal. The in-progress branch knows none of them.
+        parkedPlan: null,
+        parkedGuestRows: {
+          guests: priceBreakdown.guests.map((priced, index) => {
+            const bookingGuestId =
+              guestsForPricing[index]?.bookingGuestId ?? null;
+            if (!bookingGuestId) {
+              // An ADDED guest is genuinely being bought right now, at a price
+              // the pricing engine just produced. Spread so the resolved
+              // rate-type snapshot rides along to the row creation.
+              return { ...priced, perNightCents: [...priced.perNightCents] };
+            }
+            const stored = storedGuestById.get(bookingGuestId);
+            if (!stored) {
+              throw new Error(
+                `Parked edit has no stored guest for ${bookingGuestId} (#3166)`,
+              );
+            }
+            return {
+              // The STORED total, unchanged. Not a recomputed one, not a delta,
+              // not a zero: how much this edit alters it is the question the
+              // OPEN task exists to answer.
+              priceCents: stored.priceCents,
+              perNightCents: preservedNightPrices(
+                evidence.soldNightPriceByGuestId.get(bookingGuestId),
+                priced.nightDates,
+              ),
+              nightDates: priced.nightDates,
+              // `rateMembershipTypeId` is deliberately NOT carried through for
+              // an existing strand. `rateSnapshotUpdateForRepricedGuest` writes
+              // whatever it finds here onto the row, and a parked edit resolved
+              // no rate it charged anybody — so leaving it absent is what keeps
+              // the stored snapshot untouched along with the stored money.
+            };
+          }),
+        },
+        capacityOverridden,
+      };
+    }
   }
 
   const newTotalPriceCents = priceBreakdown.totalPriceCents;

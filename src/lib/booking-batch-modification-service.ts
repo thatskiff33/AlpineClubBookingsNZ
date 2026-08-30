@@ -22,7 +22,6 @@ import {
   calculateModificationChangeFee,
   calculateModifiedPricing,
   loadActiveSeasonRates,
-  parkedPriceBreakdown,
   prepareGuestPlan,
   resolveGuestNameUpdates,
   resolveTargetDates,
@@ -977,7 +976,13 @@ export async function modifyBookingBatch({
       priceBreakdown:
         pricingResult.kind === "priced"
           ? pricingResult.priceBreakdown
-          : parkedPriceBreakdown(pricingResult.parkedPlan),
+          : pricingResult.parkedGuestRows,
+      // #3166: NULL on a pre-check-in park, which selects the ORDINARY writer
+      // branch below — the one that knows about member links, consent columns,
+      // other-club flags and guest removal. An in-progress park still carries
+      // its plan and still takes the in-progress branch. One field decides which
+      // writer runs; `parkedGuestRows` above is what that writer is handed
+      // either way, so neither branch composes its own rows.
       inProgressPlan:
         pricingResult.kind === "priced"
           ? pricingResult.inProgressPlan

@@ -710,7 +710,11 @@ describe("calculateModifiedPricing in-progress per-night breakdown (#2736)", () 
     if (result.kind !== "financial_review_required") return;
     // And it comes back with the beds, so the caller can commit the structural
     // half — which is the whole difference between parking and refusing.
-    expect(result.parkedPlan.proposedExistingGuests).toHaveLength(1);
+    // #3166 makes `parkedPlan` nullable (a pre-check-in park writes through the
+    // ordinary branch and carries none); this case is an IN-PROGRESS park, so it
+    // must still carry one — asserted rather than narrowed away.
+    expect(result.parkedPlan).not.toBeNull();
+    expect(result.parkedPlan?.proposedExistingGuests).toHaveLength(1);
   });
 });
 
