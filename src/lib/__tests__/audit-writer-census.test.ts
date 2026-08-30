@@ -1265,7 +1265,7 @@ describe("audit writer census (#2581)", { timeout: 180_000 }, () => {
     // disjoint and all unpinned — upstream's club-time and environment-safety
     // writers plus this branch's seven communication writers. 462 sites
     // measured minus 127 pinned; `pinned` is unchanged on both sides.
-    ).toEqual({ pinned: 127, unpinned: 335 });
+    ).toEqual({ pinned: 127, unpinned: 336 });
   });
 
   it("pins which classified writers a MEMBER can now see about themselves", () => {

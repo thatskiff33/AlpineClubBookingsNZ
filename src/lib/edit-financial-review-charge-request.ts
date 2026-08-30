@@ -10,6 +10,7 @@ import {
   type Prisma,
 } from "@prisma/client";
 
+import { createAuditLog } from "@/lib/audit";
 import { parseEditFinancialReviewContext } from "@/lib/edit-financial-review-context";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -36,6 +37,10 @@ import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-o
  *     shares and never incremented.
  *   * WHAT THE REQUEST IS - `findEditReviewChargeRequest` on the card side and
  *     `hasIssuedSupplementaryInvoice` on the invoice side, both keyed on the edit.
+ *   * WHAT COULD NOT BE ASKED FOR - `recordUncollectedEditReviewChargeShare`, the
+ *     durable record that a settled share met a request it could not join. It
+ *     sits here rather than beside the writes because it is a fact ABOUT the
+ *     request, and because a `logger.warn` is not a record anybody can find.
  *   * WHAT XERO IS BILLING - `restateEditReviewChargeSupplementaryInvoice`, which
  *     RAISES the queued invoice rather than letting a second one be queued behind
  *     it and silently dropped, and never lowers one. The enqueue makes the same
@@ -232,4 +237,68 @@ export async function restateEditReviewChargeSupplementaryInvoice({
     return { restated: 0, alreadyCovering: 0 };
   });
   return outcome.restated + outcome.alreadyCovering > 0;
+}
+
+/**
+ * The durable, officer-findable record that a settled share could not be added to
+ * this edit's request.
+ *
+ * #3170 fix round (F5). `logger.warn` is not a queue: nobody goes looking through
+ * a log stream for money the club is owed. The audit log is the record an officer
+ * can actually find, and it is where every other money decision on this booking
+ * already is.
+ *
+ * Best-effort and never rethrown: a settlement whose money question is already
+ * answered must not be undone because an audit insert failed. The log line stays
+ * as the second line.
+ */
+export async function recordUncollectedEditReviewChargeShare({
+  bookingId,
+  bookingModificationId,
+  memberId,
+  derivedTotalCents,
+  requestedTotalCents,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  memberId: string | null;
+  derivedTotalCents: number;
+  requestedTotalCents: number;
+}) {
+  logger.warn(
+    {
+      bookingId,
+      bookingModificationId,
+      derivedTotalCents,
+      requestedTotalCents,
+    },
+    "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
+  );
+  try {
+    await createAuditLog({
+      action: "booking.editFinancialReview.chargeShareUncollected",
+      subjectMemberId: memberId,
+      targetId: bookingId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "payment",
+      severity: "important",
+      outcome: "failure",
+      summary:
+        "A settled review share could not be added to this booking change's payment request",
+      details:
+        "An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so the extra amount was not added to it. Collect this amount another way and record what was collected.",
+      metadata: {
+        bookingModificationId,
+        derivedTotalCents,
+        requestedTotalCents,
+        uncollectedCents: Math.max(derivedTotalCents - requestedTotalCents, 0),
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId },
+      "Failed to record the audit trace for an uncollected edit-financial-review charge share",
+    );
+  }
 }

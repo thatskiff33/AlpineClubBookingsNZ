@@ -6,12 +6,12 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 
-import { createAuditLog } from "@/lib/audit";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import {
   findEditReviewChargeRequest,
   hasIssuedSupplementaryInvoice,
+  recordUncollectedEditReviewChargeShare,
   sumEditReviewChargeSharesCents,
   type EditReviewChargeStore,
 } from "@/lib/edit-financial-review-charge-request";
@@ -616,70 +616,6 @@ export async function syncEditFinancialReviewChargeRequest({
     paymentIntentId: minted.additionalPaymentIntentId,
     totalCents,
   };
-}
-
-/**
- * The durable, officer-findable record that a settled share could not be added to
- * this edit's request.
- *
- * #3170 fix round (F5). `logger.warn` is not a queue: nobody goes looking through
- * a log stream for money the club is owed. The audit log is the record an officer
- * can actually find, and it is where every other money decision on this booking
- * already is.
- *
- * Best-effort and never rethrown: a settlement whose money question is already
- * answered must not be undone because an audit insert failed. The log line stays
- * as the second line.
- */
-async function recordUncollectedEditReviewChargeShare({
-  bookingId,
-  bookingModificationId,
-  memberId,
-  derivedTotalCents,
-  requestedTotalCents,
-}: {
-  bookingId: string;
-  bookingModificationId: string;
-  memberId: string | null;
-  derivedTotalCents: number;
-  requestedTotalCents: number;
-}) {
-  logger.warn(
-    {
-      bookingId,
-      bookingModificationId,
-      derivedTotalCents,
-      requestedTotalCents,
-    },
-    "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
-  );
-  try {
-    await createAuditLog({
-      action: "booking.editFinancialReview.chargeShareUncollected",
-      subjectMemberId: memberId,
-      targetId: bookingId,
-      entityType: "Booking",
-      entityId: bookingId,
-      category: "payment",
-      severity: "important",
-      outcome: "failure",
-      summary:
-        "A settled review share could not be added to this booking change's payment request",
-      details:
-        "An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so the extra amount was not added to it. Collect this amount another way and record what was collected.",
-      metadata: {
-        bookingModificationId,
-        derivedTotalCents,
-        requestedTotalCents,
-        uncollectedCents: Math.max(derivedTotalCents - requestedTotalCents, 0),
-      },
-    });
-  } catch (err) {
-    logger.error(
-      { err, bookingId, bookingModificationId },
-      "Failed to record the audit trace for an uncollected edit-financial-review charge share",
-    );
-  }
 }
 
 /**

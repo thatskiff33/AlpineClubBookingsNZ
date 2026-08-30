@@ -47,3 +47,13 @@
 - If the member has already paid the bill for that change, or the invoice for it
   has already gone out, the office is told plainly and the review stays open
   rather than a second request being raised behind the first.
+- If the club's card provider is unavailable at the moment one of these bills is
+  raised, the amount owed is kept on a retry queue until it succeeds, and the
+  office is alerted if it never does. It is no longer possible for the retry to
+  quietly mark itself done having asked for nothing.
+- In the rare case where the office settles a second review at the same instant
+  as the first, the member still gets exactly one invoice, for the combined
+  total, and an amount already asked for is never revised downwards.
+- Where a settled amount genuinely cannot be added to the bill — because the
+  member paid it seconds earlier — that is now written into the club's audit
+  record, naming the shortfall, so somebody can find it and collect it.

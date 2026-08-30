@@ -23,7 +23,7 @@ than ridden in on a money-correctness fix. Each was over budget independently of
 this change and stays over it by the same margin plus its one call.
 
 file: src/lib/payment-recovery.ts
-lines: 2071
+lines: 2107
 reason: one more durable-recovery pair - enqueue and happy-path close - for the
   completed edit-financial-review refund, in the file where all nine of its
   siblings live. The alternative was reusing the modification-scoped pair, and
@@ -32,7 +32,7 @@ reason: one more durable-recovery pair - enqueue and happy-path close - for the
   upsert overwrites `amountCents` and `stripeKeyPrefix`. Putting a tenth pair
   anywhere but beside the other nine is how the next reader misses that they are
   a family with one shared upsert. The module was 1,181 lines over budget before
-  this change. #3170 (+16): the additional-intent recovery enqueue takes its dedup key as a required argument instead of deriving it from the modification, so a review-completion charge can scope its own key rather than colliding with the ordinary edit's. #3170 fix round (+94): the review-charge branch of the additional-intent worker. A review charge REPLAYS differently from an ordinary edit - it re-derives the total from the settled shares rather than replaying a frozen amount, and it must not reach the "a newer additional supersedes this one" check below, which would see the request this very edit already minted and complete having minted nothing. That is the escape hatch through which the first round's second share was dropped, so the branch has to sit ahead of it, in this function. The same lines retire the inline prefix slice that derived a modification id from whatever key the operation carried: the parser now lives once, beside the builders, and this file calls it.
+  this change. #3170 (+16): the additional-intent recovery enqueue takes its dedup key as a required argument instead of deriving it from the modification, so a review-completion charge can scope its own key rather than colliding with the ordinary edit's. #3170 fix round (+94): the review-charge branch of the additional-intent worker. A review charge REPLAYS differently from an ordinary edit - it re-derives the total from the settled shares rather than replaying a frozen amount, and it must not reach the "a newer additional supersedes this one" check below, which would see the request this very edit already minted and complete having minted nothing. That is the escape hatch through which the first round's second share was dropped, so the branch has to sit ahead of it, in this function. The same lines retire the inline prefix slice that derived a modification id from whatever key the operation carried: the parser now lives once, beside the builders, and this file calls it. #3170 fix round 2 (+36): that same branch used to complete its operation unconditionally, and the mint below it swallows a provider failure and re-enqueues the row it is already processing - whose upsert deliberately does not reset `status` - so a replay while the provider was still down marked the debt SUCCEEDED having minted nothing. The branch now reads the sync's outcome and throws on "not raised", which hands the row to the back-off, retry and admin-alert machinery already in this file. The reasoning has to sit on the branch, because nothing about the old two lines looked wrong.
 
 file: src/lib/payment-transactions.ts
 lines: 1159

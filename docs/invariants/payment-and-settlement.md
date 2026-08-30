@@ -1257,9 +1257,11 @@ one, check the other.
       cannot double-count. Whichever completion commits LAST reads after both
       commits and therefore derives the true total; a settled share is terminal, so
       the total only ever grows and a smaller figure is always the older answer.
-      The write refuses to LOWER the recorded request, which is what makes the
-      outcome independent of the order the two provider calls land in and is why
-      this path still needs no advisory lock.
+      **Neither leg may LOWER what is recorded**, which is what makes the outcome
+      independent of the order two concurrent settlements land in. On the Stripe
+      leg that is a compare-and-set on the request, and it is why that leg needs no
+      advisory lock. The accounting leg needs one, and has one, for the reason
+      below.
     - **A share may not be added to a request the member has already paid, or to
       one whose supplementary invoice has already been issued.** Both are REFUSED
       before the claim with the task left OPEN. Minting a remainder request instead
@@ -1267,11 +1269,47 @@ one, check the other.
       lost the money - and the internet-banking route reaches the second case
       routinely, because its supplementary invoice is raised unpaid and issues as
       soon as the outbox runs.
-    - **The Xero leg bills the TOTAL, once.** A share arriving while this edit's
-      supplementary invoice operation is still PENDING or WAITING_PAYMENT RESTATES
-      that operation's amount; queueing a second one is silently dropped, because
-      the outbox refuses an anchor that already carries an active
-      `SUPPLEMENTARY_INVOICE` link and returns a message rather than an error.
+    - **The Xero leg bills the TOTAL, on ONE invoice per edit, and that is
+      enforced rather than assumed.** A share arriving while this edit's
+      supplementary invoice operation is still PENDING or WAITING_PAYMENT RAISES
+      that operation's amount rather than queueing a second invoice.
+      `enqueueXeroSupplementaryInvoiceOperation` decides link-check ->
+      queued-check -> write inside ONE transaction holding
+      `pg_advisory_xact_lock(hashtext("xero-supplementary-invoice"),
+      hashtext(<anchor>))`, and looks for an outstanding invoice by ANCHOR rather
+      than by the amount-derived correlation key. Both halves are needed: the
+      active `SUPPLEMENTARY_INVOICE` link only exists once the FIRST invoice has
+      been created, so before that it fences nothing, and while the queued lookup
+      keyed on an amount, $200 and $30 were two different keys - two operations,
+      two Xero invoices, $430 billed for a $230 edit. That shape was introduced by
+      the combining (each share used to queue its own amount and the concurrent
+      case summed correctly) and is closed by it.
+    - **What the accounting leg does NOT guarantee, stated rather than implied.** A
+      restate can still arrive too late to land: the outbox worker reads an
+      operation's payload from its scan and only then claims the row, so a restate
+      in that window is correctly refused by the status-guarded write and the
+      invoice goes out at the earlier figure. The shortfall is recorded, nothing is
+      overwritten behind an ask already going out, and no second invoice is raised.
+      Closing that window means making the worker re-read its payload after the
+      claim, which is a change to every outbox queue type.
+    - **A durable retry closes the debt only when the ask EXISTS afterwards.** The
+      recovery replay re-derives the total through the same sync the inline
+      completion uses, and that sync reports which of four things happened
+      (`nothing-owed`, `raised`, `already-paid`, `not-raised`) rather than a null
+      intent id that meant three of them at once. On `not-raised` the replay leaves
+      its operation open, so the existing back-off, retry and admin-alert machinery
+      carries the debt. The mint it calls SWALLOWS a provider failure by design -
+      the ordinary edit path has to return the member's saved change - and the row
+      it re-enqueues is the row being replayed, whose upsert deliberately does not
+      reset `status`; so a replay that closed unconditionally marked the operation
+      SUCCEEDED having minted nothing.
+    - **Every path that settles a share without producing a request leaves a
+      durable trace.** A `logger.warn` is not one: nobody goes looking through a
+      log stream for money the club is owed. The mint refusing before its own `try`
+      writes the recovery row, and the paid-in-flight race writes an audit row
+      (`booking.editFinancialReview.chargeShareUncollected`, category `payment`)
+      naming the shortfall, so an officer can find what has to be collected by
+      hand.
   - **The card route is capped before it claims, and keyed to the TASK.** The cap
     is measured off the booking's captured `PaymentTransaction` rows, not off
     `Payment.source` - that column DEFAULTS to `STRIPE`, so routing on it alone

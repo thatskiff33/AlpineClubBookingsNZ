@@ -908,6 +908,29 @@ const SCOPED_ADVISORY_LOCK_INVENTORY: Record<string, number> = {
   // analysis in docs/CONCURRENCY_AND_LOCKING.md.
   "src/lib/nomination.ts": 3,
   "src/lib/xero-contacts.ts": 2,
+  // #3170: `enqueueXeroSupplementaryInvoiceOperation` takes
+  // `pg_advisory_xact_lock(hashtext('xero-supplementary-invoice'), hashtext(<anchor>))`
+  // - a NEW keyspace in its own namespace, keyed on the `BookingModification`
+  // the invoice corrects.
+  //
+  // WHY IT EXISTS. The owner's 30 Aug 2026 decision makes two review settlements
+  // of ONE booking edit contribute to one combined total, and the Xero leg has to
+  // move with it. Deciding "does this edit already have a supplementary invoice
+  // going out?" was a check-then-create, and the check deduped on a
+  // `correlationKey` BUILT FROM THE AMOUNT - so two concurrent settlements at
+  // $200 and $30 matched nothing of each other's, queued two operations and sent
+  // the member two invoices for one edit. The active `SUPPLEMENTARY_INVOICE` link
+  // fences nothing before the first invoice exists, so the lock is what makes
+  // "one invoice per edit" true rather than asserted.
+  //
+  // COUNTERPARTS AND ORDER. Single-lock holder, composing with no other family:
+  // every caller reaches it post-commit through a fire-and-forget
+  // `queueXeroBookingEditSettlement`, holding nothing, so no ordering cycle is
+  // possible and no counterpart writer takes it. Held for the milliseconds of the
+  // link-check -> queued-check -> raise-or-create transaction; the Xero round trip
+  // happens later, in the outbox worker, entirely outside it. Inventory row and
+  // stated residual in docs/CONCURRENCY_AND_LOCKING.md.
+  "src/lib/xero-operation-outbox.ts": 1,
 };
 
 // Every entry here is now a LOCK-ONLY statement (#2289): it selects a constant,

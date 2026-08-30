@@ -61,7 +61,7 @@ reason: the operator CLI that replays the pre-#1231 invoice maths was a missed
   cohesive diagnostic - splitting a replay in half is how the halves drift.
 
 file: src/lib/xero-operation-outbox.ts
-lines: 2578
+lines: 2711
 reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   money could not be valued can raise two review tasks, and the owner's 30 Aug
   2026 decision is that both contribute to a single request for the total - so
@@ -79,3 +79,21 @@ reason: the fix round's Xero half of "one booking edit, one ask". An edit whose
   copy would be a second definition of "has this ask left the building". The
   module was 1,776 lines over its 700-line budget before this change; it is the
   single Xero outbox and a seam through it is a refactor of its own.
+  Fix round 2 (+133): the restate alone could not deliver what its docblock
+  claimed. Its status filter was on the READ and not on the write, so an
+  operation that left PENDING between the two statements was rewritten behind an
+  ask already going out; it had no comparison at all, so a stale run's smaller
+  total could LOWER a queued invoice and its caller would then return early,
+  leaving nothing to re-queue the difference; and the enqueue beside it deduped
+  on a `correlationKey` BUILT FROM THE AMOUNT, so two concurrent settlements at
+  $200 and $230 matched nothing of each other's and queued two operations - two
+  Xero invoices, $430 billed for a $230 edit. The growth is the status-guarded
+  `updateMany`, the never-lower comparison on the invoice's NET, a per-anchor
+  advisory lock around the enqueue's link-check -> queued-check -> write, an
+  anchor-scoped lookup replacing the amount-scoped one, and the paragraphs
+  stating what is now guaranteed and the one window that is not - the outbox
+  worker reads a payload at its scan and claims it afterwards, so a restate in
+  that window is refused and the invoice goes out at the earlier figure. All of
+  it has to sit on the two functions it governs: this is the single definition of
+  "does this booking change already have an invoice going out", and a caller-side
+  copy is what let the two answers disagree in the first place.
