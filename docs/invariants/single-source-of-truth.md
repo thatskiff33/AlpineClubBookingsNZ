@@ -257,14 +257,14 @@ are permanent: never renumbered, never reused.
   evidenced in the tree, so the count is not restated here. Cite the record, not
   the tally.
 - **`src/lib/__tests__/support/strip-comments.ts` is the canonical
-  `stripComments`, and since #3164 a lint rule enforces it.** 56 test files and
+  `stripComments`, and since #3164 a lint rule enforces it.** 57 test files and
   one CI script import it, and `ssot/no-local-comment-stripper` in
   `eslint.config.mjs` reports a second scanner as it is written rather than
   twelve minutes later in CI. **Use it; do not write a second.** The figure was
   published as 48 while the module's own docblock said 53 and the tree said 53,
   which is this ID applied to its own entry: two statements of one fact, and
   nothing comparing them. Re-measured at #3180, after three conversions took it
-  to 56.
+  to 56, and again at #3196, whose one conversion took it to 57.
 - **A population measured by NAME is not the population**, and the count above
   is the evidence. #3132 converged the copies spelled `stripComments` and closed;
   seven more were alive that day under the name `withoutComments`, and #3164
@@ -280,19 +280,36 @@ are permanent: never renumbered, never reused.
   EXTRACTOR, and the guard's own fixture file. `UNCONVERGED_COMMENT_SCANNERS` is
   a **ratchet**, whose length is pinned in
   `ssot-comment-stripper-guard.test.ts`, so the list can shrink and cannot grow.
-  It held five, then four, and since #3180 holds **one**.
-- **The canonical module holds four FORMS, and a claim made about a whole list
+  It held five, then four, then one, and since #3196 holds **none**. An empty
+  ratchet is not a dead list: it is what makes "there is no second scanner" a
+  checked fact rather than a claim, and the pin is now an equality, so the next
+  file that would need an entry cannot get one.
+- **The canonical module holds five FORMS, and a claim made about a whole list
   has to be true of every entry on it.** `stripComments` removes comments and
   keeps strings; `stripCommentsAndStrings` also blanks string CONTENTS, which is
   what a rule needs when its own subject is discussed in prose; `stripCssComments`
-  handles the one other language sharing the block delimiter; and `blankLiterals`
+  handles the one other language sharing the block delimiter; `blankLiterals`
   (#3180) returns text of the **same length**, so a caller that reports a line
   number, slices by index, or compares one match's position against another's
-  still points at what it named. #3164 moved the
+  still points at what it named; and `blankLiteralsWithSpans` (#3196) is that
+  same blanking with the runs it blanked reported back. #3164 moved the
   second form out of `xero-provider-date-boundary-census.test.ts`, where the
   #2869 review had written it — one of two instruments reading the same tree by
   different methods is exactly this ID, and a second form no other file could
   import is why a ratchet entry could not converge onto it.
+
+  **The fifth form was a cost taken knowingly (#3196), and what pays for it is a
+  docblock.** A module whose value is that there is one obvious choice per job
+  gets worse with every export, so the five-way choice is stated **once**, in the
+  module's own docblock, one sentence each, and a form's own docblock says what
+  it is and points there rather than restating the other four. Reach for
+  `blankLiteralsWithSpans` only when some of what blanking removes is the very
+  thing you are hunting: `advisory-lock-guard.test.ts` hunts raw SQL, which lives
+  inside string literals, while the prose it must ignore lives inside string
+  literals too. **The restore stays at the caller.** A `SELECT`-shaped carve-out
+  is one census's policy about SQL, not a fact about JavaScript, and a helper
+  reshaped to carry another caller's policy is the contortion `INV-SSOT-001`
+  names — so the module gained a capability and not a rule.
 - **The ratchet's preamble claimed a property two of its five entries did not
   have, and that is the correction worth recording.** It said none produced
   reduced text and all reported original-text offsets. Measured, that was false
