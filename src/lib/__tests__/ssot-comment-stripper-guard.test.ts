@@ -50,12 +50,25 @@ const FIXTURE_FILE = path.join(
 );
 
 /*
-  EVERY FIXTURE IS A MODULE-LEVEL CONSTANT, and that is load-bearing rather than
-  tidy. The rule reports the nearest enclosing FUNCTION of a comment delimiter,
-  so a fixture built inside a `it(...)` callback would make this file report
-  itself — and the honest fix is to keep the delimiters out of every function
-  here, not to add this file to the allowlist. The same argument the rule's own
-  implementation makes for building its delimiters from character codes.
+  WHY THIS FILE IS ON `COMMENT_STRIPPER_ALLOWLIST`, and why it did not used to
+  need to be.
+
+  Every fixture below is a module-level constant. Until #3164's fix round that
+  made the file invisible to its own rule FOR FREE: evidence was recorded against
+  the nearest enclosing FUNCTION, and outside every function there was none — so
+  a fixture moved inside an `it(...)` callback reported the file and the same
+  text at module scope did not. The old note here read that as a tidy invariant
+  to preserve. It was an undeclared hole in the rule, and a real stripper written
+  beside a census's imports walked through it exactly as easily as a fixture did.
+
+  The rule now reads the module body too (at a higher bar — both block
+  delimiters, since one is `diagnostics/tools/define.ts`'s SQL banlist entry), so
+  these fixtures ARE seen, and the file is silent because it is LISTED, with the
+  reason that a fixture is text handed to ESLint rather than a scanner. That is
+  a claim, so it is tested: `reports its own fixture text at any other path`
+  below lints this file's real source at a fixture path and requires a report.
+  Silent-because-listed and silent-because-unseen look identical from the tree;
+  only that pair of cases tells them apart.
 */
 
 /** A copy under a THIRD name, which is the whole point: no name is swept for. */
@@ -100,11 +113,40 @@ export function tidy(source: string): string {
 }
 `;
 
+/**
+ * A stripper written at MODULE TOP LEVEL, outside every function.
+ *
+ * Byte-for-byte the chain in `TWO_REGEX_COPY`, moved one scope out. Before
+ * #3164's fix round the first was reported and this one was silent, which is
+ * the whole reason the rule now reads the module body.
+ */
+const MODULE_LEVEL_COPY = `
+const RAW = "";
+export const CODE = RAW
+  .replace(/\\/\\*[\\s\\S]*?\\*\\//g, "")
+  .replace(/^[ \\t]*\\/\\/.*$/gm, "");
+`;
+
 /*
   THE MEASURED FALSE POSITIVES, kept as fixtures so the narrowing that closed
   them cannot be undone by a later widening without this file going red. Each
   is real code from this tree, reduced.
 */
+
+/**
+ * `diagnostics/tools/define.ts`'s SQL banlist: a module-level regex naming ONE
+ * escaped block delimiter, because a comment would break the executor's LIMIT
+ * wrapper. It is why the module-scope bar is the PAIR rather than either half —
+ * measured over the tree, it is the only module-level literal that names one.
+ */
+const MODULE_LEVEL_SQL_BANLIST = `
+export const BANNED_SQL_FRAGMENTS = [
+  /\\bdrop\\b/i,
+  /\\bgrant\\b/i,
+  /--/,
+  /\\/\\*/,
+];
+`;
 
 /** `clubPostHtmlToText` / `htmlToLineText`: a quantifier before an escaped slash. */
 const HTML_TO_TEXT = `
@@ -115,7 +157,19 @@ export function htmlToText(html: string): string {
 }
 `;
 
-/** `globToRegExp` in `diagnostics/knowledge/allowlist.ts`, and a glob suffix test. */
+/**
+ * `globToRegExp` in `diagnostics/knowledge/allowlist.ts`, a glob suffix test,
+ * and `matchScore` from `help/match.ts`.
+ *
+ * THE MARGIN IS ONE COMPARISON WIDE, and `matchScore` is the narrowest of the
+ * three, which is why its real shape is pinned here rather than described. The
+ * rule wants two slashes AND two stars; `matchScore` names a slash three times
+ * — once in `"/*"`, twice more through the `` `${base}/` `` templates, which is
+ * also the only case here that exercises the rule's TemplateElement path — and a
+ * star exactly once. One more star comparison in that function and it reports.
+ * That is the cost of the narrowing the fixtures above bought, stated where
+ * anybody widening the rule will trip over it.
+ */
 const GLOB_HANDLING = `
 export function globToRegExp(glob: string): RegExp {
   let re = "";
@@ -134,6 +188,16 @@ export function globToRegExp(glob: string): RegExp {
 export function matchesPrefix(entryPath: string, pathname: string): boolean {
   if (!entryPath.endsWith("/*")) return false;
   return pathname.startsWith(entryPath.slice(0, -2) + "/");
+}
+
+export function matchScore(pathname: string, entryPath: string): number {
+  if (entryPath.endsWith("/*")) {
+    const base = entryPath.slice(0, -2);
+    if (pathname === base) return -1;
+    if (pathname.startsWith(\`\${base}/\`)) return base.length + 0.5;
+    return -1;
+  }
+  return pathname === entryPath ? entryPath.length : -1;
 }
 `;
 
@@ -187,6 +251,7 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
     ["a two-regex copy under a third name", TWO_REGEX_COPY],
     ["a hand-written character scanner", CHARACTER_SCANNER_COPY],
     ["the same delimiter through new RegExp", CONSTRUCTED_REGEX_COPY],
+    ["the same chain written at MODULE top level", MODULE_LEVEL_COPY],
   ])("reports %s", async (_label, code) => {
     const reports = await reportsFor(code, FIXTURE_FILE);
 
@@ -205,13 +270,14 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
     ["an HTML-to-text converter", HTML_TO_TEXT],
     ["glob compilation and a glob suffix test", GLOB_HANDLING],
     ["URL and protocol-relative patterns", URL_PATTERNS],
+    ["a module-level SQL banlist naming one delimiter", MODULE_LEVEL_SQL_BANLIST],
     ["a file with nothing in it", INERT],
   ])("does not report %s", async (_label, code) => {
     const reports = await reportsFor(code, FIXTURE_FILE);
 
     expect(
       reports.map((report) => report.message.slice(0, 80)),
-      "Each of these was a MEASURED false positive of a wider first cut (#3164): a quantifier before an escaped slash, a single slash/star pair, and a line delimiter that is really a URL. A rule that is wrong whenever it fires teaches its reader to switch it off.",
+      "Each of these was a MEASURED false positive of a wider first cut (#3164): a quantifier before an escaped slash, a single slash/star pair, a line delimiter that is really a URL, and `diagnostics/tools/define.ts`'s module-level SQL banlist, which is why the module-scope bar is BOTH block delimiters. A rule that is wrong whenever it fires teaches its reader to switch it off.",
     ).toEqual([]);
   });
 
@@ -243,6 +309,28 @@ describe("INV-SSOT-004: the comment-stripper guard fires on BEHAVIOUR", () => {
     expect(
       (await reportsFor(canonical, FIXTURE_FILE)).length,
       "If this is 0 the previous case proves nothing: the rule would be silent on the canonical helper for some reason of its own, and the allowlist would be doing no work.",
+    ).toBeGreaterThan(0);
+  });
+
+  /*
+    THE SAME QUESTION ASKED OF THIS FILE, which is the one the rule's own suite
+    got wrong. Until #3164's fix round this file was silent under `npm run lint`
+    because the rule read nothing at module scope, and every fixture here is a
+    module-level constant — so the suite passed, and the file's silence proved
+    nothing about the allowlist. Now the module body IS read and the entry in
+    `COMMENT_STRIPPER_ALLOWLIST` is what silences it. This case is the difference
+    between those two worlds: if it ever returns 0, the entry has stopped doing
+    work and something else is keeping the file quiet.
+  */
+  it("reports its own fixture text at any other path", async () => {
+    const ownSource = readFileSync(
+      path.join(REPO_ROOT, "src/lib/__tests__/ssot-comment-stripper-guard.test.ts"),
+      "utf8",
+    );
+
+    expect(
+      (await reportsFor(ownSource, FIXTURE_FILE)).length,
+      "This suite's fixtures are module-level constants naming both block delimiters. The rule must see them, so that the allowlist entry for this file is what makes `npm run lint` quiet here — not a hole in the rule.",
     ).toBeGreaterThan(0);
   });
 });

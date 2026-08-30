@@ -251,12 +251,25 @@ are permanent: never renumbered, never reused.
 - **What the guard cannot catch is stated in its own failure message**, which is
   the honest form for an inexact rule: a stripper that handles only line
   comments (indistinguishable from the URL patterns this tree is full of), one
-  whose delimiters are computed at runtime, and one written for another
-  language. Two false-positive classes were measured and closed on the way in —
-  a quantifier before an escaped slash (`/<br\s*\/?>/`, two HTML-to-text
-  converters) and a single slash/star pair (a glob compiler, and
-  `endsWith("/*")`) — and both are kept as fixtures so a later widening reopens
-  them loudly.
+  whose delimiters are computed at runtime, one written for another language,
+  and — at module top level only — one that names a single block delimiter
+  rather than the pair. Three false-positive classes were measured and closed on
+  the way in — a quantifier before an escaped slash (`/<br\s*\/?>/`, two
+  HTML-to-text converters), a single slash/star pair (a glob compiler, and
+  `endsWith("/*")`, whose margin is one character comparison and is pinned as a
+  fixture for that reason), and `diagnostics/tools/define.ts`'s module-level SQL
+  banlist. All are kept as fixtures so a later widening reopens them loudly.
+- **The rule reads the module body as well as every function, and the bar out
+  there is higher.** Its first form recorded evidence only against a literal's
+  enclosing function, so a stripper written beside a census's imports was
+  invisible while the identical chain one scope further in was reported — an
+  accidental limit, and an undeclared one. It now reads module scope too,
+  requiring BOTH block delimiters rather than either, because one escaped opener
+  at module level is the `define.ts` banlist entry above and a guard that is
+  wrong when it fires teaches its reader to switch it off. That reach is what put
+  `ssot-comment-stripper-guard.test.ts` on the allowlist: its fixtures are
+  module-level constants, and the suite proves the LISTING is what silences it,
+  by linting the file's own text at a fixture path and requiring a report.
 - **What converging measured is the argument for the rule, not a footnote.** The
   sixteen copies #3132 removed fell into five behaviour classes, and they
   disagreed where it mattered: six tracked no string literals at all, so a `//`

@@ -1449,6 +1449,15 @@ export const SSOT_GUARD_ARMS = {
 // copy #3164 converged is one of those two shapes, and so is the canonical
 // helper.
 //
+// IT ALSO READS THE MODULE BODY, at a higher bar. A stripper written beside the
+// imports rather than inside a function used to be invisible here, and the
+// identical chain one line further in was reported — an accidental limit, and an
+// undeclared one. Out there a report needs BOTH block delimiters rather than
+// one, because a single escaped opener at module scope is real code:
+// `diagnostics/tools/define.ts` bans a SQL comment opener from operator-authored
+// SQL and writes it as a bare module-level regex. Nothing in this tree names
+// both at module scope without being a scanner.
+//
 // WHAT IT DELIBERATELY CANNOT CATCH, stated here and in the failure message so
 // nobody reads this guard as wider than it is:
 //
@@ -1466,10 +1475,15 @@ export const SSOT_GUARD_ARMS = {
 //     report itself; that is the shape of the hole, admitted rather than hidden.
 //   * A stripper for a DIFFERENT language's comments — SQL `--`, dotenv `#`,
 //     and (because CSS shares JavaScript's block delimiters) a CSS strip, which
-//     the allowlist below carries by file with its reason. #3164 measured three
-//     of those among the seven the issue asked it to converge, and converging
-//     any onto a JavaScript scanner would have BROKEN the census rather than
-//     repaired it.
+//     the canonical module now carries as `stripCssComments` rather than three
+//     more times in the contracts that need it. #3164 measured three of those
+//     among the seven the issue asked it to converge, and converging any onto
+//     the JavaScript scanner would have BROKEN the census rather than repaired
+//     it.
+//   * A MODULE-LEVEL stripper that names only ONE of the two block delimiters —
+//     a line-comment-only strip written outside every function. The pair is what
+//     separates a scanner from `define.ts`'s banlist out there, so this half of
+//     the module-scope reach is bought with a hole rather than for free.
 //
 // THE REMEDY IS ALWAYS THE SAME: import `stripComments` from
 // `@/lib/__tests__/support/strip-comments`. It is the only definition that
@@ -1502,6 +1516,11 @@ export const COMMENT_STRIPPER_ALLOWLIST = [
     file: "src/lib/__tests__/xero-provider-date-boundary-census.test.ts",
     reason:
       'A permitted second FORM, not an exemption. `stripCommentsAndStrings` blanks the CONTENTS of every string as well as the comments, so a rule cannot fire on prose inside a quoted example, and it keeps an identifier-shaped bracket key (`invoice["dueDate"]`) because that spelling IS a property read. Its own tests pin both behaviours, and converging it onto `stripComments`, which keeps strings, would destroy the census rather than tidy it. It already imports the canonical `startsRegexLiteral` / `endOfRegexLiteral` predicates, so the two forms cannot disagree about where a regex literal ends (#3132).',
+  },
+  {
+    file: "src/lib/__tests__/ssot-comment-stripper-guard.test.ts",
+    reason:
+      "FIXTURES, not a scanner. This is the rule's own suite, and its fixtures are module-level string constants holding the copies nobody has written yet — text a test hands to ESLint, which strips nothing. It is listed because it HAS to be: before the module-scope reach landed it was silent by ACCIDENT, and the accident was load-bearing, since moving one fixture inside an `it(...)` callback reported the file. Listing it says that out loud, and the suite's own `reports its own fixture text at any other path` case proves the listing is what silences it rather than some property of the file.",
   },
   {
     file: "prisma/migration-verification/split-statements.ts",
@@ -1616,10 +1635,10 @@ const LINE_DELIMITER = CHAR_SLASH + CHAR_SLASH;
  * `new RegExp("...")` string carries the identical text as its VALUE, so one
  * check covers both spellings.
  */
-const ESCAPED_BLOCK_DELIMITERS = [
-  CHAR_BACKSLASH + CHAR_SLASH + CHAR_BACKSLASH + CHAR_STAR,
-  CHAR_BACKSLASH + CHAR_STAR + CHAR_BACKSLASH + CHAR_SLASH,
-];
+const ESCAPED_BLOCK_OPEN =
+  CHAR_BACKSLASH + CHAR_SLASH + CHAR_BACKSLASH + CHAR_STAR;
+const ESCAPED_BLOCK_CLOSE =
+  CHAR_BACKSLASH + CHAR_STAR + CHAR_BACKSLASH + CHAR_SLASH;
 
 // BOTH characters have to be escaped, and that is a MEASURED narrowing rather
 // than caution. A first cut also accepted the half-escaped forms, on the theory
@@ -1635,7 +1654,7 @@ const FUNCTION_NODE_TYPES = new Set([
 ]);
 
 const COMMENT_STRIPPER_MESSAGE =
-  'INV-SSOT-004: This function scans source text for JavaScript COMMENT DELIMITERS, which makes it a second comment stripper. There is one, and importing it is the whole fix: `stripComments` from `src/lib/__tests__/support/strip-comments.ts`. A local copy is not a style question. The canonical helper recognises `.replace(/\\//g, "_")` as a regex literal; a copy without that branch reads the two adjacent slashes as a line comment and DELETES the rest of the line — measured across `src/` before #3155 repaired it, that silently truncated a dozen files and desynchronised `xero-contacts.ts` for a thousand lines after it. A census whose stripper under-reports goes FALSELY GREEN: it passes while the thing it exists to catch is sitting in the file. This rule keys on behaviour rather than on a name because #3132 swept by name and left seven copies alive under a second one. It still cannot see a stripper that handles only line comments, one whose delimiters are computed at runtime, or one written for another language. If yours strips SQL, dotenv or CSS comments, or is a deliberate second FORM of this one, add it to `COMMENT_STRIPPER_ALLOWLIST` in `eslint.config.mjs` with the reason it cannot be the canonical helper.';
+  'INV-SSOT-004: This function scans source text for JavaScript COMMENT DELIMITERS, which makes it a second comment stripper. There is one, and importing it is the whole fix: `stripComments` from `src/lib/__tests__/support/strip-comments.ts`. A local copy is not a style question. The canonical helper recognises `.replace(/\\//g, "_")` as a regex literal; a copy without that branch reads the two adjacent slashes as a line comment and DELETES the rest of the line — measured across `src/` before #3155 repaired it, that silently truncated a dozen files and desynchronised `xero-contacts.ts` for a thousand lines after it. A census whose stripper under-reports goes FALSELY GREEN: it passes while the thing it exists to catch is sitting in the file. This rule keys on behaviour rather than on a name because #3132 swept by name and left seven copies alive under a second one. It still cannot see FOUR shapes, and they are listed rather than left to be discovered: a stripper that handles only line comments; one whose delimiters are computed at runtime; one written for another language; and, at MODULE top level outside every function, one that names only a single block delimiter — out there the rule needs both, because `diagnostics/tools/define.ts` writes a lone escaped opener as a SQL banlist entry and a guard that fires on real code teaches its reader to switch it off. If yours strips SQL, dotenv or CSS comments, or is a deliberate second FORM of this one, add it to `COMMENT_STRIPPER_ALLOWLIST` in `eslint.config.mjs` with the reason it cannot be the canonical helper.';
 
 /**
  * Repo-relative POSIX path for a linted file, so the allowlist can be written
@@ -1700,6 +1719,27 @@ const noLocalCommentStripper = {
      */
     const evidence = new Map();
 
+    /**
+     * MODULE TOP LEVEL, where there is no enclosing function to hang evidence
+     * on, and where the bar is deliberately higher.
+     *
+     * Until #3164's fix round this rule saw nothing out here at all: a
+     * `const code = raw.replace(/…/g, "")` chain written beside the imports
+     * was SILENT, and the identical chain moved one line into a function was
+     * reported. That is not a limit anybody would choose, and it was not
+     * written down either.
+     *
+     * It cannot be the SAME test out here, though, because one escaped block
+     * delimiter at module scope is real code: `diagnostics/tools/define.ts`
+     * bans a SQL comment opener from operator-authored SQL and writes it as a
+     * bare module-level regex. Measured over this tree, that is the only
+     * module-level literal naming one, and nothing names BOTH without being a
+     * scanner. So a report out here needs the opener AND the closer — which
+     * every block-comment regex and every hand-written block scanner writes
+     * together, and which a banlist entry does not.
+     */
+    const moduleScope = { opener: null, closer: null };
+
     function evidenceFor(node) {
       const fn = enclosingFunction(node);
       if (!fn) return null;
@@ -1710,12 +1750,23 @@ const noLocalCommentStripper = {
 
     function inspectContainedText(node, text) {
       if (typeof text !== "string") return;
-      if (
-        ESCAPED_BLOCK_DELIMITERS.some((delimiter) => text.includes(delimiter))
-      ) {
-        const found = evidenceFor(node);
-        if (found && !found.proof) found.proof = node;
+      // Both membership tests run BEFORE the walk to the enclosing function,
+      // because every string and template chunk in the tree reaches this and
+      // almost none of them contains either delimiter.
+      const opens = text.includes(ESCAPED_BLOCK_OPEN);
+      const closes = text.includes(ESCAPED_BLOCK_CLOSE);
+      if (!opens && !closes) return;
+
+      const fn = enclosingFunction(node);
+      if (!fn) {
+        if (opens && !moduleScope.opener) moduleScope.opener = node;
+        if (closes && !moduleScope.closer) moduleScope.closer = node;
+        return;
       }
+
+      const found = evidence.get(fn) ?? { proof: null, slashes: 0, stars: 0 };
+      evidence.set(fn, found);
+      if (!found.proof) found.proof = node;
     }
 
     /**
@@ -1779,6 +1830,11 @@ const noLocalCommentStripper = {
           } else if (found.slashes >= 2 && found.stars >= 2) {
             context.report({ node: fn, messageId: "copy" });
           }
+        }
+        // One report for the module body, on the delimiter that completed the
+        // pair, so it lands on a line rather than on the whole file.
+        if (moduleScope.opener && moduleScope.closer) {
+          context.report({ node: moduleScope.closer, messageId: "copy" });
         }
       },
     };
