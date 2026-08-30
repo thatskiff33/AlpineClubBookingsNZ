@@ -1,7 +1,7 @@
 # File-size allowances for #3187
 
 file: src/lib/xero-booking-repair-classify.ts
-lines: 1450
+lines: 1504
 reason: the growth is one arm of the classifier learning that an edit's expected
   supplementary invoice is not always what its `BookingModification` row says,
   and it has to sit here because the whole point of #3187 is that the GATE and
@@ -17,4 +17,11 @@ reason: the growth is one arm of the classifier learning that an edit's expected
   different files, which is the drift this change exists to close. The module is
   a single sequential `classifyBookingContext`, deliberately kept whole since
   the #1208 split, and it was 694 lines over its 700-line budget before this
-  change.
+  change. Fix round (+54): the two states where the tool must REPORT rather
+  than repair - a card that took less than the officer settled on, and a card
+  request whose mint failed and is still owed by its recovery replay. Both are
+  the same decision as the arm above them (should this invoice be raised, and
+  as paid or unpaid?), taken from the same three numbers, and the whole reason
+  the queue arm is trustworthy is that a reader can see the two refusals beside
+  it. Moving them out would leave the payload and the conditions under which it
+  must not be built in different files - the drift this change exists to close.
