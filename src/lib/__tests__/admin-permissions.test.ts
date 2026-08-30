@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   bookingManagementAuthorizationRole,
+  ANY_ADMIN_ADMISSION_PATHS,
   canOpenAdminPath,
   canViewAdminHrefWithMatrix,
   financeAccessLevelFromMatrix,
@@ -730,6 +731,65 @@ describe("admin route requirements", () => {
     expect(canOpenAdminPath({ accessRoles: ["ADMIN" as const] }, "/dashboard")).toBe(
       false,
     );
+  });
+
+  /**
+   * PIN THE CARVE-OUT ITSELF, not just its current behaviour.
+   *
+   * `ANY_ADMIN_ADMISSION_PATHS` is the one constant in this module that lets a
+   * path bypass area gating entirely, and every other consumer of it computes
+   * its EXPECTED answer from the same predicate the guard uses
+   * (`admin-route-authorization-proof.test.ts` does this in both its page sweep
+   * and its finance-only exemption). That makes growing the list
+   * self-approving: adding `/admin/promo-codes` — a `bookings` page — would
+   * hand it to every content-only and lodge-only grid, and every suite would
+   * stay green, because expectation and behaviour move together.
+   *
+   * This is the #2949 shape: a privilege widening written into source that the
+   * suite waves through. The sibling reviewed lists in this PR are pinned by
+   * exact match in both directions for exactly that reason
+   * (`REVIEWED_PERMISSION_DIVERGENCES`, `SIDE_EFFECTING_GETS`); the carve-out
+   * that IS a permission decision must not be the one that is not.
+   *
+   * A second entry is therefore a deliberate edit here, argued against
+   * ADR-002 §1 rather than merged quietly. Note the prefix form: any future
+   * page under `src/app/(admin)/admin/ai-diagnostics/**` inherits any-admin
+   * admission without touching this list, which is why the reason below is
+   * about the SHELL rather than about one page.
+   */
+  it("pins the any-admin admission carve-out to exactly the ADR-002 shell (#2975)", () => {
+    expect([...ANY_ADMIN_ADMISSION_PATHS]).toEqual(["/admin/ai-diagnostics"]);
+  });
+
+  /**
+   * The behavioural half of the pin above: every OTHER admin page still gates
+   * on its own area. A single-area grid that holds none of a page's area must
+   * be refused, so a new carve-out cannot hide behind a list assertion alone.
+   */
+  it("refuses a single-area grid every admin page outside its own area and the carve-out (#2975)", () => {
+    // FINANCE_USER is the only SHIPPED single-area grid: finance VIEW, every
+    // other area NONE. `ADMIN_CONTENT` is not a substitute — it carries
+    // `overview: VIEW` as well as content, so it legitimately opens
+    // /admin/dashboard and would make this loop assert something false.
+    const financeOnly = { accessRoles: ["FINANCE_USER" as const] };
+    for (const pathname of [
+      "/admin/promo-codes",
+      "/admin/bookings",
+      "/admin/members",
+      "/admin/page-content",
+      "/admin/hut-leaders",
+      "/admin/dashboard",
+    ]) {
+      expect(
+        canOpenAdminPath(financeOnly, pathname),
+        `${pathname} is outside finance and is not the ADR-002 shell, so a finance-only grid must be refused`,
+      ).toBe(false);
+    }
+    // ...and the three it legitimately opens, so the loop above is not vacuous:
+    // its own area, the bookings-OR-finance fee console, and the carve-out.
+    expect(canOpenAdminPath(financeOnly, "/admin/payments")).toBe(true);
+    expect(canOpenAdminPath(financeOnly, "/admin/fees")).toBe(true);
+    expect(canOpenAdminPath(financeOnly, "/admin/ai-diagnostics")).toBe(true);
   });
 
   it("maps mutating admin API methods to edit access", () => {
