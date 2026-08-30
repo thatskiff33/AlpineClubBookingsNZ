@@ -156,7 +156,7 @@ function EditFinancialReviewEvidenceBlock({
 }) {
   return (
     <div
-      className="space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+      className="space-y-1 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
       data-testid="manual-refund-task-review-evidence"
     >
       <p className="font-medium text-foreground">
