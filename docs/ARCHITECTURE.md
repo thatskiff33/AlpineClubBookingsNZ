@@ -2781,8 +2781,14 @@ helper, and a transient Stripe failure enqueues a
 modification. The worker re-creates the intent with the original
 modification-scoped Stripe idempotency key (so route and cron can never
 double-mint), skips itself if a later edit already minted a newer additional
-intent, and points any supplementary Xero invoice operation still waiting on
-the failed intent at the recovered one.
+intent, and settles the Xero half two ways: it points any supplementary
+invoice operation still WAITING_PAYMENT at the recovered intent, and it raises
+the supplementary invoice outright for the edits that queued none — the inline
+dispatch skips that queue while no intent exists, so those edits had a
+collectable payment request and no accounting record until the replay completed
+the deferral (#3181). The figure is the `BookingModification`'s signed
+components; the anchor-scoped, advisory-locked enqueue is what keeps it to one
+invoice per edit however the two paths interleave.
 
 Group-settlement PaymentIntents get the same safety net: switching a group
 settlement to Internet Banking or re-attempting a card settlement voids the

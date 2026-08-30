@@ -198,6 +198,10 @@ import {
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
   restatePendingSupplementaryInvoiceAmount,
 } from "@/lib/xero-operation-outbox";
+import {
+  completeDeferredXeroSupplementaryInvoice,
+  queueXeroBookingEditSettlement,
+} from "@/lib/xero-booking-edit-settlement";
 import { XERO_OUTBOX_QUEUE_TYPES } from "@/lib/xero-operation-outbox-payload";
 import { XeroAppliedCreditOperationBusyError } from "@/lib/xero-applied-credit-operation-serialization";
 
@@ -3123,5 +3127,254 @@ describe("enqueueXeroSupplementaryInvoiceOperation: does the ask cover the total
         }),
       })
     );
+  });
+});
+
+/**
+ * #3181: A RECOVERED ADDITIONAL PAYMENT RAISES EXACTLY ONE SUPPLEMENTARY INVOICE.
+ *
+ * The defect: the inline edit path skips the supplementary invoice while no
+ * additional PaymentIntent exists, and the recovery replay that later mints one
+ * only ever ATTACHED it to an operation already waiting. Nothing was waiting,
+ * because the inline attempt had skipped it - so the member got a collectable
+ * payment request and the club's accounts got no invoice.
+ *
+ * WHY THESE RUN AGAINST THE REAL ENQUEUE. "Exactly one" is a property of
+ * `enqueueXeroSupplementaryInvoiceOperation`'s anchor-scoped link-check ->
+ * queued-check -> write, and its dedupe DROPS A SECOND ATTEMPT SILENTLY - so a
+ * fix that queues nothing at all and a fix that queues correctly look identical
+ * to a caller-side double. The store below models the two tables that decision
+ * reads, and every assertion counts the rows really created.
+ *
+ * WHAT THEY DO NOT PROVE: that two CONCURRENT settlements serialise. That is a
+ * property of the per-anchor advisory lock and belongs to
+ * `edit-financial-review-races.realdb.test.ts`, which proves it against a real
+ * server. The replay case is sequential by construction - one cron worker, one
+ * claimed operation - so this is the right instrument for it.
+ */
+describe("a recovered additional payment raises exactly one supplementary invoice (#3181)", () => {
+  type StoredOperation = {
+    id: string;
+    localModel: string;
+    localId: string;
+    status: string;
+    requestPayload: Record<string, unknown>;
+  };
+
+  const OUTSTANDING = ["PENDING", "RUNNING", "WAITING_PAYMENT"];
+  const RESTATABLE = ["PENDING", "WAITING_PAYMENT"];
+
+  let store: StoredOperation[] = [];
+
+  /** Every supplementary-invoice row the enqueue created for this anchor. */
+  function supplementaryRowsFor(localId: string) {
+    return store.filter(
+      (row) =>
+        row.localId === localId &&
+        row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE",
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store = [];
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: "inv_existing" },
+    });
+    mocks.isXeroConnected.mockResolvedValue(false);
+
+    mocks.startXeroSyncOperation.mockImplementation(
+      (args: Record<string, unknown>) => {
+        const row: StoredOperation = {
+          id: `op_${store.length + 1}`,
+          localModel: String(args.localModel),
+          localId: String(args.localId),
+          status: String(args.status ?? "PENDING"),
+          requestPayload: args.requestPayload as Record<string, unknown>,
+        };
+        store.push(row);
+        return Promise.resolve({ id: row.id });
+      },
+    );
+    mocks.findFirstOperation.mockImplementation(
+      (args: { where?: { localId?: string } }) =>
+        Promise.resolve(
+          store.find(
+            (row) =>
+              row.localId === args.where?.localId &&
+              row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE" &&
+              OUTSTANDING.includes(row.status),
+          ) ?? null,
+        ),
+    );
+    mocks.findManyOperations.mockImplementation(
+      (args: { where?: { localId?: string } }) =>
+        Promise.resolve(
+          store.filter(
+            (row) =>
+              row.localId === args.where?.localId &&
+              row.requestPayload.queueType === "SUPPLEMENTARY_INVOICE" &&
+              RESTATABLE.includes(row.status),
+          ),
+        ),
+    );
+    mocks.updateManyOperation.mockImplementation(
+      (args: { where?: { id?: string }; data?: Record<string, unknown> }) => {
+        const row = store.find((candidate) => candidate.id === args.where?.id);
+        if (!row || !RESTATABLE.includes(row.status)) {
+          return Promise.resolve({ count: 0 });
+        }
+        row.requestPayload = args.data?.requestPayload as Record<
+          string,
+          unknown
+        >;
+        return Promise.resolve({ count: 1 });
+      },
+    );
+  });
+
+  /** The recovery replay, once the intent it was waiting for exists. */
+  function recoverIntent(paymentIntentId = "pi_recovered") {
+    return completeDeferredXeroSupplementaryInvoice({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId,
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+    });
+  }
+
+  /** The ordinary edit dispatch, whose mint either succeeded or did not. */
+  function dispatchInlineEdit(additionalPaymentIntentId: string | null) {
+    return queueXeroBookingEditSettlement({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+      requiresAdditionalStripePayment: true,
+      additionalPaymentIntentId,
+    });
+  }
+
+  it("raises one invoice, waiting on the recovered intent and recording its payment", async () => {
+    await expect(recoverIntent()).resolves.toBe("covers-total");
+
+    const rows = supplementaryRowsFor("mod_1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("WAITING_PAYMENT");
+    expect(rows[0].requestPayload).toMatchObject({
+      bookingId: "booking_1",
+      bookingModificationId: "mod_1",
+      paymentIntentId: "pi_recovered",
+      waitForConfirmedAdditionalPayment: true,
+      recordPayment: true,
+      priceDiffCents: 4500,
+      changeFeeCents: 500,
+    });
+  });
+
+  it("raises no second invoice when the recovery replays", async () => {
+    await recoverIntent();
+    await recoverIntent();
+
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE REGRESSION ANCHOR. The first call is the edit whose mint failed: it must
+   * queue nothing, because there is nothing to invoice against yet. The second is
+   * the replay, which must queue the one invoice the first deferred. Make the
+   * deferral queue eagerly and the first assertion fails; remove the completion
+   * and the second does.
+   */
+  it("queues nothing while no intent exists, and the recovery then queues exactly one", async () => {
+    await dispatchInlineEdit(null);
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+
+    await recoverIntent();
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+  });
+
+  /**
+   * CONTROL: the ordinary path, whose mint succeeded, is untouched - one invoice,
+   * queued inline. A recovery replay arriving behind it finds that invoice and
+   * adds nothing.
+   */
+  it("leaves the inline path raising exactly one, and adds none behind it", async () => {
+    await dispatchInlineEdit("pi_inline");
+
+    const inlineRows = supplementaryRowsFor("mod_1");
+    expect(inlineRows).toHaveLength(1);
+    expect(inlineRows[0].requestPayload).toMatchObject({
+      paymentIntentId: "pi_inline",
+      waitForConfirmedAdditionalPayment: true,
+    });
+
+    await recoverIntent();
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(1);
+  });
+
+  /**
+   * CONTROL. An invoice that has already been SENT carries an active link on the
+   * anchor, and the enqueue refuses to queue a second behind it. `short` rather
+   * than `covers-total` is what tells the caller the difference is owed outside
+   * the invoice; reporting success here would hide it.
+   */
+  it("refuses a second invoice for an anchor that already has a sent one", async () => {
+    mocks.findFirstLink.mockResolvedValue({ id: "link_1" });
+
+    await expect(recoverIntent()).resolves.toBe("short");
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL. A booking with no primary Xero invoice has nothing to supplement, so
+   * the recovery must not invent one - `none` is not a shortfall and not a
+   * success.
+   */
+  it("raises nothing for a booking with no primary Xero invoice", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: null },
+    });
+
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: 4500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: false,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
+  });
+
+  /**
+   * CONTROL. A mixed-sign edit whose net is not positive settles through the
+   * credit-note paths; the recovery must not gross-bill the fee (#1356).
+   */
+  it("raises nothing when the edit's net is not positive", async () => {
+    await expect(
+      completeDeferredXeroSupplementaryInvoice({
+        bookingId: "booking_1",
+        bookingModificationId: "mod_1",
+        paymentIntentId: "pi_recovered",
+        priceDiffCents: -4500,
+        changeFeeCents: 500,
+        hasIssuedXeroInvoice: true,
+        originalPaymentStatus: "SUCCEEDED",
+      }),
+    ).resolves.toBe("none");
+    expect(supplementaryRowsFor("mod_1")).toHaveLength(0);
   });
 });

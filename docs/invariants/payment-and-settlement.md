@@ -1320,6 +1320,26 @@ one, check the other.
       it re-enqueues is the row being replayed, whose upsert deliberately does not
       reset `status`; so a replay that closed unconditionally marked the operation
       SUCCEEDED having minted nothing.
+    - **A recovered ask raises the accounting invoice the inline attempt
+      deferred** (#3181). The inline settlement SKIPS the supplementary invoice
+      while an additional Stripe payment is required and no intent exists yet -
+      correctly, because there is nothing to invoice against - and defers to the
+      intent's recovery replay. The replay only ATTACHED a recovered intent to an
+      operation already WAITING_PAYMENT, and on exactly the edits that skipped
+      there is no such operation, so the deferred invoice was never raised at all:
+      the member had a collectable request and the club's accounts had no record
+      of the charge. The replay now completes the deferral by re-entering the same
+      settlement dispatcher with the intent set, on BOTH of its forks - an ordinary
+      edit bills the `BookingModification`'s signed components, a review charge
+      bills the combined total the sync re-derived. It queues no second invoice
+      because it asks no second question: the anchor-scoped, advisory-locked
+      decision above is the only one, which also makes the replay safe to run
+      twice. A failure to queue is recorded and NOT retried, because by that point
+      the replay has written this edit's `ADDITIONAL` transaction and the
+      processor's own "a later edit superseded this one" check would read that row
+      as a supersession - so a retry would complete having done nothing. The
+      booking-vs-Xero repair pass classifies the resulting divergence and offers
+      `QUEUE_SUPPLEMENTARY_INVOICE` built from the same two components.
     - **Every path that settles a share without producing a request leaves a
       durable trace.** A `logger.warn` is not one: nobody goes looking through a
       log stream for money the club is owed. The mint refusing before its own `try`
