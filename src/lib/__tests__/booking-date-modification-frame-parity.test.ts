@@ -97,7 +97,14 @@ const tx = {
   // #3032: the pending-review fence reads this under the booking-edit locks.
   // Empty by default - no financial review is open - so every pre-#3032 test
   // asserts exactly what it asserted before.
-  manualRefundTask: { findFirst: vi.fn().mockResolvedValue(null) },
+  manualRefundTask: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      // #3032: the modified email asks whether the club is still working
+      // out an amount on this booking (`bookingHasOpenFinancialReview`).
+      // Empty by default - no review is open - so every pre-#3032
+      // assertion in this file means exactly what it meant before.
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   bookingModification: { create: h.txModificationCreate },
   payment: { update: vi.fn() },
   choreAssignment: { findMany: vi.fn().mockResolvedValue([]) },
@@ -117,6 +124,15 @@ const tx = {
 */
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    /*
+      #3032: the modified email asks whether the club is still working out an
+      amount on this booking, through `bookingHasOpenFinancialReview`. That
+      reads the GLOBAL client after the transaction commits, which is a
+      different read from the fence's in-transaction `findFirst`. Empty by
+      default - no review is open - so every pre-#3032 assertion in this file
+      means exactly what it meant before.
+    */
+    manualRefundTask: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: (cb: (client: typeof tx) => unknown) => cb(tx),
     clubTimeSettings: {
       findUnique: async () => ({
