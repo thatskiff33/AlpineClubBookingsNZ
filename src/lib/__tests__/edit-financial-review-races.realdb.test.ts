@@ -216,14 +216,41 @@ let observerClient: PrismaClient;
       await prisma.member.deleteMany({ where: { id: MEMBER_ID } });
     }
 
-    /** How many backends are queued behind `blockerPid`, whatever they wait on. */
+    /**
+     * How many backends are queued behind `blockerPid`, directly OR transitively.
+     *
+     * `pg_blocking_pids` reports a session's IMMEDIATE blockers only, and on a
+     * contended ROW that is not the row's holder. PostgreSQL makes the second
+     * waiter queue on the intermediate TUPLE lock held by the first waiter, so a
+     * measured run of the double-completion case shows the holder blocking
+     * completion A and completion A blocking completion B — B never names the
+     * holder at all. Counting direct blockers would therefore see ONE contender
+     * at the moment two are queued on the one row, and time the barrier out on a
+     * proof that was in fact holding.
+     *
+     * So ask the question the barrier actually means: is the holder the ROOT of
+     * this session's wait? `UNION` (never `UNION ALL`) makes a wait cycle
+     * terminate instead of spinning.
+     */
     async function blockedByHolder(blockerPid: number): Promise<number> {
       const rows = await observerClient.$queryRaw<Array<{ count: number }>>`
-        SELECT COUNT(*)::int AS "count"
-        FROM pg_stat_activity AS activity
-        WHERE activity.datname = current_database()
-          AND activity.pid <> pg_backend_pid()
-          AND pg_blocking_pids(activity.pid) @> ARRAY[${blockerPid}::int]
+        WITH RECURSIVE waits AS (
+          SELECT activity.pid AS waiter, blocker.pid AS blocker
+          FROM pg_stat_activity AS activity
+          CROSS JOIN LATERAL unnest(pg_blocking_pids(activity.pid)) AS blocker(pid)
+          WHERE activity.datname = current_database()
+            AND activity.pid <> pg_backend_pid()
+        ),
+        chain AS (
+          SELECT waiter, blocker FROM waits
+          UNION
+          SELECT chain.waiter, waits.blocker
+          FROM chain
+          JOIN waits ON waits.waiter = chain.blocker
+        )
+        SELECT COUNT(DISTINCT waiter)::int AS "count"
+        FROM chain
+        WHERE blocker = ${blockerPid}::int
       `;
       return rows[0]?.count ?? 0;
     }
