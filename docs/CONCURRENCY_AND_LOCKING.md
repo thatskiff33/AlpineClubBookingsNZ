@@ -2571,6 +2571,20 @@ makes the settlement single-flight, so:
   stored prefix, Stripe answers the repeat with the original refund, and the
   ledger dedupes on refund id.
 
+**#3194 ADDS A READ TO THAT SAME LOCKLESS TRANSACTION AND STILL NO KEY.** Where
+the task carries no `paymentId` of its own — a review parked before the member
+paid — the route decision re-reads the BOOKING's payment on the caller's
+transaction and routes on that, so a card payment made while the review was open
+is refunded to the card rather than turned into account credit. It composes no
+tier: it writes nothing, backfills nothing and takes no key, so it can neither
+deadlock against another writer nor produce a second refund. A capture committing
+between that read and the claim is the same benign race the section above
+describes — the completion simply sees the pre-capture snapshot and routes to
+account credit, which is the answer it gave before this change; the anchor-taken
+refusal still prevents a second credit on the same `BookingModification`. The
+opposite ordering cannot arise: routing to the card at all requires the capture to
+have been visible already.
+
 **The Stripe key and the recovery key are scoped to the TASK, not to the
 `BookingModification`.** Owner decision D-3032-1 settles a review against the
 ORIGINAL edit's modification row, and one edit can raise TWO review tasks — two
