@@ -587,6 +587,33 @@ sentences plus the fact that joins them: the unpriced adjustment is not part of
 the figure being asked for. Gating the review branch to PAID would have resolved
 the contradiction by deleting the disclosure.
 
+**On the emailed payment link** (`/pay/<token>`), the member reads the same
+thing. Until #3194 they did not: that helper is `server-only`, the page is a
+client component, and nobody threaded the answer through — so a member who
+followed their emailed link saw the ordinary payment view and, on a booking that
+read as paid, was told there was nothing more to do, while the booking's own page
+said the money was with the office. The route handler now does the read and hands
+it down, and the sentences come from `booking-financial-review-copy.ts` rather
+than from a second set written for this page.
+
+The page keeps taking money. Its payment card is its own — dates, guests, amount
+due, link expiry — so it shows the review half on its own from
+`financialReviewNoteBesideAnAmount`, directly under the amount and above the
+buttons, where it is read before the member decides. The card button, the
+internet banking reference and the *"email me a new link"* action all stay armed,
+because the booking's own price is genuinely due and this link is the only way an
+unregistered guest can pay it; disarming them would cost the member the booking
+when the hold expired without moving a cent of the money under review. The note
+also stays on screen after a card payment completes on the page, where the
+confirmation is composed by the page rather than by the server and would
+otherwise sign off with *"your booking is confirmed"*.
+
+That means the page reads TWO facts off one payload and must not conflate them:
+`state` is the WORDING state, which a review changes, and `payable` /
+`canRequestFreshLink` are the LINK's own state, which it does not. Keying the
+payment card on the wording state hands a CONFIRMED-unpaid member a page saying
+*"pay by card or internet banking below"* with nothing below it.
+
 **In the booking's own Transaction History**, the modification row for the change
 keeps its figure and loses its colour. The signed price difference is real — it is
 how far the booking's total moved — but it was rendered in the same green a
