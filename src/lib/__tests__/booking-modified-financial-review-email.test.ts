@@ -61,6 +61,10 @@ function params(overrides: Record<string, unknown> = {}) {
     changeFeeCents: 0,
     refundAmountCents: 0,
     additionalAmountCents: 0,
+    // #3032 made this required, so the base fixture states the CONTROL value
+    // explicitly: this is the "no review is open" email every case below is
+    // measured against, not an absence the compiler filled in.
+    financialReviewPending: false,
     ...overrides,
   };
 }

@@ -2980,6 +2980,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Booking Modified");
     expect(html).toContain("Alice");
@@ -3004,6 +3007,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Guests Added");
     expect(html).toContain("Previous Guests");
@@ -3027,6 +3033,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 5000,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Guest Removed");
     expect(html).toContain("refund");
@@ -3049,6 +3058,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 5000,
       refundAmountCents: 0,
       additionalAmountCents: 5000,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).toContain("Change Fee");
     expect(html).toContain("$50.00");
@@ -3074,6 +3086,9 @@ describe("bookingModifiedTemplate", () => {
       additionalPaymentMethod: "INTERNET_BANKING",
       paymentReference: "BOOKING-IB-1",
       xeroInvoiceNumber: "INV-1001",
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
 
     expect(html).toContain("additional Internet Banking payment");
@@ -3098,6 +3113,9 @@ describe("bookingModifiedTemplate", () => {
       changeFeeCents: 0,
       refundAmountCents: 0,
       additionalAmountCents: 0,
+      // #3032: required, and this suite is not about the review note.
+      // False is the control state for every assertion here.
+      financialReviewPending: false,
     });
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
