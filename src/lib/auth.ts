@@ -4,8 +4,9 @@
  * that reaches NextAuth's configuration, `bcrypt` and the credential callbacks
  * fails `next build` with the import chain printed.
  * `scripts/ci/server-only-boundary-selftest.mjs` plants exactly that and proves
- * the build still catches it. `@/lib/prisma` is deliberately NOT marked — see
- * `docs/invariants/operations.md` → `INV-OPS-013` for the measured reason.
+ * the build still catches it, for this module and for `@/lib/prisma`.
+ * `docs/invariants/operations.md` → `INV-OPS-013` lists every marked root and
+ * why the operator CLIs that reach them run with `--conditions=react-server`.
  */
 import "server-only";
 
