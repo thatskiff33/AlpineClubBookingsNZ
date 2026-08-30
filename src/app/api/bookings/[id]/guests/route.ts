@@ -646,25 +646,13 @@ export async function POST(
             nights: {
               create: (priced.nightDates ?? []).map((stayDate, k) => ({
                 stayDate,
-                // #3167 (epic #2797): NO `?? 0`. This writer is the sharpest of
-                // the three the issue names — it puts night rows on an EXISTING
-                // booking, alongside rows that already carry real sold prices.
-                // A magic zero here seeds a strand that a later edit reads back
-                // as evidence, and under #3031 a strand whose rows do not
-                // reconcile to its guest total sends the whole edit to manual
-                // review: the damage surfaces months later, on someone else's
-                // day, with nothing left to explain it.
-                //
-                // The #3167 census found this UNREACHABLE on every current
-                // caller, but on a STRUCTURAL invariant rather than a tautology:
-                // `calculateBookingPrice` builds `perNightCents` and
-                // `nightDates` in one loop — every iteration pushes exactly
-                // once, no `continue` skips a push, no filter, no early break,
-                // and the only other exit abandons the whole breakdown — and the
-                // loop above iterates the OTHER half of that same object. Real,
-                // but unenforced: the breakdown type declares no length
-                // relation, so a second producer whose halves disagree would
-                // type-check. This is what enforces it, at zero live cost.
+                // #3167 (epic #2797): NO `?? 0` — the rule and the #3167
+                // census are in `required-price-cents.ts`. What is specific
+                // here is the blast radius: this is the one writer that puts
+                // night rows on an EXISTING booking, beside rows already
+                // carrying real sold prices, so a magic zero would not read as
+                // the caller bug it is — it would surface much later as an
+                // unexplained review on somebody else's day.
                 priceCents: requiredNightPriceCents(
                   priced.perNightCents,
                   k,

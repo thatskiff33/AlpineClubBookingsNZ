@@ -1424,21 +1424,14 @@ export async function holdBookingRequestSlots(input: {
           memberId,
           stayStart: request.checkIn,
           stayEnd: request.checkOut,
-          // #3167 (epic #2797): NO `?? 0`. This one writes a guest TOTAL rather
-          // than a night row, and its guarantee is the strongest of the three —
-          // a tautology. `guestPriceCents` is `splitPriceAcrossGuests(...,
-          // guests.length)`, which returns exactly that many entries, and the
-          // loop below iterates the same `guests` const fourteen lines later
-          // with nothing in between that mutates it. This refusal can never
-          // fire on any input; its sibling on the same pipeline
-          // (`buildApprovalGuestCreates`) already carries no fallback at all and
-          // has run in production across three approval callers.
-          //
-          // It goes in anyway, and not as padding: the `?? 0` it replaces was a
-          // real financial number standing in for "the split came up short",
-          // and leaving one prohibited construct on a money column because the
-          // reason it is safe is subtle is how the subtlety gets forgotten. The
-          // rule is now the same rule at every writer of a price column.
+          // #3167 (epic #2797): NO `?? 0` — the rule is in
+          // `required-price-cents.ts`. The #3167 census graded this site a
+          // TAUTOLOGY, the strongest of its three verdicts: the split is taken
+          // over `guests.length` and this loop iterates that same const, with
+          // nothing between them that mutates it, so the refusal cannot fire on
+          // any input. It goes in anyway — leaving one prohibited construct on a
+          // money column because the reason it is safe is subtle is how the
+          // subtlety gets forgotten.
           priceCents: requiredGuestPriceCents(
             guestPriceCents,
             index,
