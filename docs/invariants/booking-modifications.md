@@ -1426,7 +1426,15 @@ edit in `batch-modify-payment.test.ts` (the save commits and parks rather than
 refusing, `NULL` is written for every night it cannot value, a partially readable
 strand keeps its readable row byte for byte, and a REMOVED strand whose own rows
 were readable is recorded before they are deleted), the preview in
-`phase2-guest-subscription.test.ts`, the date change in `fix-mod-payment.test.ts`
+`phase2-guest-subscription.test.ts`, which strand a parked edit RECORDS — removed,
+shortened or extended, each beside a control — in
+`pre-check-in-edit-evidence.test.ts`, that the gate is CALLED on all four
+surfaces and its answer is what fences the write in the pre-check-in gate census
+in `in-progress-edit-sold-price-census.test.ts`, that a SETTLED review no longer
+silences the next occurrence of the same identity in
+`edit-financial-review.test.ts`, that the waitlist offer sweep declines to
+reprice over a blank in `waitlist.test.ts`, the date change in
+`fix-mod-payment.test.ts`
 (including that a moved range which still covers a night keeps that night at the
 price it was sold for), and the guest add in `guests-add-notify-choice.test.ts`. The removal PARK is pinned by
 `booking-guest-consent-authority.test.ts` (the consent decline and the expiry
