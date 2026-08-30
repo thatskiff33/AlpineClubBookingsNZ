@@ -1181,13 +1181,40 @@ one, check the other.
     without filtering on amount, so that event is chosen and shadows any genuine
     later one. "Reviewed, nothing is due" is DISMISSED. This is the same magic
     zero the epic exists to remove, arriving through the completion door.
-  - **A credit-only completion records no refund.** With `paymentId` NULL nothing
-    writes account credit, nothing moves in the ledger and
-    `Payment.refundedAmountCents` is untouched, so no `REFUNDED` booking event is
-    written either - that log is member-facing and must not claim money the
-    system did not return. The admin's action is recorded in the AUDIT log. When
-    the path that ISSUES the credit is wired (#3032/#3033), the booking event
-    belongs there, written where the money moves.
+  - **A credit-only completion records no refund.** With `paymentId` NULL there is
+    nothing to allocate against and `Payment.refundedAmountCents` is untouched, so
+    no `REFUNDED` booking event is written - that log is member-facing and must
+    not claim money the system did not return. Since #3032 such a completion does
+    ISSUE account credit, and records `CREDITED` after the commit, where the money
+    moved.
+  - **A confirmed amount is settled through the settlement path that already
+    exists, never a fourth one** (#3032). The booking's payment decides which: a
+    canonical Stripe refund for a card capture, made AFTER the commit and keyed
+    `${prefix}_${bookingModificationId}` like every other modification refund; the
+    local ledger allocation for an internet-banking hand-back; or
+    `createBookingModificationCredit` where nothing was captured, whose
+    exactly-once key is the `BookingModification` id. The route is chosen and
+    every refusal raised BEFORE the status claim, so a refused completion leaves
+    the task OPEN and nothing half-applied; the Stripe route writes no allocation
+    of its own, because `refundPaymentTransactions` writes it and doing both would
+    consume the refundable headroom twice. The completion holds no advisory lock -
+    see `docs/CONCURRENCY_AND_LOCKING.md` for why that is deliberate - so the
+    status claim is the whole single-flight guarantee.
+  - **The settlement anchor is the ORIGINAL edit's `BookingModification`** (owner
+    decision D-3032-1), carried on `reviewContext.bookingModificationId` and
+    deliberately NOT part of the occurrence identity: it points at a row rather
+    than describing which edit happened, so including it would re-identify every
+    replay. `MemberCredit.sourceBookingModificationId` is unique, so an anchor
+    that already carries a credit is refused with a typed 409 rather than reaching
+    an untyped throw inside the credit writer. ANY pre-existing credit is refused,
+    including one whose amount matches: a matching amount is indistinguishable
+    from a coincidence, and treating it as a replay would close the task having
+    moved nothing.
+  - **While a review is OPEN, a second money-affecting edit to that booking is
+    refused** (#3032, `assertNoPendingEditFinancialReview`), because pricing one
+    would mean starting from the amount under review. Identity-only edits, credit
+    elections, the price-preserving admin date shift and consent-authority
+    removals (owner decision D-14) are not fenced.
   - **Three database constraints, because prose is not enforcement** (migration
     `20260903010000`). An `EDIT_FINANCIAL_REVIEW` row must carry its
     `occurrenceKey` (`ManualRefundTask_edit_review_occurrence_key_present`) -
@@ -1203,11 +1230,17 @@ one, check the other.
     property of an UPDATE rather than of a row and is NOT enforced by the
     database; it holds because the column has one writer and every completion
     audits the previous and raised figures.
+  - **An OPEN review blocks reversal of a manual settlement**, and that is
+    accepted as correct (owner decision D-3032-2). It falls out of `INV-PAY-045`,
+    which already refuses a reversal while any `ManualRefundTask` is OPEN, rather
+    than being new behaviour - but raising this kind changes which bookings
+    satisfy that condition, so it is stated here rather than shipped quietly.
   - **What #3030 enforces versus what #3032 wires.** #3030 ships the state, the
     single occurrence-key mint, the raise, the DB constraints and the audited
-    completion. It ships NO caller: the booking-edit path that decides an edit is
-    unpriceable and calls the raise is #3032, and until it lands no production
-    path creates a row of this kind. Read the rules above as binding on any writer
+    completion. #3032 adds the settlement routing, the anchor and the
+    pending-review fence. Neither ships the RAISE CALLER: the booking-edit path
+    that decides an edit is unpriceable needs #3031's discriminated planner
+    result, so until that lands no production path creates a row of this kind. Read the rules above as binding on any writer
     of this kind rather than as a description of a live flow — which is also why
     the current estimator behaviour in `INV-MOD-005` is still true today and is
     #3031's to remove.

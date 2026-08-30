@@ -2543,6 +2543,43 @@ turned into either answer, so the rejection reaches the webhook's outer catch, t
 processed-event marker is cleared and Stripe redelivers against the same idempotent
 refund keys.
 
+**#3032 SETTLES MONEY ON THAT SAME LOCKLESS PATH, AND DELIBERATELY ADDS NO KEY TO
+IT.** Completing an `EDIT_FINANCIAL_REVIEW` task now issues a Stripe refund, a
+local allocation or account credit for the amount an admin confirms. The obvious
+instinct is to serialise that against a concurrent edit or capture with `lock(1)`
+— and it is the same instinct this section already refuses, for the same reason:
+the Stripe refund is a provider round trip, and holding the global key across one
+is exactly what the bounded-exception rule forbids. The guarantee is a **durable
+claim, not a lock**. The existing status-guarded `updateMany` on `OPEN` is what
+makes the settlement single-flight, so:
+
+- every refusal is raised BEFORE the claim, so a refused completion leaves the
+  task `OPEN` with nothing half-applied;
+- the ledger writes sit AFTER it inside the same transaction, so a lost claim
+  writes nothing — `applyLocalRefundAllocation` INCREMENTS `refundedAmountCents`
+  and is not idempotent, so a caller placed beside the claim rather than
+  downstream of it would silently double-consume the refundable headroom until
+  the captured-cash cap tripped;
+- the Stripe call happens after the COMMIT, keyed
+  `${prefix}_${bookingModificationId}` like every other modification refund, and
+  enqueues the same durable recovery operation on failure.
+
+`src/lib/__tests__/edit-financial-review-races.realdb.test.ts` proves both halves
+against a real server, forcing the interleaving with a third connection rather
+than hoping for it: two concurrent applies of one occurrence queue on `lock(1)`
+and raise exactly one task, and two concurrent completions queue on the task ROW
+and issue exactly one credit.
+
+**And one new READ inside the booking-edit lock envelope.**
+`assertNoPendingEditFinancialReview` is called by `modifyBookingBatch`,
+`modifyBookingDates` and `removeBookingGuestInTransaction` after both locks and
+after the post-lock re-read, on the caller's `tx`. It takes no key of its own and
+adds no tier: it is a `findFirst` on the caller's transaction client, placed under
+the locks precisely so it cannot be answered by a task a concurrent completion
+was about to close. `adminShiftBookingDates` is the one edit path deliberately
+NOT fenced — it is price-preserving (`priceDiffCents: 0`, no refund, no credit),
+so it needs no money baseline.
+
 Note what `softDeleteCancelledBooking` does NOT do here. It cancels the deleted
 booking's in-flight Stripe PaymentIntents **after** its transaction commits,
 never inside it, so no provider round trip happens while `lock(1)` is held and a

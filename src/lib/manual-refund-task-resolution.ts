@@ -4,16 +4,12 @@ import {
   BookingEventType,
   ManualRefundTaskKind,
   ManualRefundTaskStatus,
-  PaymentSource,
 } from "@prisma/client";
 import { createAuditLog } from "@/lib/audit";
 import { recordBookingEvent } from "@/lib/booking-events";
 import { executeBookingModificationRefund } from "@/lib/booking-modification-settlement";
-import { hasCapturedPayment } from "@/lib/booking-payment-state";
-import {
-  isNonNegativeIntegerCents,
-  parseEditFinancialReviewContext,
-} from "@/lib/edit-financial-review-context";
+import { isNonNegativeIntegerCents } from "@/lib/edit-financial-review-context";
+import { chooseEditReviewSettlementRoute } from "@/lib/edit-financial-review-settlement";
 import {
   MANUAL_PAYMENT_NOTE_MAX,
   normaliseManualPaymentNote,
@@ -84,89 +80,6 @@ export { MANUAL_PAYMENT_NOTE_MAX };
  * every existing call site keep the old behaviour silently, where requiring it
  * makes the compiler list them.
  */
-/**
- * #3032 (epic #2797): WHERE a confirmed amount goes when the task is closed.
- *
- * There is no single "settlement function" in this repository, and this issue
- * deliberately does not mint a fourth one. It picks between the three that
- * already exist and re-enters them unchanged:
- *
- *  - `stripe-refund` - the booking was paid by card, so the money goes back the
- *    way it came. `executeBookingModificationRefund` owns the provider call, its
- *    Stripe idempotency key (`${prefix}_${bookingModificationId}`) and its
- *    recovery enqueue. It writes the ledger allocation ITSELF, through
- *    `refundPaymentTransactions`, which is why this route writes none here -
- *    doing both would consume the refundable headroom twice.
- *  - `local-allocation` - a payment the club settles by hand (internet banking,
- *    or a cash hand-back). Only the ledger mirror moves, which is exactly what
- *    every pre-#3032 task did and is left byte-identical.
- *  - `account-credit` - no captured card charge behind the adjustment, so the
- *    money is returned as account credit through
- *    `createBookingModificationCredit`, whose exactly-once key is the
- *    `BookingModification` id (owner decision D-3032-1).
- *
- * `null` is the fourth outcome and means "nothing moves": a DISMISSED task, and
- * a legacy hand-back with no payment behind it.
- */
-type EditReviewSettlementRoute =
-  | {
-      kind: "stripe-refund";
-      paymentId: string;
-      bookingModificationId: string;
-    }
-  | { kind: "local-allocation"; paymentId: string }
-  | {
-      kind: "account-credit";
-      bookingModificationId: string;
-      /**
-       * The booking's captured payment, when it has one. An account credit
-       * consumes refundable value exactly like a card refund does, so the
-       * allocation has to be written or a later cancellation refunds the same
-       * cents a second time (#1031, and the reason
-       * `createBookingModificationCredit` takes a payment id at all). Null when
-       * the booking has no captured payment, where there is nothing to allocate
-       * against.
-       */
-      allocateAgainstPaymentId: string | null;
-    };
-
-/**
- * The two refusals #3032 adds, both raised BEFORE the status claim so a refused
- * completion leaves the task exactly as it found it - still OPEN, still holding
- * the money question, with nothing half-applied.
- */
-const REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE =
-  "This review is not linked to the booking change it came from, so the amount cannot be settled automatically. Record the hand-back against the booking's payment and dismiss this task with a note saying so.";
-
-/**
- * Owner decision D-3032-1 obliges this case to be handled deliberately rather
- * than discovered at runtime. A confirmed review amount settles against the
- * ORIGINAL edit's `BookingModification` row, and
- * `MemberCredit.sourceBookingModificationId` is `@unique` - so if that edit had
- * already issued a credit of its own, a second credit against the same row
- * cannot be represented.
- *
- * Left unhandled it is not a clean failure: `createBookingModificationCredit`
- * would reach `assertMatchingBookingModificationCredit` and throw an untyped
- * `Error`, which falls past the route's `instanceof ManualBookingPaymentError`
- * check and reaches the operator as "Could not close the refund task" with a 500
- * in monitoring - for a database doing exactly what it was asked to.
- *
- * ANY pre-existing credit on the anchor is refused, including one whose amount
- * happens to equal the confirmed figure. That is not over-caution: a matching
- * amount is indistinguishable from a coincidence, and treating it as a replay
- * would mark the task COMPLETED having moved nothing - money lost in silence,
- * which is the failure this epic exists to prevent. A genuine replay never gets
- * here, because a second completion of a COMPLETED task is refused by the status
- * check above this.
- *
- * It is a DEFENSIVE refusal rather than a routine one: an edit whose amount
- * could not be proven computes no settlement, so it issues no credit of its own
- * and leaves the anchor free.
- */
-const REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE =
-  "The booking change behind this review has already issued account credit, so a second credit cannot be recorded against it. Hand the amount back another way and dismiss this task with a note saying what was done.";
-
 export type ManualRefundTaskResolution =
   | {
       taskId: string;
@@ -374,93 +287,15 @@ export async function resolveManualRefundTask(
       }
     }
 
-    /**
-     * #3032: pick the settlement route BEFORE the claim, and refuse here rather
-     * than after it.
-     *
-     * Everything this block does is a read or a throw. That ordering is the
-     * whole point: a refusal that fired after the status claim would leave the
-     * task COMPLETED with nothing moved, which is precisely the "pretends money
-     * moved" failure `INV-PAY-051` forbids. A refusal from here leaves the row
-     * untouched and still OPEN.
-     *
-     * Every kind other than `EDIT_FINANCIAL_REVIEW` keeps its pre-#3032
-     * behaviour byte for byte - allocate against the task's payment when it has
-     * one, and otherwise move nothing. Those tasks are raised for cash-settled
-     * bookings with no card charge to reverse, so there is no Stripe route to
-     * send them down and no anchor to credit against.
-     */
-    let settlementRoute: EditReviewSettlementRoute | null = null;
-    if (settlement) {
-      if (!isEditReview) {
-        settlementRoute =
-          task.paymentId !== null
-            ? { kind: "local-allocation", paymentId: task.paymentId }
-            : null;
-      } else {
-        // Parsed through the one parser (`INV-SSOT`, #3030) rather than indexed
-        // into as JSON. Null here means the row's evidence is unreadable, which
-        // is a legitimate state for a task an admin must still be able to SEE -
-        // but not one that can be settled automatically, so it falls into the
-        // anchor-missing refusal below with a message that says what to do.
-        const reviewContext = parseEditFinancialReviewContext(
-          task.reviewContext,
-        );
-        const bookingModificationId =
-          reviewContext?.bookingModificationId ?? null;
-        if (
-          task.paymentId !== null &&
-          task.payment?.source === PaymentSource.STRIPE
-        ) {
-          if (!bookingModificationId) {
-            throw new ManualBookingPaymentError(
-              REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
-              409,
-            );
-          }
-          settlementRoute = {
-            kind: "stripe-refund",
-            paymentId: task.paymentId,
-            bookingModificationId,
-          };
-        } else if (task.paymentId !== null) {
-          // Internet banking, or any non-card capture: the club moves the money
-          // by hand and this records the ledger mirror of it, exactly as the
-          // legacy hand-back does.
-          settlementRoute = {
-            kind: "local-allocation",
-            paymentId: task.paymentId,
-          };
-        } else {
-          if (!bookingModificationId) {
-            throw new ManualBookingPaymentError(
-              REVIEW_SETTLEMENT_ANCHOR_MISSING_MESSAGE,
-              409,
-            );
-          }
-          // Owner decision D-3032-1's obliged edge case - see
-          // `REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE` for why any pre-existing credit
-          // on the anchor is refused rather than treated as a replay.
-          const anchorCredit = await tx.memberCredit.findUnique({
-            where: { sourceBookingModificationId: bookingModificationId },
-            select: { id: true },
-          });
-          if (anchorCredit) {
-            throw new ManualBookingPaymentError(
-              REVIEW_CREDIT_ANCHOR_TAKEN_MESSAGE,
-              409,
-            );
-          }
-          settlementRoute = {
-            kind: "account-credit",
-            bookingModificationId,
-            allocateAgainstPaymentId: hasCapturedPayment(task.booking.payment)
-              ? (task.booking.payment?.id ?? null)
-              : null,
-          };
-        }
-      }
-    }
+    // #3032: pick the settlement route BEFORE the claim, and let it refuse from
+    // there rather than after. A refusal that fired after the status claim would
+    // leave the task COMPLETED with nothing moved, which is precisely the
+    // "pretends money moved" failure `INV-PAY-051` forbids; a refusal from here
+    // leaves the row untouched and still OPEN. The rules, the three routes and
+    // the two refusals live in `edit-financial-review-settlement.ts`.
+    const settlementRoute = settlement
+      ? await chooseEditReviewSettlementRoute(task, tx)
+      : null;
 
     const now = new Date();
     const claimed = await tx.manualRefundTask.updateMany({
