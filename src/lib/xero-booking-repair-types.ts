@@ -377,6 +377,18 @@ export interface BookingClassificationContext {
   bookingOperations: XeroOperationRecord[];
   modificationOperationsById: Map<string, XeroOperationRecord[]>;
   cancellationRefundRecoveryOperations: BookingCancellationRefundRecoveryRecord[];
+  /**
+   * #3187: what this booking's COMPLETED edit-financial-review tasks settled as
+   * money owed to the club, totalled per `BookingModification` anchor.
+   *
+   * Empty for every booking that has never had a review parked on it, which is
+   * what keeps the ordinary arms of the classifier exactly as they were. A
+   * parked edit writes `priceDiffCents: 0` and `changeFeeCents: 0` on its
+   * modification row BY CONSTRUCTION - the booking's stored totals do not move,
+   * because the money is unresolved - so the modification row alone can never
+   * say what such an edit owes. This map is where that number comes from.
+   */
+  editReviewChargeCentsByModificationId: Map<string, number>;
 }
 
 export interface MutableFinding {

@@ -13,6 +13,12 @@ import {
   type XeroOperationRecord,
 } from "./xero-booking-repair-types";
 import { buildBookingCancellationRefundIdempotencyKey } from "./payment-recovery-keys";
+import {
+  editReviewChargeShareTaskSelect,
+  editReviewChargeShareTaskWhere,
+  sumEditReviewChargeSharesByAnchor,
+  type EditReviewChargeShareRow,
+} from "@/lib/edit-financial-review-charge-shape";
 import type { RepairDependencies } from "./xero-booking-repair-deps";
 import { makeLocalKey, parseRepairScopeDay } from "./xero-booking-repair-utils";
 import {
@@ -27,6 +33,11 @@ import {
   type ClubTimeZone,
 } from "@/lib/club-time";
 import { readClubTimeZoneOutsideRequest } from "@/lib/club-time-zone-runtime";
+
+/** A settled edit-review charge share, carrying the booking it was raised on. */
+type EditReviewChargeShareRecord = EditReviewChargeShareRow & {
+  bookingId: string;
+};
 
 /**
  * The club calendar day after `day`, as `yyyy-MM-dd`.
@@ -194,7 +205,12 @@ export async function loadAuditData(
     });
   }
 
-  const [links, operations, cancellationRefundRecoveryOperations] = await Promise.all([
+  const [
+    links,
+    operations,
+    cancellationRefundRecoveryOperations,
+    editReviewChargeShares,
+  ] = await Promise.all([
     linkScopes.length > 0
       ? deps.prisma.xeroObjectLink.findMany({
           where: {
@@ -241,6 +257,22 @@ export async function loadAuditData(
           },
         })
       : Promise.resolve([] as BookingCancellationRefundRecoveryRecord[]),
+    // #3187: the money a parked booking edit actually owes. It is on the review
+    // TASKS, never on the `BookingModification` row the edit wrote - parking
+    // exists so the structural change can commit while the money stays
+    // unresolved, so that row's `priceDiffCents` is 0 and stays 0. Scoped to the
+    // bookings this sweep loaded, and selected through the charge feature's own
+    // criteria (`editReviewChargeShareTaskWhere`) so the repair tool and the
+    // settlement it audits cannot disagree about which rows count as owed.
+    bookingIds.length > 0
+      ? deps.prisma.manualRefundTask.findMany({
+          where: {
+            bookingId: { in: bookingIds },
+            ...editReviewChargeShareTaskWhere,
+          },
+          select: { bookingId: true, ...editReviewChargeShareTaskSelect },
+        })
+      : Promise.resolve([] as EditReviewChargeShareRecord[]),
   ]);
 
   const linksByLocalKey = new Map<string, XeroObjectLinkRecord[]>();
@@ -262,6 +294,23 @@ export async function loadAuditData(
     const list = cancellationRecoveryByBookingId.get(operation.bookingId) ?? [];
     list.push(operation);
     cancellationRecoveryByBookingId.set(operation.bookingId, list);
+  }
+
+  /**
+   * Per BOOKING, then per anchor. Grouping by booking first is not decoration:
+   * the anchor is read out of a stored JSON context, and a context naming a
+   * modification that belongs to a DIFFERENT booking must not contribute to that
+   * booking's expected invoice. Summing globally would let one unreadable or
+   * mis-written row move another booking's money.
+   */
+  const editReviewChargeSharesByBookingId = new Map<
+    string,
+    EditReviewChargeShareRecord[]
+  >();
+  for (const share of editReviewChargeShares) {
+    const list = editReviewChargeSharesByBookingId.get(share.bookingId) ?? [];
+    list.push(share);
+    editReviewChargeSharesByBookingId.set(share.bookingId, list);
   }
 
   const operationsByLocalKey = new Map<string, XeroOperationRecord[]>();
@@ -299,5 +348,8 @@ export async function loadAuditData(
     ),
     cancellationRefundRecoveryOperations:
       cancellationRecoveryByBookingId.get(booking.id) ?? [],
+    editReviewChargeCentsByModificationId: sumEditReviewChargeSharesByAnchor(
+      editReviewChargeSharesByBookingId.get(booking.id) ?? []
+    ),
   }));
 }
