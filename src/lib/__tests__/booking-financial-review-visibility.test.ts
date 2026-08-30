@@ -8,11 +8,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Bookings row qualifier, and the admin booking-tools warning) and they must not
  * be able to disagree, because the answer is a claim about a member's money.
  *
- * MUTATION PROOF. Drop the `kind` clause and "counts only an unresolved edit
- * valuation" fails. Drop the `status` clause and "ignores a review that has
- * already been resolved" fails. Scope the query by payment and "finds a
- * credit-only review, which carries no payment" fails. Issue the query on an
- * empty list and "asks nothing when there is nothing to ask about" fails.
+ * MUTATION PROOF. Drop either the `kind` clause or the `status` clause and
+ * "counts only an unresolved edit valuation, and only while it is open" fails —
+ * it asserts the whole `where`, so both halves are covered by the one test.
+ * Scope the query by payment and "finds a credit-only review, which carries no
+ * payment" fails. Issue the query on an empty list and "asks nothing when there
+ * is nothing to ask about" fails. Give the single-booking reader its own second
+ * query and "answers one booking through the same query, not a second one"
+ * fails.
  */
 
 const findMany = vi.hoisted(() => vi.fn());

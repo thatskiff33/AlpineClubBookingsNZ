@@ -13,7 +13,11 @@ import {
 import { AdminReturnToWaitlistControls } from "@/components/admin/admin-return-to-waitlist-controls";
 import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
-import type { BookingProviderMismatch } from "@/lib/booking-provider-mismatches";
+import type {
+  BookingFinancialReviewWarning,
+  BookingProviderMismatch,
+  BookingWarningRow,
+} from "@/lib/booking-provider-mismatches";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import { formatDateOnly } from "@/lib/date-only";
@@ -31,7 +35,9 @@ function WarningRow({
   warning,
   returnTo,
 }: {
-  warning: BookingProviderMismatch;
+  // The shape, not either producer's id vocabulary: this renders a row, and has
+  // no business knowing which of them made it (#3033).
+  warning: BookingWarningRow;
   returnTo: string;
 }) {
   return (
@@ -99,12 +105,13 @@ export function AdminBookingToolsCard({
   providerMismatches?: BookingProviderMismatch[];
   /**
    * #3033: money on this booking is held for review — the stay change saved,
-   * the adjustment did not. Its own prop and its own block rather than another
-   * entry in `providerMismatches`, because that block is headed "Provider state
-   * out of step" and this is not a provider disagreement: local state is right
-   * and the club owes a decision. Same row shape, so both render identically.
+   * the adjustment did not. Its own prop, its own block and its own id
+   * vocabulary rather than another entry in `providerMismatches`, because that
+   * block is headed "Provider state out of step" and this is not a provider
+   * disagreement: local state is right and the club owes a decision. The row
+   * SHAPE is shared, so both render identically through `WarningRow`.
    */
-  financialReviewWarnings?: BookingProviderMismatch[];
+  financialReviewWarnings?: BookingFinancialReviewWarning[];
   features: FeatureFlags;
   /** Admin capacity hold state (#1764); omitted for deleted bookings. */
   capacityHold?: {

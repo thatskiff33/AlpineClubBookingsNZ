@@ -1,7 +1,7 @@
 // #2919 review — EVERY surface that puts a booking-message body on a screen
 // must render it through the booking-message renderer, never by hand.
 //
-// WHY THIS FILE EXISTS. All 12 message definitions declare every token as
+// WHY THIS FILE EXISTS. EVERY message definition declares every token as
 // insertable (`tokens: ALL_TOKENS`), so an operator may put
 // `{{CLUB_LODGE_NAME}}` — or `{{SUPPORT_EMAIL}}`, or `{{amountDue}}` — into any
 // of them. The admin preview renders all of them. Four live client surfaces used

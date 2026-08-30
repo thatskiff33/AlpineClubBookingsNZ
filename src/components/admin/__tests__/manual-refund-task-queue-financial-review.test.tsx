@@ -294,8 +294,50 @@ describe("what completing or dismissing means, per kind (#3033)", () => {
     // And it does not print "Record Awaiting pricing as paid back".
     expect(dialog).not.toHaveTextContent("Awaiting pricing as paid back");
     expect(
-      screen.getByRole("button", { name: "Record as paid back" }),
+      screen.getByRole("button", { name: "Record the adjustment" }),
     ).toBeDisabled();
+  });
+
+  it("does not tell an admin a decided adjustment has already gone", async () => {
+    /*
+      A review whose amount an admin has confirmed used to fall through to the
+      hand-back arm: "Record $45.00 as paid back to Grace Hopper?", over a body
+      saying "only do this once the money has actually gone back to the member".
+      An adjustment is a figure just decided — nothing has physically gone
+      anywhere, and waiting until it has is the opposite of what to do.
+    */
+    const priced = { ...REVIEW_TASK, id: "task-review-priced", amountCents: 4500 };
+    const dialog = await openDialog(priced, "Record the adjustment");
+
+    expect(dialog).toHaveTextContent("$45.00");
+    expect(dialog).not.toHaveTextContent(/as paid back/);
+    expect(dialog).not.toHaveTextContent(/actually gone back to the member/);
+    expect(dialog).toHaveTextContent(/adjustment the club has decided on/);
+    expect(
+      screen.getByRole("button", { name: "Record the adjustment" }),
+    ).not.toBeDisabled();
+  });
+
+  it("does not read a hand-back's placeholder as an amount", async () => {
+    /*
+      #2971 made `amountCents` nullable for every kind, so an UNPRICED HAND-BACK
+      is representable. Interpolating the amount formatter into the hand-back
+      sentence announced it as "Record Awaiting pricing as paid back to Ada
+      Lovelace?".
+    */
+    const unpriced = {
+      ...HAND_BACK_TASK,
+      id: "task-hand-back-unpriced",
+      amountCents: null,
+    };
+    const dialog = await openDialog(unpriced, "Mark paid back");
+
+    expect(dialog).not.toHaveTextContent("Awaiting pricing as paid back");
+    expect(dialog).toHaveTextContent(
+      "Record this refund as paid back to Ada Lovelace?",
+    );
+    // Still a hand-back: it keeps the hand-back body, not the review's.
+    expect(dialog).toHaveTextContent(/actually gone back to the member/);
   });
 
   it("still offers the completion on a priced hand-back", async () => {

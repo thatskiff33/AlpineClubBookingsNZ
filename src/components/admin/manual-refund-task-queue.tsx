@@ -20,6 +20,7 @@ import { FocusedActionError } from "@/components/focused-action-error";
 import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { formatCents } from "@/lib/utils";
+import type { ManualRefundTaskKind } from "@prisma/client";
 import {
   EDIT_FINANCIAL_REVIEW_CAUSE_LABEL,
   type EditFinancialReviewEvidence,
@@ -73,12 +74,26 @@ interface ManualRefundTask {
 }
 
 /**
- * #3033: the one row kind whose money is genuinely unknown. Matched against the
- * `ManualRefundTaskKind` value rather than an enum import so the client bundle
- * does not pull Prisma across the boundary; an absent or unrecognised kind is a
- * hand-back, which is what every row was before the column existed.
+ * #3033: the one row kind whose money is genuinely unknown.
+ *
+ * TYPED AGAINST THE PRISMA ENUM, not left as a bare string. Nothing else here
+ * fails if the enum member is renamed — every test supplies `kind` as a fixture
+ * string, so the whole suite would stay green while the queue silently printed
+ * the cash-hand-back paragraph over financial reviews again, which is the exact
+ * defect this issue exists to fix. Annotating the constant makes the rename a
+ * compile error instead.
+ *
+ * `import type` is fully erased at build time, so this pulls no Prisma runtime
+ * across the client boundary — the same pattern `my-bookings-list.tsx` already
+ * uses for `BookingStatus`, and what `client-server-boundary-census.test.ts`
+ * permits.
+ *
+ * The wire field stays a loose string: an absent or unrecognised kind is a
+ * hand-back, which is what every row was before the column existed, and a
+ * cached client bundle reading a newer row must degrade rather than throw.
  */
-const EDIT_FINANCIAL_REVIEW_KIND = "EDIT_FINANCIAL_REVIEW";
+const EDIT_FINANCIAL_REVIEW_KIND: ManualRefundTaskKind =
+  "EDIT_FINANCIAL_REVIEW";
 
 function isFinancialReview(task: ManualRefundTask): boolean {
   return task.kind === EDIT_FINANCIAL_REVIEW_KIND;
@@ -167,6 +182,78 @@ function EditFinancialReviewEvidenceBlock({
       </p>
     </div>
   );
+}
+
+/**
+ * #3033: what the confirmation dialog SAYS, per row kind and per priced state.
+ *
+ * Lifted out of three nested ternaries in the JSX because the combinations are
+ * what the wording has to get right and a nested conditional hides which ones
+ * exist. Two were wrong while they were inline, and both were wrong in the same
+ * way — the hand-back sentence surviving on a row it does not describe:
+ *
+ *  - a review with a CONFIRMED amount fell to the hand-back arm and was
+ *    announced as "Record $45.00 as paid back", over a body saying "only do this
+ *    once the money has actually gone back to the member". An adjustment is a
+ *    figure the club has just decided; nothing has physically gone anywhere, and
+ *    the instruction to wait until it has is the opposite of what to do;
+ *  - a HAND-BACK raised with no amount — which #2971 made representable when it
+ *    allowed a null `amountCents` — read "Record Awaiting pricing as paid back
+ *    to Sam?", because the amount formatter's placeholder was interpolated into
+ *    a sentence built for a number.
+ *
+ * Each function therefore branches on the two facts that actually matter, kind
+ * and whether an amount is known, and never falls through to the other kind's
+ * words.
+ */
+type ResolutionTarget = {
+  task: ManualRefundTask;
+  resolution: "completed" | "dismissed";
+};
+
+function completionTitle({ task, resolution }: ResolutionTarget): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task)
+      ? `Close this review for ${task.memberName} with no adjustment?`
+      : `Dismiss the refund for ${task.memberName}?`;
+  }
+
+  if (isFinancialReview(task)) {
+    return task.amountCents === null
+      ? `Record an adjustment for ${task.memberName}?`
+      : `Record the confirmed adjustment of ${formatCents(task.amountCents)} for ${task.memberName}?`;
+  }
+
+  return task.amountCents === null
+    ? `Record this refund as paid back to ${task.memberName}?`
+    : `Record ${formatCents(task.amountCents)} as paid back to ${task.memberName}?`;
+}
+
+function resolutionDescription({
+  task,
+  resolution,
+}: ResolutionTarget): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task)
+      ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
+      : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later.";
+  }
+
+  if (isFinancialReview(task)) {
+    return task.amountCents === null
+      ? "This review has no confirmed amount yet, so there is nothing to record. Confirm the adjustment from the evidence and the booking's payment history first; if the evidence shows nothing is owed, close the review with no adjustment instead."
+      : "This records the adjustment the club has decided on and settles the review through the normal path. Check it against the evidence on the row and the booking's payment history before you confirm it.";
+  }
+
+  return "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history.";
+}
+
+function confirmButtonLabel({ task, resolution }: ResolutionTarget): string {
+  if (resolution === "dismissed") {
+    return isFinancialReview(task) ? "Close with no adjustment" : "Dismiss refund";
+  }
+
+  return isFinancialReview(task) ? "Record the adjustment" : "Record as paid back";
 }
 
 /**
@@ -521,9 +608,7 @@ export function ManualRefundTaskQueue() {
    * same reasoning the automatic-refund card beside this one already records).
    */
   const [viewerCanViewBookings, setViewerCanViewBookings] = useState(false);
-  const [target, setTarget] = useState<
-    null | { task: ManualRefundTask; resolution: "completed" | "dismissed" }
-  >(null);
+  const [target, setTarget] = useState<ResolutionTarget | null>(null);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   /**
@@ -882,16 +967,7 @@ export function ManualRefundTaskQueue() {
               {target && (
                 <>
                   <DialogHeader>
-                    <DialogTitle>
-                      {target.resolution === "completed"
-                        ? isFinancialReview(target.task) &&
-                          target.task.amountCents === null
-                          ? `Record an adjustment for ${target.task.memberName}?`
-                          : `Record ${formatTaskAmount(target.task.amountCents)} as paid back to ${target.task.memberName}?`
-                        : isFinancialReview(target.task)
-                          ? `Close this review for ${target.task.memberName} with no adjustment?`
-                          : `Dismiss the refund for ${target.task.memberName}?`}
-                    </DialogTitle>
+                    <DialogTitle>{completionTitle(target)}</DialogTitle>
                     <DialogDescription>
                       {/*
                         #3033: four sentences, not two, because a dismissal means
@@ -901,14 +977,7 @@ export function ManualRefundTaskQueue() {
                         which is a FINDING about the money, not a decision to
                         skip it, and the record has to read that way later.
                       */}
-                      {target.resolution === "completed"
-                        ? isFinancialReview(target.task) &&
-                          target.task.amountCents === null
-                          ? "This review has no confirmed amount yet, so there is nothing to record. Confirm the adjustment from the evidence and the booking's payment history first; if the evidence shows nothing is owed, close the review with no adjustment instead."
-                          : "Only do this once the money has actually gone back to the member. It writes the refund into the payment ledger and records a refund on the booking's history."
-                        : isFinancialReview(target.task)
-                          ? "This closes the review as looked at, with nothing to pay back or credit. It moves no money and records none as having moved. Say what the evidence showed, so the finding makes sense to whoever reads it next."
-                          : "Dismissing closes the task without refunding anything — for a member who declined the refund, or money settled another way. Say which, so the record makes sense later."}
+                      {resolutionDescription(target)}
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-2">
@@ -979,11 +1048,7 @@ export function ManualRefundTaskQueue() {
                         (target.resolution === "dismissed" && note.trim().length === 0)
                       }
                     >
-                      {target.resolution === "completed"
-                        ? "Record as paid back"
-                        : isFinancialReview(target.task)
-                          ? "Close with no adjustment"
-                          : "Dismiss refund"}
+                      {confirmButtonLabel(target)}
                     </Button>
                   </DialogFooter>
                 </>

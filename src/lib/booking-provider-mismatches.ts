@@ -19,22 +19,46 @@ import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-vi
 type BookingProviderMismatchId =
   | "xero-invoice-pending"
   | "xero-credit-note-pending"
-  | "waitlist-offer-email-failed"
-  // #3033: not a provider mismatch, and it is rendered in its own block on the
-  // Admin tools card rather than under "Provider state out of step". It reuses
-  // this row SHAPE — label, description, href, link label — because that is
-  // exactly what a one-line admin warning with an actionable path needs, and
-  // inventing a parallel interface with the same four fields would be a second
-  // home for one thing (`INV-SSOT`).
-  | "financial-review-open";
+  | "waitlist-offer-email-failed";
 
-export interface BookingProviderMismatch {
-  id: BookingProviderMismatchId;
+/**
+ * #3033: the id of the money-waiting-for-review warning, which is NOT a provider
+ * mismatch.
+ *
+ * Its own union rather than a fourth member of the one above. The row SHAPE is
+ * shared — label, description, href, link label is exactly what a one-line admin
+ * warning with an actionable path needs, and a parallel interface carrying the
+ * same four fields would be a second home for one thing (`INV-SSOT`). The set of
+ * IDS is not shared, because that is not a shape: it is a claim about what each
+ * function can return. Folded into one union,
+ * `getBookingProviderMismatches` declared `financial-review-open` as a possible
+ * result even though it can never produce one, and a caller narrowing on the id
+ * was handed a case that cannot happen.
+ */
+type BookingFinancialReviewWarningId = "financial-review-open";
+
+/**
+ * One admin warning line: what is out of step, and the one link that leads to
+ * fixing it.
+ *
+ * Generic over its id so the two producers below share the shape without
+ * sharing the vocabulary.
+ */
+export interface BookingWarningRow<Id extends string = string> {
+  id: Id;
   label: string;
   description: string;
   href: string;
   linkLabel: string;
 }
+
+/** Provider state disagreeing with local state (#1089). */
+export type BookingProviderMismatch =
+  BookingWarningRow<BookingProviderMismatchId>;
+
+/** Money on a booking waiting for a person to decide it (#3033). */
+export type BookingFinancialReviewWarning =
+  BookingWarningRow<BookingFinancialReviewWarningId>;
 
 type MismatchBooking = {
   id: string;
@@ -200,7 +224,7 @@ export async function getBookingProviderMismatches(
  */
 export async function getBookingFinancialReviewWarnings(
   bookingId: string,
-): Promise<BookingProviderMismatch[]> {
+): Promise<BookingFinancialReviewWarning[]> {
   if (!(await bookingHasOpenFinancialReview(bookingId))) return [];
 
   return [
