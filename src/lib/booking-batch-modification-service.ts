@@ -42,6 +42,7 @@ import {
 } from "@/lib/booking-other-lodge-rate";
 import { acquireLodgeCapacityLock } from "@/lib/capacity";
 import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { linkModificationToOutstandingChangeRequest } from "@/lib/booking-change-request-linkage";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { assertBookingEnvelopeInvariants } from "@/lib/booking-envelope-invariants";
@@ -1573,6 +1574,30 @@ async function dispatchBatchPostTransactionSideEffects({
   });
   if (!member) return;
 
+  /*
+    #3032 (epic #2797): does this booking's money sit under review as this email
+    is written?
+
+    NOT "did this edit park money" - this path parks none. The batch park is
+    #3170, held on an owner money decision, so a value derived from THIS edit
+    would be a constant `false` dressed up as a computation, and would stay
+    `false` on the day #3170 lands. The question the member is owed is the one
+    every other member-facing surface answers: is the club still working out an
+    amount on this booking. Read from `bookingHasOpenFinancialReview`, the same
+    reader behind the booking-detail banner and the My Bookings row, so the
+    email cannot say one thing while the page the member opens says another
+    (`INV-SSOT`).
+
+    Read after the transaction commits, deliberately: this edit decided nothing
+    about the review, so the honest answer is the booking's state now, not a
+    value captured earlier in a transaction that never touched it. That is the
+    opposite of the removal path, where the transaction DID decide it and
+    carries the answer out on its result.
+  */
+  const financialReviewPending = await bookingHasOpenFinancialReview(
+    result.booking.id,
+  );
+
   sendBookingModifiedEmail({
     bookingId: result.booking.id,
     recipientMemberId: member.id,
@@ -1603,6 +1628,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // #2390: if a usage cap stopped the promotion reaching somebody this edit
     // added, the email says so in the same words the member saw on screen.
     promoCoverageNote: result.promoCoverage?.message ?? null,
+    financialReviewPending,
     lodgeId: result.booking.lodgeId,
   }).catch((err) =>
     logger.error(

@@ -47,6 +47,7 @@ import {
 import { ApiError as SharedApiError } from "@/lib/api-error";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import logger from "@/lib/logger";
@@ -1025,6 +1026,18 @@ export async function POST(
       where: { id: result.booking.memberId },
     });
     if (member && notifyMember !== false) {
+      /*
+        #3032 (epic #2797): whether the club is still working out an amount on
+        this booking as the email is written. Adding a guest raises no review of
+        its own, so - as on the batch and date paths - the honest value is the
+        booking's current state, read through the same
+        `bookingHasOpenFinancialReview` the booking-detail banner and the My
+        Bookings row use, so the email and the page agree (`INV-SSOT`).
+      */
+      const financialReviewPending = await bookingHasOpenFinancialReview(
+        result.booking.id,
+      );
+
       sendBookingModifiedEmail({
         bookingId: result.booking.id,
         recipientMemberId: member.id,
@@ -1053,6 +1066,7 @@ export async function POST(
         xeroInvoiceNumber: result.xeroInvoiceNumber,
         // #2390: same words as the edit preview and the booking history.
         promoCoverageNote: result.promoCoverage?.message ?? null,
+        financialReviewPending,
         lodgeId: result.booking.lodgeId,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send booking modified email")

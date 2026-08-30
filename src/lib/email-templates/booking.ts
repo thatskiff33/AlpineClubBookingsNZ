@@ -458,8 +458,14 @@ export function bookingModifiedTemplate(params: {
    * "Booking Modified" email whose money section rendered as nothing at all,
    * which reads as "no money is involved" on the one change where that is most
    * conspicuously untrue.
+   *
+   * REQUIRED, with no default (#3032). #3033 landed it optional so it could add
+   * the rendering without editing the three services that call the sender, and
+   * the consequence was a fix that never fired in production: every caller took
+   * the default. The compiler now asks each one whether this change is under
+   * review, the way `confirmedAmountCents` is asked for (`INV-SSOT`).
    */
-  financialReviewPending?: boolean;
+  financialReviewPending: boolean;
 }): string {
   const {
     firstName,
@@ -480,7 +486,7 @@ export function bookingModifiedTemplate(params: {
     paymentReference,
     xeroInvoiceNumber,
     promoCoverageNote,
-    financialReviewPending = false,
+    financialReviewPending,
   } = params;
 
   // The change rows come from the shared helper the flat {{changeSummary}}

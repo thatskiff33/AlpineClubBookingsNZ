@@ -35,6 +35,7 @@ import {
   type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import { assertNoPendingEditFinancialReview } from "@/lib/edit-financial-review";
+import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   acquireLodgeCapacityLock,
   checkCapacity,
@@ -1227,6 +1228,25 @@ async function dispatchDatePostTransactionSideEffects({
       })
     : null;
   if (member) {
+    /*
+      #3032 (epic #2797): whether the club is still working out an amount on
+      this booking as the email is written. See the identical read on the batch
+      path for why this is the booking's current state rather than something
+      this edit decided - a date change dispatches no review of its own, so
+      there is nothing of this edit's to carry out. Same reader as the
+      booking-detail banner and the My Bookings row (`INV-SSOT`).
+
+      In practice the pending-review fence above (`moneyAffecting: true`) turns
+      away any repricing date change while a review is open, so today this is
+      false whenever the standard path emails at all. It is READ rather than
+      assumed because that is a fact about the fence, not about the member's
+      money, and a later change to either would silently make a hard-coded
+      `false` a lie.
+    */
+    const financialReviewPending = await bookingHasOpenFinancialReview(
+      result.booking.id,
+    );
+
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
       recipientMemberId: member.id,
@@ -1256,6 +1276,7 @@ async function dispatchDatePostTransactionSideEffects({
       xeroInvoiceNumber: result.xeroInvoiceNumber,
       // #2390: same words as the edit preview and the booking history.
       promoCoverageNote: result.promoCoverage?.message ?? null,
+      financialReviewPending,
       lodgeId: result.booking.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send booking modified email"),
@@ -1734,6 +1755,20 @@ export async function adminShiftBookingDates({
   // Owner decision (#1668 review): the admin explicitly chose in the override
   // dialog whether to send the change email; the choice is audited above.
   if (notifyMember) {
+    /*
+      #3032 (epic #2797). This path is DELIBERATELY not fenced - an admin date
+      shift preserves the price, so it never prices against money under review
+      and is never turned away by one. That makes it the one modified-email path
+      where an open review is genuinely reachable: a booking can sit under
+      review and still have its dates moved. Telling that member their booking
+      changed while saying nothing about the amount the club still owes them a
+      figure for is exactly the silent money section #3033 removed, so the read
+      belongs here more than anywhere else on this file.
+    */
+    const financialReviewPending = await bookingHasOpenFinancialReview(
+      result.booking.id,
+    );
+
     sendBookingModifiedEmail({
       bookingId: result.booking.id,
       recipientMemberId: result.memberId,
@@ -1755,6 +1790,7 @@ export async function adminShiftBookingDates({
       additionalPaymentMethod: undefined,
       paymentReference: result.paymentReference,
       xeroInvoiceNumber: result.xeroInvoiceNumber,
+      financialReviewPending,
       lodgeId: result.lodgeId,
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin override date-shift email"),

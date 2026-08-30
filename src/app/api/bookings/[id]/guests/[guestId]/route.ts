@@ -347,6 +347,15 @@ export async function DELETE(
         // #2390: same words as the edit preview and the booking history when a
         // usage cap stopped the promotion reaching somebody on this booking.
         promoCoverageNote: result.promoCoverage?.message ?? null,
+        /*
+          #3032 (epic #2797): the removal path is the one that PARKS money, so
+          the honest source is the transaction that decided it - not a read
+          taken here afterwards, which would answer a different question that
+          another lane's edit could have changed in between. That is why
+          `RemoveBookingGuestResult` carries the answer out (see the field's own
+          docblock), and why this is a single hand-off rather than a query.
+        */
+        financialReviewPending: result.financialReviewPending,
         lodgeId: result.booking.lodgeId,
         // Removing a guest can raise the price when it invalidates a group
         // promo the remaining guests relied on. Surface the increase when a

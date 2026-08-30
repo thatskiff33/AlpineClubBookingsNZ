@@ -1299,11 +1299,17 @@ export async function sendBookingModifiedEmail(params: {
    * #3033 (epic #2797): this change saved and its refund or credit could not be
    * worked out from stored history, so the club is deciding it.
    *
-   * Optional and defaulting to false, so no existing caller changes behaviour.
-   * The raise path (#3032) is what sets it, at the one place that knows the edit
-   * was applied with its money unresolved.
+   * REQUIRED, with no default (#3032). It arrived optional-and-false so that
+   * #3033 could land the rendering without touching this lane's files, and that
+   * left the fix INERT: every production caller took the default, so the member
+   * whose adjustment was under review still got the silent money section the
+   * flag exists to prevent. A default here is not a convenience, it is a wrong
+   * answer that no call site has to look at - which is why this follows
+   * `confirmedAmountCents` and `assertNoPendingEditFinancialReview`'s
+   * `moneyAffecting` in making the compiler ask every caller the question
+   * instead (`INV-SSOT`, "prefer unrepresentable over policed").
    */
-  financialReviewPending?: boolean;
+  financialReviewPending: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 }) {
