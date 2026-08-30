@@ -6,6 +6,7 @@ import {
   PaymentTransactionKind,
 } from "@prisma/client";
 
+import { createAuditLog } from "@/lib/audit";
 import { hasCapturedPayment } from "@/lib/booking-payment-state";
 import { createModificationAdditionalPaymentIntent } from "@/lib/booking-modification-settlement";
 import {
@@ -102,6 +103,43 @@ export type EditReviewChargeMember = {
   email: string;
   name: string;
   stripeCustomerId: string | null;
+};
+
+/**
+ * What actually happened to this edit's ONE request, as a value the caller has to
+ * read rather than as an absence it has to infer.
+ *
+ * #3170 fix round: the sync used to answer with `paymentIntentId: string | null`,
+ * and `null` meant THREE different things - "nothing is owed", "the ask exists
+ * and is an invoice", and "the provider refused and the club minted nothing".
+ * The recovery replay could not tell them apart, so it closed the operation on
+ * all three, and the third is a debt the club then never asks for. A silent
+ * success on a money path is not something to log; it is something to make
+ * unrepresentable, so the sync now says which of them it means.
+ *
+ *   * `nothing-owed`   - no settled share against this edit. Nothing to ask for,
+ *                        and nothing further will ever be owed by this row.
+ *   * `raised`         - the request exists and asks for at least the derived
+ *                        total. This is the only outcome that closes a replay.
+ *   * `already-paid`   - the member paid before the combined total could be
+ *                        raised. Terminal: the remaining share is collected by
+ *                        hand, and the audit row written alongside it is how an
+ *                        officer finds that out.
+ *   * `not-raised`     - the ask does NOT exist and the money IS owed. The debt
+ *                        is durable (a recovery row), and a replay that sees this
+ *                        must leave its operation open.
+ */
+export type EditReviewChargeSyncOutcome =
+  | "nothing-owed"
+  | "raised"
+  | "already-paid"
+  | "not-raised";
+
+/** What the sync did, and what the request now asks for. */
+export type EditReviewChargeSyncResult = {
+  outcome: EditReviewChargeSyncOutcome;
+  paymentIntentId: string | null;
+  totalCents: number;
 };
 
 /**
@@ -412,7 +450,7 @@ export async function syncEditFinancialReviewChargeRequest({
   bookingModificationId: string;
   paymentId: string;
   member: EditReviewChargeMember | null;
-}): Promise<{ paymentIntentId: string | null; totalCents: number }> {
+}): Promise<EditReviewChargeSyncResult> {
   const totalCents = await sumEditReviewChargeSharesCents({
     bookingId,
     bookingModificationId,
@@ -421,7 +459,7 @@ export async function syncEditFinancialReviewChargeRequest({
     // No settled share to ask for. Reachable only from a recovery replay of an
     // operation whose task was never claimed; minting for zero would be the
     // magic-value failure this epic exists to remove.
-    return { paymentIntentId: null, totalCents: 0 };
+    return { outcome: "nothing-owed", paymentIntentId: null, totalCents: 0 };
   }
 
   const existing = await findEditReviewChargeRequest({
@@ -434,19 +472,32 @@ export async function syncEditFinancialReviewChargeRequest({
     if (isCapturedTransactionStatus(existing.status)) {
       // Paid while this was in flight. The pre-claim refusal is the ordinary
       // guard; this is the race behind it, and it must not restate a paid ask.
-      logger.warn(
-        { bookingId, bookingModificationId, totalCents },
-        "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
-      );
+      //
+      // #3170 fix round: a log line is not a queue. An officer has to be able to
+      // FIND a share that was settled into a request the member had already
+      // paid, and the durable, officer-readable record of a money decision in
+      // this repository is the audit log. Written before the return, so the
+      // trace exists whether or not anybody is watching a log stream.
+      await recordUncollectedEditReviewChargeShare({
+        bookingId,
+        bookingModificationId,
+        memberId: member?.id ?? null,
+        derivedTotalCents: totalCents,
+        requestedTotalCents: existing.amountCents,
+      });
       return {
+        outcome: "already-paid",
         paymentIntentId: existing.stripePaymentIntentId,
         totalCents: existing.amountCents,
       };
     }
     if (totalCents <= existing.amountCents) {
       // Either an exact replay (equal), which must change nothing at all, or a
-      // stale, smaller total, which must never lower a live ask.
+      // stale, smaller total, which must never lower a live ask. Either way the
+      // ask that already exists covers the total this run derived, so this is
+      // `raised` rather than a second write.
       return {
+        outcome: "raised",
         paymentIntentId: existing.stripePaymentIntentId,
         totalCents: existing.amountCents,
       };
@@ -468,6 +519,7 @@ export async function syncEditFinancialReviewChargeRequest({
       reason,
     });
     return {
+      outcome: "raised",
       paymentIntentId: existing.stripePaymentIntentId,
       totalCents,
     };
@@ -524,10 +576,110 @@ export async function syncEditFinancialReviewChargeRequest({
     failureMessage:
       "Failed to create the additional PaymentIntent for a completed edit financial review - the persisted recovery operation will replay it",
   });
+  if (!minted.additionalPaymentIntentId) {
+    /**
+     * THE MINT PRODUCED NOTHING, AND THE MONEY IS STILL OWED.
+     *
+     * `createModificationAdditionalPaymentIntent` cannot throw this back at us:
+     * it SWALLOWS a provider failure by design, because the ordinary edit path
+     * that shares it must still return the member's saved change while the
+     * recovery row carries the debt. That design is right there and wrong here,
+     * so this caller reads the RESULT rather than relying on an exception -
+     * which is why the fix is here and not in the minter's contract.
+     *
+     * Two ways to arrive, and the enqueue below covers both:
+     *
+     *   * the provider refused - the minter's own `catch` has already written
+     *     the recovery row, and this upsert is a no-op on it;
+     *   * its `hasSucceededPayment` / `paymentId` guard answered false on the
+     *     re-read - it returns BEFORE its `try`, so nothing at all was written.
+     *     That was the one path that settled a task, minted nothing, and left no
+     *     trace of any kind.
+     */
+    await enqueueAdditionalPaymentIntentRecovery({
+      bookingId,
+      paymentId,
+      idempotencyKey:
+        buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+          bookingModificationId,
+        ),
+      // Advisory only, exactly as in `executeEditReviewCharge`: the replay
+      // re-derives the total from the settled shares.
+      amountCents: totalCents,
+      stripeIdempotencyKey:
+        buildEditFinancialReviewAdditionalIntentStripeKey(bookingModificationId),
+    });
+    return { outcome: "not-raised", paymentIntentId: null, totalCents };
+  }
   return {
-    paymentIntentId: minted.additionalPaymentIntentId ?? null,
+    outcome: "raised",
+    paymentIntentId: minted.additionalPaymentIntentId,
     totalCents,
   };
+}
+
+/**
+ * The durable, officer-findable record that a settled share could not be added to
+ * this edit's request.
+ *
+ * #3170 fix round (F5). `logger.warn` is not a queue: nobody goes looking through
+ * a log stream for money the club is owed. The audit log is the record an officer
+ * can actually find, and it is where every other money decision on this booking
+ * already is.
+ *
+ * Best-effort and never rethrown: a settlement whose money question is already
+ * answered must not be undone because an audit insert failed. The log line stays
+ * as the second line.
+ */
+async function recordUncollectedEditReviewChargeShare({
+  bookingId,
+  bookingModificationId,
+  memberId,
+  derivedTotalCents,
+  requestedTotalCents,
+}: {
+  bookingId: string;
+  bookingModificationId: string;
+  memberId: string | null;
+  derivedTotalCents: number;
+  requestedTotalCents: number;
+}) {
+  logger.warn(
+    {
+      bookingId,
+      bookingModificationId,
+      derivedTotalCents,
+      requestedTotalCents,
+    },
+    "Edit-financial-review charge request was paid before its combined total could be raised - the remaining share must be collected by hand",
+  );
+  try {
+    await createAuditLog({
+      action: "booking.editFinancialReview.chargeShareUncollected",
+      subjectMemberId: memberId,
+      targetId: bookingId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "payment",
+      severity: "important",
+      outcome: "failure",
+      summary:
+        "A settled review share could not be added to this booking change's payment request",
+      details:
+        "An admin settled a booking-change review as money the member owes the club, but the request for that change had already been paid, so the extra amount was not added to it. Collect this amount another way and record what was collected.",
+      metadata: {
+        bookingModificationId,
+        derivedTotalCents,
+        requestedTotalCents,
+        uncollectedCents: Math.max(derivedTotalCents - requestedTotalCents, 0),
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, bookingModificationId },
+      "Failed to record the audit trace for an uncollected edit-financial-review charge share",
+    );
+  }
 }
 
 /**

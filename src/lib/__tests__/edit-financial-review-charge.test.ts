@@ -173,6 +173,7 @@ import {
   REVIEW_CHARGE_REQUEST_ALREADY_PAID_MESSAGE,
   REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE,
   REVIEW_CHARGE_WRONG_KIND_MESSAGE,
+  syncEditFinancialReviewChargeRequest,
 } from "@/lib/edit-financial-review-charge";
 /**
  * NOT mocked. These keys ARE the exactly-once boundary of a charge, so they are
@@ -338,6 +339,7 @@ beforeEach(() => {
   mocks.upsertPaymentIntentTransaction.mockResolvedValue(undefined);
   mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
     restated: 0,
+    alreadyCovering: 0,
   });
   mocks.queueXeroBookingEditSettlement.mockResolvedValue(undefined);
 });
@@ -823,6 +825,7 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
   it("the supplementary Xero invoice is RESTATED to the total, not queued a second time", async () => {
     mocks.restatePendingSupplementaryInvoiceAmount.mockResolvedValue({
       restated: 1,
+      alreadyCovering: 0,
     });
 
     await settleSecondShare();
@@ -982,5 +985,206 @@ describe("two shares of one booking edit (#3170 combined request)", () => {
     await settleSecondShare({ direction: "REFUND_TO_MEMBER" });
 
     expect(mocks.refundPaymentTransactions).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * #3170 fix round: WHAT THE SYNC SAYS IT DID, and why a caller has to read it.
+ *
+ * The sync is the single entry point for the inline completion and the recovery
+ * replay, and it used to answer with `paymentIntentId: string | null` alone -
+ * where `null` meant "nothing owed", "the ask is an invoice" and "the provider
+ * refused and nothing was minted" indistinguishably. The replay closed its
+ * operation on all three. These tests pin the discriminant that made the third
+ * case a value rather than an absence, and the durable trace each silent path now
+ * leaves.
+ */
+describe("what the sync reports, and the trace it leaves (#3170 fix round)", () => {
+  const syncArgs = {
+    bookingId: "booking-1",
+    bookingModificationId: "mod-1",
+    paymentId: "payment-1",
+    member: {
+      id: "member-1",
+      email: "grace@example.test",
+      name: "Grace Hopper",
+      stripeCustomerId: "cus_1",
+    },
+  };
+
+  beforeEach(() => {
+    // Two shares settled against this edit: $200 + $30.
+    mocks.manualRefundTaskFindMany.mockResolvedValue([
+      settledShare(),
+      settledShare({ id: "task-2", amountCents: 3000 }),
+    ]);
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      status: PaymentStatus.SUCCEEDED,
+      amountCents: 15000000,
+      refundedAmountCents: 0,
+      source: PaymentSource.STRIPE,
+      stripeCustomerId: "cus_1",
+    });
+  });
+
+  /**
+   * F1, THE MINT THAT PRODUCED NOTHING. This is what the recovery replay meets
+   * while the provider is still down, and what it used to close the debt on.
+   */
+  it("reports `not-raised` and leaves a durable debt when the mint produced no intent", async () => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    // `createModificationAdditionalPaymentIntent` swallows the provider failure
+    // and returns empty - it does not throw, which is exactly why the caller has
+    // to read the result.
+    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    });
+
+    await expect(
+      syncEditFinancialReviewChargeRequest(syncArgs),
+    ).resolves.toEqual({
+      outcome: "not-raised",
+      paymentIntentId: null,
+      totalCents: 23000,
+    });
+
+    // The debt is durable under the EDIT-scoped recovery key, so the cron replays
+    // this same derivation rather than a frozen figure.
+    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        idempotencyKey:
+          buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey(
+            "mod-1",
+          ),
+        stripeIdempotencyKey:
+          buildEditFinancialReviewAdditionalIntentStripeKey("mod-1"),
+      }),
+    );
+  });
+
+  /**
+   * The path that used to leave NO trace of any kind: the minter's
+   * `hasSucceededPayment` guard answers false on the post-commit re-read, so it
+   * returns before its own `try` and neither logs nor enqueues.
+   */
+  it("still leaves a durable debt when the minter's own guard refused before its try", async () => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    // No captured card payment at the re-read.
+    mocks.paymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      status: PaymentStatus.PENDING,
+      amountCents: null,
+      refundedAmountCents: 0,
+      source: PaymentSource.STRIPE,
+      stripeCustomerId: null,
+    });
+    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
+      additionalPaymentClientSecret: undefined,
+      additionalPaymentIntentId: undefined,
+    });
+
+    const result = await syncEditFinancialReviewChargeRequest(syncArgs);
+
+    expect(result.outcome).toBe("not-raised");
+    expect(mocks.enqueueAdditionalPaymentIntentRecovery).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  /**
+   * THE CONTROL for both tests above. A sync that raised the request must say so,
+   * and must NOT write a recovery row - otherwise the cron would replay a debt
+   * that has already been asked for.
+   */
+  it("reports `raised` and enqueues nothing when the mint produced an intent", async () => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(null);
+    mocks.createModificationAdditionalPaymentIntent.mockResolvedValue({
+      additionalPaymentClientSecret: "secret",
+      additionalPaymentIntentId: "pi_additional_9",
+    });
+
+    await expect(
+      syncEditFinancialReviewChargeRequest(syncArgs),
+    ).resolves.toEqual({
+      outcome: "raised",
+      paymentIntentId: "pi_additional_9",
+      totalCents: 23000,
+    });
+    expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
+  });
+
+  /**
+   * F5, THE PAID-IN-FLIGHT RACE. The pre-claim refusal is the ordinary guard;
+   * this is the race behind it. It was a `logger.warn` and nothing else, so
+   * nobody could ever find the share that went uncollected.
+   */
+  it("records an audit trace when the member paid before the total could be raised", async () => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(
+      chargeRequestRow({ status: PaymentStatus.SUCCEEDED }),
+    );
+
+    await expect(
+      syncEditFinancialReviewChargeRequest(syncArgs),
+    ).resolves.toEqual({
+      outcome: "already-paid",
+      paymentIntentId: "pi_additional_1",
+      totalCents: 20000,
+    });
+
+    // Nothing was restated on a paid ask...
+    expect(mocks.updatePaymentIntentAmount).not.toHaveBeenCalled();
+    expect(
+      mocks.createModificationAdditionalPaymentIntent,
+    ).not.toHaveBeenCalled();
+    // ...and the $30 nobody can collect automatically is written where an officer
+    // will find it, with the shortfall spelled out.
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "booking.editFinancialReview.chargeShareUncollected",
+        category: "payment",
+        outcome: "failure",
+        entityId: "booking-1",
+        metadata: expect.objectContaining({
+          bookingModificationId: "mod-1",
+          derivedTotalCents: 23000,
+          requestedTotalCents: 20000,
+          uncollectedCents: 3000,
+        }),
+      }),
+    );
+  });
+
+  /**
+   * The CONTROL for the trace: an ordinary raise must NOT write one. An audit row
+   * on every settlement would bury the ones that mean something.
+   */
+  it("writes no such trace on an ordinary raise", async () => {
+    mocks.paymentTransactionFindFirst.mockResolvedValue(chargeRequestRow());
+
+    await expect(
+      syncEditFinancialReviewChargeRequest(syncArgs),
+    ).resolves.toMatchObject({ outcome: "raised", totalCents: 23000 });
+
+    expect(mocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("reports `nothing-owed` when no share has been settled", async () => {
+    mocks.manualRefundTaskFindMany.mockResolvedValue([]);
+
+    await expect(
+      syncEditFinancialReviewChargeRequest(syncArgs),
+    ).resolves.toEqual({
+      outcome: "nothing-owed",
+      paymentIntentId: null,
+      totalCents: 0,
+    });
+    expect(
+      mocks.createModificationAdditionalPaymentIntent,
+    ).not.toHaveBeenCalled();
+    expect(mocks.enqueueAdditionalPaymentIntentRecovery).not.toHaveBeenCalled();
   });
 });

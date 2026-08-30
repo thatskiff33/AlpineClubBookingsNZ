@@ -38,10 +38,16 @@ const mocks = vi.hoisted(() => ({
   createXeroMembershipCancellationCreditNote: vi.fn(),
   syncXeroMembershipCancellationContact: vi.fn(),
   isXeroConnected: vi.fn().mockResolvedValue(false),
+  executeRaw: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+// #3170 fix round: `enqueueXeroSupplementaryInvoiceOperation` now decides
+// link-check -> queued-check -> write inside ONE advisory-locked transaction, so
+// the double has to serve the transaction client too. It is the SAME object, so
+// every existing assertion on `mocks.*` reads the in-transaction calls unchanged,
+// and `mocks.executeRaw` is where the lock statement lands.
+vi.mock("@/lib/prisma", () => {
+  const client: Record<string, unknown> = {
     booking: {
       findUnique: mocks.findUniqueBooking,
     },
@@ -69,8 +75,11 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.updateManyOperation,
       update: mocks.updateOperation,
     },
-  },
-}));
+    $executeRaw: mocks.executeRaw,
+    $transaction: (fn: (tx: unknown) => unknown) => fn(client),
+  };
+  return { prisma: client };
+});
 
 vi.mock("@/lib/logger", () => ({
   default: {
@@ -2408,7 +2417,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
 describe("restatePendingSupplementaryInvoiceAmount (#3170)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.updateOperation.mockResolvedValue({});
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
   });
 
   function waitingOperation(overrides: Record<string, unknown> = {}) {
@@ -2437,10 +2446,16 @@ describe("restatePendingSupplementaryInvoiceAmount (#3170)", () => {
         priceDiffCents: 23000,
         changeFeeCents: 0,
       })
-    ).resolves.toEqual({ restated: 1 });
+    ).resolves.toEqual({ restated: 1, alreadyCovering: 0 });
 
-    expect(mocks.updateOperation).toHaveBeenCalledWith({
-      where: { id: "op_supplementary_1" },
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: {
+        id: "op_supplementary_1",
+        // #3170 fix round (F3): the SAME status predicate the read used. An
+        // operation the outbox claimed between the two statements matches
+        // nothing here, so the write cannot contradict an ask already going out.
+        status: { in: ["PENDING", "WAITING_PAYMENT"] },
+      },
       data: {
         requestPayload: expect.objectContaining({
           priceDiffCents: 23000,
@@ -2487,6 +2502,28 @@ describe("restatePendingSupplementaryInvoiceAmount (#3170)", () => {
     );
   });
 
+  /**
+   * #3170 fix round (F3). The test above asserted the READ filter and stopped
+   * there, which is exactly how the write came to carry no filter at all: the
+   * docblock said "only operations that have not run yet" and half the function
+   * obeyed it. A row that left PENDING between the read and the write is a row
+   * the outbox is already sending, and rewriting its amount contradicts an ask in
+   * flight.
+   */
+  it("counts nothing restated when the operation left PENDING before the write", async () => {
+    mocks.findManyOperations.mockResolvedValue([waitingOperation()]);
+    // The status-guarded updateMany matches no row: the outbox claimed it.
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 23000,
+        changeFeeCents: 0,
+      })
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 0 });
+  });
+
   it("a replay at the same figures writes nothing but still reports the operation", async () => {
     mocks.findManyOperations.mockResolvedValue([waitingOperation()]);
 
@@ -2496,11 +2533,95 @@ describe("restatePendingSupplementaryInvoiceAmount (#3170)", () => {
         priceDiffCents: 20000,
         changeFeeCents: 0,
       })
-    ).resolves.toEqual({ restated: 1 });
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 1 });
 
-    // Counted, because the caller must NOT then enqueue a second invoice; but not
-    // written, because nothing changed.
-    expect(mocks.updateOperation).not.toHaveBeenCalled();
+    // Reported, because the caller must NOT then enqueue a second invoice; but
+    // not written, because nothing changed.
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #3170 fix round (F2, interleaving A) - THE STALE RUN CANNOT LOWER THE ASK.
+   *
+   * Two settlements of one edit derive their totals independently. Whichever
+   * commits last necessarily sees both shares, so the LARGER figure is always the
+   * newer one - but the two Xero legs can still land in either order. Without a
+   * comparison the stale $200 run's restate lands after the $230 one, takes the
+   * queued invoice back down to $200, and returns "restated" - so its caller
+   * returns early and nothing ever re-queues the missing $30. The provider leg's
+   * compare-and-set never covered this leg; this is that guard, on the accounting
+   * side.
+   *
+   * No database is needed to prove it: a stale total and an already-restated
+   * operation are two arguments.
+   */
+  it("refuses to lower a queued invoice when a stale, smaller total lands last", async () => {
+    // The $230 run already restated this operation.
+    mocks.findManyOperations.mockResolvedValue([
+      waitingOperation({
+        requestPayload: {
+          ...waitingOperation().requestPayload,
+          priceDiffCents: 23000,
+        },
+      }),
+    ]);
+
+    // The $200 run's Xero leg arrives afterwards.
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 20000,
+        changeFeeCents: 0,
+      })
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 1 });
+
+    // Nothing written: the member is still billed $230.
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The control for the guard above: the same two runs in the other order must
+   * still RAISE. A guard that refused everything would pass the test above and be
+   * useless.
+   */
+  it("still raises when the larger total lands last", async () => {
+    mocks.findManyOperations.mockResolvedValue([waitingOperation()]);
+
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 23000,
+        changeFeeCents: 0,
+      })
+    ).resolves.toEqual({ restated: 1, alreadyCovering: 0 });
+    expect(mocks.updateManyOperation).toHaveBeenCalled();
+  });
+
+  /**
+   * "Never lower" is about what the invoice BILLS, which is the sum of its two
+   * signed components. Comparing `priceDiffCents` alone would let a queued
+   * $200 price + $50 fee be replaced by a $210 price with no fee - a lower net
+   * dressed as a higher number.
+   */
+  it("compares the net the invoice bills, not the price component alone", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      waitingOperation({
+        requestPayload: {
+          ...waitingOperation().requestPayload,
+          priceDiffCents: 20000,
+          changeFeeCents: 5000,
+        },
+      }),
+    ]);
+
+    await expect(
+      restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: "mod_1",
+        priceDiffCents: 21000,
+        changeFeeCents: 0,
+      })
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 1 });
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
   });
 
   it("reports nothing to restate when this edit has queued no invoice", async () => {
@@ -2514,8 +2635,161 @@ describe("restatePendingSupplementaryInvoiceAmount (#3170)", () => {
         priceDiffCents: 20000,
         changeFeeCents: 0,
       })
-    ).resolves.toEqual({ restated: 0 });
+    ).resolves.toEqual({ restated: 0, alreadyCovering: 0 });
 
-    expect(mocks.updateOperation).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3170 fix round (F2, interleaving B) - TWO CONCURRENT SETTLEMENTS, ONE INVOICE.
+ *
+ * The regression this closes was introduced by the combined request itself.
+ * Before it, each share queued its own amount and the concurrent case summed
+ * correctly. After it, both settlements restate first (finding nothing, because
+ * neither has queued yet) and then both enqueue - and the queued-operation lookup
+ * deduped on a correlation key BUILT FROM THE AMOUNT, so $200 and $230 were two
+ * different keys, two operations, and two Xero invoices totalling $430 for a $230
+ * edit.
+ *
+ * Two changes close it and both are asserted here: the enqueue decides under a
+ * per-anchor advisory lock, and it looks for an outstanding invoice by ANCHOR
+ * rather than by amount.
+ */
+describe("enqueueXeroSupplementaryInvoiceOperation: one invoice per anchor (#3170)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: { xeroInvoiceId: "inv_existing" },
+    });
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.findManyOperations.mockResolvedValue([]);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_supplementary_1" });
+  });
+
+  it("takes the per-anchor advisory lock before it decides", async () => {
+    await enqueueXeroSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      priceDiffCents: 20000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+    });
+
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mocks.executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(strings.join("?")).toContain("pg_advisory_xact_lock");
+    // Namespaced and scoped to the anchor: a different edit does not contend.
+    expect(values).toEqual(["xero-supplementary-invoice", "mod_1"]);
+  });
+
+  /**
+   * The second settlement of the same edit, arriving after the first has queued
+   * $200 and asking for the $230 combined total. It must find that invoice
+   * DESPITE the amounts differing, and raise it rather than queue its own.
+   */
+  it("finds the first settlement's invoice by anchor and raises it instead of queueing a second", async () => {
+    mocks.findFirstOperation.mockResolvedValue({ id: "op_supplementary_1" });
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_supplementary_1",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          priceDiffCents: 20000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_1",
+        },
+      },
+    ]);
+
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({
+        bookingId: "booking_1",
+        priceDiffCents: 23000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_supplementary_1",
+      message:
+        "Xero supplementary invoice already queued for this change was raised to the combined amount.",
+    });
+
+    // ONE invoice, and it bills the combined total.
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          requestPayload: expect.objectContaining({ priceDiffCents: 23000 }),
+        }),
+      })
+    );
+  });
+
+  /**
+   * The lookup is by anchor, not by correlation key. This is the assertion that
+   * fails if anyone puts the amount-derived key back into the `where`.
+   */
+  it("looks for an outstanding invoice by anchor, never by the amount-derived key", async () => {
+    await enqueueXeroSupplementaryInvoiceOperation({
+      bookingId: "booking_1",
+      priceDiffCents: 23000,
+      changeFeeCents: 0,
+      bookingModificationId: "mod_1",
+    });
+
+    const where = mocks.findFirstOperation.mock.calls[0]?.[0]?.where as Record<
+      string,
+      unknown
+    >;
+    expect(where).toMatchObject({
+      localModel: "BookingModification",
+      localId: "mod_1",
+      queueType: "SUPPLEMENTARY_INVOICE",
+      status: { in: ["PENDING", "RUNNING", "WAITING_PAYMENT"] },
+    });
+    expect(where.correlationKey).toBeUndefined();
+  });
+
+  /**
+   * The stale run reaching the enqueue rather than the restate: it must not lower
+   * what the queued invoice bills, and it must still not queue a second one.
+   */
+  it("a stale, smaller total neither lowers the queued invoice nor queues a second", async () => {
+    mocks.findFirstOperation.mockResolvedValue({ id: "op_supplementary_1" });
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_supplementary_1",
+        requestPayload: {
+          queueType: "SUPPLEMENTARY_INVOICE",
+          bookingId: "booking_1",
+          priceDiffCents: 23000,
+          changeFeeCents: 0,
+          bookingModificationId: "mod_1",
+        },
+      },
+    ]);
+
+    await expect(
+      enqueueXeroSupplementaryInvoiceOperation({
+        bookingId: "booking_1",
+        priceDiffCents: 20000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_supplementary_1",
+      message:
+        "Xero supplementary invoice is already queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
   });
 });

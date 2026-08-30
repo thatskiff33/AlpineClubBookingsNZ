@@ -266,11 +266,15 @@ export async function enqueueBookingModificationRefundRecovery({
  * #3170: `idempotencyKey` is now a REQUIRED argument rather than derived from
  * `bookingModificationId` inside. The ordinary edit path still passes the
  * modification-scoped key and behaves identically; the review-completion charge
- * passes a TASK-scoped one, because one edit can raise two review tasks over one
- * `BookingModification` row and the modification-scoped key would make their two
- * charge debts the same row. Passing the key rather than a flag is what stops a
- * future caller getting the scoping wrong by omission (`INV-SSOT`: a required
- * argument beats a rule).
+ * passes its own EDIT-scoped key from `payment-recovery-keys.ts`. Both are keyed
+ * on the same `BookingModification` in different namespaces, so the two paths'
+ * debts are separate rows - while the two review tasks of ONE edit deliberately
+ * share a row, because the owner's 30 Aug 2026 decision makes their two shares
+ * one debt against one request. (An earlier draft of this paragraph said the
+ * review key was TASK-scoped. It was, for one round, and that scoping is what
+ * let a second share mint a second intent and cancel the first.) Passing the key
+ * rather than a flag is what stops a future caller getting the scoping wrong by
+ * omission (`INV-SSOT`: a required argument beats a rule).
  *
  * #3170 ALSO STOPPED THE UPSERT REWRITING `amountCents`. An `update` clause
  * carrying the amount means a colliding second caller silently rewrites a debt
@@ -294,10 +298,11 @@ export async function enqueueAdditionalPaymentIntentRecovery({
   paymentId: string;
   /**
    * The recovery-operation dedup key. Build it with
-   * `buildAdditionalIntentRecoveryIdempotencyKey` (an ordinary edit, scoped to
-   * its `BookingModification`) or
+   * `buildAdditionalIntentRecoveryIdempotencyKey` (an ordinary edit) or
    * `buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey` (a review
-   * completion, scoped to its task).
+   * completion). Both are scoped to the `BookingModification` and neither is
+   * scoped to a task: one edit raises one request, so its two review shares are
+   * one debt and share one recovery row.
    */
   idempotencyKey: string;
   amountCents: number;
@@ -1730,6 +1735,37 @@ async function processCreateAdditionalPaymentIntentOperation(
         where: { id: operation.id },
         data: { paymentIntentId: synced.paymentIntentId },
       });
+    }
+    /**
+     * #3170 fix round: THE REPLAY CLOSES THE DEBT ONLY IF THE ASK NOW EXISTS.
+     *
+     * This used to complete unconditionally, and the reason that lost money is
+     * worth stating exactly, because nothing about it looks wrong at the call
+     * site. The mint below the sync is
+     * `createModificationAdditionalPaymentIntent`, which SWALLOWS its provider
+     * failure and re-enqueues a recovery row - and the row it re-enqueues is
+     * THIS row, whose upsert `update` branch deliberately does not reset
+     * `status`. So on a replay while the provider is still down the re-enqueue
+     * was a no-op on a PROCESSING row, and the next line marked the operation
+     * SUCCEEDED with nothing minted. Two shares of $200 and $30 both read
+     * COMPLETED and the club collected nothing.
+     *
+     * Throwing hands the row to `failPaymentRecoveryOperation`, which is the
+     * machinery that already exists for exactly this: back off, retry, and on
+     * exhaustion mark the operation FAILED and raise the admin payment-failure
+     * alert. So the debt stays visible and recoverable instead of being closed.
+     *
+     * Deliberately NOT the two other shapes considered. Not "stop swallowing in
+     * the minter": that function is shared with the ordinary edit path, where
+     * swallowing is correct - the member's saved change must still return, and
+     * the recovery row IS the retry. Not "enqueue a fresh recovery row": the row
+     * being processed is already this debt's durable retry, and a second row for
+     * one debt is a second debt.
+     */
+    if (synced.outcome === "not-raised") {
+      throw new Error(
+        `Edit financial review charge request for booking modification ${bookingModificationId} was not raised (${synced.totalCents} cents still owed); leaving the recovery operation open to retry`,
+      );
     }
     await completePaymentRecoveryOperation(operation.id);
     return;

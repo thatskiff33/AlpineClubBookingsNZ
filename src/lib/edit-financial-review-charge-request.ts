@@ -37,8 +37,11 @@ import { restatePendingSupplementaryInvoiceAmount } from "@/lib/xero-operation-o
  *   * WHAT THE REQUEST IS - `findEditReviewChargeRequest` on the card side and
  *     `hasIssuedSupplementaryInvoice` on the invoice side, both keyed on the edit.
  *   * WHAT XERO IS BILLING - `restateEditReviewChargeSupplementaryInvoice`, which
- *     raises the queued invoice rather than letting a second one be queued behind
- *     it and silently dropped.
+ *     RAISES the queued invoice rather than letting a second one be queued behind
+ *     it and silently dropped, and never lowers one. The enqueue makes the same
+ *     decision under a per-anchor advisory lock, so the two together are what
+ *     stop two concurrent settlements sending two invoices; this function alone
+ *     never could.
  */
 
 export type EditReviewChargeStore = Prisma.TransactionClient | typeof prisma;
@@ -175,15 +178,36 @@ export async function sumEditReviewChargeSharesCents({
  * Raise what this edit's ALREADY-QUEUED supplementary invoice will bill, when it
  * has one.
  *
- * Returns true when the Xero side is now asking for the combined total and the
- * caller must NOT queue anything further. False means this edit has nothing
- * queued - the first share's ordinary answer - and the caller enqueues normally.
+ * Returns true when the Xero side is already asking for at least the combined
+ * total and the caller must NOT queue anything further. False means this edit has
+ * nothing queued - the first share's ordinary answer - and the caller enqueues
+ * normally.
+ *
+ * TRUE COVERS TWO CASES, and conflating them was the bug. `restated` is an
+ * invoice this call RAISED; `alreadyCovering` is one already asking for at least
+ * this much, which happens on an exact replay and when a STALE, smaller total
+ * arrives after a larger one. Both mean "do not queue a second invoice", and
+ * neither writes anything in the second case, because
+ * `restatePendingSupplementaryInvoiceAmount` refuses to lower an ask.
+ *
+ * WHAT THE ACCOUNTING LEG NOW GUARANTEES, stated exactly rather than as "never
+ * two invoices":
+ *
+ *   * A queued supplementary invoice for one edit is only ever RAISED, never
+ *     lowered, whichever order two concurrent settlements land in.
+ *   * At most one supplementary invoice is queued per edit. The enqueue decides
+ *     that under a per-anchor advisory lock and scoped to the anchor rather than
+ *     to the amount, so a second settlement racing this one finds the first
+ *     invoice and raises it instead of queueing its own.
+ *   * NOT guaranteed: that a restate always lands. The outbox worker reads an
+ *     operation's payload from its scan before it claims the row, so a restate
+ *     arriving in that window is correctly refused and the invoice goes out at
+ *     the earlier figure. The shortfall is recorded; nothing is overwritten
+ *     behind a send, and no second invoice is raised.
  *
  * Best-effort: a Xero outage must not undo a completion whose money question is
  * already settled, so a failure is logged and treated as "nothing restated". The
- * ordinary enqueue that then runs is itself deduped by the outbox, so the worst
- * case is an invoice left at the earlier figure with the failure recorded, never
- * two invoices.
+ * ordinary enqueue that then runs then makes the same decision under the lock.
  */
 export async function restateEditReviewChargeSupplementaryInvoice({
   bookingId,
@@ -196,7 +220,7 @@ export async function restateEditReviewChargeSupplementaryInvoice({
   bookingModificationId: string;
   totalCents: number;
 }): Promise<boolean> {
-  const restated = await restatePendingSupplementaryInvoiceAmount({
+  const outcome = await restatePendingSupplementaryInvoiceAmount({
     bookingModificationId,
     priceDiffCents: totalCents,
     changeFeeCents: 0,
@@ -205,7 +229,7 @@ export async function restateEditReviewChargeSupplementaryInvoice({
       { err, bookingId, taskId },
       "Failed to restate the queued Xero supplementary invoice for a completed edit financial review",
     );
-    return { restated: 0 };
+    return { restated: 0, alreadyCovering: 0 };
   });
-  return restated.restated > 0;
+  return outcome.restated + outcome.alreadyCovering > 0;
 }

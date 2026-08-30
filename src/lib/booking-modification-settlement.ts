@@ -136,11 +136,25 @@ export async function executeBookingModificationRefund({
  *
  * #3170 RE-ENTERS THIS RATHER THAN ADDING A COLLECTION PATH. A completed
  * `EDIT_FINANCIAL_REVIEW` task whose officer decided the MEMBER owes the club
- * comes through here with a task-scoped `idempotencyKey` and
- * `recoveryIdempotencyKey`, so a review charge and an ordinary price increase are
- * the same instrument, chased by the same cron and reconciled the same way. The
- * epic forbids a fourth settlement mechanism, and this is the third's charging
- * half.
+ * comes through here, so a review charge and an ordinary price increase are the
+ * same instrument, chased by the same cron and reconciled the same way. The epic
+ * forbids a fourth settlement mechanism, and this is the third's charging half.
+ *
+ * IT PASSES EDIT-SCOPED KEYS, NOT TASK-SCOPED ONES, and an earlier draft of this
+ * docblock said the opposite. The owner's 30 Aug 2026 decision is that one
+ * booking edit raises ONE request, so both of a review's two tasks contribute
+ * shares to a single ask anchored to the `BookingModification`. Task-scoping
+ * these keys would mint a second intent for the second share, and minting queues
+ * every other outstanding additional on that payment for cancellation - which is
+ * how $230 of debt became a $30 ask. `payment-recovery-keys.ts` holds the full
+ * reasoning and both builders.
+ *
+ * THE CALLER READS THE RESULT, and must. This function swallows a provider
+ * failure by design - the ordinary edit path has to return the member's saved
+ * change, and the recovery row it writes is the retry. A caller for whom
+ * "minted nothing" is not an acceptable outcome (the review charge's recovery
+ * replay is the one such caller) has to test `additionalPaymentIntentId` rather
+ * than wait for an exception that never comes.
  */
 export async function createModificationAdditionalPaymentIntent({
   bookingId,
@@ -156,10 +170,15 @@ export async function createModificationAdditionalPaymentIntent({
   idempotencyKey: string;
   /**
    * #3170: the dedup key for the durable retry, when it must not be the
-   * modification-scoped default. One edit can raise TWO review tasks over one
-   * `BookingModification` row, so a review completion passes its TASK-scoped key
-   * and two reviews of one edit can never share a charge debt. Omitted by the
-   * ordinary edit paths, which are one-per-modification by construction.
+   * modification-scoped default.
+   *
+   * The review-charge caller passes
+   * `buildEditFinancialReviewAdditionalIntentRecoveryIdempotencyKey`, which is
+   * EDIT-scoped - a different namespace from the ordinary edit's key over the
+   * same `BookingModification`, so the two paths' debts stay separate rows, but
+   * deliberately the SAME row for both review tasks of one edit, because they
+   * are two shares of one debt. Omitted by the ordinary edit paths, which are
+   * one-per-modification by construction.
    */
   recoveryIdempotencyKey?: string;
   failureMessage: string;

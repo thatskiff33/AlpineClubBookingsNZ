@@ -1005,6 +1005,56 @@ export async function enqueueXeroAccountCreditNoteOperation(
   };
 }
 
+/**
+ * The two states in which a queued supplementary invoice has not yet reached
+ * Xero, so its amount may still be restated. Named once because the read and the
+ * write must use the SAME set - a filter on one and not the other is a
+ * check-then-act, which is how a restate came to rewrite an operation the outbox
+ * had already moved on (#3170 fix round, F3).
+ */
+const RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES = [
+  "PENDING",
+  "WAITING_PAYMENT",
+] as const;
+
+/**
+ * The states in which a supplementary invoice for this anchor is still going to
+ * be sent, so a second one must not be queued behind it. Wider than the
+ * restatable set by `RUNNING`: an operation the outbox is executing right now
+ * cannot have its amount changed, but it is very much still an invoice.
+ */
+const OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES = [
+  "PENDING",
+  "RUNNING",
+  "WAITING_PAYMENT",
+] as const;
+
+/**
+ * #3170 fix round (F2): the advisory key that makes "one supplementary invoice
+ * per booking modification" TRUE rather than asserted.
+ *
+ * The check-then-create below was racy, and the race lost real money rather than
+ * merely duplicating work. Two officers settling the two review tasks of one
+ * booking edit both compute a total, both find nothing queued for the anchor, and
+ * both queue - and because the queued-operation lookup deduped on a
+ * `correlationKey` BUILT FROM THE AMOUNT, $200 and $230 were two different keys
+ * and neither found the other. `createXeroSupplementaryInvoice` has no
+ * active-link guard of its own and its provider idempotency key also embeds the
+ * amount, so that is two Xero invoices to the member totalling $430 for a $230
+ * edit. Before the combined request each share queued its own amount and the
+ * concurrent case summed correctly, so this shape was introduced by the combining
+ * and had to be closed by it.
+ *
+ * A scoped, namespaced key in the ordinary style of `backup-run.ts`'s
+ * reap-check-insert claim: held for the milliseconds of one short transaction
+ * that reads and writes only `XeroSyncOperation` and `XeroObjectLink`, composing
+ * with no other lock family, so no ordering cycle is possible. Every caller
+ * reaches it post-commit through a fire-and-forget
+ * `queueXeroBookingEditSettlement`, holding nothing. The Xero round trip happens
+ * later, in the outbox worker, entirely outside this transaction.
+ */
+const XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE = "xero-supplementary-invoice";
+
 export async function enqueueXeroSupplementaryInvoiceOperation(
   params: {
     bookingId: string;
@@ -1063,24 +1113,6 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
-      localModel,
-      localId,
-      xeroObjectType: "INVOICE",
-      role: "SUPPLEMENTARY_INVOICE",
-      active: true,
-    },
-    select: { id: true },
-  });
-
-  if (existingLink) {
-    return {
-      queueOperationId: null,
-      message: "Xero supplementary invoice already linked for this modification.",
-    };
-  }
-
   const correlationKey = buildXeroIdempotencyKey(
     bookingModificationId ? "booking-mod" : "booking",
     localId,
@@ -1090,59 +1122,107 @@ export async function enqueueXeroSupplementaryInvoiceOperation(
     "v1"
   );
 
-  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
-    where: {
-      correlationKey,
+  /**
+   * ONE SUPPLEMENTARY INVOICE PER ANCHOR, decided under a lock (#3170 fix round).
+   *
+   * Two things changed here and they only work together. The lock
+   * (`XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE`) serialises the whole
+   * link-check -> queued-check -> write against another settlement of the same
+   * edit; and the queued check is now scoped to the ANCHOR rather than to a
+   * `correlationKey` that embeds the amount, so a second share arriving with a
+   * larger total FINDS the first invoice instead of queueing a second one beside
+   * it. Either alone leaves a way to send two invoices for one edit.
+   *
+   * Finding one does not mean leaving it alone: an operation asking for LESS is
+   * raised to this total through the one restate function, so the second share is
+   * billed rather than silently dropped. That function refuses to LOWER, so a
+   * stale, smaller total arriving second changes nothing.
+   */
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${XERO_SUPPLEMENTARY_INVOICE_LOCK_NAMESPACE}), hashtext(${localId}))`;
+
+    const existingLink = await tx.xeroObjectLink.findFirst({
+      where: {
+        localModel,
+        localId,
+        xeroObjectType: "INVOICE",
+        role: "SUPPLEMENTARY_INVOICE",
+        active: true,
+      },
+      select: { id: true },
+    });
+
+    if (existingLink) {
+      return {
+        queueOperationId: null,
+        message: "Xero supplementary invoice already linked for this modification.",
+      };
+    }
+
+    const existingQueuedOperation = await tx.xeroSyncOperation.findFirst({
+      where: {
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel,
+        localId,
+        queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+        status: {
+          in: [...OUTSTANDING_SUPPLEMENTARY_INVOICE_STATUSES],
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    if (existingQueuedOperation) {
+      const raised = await restatePendingSupplementaryInvoiceAmount({
+        bookingModificationId: localId,
+        priceDiffCents,
+        changeFeeCents,
+        store: tx,
+      });
+      return {
+        queueOperationId: existingQueuedOperation.id,
+        message:
+          raised.restated > 0
+            ? "Xero supplementary invoice already queued for this change was raised to the combined amount."
+            : "Xero supplementary invoice is already queued for background processing.",
+      };
+    }
+
+    const queuedOperation = await startXeroSyncOperation({
       direction: "OUTBOUND",
       entityType: "INVOICE",
       operationType: "CREATE",
       localModel,
       localId,
-      status: {
-        in: ["PENDING", "RUNNING", "WAITING_PAYMENT"],
+      status: options?.waitForConfirmedAdditionalPayment ? "WAITING_PAYMENT" : "PENDING",
+      idempotencyKey: correlationKey,
+      correlationKey,
+      requestPayload: {
+        queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
+        bookingId,
+        priceDiffCents,
+        changeFeeCents,
+        bookingModificationId: bookingModificationId ?? null,
+        recordPayment: options?.recordPayment ?? true,
+        paymentIntentId: options?.paymentIntentId ?? null,
+        waitForConfirmedAdditionalPayment:
+          options?.waitForConfirmedAdditionalPayment ?? false,
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+      createdByMemberId: options?.createdByMemberId ?? null,
+      store: tx,
+    });
 
-  if (existingQueuedOperation) {
     return {
-      queueOperationId: existingQueuedOperation.id,
-      message: "Xero supplementary invoice is already queued for background processing.",
+      queueOperationId: queuedOperation.id,
+      message: options?.waitForConfirmedAdditionalPayment
+        ? "Xero supplementary invoice is waiting for confirmed additional payment."
+        : "Xero supplementary invoice queued for background processing.",
     };
-  }
-
-  const queuedOperation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel,
-    localId,
-    status: options?.waitForConfirmedAdditionalPayment ? "WAITING_PAYMENT" : "PENDING",
-    idempotencyKey: correlationKey,
-    correlationKey,
-    requestPayload: {
-      queueType: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
-      bookingId,
-      priceDiffCents,
-      changeFeeCents,
-      bookingModificationId: bookingModificationId ?? null,
-      recordPayment: options?.recordPayment ?? true,
-      paymentIntentId: options?.paymentIntentId ?? null,
-      waitForConfirmedAdditionalPayment:
-        options?.waitForConfirmedAdditionalPayment ?? false,
-    },
-    createdByMemberId: options?.createdByMemberId ?? null,
   });
-
-  return {
-    queueOperationId: queuedOperation.id,
-    message: options?.waitForConfirmedAdditionalPayment
-      ? "Xero supplementary invoice is waiting for confirmed additional payment."
-      : "Xero supplementary invoice queued for background processing.",
-  };
 }
 
 /**
@@ -1249,26 +1329,65 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
  * pre-claim refusal (`REVIEW_CHARGE_REQUEST_CLOSED_MESSAGE`) is what stops a
  * share reaching an ask that has already gone out.
  *
+ * THE STATUS FILTER IS ON THE READ **AND** ON THE WRITE (#3170 fix round, F3).
+ * It was on the read alone, which is a check-then-act: an operation that left
+ * PENDING between the two statements was rewritten anyway, contradicting the
+ * paragraph above. The write is now an `updateMany` carrying the same status
+ * predicate, so a row that has moved on matches nothing and is counted as not
+ * restated.
+ *
+ * THE RESIDUAL WINDOW THAT REMAINS, STATED RATHER THAN IMPLIED. The outbox
+ * worker reads an operation's `requestPayload` from its SCAN and only then
+ * claims it (`processQueuedXeroOutboxOperations`), so between those two
+ * statements it is holding a payload this function can no longer reach: the
+ * status guard refuses the write, correctly, but the amount the worker is about
+ * to send is the OLD one. A restate that lands in that window therefore reports
+ * `restated: 0` - the honest answer - and the caller falls through to the
+ * ordinary enqueue, which the active-link check then refuses once the first
+ * invoice lands. The outcome is one invoice at the earlier figure with the
+ * shortfall recorded, never two invoices and never a silent overwrite of a sent
+ * ask. Closing it properly means making the worker re-read its payload after the
+ * claim, which is a change to every outbox queue type and belongs to its own
+ * issue.
+ *
+ * IT NEVER LOWERS AN ASK. The combined total is derived from settled shares and
+ * a settled share is terminal, so the figure only ever grows and a SMALLER one is
+ * always the older answer. Two settlements racing can compute their totals in
+ * either order, so without this comparison the stale run's restate could land
+ * last and take a queued $230 invoice back down to $200 - and its caller would
+ * then return early, having "restated", so nothing re-queued the difference. An
+ * operation already asking for at least this much is counted in
+ * `alreadyCovering` instead: nothing is written, and the caller still knows not
+ * to queue a second invoice behind it.
+ *
  * The correlation key moves with the amount, because it is built FROM the amount:
  * leaving it stale would let a later enqueue for the new total find no match and
  * queue a duplicate.
  *
- * Returns how many operations were restated. Zero means "nothing was queued for
- * this edit", which is the FIRST share's ordinary answer and tells the caller to
+ * Returns how many operations this raised and how many already asked for at least
+ * this much. `restated + alreadyCovering === 0` means "nothing is queued for this
+ * edit", which is the FIRST share's ordinary answer and tells the caller to
  * enqueue normally.
  */
 export async function restatePendingSupplementaryInvoiceAmount({
   bookingModificationId,
   priceDiffCents,
   changeFeeCents,
+  store = prisma,
 }: {
   bookingModificationId: string;
   priceDiffCents: number;
   changeFeeCents: number;
-}): Promise<{ restated: number }> {
-  const operations = await prisma.xeroSyncOperation.findMany({
+  /**
+   * The enqueue calls this from INSIDE its advisory-locked transaction, so the
+   * raise and the decision not to queue a second invoice are one atomic act.
+   * Every other caller runs post-commit on the module client.
+   */
+  store?: Prisma.TransactionClient | typeof prisma;
+}): Promise<{ restated: number; alreadyCovering: number }> {
+  const operations = await store.xeroSyncOperation.findMany({
     where: {
-      status: { in: ["PENDING", "WAITING_PAYMENT"] },
+      status: { in: [...RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES] },
       direction: "OUTBOUND",
       entityType: "INVOICE",
       operationType: "CREATE",
@@ -1291,7 +1410,10 @@ export async function restatePendingSupplementaryInvoiceAmount({
     "v1"
   );
 
+  const requestedNetCents = priceDiffCents + changeFeeCents;
+
   let restated = 0;
+  let alreadyCovering = 0;
   for (const operation of operations) {
     const payload =
       operation.requestPayload &&
@@ -1300,16 +1422,27 @@ export async function restatePendingSupplementaryInvoiceAmount({
         ? (operation.requestPayload as Record<string, unknown>)
         : null;
     if (!payload) continue;
-    if (
-      payload.priceDiffCents === priceDiffCents &&
-      payload.changeFeeCents === changeFeeCents
-    ) {
-      // Already asking for exactly this - a replay, which must change nothing.
-      restated += 1;
+    // What the queued invoice would BILL, which is the sum of its two signed
+    // components (`createXeroSupplementaryInvoice` bills `priceDiffCents +
+    // changeFeeCents`). Comparing the net rather than one component is what makes
+    // "never lower" mean what it says on a queued row carrying a change fee.
+    const queuedNetCents =
+      (typeof payload.priceDiffCents === "number" ? payload.priceDiffCents : 0) +
+      (typeof payload.changeFeeCents === "number" ? payload.changeFeeCents : 0);
+    if (queuedNetCents >= requestedNetCents) {
+      // Already asking for at least this much: an exact replay, or a stale,
+      // smaller total arriving after a larger one. Neither may write.
+      alreadyCovering += 1;
       continue;
     }
-    await prisma.xeroSyncOperation.update({
-      where: { id: operation.id },
+    // `updateMany` rather than `update`, carrying the same status predicate the
+    // read used: an operation the outbox claimed between the two statements
+    // matches nothing and is left exactly as the worker found it.
+    const raised = await store.xeroSyncOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: { in: [...RESTATABLE_SUPPLEMENTARY_INVOICE_STATUSES] },
+      },
       data: {
         requestPayload: {
           ...payload,
@@ -1320,10 +1453,10 @@ export async function restatePendingSupplementaryInvoiceAmount({
         correlationKey,
       },
     });
-    restated += 1;
+    if (raised.count === 1) restated += 1;
   }
 
-  return { restated };
+  return { restated, alreadyCovering };
 }
 
 export async function attachPaymentIntentToWaitingSupplementaryInvoiceOperations({

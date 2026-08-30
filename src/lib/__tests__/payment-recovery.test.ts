@@ -2255,10 +2255,28 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       payment: { stripeCustomerId: "cus_123" },
     });
     mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "raised",
       paymentIntentId: "pi_additional_1",
       totalCents: 23000,
     });
   });
+
+  /** Did this run mark the operation SUCCEEDED? */
+  function wasClosedSuccessfully() {
+    return mockPaymentRecoveryUpdateMany.mock.calls.some(
+      (call) =>
+        (call[0] as { data?: { status?: string } })?.data?.status ===
+        "SUCCEEDED",
+    );
+  }
+
+  /** Did this run leave the operation FAILED with a retry still to come? */
+  function wasLeftForRetry() {
+    return mockPaymentRecoveryUpdate.mock.calls.some((call) => {
+      const data = (call[0] as { data?: Record<string, unknown> })?.data;
+      return data?.status === "FAILED" && data?.nextRetryAt != null;
+    });
+  }
 
   it("re-derives the edit's combined total instead of replaying the frozen amount", async () => {
     const result = await processPaymentRecoveryOperations({ limit: 1 });
@@ -2292,6 +2310,84 @@ describe("edit-financial-review charge recovery (#3170)", () => {
       bookingModificationId: "mod-1",
       paymentIntentId: "pi_additional_1",
     });
+  });
+
+  /**
+   * #3170 fix round (F1) - THE REPLAY MUST NOT CLOSE A DEBT IT DID NOT RAISE.
+   *
+   * The provider is still down when the cron replays. The mint arm swallows its
+   * failure and re-enqueues - and the row it re-enqueues is THIS row, whose
+   * upsert `update` branch deliberately does not reset `status`, so that
+   * re-enqueue is a no-op on a PROCESSING row. Completing here marked the
+   * operation SUCCEEDED having minted nothing: two shares of $200 and $30 both
+   * read COMPLETED and the club collected neither.
+   */
+  it("leaves the operation open when the replay raised no request", async () => {
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "not-raised",
+      paymentIntentId: null,
+      totalCents: 23000,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    // NOT closed, and NOT counted as a success.
+    expect(result.succeeded).toBe(0);
+    expect(wasClosedSuccessfully()).toBe(false);
+    // Handed to the machinery that already exists for this: back off, retry, and
+    // on exhaustion mark it FAILED and raise the admin payment-failure alert. The
+    // $230 stays owed, visible and recoverable.
+    expect(result.retried).toBe(1);
+    expect(wasLeftForRetry()).toBe(true);
+    // Nothing was attached to a Xero operation either, because there is no intent
+    // to attach.
+    expect(mockAttachIntentToWaitingOps).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The CONTROL for the guard above. A replay that DID raise the request must
+   * still close - a check that refused everything would pass the test above and
+   * would wedge every recovered charge in a retry loop.
+   */
+  it("closes the operation when the replay did raise the request", async () => {
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(wasClosedSuccessfully()).toBe(true);
+    expect(wasLeftForRetry()).toBe(false);
+  });
+
+  /**
+   * The other two outcomes are terminal rather than recoverable, and closing on
+   * them is the point: retrying would loop for ever on a question no retry can
+   * answer.
+   */
+  it("closes the operation when there is nothing owed", async () => {
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "nothing-owed",
+      paymentIntentId: null,
+      totalCents: 0,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(wasClosedSuccessfully()).toBe(true);
+  });
+
+  it("closes the operation when the member had already paid the request", async () => {
+    // The remaining share is collected by hand; the charge module writes the
+    // audit row that tells an officer so. Nothing a retry can improve.
+    mockSyncEditFinancialReviewChargeRequest.mockResolvedValue({
+      outcome: "already-paid",
+      paymentIntentId: "pi_additional_1",
+      totalCents: 20000,
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(wasClosedSuccessfully()).toBe(true);
   });
 
   it("mints nothing for a cancelled booking", async () => {
