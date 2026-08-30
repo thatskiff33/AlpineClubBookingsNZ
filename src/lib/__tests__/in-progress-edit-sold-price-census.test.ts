@@ -379,17 +379,17 @@ const LENIENT_LOCK_CALL_SITES = [
   {
     file: "src/app/api/bookings/[id]/guests/route.ts",
     calls: 1,
-    what: "adding a guest: the existing party keep their booked prices while the new guest's nights are bought at current rates. An unlocked night here is a night nobody is giving back",
+    what: "adding a guest: the existing party keep their booked prices while the new guest's nights are bought at current rates. An unlocked night here is a night nobody is giving back — but it still reached the booking's recomputed TOTAL at today's rate, which #3166 closed by asking preCheckInEditEvidence first and parking the whole add when a strand cannot be read",
   },
   {
     file: "src/app/api/bookings/[id]/modify-quote/route.ts",
     calls: 1,
-    what: "the QUOTE path's ORDINARY (not in-progress) pricing pass. The in-progress branch of the same route does not use this reader at all — it goes through the planner, which is strict",
+    what: "the QUOTE path's ORDINARY (not in-progress) pricing pass. The in-progress branch of the same route does not use this reader at all — it goes through the planner, which is strict. Since #3166 the ordinary branch is judged by preCheckInEditEvidence AFTER this pass, against the night sets it produced, so the preview parks whenever the save would",
   },
   {
     file: "src/lib/booking-date-modification-service.ts",
     calls: 1,
-    what: "a date change: the locks are keyed by NORMALISED stay date, so a night the guest keeps across the move matches its lock however far the range moved and keeps its booked price - only genuinely new nights reach the season table. The old side of the credit is `Booking.finalPriceCents` as stored, so nothing here reconstructs a historical amount. What this path does NOT do is test that the stored rows can account for that total: a strand with no usable per-night price still has its dropped nights valued at today's rate, which is #3166 and not INV-MOD-028",
+    what: "a date change: the locks are keyed by NORMALISED stay date, so a night the guest keeps across the move matches its lock however far the range moved and keeps its booked price - only genuinely new nights reach the season table. The old side of the credit is `Booking.finalPriceCents` as stored, so nothing here reconstructs a historical amount. It used NOT to test that the stored rows can account for that total, so a strand with no usable per-night price had its nights valued at today's rate AND written back as integers; #3166 added preCheckInEditEvidence after the pricing pass, and an unreadable strand now parks with NULL on every night this booking cannot account for",
   },
   {
     file: "src/lib/booking-guest-removal-service.ts",
@@ -399,7 +399,7 @@ const LENIENT_LOCK_CALL_SITES = [
   {
     file: "src/lib/booking-modify-plan.ts",
     calls: 2,
-    what: "prepareGuestPlan (the apply path's ordinary pricing pass) and the proposed-remaining-guest pass. The declaration itself is excluded by the pattern's lookbehind",
+    what: "prepareGuestPlan (the apply path's ordinary pricing pass) and the proposed-remaining-guest pass. The declaration itself is excluded by the pattern's lookbehind. Since #3166 the amounts this reader produces for an unreadable strand are computed and then DISCARDED: calculateModifiedPricing judges every existing strand against the night sets the pass produced and parks the edit, writing the stored price where there is one and NULL where there is not",
   },
 ] as const;
 
