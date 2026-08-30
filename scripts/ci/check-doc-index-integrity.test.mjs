@@ -1434,7 +1434,7 @@ describe("tracked citation source extensions", () => {
     // got 0" that says nothing about why. The assertion below turns that into a
     // readable failure, and it was earned — INV-MOD-027 shipped and this case
     // went red on a branch whose author had no reason to look here.
-    const planted = "INV-MOD-028";
+    const planted = "INV-MOD-029";
     // The precondition the fixture rests on. When this fails, `planted` has been
     // taken by a real invariant: move it up one, and no further.
     expect(files.get("docs/DOMAIN_INVARIANTS.md")).not.toContain(planted);
