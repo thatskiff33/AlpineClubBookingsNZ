@@ -450,6 +450,39 @@ lodge:tukino,INHERIT,NO_HOLD,
     ).toBe("unchanged");
   });
 
+  it("binds the plan fingerprint to the Group Trip column too (#3037)", async () => {
+    // The fingerprint is how an apply notices the target moved after the operator
+    // read the dry run. A scope column left out of the digest makes a concurrent
+    // change to that exact setting invisible, and the apply proceeds against a
+    // target its plan no longer describes. Two targets differing ONLY in the new
+    // column must therefore produce different fingerprints.
+    const base = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: false,
+    };
+    const off = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([base])),
+    );
+    const on = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([{ ...base, hostScopeSameGroupTrip: true }])),
+    );
+    const hostingParts = (parts: string[]) =>
+      parts.filter((part) => part.startsWith("adult-member-hosting-policy:"));
+    expect(hostingParts(off.fingerprintParts)).not.toEqual(
+      hostingParts(on.fingerprintParts),
+    );
+    // The control: the same target twice hashes identically, so the assertion
+    // above is about the column and not about the digest being unstable.
+    const again = await bookingPoliciesImporter.plan(
+      planContext(HEADER, db([base])),
+    );
+    expect(hostingParts(off.fingerprintParts)).toEqual(
+      hostingParts(again.fingerprintParts),
+    );
+  });
+
   it("carries an explicit host-scope set, and refuses the shapes the card refuses (#2569)", async () => {
     const { tx, updateMany } = txDouble();
     await bookingPoliciesImporter.apply(

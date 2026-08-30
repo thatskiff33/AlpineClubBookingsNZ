@@ -55,10 +55,13 @@ const DATA_FIELDS = [
   "capacityMode",
   "hostScopeSameBooking",
   "hostScopeSameBookingOwner",
-  // #3037. Every scope column belongs here: this list drives both `hashRow` (the
-  // plan's change fingerprint) and `changedFields` (which decides update versus
-  // unchanged), so a column left out would let a Group-Trip-only difference
-  // import as "unchanged" and silently keep the target's setting.
+  // #3037. Every scope column belongs here. This list is what `hashRow` digests
+  // into the plan's fingerprint, which is how an apply notices that the target
+  // moved after the operator read the dry run — so a column left out means a
+  // concurrent scope-set change between plan and apply is invisible and the
+  // apply proceeds against a target it no longer describes. (`changedFields`
+  // reads the parsed write-data's own keys rather than this list, so
+  // update-versus-unchanged is not what this constant decides.)
   "hostScopeSameGroupTrip",
 ] as const;
 
