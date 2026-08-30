@@ -1,6 +1,8 @@
 "use client";
 
-import { FieldHint, useFieldHint } from "@/components/ui/field-hint";
+import { useId } from "react";
+
+import { describedByFieldHint, FieldHint } from "@/components/ui/field-hint";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -64,11 +66,39 @@ export function UnpricedNightPriceFields({
   check: StoredNightPriceRepairCheck | null;
   disabled: boolean;
 }) {
-  const hint = useFieldHint();
-  const enteredCents = summary.dates.reduce((sum, date) => {
-    const parsed = parseNightInput(values[date] ?? "");
-    return parsed === null ? sum : sum + parsed;
-  }, 0);
+  /*
+    #3191 fix round. Deterministic ids rather than `useFieldHint()`, because
+    EVERY box is described by the same two paragraphs and a hook cannot be
+    called per row - the `.map()` case `field-hint.tsx` names, with
+    `describedByFieldHint` as its helper.
+
+    Two problems this fixes, both of which land hardest on a screen-reader user:
+
+     1. the verdict was announced to nobody. The confirm button is DISABLED
+        behind this paragraph, so a reader who cannot see it is left with a
+        control that will not press and no reason given - which is the bare
+        refusal the owner's 31 Aug 2026 decision rejected on the sibling $0.00
+        control, in the same dialog. It is listed FIRST in every box's
+        `aria-describedby` and carries `aria-live`, because "this is wrong, and
+        here is why" is heard before "here is an example" and because the figure
+        changes as the officer types.
+     2. the hint was on the FIRST box only. "A free night is 0.00, which is a
+        real price and not the same as leaving it blank" is the single sentence
+        that keeps this feature honest, and a night in the middle of the list is
+        exactly where somebody wonders it.
+  */
+  const statusId = useId();
+  const hintId = useId();
+  /*
+    Every box holds text, so the officer has answered as fully as they are going
+    to. Until then a refusal is ordinary progress rather than a rejection, and
+    warning colour on the very first keystroke reads as "you have done something
+    wrong" when they have simply not finished. The SENTENCE is unchanged - it
+    still says what is missing - only how loudly it is said.
+  */
+  const everyBoxFilled = summary.dates.every(
+    (date) => (values[date] ?? "").trim() !== "",
+  );
 
   return (
     <fieldset className="space-y-3" data-testid="unpriced-night-price-fields">
@@ -95,43 +125,56 @@ export function UnpricedNightPriceFields({
               value={values[date] ?? ""}
               disabled={disabled}
               onChange={(event) => onChange(date, event.target.value)}
-              {...(date === summary.dates[0] ? hint.fieldProps : {})}
+              aria-describedby={describedByFieldHint(hintId, statusId)}
             />
           </div>
         ))}
       </div>
-      <FieldHint {...hint.hintProps}>
+      {/*
+        The running total, and the ONE live region on this fieldset. Two figures,
+        always both: what has been typed and what it has to come to. Showing only
+        the remainder would hand the officer the last night's price, which is the
+        derivation this screen exists to avoid.
+
+        PERMANENTLY MOUNTED, empty when it has nothing to say, for the reason
+        `focused-action-error.tsx` records: a live region injected already
+        populated is silently dropped by some screen-reader/browser pairings, so
+        the first verdict an officer typed their way to would be the one nobody
+        heard.
+      */}
+      <p
+        id={statusId}
+        aria-live="polite"
+        className={
+          !targetKnown || check === null || check.ok || !everyBoxFilled
+            ? "text-xs text-muted-foreground"
+            : "text-xs text-warning-11"
+        }
+        data-testid={
+          targetKnown
+            ? "unpriced-night-price-reconciliation"
+            : "unpriced-night-price-target-unknown"
+        }
+      >
+        {!targetKnown
+          ? "Say which way the money goes and how much first — what these nights have to add up to depends on both."
+          : check === null
+            ? ""
+            : check.ok
+              ? /*
+                  #3191 fix round: the checker's OWN figure, not a second sum of
+                  the same boxes taken here. On the ok branch `targetCents` is
+                  equal to that sum by construction, and two derivations of one
+                  number on money copy an officer reads as a receipt is how the
+                  screen ends up printing a total it did not submit.
+                */
+                `These nights come to ${formatCents(check.targetCents)}, which is what this guest's stay works out to. Recording them stops this guest's nights sending the booking back here.`
+              : check.message}
+      </p>
+      <FieldHint id={hintId}>
         Example: 45.00 — a free night is 0.00, which is a real price and not the
         same as leaving it blank.
       </FieldHint>
-      {/*
-        The running total. Two figures, always both: what has been typed and what
-        it has to come to. Showing only the remainder would hand the officer the
-        last night's price, which is the derivation this screen exists to avoid.
-      */}
-      {targetKnown && check ? (
-        <p
-          className={
-            check.ok
-              ? "text-xs text-muted-foreground"
-              : "text-xs text-warning-11"
-          }
-          data-testid="unpriced-night-price-reconciliation"
-        >
-          {check.ok
-            ? `These nights come to ${formatCents(enteredCents)}, which is what this guest's stay works out to. Recording them stops this booking coming back here.`
-            : check.message}
-        </p>
-      ) : null}
-      {!targetKnown ? (
-        <p
-          className="text-xs text-muted-foreground"
-          data-testid="unpriced-night-price-target-unknown"
-        >
-          Say which way the money goes and how much first — what these nights
-          have to add up to depends on both.
-        </p>
-      ) : null}
     </fieldset>
   );
 }

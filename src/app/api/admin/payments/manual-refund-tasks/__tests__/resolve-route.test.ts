@@ -234,7 +234,17 @@ describe("what the operator is told afterwards", () => {
     );
     const body = (await response.json()) as { message: string };
     expect(body.message).toContain("2 nights' prices were recorded");
-    expect(body.message).toContain("not be sent for review again");
+    /*
+      #3191 fix round: the receipt claims THIS GUEST'S nights, not the booking.
+      One edit raises one review per unreadable guest strand, so settling the
+      first of two leaves the second blank - and "this booking will not be sent
+      for review again" would be a promise the next edit disproves, on the one
+      promise this whole epic is about.
+    */
+    expect(body.message).toContain(
+      "this guest's nights will not send this booking back for review again",
+    );
+    expect(body.message).toContain("Another guest on the same booking still can");
   });
 
   it("says nothing extra when no nights were recorded", async () => {

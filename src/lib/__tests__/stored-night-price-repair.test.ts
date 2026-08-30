@@ -172,6 +172,41 @@ describe("the figures must reconcile to the amount being settled", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toContain("$70.01");
     expect(result.ok === false && result.message).toContain("$70.00");
+    /*
+      #3191 fix round: AND it offers the third way out. The two obvious ones -
+      change the figures, change the settlement - are arithmetically forced, and
+      on a settlement that is not simply what the nights were worth (an admin
+      fee kept back, a hand-back reduced by policy) the only figure that
+      satisfies this check is FALSE. An officer steered towards nothing else
+      types it, and that is the unprovenanced number epic #2797 exists to
+      remove. `docs/guides/payments.md` says leaving them blank is fine; the
+      refusal has to say it at the moment the decision is made.
+    */
+    expect(result.ok === false && result.message).toMatch(
+      /clear every box and settle without them/,
+    );
+  });
+
+  it("says the same when no set of prices could satisfy it at all", () => {
+    // A refund larger than everything the blanks could be worth. There is no
+    // figure to type here, so a refusal that named only the two forced options
+    // would be a dead end.
+    const result = checkStoredNightPriceRepair({
+      summary,
+      entries: [
+        { date: requireCalendarDate("2026-08-01"), priceCents: 0 },
+        { date: requireCalendarDate("2026-08-02"), priceCents: 0 },
+      ],
+      deltaCents: settlementDeltaCents({
+        direction: "REFUND_TO_MEMBER",
+        amountCents: 9_000,
+      }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.targetCents).toBe(-2_000);
+    expect(result.ok === false && result.message).toMatch(
+      /clear every box and settle without them/,
+    );
   });
 
   it("takes a refund off what the stay is worth and adds a charge to it", () => {

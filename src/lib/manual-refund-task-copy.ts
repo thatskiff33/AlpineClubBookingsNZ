@@ -46,6 +46,14 @@
  * both: the admin route no longer refuses a zero of its own, precisely so the
  * layers that know the task's kind - the server's completion door and the screen
  * - are the only ones that speak.
+ *
+ * ONLY ONE OF THE TWO IS EVER PRINTED IN THE BROWSER, and saying otherwise
+ * sends a reader auditing the screen looking for a control that is not there. A
+ * legacy hand-back has NO amount box on the settle dialog - the officer never
+ * types a figure, so they cannot type a zero - so the screen calls this with
+ * `true` and nothing else. The hand-back sentence is the server's, reached when
+ * a zero arrives at the completion door by some other route, and it surfaces as
+ * an error after posting rather than as guidance beside a box.
  */
 export function zeroCompletionRefusal(isEditReview: boolean): string {
   return isEditReview
@@ -102,13 +110,22 @@ export function completionMessage(result: {
  * DISMISSAL, which those sentences never describe. Empty when nothing was
  * recorded, which is the ordinary case.
  *
- * It says what the officer gained, not what was written: "will not be sent for
- * review again" is the outcome they were promised when they filled the boxes in,
- * and it is the thing they would otherwise have to take on trust.
+ * It says what the officer gained, not what was written: not being sent back for
+ * review is the outcome they were promised when they filled the boxes in, and it
+ * is the thing they would otherwise have to take on trust.
+ *
+ * IT CLAIMS THE STRAND AND NOT THE BOOKING. One edit raises one review task per
+ * unreadable guest strand, so settling the first of two writes guest one's
+ * nights and leaves guest two's blank - and "this booking will not be sent for
+ * review again" would be a receipt disproved by the next edit. Overstating it
+ * here is worse than overstating it anywhere else on this screen, because not
+ * coming back is the entire thing #3191 promises.
  */
 export function nightPricesRecordedMessage(count: number): string {
   if (count === 0) return "";
+  const tail =
+    ", so this guest's nights will not send this booking back for review again. Another guest on the same booking still can, if their nights are unpriced too.";
   return count === 1
-    ? " One night's price was recorded, so this booking will not be sent for review again for want of it."
-    : ` ${count} nights' prices were recorded, so this booking will not be sent for review again for want of them.`;
+    ? ` One night's price was recorded${tail}`
+    : ` ${count} nights' prices were recorded${tail}`;
 }

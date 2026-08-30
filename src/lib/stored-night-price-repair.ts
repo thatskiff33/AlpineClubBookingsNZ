@@ -6,7 +6,7 @@ import {
   nonNegativeCentsSchema,
 } from "@/lib/edit-financial-review-context";
 import { formatCents } from "@/lib/utils";
-import type { CalendarDate } from "@/lib/club-time";
+import { formatClubDate, type CalendarDate } from "@/lib/club-time";
 
 /**
  * #3191 (epic #2797): the RULE for filling in a night whose sold price is not
@@ -172,9 +172,17 @@ export function unpricedNightTargetCents(
 export const NIGHT_PRICE_REPAIR_NO_STRAND_MESSAGE =
   "This task is not linked to a guest whose nights could be priced, so per-night amounts cannot be recorded against it. Settle it without them.";
 
-/** There is nothing on this review that recording per-night amounts could fix. */
+/**
+ * There is nothing on this review that recording per-night amounts could fix.
+ *
+ * IT ENDS BY SAYING WHAT TO DO, because the server raises it at 409 - a
+ * concurrent edit priced the blanks between this page loading and the settle
+ * being posted. Its two sibling race refusals both say "reload"; without that
+ * this one reads as a permanent property of the task, and the officer retries
+ * the same figures until they happen to reload of their own accord.
+ */
 export const NIGHT_PRICE_REPAIR_NOTHING_TO_FILL_MESSAGE =
-  "There are no unpriced nights to fill in on this review, so per-night amounts cannot be recorded against it.";
+  "There are no unpriced nights left to fill in on this review - somebody may have priced them since this page was loaded. Reload the page and settle it without them.";
 
 /** Rule 1, said out loud: a night nobody priced stays unpriced. */
 export const NIGHT_PRICE_REPAIR_INCOMPLETE_MESSAGE =
@@ -186,17 +194,57 @@ export const NIGHT_PRICE_REPAIR_UNKNOWN_NIGHT_MESSAGE =
 export const NIGHT_PRICE_REPAIR_AMOUNT_MESSAGE =
   "Each night's amount must be whole cents and cannot be negative. A free night is 0.00, which is a real price.";
 
-/** Rule 2's refusal, which has to say what the figures should come to. */
-export function nightPriceRepairReconcileMessage(
+/**
+ * A box holding something that is not an amount at all, naming which box.
+ *
+ * A DIFFERENT REFUSAL FROM THE ONE ABOVE, and from the incomplete one, because
+ * it is a different mistake. `parseDecimalDollarsToCents` answers `null` for
+ * "1,200.00", "$45", "45." and a stray letter alike, and a caller that treats
+ * that `null` as "not typed" hands the officer "give an amount for every night"
+ * over boxes that visibly all hold one - the #2685 class the money parser's own
+ * docblock warns about. Naming the night is the whole value of it: the officer
+ * is looking at a column of figures, and "one of these is wrong" is not a
+ * finding they can act on.
+ */
+export function nightPriceRepairUnreadableMessage(
+  dates: readonly CalendarDate[],
+): string {
+  const listed = dates.map((date) => formatClubDate(date)).join(", ");
+  return dates.length === 1
+    ? `The amount for ${listed} is not one this box can read. Give it as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`
+    : `The amounts for ${listed} are not ones these boxes can read. Give each as dollars and cents - 45.00 - with no currency sign, comma or minus sign.`;
+}
+
+/**
+ * Rule 2's refusal, which has to say what the figures should come to - AND that
+ * not answering at all is a real third option.
+ *
+ * The two obvious ways out are arithmetically forced, and on a settlement that
+ * is not simply a restatement of what the nights were worth they are both
+ * WRONG. A hand-back reduced by an admin fee, or a change fee kept back, leaves
+ * a target that no honest set of night prices comes to - so an officer steered
+ * only towards "change the night amounts" closes the gap by typing a figure
+ * that reconciles and is false, which is precisely the unprovenanced number
+ * epic #2797 exists to remove. `docs/guides/payments.md` says leaving them all
+ * blank is fine and why; the sentence read at the moment of refusal has to say
+ * it too, because that is where the decision is actually made.
+ */
+function nightPriceRepairReconcileMessage(
   targetCents: number,
   enteredCents: number,
 ): string {
-  return `These nights come to ${formatCents(enteredCents)}, and they need to come to ${formatCents(targetCents)} - what this guest's stay is stored as being worth, adjusted by the amount being settled. Change the night amounts, or the settlement figure, until the two agree.`;
+  return `These nights come to ${formatCents(enteredCents)}, and they need to come to ${formatCents(targetCents)} - what this guest's stay is stored as being worth, adjusted by the amount being settled. Change the night amounts, or the settlement figure, until the two agree. If the amount being settled is not simply what these nights were worth - a change fee kept back, or a hand-back reduced by policy - then the figures cannot be made to add up honestly: clear every box and settle without them, and take the booking coming back here next time as the cost of that.`;
 }
 
-/** Rule 2 when no set of prices could satisfy it, which is worth saying plainly. */
-export function nightPriceRepairUnreachableMessage(targetCents: number): string {
-  return `The amount being settled would leave these nights worth ${formatCents(targetCents)} in total, which cannot be shared out as prices. Check the settlement figure against what this guest's stay is stored as being worth.`;
+/**
+ * Rule 2 when no set of prices could satisfy it, which is worth saying plainly.
+ *
+ * Same third option as above, for the same reason: a negative target cannot be
+ * typed away, so leaving the boxes empty is the ONLY honest answer here and the
+ * sentence would be a dead end without it.
+ */
+function nightPriceRepairUnreachableMessage(targetCents: number): string {
+  return `The amount being settled would leave these nights worth ${formatCents(targetCents)} in total, which cannot be shared out as prices. Check the settlement figure against what this guest's stay is stored as being worth - and if that figure is right, then these nights cannot account for it: clear every box and settle without them.`;
 }
 
 /**
@@ -303,10 +351,17 @@ export function checkStoredNightPriceRepair({
  * these in does, and what leaving them costs - and the refusals above are about
  * that same rule. A screen and a server describing one behaviour in two places
  * drift (`INV-SSOT`).
+ *
+ * IT PROMISES ONLY WHAT THIS TASK CAN DELIVER. One edit raises one review task
+ * per unreadable guest strand, so a booking with two of them gets two tasks and
+ * these boxes cover ONE of them. "The booking stops coming back here" would
+ * therefore be a false receipt on exactly the booking whose second strand parks
+ * it again the next morning - and a promise this epic exists to keep is the
+ * worst one to overstate.
  */
 export function unpricedNightsExplanation(
   summary: UnpricedNightsSummary,
 ): string {
   const count = summary.dates.length;
-  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for and the booking stops coming back here; leave them blank and it is sent for review again the next time anybody changes it. Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
+  return `${count === 1 ? "One night" : `${count} nights`} on this guest's stay ${count === 1 ? "has" : "have"} no stored price, which is why this change could not be worked out automatically. Say what each one sold for and this guest's nights stop sending the booking back here; leave them blank and it is sent for review again the next time anybody changes it. Another guest on the same booking whose nights are unpriced too is asked about separately, on their own review. Nothing is filled in for you - an amount nobody decided is exactly what this review exists to avoid.`;
 }

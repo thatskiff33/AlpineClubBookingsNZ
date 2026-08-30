@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -37,7 +37,9 @@ import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { zeroCompletionRefusal } from "@/lib/manual-refund-task-copy";
 import {
   checkStoredNightPriceRepair,
+  nightPriceRepairUnreadableMessage,
   settlementDeltaCents,
+  unpricedNightTargetCents,
   type RecordedNightPrice,
   type StoredNightPriceRepairCheck,
   type UnpricedNightsSummary,
@@ -774,8 +776,19 @@ export function ManualRefundTaskQueue() {
     carries that, and repeating it there would announce it twice.
   */
   const noteHint = useFieldHint();
-  /** #3170: the review pricing box's hint, on the house field-hint wiring. */
-  const amountHint = useFieldHint();
+  /*
+    #3170: the review pricing box's hint, on the house field-hint wiring.
+
+    #3195 fix round: the $0.00 refusal is passed as a PRECEDING description, so
+    a screen-reader user hears "this is wrong, and here is why" before "here is
+    an example" - the ordering `field-hint.tsx` exists to make the default. It
+    matters more here than at most field-hint sites: the confirm button is
+    disabled behind that sentence, so without it the officer is left with a
+    control that will not press and no reason given, which is the bare refusal
+    the owner's 31 Aug 2026 decision rejected.
+  */
+  const zeroAmountRefusalId = useId();
+  const amountHint = useFieldHint(zeroAmountRefusalId);
 
   const load = useCallback(async () => {
     try {
@@ -850,6 +863,7 @@ export function ManualRefundTaskQueue() {
    * (`INV-SSOT`): a screen with its own arithmetic would enable a button the
    * server then refuses, or the reverse.
    */
+  // NIGHT-PRICE REGION START (stored-night-price-repair-census)
   const unpricedNights =
     target !== null && target.task.unpricedNights
       ? target.task.unpricedNights
@@ -864,6 +878,17 @@ export function ManualRefundTaskQueue() {
           })
         : null;
   const nightPriceEntries: RecordedNightPrice[] = [];
+  /*
+    Boxes holding something that is NOT an amount, kept apart from boxes holding
+    nothing. `parseDecimalDollarsToCents` answers null for "1,200.00", "$45",
+    "45." and a stray letter alike, and folding those in with "not typed" is how
+    an officer looking at a full column of figures gets told to "give an amount
+    for every night listed" - true of the entries this screen built, and visibly
+    false of what is on their screen. `money-input.ts` says the caller must turn
+    that null into a validation error the person can see (#2685); this is that
+    caller.
+  */
+  const unreadableNightDates: CalendarDate[] = [];
   let nightBoxesTyped = 0;
   if (unpricedNights) {
     for (const date of unpricedNights.dates) {
@@ -871,20 +896,33 @@ export function ManualRefundTaskQueue() {
       if (raw.trim() === "") continue;
       nightBoxesTyped += 1;
       const cents = parseNightInput(raw);
-      if (cents !== null) nightPriceEntries.push({ date, priceCents: cents });
+      if (cents === null) unreadableNightDates.push(date);
+      else nightPriceEntries.push({ date, priceCents: cents });
     }
   }
   // A partial or malformed answer never reaches the checker as if it were whole:
-  // the entries are only complete when every box parsed, and the checker's own
-  // refusal covers the case where they are not (it will not fill one in).
+  // the entries are only complete when every box parsed, and an unreadable one
+  // is answered here, by name, before the checker sees a vector it would call
+  // short. Neither branch fills anything in.
   const nightPriceCheck: StoredNightPriceRepairCheck | null =
-    unpricedNights && nightBoxesTyped > 0 && nightPriceDeltaCents !== null
-      ? checkStoredNightPriceRepair({
-          summary: unpricedNights,
-          entries: nightPriceEntries,
-          deltaCents: nightPriceDeltaCents,
-        })
-      : null;
+    !unpricedNights || nightBoxesTyped === 0 || nightPriceDeltaCents === null
+      ? null
+      : unreadableNightDates.length > 0
+        ? {
+            ok: false,
+            message: nightPriceRepairUnreadableMessage(unreadableNightDates),
+            // The ONE definition of what the blanks must come to, shared with
+            // the checker rather than restated for this branch.
+            targetCents: unpricedNightTargetCents(
+              unpricedNights,
+              nightPriceDeltaCents,
+            ),
+          }
+        : checkStoredNightPriceRepair({
+            summary: unpricedNights,
+            entries: nightPriceEntries,
+            deltaCents: nightPriceDeltaCents,
+          });
   /*
     Blocked, not required. Leaving every box blank is a valid answer and settles
     exactly as it did before #3191; having typed into SOME of them and not
@@ -895,6 +933,7 @@ export function ManualRefundTaskQueue() {
     unpricedNights !== null &&
     nightBoxesTyped > 0 &&
     (nightPriceDeltaCents === null || nightPriceCheck?.ok !== true);
+  // NIGHT-PRICE REGION END (stored-night-price-repair-census)
 
   async function submit() {
     if (!target) return;
@@ -1322,15 +1361,28 @@ export function ManualRefundTaskQueue() {
                           zero, so this sentence is the whole of what the officer
                           gets to work with — and a refusal that does not name the
                           way out is the version the owner's decision rejected.
+
+                          Permanently mounted and empty when there is nothing to
+                          say, for the two reasons the same shape is used on the
+                          night boxes and on `focused-action-error.tsx`: a live
+                          region injected already populated is silently dropped
+                          by some screen-reader/browser pairings, and the amount
+                          box's `aria-describedby` names this id whether or not a
+                          zero has been typed.
                         */}
-                        {zeroAmountRefusal ? (
-                          <p
-                            className="text-xs text-warning-11"
-                            data-testid="manual-refund-task-zero-amount-refusal"
-                          >
-                            {zeroAmountRefusal}
-                          </p>
-                        ) : null}
+                        <p
+                          id={zeroAmountRefusalId}
+                          aria-live="polite"
+                          className="text-xs text-warning-11"
+                          {...(zeroAmountRefusal
+                            ? {
+                                "data-testid":
+                                  "manual-refund-task-zero-amount-refusal",
+                              }
+                            : {})}
+                        >
+                          {zeroAmountRefusal ?? ""}
+                        </p>
                       </div>
                     </div>
                   ) : null}
@@ -1342,6 +1394,7 @@ export function ManualRefundTaskQueue() {
                     could fill the blanks in, exactly those bookings would park
                     forever, which is the defect this issue exists to remove.
                   */}
+                  {/* NIGHT-PRICE REGION START (stored-night-price-repair-census) */}
                   {unpricedNights ? (
                     <UnpricedNightPriceFields
                       summary={unpricedNights}
@@ -1357,6 +1410,7 @@ export function ManualRefundTaskQueue() {
                       disabled={submitting || unverified !== null}
                     />
                   ) : null}
+                  {/* NIGHT-PRICE REGION END (stored-night-price-repair-census) */}
                   <div className="space-y-2">
                     <Label htmlFor="manual-refund-task-note">
                       Note{target.resolution === "dismissed" ? " (required)" : " (optional)"}

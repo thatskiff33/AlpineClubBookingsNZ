@@ -580,6 +580,121 @@ describe("recording what the unpriced nights sold for (#3191)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("no box is ever filled in by the screen, however many of the others are", async () => {
+    /*
+      THE HALF THE SOURCE CENSUS CANNOT SEE (#3191 fix round). A remainder fill
+      - `targetCents - enteredCents` into the last empty box - matches none of
+      `stored-night-price-repair-census.test.ts`'s patterns, and the server
+      cannot catch it either: it would arrive as a complete, reconciling vector
+      the checker is obliged to accept. The property is about the RESULT, so it
+      is asserted as behaviour on the real screen rather than as a regex over
+      the source.
+
+      MUTATION PROOF: default the second box to the remaining balance and this
+      test fails; the census stays green.
+    */
+    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "35.00" } });
+
+    // One night left, one figure outstanding, and the arithmetic is forced -
+    // which is exactly when a screen is tempted to be helpful.
+    expect(nightBox("2026-08-12")).toHaveValue("");
+    // And nothing offers to work it out either.
+    expect(
+      screen.queryByRole("button", {
+        name: /split|evenly|remainder|work (it|the rest) out|fill in/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("takes a typed 0.00 as a real price, not as an empty box", async () => {
+    /*
+      #3191: "a free night is 0.00, which is a real price and not the same as
+      leaving it blank" is printed under the boxes and asserted nowhere until
+      this test. The distinction is the whole epic in miniature, and it runs
+      through three layers that each collapse null and zero differently, so it
+      is pinned end to end: typed here, posted as `priceCents: 0`.
+    */
+    const fetchMock = stubLoad({
+      tasks: [REVIEW_WITH_BLANKS],
+      viewerCanViewBookings: true,
+    });
+    render(<ManualRefundTaskQueue />);
+    await waitFor(() =>
+      expect(screen.getByTestId("manual-refund-task-queue")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "No adjustment" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("unpriced-night-price-fields"),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Note (required)"), {
+      target: { value: "The second night was comped." },
+    });
+    // $120.00 stored, $60.00 already priced, nothing moving: the first night
+    // carries the whole $60.00 and the second was genuinely free.
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "60.00" } });
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "0.00" } });
+
+    const confirm = screen.getByRole("button", {
+      name: "Close with no adjustment",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+    expect(postBody(fetchMock).recordedNightPrices).toEqual([
+      { date: "2026-08-11", priceCents: 6000 },
+      { date: "2026-08-12", priceCents: 0 },
+    ]);
+  });
+
+  it("names the box it cannot read, instead of asking for amounts it already has", async () => {
+    /*
+      #3191 fix round. `parseDecimalDollarsToCents` answers null for "1,200.00",
+      "$45" and "45." alike, and folding that in with "not typed" told the
+      officer to give an amount for every night while every night visibly held
+      one - the #2685 class `money-input.ts` warns its callers about.
+    */
+    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
+    fireEvent.change(nightBox("2026-08-11"), { target: { value: "1,200.00" } });
+    fireEvent.change(nightBox("2026-08-12"), { target: { value: "25.00" } });
+
+    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
+    expect(verdict).toHaveTextContent(/11 Aug 2026/);
+    expect(verdict).toHaveTextContent(/not one this box can read/);
+    expect(verdict).not.toHaveTextContent(/every night listed/);
+    expect(
+      screen.getByRole("button", { name: "Close with no adjustment" }),
+    ).toBeDisabled();
+  });
+
+  it("tells a screen reader why the button will not press", async () => {
+    /*
+      #3191 fix round. The confirm control is DISABLED behind the running
+      verdict, so a reader who cannot see that paragraph is left with a control
+      that will not press and no reason given - the bare refusal the owner's
+      31 Aug 2026 decision rejected on the $0.00 control in this same dialog.
+      Every box is described by it, and by the "0.00 is a real price" hint,
+      in that order.
+    */
+    await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
+    const verdict = screen.getByTestId("unpriced-night-price-reconciliation");
+    expect(verdict).toHaveAttribute("aria-live", "polite");
+
+    for (const date of ["2026-08-11", "2026-08-12"]) {
+      const described = (
+        nightBox(date).getAttribute("aria-describedby") ?? ""
+      ).split(" ");
+      expect(described[0]).toBe(verdict.id);
+      expect(described).toHaveLength(2);
+      expect(document.getElementById(described[1])).toHaveTextContent(
+        /a free night is 0.00/,
+      );
+    }
+  });
+
   it("will not settle a half-answered set of nights", async () => {
     await openSettleDialog(REVIEW_WITH_BLANKS, "No adjustment");
     fireEvent.change(screen.getByLabelText("Note (required)"), {
@@ -684,6 +799,22 @@ describe("a $0 settlement is refused in words that help (#3195)", () => {
     expect(
       screen.getByRole("button", { name: "Settle the review" }),
     ).toBeDisabled();
+
+    /*
+      #3195 fix round: and it is announced. The button is disabled behind this
+      sentence, so a reader who never hears it gets the bare refusal the owner's
+      decision rejected. It is listed FIRST on the amount box, ahead of the
+      worked example, which is the ordering `field-hint.tsx` exists to enforce.
+    */
+    expect(refusal).toHaveAttribute("aria-live", "polite");
+    const described = (
+      screen.getByLabelText("Amount").getAttribute("aria-describedby") ?? ""
+    ).split(" ");
+    expect(described[0]).toBe(refusal.id);
+    expect(described).toHaveLength(2);
+    expect(document.getElementById(described[1])).toHaveTextContent(
+      /how much, without a plus or minus/,
+    );
   });
 
   it("says nothing about zero when a real amount is typed", async () => {

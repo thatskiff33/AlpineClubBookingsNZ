@@ -3,8 +3,8 @@ import "server-only";
 import { ManualRefundTaskKind, type Prisma } from "@prisma/client";
 
 import {
-  calendarDateOfDateOnlyInstant,
   dateOnlyInstantOf,
+  requireCalendarDate,
   type CalendarDate,
 } from "@/lib/club-time";
 import { createAuditLog } from "@/lib/audit";
@@ -119,10 +119,18 @@ export function unpricedNightsSummaryForGuest(
     // collapses and this one needs: an absent price and an unusable one are the
     // same thing to a READER, and completely different things to a writer whose
     // whole safety rests on a `priceCents: null` fence.
+    //
+    // AND THE KEY IT RETURNS IS THE ONE THAT IS KEPT. It was computed here,
+    // used as a guard and then thrown away, with a second conversion of the
+    // same `stayDate` pushed in its place - two derivations that agree only
+    // because the canonical one happens to run first and throw on a non-midnight
+    // instant. Delete the apparently-unused call, as a later reader reasonably
+    // would, and what is left is an unguarded conversion: exactly the silent
+    // `INV-DATE-020` failure the paragraph above warns about.
     const [key] = getExplicitGuestBedNightKeys({ nights: [night] }) ?? [];
     if (key === undefined) return null;
     if (night.priceCents === null) {
-      blanks.push(calendarDateOfDateOnlyInstant(night.stayDate));
+      blanks.push(requireCalendarDate(key));
       continue;
     }
     if (!isNonNegativeIntegerCents(night.priceCents)) return null;
