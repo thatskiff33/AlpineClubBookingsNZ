@@ -140,7 +140,7 @@ reason: the same one branch, for the same reason, on the removal route.
   dead branch back.
 
 file: src/lib/waitlist.ts
-lines: 1413
+lines: 1418
 reason: one line of the growth is #3032's correction to this docblock's claim
   that a later removal "would be refused" — it parks. Docblock claims are
   contracts here, and a stale one at the site that explains why the write exists
@@ -154,3 +154,7 @@ reason: one line of the growth is #3032's correction to this docblock's claim
   growth is the ordering rule — the rows are built and checked BEFORE the first
   write, because this function's catch degrades to the stored snapshot and lets
   the offer go out, so a throw between two writes would commit half a reprice.
+  #3167 round (+5): that refusal is now a call to `requiredNightPriceCents`
+  rather than the same predicate restated inline. The module claiming to be the
+  rule's one home was not, and this is one of the two siblings that made it
+  false; the other is assigned in that module's header.
