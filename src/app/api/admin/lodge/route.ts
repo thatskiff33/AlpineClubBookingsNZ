@@ -126,32 +126,27 @@ function serializeLodge(lodge: {
 
 /**
  * GET /api/admin/lodge
- * Returns the lodge account details, and provisions the FIRST kiosk account
- * when a Full Admin is the one asking.
+ * Reads kiosk account details, and provisions the FIRST one when a Full Admin
+ * is asking.
  *
- * WHY THE PROVISIONING IS GATED SEPARATELY FROM THE READ. `POST` below refuses
- * a scoped admin outright, because "creating an account that holds the
- * privileged LODGE access role is an access-role write" (separation of duties,
- * upstream #1012). This handler used to do exactly that thing on a plain page
- * load at `lodge:view` — so the only shipped role holding lodge view without
- * edit, "Read-only Admin" ("Can view admin areas without making changes"),
- * could bring a login-capable account into existence by opening a screen. One
- * handler stated the rule and its neighbour walked around it.
+ * THE READ AND THE CREATE ARE GATED DIFFERENTLY, ON PURPOSE. `POST` below
+ * refuses a scoped admin because creating a `LODGE`-role account is an
+ * access-role write (separation of duties, upstream #1012). This handler used
+ * to do that same thing on a plain `lodge:view` page load — so "Read-only
+ * Admin", the one shipped role with lodge view and no edit, could bring a
+ * login-capable account into existence by opening a screen. One handler stated
+ * the rule; its neighbour walked around it.
  *
- * The read stays at `lodge:view`, because looking at kiosk details is
- * legitimately a read. Only the CREATE is raised to Full Admin, which is where
- * `POST` already had it. A scoped admin loading this page before any kiosk
- * exists now gets the empty state the client already renders, and the page's
- * existing "create" action — the Full-Admin-gated `POST` — remains the explicit
- * way to make one.
+ * So the read stays at `lodge:view` (looking is legitimately a read) and only
+ * the create rises to Full Admin, matching `POST`. A scoped admin arriving
+ * before any kiosk exists gets the empty state the client already renders; the
+ * page's existing create action, which is that same Full-Admin `POST`, stays
+ * the explicit way to make one.
  *
- * This is not a theoretical tightening: the auto-create is the ONLY way a
- * club's first kiosk account comes into being (no seed, no setup wizard, no
- * migration writes one), so it is deliberately kept rather than removed —
- * a Full Admin opening this page during setup still gets a kiosk with no extra
- * step. Decided by the owner on 30 Aug 2026 after the usage was measured;
- * found by the #2975 authorization sweep, which named it in
- * `SIDE_EFFECTING_GETS` rather than implying it away.
+ * The auto-create is KEPT rather than removed because it is the only way a
+ * club's first kiosk comes into being — nothing else writes one — so setup is
+ * unchanged for the Full Admin who does it. Found by #2975's sweep, which
+ * named it in `SIDE_EFFECTING_GETS`; owner decided 30 Aug 2026 on measured usage.
  */
 export async function GET() {
   const guard = await requireAdmin({

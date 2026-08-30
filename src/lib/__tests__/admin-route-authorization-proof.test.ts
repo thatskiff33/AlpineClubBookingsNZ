@@ -659,11 +659,6 @@ const SIDE_EFFECTING_GETS: Array<{
     gatedAtEdit: true,
     what: "exchanges the OAuth code and stores tokens; EDIT_ON_GET_PREFIXES forces finance:edit.",
   },
-  {
-    pathname: "/api/admin/lodge",
-    gatedAtEdit: false,
-    what: "PROVISIONS the lodge kiosk account when none exists: creates a Member row with role LODGE, canLogin and emailVerified set, seeds a subscription row and writes an audit entry — all on a lodge:view GET, triggered by loading the page. Impact is bounded (random password, forcePasswordChange set) and the flow is how a club gets a kiosk at all, so the gate is left alone and the exposure is recorded here instead.",
-  },
 ];
 
 describe("side-effecting GETs are named rather than implied away (#2975)", () => {
@@ -678,10 +673,17 @@ describe("side-effecting GETs are named rather than implied away (#2975)", () =>
         `${entry.pathname}: gatedAtEdit says ${entry.gatedAtEdit}, the map disagrees`,
       ).toBe(entry.gatedAtEdit);
     }
-    // The one that is NOT gated at edit is the stated gap. If this becomes zero
-    // somebody closed it, and the entry should go rather than quietly stand.
+    // Every remaining entry is gated at edit. There is deliberately no
+    // ungated one left: `/api/admin/lodge` used to be it, provisioning a
+    // kiosk account on a `lodge:view` page load, and #2984's follow-through
+    // closed that by requiring Full Admin for the CREATE while leaving the
+    // READ at `lodge:view`. Its own note said the entry should go rather than
+    // quietly stand once somebody closed it, so it went.
+    //
+    // Keep this at zero. A new ungated side-effecting GET is a decision, not
+    // an oversight, and it should have to change this line to land.
     expect(SIDE_EFFECTING_GETS.filter((entry) => !entry.gatedAtEdit)).toHaveLength(
-      1,
+      0,
     );
   });
 });
