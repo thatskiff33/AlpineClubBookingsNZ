@@ -396,7 +396,7 @@ async function main() {
         `"${clubTimeZoneBackfill.raw}", which is not a named place such as ` +
         `Pacific/Auckland, so there was nothing to preserve. If this club is ` +
         `somewhere else, set the club's timezone at /admin/club-time (or run ` +
-        `npm run setup); the setup checklist reports it as a warning until ` +
+        `npm run setup:wizard); the setup checklist reports it as a warning until ` +
         `somebody confirms it.`,
     );
   } else {

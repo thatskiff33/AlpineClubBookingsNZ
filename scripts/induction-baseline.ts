@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Dry-run-first trusted legacy induction baseline.
  *

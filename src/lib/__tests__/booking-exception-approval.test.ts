@@ -116,9 +116,9 @@ import {
   PolicyExceptionExecutionCapacityError,
   PolicyExceptionUnverifiedExecutionError,
 } from "@/lib/booking-exception-approval";
+import { formatPolicyExceptionRequestAge } from "@/lib/booking-exception-request-shared";
 import {
   computeProposalHash,
-  formatPolicyExceptionRequestAge,
   type ModificationProposalSnapshot,
   type NewBookingProposalSnapshot,
 } from "@/lib/booking-exception-requests";

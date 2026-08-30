@@ -547,7 +547,7 @@ export const adminSetupAndConfigurationHelpEntries: HelpEntry[] = [
         {
           name: "Last changed",
           description:
-            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by npm run setup at the command line.",
+            "When the time zone was last saved, and who saved it. The name is blank when nobody chose it by hand — the zone recorded automatically on the first start after upgrading has no administrator behind it, and neither does one set by npm run setup:wizard at the command line.",
         },
       ],
       [

@@ -194,7 +194,7 @@ prepare_source() {
   ALLOW_DEMO_SEED=1 DATABASE_URL="$SRC_URL" npx tsx prisma/demo-seed.ts >/dev/null
 
   log "Seeding base data (prisma/seed.ts)"
-  DATABASE_URL="$SRC_URL" npx tsx prisma/seed.ts >/dev/null
+  DATABASE_URL="$SRC_URL" npx tsx --conditions=react-server prisma/seed.ts >/dev/null
 
   # Take the backup: plain pg_dump piped through gzip, matching the artifact
   # shape src/lib/backup.ts writes (pg_dump with no format flags, then gzip).

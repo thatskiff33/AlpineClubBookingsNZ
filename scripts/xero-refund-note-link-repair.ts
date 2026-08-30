@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Operator repair for Stripe per-delta refund credit-note links damaged by the
  * pre-#2901 canonical cleanup (and for the local aftermath of voiding the
@@ -20,9 +19,9 @@
  * Dry run by default. SAFE USAGE — review the dry-run report first, keep its
  * output with the change record, then apply exactly the reviewed payments:
  *
- *   npx tsx scripts/xero-refund-note-link-repair.ts                     # dry run (writes nothing)
- *   npx tsx scripts/xero-refund-note-link-repair.ts --record-statuses   # fetch + record live note statuses, then dry run
- *   npx tsx scripts/xero-refund-note-link-repair.ts --apply --payment <id> [--payment <id>...]
+ *   npm run xero:refund-note-link-repair                        # dry run (writes nothing)
+ *   npm run xero:refund-note-link-repair -- --record-statuses   # fetch + record live note statuses, then dry run
+ *   npm run xero:refund-note-link-repair -- --apply --payment <id> [--payment <id>...]
  */
 import "dotenv/config";
 import process from "node:process";
@@ -39,13 +38,13 @@ import { prisma } from "../src/lib/prisma";
 
 function printUsage() {
   console.log(`Usage:
-  npx tsx scripts/xero-refund-note-link-repair.ts                     # dry run (default, writes nothing)
-  npx tsx scripts/xero-refund-note-link-repair.ts --dry-run           # explicit dry run
-  npx tsx scripts/xero-refund-note-link-repair.ts --record-statuses   # fetch live note statuses from Xero (read-only
-                                                                      # at the provider), record them on the local
-                                                                      # links, then print the refreshed dry-run report
-  npx tsx scripts/xero-refund-note-link-repair.ts --payment <id>      # scope to payment id(s) (repeatable)
-  npx tsx scripts/xero-refund-note-link-repair.ts --apply --payment <id> [--payment <id>...]
+  npm run xero:refund-note-link-repair                        # dry run (default, writes nothing)
+  npm run xero:refund-note-link-repair -- --dry-run           # explicit dry run
+  npm run xero:refund-note-link-repair -- --record-statuses   # fetch live note statuses from Xero (read-only
+                                                              # at the provider), record them on the local
+                                                              # links, then print the refreshed dry-run report
+  npm run xero:refund-note-link-repair -- --payment <id>      # scope to payment id(s) (repeatable)
+  npm run xero:refund-note-link-repair -- --apply --payment <id> [--payment <id>...]
 
 Options:
   --apply             Apply the reviewed plans, each payment in its own

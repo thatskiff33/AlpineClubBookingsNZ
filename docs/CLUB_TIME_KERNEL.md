@@ -56,13 +56,16 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
 - **A shared `src/lib` module a CLI can reach — and only then.** Use
   `readClubTimeZoneOutsideRequest()` from `club-time-zone-runtime`.
   `server-only` is a bare `throw` that is inert only under the `react-server`
-  condition, which `tsx` does not set, so a shared module importing
-  `club-time/server` kills every command-line entry point that reaches it — at
-  import, before `main()`. That has happened twice: CT-5 (#2869) broke two
+  condition. Since #2850 every operator command that reaches a marked module is
+  published with `--conditions=react-server`, so the throw no longer waits at
+  the end of every CLI's import graph — but the condition has to be ON THE
+  INVOCATION, and a command published without it still dies at import, before
+  `main()`. That has happened twice: CT-5 (#2869) broke two
   operator CLIs and added this reader, and CT-4 then broke the multi-lodge E2E
-  seed the same way. `cli-server-only-reach-census.test.ts` is the guard, and it
+  seed the same way. `cli-server-only-reach-census.test.ts` is the guard: it
   derives its entry points from where they are actually invoked rather than from
-  a list somebody has to remember to extend.
+  a list somebody has to remember to extend, and it fails when a command that
+  reaches a marked module is published anywhere without the flag.
 
   **"Shared `src/lib` module" is not the test — being CLI-REACHABLE is**, and
   the difference is one decision this file now makes once instead of leaving to a
@@ -90,9 +93,12 @@ One place: `getClubTimeZone()` (CT-1, `INV-CONFIG-002`), the persisted
   only `booking-create.ts` is statically CLI-reachable, through
   `e2e/setup/seed-second-lodge.ts`. The other seven files are the cron modules
   and `config-transfer`, and the census cannot see their hazard **by design** —
-  `src/instrumentation.node.ts` loads each job through a LAZY
-  `await import(...)`, and the census counts static edges only, because counting
-  lazy ones would report every legitimate deferred import in the tree. Next
+  but not because of the EDGE, which it now counts. It follows
+  `await import(...)` as well as static imports, and has to:
+  `scripts/induction-baseline.ts` reaches `@/lib/prisma` through a lazy import
+  and nothing else. What it cannot see is the ENTRY POINT.
+  `src/instrumentation.node.ts` loads each job through a lazy `await import(...)`
+  and is not a CLI root, so nothing walks the graph out of it at all. Next
   bundles instrumentation separately from routes, so a `server-only` import on
   that graph throws when the job runs rather than at boot, and `cache()` gives a
   cron tick no memo to win anyway. So the reader choice is: **static CLI reach,

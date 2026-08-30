@@ -70,7 +70,7 @@ The gate is enforced on the server for every create/edit/delete, so the buttons
 a member cannot use are never shown — and even a stale page could not save.
 
 > To check why a specific person can or cannot edit, run
-> `npx tsx scripts/diagnose-calendar-access.ts their@email` — it prints their
+> `npm run calendar:diagnose-access -- their@email` — it prints their
 > permission matrix, committee assignments, and the final decision.
 
 ## Step-by-step
@@ -294,8 +294,8 @@ container logs for `MIRO_JWT_KEY` after a deploy to see whether yours tripped it
 | Symptom                                               | Likely cause                                                                                    | Fix                                                                                                                               |
 | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | **Calendar** and the dashboard **Events** card have vanished for everyone | The **Events calendar** module was switched off | Turn it back on at **Admin → Modules**; your events are still there |
-| One person gets **Not Found** on `/calendar` while everyone else is fine | That account is an **organisation**, which never sees the calendar | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email` (it prints the module switch and the organisation check ahead of the write gates); working as designed, but if they should be a member, change their user type on **Admin → Members → [member]** |
-| A member sees **Save**/**Delete** on events           | That account is a lodge-edit admin (only admins can edit or delete; committee members see **New event** but not Save/Delete)      | Confirm with `npx tsx scripts/diagnose-calendar-access.ts their@email`; if they should not edit, remove their lodge-edit role     |
+| One person gets **Not Found** on `/calendar` while everyone else is fine | That account is an **organisation**, which never sees the calendar | Confirm with `npm run calendar:diagnose-access -- their@email` (it prints the module switch and the organisation check ahead of the write gates); working as designed, but if they should be a member, change their user type on **Admin → Members → [member]** |
+| A member sees **Save**/**Delete** on events           | That account is a lodge-edit admin (only admins can edit or delete; committee members see **New event** but not Save/Delete)      | Confirm with `npm run calendar:diagnose-access -- their@email`; if they should not edit, remove their lodge-edit role     |
 | A member should be able to **create** but cannot       | They have no active committee assignment and no lodge-edit role                                 | Add a committee assignment (**Admin → Members → [member] → Committee**) or grant lodge edit                                       |
 | A committee member cannot **edit or delete** an event  | Working as designed — committee members are create-only; only lodge-edit admins may edit/delete | Grant the member the lodge-edit admin role if they need to edit or delete events                                                 |
 | A repeating event shows on only one month             | The recurrence was not saved (older build)                                                      | Open the event, set **Repeat**, and **Save** (this converts it to a series), or delete and recreate; ensure the app is up to date |
