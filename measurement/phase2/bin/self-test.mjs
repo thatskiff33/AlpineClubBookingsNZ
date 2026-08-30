@@ -109,7 +109,7 @@ const assertStackPreparationOrdering = (source) => {
     "DROP SCHEMA public CASCADE",
     "npx prisma migrate deploy",
     "npx tsx prisma/demo-seed.ts",
-    "npx tsx prisma/seed.ts",
+    "npx tsx --conditions=react-server prisma/seed.ts",
   ], "stack preparation must stop app and caddy before reset, migration and both seeds");
 
   const dump = sourceSection(source, "create_canonical_dump() (", "prepare_stack() (");
