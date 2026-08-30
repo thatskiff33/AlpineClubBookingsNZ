@@ -426,47 +426,101 @@ export function classifyBookingContext(
           // modification with no review contributes no plan.
           const editReviewPaymentPlan =
             editReviewChargeCents > 0
-              ? planEditReviewChargeInvoicePayment(payment, modification.id)
+              ? planEditReviewChargeInvoicePayment({
+                  payment,
+                  bookingModificationId: modification.id,
+                  expectedNetAmountCents: netAmountCents,
+                  hasOpenIntentMintRecovery:
+                    context.openEditReviewChargeIntentRecoveryModificationIds.has(
+                      modification.id
+                    ),
+                })
               : null;
-          const action = addAction(actionMap, {
-            key: `queue:supplementary-invoice:${modification.id}`,
-            bookingId: booking.id,
-            type: "QUEUE_SUPPLEMENTARY_INVOICE",
-            description:
-              editReviewChargeCents > 0
-                ? "Queue the missing Xero supplementary invoice for a booking edit priced by a completed financial review."
-                : "Queue the missing Xero supplementary invoice for a price-increase booking modification.",
-            safeToAutoApply: true,
-            payload: {
+          if (editReviewPaymentPlan?.outcome === "manual-review") {
+            // The invoice IS missing, but the tool must not raise it: doing so
+            // would either assert money the club does not hold, or claim the
+            // anchor the intent-mint recovery is about to use. Same finding
+            // code, no queue action, and NOT safe to auto-apply - the arm a
+            // person sizes, exactly as the credit-note arm does above.
+            const summary =
+              editReviewPaymentPlan.reason === "capture-short-of-ask"
+                ? "A completed financial review priced this booking edit above what the member's card actually took, and no supplementary Xero invoice exists - the difference is owed outside any invoice, so raise it by hand."
+                : "A completed financial review priced this booking edit as money owed, but its card request has not been raised yet and its recovery is still owed - no supplementary Xero invoice can be raised until that replay runs.";
+            const manualAction = addAction(
+              actionMap,
+              buildManualReviewAction(booking.id, summary)
+            );
+            addFinding(findings, {
+              code: "MISSING_SUPPLEMENTARY_INVOICE",
+              severity: "manual_review",
+              summary,
+              safeToAutoApply: false,
+              details: {
+                modificationId: modification.id,
+                netAmountCents,
+                priceDiffCents: expectedAsk.priceDiffCents,
+                changeFeeCents: expectedAsk.changeFeeCents,
+                editReviewChargeCents,
+                editReviewPaymentReason: editReviewPaymentPlan.reason,
+                ...(editReviewPaymentPlan.capturedAmountCents === null
+                  ? {}
+                  : {
+                      capturedAmountCents:
+                        editReviewPaymentPlan.capturedAmountCents,
+                    }),
+              },
+              actionKeys: [manualAction.key],
+            });
+          } else {
+            const action = addAction(actionMap, {
+              key: `queue:supplementary-invoice:${modification.id}`,
               bookingId: booking.id,
-              bookingModificationId: modification.id,
-              // Signed (#1356): the queued invoice must carry the mixed-sign
-              // components so its total matches the expectedAmountCents (net)
-              // this same pass verifies against. Since #3187 they come from the
-              // expected ask rather than straight off the modification row, so
-              // a review-priced edit queues the amount the finding reports.
-              priceDiffCents: expectedAsk.priceDiffCents,
-              changeFeeCents: expectedAsk.changeFeeCents,
-              ...(editReviewPaymentPlan ?? {}),
-            },
-          });
-          addFinding(findings, {
-            code: "MISSING_SUPPLEMENTARY_INVOICE",
-            severity: "critical",
-            summary:
-              editReviewChargeCents > 0
-                ? "A completed financial review priced this booking edit as money owed, but no supplementary Xero invoice exists."
-                : "A booking modification increased the amount owing, but no supplementary Xero invoice exists.",
-            safeToAutoApply: true,
-            details: {
-              modificationId: modification.id,
-              netAmountCents,
-              priceDiffCents: expectedAsk.priceDiffCents,
-              changeFeeCents: expectedAsk.changeFeeCents,
-              ...(editReviewChargeCents > 0 ? { editReviewChargeCents } : {}),
-            },
-            actionKeys: [action.key],
-          });
+              type: "QUEUE_SUPPLEMENTARY_INVOICE",
+              description:
+                editReviewChargeCents > 0
+                  ? "Queue the missing Xero supplementary invoice for a booking edit priced by a completed financial review."
+                  : "Queue the missing Xero supplementary invoice for a price-increase booking modification.",
+              safeToAutoApply: true,
+              payload: {
+                bookingId: booking.id,
+                bookingModificationId: modification.id,
+                // Signed (#1356): the queued invoice must carry the mixed-sign
+                // components so its total matches the expectedAmountCents (net)
+                // this same pass verifies against. Since #3187 they come from the
+                // expected ask rather than straight off the modification row, so
+                // a review-priced edit queues the amount the finding reports.
+                priceDiffCents: expectedAsk.priceDiffCents,
+                changeFeeCents: expectedAsk.changeFeeCents,
+                // Named one by one rather than spread, so the plan's own
+                // discriminant never rides along into the queued payload.
+                ...(editReviewPaymentPlan
+                  ? {
+                      recordPayment: editReviewPaymentPlan.recordPayment,
+                      waitForConfirmedAdditionalPayment:
+                        editReviewPaymentPlan.waitForConfirmedAdditionalPayment,
+                      paymentIntentId: editReviewPaymentPlan.paymentIntentId,
+                    }
+                  : {}),
+              },
+            });
+            addFinding(findings, {
+              code: "MISSING_SUPPLEMENTARY_INVOICE",
+              severity: "critical",
+              summary:
+                editReviewChargeCents > 0
+                  ? "A completed financial review priced this booking edit as money owed, but no supplementary Xero invoice exists."
+                  : "A booking modification increased the amount owing, but no supplementary Xero invoice exists.",
+              safeToAutoApply: true,
+              details: {
+                modificationId: modification.id,
+                netAmountCents,
+                priceDiffCents: expectedAsk.priceDiffCents,
+                changeFeeCents: expectedAsk.changeFeeCents,
+                ...(editReviewChargeCents > 0 ? { editReviewChargeCents } : {}),
+              },
+              actionKeys: [action.key],
+            });
+          }
         } else {
           // #1356: a live-but-not-retryable operation (WAITING_PAYMENT parked
           // on its additional Stripe payment, or pending/running/unsupported)

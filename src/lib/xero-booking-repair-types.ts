@@ -389,6 +389,18 @@ export interface BookingClassificationContext {
    * say what such an edit owes. This map is where that number comes from.
    */
   editReviewChargeCentsByModificationId: Map<string, number>;
+  /**
+   * #3187 fix round: the edits whose additional PaymentIntent mint FAILED and
+   * is still owed by the recovery replay (PENDING or PROCESSING).
+   *
+   * From the ledger alone this state is indistinguishable from the
+   * internet-banking route - both have no charge request row - and the two need
+   * opposite handling: internet banking wants an unpaid invoice raised, a failed
+   * mint wants the repair DEFERRED so the replay can raise it properly. Empty
+   * for every booking with no failed mint, which is every booking the tool
+   * repaired before this map existed.
+   */
+  openEditReviewChargeIntentRecoveryModificationIds: Set<string>;
 }
 
 export interface MutableFinding {
