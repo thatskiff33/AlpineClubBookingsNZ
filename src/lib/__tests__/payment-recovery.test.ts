@@ -1838,6 +1838,49 @@ describe("payment recovery worker", () => {
         }),
       );
     });
+
+    it("never rewrites an existing debt's amount on a colliding upsert (#3170)", async () => {
+      /*
+        The update clause used to carry `amountCents`, so a second caller landing
+        on the same key silently rewrote a debt the recovery cron might already be
+        part way through. That is the hazard
+        `buildEditFinancialReviewRefundRecoveryIdempotencyKey` was task-scoped to
+        avoid on the REFUND side, and it sat unremarked on the charge side - where
+        one edit raising two review tasks over one BookingModification row would
+        have collided by construction.
+
+        Under a correct key a repeat carries the same amount, so dropping it from
+        the update changes nothing that is right and makes the wrong thing
+        unrepresentable.
+      */
+      const { enqueueAdditionalPaymentIntentRecovery } = await import(
+        "@/lib/payment-recovery"
+      );
+
+      await enqueueAdditionalPaymentIntentRecovery({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+        idempotencyKey: "edit_financial_review_additional_intent_recovery_task-1",
+        amountCents: 3000,
+        stripeIdempotencyKey: "edit_financial_review_additional_task-1",
+      });
+
+      const call = mockPaymentRecoveryUpsert.mock.calls[0][0] as {
+        update: Record<string, unknown>;
+        create: Record<string, unknown>;
+      };
+      expect(call.update).not.toHaveProperty("amountCents");
+      // A CONTROL: the update clause still exists and still refreshes what a
+      // repeat cannot change, so the assertion above is about the amount rather
+      // than about the clause having been emptied.
+      expect(call.update).toMatchObject({
+        bookingId: "booking-1",
+        paymentId: "payment-1",
+      });
+      // And the amount is still written when the row is CREATED - the debt has
+      // to start life with a figure.
+      expect(call.create).toMatchObject({ amountCents: 3000 });
+    });
   });
 
   describe("#1992 duplicate-capture refund recovery replay (#2008)", () => {
