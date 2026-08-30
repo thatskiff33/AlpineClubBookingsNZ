@@ -30,6 +30,7 @@ import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
   type InProgressGuestRangePlanResult,
+  type ParkedEditStructuralPlan,
 } from "@/lib/booking-edit-guest-ranges";
 import {
   cleanupChoreAssignmentsForDateChange,
@@ -103,6 +104,7 @@ import {
 } from "@/lib/member-guest-add-policy";
 import {
   isNonNegativeIntegerCents,
+  type EditFinancialReviewOccurrence,
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
@@ -1288,7 +1290,17 @@ export type PricedModification = {
  */
 export type PricingResult =
   | ({ kind: "priced" } & PricedModification)
-  | FinancialReviewRequired;
+  /**
+   * #3170: the review branch now carries the STRUCTURAL half of the edit — which
+   * beds, on which nights, with what (possibly unknown) price on each — plus
+   * whether an admin confirmed an overbooking to get them. It carries no
+   * booking-level amount, so the property the union was built for is intact:
+   * there is still nothing here a caller could read an adjustment off.
+   */
+  | (FinancialReviewRequired & {
+      parkedPlan: ParkedEditStructuralPlan;
+      capacityOverridden: boolean;
+    });
 
 /**
  * The per-night breakdown for one guest of an in-progress edit, in the shape the
@@ -1527,6 +1539,10 @@ export async function calculateModifiedPricing(
   );
 
   let inProgressPlan: BookingEditGuestRangePlan | null = null;
+  // #3170: the parked twin. Set instead of `inProgressPlan` when this booking's
+  // own history cannot price the edit; it carries the beds and no amount.
+  let parkedPlan: ParkedEditStructuralPlan | null = null;
+  let parkedOccurrences: EditFinancialReviewOccurrence[] = [];
   if (isInProgressEdit && editableFrom) {
     // #2756: the same mapping the QUOTE route already applies around its own call
     // to this planner (`modify-quote/route.ts`, "Unable to price the requested
@@ -1571,19 +1587,30 @@ export async function calculateModifiedPricing(
       throw new ApiError("No season rate found for the requested dates", 400);
     }
     if (planResult.kind === "financial_review_required") {
-      // #3031: STOP HERE, and return nothing numeric. The capacity check below
-      // and every price after it would be work done toward an adjustment this
-      // booking's history cannot support, and the epic's answer to that is a
-      // person rather than an estimate. Returned rather than thrown so the
-      // caller's own type system forces the case to be handled — the apply path
-      // turns it into a refusal today and into #3032's park-the-money flow next.
-      return {
-        kind: "financial_review_required",
-        occurrences: planResult.occurrences,
-      };
+      // #3031: NOTHING NUMERIC IS COMPUTED FROM HERE ON. Every price below would
+      // be work done toward an adjustment this booking's history cannot support,
+      // and the epic's answer to that is a person rather than an estimate.
+      // Returned rather than thrown so the caller's own type system forces the
+      // case to be handled.
+      //
+      // #3170: THE CAPACITY CHECK IS THE ONE THING THAT STILL RUNS, and it must.
+      // This used to return immediately, which was safe only because the edit
+      // was then refused outright. It now COMMITS its structural half, and beds
+      // are not money: an in-progress edit that moves the check-out puts real
+      // people in real beds on nights nobody has checked. So the parked plan
+      // falls through to the same capacity block, the same admin override and
+      // the same whole-lodge-hold refusal as a priced one, and the review exit
+      // is taken immediately after it.
+      parkedOccurrences = planResult.occurrences;
+      parkedPlan = planResult.parkedPlan;
+    } else {
+      inProgressPlan = planResult.plan;
     }
-    inProgressPlan = planResult.plan;
   }
+  // #3170: which plan the capacity block reads its ranges from. Exactly one of
+  // the two is ever set, and both propose the same beds by construction — they
+  // are composed by one function (`composeCapacityCoverage`).
+  const capacityPlan = inProgressPlan ?? parkedPlan;
 
   const pricingLodgeId = booking.lodgeId ?? (await getDefaultLodgeId(tx));
   let capacity: Awaited<ReturnType<typeof checkCapacityForGuestRanges>>;
@@ -1599,13 +1626,13 @@ export async function calculateModifiedPricing(
       // check-out-day extension's newly-occupied night is inside the checked
       // window; it equals editableFrom for every mid-stay / last-night edit.
       rangeStart:
-        inProgressPlan && editableFrom
-          ? inProgressPlan.capacityRangeStart
+        capacityPlan && editableFrom
+          ? capacityPlan.capacityRangeStart
           : newCheckIn,
       rangeEnd: newCheckOut,
       proposedRanges:
-        inProgressPlan && editableFrom
-          ? inProgressPlan.capacityGuestRanges
+        capacityPlan && editableFrom
+          ? capacityPlan.capacityGuestRanges
           : policyAdjustedGuestsForPricing,
       partnerSharedGuests,
       excludeBookingId: bookingId,
@@ -1624,14 +1651,14 @@ export async function calculateModifiedPricing(
     };
   } else {
     capacity =
-      inProgressPlan && editableFrom
+      capacityPlan && editableFrom
         ? await checkCapacityForGuestRanges(
             pricingLodgeId,
             // #2029: capacityRangeStart, not editableFrom — see the
             // partner-shared branch above; unchanged for mid-stay edits.
-            inProgressPlan.capacityRangeStart,
+            capacityPlan.capacityRangeStart,
             newCheckOut,
-            inProgressPlan.capacityGuestRanges,
+            capacityPlan.capacityGuestRanges,
             bookingId,
             tx,
           )
@@ -1663,6 +1690,18 @@ export async function calculateModifiedPricing(
       // proceed and report it so the caller can audit capacityOverridden.
       capacityOverridden = true;
     }
+  }
+
+  // #3170: the parked exit, taken the moment the beds are settled and before a
+  // single cent is computed. Everything below prices the edit, and this booking's
+  // history cannot support a price — that is the whole finding.
+  if (parkedPlan) {
+    return {
+      kind: "financial_review_required",
+      occurrences: parkedOccurrences,
+      parkedPlan,
+      capacityOverridden,
+    };
   }
 
   let priceBreakdown: PricedModification["priceBreakdown"];

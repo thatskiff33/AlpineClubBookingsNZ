@@ -1396,112 +1396,112 @@ export function buildInProgressGuestRangePlan(
    * would be two answers to one question.
    */
   const composeParkedPlan = (): ParkedEditStructuralPlan => {
-  // #3170 (epic #2797): PARK, DO NOT REFUSE. The money cannot be valued from
-  // this booking's own history, so none of it moves — but the structural
-  // change is a statement about beds, not about cents, and it commits. What
-  // follows composes exactly that and nothing else.
-  //
-  // NO PRICING PASS RUNS FOR THE EXISTING STRANDS. It is not skipped for
-  // speed: every amount it could produce would be today's rate for a night
-  // whose real price this booking cannot tell us, and #3031 deleted that
-  // machinery precisely because its output was being written into the rows the
-  // NEXT edit reads as evidence.
-  const parkedAddedPrices =
-    addGuests.length > 0
-      ? // Only an ADDED guest's nights are priced here, and only because they
-        // are genuinely being bought now (see `ParkedEditStructuralPlan`). The
-        // existing strands are in the pass for the PARTY COUNT — so the group
-        // discount an added guest qualifies for is the one the real party
-        // earns — and every price it returns for them is discarded below.
-        pricePartyNights(
-          [
-            ...existingNightPlans.map((entry) => ({
-              guest: entry.guest,
-              nightKeys:
-                pricingFloorKey === undefined
-                  ? []
-                  : proposedPassNightKeys(
-                      entry,
-                      usableStoredNightPrices(entry.storedNightPriceByKey),
-                      pricingFloorKey
-                    ),
-              lockedNightPricesByKey: usableStoredNightPrices(
-                entry.storedNightPriceByKey
-              ),
-            })),
-            ...addGuests.map((guest) => ({
-              guest,
-              nightKeys: addedGuestNightKeys,
-            })),
-          ],
-          input.seasons,
-          input.groupDiscount
-        )
-      : [];
+    // #3170 (epic #2797): PARK, DO NOT REFUSE. The money cannot be valued from
+    // this booking's own history, so none of it moves — but the structural
+    // change is a statement about beds, not about cents, and it commits. What
+    // follows composes exactly that and nothing else.
+    //
+    // NO PRICING PASS RUNS FOR THE EXISTING STRANDS. It is not skipped for
+    // speed: every amount it could produce would be today's rate for a night
+    // whose real price this booking cannot tell us, and #3031 deleted that
+    // machinery precisely because its output was being written into the rows the
+    // NEXT edit reads as evidence.
+    const parkedAddedPrices =
+      addGuests.length > 0
+        ? // Only an ADDED guest's nights are priced here, and only because they
+          // are genuinely being bought now (see `ParkedEditStructuralPlan`). The
+          // existing strands are in the pass for the PARTY COUNT — so the group
+          // discount an added guest qualifies for is the one the real party
+          // earns — and every price it returns for them is discarded below.
+          pricePartyNights(
+            [
+              ...existingNightPlans.map((entry) => ({
+                guest: entry.guest,
+                nightKeys:
+                  pricingFloorKey === undefined
+                    ? []
+                    : proposedPassNightKeys(
+                        entry,
+                        usableStoredNightPrices(entry.storedNightPriceByKey),
+                        pricingFloorKey
+                      ),
+                lockedNightPricesByKey: usableStoredNightPrices(
+                  entry.storedNightPriceByKey
+                ),
+              })),
+              ...addGuests.map((guest) => ({
+                guest,
+                nightKeys: addedGuestNightKeys,
+              })),
+            ],
+            input.seasons,
+            input.groupDiscount
+          )
+        : [];
 
-  const parkedExistingGuests: ParkedExistingGuestRange[] =
-    existingNightPlans.map((entry) => ({
-      guest: entry.guest,
-      stayStart: entry.stayStart,
-      stayEnd: entry.proposedStayEnd,
-      nights: entry.proposedNightKeys.map((key) => parseDateOnly(key)),
-      perNightCents: composeProposedNightPrices({
-        proposedNightKeys: entry.proposedNightKeys,
-        heldNightKeySet: entry.heldNightKeySet,
-        soldNightPriceByKey: usableStoredNightPrices(
-          entry.storedNightPriceByKey
+    const parkedExistingGuests: ParkedExistingGuestRange[] =
+      existingNightPlans.map((entry) => ({
+        guest: entry.guest,
+        stayStart: entry.stayStart,
+        stayEnd: entry.proposedStayEnd,
+        nights: entry.proposedNightKeys.map((key) => parseDateOnly(key)),
+        perNightCents: composeProposedNightPrices({
+          proposedNightKeys: entry.proposedNightKeys,
+          heldNightKeySet: entry.heldNightKeySet,
+          soldNightPriceByKey: usableStoredNightPrices(
+            entry.storedNightPriceByKey
+          ),
+          // No night of an existing strand is priced on this branch, so the
+          // "newly bought" arm has nothing to look up and every night that is
+          // not RETAINED-with-usable-money comes out as `null`.
+          futureNightKeys: entry.proposedNightKeys,
+          futurePerNightCents: [],
+          onUnknownRetainedNight: "record-as-unknown",
+        }).map((cents, index) =>
+          // A night this edit newly puts the strand on is unknown too, for the
+          // reason on `ParkedEditStructuralPlan`: the strand's stored total does
+          // not move, so a priced new night would put its rows out of step with
+          // its own total and make the NEXT edit unreadable as well.
+          entry.heldNightKeySet.has(entry.proposedNightKeys[index]) ? cents : null
         ),
-        // No night of an existing strand is priced on this branch, so the
-        // "newly bought" arm has nothing to look up and every night that is
-        // not RETAINED-with-usable-money comes out as `null`.
-        futureNightKeys: entry.proposedNightKeys,
-        futurePerNightCents: [],
-        onUnknownRetainedNight: "record-as-unknown",
-      }).map((cents, index) =>
-        // A night this edit newly puts the strand on is unknown too, for the
-        // reason on `ParkedEditStructuralPlan`: the strand's stored total does
-        // not move, so a priced new night would put its rows out of step with
-        // its own total and make the NEXT edit unreadable as well.
-        entry.heldNightKeySet.has(entry.proposedNightKeys[index]) ? cents : null
-      ),
-      // The STORED total, untouched. How much this edit changes it is the
-      // question the OPEN task exists to answer.
-      priceCents: entry.guest.priceCents,
-      futureNights: entry.futureNightKeys.map((key) => parseDateOnly(key)),
-      futureStart: entry.newFutureStart,
-      removedFromFuture: entry.removedFromFuture,
-    }));
+        // The STORED total, untouched. How much this edit changes it is the
+        // question the OPEN task exists to answer.
+        priceCents: entry.guest.priceCents,
+        futureNights: entry.futureNightKeys.map((key) => parseDateOnly(key)),
+        futureStart: entry.newFutureStart,
+        removedFromFuture: entry.removedFromFuture,
+      }));
 
-  const parkedAddedGuests: ProposedAddedGuestRange[] = addGuests.map(
-    (guest, addedIndex) => {
-      const perNightCents = nightPricesFrom(
-        parkedAddedPrices[existingNightPlans.length + addedIndex],
-        addedGuestNightKeys
-      );
+    const parkedAddedGuests: ProposedAddedGuestRange[] = addGuests.map(
+      (guest, addedIndex) => {
+        const perNightCents = nightPricesFrom(
+          parkedAddedPrices[existingNightPlans.length + addedIndex],
+          addedGuestNightKeys
+        );
+        return {
+          guest,
+          stayStart: editableFrom,
+          stayEnd: newCheckOut,
+          nights: addedGuestNightKeys.map((key) => parseDateOnly(key)),
+          perNightCents,
+          priceCents: sumCents(perNightCents),
+        };
+      }
+    );
+
+    const { capacityGuestRanges, capacityRangeStart } = composeCapacityCoverage(
+      parkedExistingGuests,
+      parkedAddedGuests,
+      editableFrom
+    );
       return {
-        guest,
-        stayStart: editableFrom,
-        stayEnd: newCheckOut,
-        nights: addedGuestNightKeys.map((key) => parseDateOnly(key)),
-        perNightCents,
-        priceCents: sumCents(perNightCents),
+        proposedExistingGuests: parkedExistingGuests,
+        proposedAddedGuests: parkedAddedGuests,
+        remainingGuests,
+        removedGuests,
+        capacityGuestRanges,
+        capacityRangeStart,
       };
-    }
-  );
-
-  const { capacityGuestRanges, capacityRangeStart } = composeCapacityCoverage(
-    parkedExistingGuests,
-    parkedAddedGuests,
-    editableFrom
-  );
-    return {
-      proposedExistingGuests: parkedExistingGuests,
-      proposedAddedGuests: parkedAddedGuests,
-      remainingGuests,
-      removedGuests,
-      capacityGuestRanges,
-      capacityRangeStart,
-    };
   };
 
   if (financialReviewOccurrences.length > 0) {
