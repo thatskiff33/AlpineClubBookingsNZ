@@ -15,7 +15,7 @@ would be rebuilt in a fortnight, which is the case
 `size-allowances.d/README.md` names as an allowance rather than a split.
 
 file: src/lib/booking-edit-guest-ranges.ts
-lines: 1467
+lines: 1805
 reason: the file that must NOT be split, and the file's own header says why in a
   way this change strengthens. `booking-guest-profile-gates.test.ts` compares
   string indexes WITHIN a single file to prove the pipeline stays in one place,
@@ -33,19 +33,19 @@ reason: the file that must NOT be split, and the file's own header says why in a
   it and records the removals at the sites they were at. The review round pulled
   it DOWN 42 lines against the first draft, by moving the duplicated occurrence
   builder, night-price projection and calendar-date narrowing into
-  `stored-sold-price-evidence.ts`.
+  `stored-sold-price-evidence.ts`. #3170 round (+338): the planner composes the STRUCTURAL half of an edit it cannot value - which beds, on which nights, with what on each - so the batch path commits and parks instead of refusing. One shared capacity-coverage function, extracted so the priced and parked plans cannot propose different beds; one required argument on the night-price composer, with no default because the two callers need opposite answers; and the paragraphs saying why a parked edit prices an ADDED guest and not an existing strand's new night. Every input is local state of this function.
 
 file: src/lib/booking-modify-plan.ts
-lines: 2490
+lines: 2685
 reason: `PricingResult` becomes a discriminated union, so the priced fields move
   behind `PricedModification` and every reader narrows once — plus
   `requiredNightPriceCents`, the refusal that replaces `perNightCents[k] ?? 0`
   in the writer that BECOMES the booking's sold-price history. Splitting this
   file is specifically forbidden by its own header and by
-  `booking-guest-profile-gates.test.ts`, which compares positions inside it.
+  `booking-guest-profile-gates.test.ts`, which compares positions inside it. #3170 round (+195): the write itself. `syncGuestNights` now tells an explicit "not known" from a vector that is merely SHORT - writing NULL for the first and still throwing on the second - and that docblock is longer than the code it guards, because it is the paragraph a later reader is most likely to delete as redundant and the one whose loss turns every future wiring defect into a silently unpriced night.
 
 file: src/lib/booking-batch-modification-service.ts
-lines: 1639
+lines: 1774
 reason: the apply path narrows the pricing result once and refuses the review
   branch inside the transaction, so the structural change rolls back with it;
   plus the identity-only echo's `?? 0` becoming a refusal. The comment weight is
@@ -62,7 +62,7 @@ reason: the apply path narrows the pricing result once and refuses the review
   per-night integer that an unreadable strand does not have — and the three ways
   to supply one are money decisions rather than implementation choices. Twenty-one
   lines is what it takes to leave that open question stated instead of leaving the
-  next lane to re-derive it, or worse, to assume it was an oversight.
+  next lane to re-derive it, or worse, to assume it was an oversight. #3170 round (+135): the branch that makes the epic's promise true on the busiest edit path - the change commits and the money parks. Every money door is closed individually (reprice, promotion, change fee, settlement options, refund, credit, Xero delta, stored totals), each with the sentence saying it is a decision rather than an omission, and the raise sits after the booking-modification row because it anchors to it. The branch's position inside the locked transaction is its safety property, so none of it can move.
 
 file: src/lib/booking-guest-removal-service.ts
 lines: 1359
@@ -109,24 +109,24 @@ reason: eleven lines. `perNightCents[k] ?? 0` becomes a refusal in the writer
   Merged forward: #3032's fence on the date path. One file, one allowance.
 
 file: src/app/api/bookings/[id]/modify-quote/route.ts
-lines: 2095
+lines: 2155
 reason: the preview consumes the same discriminated result as the save and
   refuses with the same code and sentence, which is the issue's own quote/apply
   parity requirement. It cannot be lifted out without moving the plan call with
   it, and this route is the parity partner the census already tracks.
   Merged forward: #3032 fences the PREVIEW too, so quote and apply refuse the
   same edit rather than the preview pricing a refund the save then rejects.
-  One file, one allowance.
+  One file, one allowance. #3170 round (+60): the preview parks in step with the save, or it blocks the member from a change that would have succeeded - this same parity, pointing the other way. Placed AFTER the capacity block rather than before it, so "no beds" is still said before "an officer will confirm the amount".
 
 file: src/app/api/bookings/[id]/modify/route.ts
-lines: 503
+lines: 491
 reason: one error branch, above the generic `ApiError` branch that would
   otherwise drop the machine-readable code — the same shape and the same
   ordering rule as the four refusal branches already beside it.
   Raise-trigger round (+13): a second branch of exactly that shape, for the
   pending-review FENCE. It was falling through to the generic branch and losing
   its code, while the preview route already surfaced it — so quote and apply
-  disagreed about one refusal, which is the parity this epic requires of them.
+  disagreed about one refusal, which is the parity this epic requires of them. #3170 round (-12): the `FINANCIAL_REVIEW_REQUIRED` catch is DELETED along with the error class. Nothing throws it any more, and its sentence - "nothing has been changed yet" - is false for what the save now does.
 
 file: src/app/api/bookings/[id]/guests/[guestId]/route.ts
 lines: 543
