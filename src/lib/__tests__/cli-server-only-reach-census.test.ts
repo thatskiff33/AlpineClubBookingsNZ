@@ -148,6 +148,17 @@ const DYNAMIC_IMPORT = /(?:\bimport|\brequire)\s*\(\s*["']([^"']+)["']\s*\)/g;
  */
 const TSX_COMMAND = /(?<![\w.=:-])tsx((?:[ \t]+\S+)+)/g;
 
+/**
+ * The quoting a token arrives wrapped in, which is not part of the argument.
+ *
+ * `package.json` is the case that matters and the one a probe caught: an npm
+ * script's last token arrives as `scripts/xero-booking-repair.ts",` — trailing
+ * quote and comma — so without this the sweep saw NO invocation in
+ * `package.json` at all, and a script that had lost its flag passed. Markdown
+ * back-ticks and a trailing `;` or `)` in prose do the same thing.
+ */
+const TOKEN_EDGE_PUNCTUATION = /^[`"'(]+|[`"',;)]+$/g;
+
 /** A token that names a file `tsx` could execute. */
 const TSX_ENTRYPOINT_TOKEN = /^[\w./-]+\.[cm]?tsx?$/;
 
@@ -336,7 +347,10 @@ function sweepInvocations(): Invocation[] {
     // read as the one command it is rather than losing its entrypoint.
     const text = readFileSync(file, "utf8").replace(/\\\r?\n[ \t]*/g, " ");
     for (const match of text.matchAll(TSX_COMMAND)) {
-      const tokens = match[1].trim().split(/\s+/);
+      const tokens = match[1]
+        .trim()
+        .split(/\s+/)
+        .map((token) => token.replace(TOKEN_EDGE_PUNCTUATION, ""));
       const entryIndex = tokens.findIndex((token) =>
         TSX_ENTRYPOINT_TOKEN.test(token),
       );
@@ -379,6 +393,21 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
     // true and this file protects nothing.
     expect(INVOCATIONS.length).toBeGreaterThan(10);
     expect(INVOCATIONS.some((invocation) => invocation.hasCondition)).toBe(true);
+    // Per KIND of source, because a sweep can go blind to one and stay green on
+    // the others. It did: `package.json` hands every argument back with its
+    // JSON quoting attached, so before `TOKEN_EDGE_PUNCTUATION` the npm scripts
+    // — the commands this whole change publishes — contributed nothing and a
+    // script stripped of its flag passed.
+    // No `.yml` here: every workflow runs its tooling through `npm run`, so
+    // there is genuinely no direct `tsx` line in one today. They are still
+    // swept, so the day one appears it is judged like any other.
+    for (const suffix of ["package.json", "prisma.config.ts", ".sh", ".md"]) {
+      expect(
+        INVOCATIONS.filter((invocation) => invocation.source.endsWith(suffix)),
+        `the sweep found no tsx invocation in any \`${suffix}\` file, so that ` +
+          "whole class of published command is invisible to this census",
+      ).not.toEqual([]);
+    }
   });
 
   it("has roots that DO reach `server-only`, which is what the flag is for", () => {
