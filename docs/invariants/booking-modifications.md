@@ -1218,8 +1218,19 @@ for, under four conditions, none of which is optional:
 
 - **the officer types every figure.** A partial answer is refused rather than
   completed, and there is no derivation anywhere in that path - no even split, no
-  rate lookup, no rounding, no defaulted zero. `stored-night-price-repair-census.test.ts`
-  measures both halves of the feature from source and fails on any of them;
+  rate lookup, no rounding, no defaulted zero. Two instruments, because neither
+  covers the other. `stored-night-price-repair-census.test.ts` reads the source:
+  it names the ONE module in the tree that may update a night row's price in
+  place, so a second writer appearing anywhere fails there with its own file
+  name, and it scans the two rules modules, the boxes component and the
+  night-price region of the settle screen for a division, a rounding, a split
+  helper, an average or a defaulted zero. What a source scan cannot see is a
+  REMAINDER FILL - `targetCents - enteredCents` is a subtraction and matches
+  none of those patterns, and the server cannot catch one either because it
+  arrives as a complete, reconciling vector - so that half is behaviour:
+  `manual-refund-task-queue-financial-review.test.tsx` fills every night but one
+  on the real screen and asserts the last box stays empty and the confirm button
+  stays disabled;
 - **the figures reconcile.** Together with the strand's already-priced nights
   they must come to `BookingGuest.priceCents` adjusted by the settled amount -
   minus a refund, plus a charge - which is what makes the strand exact under the
@@ -1244,16 +1255,49 @@ repair that is optional by nature hold a money question open. What is NOT
 optional is the asking: the settle screen lists the blanks and says that leaving
 them means the booking is sent for review again next time anybody changes it.
 
-**Two things this deliberately does not repair.** A strand with a negative or
+**Four things this deliberately does not repair.** A strand with a negative or
 fractional stored row is not offered the boxes at all: those rows are an absence
 of usable evidence too, but they are not `NULL`, so filling the blanks beside
 them would leave the strand still unable to reconcile - a promise of a repair
 that is not one. Rewriting them is #2745's audited decision. Nor does anything
 here create a missing night ROW, which is a different act from filling one in.
+A `STORED_TOTAL_MISMATCH` strand - every night priced, and those prices not
+summing to `BookingGuest.priceCents` - gets no boxes either, and for a different
+reason from the other two: it has no blanks, so the summary is `null` and the
+screen stays silent. That strand parks on every edit for as long as it exists,
+exactly as it did before #3191, because what it needs is a decision about which
+of two stored numbers is wrong rather than a number nobody has.
 `Booking.totalPriceCents` is likewise untouched: the park froze it and the
 settlement moves the money through the club's own instruments, so re-basing the
 booking's headline total is a separate question from recording what a stay sold
-for.
+for. A parked edit already leaves the booking's headline total and its guest rows
+disagreeing by design, and nothing in the tree asserts that they agree.
+
+**What the re-based `BookingGuest.priceCents` is read by, since "only the
+booking's headline total is frozen" would leave that unsaid.** The strand total
+this repair moves is a Xero input, and the repair also flips a strand out of the
+whole-stay fallback into per-night runs (`buildInvoiceLineItems` sends a guest
+holding any unknown night down the legacy branch, #3170). Three consumers, and
+none of them restates an amount already billed:
+
+- **the primary booking invoice** is a date-and-narration update and nothing
+  else. `updateXeroBookingInvoiceForBooking` copies `quantity`, `unitAmount` and
+  `lineAmount` from the invoice as Xero currently holds it and takes only the
+  DESCRIPTION from the rebuilt line items, so no re-pricing of that document is
+  reachable from here at all - not from the settle itself, which classifies as
+  `datesChanged: false, guestIdentityChanged: false` and queues no update, and
+  not from a later date-change edit, which queues one that moves no money. Pinned
+  by `xero-booking-invoice.test.ts` -> "updates primary invoice dates and guest
+  line narration without changing amounts";
+- **a group settlement invoice** does build its amounts from `priceCents`, but it
+  is raised ONCE from current state and re-asserts its existing link on every
+  later attempt. A repair therefore lands either before it is raised, where it
+  bills the corrected figure, or after, where it changes nothing;
+- **the finance revenue reconciliation** counts a `NULL` night as excluded rather
+  than as zero, so an unpriced strand shows as a positive variance against Xero
+  and the OPEN review is the system's record of why. Recording the prices closes
+  that variance, which is the report working as intended rather than a number
+  moving under it.
 
 The test is RECONCILIATION and not provenance: two of the three events that populated that table were themselves
 even splits (migrations `20260704150000` #1098 and `20260810010000` #2739), there

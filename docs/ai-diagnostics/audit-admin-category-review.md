@@ -633,7 +633,8 @@ find, and it was a log line rather than a record until then. ONE write site
 serves both asks — the card request already paid, and the Xero supplementary
 invoice already sent — because they are the same fact about the same edit; a
 `leg` of `payment-request` or `xero-invoice` in the metadata and in the prose is
-what tells an officer which one to go and fix. That
+what tells an officer which one to go and fix.
+
 Since then #3191 added the stored-night-price record
 (`payment` 38 → 39, 463 → 464): settling a review may also record what the
 booking's unpriced nights sold for, which rewrites what a stay is stored as

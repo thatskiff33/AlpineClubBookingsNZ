@@ -435,15 +435,24 @@ line saying what the figures come to and what they have to come to - the strand'
 stored total adjusted by the amount being settled - and until the officer has
 chosen a direction and an amount it says instead that the target cannot be worked
 out yet. Filling some boxes and not others disables the confirm button with that
-sentence showing; filling none of them is a valid answer and posts exactly the
-body this screen posted before #3191.
+sentence showing; a box holding something that is not an amount at all -
+`1,200.00`, `$45`, `45.` - is refused by name rather than reported as a missing
+one; filling none of them is a valid answer and posts exactly the body this
+screen posted before #3191. When the figures cannot be made to add up honestly,
+the refusal itself says so and names clearing every box as the third way out.
 
 **A $0.00 settlement is refused with a sentence rather than a disabled button
 (#3195).** The confirm control was already disabled at zero and said nothing,
 which is the bare refusal the owner's 31 Aug 2026 decision rejected. The dialog
-now prints the refusal beneath the amount box, naming the control on that row -
-"no adjustment" on a review, "dismiss" on a hand-back - from the same string the
-server would have thrown.
+now prints the refusal beneath the amount box, from the same string the server
+would have thrown, naming **No adjustment** - the control that does say "nothing
+to adjust". Only a financial review has an amount box on this screen, so that is
+the only wording the browser ever prints; the hand-back wording, which names
+**Dismiss**, belongs to the server's own refusal and reaches the officer as an
+error after posting. Both the $0.00 refusal and the night-price verdict below it
+are live regions, and each is listed ahead of its box's worked example in
+`aria-describedby` - the confirm button is disabled behind both sentences, so a
+reader who cannot hear one is back at the bare refusal.
 
 **Two groups inside that one card, deleted first (#2760).** The record covers every
 auto-refunded late capture, and since #2760 that includes bookings which are

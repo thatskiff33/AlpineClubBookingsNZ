@@ -267,10 +267,32 @@ that turns out to owe nothing is one of the commonest ones to have this problem.
   You would do that when the amount you are settling is not simply what the
   nights were worth — a change fee, or a refund reduced by policy — because then
   the figures cannot be made to add up honestly. The booking will come back to
-  this queue next time it changes, which is the cost of leaving them.
+  this queue next time it changes, which is the cost of leaving them. The screen
+  says this too, in the sentence it shows when your figures do not add up: **do
+  not change a night's price to make the arithmetic work.** A figure typed to
+  close a gap is a price nobody decided, which is the one thing this whole
+  queue exists to prevent.
+- **If a box will not take what you typed**, the sentence names the night. It
+  wants plain dollars and cents — `45.00` — with no dollar sign, no comma and no
+  minus.
 
 Filling them in is a money-affecting act and is audited as one, in its own entry:
 what each night was set to, and what the guest's stay was worth before and after.
+
+**It settles that guest, not the whole booking.** A change to a booking raises
+one review for each guest whose nights could not be read, so a booking with two
+such guests gets two rows here. Filling in the boxes on one of them stops *that
+guest* sending the booking back; the other row is still waiting, and until it is
+dealt with the booking will keep returning. The message you get after settling
+says so.
+
+**Some rows will never show the boxes**, and that is deliberate. A guest whose
+nights all carry a price, but whose prices do not add up to what their stay is
+recorded as being worth, has nothing blank to fill in — what that needs is a
+decision about which of two stored figures is wrong, which is not something this
+screen can ask for. So is a guest with a negative or otherwise unusable stored
+price. Those bookings keep coming back to this queue, and pricing each change by
+hand is the current answer for them.
 
 A booking with a review waiting also shows a **Money waiting for review** warning
 on its own page, under **Admin tools**, with a link back to this page.

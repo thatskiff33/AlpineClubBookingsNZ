@@ -369,7 +369,7 @@ export const AUDIT_CENSUS_TOTALS = {
   // different acts and this one can happen on a DISMISSAL, whose entry says in
   // as many words that nothing moved. Categorised `payment` at the site, so it
   // does not join `UNCATEGORISED_AUDIT_WRITERS` below. Measured by RUNNING
-  // `npm run audit:census` on this tree (464 sites, 2226 files scanned), not by
+  // `npm run audit:census` on this tree (464 sites, 2229 files scanned), not by
   // adding one to the literal.
   writeSites: 464,
   /**
