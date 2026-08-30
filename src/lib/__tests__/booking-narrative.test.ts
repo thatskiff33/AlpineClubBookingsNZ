@@ -431,3 +431,217 @@ describe("resolveBookingNarrative", () => {
     expect(missingGuidance).toEqual([]);
   });
 });
+
+/**
+ * #3033 (epic #2797) — the member is told their change saved and the money is
+ * with the club, without being told a number that does not exist.
+ *
+ * MUTATION PROOF. Print `finalPriceCents` (or any amount) in the message and
+ * "names no amount at all" fails. Name it `under_review` and "does not collide
+ * with the admin approval queue" fails. Check the flag after the PAID branch and
+ * "outranks the paid narrative" fails; check it before the cancellation branch
+ * and "does not outrank a cancellation" fails. Default the flag to true and
+ * "says nothing about review unless the caller says so" fails. Put a cause, a
+ * diagnostic word or a member-blaming clause in the copy and "uses no internal
+ * vocabulary and blames nobody" fails. Return the review narrative outright for
+ * a payable booking — the original shape of this branch — and "does not tell an
+ * unpaid booking there is nothing to do" fails on both the amount due and the
+ * unscoped sentence.
+ */
+describe("a stay change that saved while its money is still being worked out (#3033)", () => {
+  const REVIEW = {
+    club: CLUB,
+    booking: booking({ status: "PAID" }),
+    events: [
+      event(BookingEventType.MEMBER_PAID, "2026-07-02T00:00:00.000Z", {
+        amountCents: 12000,
+      }),
+    ],
+    financialReviewPending: true,
+  };
+
+  it("confirms the saved change first, and says the club is working the amount out", () => {
+    const result = resolveBookingNarrative(REVIEW);
+
+    expect(result.state).toBe("financial_review_pending");
+    expect(result.headline).toBe("Your booking change is saved");
+    expect(result.message).toContain("has been saved");
+    expect(result.message).toContain("1 Aug 2026 to 3 Aug 2026");
+    expect(result.message).toMatch(/working out what that change means/i);
+    expect(result.nextStep).toMatch(/nothing you need to do about that change/i);
+  });
+
+  it("names no amount at all — not a zero, not an estimate, not the new total", () => {
+    // The structural edit has already updated `finalPriceCents`, so printing it
+    // would put an authoritative-looking figure beside a sentence saying the
+    // figure is unknown. `$` is asserted absent rather than a specific number,
+    // so any amount reaching this copy trips it.
+    const result = resolveBookingNarrative(REVIEW);
+
+    expect(result.message).not.toContain("$");
+    expect(result.nextStep).not.toContain("$");
+    // And no bare number of any kind, which is what an estimate would look
+    // like with its currency symbol dropped. The stay dates render as
+    // "1 Aug 2026", so digits DO legitimately appear — the assertion is over
+    // the sentence with its date range removed.
+    expect(result.message.replace("1 Aug 2026 to 3 Aug 2026", "")).not.toMatch(
+      /[0-9]/,
+    );
+  });
+
+  it("says nothing has moved, and never that settlement is complete", () => {
+    const result = resolveBookingNarrative(REVIEW);
+
+    expect(result.message).toMatch(/nothing has been refunded or charged/i);
+    expect(result.message).not.toMatch(/refunded to you|has been credited|processed/i);
+  });
+
+  it("uses no internal vocabulary and blames nobody", () => {
+    // #3033 forbids corruption terminology and blaming the member. The evidence
+    // vocabulary stays on the admin screen.
+    const result = resolveBookingNarrative(REVIEW);
+    const copy = `${result.headline} ${result.message} ${result.nextStep}`;
+
+    expect(copy).not.toMatch(
+      /corrupt|mismatch|inconsistent|invalid|error|missing|your data|you did/i,
+    );
+    expect(copy).not.toMatch(/NO_STORED_NIGHT_PRICES|STORED_TOTAL_MISMATCH/);
+  });
+
+  it("does not collide with the admin approval queue's own state", () => {
+    // `under_review` already means "an officer has not allowed this booking
+    // yet", which is a different and more alarming claim than the true one.
+    const result = resolveBookingNarrative(REVIEW);
+    const approval = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "AWAITING_REVIEW" }),
+      events: [],
+    });
+
+    expect(approval.state).toBe("under_review");
+    expect(result.state).not.toBe(approval.state);
+  });
+
+  it("outranks the paid narrative, whose next step is the false reassurance", () => {
+    const paid = resolveBookingNarrative({ ...REVIEW, financialReviewPending: false });
+
+    expect(paid.state).toBe("paid");
+    expect(paid.nextStep).toMatch(/nothing more to do/i);
+    expect(resolveBookingNarrative(REVIEW).nextStep).not.toMatch(
+      /nothing more to do/i,
+    );
+  });
+
+  it("does not outrank a cancellation, which is the more important truth", () => {
+    // The review wording assumes a stay that is still going ahead. A cancelled
+    // booking keeps its own narrative even while money is unresolved.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CANCELLED" }),
+      events: [event(BookingEventType.CANCELLED, "2026-07-05T00:00:00.000Z")],
+      financialReviewPending: true,
+    });
+
+    expect(result.state).toBe("cancelled_pre_payment");
+  });
+
+  it("does not tell an unpaid booking there is nothing to do (#3033 B2)", () => {
+    /*
+      THE CONTRADICTION THIS BRANCH USED TO PRODUCE. `PAYABLE_STATUSES` covers
+      CONFIRMED, and a CONFIRMED-unpaid booking renders the member's Complete
+      Payment card — so returning the review narrative outright put "there is
+      nothing you need to do" directly beside a card asking for money. Both
+      facts are true, so both are said.
+    */
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CONFIRMED" }),
+      events: [],
+      financialReviewPending: true,
+    });
+
+    expect(result.state).toBe("financial_review_pending");
+    // The payment facts survive intact — the amount due and the instruction to
+    // pay it, which is what the Complete Payment card beside this banner is for.
+    expect(result.message).toContain("$120.00 is due");
+    expect(result.nextStep).toMatch(/pay by card or internet banking/i);
+    // And the review facts are added rather than substituted.
+    expect(result.message).toMatch(/working out what that change means/i);
+    expect(result.message).toMatch(/not part of that figure/i);
+    // The narrowed sentence: scoped to the change, so it cannot cancel the
+    // instruction to pay sitting in the same next step.
+    expect(result.nextStep).toContain(
+      "There is nothing you need to do about that change.",
+    );
+    expect(result.nextStep).not.toMatch(
+      /there is nothing you need to do\.|there's nothing you need to do\./i,
+    );
+  });
+
+  it("keeps the payable composition for every payable status", () => {
+    // PENDING, PAYMENT_PENDING and CONFIRMED are all payable; the last two also
+    // render the Complete Payment card. None may be told to do nothing.
+    for (const status of ["PENDING", "PAYMENT_PENDING", "CONFIRMED"] as const) {
+      const result = resolveBookingNarrative({
+        club: CLUB,
+        booking: booking({ status }),
+        events: [],
+        financialReviewPending: true,
+      });
+
+      expect(result.state).toBe("financial_review_pending");
+      expect(result.message).toContain("$120.00 is due");
+      expect(result.nextStep).toMatch(/pay by card or internet banking/i);
+    }
+  });
+
+  it("keeps the expired-link wording when a payable booking has a review", () => {
+    // The composition wraps whatever the payable builder produced, so a dead
+    // link still offers a fresh one rather than being flattened to "pay below".
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CONFIRMED" }),
+      events: [],
+      link: {
+        revokedAt: null,
+        usedAt: null,
+        expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+      },
+      financialReviewPending: true,
+    });
+
+    expect(result.headline).toBe("Payment link expired");
+    expect(result.nextStep).toMatch(/request a fresh payment link/i);
+    expect(result.message).toMatch(/working out what that change means/i);
+  });
+
+  it("still names no amount for the review half of a payable booking", () => {
+    // The $120.00 that appears is the booking's OWN price, which is due and is
+    // real. No second figure is invented for the adjustment.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "CONFIRMED" }),
+      events: [],
+      financialReviewPending: true,
+    });
+
+    expect(result.message.match(/\$/g)).toHaveLength(1);
+    expect(result.message).not.toMatch(/\$0\.00/);
+  });
+
+  it("says nothing about review unless the caller says so", () => {
+    // Defaulted false: a caller that has not checked must not make a claim about
+    // this member's money.
+    const result = resolveBookingNarrative({
+      club: CLUB,
+      booking: booking({ status: "PAID" }),
+      events: [
+        event(BookingEventType.MEMBER_PAID, "2026-07-02T00:00:00.000Z", {
+          amountCents: 12000,
+        }),
+      ],
+    });
+
+    expect(result.state).toBe("paid");
+  });
+});

@@ -22,6 +22,7 @@ import {
   unpaidCreditNoteInput,
   unpaidMoneySummaryRows,
 } from "@/lib/booking-money-lines";
+import { FINANCIAL_REVIEW_EMAIL_NOTE } from "@/lib/booking-financial-review-copy";
 import { escapeHtml } from "./escape";
 import {
   type BookingCalendarLinks,
@@ -447,6 +448,18 @@ export function bookingModifiedTemplate(params: {
   // #2390: see bookingModificationSummaryRows — it renders as one more change
   // row, so the HTML and the flat body stay identical.
   promoCoverageNote?: string | null;
+  /**
+   * #3033 (epic #2797): this change saved and its refund or credit could not be
+   * worked out from what the booking has stored, so the club is deciding it.
+   *
+   * It exists because without it the money section is SILENT. Every one of the
+   * three branches below tests a positive amount, and an unresolved adjustment
+   * has none by construction — so a member whose booking was edited received a
+   * "Booking Modified" email whose money section rendered as nothing at all,
+   * which reads as "no money is involved" on the one change where that is most
+   * conspicuously untrue.
+   */
+  financialReviewPending?: boolean;
 }): string {
   const {
     firstName,
@@ -467,6 +480,7 @@ export function bookingModifiedTemplate(params: {
     paymentReference,
     xeroInvoiceNumber,
     promoCoverageNote,
+    financialReviewPending = false,
   } = params;
 
   // The change rows come from the shared helper the flat {{changeSummary}}
@@ -488,14 +502,38 @@ export function bookingModifiedTemplate(params: {
     value: escapeHtml(row.value),
   }));
 
-  let paymentNote = "";
+  /*
+    TWO NOTES, COMPOSED — not one exclusive box (#3033).
+
+    A booking whose adjustment is unresolved can still carry a positive
+    additional amount from the priced half of the same edit: new nights are
+    priced normally under current policy while the surrendered ones are what
+    cannot be valued. The first shape of this checked `financialReviewPending`
+    as a fourth arm of the existing three-way chain, and that is wrong whichever
+    end it is put at — last, the payment instruction shadows the honest
+    sentence; first, the honest sentence suppresses a real instruction to pay,
+    and the member is told there is nothing to do while $45 goes uncollected and
+    the hold expires under them.
+
+    The question was never which branch wins. Both facts are true at once, so
+    both are rendered: the review note, then whichever settlement note applies.
+    The settlement notes remain mutually exclusive exactly as they always were.
+    `FINANCIAL_REVIEW_NOTHING_TO_DO` is scoped to the change rather than to the
+    email, which is what lets a "payment required" box sit under it without
+    contradiction.
+  */
+  const reviewNote = financialReviewPending
+    ? alertBox(FINANCIAL_REVIEW_EMAIL_NOTE, "info")
+    : "";
+
+  let settlementNote = "";
   if (refundAmountCents > 0) {
-    paymentNote = alertBox(
+    settlementNote = alertBox(
       `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
       "success"
     );
   } else if (accountCreditAmountCents > 0) {
-    paymentNote = alertBox(
+    settlementNote = alertBox(
       `Account credit of ${formatCents(accountCreditAmountCents)} has been added for future bookings.`,
       "success"
     );
@@ -507,17 +545,19 @@ export function bookingModifiedTemplate(params: {
       const referenceContext = paymentReference
         ? ` Payment reference: ${escapeHtml(paymentReference)}.`
         : "";
-      paymentNote = alertBox(
+      settlementNote = alertBox(
         `An additional Internet Banking payment of ${formatCents(additionalAmountCents)} is required.${invoiceContext}${referenceContext} Xero reconciliation confirms the payment before it is treated as paid.`,
         "warning"
       );
     } else {
-      paymentNote = alertBox(
+      settlementNote = alertBox(
         `An additional payment of ${formatCents(additionalAmountCents)} is required.`,
         "warning"
       );
     }
   }
+
+  const paymentNote = `${reviewNote}${settlementNote}`;
 
   return layout(`
     ${heading("Booking Modified")}

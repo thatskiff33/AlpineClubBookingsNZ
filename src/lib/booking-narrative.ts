@@ -48,6 +48,11 @@ import type {
 } from "@/lib/booking-events";
 import { isDuplicateCaptureRefundEvent } from "@/lib/duplicate-capture-refund-event";
 import { isManualSettlementMarkerEvent } from "@/lib/manual-settlement-reversal-event";
+import {
+  FINANCIAL_REVIEW_NOTHING_MOVED,
+  FINANCIAL_REVIEW_NOTHING_TO_DO,
+  FINANCIAL_REVIEW_WORKING_IT_OUT,
+} from "@/lib/booking-financial-review-copy";
 
 export type BookingNarrativeState =
   | "payable"
@@ -58,6 +63,16 @@ export type BookingNarrativeState =
   | "cancelled_post_payment"
   | "declined"
   | "under_review"
+  /**
+   * #3033 (epic #2797): the stay change SAVED and the money for it did not.
+   *
+   * Named apart from `under_review` on purpose. That one is the ADMIN BOOKING
+   * APPROVAL queue — a booking waiting for an officer to allow it at all — and
+   * reusing it here would have told a member with a confirmed stay that their
+   * booking was awaiting approval, which is a different and more alarming
+   * claim than the true one.
+   */
+  | "financial_review_pending"
   | "unknown";
 
 export interface BookingNarrative {
@@ -108,6 +123,22 @@ export interface ResolveBookingNarrativeInput {
   /** The payment link's own state, when resolving for `/pay/[token]`. */
   link?: NarrativeLinkState | null;
   now?: Date;
+  /**
+   * #3033: this booking has an OPEN financial review — a stay or guest change
+   * that saved while the refund or credit for it could not be worked out from
+   * stored history (epic #2797).
+   *
+   * ARRIVES AS DATA, like `club` above, and for the same load-bearing reason:
+   * this module is pure and is reachable from `src/instrumentation.node.ts`
+   * through `payment-link.ts`, so reading it from the database here would drag
+   * `server-only` in and kill the module at import. The caller reads it with
+   * `bookingHasOpenFinancialReview` and hands the answer over.
+   *
+   * Defaults to false, so a caller that does not know stays on the wording it
+   * has always produced rather than making a claim about money it has not
+   * checked.
+   */
+  financialReviewPending?: boolean;
 }
 
 const PAID_EVENT_TYPES: BookingEventType[] = [
@@ -381,6 +412,83 @@ function buildPayableNarrative(
 }
 
 /**
+ * #3033 (epic #2797, owner decision D1): the stay change saved; the money for it
+ * is being worked out by the club.
+ *
+ * Every sentence here is written against this issue's four rules, and each rule
+ * is visible in the wording rather than assumed:
+ *
+ *  - the change is confirmed FIRST, in the headline and the opening clause,
+ *    because that is the part the member acted on and it is settled;
+ *  - the adjustment is described as something the club is working out, never as
+ *    something that has happened. No verb here is in the past tense about money;
+ *  - NO AMOUNT APPEARS AT ALL. Not `$0`, not an estimate, not the booking's
+ *    `finalPriceCents` — which the structural edit has already updated, so
+ *    printing it would put a stale, authoritative-looking figure beside a
+ *    sentence saying the figure is unknown;
+ *  - nothing internal and nothing about the member: no cause, no diagnostic
+ *    category, no "corrupt", "missing", "inconsistent" or "we could not find" —
+ *    the wording is about the club doing a check, which is what is true, and
+ *    the evidence vocabulary stays on the admin screen where it belongs.
+ *
+ * No `club` binding is taken because no instant is rendered: the only dates are
+ * the stay's own lodge nights, which are calendar days and take no zone.
+ */
+function buildFinancialReviewPendingNarrative(
+  booking: NarrativeBooking,
+): BookingNarrative {
+  return {
+    state: "financial_review_pending",
+    headline: "Your booking change is saved",
+    message: `Thanks ${booking.firstName} — the change to your booking has been saved, and your stay is now ${dateRange(booking)}. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} We'll be in touch once the amount is confirmed — please get in touch if you'd like to know where it's up to.`,
+  };
+}
+
+/**
+ * #3033: the same booking still owes its ORDINARY payment, and also has money
+ * held for review.
+ *
+ * The first shape of this branch sat above `PAYABLE_STATUSES` and returned the
+ * review narrative outright, which was a real contradiction and not a
+ * theoretical one. `PAYABLE_STATUSES` covers CONFIRMED, and a CONFIRMED-unpaid
+ * booking renders the member's **Complete Payment** card
+ * (`isPaymentOwedBookingStatus`) — so the banner said "there is nothing you need
+ * to do about that change" directly beside a card asking for money. The
+ * in-code argument for the placement only ever considered PAID.
+ *
+ * Composed rather than gated to PAID, because both facts are true and the
+ * member needs both: the booking's own price is due and payable, and separately
+ * an adjustment for a change is unpriced. Gating the review branch to PAID
+ * would have fixed the contradiction by removing the disclosure, which is the
+ * opposite of what this issue is for — the member would pay, and hear nothing
+ * about the money they may be owed.
+ *
+ * The bridging sentence is this module's own and duplicates nothing: "not part
+ * of that figure" is a fact about the relationship between the two amounts,
+ * which only exists in this composed case. The two money clauses after it are
+ * the shared ones, and they read correctly here precisely because they name
+ * what they are about rather than relying on where they sit.
+ */
+function buildPayableWithFinancialReviewNarrative(
+  booking: NarrativeBooking,
+  link: NarrativeLinkState | null | undefined,
+  now: Date,
+): BookingNarrative {
+  const payable = buildPayableNarrative(booking, link, now);
+
+  return {
+    state: "financial_review_pending",
+    // The payable headline is kept: an unpaid booking's most urgent fact is
+    // still that it is unpaid, and "Your booking change is saved" at the top of
+    // a screen asking for payment would bury it.
+    headline: payable.headline,
+    message: `${payable.message} You have also made a change to this booking whose amount is not part of that figure. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    nextStep: `${payable.nextStep} ${FINANCIAL_REVIEW_NOTHING_TO_DO} We'll be in touch once the amount is confirmed.`,
+  };
+}
+
+/**
  * Resolve the human narrative for a booking from its durable events. Shared by
  * the public payment-link page and the admin/member booking-history view.
  */
@@ -390,14 +498,29 @@ export function resolveBookingNarrative({
   club,
   link,
   now = new Date(),
+  financialReviewPending = false,
 }: ResolveBookingNarrativeInput): BookingNarrative {
   const ordered = sortedByOccurredAt(events);
   const status = booking.status;
 
-  if (status === "PAID" || status === "COMPLETED") {
-    return buildPaidNarrative(booking, ordered, club);
-  }
+  /*
+    #3033 reordered the three status branches below AHEAD of the paid branch,
+    which is behaviour-neutral: every one of them tests `booking.status` for a
+    different single value, so at most one can ever match and the order between
+    them cannot change an outcome. What the reorder buys is a place to put the
+    financial-review branch where it outranks the LIVE states without outranking
+    a cancellation.
 
+    That placement is the whole decision. A cancelled, bumped or declined
+    booking keeps its own narrative even while a review is open: those sentences
+    describe what happened to the booking, which is the more important truth,
+    and the review's own wording assumes a stay that is still going ahead. A
+    PAID booking does NOT keep its narrative, because "nothing more to do" is
+    exactly the false reassurance this issue exists to remove. A PAYABLE booking
+    keeps its facts and has the review's added to them, because it is still
+    genuinely unpaid — the composition, and the contradiction that made it
+    necessary, are on `buildPayableWithFinancialReviewNarrative`.
+  */
   if (status === "CANCELLED" || status === "BUMPED") {
     return buildCancelledNarrative(booking, ordered, club);
   }
@@ -413,6 +536,24 @@ export function resolveBookingNarrative({
       nextStep:
         "No action is needed right now — we'll email you as soon as it's approved.",
     };
+  }
+
+  if (financialReviewPending) {
+    /*
+      A payable booking keeps its payment facts and GAINS the review ones
+      (#3033). It does not swap one for the other: see
+      `buildPayableWithFinancialReviewNarrative` for why replacing them told a
+      CONFIRMED-unpaid member there was nothing to do beside a card asking them
+      to pay.
+    */
+    if (PAYABLE_STATUSES.has(status)) {
+      return buildPayableWithFinancialReviewNarrative(booking, link, now);
+    }
+    return buildFinancialReviewPendingNarrative(booking);
+  }
+
+  if (status === "PAID" || status === "COMPLETED") {
+    return buildPaidNarrative(booking, ordered, club);
   }
 
   if (PAYABLE_STATUSES.has(status)) {
