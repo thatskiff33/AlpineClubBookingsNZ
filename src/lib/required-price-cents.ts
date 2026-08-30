@@ -19,12 +19,24 @@
  * the loop bound. Two shapes look like write points to a bare grep and are
  * deliberately NOT counted, for two different reasons:
  *
- *  - a write indexed by its own enclosing `map`, over the very array the
- *    breakdown was built from, which cannot run past the end — the guest-total
- *    writes `priceBreakdown.guests[i].priceCents` in `waitlist.ts`,
- *    `booking-date-modification-service.ts` and `booking-modify-plan.ts`, and
+ *  - a guest-total write that carries NO `?? 0`, so a short breakdown throws
+ *    rather than persisting a zero — `priceBreakdown.guests[i].priceCents` in
+ *    `waitlist.ts` and `booking-date-modification-service.ts`,
  *    `repricedGuests.guests[index].priceCents` in
- *    `booking-guest-removal-service.ts`;
+ *    `booking-guest-removal-service.ts`, and the `for (let i = 0; …)` in
+ *    `booking-modify-plan.ts`. They are not magic-zero write points, which is
+ *    what this module is the home of.
+ *
+ *    An earlier version of this bullet excluded them as "indexed by its own
+ *    enclosing `map`, over the very array the breakdown was built from". That
+ *    was not true of the code and a reader applying it literally would have
+ *    counted EIGHT: in each of the four the loop bound and the indexed array are
+ *    different objects (`candidate.guests` against `priceBreakdown.guests`, and
+ *    so on), one is not a `map` at all, and `booking-guest-removal-service.ts`
+ *    optional-chains the very next line — so its own author did not treat that
+ *    index as guaranteed. They are related only by the single-producer
+ *    convention this header calls undeclared two paragraphs above, which is
+ *    exactly the thing a recount criterion may not lean on;
  *  - a read of an inner vector whose length is CHECKED against the loop bound
  *    immediately above it — `engine[index]` in `buildApprovalGuestNights`
  *    (`booking-request-shared.ts`), fenced by `engine.length === count` and
