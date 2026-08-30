@@ -53,6 +53,7 @@ import {
   FINANCIAL_REVIEW_NOTHING_TO_DO,
   FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE,
   FINANCIAL_REVIEW_WILL_BE_IN_TOUCH,
+  FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK,
   FINANCIAL_REVIEW_WORKING_IT_OUT,
 } from "@/lib/booking-financial-review-copy";
 
@@ -435,6 +436,17 @@ function buildPayableNarrative(
  *
  * No `club` binding is taken because no instant is rendered: the only dates are
  * the stay's own lodge nights, which are calendar days and take no zone.
+ *
+ * ## What still reaches this, after #3194
+ *
+ * The FALLBACK arm of the review branch. A payable booking composes
+ * {@link buildPayableWithFinancialReviewNarrative} and a paid one composes
+ * {@link buildPaidWithFinancialReviewNarrative}, so what is left here is a
+ * booking that is neither — DRAFT, WAITLISTED, WAITLIST_OFFERED — where these
+ * sentences are the whole of what there is to say and are a far better answer
+ * than the resolver's `unknown` fallback. The rules above still govern every
+ * word of it; the two compositions state, each in its own docblock, why a figure
+ * the member is genuinely owed an answer about survives beside them.
  */
 function buildFinancialReviewPendingNarrative(
   booking: NarrativeBooking,
@@ -443,7 +455,7 @@ function buildFinancialReviewPendingNarrative(
     state: "financial_review_pending",
     headline: "Your booking change is saved",
     message: `Thanks ${booking.firstName} — the change to your booking has been saved, and your stay is now ${dateRange(booking)}. ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
-    nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} We'll be in touch once the amount is confirmed — please get in touch if you'd like to know where it's up to.`,
+    nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK}`,
   };
 }
 
@@ -478,6 +490,76 @@ function buildFinancialReviewPendingNarrative(
  * The clauses read correctly in either precisely because they name what they are
  * about rather than relying on where they sit.
  */
+/**
+ * #3194 (epic #2797): the booking is PAID, and it ALSO has money held for
+ * review.
+ *
+ * ## The defect this closes
+ *
+ * #3033 put the review branch above the paid branch, and that was right about
+ * the half it was aiming at: the paid next step is "Nothing more to do — we'll
+ * see you at the lodge", which is the false reassurance the whole epic exists to
+ * remove. But returning the review narrative OUTRIGHT threw away the other half
+ * with it. `buildPaidNarrative` is the only place a member is ever told "we've
+ * received your payment of $360.00 on 12 Aug", and on the public payment-link
+ * page that narrative is the ENTIRE page: a member who paid by internet banking
+ * and opened the link to check the club had received it got no answer at all, on
+ * the one page whose whole purpose is that payment.
+ *
+ * That is the same mistake #3033's own review caught one branch over, where
+ * gating the review to PAID would have "fixed the contradiction by removing the
+ * disclosure" — see `buildPayableWithFinancialReviewNarrative`. Both facts are
+ * true, so both are said, and the banned sentence is the only thing dropped.
+ *
+ * ## Why an amount appears here, and why it is not the amount under review
+ *
+ * The epic's rule is that the REVIEWED change's amount never appears, because
+ * nobody knows it. The figure kept here is money the club has ALREADY RECEIVED,
+ * read off a durable payment event — a settled historical fact, not a guess, and
+ * not the post-edit `finalPriceCents` that
+ * {@link buildFinancialReviewPendingNarrative} refuses. Saying it out loud is
+ * the point of this branch. `FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE` then states
+ * the relationship between the two amounts explicitly, exactly as it does beside
+ * the payable narrative's "$120.00 is due".
+ *
+ * It is composed even on the no-payment-was-required arm, where the "figure" is
+ * nothing at all. That reads a little loosely, and it is still the right
+ * sentence: it is what introduces "that change" for every clause after it, and a
+ * member told no payment was required is precisely the one who needs to hear
+ * that an unpriced change sits outside that.
+ *
+ * ## Why the next step is REPLACED rather than appended
+ *
+ * The payable composition appends, because "pay by card or internet banking
+ * below" stays true beside a review. The paid next step does not: it opens with
+ * "Nothing more to do", which is the sentence #3194 is named after. Its closing
+ * pointer to the bookings page goes with it, deliberately — the two surfaces
+ * that render this are the member's own booking page and a public link they are
+ * not signed in on, so it is the least useful sentence on either, and keeping it
+ * would have meant a third next-step shape to hold in agreement.
+ *
+ * The result is that both review compositions end identically, which is a
+ * property worth having rather than a coincidence.
+ */
+function buildPaidWithFinancialReviewNarrative(
+  booking: NarrativeBooking,
+  events: NarrativeEvent[],
+  club: BoundClubTime,
+): BookingNarrative {
+  const paid = buildPaidNarrative(booking, events, club);
+
+  return {
+    state: "financial_review_pending",
+    // The paid headline is kept for the same reason the payable one is: the
+    // most urgent fact about this booking is still the one the member came to
+    // check, and "Your booking change is saved" above a payment they are trying
+    // to confirm would bury it.
+    headline: paid.headline,
+    message: `${paid.message} ${FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE} ${FINANCIAL_REVIEW_WORKING_IT_OUT} ${FINANCIAL_REVIEW_NOTHING_MOVED}`,
+    nextStep: `${FINANCIAL_REVIEW_NOTHING_TO_DO} ${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH}`,
+  };
+}
+
 function buildPayableWithFinancialReviewNarrative(
   booking: NarrativeBooking,
   link: NarrativeLinkState | null | undefined,
@@ -522,12 +604,15 @@ export function resolveBookingNarrative({
     That placement is the whole decision. A cancelled, bumped or declined
     booking keeps its own narrative even while a review is open: those sentences
     describe what happened to the booking, which is the more important truth,
-    and the review's own wording assumes a stay that is still going ahead. A
-    PAID booking does NOT keep its narrative, because "nothing more to do" is
-    exactly the false reassurance this issue exists to remove. A PAYABLE booking
-    keeps its facts and has the review's added to them, because it is still
-    genuinely unpaid — the composition, and the contradiction that made it
-    necessary, are on `buildPayableWithFinancialReviewNarrative`.
+    and the review's own wording assumes a stay that is still going ahead.
+
+    A PAYABLE or a PAID booking keeps its facts and has the review's ADDED to
+    them, rather than swapped for them. #3033 composed the payable case and
+    replaced the paid one; #3194 made the paid case a composition too, because
+    replacing it dropped the confirmation that the member's money arrived — the
+    only thing the public payment-link page had to say. What both compositions
+    drop is the one sentence that was actually false, and each carries the
+    argument for its own shape.
   */
   if (status === "CANCELLED" || status === "BUMPED") {
     return buildCancelledNarrative(booking, ordered, club);
@@ -556,6 +641,15 @@ export function resolveBookingNarrative({
     */
     if (PAYABLE_STATUSES.has(status)) {
       return buildPayableWithFinancialReviewNarrative(booking, link, now);
+    }
+    /*
+      And a PAID booking keeps its payment facts and gains the review ones, for
+      the same reason (#3194). #3033 replaced them, which removed "nothing more
+      to do" and the confirmation that the money arrived along with it — on the
+      public payment link, the only thing that page had to say.
+    */
+    if (status === "PAID" || status === "COMPLETED") {
+      return buildPaidWithFinancialReviewNarrative(booking, ordered, club);
     }
     return buildFinancialReviewPendingNarrative(booking);
   }

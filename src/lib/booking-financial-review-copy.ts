@@ -79,25 +79,51 @@ export const FINANCIAL_REVIEW_NOTHING_TO_DO =
  * amount is the thing nobody knows yet.
  *
  * MOVED HERE FROM `booking-narrative.ts` (#3194), which composed it inline while
- * it had one caller. It now has two — the booking page's payable-with-review
- * banner and the public payment-link page's own payment card, which renders its
- * amount itself and so cannot use the composed banner message — and a sentence
- * two surfaces say about one member's money belongs in one file (`INV-SSOT`).
+ * it had one caller. It now has three — the payable-with-review narrative, the
+ * paid-with-review narrative, and the public payment-link page's own payment
+ * card, which renders its amount itself and so cannot use a composed banner
+ * message — and a sentence three surfaces say about one member's money belongs
+ * in one file (`INV-SSOT`).
+ *
+ * "That figure" is therefore whichever amount the surface has just shown:
+ * money due, money received, or the "no payment was required" that stands in
+ * for one. In every case the claim is the same and it is the claim that
+ * matters — the change's amount is not inside it.
  */
 export const FINANCIAL_REVIEW_NOT_IN_THAT_FIGURE =
   "You have also made a change to this booking whose amount is not part of that figure.";
 
 /**
- * The club closes the loop; the member does not have to chase it.
+ * The club closes the loop; the member does not have to chase it — the ONE
+ * wording of that promise, in its two terminations.
  *
- * Moved here with the sentence above and for the same reason. Deliberately the
- * SHORT form: `buildFinancialReviewPendingNarrative` says a longer version of
- * this that also invites the member to ask where it is up to, which belongs on a
- * screen the member reached deliberately — not beside a payment they are in the
- * middle of making.
+ * The clause is private and both public forms end it, so rewording it moves
+ * every surface at once. That is not decoration: the long form below shipped as
+ * `buildFinancialReviewPendingNarrative`'s own literal while the short one was
+ * already a shared constant, so the two said the same thing twice and a reword
+ * of the constant would have left the review-pending narrative promising the old
+ * wording (`INV-SSOT`, "cannot change a fact in one place is the defect").
  */
-export const FINANCIAL_REVIEW_WILL_BE_IN_TOUCH =
-  "We'll be in touch once the amount is confirmed.";
+const FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_CLAUSE =
+  "We'll be in touch once the amount is confirmed";
+
+/**
+ * The SHORT form, for a surface the member did not go looking for.
+ *
+ * Beside a payment they are in the middle of making, an invitation to ask where
+ * something else is up to is a distraction from the thing they came to do.
+ */
+export const FINANCIAL_REVIEW_WILL_BE_IN_TOUCH = `${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_CLAUSE}.`;
+
+/**
+ * The LONG form, for a screen the member reached DELIBERATELY — their own
+ * booking — where "can I ask?" is a question they are already there to ask.
+ *
+ * Derived from the same clause rather than restated (#3194). Byte-identical to
+ * the literal it replaces.
+ */
+export const FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_OR_ASK =
+  `${FINANCIAL_REVIEW_WILL_BE_IN_TOUCH_CLAUSE} — please get in touch if you'd like to know where it's up to.`;
 
 /**
  * The whole note, for a surface that renders it as ONE BLOCK: the two email
@@ -163,14 +189,16 @@ export function financialReviewNote({
  *
  * ## Why this is one home and not a second one
  *
- * `buildPayableWithFinancialReviewNarrative` appends the same five sentences to
- * a payable narrative — the first three to its `message`, the last two to its
- * `nextStep`, because that banner renders those as separate paragraphs. It
- * appends them from these same constants, and
- * `booking-financial-review-copy.test.ts` pins the two compositions against each
- * other sentence for sentence. So the payment-link page and the booking page
- * cannot come to say different things about one member's money, which is the
- * whole of what #3194 is closing.
+ * `buildPayableWithFinancialReviewNarrative` and
+ * `buildPaidWithFinancialReviewNarrative` say the same five sentences beside a
+ * narrative of their own — the first three in `message`, the last two in
+ * `nextStep`, because that banner renders those as separate paragraphs. Both
+ * build them from these same constants, and
+ * `booking-financial-review-copy.test.ts` pins all three compositions against
+ * each other sentence for sentence, by DERIVING what each narrative adds rather
+ * than restating it. So the payment-link page and the booking page cannot come
+ * to say different things about one member's money, which is the whole of what
+ * #3194 is closing.
  *
  * No parameter, unlike {@link financialReviewNote}: this surface composes no
  * settlement note beside it and never can — a review parks with nothing
