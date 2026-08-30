@@ -47,9 +47,12 @@ import { describe, expect, it } from "vitest";
  *
  * So this walks the import graph from every CLI root, and separately sweeps
  * every place in the repository where a `tsx` entrypoint is NAMED — package
- * scripts, `prisma.config.ts`, shell scripts, workflows, and the documentation
- * an operator copies from. A root that reaches `server-only` must ask for the
- * `react-server` condition at EVERY one of those sites. The repository
+ * scripts, `prisma.config.ts`, shell scripts, workflows, the documentation
+ * an operator copies from, and (since #2850) the scripts' own sources, where
+ * the `--help` text and the shebang publish a command too. A root that reaches
+ * `server-only` must ask for the `react-server` condition at EVERY one of
+ * those sites, or be published as an `npm run` script that carries it. The
+ * repository
  * publishes one spelling, `--conditions=react-server`, because one form is
  * greppable — but the check accepts Node's space form and comma lists too,
  * since refusing a command that is genuinely safe would be a false positive in
@@ -297,9 +300,22 @@ const CLI_ROOTS = cliRoots();
  * `measurement/**` is swept for its shell runners even though it is
  * deliberately outside CI: it seeds a real database the same way `scripts/`
  * does, so a broken command there costs the same diagnosis.
+ *
+ * **The CLI roots themselves are swept too, and that half is new (#2850).** A
+ * script publishes commands in its own source: the `--help` text it prints at
+ * runtime, and the worked examples in its docblock. Those are the lines an
+ * operator reads FIRST — `--help` is what you run when you have forgotten the
+ * flags mid-incident — and they were the last place still handing out the bare
+ * form after every runbook, npm script and workflow around them had been
+ * corrected. Measured on this tree: `npx tsx scripts/xero-booking-repair.ts`,
+ * printed by that money-repair script's own usage text, died at import with the
+ * React "Client Component" throw. A script that publishes a command it cannot
+ * survive is worse than one that publishes none, because the operator has no
+ * reason to doubt it.
  */
 function invocationSources(): string[] {
   return [
+    ...CLI_ROOTS,
     ...filesUnder("scripts", ".sh"),
     ...filesUnder("measurement", ".sh"),
     ...filesIn(".github/workflows", ".yml"),
@@ -340,34 +356,67 @@ function tokensRequestReactServer(tokens: string[]): boolean {
   });
 }
 
-function sweepInvocations(): Invocation[] {
+/**
+ * Every `tsx` command named in one file's text.
+ *
+ * Split out from the sweep so a test can drive it over a synthetic source
+ * directly. The extractor is the half that goes quietly blind — it already did
+ * once, on `package.json`'s JSON quoting — and a sweep that finds nothing reads
+ * exactly like a sweep that finds nothing wrong.
+ */
+function extractInvocations(source: string, raw: string): Invocation[] {
   const found: Invocation[] = [];
-  for (const file of invocationSources()) {
-    // Join shell line continuations first, so a command wrapped across lines is
-    // read as the one command it is rather than losing its entrypoint.
-    const text = readFileSync(file, "utf8").replace(/\\\r?\n[ \t]*/g, " ");
-    for (const match of text.matchAll(TSX_COMMAND)) {
-      const tokens = match[1]
-        .trim()
-        .split(/\s+/)
-        .map((token) => token.replace(TOKEN_EDGE_PUNCTUATION, ""));
-      const entryIndex = tokens.findIndex((token) =>
-        TSX_ENTRYPOINT_TOKEN.test(token),
-      );
-      // No file argument at all: prose about `tsx`, or a flag-only command.
-      // Nothing to judge, and nothing this census can say about it.
-      if (entryIndex === -1) continue;
-      found.push({
-        source: relative(file),
-        entry: tokens[entryIndex].replace(/^\.\//, ""),
-        hasCondition: tokensRequestReactServer(tokens.slice(0, entryIndex)),
-      });
-    }
+  // Join shell line continuations first, so a command wrapped across lines is
+  // read as the one command it is rather than losing its entrypoint.
+  const text = raw.replace(/\\\r?\n[ \t]*/g, " ");
+  for (const match of text.matchAll(TSX_COMMAND)) {
+    const tokens = match[1]
+      .trim()
+      .split(/\s+/)
+      .map((token) => token.replace(TOKEN_EDGE_PUNCTUATION, ""));
+    const entryIndex = tokens.findIndex((token) =>
+      TSX_ENTRYPOINT_TOKEN.test(token),
+    );
+    // No file argument at all: prose about `tsx`, or a flag-only command.
+    // Nothing to judge, and nothing this census can say about it.
+    if (entryIndex === -1) continue;
+    found.push({
+      source,
+      entry: tokens[entryIndex].replace(/^\.\//, ""),
+      hasCondition: tokensRequestReactServer(tokens.slice(0, entryIndex)),
+    });
   }
   return found;
 }
 
+function sweepInvocations(): Invocation[] {
+  return invocationSources().flatMap((file) =>
+    extractInvocations(relative(file), readFileSync(file, "utf8")),
+  );
+}
+
 const INVOCATIONS = sweepInvocations();
+
+/**
+ * The shebang line, if the file opens with one.
+ *
+ * A shebang is a published invocation like any other — it is this file's own
+ * answer to "how do I run me?" — but `sweepInvocations` cannot see it, because
+ * `#!/usr/bin/env npx tsx` names no entrypoint argument: the entrypoint is the
+ * file the line sits in. So it is judged separately, below.
+ */
+function shebangOf(file: string): string | null {
+  const [first = ""] = readFileSync(file, "utf8").split(/\r?\n/, 1);
+  return first.startsWith("#!") ? first : null;
+}
+
+/** Does this shebang name `tsx` as the runner (`env tsx`, `env npx tsx`, …)? */
+function shebangRunsTsx(shebang: string): boolean {
+  return shebang
+    .trim()
+    .split(/\s+/)
+    .some((token) => token === "tsx" || token.endsWith("/tsx"));
+}
 
 /** The roots whose graph reaches `server-only`, by any edge. */
 const ROOTS_REACHING_SERVER_ONLY = new Map<string, string[]>(
@@ -455,6 +504,88 @@ describe("CLI entrypoints and the `server-only` boundary", () => {
         "`tsx` and the entrypoint, or publish the command as an `npm run` " +
         "script that carries it (CT-5, #2869; #2850).\n\n" +
         violations.join("\n\n"),
+    ).toEqual([]);
+  });
+
+  it("carries no `tsx` shebang a `server-only`-reaching root cannot survive", () => {
+    // The shebang is the one published invocation the sweep above structurally
+    // cannot see, because it names no entrypoint argument — and it is the most
+    // authoritative-looking of the lot, sitting on line 1 of the file it runs.
+    // Every one of these scripts is mode 644, so the line was never executable
+    // in the first place; it was pure instruction, and the instruction was to
+    // run a command that aborts at import. The remedy chosen here is to DELETE
+    // it and let the `npm run` script be the single published form, but a
+    // shebang that genuinely carries the condition is safe and passes.
+    const violations: string[] = [];
+    for (const entry of ROOTS_REACHING_SERVER_ONLY.keys()) {
+      const shebang = shebangOf(path.join(REPO_ROOT, entry));
+      if (shebang === null || !shebangRunsTsx(shebang)) continue;
+      if (tokensRequestReactServer(shebang.trim().split(/\s+/))) continue;
+      violations.push(`${entry}: ${shebang}`);
+    }
+
+    expect(
+      violations,
+      "A CLI root that reaches a `server-only` module opens with a `tsx` " +
+        `shebang that does not ask for \`${REACT_SERVER_CONDITION}\`, so the ` +
+        "command its own first line publishes throws at import. Delete the " +
+        "shebang and publish the `npm run` script instead, or spell it " +
+        "`#!/usr/bin/env -S npx tsx --conditions=react-server` (#2850).\n\n" +
+        violations.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("sweeps the CLI scripts' own sources, where the usage text lives", () => {
+    // Structural non-vacuity for the half added by #2850. `extractInvocations`
+    // can be proved to work (below) and the rule above can be proved to judge
+    // what it is handed, and BOTH stay green if the roots quietly drop out of
+    // `invocationSources()` — the sweep would simply never look at a `--help`
+    // string again. So assert the join explicitly.
+    const swept = new Set(invocationSources().map(relative));
+    const unswept = [...ROOTS_REACHING_SERVER_ONLY.keys()]
+      .filter((entry) => !swept.has(entry))
+      .sort();
+
+    expect(
+      unswept,
+      "A CLI root that reaches a `server-only` module is not itself in the " +
+        "invocation sweep, so nothing reads the commands it prints in its own " +
+        "`--help` text and docblock (#2850).\n\n" +
+        unswept.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("would see a raw invocation printed in a script's own usage text", () => {
+    // The mutation this guard exists to catch, run as a fixture rather than
+    // left to whoever remembers to re-introduce it by hand: the exact shape
+    // `scripts/xero-booking-repair.ts` used to print from `printUsage()`.
+    const usageText = [
+      "function printUsage() {",
+      "  console.log(`Usage:",
+      "  npx tsx scripts/xero-booking-repair.ts --apply",
+      "`);",
+      "}",
+    ].join("\n");
+
+    expect(extractInvocations("scripts/synthetic.ts", usageText)).toEqual([
+      {
+        source: "scripts/synthetic.ts",
+        entry: "scripts/xero-booking-repair.ts",
+        hasCondition: false,
+      },
+    ]);
+    // …and that entrypoint really is one the rule above judges, so the fixture
+    // is not describing a violation the census would shrug at.
+    expect(ROOTS_REACHING_SERVER_ONLY.has("scripts/xero-booking-repair.ts")).toBe(
+      true,
+    );
+    // The npm-script form this repository publishes instead names no `tsx`
+    // entrypoint at all, so it is invisible to the sweep — which is the point.
+    expect(
+      extractInvocations(
+        "scripts/synthetic.ts",
+        "  npm run xero:booking-repair -- --apply",
+      ),
     ).toEqual([]);
   });
 
