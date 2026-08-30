@@ -149,6 +149,62 @@ describe("an unresolved adjustment no longer sends a silent money section (#3033
     expect(html).toMatch(/An additional payment of \$45\.00 is required/);
   });
 
+  it("drops 'nothing has moved' when the settlement note says money HAS moved", async () => {
+    /*
+      #3032 - THE ONE COMPOSITION THAT CONTRADICTS ITSELF.
+
+      Two of the settlement note's four arms are past tense about money: "A
+      refund of $X has been processed" and "Account credit of $X has been
+      added". Beside either of them, "Nothing has been refunded or charged for
+      it yet" is a flat contradiction in one email about one change, and the
+      member has no way to tell which sentence to believe. The
+      additional-payment arms are compatible - they are about money that has NOT
+      moved - and the case above requires the sentence to survive them.
+
+      NOT REACHABLE THROUGH ANY CURRENT PATH, and pinned anyway. A parked edit
+      settles nothing, so its refund, credit and additional amounts are all zero
+      by construction. The reachability is a property of today's callers, not of
+      the copy; the contradiction is removed where it is composed, so a future
+      caller cannot reintroduce it by being written.
+    */
+    for (const moved of [
+      { refundAmountCents: 5000 },
+      { accountCreditAmountCents: 5000 },
+    ]) {
+      const overrides = { financialReviewPending: true, ...moved };
+      const note = await paymentNoteFromSender(overrides);
+      const html = bookingModifiedTemplate(params(overrides));
+
+      // The honest half stays: the club is still working the amount out.
+      expect(note).toMatch(/working out what that change means/i);
+      expect(html).toMatch(/working out what that change means/i);
+      // The contradicting sentence is gone from both surfaces.
+      expect(note).not.toMatch(/nothing has been refunded or charged/i);
+      expect(html).not.toMatch(/nothing has been refunded or charged/i);
+      // And the settlement fact itself is untouched.
+      expect(note).toMatch(/has been (processed|added)/i);
+    }
+  });
+
+  it("keeps 'nothing has moved' when the settlement note is a request to PAY", async () => {
+    // THE CONTROL, and it is the half that would be lost by suppressing the
+    // sentence whenever any settlement note is present. "An additional payment
+    // is required" is about money that has not moved, so the two agree.
+    const overrides = {
+      financialReviewPending: true,
+      additionalAmountCents: 4500,
+      refundAmountCents: 0,
+      accountCreditAmountCents: 0,
+    };
+
+    expect(await paymentNoteFromSender(overrides)).toMatch(
+      /nothing has been refunded or charged/i,
+    );
+    expect(bookingModifiedTemplate(params(overrides))).toMatch(
+      /nothing has been refunded or charged/i,
+    );
+  });
+
   it("carries the invoice and reference an internet-banking payment needs", async () => {
     /*
       The suppressed branch was not merely a sentence — it is HOW the member

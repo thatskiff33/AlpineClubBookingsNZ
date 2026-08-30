@@ -529,6 +529,28 @@ function occurrenceKeyViolation(
  * `paymentId`, so a payment-scoped lookup would miss precisely the tasks this
  * feature creates.
  */
+/**
+ * What "this booking's money is still under review" MEANS, as a `where`
+ * fragment, and the one definition of it (`INV-SSOT`).
+ *
+ * Two readers ask that question and they are imported side by side into the same
+ * services: this module's `findOpenEditFinancialReviewTask`, which is the FENCE
+ * and runs on the caller's transaction client under the booking-edit locks, and
+ * `booking-financial-review-visibility.ts`, which is the member-facing and admin
+ * VISIBILITY read and runs on the global client after the commit. The client, the
+ * moment, the shape returned and the number of bookings asked about all differ,
+ * which is why they are two functions - but the predicate is one idea, and
+ * spelling it twice is how a later narrowing (a third status, a second kind) ends
+ * up applying to the banner and not to the fence, or the other way round.
+ *
+ * It lives HERE, with the module that mints the kind, rather than beside either
+ * reader.
+ */
+export const OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER = {
+  kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
+  status: ManualRefundTaskStatus.OPEN,
+} as const;
+
 export async function findOpenEditFinancialReviewTask(
   bookingId: string,
   store: Prisma.TransactionClient,
@@ -545,11 +567,7 @@ export async function findOpenEditFinancialReviewTask(
   reviewContext: EditFinancialReviewContext | null;
 } | null> {
   const task = await store.manualRefundTask.findFirst({
-    where: {
-      bookingId,
-      kind: ManualRefundTaskKind.EDIT_FINANCIAL_REVIEW,
-      status: ManualRefundTaskStatus.OPEN,
-    },
+    where: { bookingId, ...OPEN_EDIT_FINANCIAL_REVIEW_TASK_FILTER },
     select: {
       id: true,
       occurrenceKey: true,

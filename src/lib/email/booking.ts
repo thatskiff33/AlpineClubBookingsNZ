@@ -48,7 +48,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
-import { FINANCIAL_REVIEW_EMAIL_NOTE } from "@/lib/booking-financial-review-copy";
+import { financialReviewEmailNote } from "@/lib/booking-financial-review-copy";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -1351,7 +1351,13 @@ export async function sendBookingModifiedEmail(params: {
     zero, not the booking's new total, not an estimate.
   */
   const reviewNote = params.financialReviewPending
-    ? FINANCIAL_REVIEW_EMAIL_NOTE
+    ? financialReviewEmailNote({
+        // The two PAST-TENSE settlement arms below. "Nothing has been refunded
+        // or charged for it yet" cannot stand beside "a refund has been
+        // processed" in one email about one change.
+        moneyAlreadyMoved:
+          params.refundAmountCents > 0 || accountCreditAmountCents > 0,
+      })
     : "";
   const settlementNote =
     params.refundAmountCents > 0

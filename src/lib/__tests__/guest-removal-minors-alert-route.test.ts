@@ -531,6 +531,97 @@ describe("DELETE guest removal - unpriceable stored history (#3032, epic #2797)"
     expect(written.finalPriceCents).toBe(8000);
   });
 
+  /**
+   * #3032: WHICH WAY A CONFIRMED AMOUNT WILL EVENTUALLY GO, decided at raise time
+   * and recorded on the task as `paymentId`.
+   *
+   * `chooseEditReviewSettlementRoute` reads exactly this field to decide whether a
+   * completion becomes a card refund, a hand-settled allocation, or account
+   * credit. Getting it wrong is silent in both directions: a null where a capture
+   * exists routes a card refund to account credit, and a non-null where nothing
+   * was captured points a refund at money the club never received.
+   *
+   * The expression is byte-identical to `applyPaymentAdjustments`' own
+   * `hasSettledPayment`, so the LOGIC is not in doubt - what was in doubt is
+   * whether anything would notice if it changed. Forcing it to `null` and running
+   * `vitest related` over the removal service passed 142 files and 2,673 tests.
+   * These three cases are what make it noticed, and they are split so that each
+   * HALF of the conjunction has a case that fails alone.
+   */
+  function capturedPayment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "pay_1",
+      bookingId: "b1",
+      status: "SUCCEEDED",
+      source: "STRIPE",
+      amountCents: 8000,
+      refundedAmountCents: 0,
+      stripePaymentIntentId: "pi_1",
+      stripeCustomerId: "cus_1",
+      xeroInvoiceId: null,
+      changeFeeCents: 0,
+      additionalPaymentIntentId: null,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
+      ...overrides,
+    };
+  }
+
+  /** Every `paymentId` this removal wrote onto a review task. */
+  async function paymentIdsOnRaisedTasks(
+    bookingOverride: Record<string, unknown>,
+  ) {
+    const tx = buildTx([ADULT, CHILD], {
+      ...stripStoredNightPrices([ADULT, CHILD]),
+      ...bookingOverride,
+    });
+    mocks.transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
+      cb(tx),
+    );
+
+    const res = await DELETE(makeRequest(), {
+      params: Promise.resolve({ id: "b1", guestId: "g-child" }),
+    });
+    expect(res.status).toBe(200);
+    // The park really happened, so the assertion below is reading real rows
+    // rather than agreeing with an empty list.
+    expect(tx.manualRefundTask.create).toHaveBeenCalledTimes(2);
+    return (tx.manualRefundTask.create.mock.calls as unknown[][]).map(
+      (call) => (call[0] as { data: { paymentId: string | null } }).data.paymentId,
+    );
+  }
+
+  it("carries the captured payment id, so a confirmed amount can go back to the card", async () => {
+    // A PAID booking with a SUCCEEDED capture: both halves of the gate are true.
+    expect(await paymentIdsOnRaisedTasks({ payment: capturedPayment() })).toEqual(
+      ["pay_1", "pay_1"],
+    );
+  });
+
+  it("carries no payment id when the payment row exists but nothing was captured", async () => {
+    // THE CONTROL FOR THE CAPTURE HALF, and the case a bare `payment?.id ?? null`
+    // gets wrong: the row is there, so the id is there, but no money was ever
+    // taken - and a completion pointed at it would try to refund a capture that
+    // does not exist. `PENDING` is stated explicitly rather than inherited.
+    expect(
+      await paymentIdsOnRaisedTasks({
+        payment: capturedPayment({ status: "PENDING" }),
+      }),
+    ).toEqual([null, null]);
+  });
+
+  it("carries no payment id when the booking is not in a settled status", async () => {
+    // THE CONTROL FOR THE STATUS HALF. The capture is real, but a PENDING booking
+    // has not settled, so its money is not the money a review adjustment sits
+    // against.
+    expect(
+      await paymentIdsOnRaisedTasks({
+        status: BookingStatus.PENDING,
+        payment: capturedPayment(),
+      }),
+    ).toEqual([null, null]);
+  });
+
   it("hands the fence's own machine code back to the caller, not a bare 409", async () => {
     // The refusal that DOES still reach this route: an earlier edit on this
     // booking is under review, so a second money-affecting removal would have to

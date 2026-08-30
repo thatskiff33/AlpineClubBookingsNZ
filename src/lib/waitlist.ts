@@ -211,9 +211,10 @@ async function repriceWaitlistCandidate(
     // offer the rows summed to the OLD total while the guest carried the NEW
     // one. That is a strand that does not reconcile — INV-MOD-028's
     // `STORED_TOTAL_MISMATCH` — manufactured fresh, on a healthy live booking,
-    // every time this ran. Every subsequent in-progress edit and single-guest
-    // removal on that booking would then be refused and sent to a person, for a
-    // mismatch the application itself had created.
+    // every time this ran. Every subsequent in-progress edit on that booking
+    // would then be REFUSED, and every single-guest removal would commit with
+    // its money PARKED for a person to price (#3032) — both for a mismatch the
+    // application itself had created.
     //
     // The amounts were already in hand: `perNightCents` and `nightDates` are the
     // same values `guestNightRates` hands to the promo allocator above, so this
