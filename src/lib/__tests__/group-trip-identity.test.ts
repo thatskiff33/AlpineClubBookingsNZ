@@ -311,14 +311,24 @@ function adultHost(
 
 describe("SAME_GROUP_TRIP is off until a club turns it on", () => {
   it("is off in the built-in default", () => {
-    expect(DEFAULT_ADULT_MEMBER_HOST_SCOPES.sameGroupTrip).toBe(false);
-    expect(hostScopeEnabled(DEFAULT_ADULT_MEMBER_HOST_SCOPES, "SAME_GROUP_TRIP"))
-      .toBe(false);
+    const rule =
+      "INV-HOST-041 (docs/invariants/adult-member-hosting.md): SAME_GROUP_TRIP " +
+      "is OFF unless a club turns it on, and it is APPENDED to " +
+      "ADULT_MEMBER_HOST_SCOPES rather than inserted. enabledHostScopeList " +
+      "sorts frozen violation snapshots through that constant, so widening the " +
+      "default or reordering the list rewrites the bytes of snapshots nobody " +
+      "edited and reopens decided reviews.";
+    expect(DEFAULT_ADULT_MEMBER_HOST_SCOPES.sameGroupTrip, rule).toBe(false);
+    expect(
+      hostScopeEnabled(DEFAULT_ADULT_MEMBER_HOST_SCOPES, "SAME_GROUP_TRIP"),
+      rule,
+    ).toBe(false);
     // And the default set still lists exactly the one scope it always listed, so
     // a snapshot frozen for a club that changed nothing carries the same bytes.
-    expect(enabledHostScopeList(DEFAULT_ADULT_MEMBER_HOST_SCOPES)).toEqual([
-      "SAME_BOOKING",
-    ]);
+    expect(
+      enabledHostScopeList(DEFAULT_ADULT_MEMBER_HOST_SCOPES),
+      rule,
+    ).toEqual(["SAME_BOOKING"]);
   });
 
   it("is off for a row that decided the #2569 pair before this column existed", () => {
@@ -337,7 +347,14 @@ describe("SAME_GROUP_TRIP is off until a club turns it on", () => {
       ],
       "lodge-1",
     );
-    expect(resolved.hostScopes).toEqual({
+    expect(
+      resolved.hostScopes,
+      "INV-HOST-042 (docs/invariants/adult-member-hosting.md): the Group Trip " +
+        "column is outside the all-or-none CHECK, and NULL on a row that DID " +
+        "decide the #2569 pair means OFF rather than inherit. Reading it as " +
+        "inherit would make every pre-migration and every previous-colour row " +
+        "fall back to the club default — a scope set nobody chose.",
+    ).toEqual({
       sameBooking: true,
       sameBookingOwner: true,
       sameGroupTrip: false,

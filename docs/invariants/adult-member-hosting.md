@@ -710,7 +710,8 @@ compliant indefinitely.
   nobody edited and reopen decided reviews. The built-in default is unchanged —
   same-booking only — so a club that upgrades and changes nothing gets
   byte-identical answers, including the member-facing sentence and the material
-  identity key.
+  identity key. Enforced by `src/lib/__tests__/group-trip-identity.test.ts`,
+  whose failure messages carry this id.
 
 ### INV-HOST-042
 
@@ -731,7 +732,9 @@ compliant indefinitely.
   is refused with 23514. No constraint tying the column to the pair can avoid
   that, it fails closed on one row rather than half-writing a policy, and the
   only UPDATE-safe alternative — no constraint at all — readmits the shape that
-  has no reading.
+  has no reading. Enforced by `src/lib/__tests__/group-trip-identity.test.ts`
+  (the decided-row-with-NULL case) and by the config-transfer suite, which pins
+  that a legacy decided row does not round-trip as a spurious change.
 
 ### INV-HOST-043
 

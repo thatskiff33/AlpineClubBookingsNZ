@@ -247,7 +247,28 @@ async function loadCurrent(db: ReadDb): Promise<{
       continue;
     }
     const scope = slug ? lodgeScope(slug) : "club-wide";
-    byScope.set(scope, { ...policy, scope });
+    byScope.set(scope, {
+      ...policy,
+      // NULL MEANS `false` ON A DECIDED ROW (#3037, `INV-HOST-042`), and the
+      // comparison has to read it the way the evaluator does or config transfer
+      // reports a change nobody made. Every row written before the migration —
+      // and every row a draining previous colour writes during a deploy — has
+      // the pair set and this column NULL. It EXPORTS as the set it means, so
+      // re-importing an untouched bundle parsed back to an explicit `false` and
+      // `changedFields` compared `false !== null`: a plan item reading "update",
+      // an apply that writes, and a version bump that 409s every open policy
+      // editor, all for a round trip that changed nothing.
+      //
+      // An inheriting row keeps NULL, which is a different fact — "this row did
+      // not decide" — and the database CHECK guarantees the column is NULL there
+      // anyway. The conditional states the rule rather than relying on that.
+      hostScopeSameGroupTrip:
+        policy.hostScopeSameBooking === null ||
+        policy.hostScopeSameBookingOwner === null
+          ? policy.hostScopeSameGroupTrip
+          : policy.hostScopeSameGroupTrip === true,
+      scope,
+    });
   }
   return { byScope, lodgeIdBySlug, errors };
 }

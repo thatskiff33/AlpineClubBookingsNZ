@@ -450,6 +450,48 @@ lodge:tukino,INHERIT,NO_HOLD,
     ).toBe("unchanged");
   });
 
+  it("does not plan a legacy decided row as changed just for existing (#3037)", async () => {
+    // THE MIGRATION-DAY ROUND TRIP. A row written before this column existed has
+    // the #2569 pair set and Group Trip NULL, which the evaluator reads as OFF.
+    // Exporting it yields "SAME_BOOKING", and re-importing that same bundle
+    // parses back to an explicit `false` — so a naive `false !== null` compare
+    // called an untouched installation an update, wrote the row and bumped the
+    // version, 409ing every admin who had the policy card open.
+    const legacyDecided = {
+      ...clubPolicy,
+      hostScopeSameBooking: true,
+      hostScopeSameBookingOwner: false,
+      hostScopeSameGroupTrip: null,
+    };
+    const plan = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([legacyDecided, lodgePolicy]),
+      ),
+    );
+    expect(plan.errors).toEqual([]);
+    const club = plan.items.find((item) => item.key === "club-wide")!;
+    expect(club.action).toBe("unchanged");
+    expect(club.changedFields).toBeUndefined();
+
+    // THE CONTROL, and it is what stops this becoming "never notice this
+    // column": the same legacy row against a bundle that really does turn Group
+    // Trip cover on is still a real update.
+    const turningOn = await bookingPoliciesImporter.plan(
+      planContext(
+        `${HEADER}club-wide,ADMIN_REVIEW_REQUIRED,HOLD,SAME_BOOKING|SAME_GROUP_TRIP
+lodge:tukino,INHERIT,NO_HOLD,
+`,
+        db([legacyDecided, lodgePolicy]),
+      ),
+    );
+    const changing = turningOn.items.find((item) => item.key === "club-wide")!;
+    expect(changing.action).toBe("update");
+    expect(changing.changedFields).toEqual(["hostScopeSameGroupTrip"]);
+  });
+
   it("binds the plan fingerprint to the Group Trip column too (#3037)", async () => {
     // The fingerprint is how an apply notices the target moved after the operator
     // read the dry run. A scope column left out of the digest makes a concurrent

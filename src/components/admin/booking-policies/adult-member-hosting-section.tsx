@@ -47,8 +47,17 @@ const UNLOADED_SCOPE = "__unloaded__"
 /**
  * The checkbox wording, taken from the server's own
  * `ADULT_MEMBER_HOST_SCOPE_LABELS` / `..._DESCRIPTIONS` (#2576 §12). Repeated as
- * literals rather than imported because this is a client component and those live
- * beside the evaluator; the route tests assert the two agree.
+ * literals rather than imported because this is a client component and
+ * `policies/adult-member-hosting.ts` imports a Prisma VALUE, which cannot cross
+ * into the browser bundle.
+ *
+ * `adult-member-hosting-call-sites.test.ts` reads these two records off disk and
+ * asserts, scope by scope, that they are the evaluator's own words and that both
+ * records plus `HOST_SCOPE_ORDER` are total over `ADULT_MEMBER_HOST_SCOPES`.
+ * That guard was promised here long before it existed — this docblock used to
+ * say "the route tests assert the two agree", and no test did (#3037). A copy is
+ * the weaker of `INV-SSOT`'s two options and is used only because importing is
+ * genuinely blocked, so the policing has to be real.
  */
 const HOST_SCOPE_LABELS: Record<keyof AdultMemberHostScopeSetValue, string> = {
   sameBooking: "Eligible adult member on the same booking",
