@@ -22,7 +22,7 @@ reason: this is where the whole admin half of the feature lands — the two
   change's own subject, not as a line-count tidy-up ridden in on a money-copy fix. #3170 (+196): the queue could not price a review at all - the confirm button was disarmed whenever the task carried no amount - and its copy read "Record an adjustment", which is neutral to read and settles as a refund. The growth is the amount box, the two-way direction choice with no default, the sentence under each option naming the instrument it uses, and the direction-bearing button label. It is the screen where a wrong-direction money movement was one plausible action away, so the words are the fix.
 
 file: src/lib/email/booking.ts
-lines: 1545
+lines: 1561
 reason: #3032's delta round added the `moneyAlreadyMoved` answer at this
   composition site: two of the settlement note's arms are past tense about money,
   and beside either of them "Nothing has been refunded or charged for it yet" is
@@ -36,6 +36,15 @@ reason: #3032's delta round added the `moneyAlreadyMoved` answer at this
   is composed there and nowhere else. The sentences themselves were moved OUT, to
   `booking-financial-review-copy.ts`, so what remains is the composition and the
   reasoning for it.
+  #3179 round (+16): one more optional note on this sender - the promo-code
+  change a saved edit could not carry - plus the paragraph saying why it is
+  optional where `financialReviewPending` beside it is required. That flag is a
+  question every caller of this sender can be in the middle of, so a default
+  answered it wrongly for all of them; this one has exactly one caller that can
+  ever have a value, because the batch modify path is the only edit door whose
+  request schema accepts a promo code at all. The note itself is not written
+  here: it flows into the shared change rows, so the hand-built HTML body and the
+  admin-editable flat body cannot be the ones to disagree.
 
 file: src/app/(authenticated)/bookings/[id]/page.tsx
 lines: 2698

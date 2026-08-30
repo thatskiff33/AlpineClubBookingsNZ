@@ -1287,6 +1287,27 @@ transaction, under the locks already held, anchored to that edit's own
 `BookingModification`. `priceDiffCents` falls out as 0 because the booking's
 money genuinely did not move, NOT because 0 was chosen as the adjustment.
 
+**"No promotion is recalculated" includes one the member asked for in the same
+request, and they are told so** (#3179). A parked edit re-runs no promotion, so a
+`promoCode` or `removePromoCode` carried alongside the structural change is
+dropped and the booking's stored discount figures are written back untouched.
+That half of the request used to end in an HTTP 200 with nothing said - a member
+walking away believing they had applied a discount they had not. The edit still
+saves: the owner's decision on #3179 was to save what can be honoured and warn
+clearly about what cannot, because refusing the date change too would remove
+something that works in order to fix something that does not. The preview, the
+save response, the "Booking Modified" email, the booking's history and the audit
+row now all carry ONE sentence, composed in
+`src/lib/promo-change-not-applied.ts` (`INV-SSOT`). It does not make the promo
+change happen; applying a promotion to a stay whose money is already with a
+person is separate work, and money-shaped enough to deserve its own review.
+
+A stay already **under way** never reaches that sentence, because both surfaces
+refuse a promo change on one outright - `resolveTargetDates` on the save, and the
+`isInProgressEdit` block in the modify-quote route, with "Promo code changes are
+not available for in-progress bookings". The copy module still carries wording
+for that case, so relaxing either refusal cannot re-open the silence.
+
 - the IN-PROGRESS edit planner, `buildInProgressGuestRangePlan`
   (`src/lib/booking-edit-guest-ranges.ts`), reached from both the modify-quote
   preview and the modify save whenever the stay is already under way (#3031,
