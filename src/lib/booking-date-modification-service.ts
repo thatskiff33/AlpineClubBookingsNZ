@@ -39,11 +39,13 @@ import {
   raiseParkedEditFinancialReviewTasks,
 } from "@/lib/edit-financial-review";
 import {
-  classifyNightPriceToWrite,
   preCheckInEditEvidence,
-  preservedNightPrices,
-  type PreCheckInEditStrand,
+  preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
+import {
+  classifyNightPriceToWrite,
+  preservedNightPrices,
+} from "@/lib/stored-night-price-write";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   acquireLodgeCapacityLock,
@@ -643,16 +645,17 @@ export async function modifyBookingDates({
     const dateEditEvidence = preCheckInEditEvidence({
       bookingId,
       booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-      strands: booking.guests.map(
-        (guest, index): PreCheckInEditStrand => ({
+      // THE SAME ASSEMBLY the modify save and the modify preview use, so all
+      // three judge a strand the same way (`INV-SSOT`). A date change removes
+      // nobody, and the pricing pass is index-aligned with the booking's own
+      // guest list here.
+      strands: preCheckInEditStrands({
+        bookingGuests: booking.guests,
+        guestsForPricing: booking.guests.map((guest) => ({
           bookingGuestId: guest.id,
-          guestTotalCents: guest.priceCents,
-          stayStart: guest.stayStart,
-          stayEnd: guest.stayEnd,
-          nights: guest.nights,
-          proposedNightDates: priceBreakdown.guests[index]?.nightDates ?? [],
-        }),
-      ),
+        })),
+        pricedGuests: priceBreakdown.guests,
+      }),
     });
     /**
      * True when this booking's own history cannot price the date change.

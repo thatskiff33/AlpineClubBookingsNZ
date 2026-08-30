@@ -10,6 +10,13 @@ import { stripComments } from "./support/strip-comments";
  * that says what a night was SOLD for (#2744), and every builder of the plan must
  * hand it the club's group-discount config (#2756).
  *
+ * THE FILENAME UNDERSELLS IT, AND IS KEPT ANYWAY. Since #3166 four of the five
+ * lenient-reader sites below are PRE-check-in paths, and the last block in this
+ * file is the pre-check-in gate census. A rename would read better and would
+ * disarm every path-hardcoded scanner that names this file — including three
+ * ways of doing so silently — for no measured benefit. The scope is what the
+ * describe blocks say, not what the name says.
+ *
  * `buildInProgressGuestRangePlan` credits a night given back at the price
  * recorded on its `BookingGuestNight` row. Since #3031 it does not fall back to
  * anything: a night whose stored price it cannot see makes the whole edit

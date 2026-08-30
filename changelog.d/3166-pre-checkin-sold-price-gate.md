@@ -45,6 +45,17 @@
   review. Previously, once the office had settled one, an identical change made
   afterwards was treated as a repeat of it: nothing was charged, nothing was
   asked, and nobody was told.
+- Where the club is still working the money out, the person handling it is now
+  told what else the same change did — how many people were added and what they
+  were priced at. Before, the review card described one guest nobody had touched
+  and said nothing about the new arrivals the booking had not been charged for.
+- Two things this deliberately does **not** change, so nobody is surprised by
+  them: a member can still be asked to pay, and can still pay, the price the
+  booking carried before the change, with the difference settled by the office
+  afterwards — that is what the review is for, and blocking payment would leave
+  a member unable to pay for a booking at all. And correcting a placeholder into
+  a real member still applies the name and membership immediately while the
+  price waits for the office.
 - One consequence worth knowing: once a booking has been through this, every
   later change to it also waits for the office, because settling a review
   records the amount against the review rather than against the individual

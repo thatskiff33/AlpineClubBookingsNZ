@@ -1367,6 +1367,38 @@ rule rather than exceptions to it, because neither values a historical night:
   evidence. It values no historical night, so this rule does not reach it — but
   it IS bound by the blank clause below, and is fenced accordingly (#3166).
 
+### Three limits this rule does NOT close, named rather than left to be found
+
+Each is a real edge with a real reason for being left alone. None is a defect
+disguised as a decision, and none is a follow-up hiding in prose — a change that
+removes any of them is a change to the rule above, not a tidy-up.
+
+- **A member can still be asked for, and can still pay, the PRE-EDIT price while
+  a review is open.** A parked shortening leaves `Booking.finalPriceCents` at the
+  figure it had before, and no payment path is fenced on an open review —
+  `bookingHasOpenFinancialReview` is read by the member's banner, the modified
+  email, the history builders and a diagnostic, and by nothing that takes money.
+  That is deliberate: the stored total IS the last figure a person stood behind,
+  the review exists precisely to settle the difference afterwards through
+  `chooseEditReviewSettlementRoute`, and fencing payment would strand a member
+  on a `PAYMENT_PENDING` booking they cannot pay for, on a booking the club then
+  holds no money against. The member is told, by the banner and by the email,
+  that the adjustment is still being worked out.
+- **A placeholder→member link (#2337) HALF-lands on a parked edit.** The identity
+  columns — `isMember`, `memberId`, name and consent — are written
+  unconditionally, while the price and the rate-membership-type snapshot stay
+  frozen because a parked edit charges nobody. So the strand is member-flagged
+  and priced, and posted to Xero, at the non-member figure until the review
+  settles, and no review task names it — the strand is exact and its nights did
+  not move, so nothing records it. It is the same trade `otherLodgeRatedGuestIds`
+  already makes: the flag says what was CHARGED, and nothing was. Undoing it
+  would mean either withholding an identity correction the member asked for, or
+  charging money the edit was parked for being unable to price.
+- **A parked batch edit writes the officer's other-club rate tick back as
+  `false`, with no message on screen.** Intended, for the reason above — the tick
+  records a rate that was honoured, and a parked edit honours no rate — but the
+  officer is not told, so they may believe they applied it.
+
 **The consequence worth stating plainly:** because nothing clears a blank, a
 booking that has been parked once is unreadable for good. Settling a review
 writes an amount to the TASK, not a price to the night row. Combined with the

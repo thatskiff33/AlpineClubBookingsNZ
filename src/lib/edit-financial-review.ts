@@ -7,8 +7,6 @@ import {
 } from "@prisma/client";
 import { ApiError } from "@/lib/api-error";
 import logger from "@/lib/logger";
-import { stableDigest } from "@/lib/stable-digest";
-import { canonicalNights } from "@/lib/stable-json";
 import {
   isNonNegativeIntegerCents,
   parseEditFinancialReviewContext,
@@ -16,6 +14,12 @@ import {
   type EditFinancialReviewOccurrence,
 } from "@/lib/edit-financial-review-context";
 import { MANUAL_REFUND_TASK_REASON_MAX } from "@/lib/manual-subscription-payment";
+import {
+  buildEditFinancialReviewReason,
+  editFinancialReviewOccurrenceKey,
+  findFreeOccurrenceSlot,
+  MAX_OCCURRENCE_RECURRENCES,
+} from "@/lib/edit-financial-review-occurrence";
 import {
   editReviewSettlementPaymentId,
   type EditReviewSettlementPayment,
@@ -88,291 +92,15 @@ import {
  * whole point of the state is that nothing has moved yet.
  */
 
-/**
- * The occurrence-key namespace and its version.
- *
- * `v1` is a real hinge. The key IS the identity of an occurrence, so changing
- * what goes into the hash silently re-identifies every future edit and would let
- * an already-reviewed occurrence raise a second task. Bumping this prefix makes
- * such a change a deliberate new namespace instead - old keys keep matching old
- * rows, and nothing collides. Never widen the material without bumping it.
- */
-const OCCURRENCE_KEY_NAMESPACE = "edit-financial-review";
-const OCCURRENCE_KEY_VERSION = "v1";
-
-/**
- * The identity of one unpriceable structural edit, as 64 lowercase hex
- * characters behind a namespaced, versioned prefix.
- *
- * ## What "the same structural edit" means, precisely
- *
- * Two calls describe the SAME occurrence when all of the following match:
- *
- *  1. the booking and the guest strand whose nights were given back;
- *  2. why the price could not be proven (the `cause`);
- *  3. the set of night dates surrendered, and the set added - as SETS, so order
- *     and duplicates cannot change the answer; and
- *  4. the stored night-price rows the edit was judged against - the guest's
- *     stored total, and every stored night row's date and price, including the
- *     nulls, as it all stood BEFORE the edit.
- *
- * Anything else differing - the operator prose in `reason`, the wall-clock
- * moment, who was signed in, which retry this is - does not change the key.
- *
- * ## Why (4) is in there, which is the part worth arguing
- *
- * Without it a retry is still one task, but this sequence quietly loses money.
- * A night is surrendered and the amount cannot be proven, so a task is raised.
- * An admin prices it and COMPLETES it. Later the same night is added back to the
- * booking and surrendered again. That is a genuinely new occurrence owed a
- * genuinely new adjustment - but on booking, guest, cause and dates alone it
- * hashes to the key the completed task already holds, so the raise finds a
- * terminal row, declines to create anything, and the second adjustment is never
- * reviewed by anybody. Including the stored evidence distinguishes the two,
- * because the first edit changed it.
- *
- * THAT IS NECESSARY AND WAS NOT SUFFICIENT (#3166). It rests on the edit
- * changing the evidence, and the pre-check-in guest-add parks WITHOUT changing
- * any of the material above - no night is surrendered, none is added, and a
- * parked add writes nothing to `BookingGuest` or `BookingGuestNight`, so the
- * identity is stable across every repeat. `findFreeOccurrenceSlot` is what makes
- * a settled task stop suppressing the next occurrence; read its docblock for the
- * money that was walking out of the door and why the ordinal sits outside this
- * digest rather than inside it.
- *
- * ## Why NOT the `BookingGuestNight` row ids, which is the obvious answer
- *
- * Row ids would distinguish that case cleanly and were rejected on measurement:
- * the whole reason an edit reaches this module is that the stored per-night
- * evidence is missing or unusable, so in the `NO_STORED_NIGHT_PRICES` case there
- * are no row ids to key on at all. An identity that is unavailable in its own
- * primary failure case is not an identity.
- *
- * The evidence fingerprint costs nothing extra: it is data the planner has
- * necessarily already read (it is what failed to reconcile), and the same data
- * `reviewContext` must capture regardless, because the edit destroys it.
- *
- * It is IDENTITY MATERIAL, and calling it "sold-price evidence" would overstate
- * it. A stored `BookingGuestNight.priceCents` may be a derived even split rather
- * than a price anyone was ever charged - two backfill migrations wrote splits,
- * and nothing distinguishes their rows from genuinely-sold ones
- * (`StoredNightPriceEvidence` names them). That does not weaken its use HERE:
- * the key needs a fingerprint of what the database held at the moment of the
- * edit, and that is exactly what this is. It is also why the amount goes to a
- * human instead of being computed.
- *
- * ## Why a hash rather than a readable composite key
- *
- * The material is unbounded - a stay can be a fortnight, and every night
- * contributes a date and a price - and `occurrenceKey` is one indexed column.
- * A digest is fixed-width. It is not a secret and nothing is hidden by it: the
- * whole input is stored in plain form in `reviewContext` on the same row, so the
- * key can be recomputed and checked. Canonicalisation goes through the shared
- * `stableDigest` (`INV-SSOT`) because `JSON.stringify` is insertion-ordered and
- * a key that shifts with field order is not an identity either.
- *
- * The digest for a fixed occurrence is PINNED in
- * `src/lib/__tests__/edit-financial-review.test.ts`. That pin is what makes the
- * "never widen the material without bumping the version" rule above enforceable
- * rather than merely written down: every other test recomputes the key on both
- * sides and would pass through exactly the change that loses the money.
- */
-export function editFinancialReviewOccurrenceKey(
-  occurrence: EditFinancialReviewOccurrence,
-): string {
-  const material = {
-    bookingId: occurrence.bookingId,
-    bookingGuestId: occurrence.bookingGuestId,
-    cause: occurrence.cause,
-    surrenderedNightDates: canonicalNights(occurrence.surrenderedNightDates),
-    addedNightDates: canonicalNights(occurrence.addedNightDates),
-    storedEvidence: {
-      guestTotalCents: occurrence.storedEvidence.guestTotalCents,
-      // Sorted by date so the planner's read order cannot change the identity.
-      // Two rows for one date would be evidence in their own right, so they are
-      // NOT deduplicated here - only ordered.
-      nightPrices: [...occurrence.storedEvidence.nightPrices]
-        .map((night) => ({ date: night.date, priceCents: night.priceCents }))
-        .sort((left, right) =>
-          left.date === right.date
-            ? (left.priceCents ?? -1) - (right.priceCents ?? -1)
-            : left.date < right.date
-              ? -1
-              : 1,
-        ),
-    },
-  };
-  return `${OCCURRENCE_KEY_NAMESPACE}:${OCCURRENCE_KEY_VERSION}:${stableDigest(material)}`;
-}
-
-/**
- * How many times ONE occurrence identity may recur before the raise refuses.
- *
- * Not a policy limit - it is a runaway guard on the walk below, which is the
- * only unbounded loop in this module. Fifty settled reviews of the identical
- * structural edit on one booking is not a club's booking history, it is a
- * defect, and looping for ever against the database is a worse way to find out.
- */
-const MAX_OCCURRENCE_RECURRENCES = 50;
-
-/**
- * The stored key for the `n`th time one occurrence identity has come round.
- *
- * The first is the digest itself, so every key already on file keeps matching
- * its row and the pinned digest in `edit-financial-review.test.ts` is still the
- * key a first raise writes. Later ones carry a `#n` suffix OUTSIDE the digest,
- * which is what keeps the "recompute the key from `reviewContext` and check it"
- * property the key's own docblock claims: recomputing yields the base, and the
- * row's key is the base plus an optional recurrence suffix.
- */
-function occurrenceKeyForRecurrence(
-  baseOccurrenceKey: string,
-  recurrence: number,
-): string {
-  return recurrence === 1
-    ? baseOccurrenceKey
-    : `${baseOccurrenceKey}#${recurrence}`;
-}
-
-/**
- * #3166: WHERE THIS RAISE GOES - the open task already holding this occurrence,
- * or the first free key for a new one.
- *
- * ## The money this closes
- *
- * The find-then-create this replaces matched on the base key REGARDLESS OF
- * STATUS, so a task that had been completed or dismissed suppressed every later
- * raise of the same occurrence identity for ever. The key's own docblock names
- * that failure ("the raise finds a terminal row, declines to create anything,
- * and the second adjustment is never reviewed by anybody") and answers it by
- * putting the guest's stored evidence in the hash - which works only when the
- * edit CHANGES that evidence.
- *
- * #3166 makes an occurrence that changes nothing the ordinary case, on the
- * busiest door in the product. Adding a guest surrenders no nights and adds
- * none, and a parked add writes nothing to `BookingGuest` or
- * `BookingGuestNight` - so the key is a pure function of the unchanged stored
- * evidence, and settling a task never moves it. Worked through: add a $320
- * guest to a booking whose history cannot be read, park, an officer prices and
- * completes the task; add a second $320 guest, and the raise finds the COMPLETED
- * row, creates nothing, and every downstream reader is filtered on OPEN - so
- * there is no banner, no email flag, and no fence on the third add. Ten guests
- * over a season is $3,200 the club never sees and never hears about.
- *
- * ## What "already raised" now means
- *
- * An OPEN task, and only an OPEN task. That is the state a replay must collapse
- * into, and a replay is the only thing the dedup was ever for: a raise and the
- * edit that caused it share one transaction, so a retry can only ever find its
- * predecessor's task OPEN or find nothing at all. A TERMINAL task is not a
- * replay - it is a question somebody already answered, and the edit in front of
- * us is asking a new one.
- *
- * ## Why a suffix rather than widening the hashed material
- *
- * `bookingModificationId` is the obvious discriminator and is the wrong one: a
- * retried edit writes a NEW modification row, so hashing it would make every
- * retry a fresh task and lose the replay dedup this walk exists to keep. The
- * recurrence ordinal is not part of the occurrence's identity at all - it is
- * which turn of that identity this is - so it belongs beside the digest rather
- * than inside it, and `OCCURRENCE_KEY_VERSION` does not move.
- *
- * TERMINAL ROWS ARE NEVER TOUCHED. Nothing here reopens, amends or re-reads a
- * settled task; the audit of what an officer decided the first time stays
- * exactly as they left it, and the new question gets its own row. A booking
- * legitimately holding more than one review is already the model
- * (`booking-financial-review-visibility.ts` says so in as many words).
- *
- * Walked one indexed unique lookup at a time rather than with a `startsWith`
- * scan, because `occurrenceKey`'s btree serves equality under any collation and
- * a prefix `LIKE` does not. The realistic depth is one.
- */
-async function findFreeOccurrenceSlot(
-  store: Prisma.TransactionClient,
-  baseOccurrenceKey: string,
-): Promise<
-  | {
-      kind: "open";
-      occurrenceKey: string;
-      task: { id: string; status: ManualRefundTaskStatus };
-    }
-  | { kind: "free"; occurrenceKey: string }
-> {
-  for (
-    let recurrence = 1;
-    recurrence <= MAX_OCCURRENCE_RECURRENCES;
-    recurrence += 1
-  ) {
-    const occurrenceKey = occurrenceKeyForRecurrence(
-      baseOccurrenceKey,
-      recurrence,
-    );
-    const existing = await store.manualRefundTask.findUnique({
-      where: { occurrenceKey },
-      select: { id: true, status: true },
-    });
-    if (!existing) return { kind: "free", occurrenceKey };
-    if (existing.status === ManualRefundTaskStatus.OPEN) {
-      return { kind: "open", occurrenceKey, task: existing };
-    }
-  }
-  throw new EditFinancialReviewError(
-    `This booking edit's financial review has already been raised and settled ${MAX_OCCURRENCE_RECURRENCES} times for the identical change; it will not be raised again automatically.`,
-    500,
-  );
-}
-
-/**
- * The operator prose on the task.
- *
- * A builder rather than free text at the call site, so every raised task reads
- * the same way - but prose is emphatically NOT the identity. #3030 rejects "free
- * form task reason as the identity" outright, and this repository has already
- * been bitten by the weaker version of that: `reason` has been used as a
- * de-facto discriminator via a `startsWith` match in the finance queue, which is
- * what `ManualRefundTaskKind` exists to replace. Change this wording freely; the
- * occurrence key will not move.
- */
-export function buildEditFinancialReviewReason(
-  occurrence: EditFinancialReviewOccurrence,
-): string {
-  const nights = canonicalNights(occurrence.surrenderedNightDates);
-  // NOT "first to last". A night set need not be contiguous, and "3 nights
-  // (2026-08-02 to 2026-08-20)" reads as a nineteen-night span for three actual
-  // nights - in the sentence an admin reads WHILE PRICING REAL MONEY. The nights
-  // are listed instead, and the list is what gets truncated if the stay is long
-  // enough to overrun the column; `reviewContext` carries the full set either
-  // way, and #3033 renders it.
-  const nightsPhrase =
-    nights.length === 0
-      ? "no nights"
-      : nights.length === 1
-        ? `the night of ${nights[0]}`
-        : `${nights.length} nights: ${nights.join(", ")}`;
-  // #3032: the second sentence has to match the cause, because the two are read
-  // as instructions. "The exact sold price could not be read" is FALSE of a
-  // `COUNTERPART_STRAND_UNREADABLE` strand - its rows are complete and add up -
-  // and an admin told otherwise about a task that carries real per-night prices
-  // has been handed a contradiction while pricing real money.
-  const why =
-    occurrence.cause === "COUNTERPART_STRAND_UNREADABLE"
-      ? "This guest's own stored night prices are complete and add up, but another guest on the same booking has prices that cannot be read, so the booking's total could not be reworked automatically. Confirm the amount owed for the nights above before any money moves."
-      : "The exact sold price could not be read from this booking's stored history, so the club must price the adjustment from the booking's own payment and rate history before any money moves.";
-  return `Booking edit gave back ${nightsPhrase}. ${why}`.slice(
-    0,
-    MANUAL_REFUND_TASK_REASON_MAX,
-  );
-}
 
 /** What became of a raise. */
 export type RaiseEditFinancialReviewResult = {
   taskId: string;
   /**
-   * The key the returned task is actually stored under.
-   *
-   * The occurrence digest for the first turn of an identity, and the digest plus
-   * a `#n` recurrence suffix afterwards (#3166) - so a caller that wants to find
-   * this row again must use THIS value rather than re-deriving the digest.
+   * The key the returned task is actually stored under: the occurrence digest
+   * for the first turn of an identity, and the digest plus a `#n` recurrence
+   * suffix afterwards (#3166). A caller wanting to find this row again must use
+   * THIS value rather than re-deriving the digest.
    */
   occurrenceKey: string;
   /**
@@ -382,13 +110,11 @@ export type RaiseEditFinancialReviewResult = {
   created: boolean;
   /**
    * The status of the task this call returns, which since #3166 is always
-   * `OPEN`: either a row just inserted, or a replay of one still awaiting
-   * pricing. A COMPLETED or DISMISSED task is terminal and is never reopened,
-   * amended or returned here - it also no longer SUPPRESSES a later occurrence
-   * of the same identity, which is the money `findFreeOccurrenceSlot` closes.
-   *
-   * Typed as the enum rather than the literal because terminal-versus-open is
-   * the caller's question to ask, not a shape to hard-code around.
+   * `OPEN`: a row just inserted, or a replay of one still awaiting pricing. A
+   * COMPLETED or DISMISSED task is terminal, is never reopened or returned here,
+   * and no longer SUPPRESSES a later occurrence of the same identity - the money
+   * `findFreeOccurrenceSlot` closes. Typed as the enum rather than the literal
+   * because that is the caller's question to ask.
    */
   status: ManualRefundTaskStatus;
 };
@@ -494,11 +220,11 @@ export async function raiseEditFinancialReviewTask({
    */
   bookingModificationId: string | null;
   /**
-   * #3166: the guests this same edit added, and what they were priced at — null
-   * when it added none. REQUIRED rather than defaulted, for the same reason as
-   * the two arguments above: an add whose new guests were silently dropped from
-   * the evidence hands an admin a card that says the booking gained nothing.
-   * `EditFinancialReviewContext.guestsAddedByEdit` is where the reasoning lives.
+   * #3166: the guests this same edit added and what they were priced at, or null.
+   * REQUIRED for the same reason as the two arguments above: an add whose new
+   * guests were dropped from the evidence hands an admin a card saying the
+   * booking gained nothing. `EditFinancialReviewContext.guestsAddedByEdit`
+   * carries the reasoning.
    */
   guestsAddedByEdit: { count: number; totalPriceCents: number | null } | null;
   /** Operator prose. Defaults to `buildEditFinancialReviewReason`. */
@@ -511,14 +237,11 @@ export async function raiseEditFinancialReviewTask({
    * no refund allocation.
    *
    * REQUIRED rather than defaulted (#3166), for the reason
-   * `bookingModificationId` beside it already gives: `chooseEditReviewSettlementRoute`
-   * reads this to decide whether a confirmed amount goes back to the card, is
-   * mirrored as a hand-settled allocation, or becomes account credit — so a
-   * caller that quietly inherited `null` would have its refund silently
-   * re-routed to credit, and the failure would surface only when an admin closed
-   * the task, long after the edit committed. Derive it through
+   * `bookingModificationId` beside it gives: a caller that quietly inherited
+   * `null` would have its refund silently re-routed to credit, and the failure
+   * would surface only when an admin closed the task. Derive it through
    * `editReviewSettlementPaymentId`; `raiseParkedEditFinancialReviewTasks` below
-   * does that for you and is what every production caller uses.
+   * does that and is what every production caller uses.
    */
   paymentId: string | null;
   /**
@@ -568,6 +291,12 @@ export async function raiseEditFinancialReviewTask({
   await store.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
   const slot = await findFreeOccurrenceSlot(store, baseOccurrenceKey);
+  if (slot.kind === "exhausted") {
+    throw new EditFinancialReviewError(
+      `This booking edit's financial review has already been raised and settled ${MAX_OCCURRENCE_RECURRENCES} times for the identical change; it will not be raised again automatically.`,
+      500,
+    );
+  }
   if (slot.kind === "open") {
     return {
       taskId: slot.task.id,
@@ -661,31 +390,24 @@ export async function raiseEditFinancialReviewTask({
 /**
  * #3166: THE PARKED EDIT'S WHOLE RAISE, in one place, for all four doors.
  *
- * Every parked path used to write this block out by hand: the same
- * `settledPaymentId` computation, the same `memberIdByGuestId` map, the same
- * loop over the edit's occurrences with the same five constant arguments. Four
- * copies of ONE fact — *which captured payment a parked edit's review settles
- * against, and which member owns the strand it names*. The drift had already
- * started before this function existed: two copies explained that
- * `chooseEditReviewSettlementRoute` is what reads the payment id, and two did
- * not, so a reader landing on the wrong copy could not see why the value
- * matters. `INV-SSOT`.
+ * Every parked path used to write this block out by hand: the same settlement
+ * payment id, the same `memberIdByGuestId` map, the same loop with the same
+ * constant arguments. Four copies of ONE fact — which captured payment a parked
+ * edit's review settles against, and which member owns the strand it names — and
+ * the drift had already started: two copies said why the payment id matters and
+ * two did not (`INV-SSOT`).
  *
- * ## What the payment id decides, which is why it is not incidental
- *
- * `chooseEditReviewSettlementRoute` reads it at COMPLETION to decide whether a
- * confirmed amount goes back to the card, is mirrored as a hand-settled
- * allocation, or becomes account credit. Getting it wrong does not fail — it
- * routes real money down the wrong path, weeks later, in front of an admin who
- * has no way to tell. It is derived here through
+ * That value is not incidental. `chooseEditReviewSettlementRoute` reads it at
+ * COMPLETION to decide whether a confirmed amount goes back to the card, is
+ * mirrored as a hand-settled allocation, or becomes account credit — so getting
+ * it wrong does not fail, it routes real money down the wrong path weeks later
+ * in front of an admin with no way to tell. It is derived through
  * `editReviewSettlementPaymentId`, the one home for that rule.
  *
- * ## `raisedAmountCents` IS NULL AND CANNOT BE ANYTHING ELSE
- *
- * Not exposed as an argument at all, so no caller can pass a number. A parked
- * edit's amount is unknown, which is the whole point of the epic; zero is a real
- * financial decision and a computed figure is the guess the review exists to
- * avoid. Unrepresentable beats policed.
+ * `raisedAmountCents` is not an argument at all, so no caller can pass a number:
+ * a parked edit's amount is unknown, zero is a real financial decision, and a
+ * computed figure is the guess the review exists to avoid. Unrepresentable beats
+ * policed.
  *
  * Call it inside the caller's transaction, after the locks and after the
  * `BookingModification` row exists — the returned task ids are in occurrence

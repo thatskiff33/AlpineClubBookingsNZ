@@ -35,7 +35,6 @@ export {
   GUEST_MEMBER_LINK_PLACEHOLDER_ONLY_MESSAGE,
   GUEST_MEMBER_LINK_WHOLE_LODGE_ONLY_MESSAGE,
   loadActiveSeasonRates,
-  parkedPriceBreakdown,
   lockedNightPricesForGuest,
   PAID_NAME_TYPO_ONLY_MESSAGE,
   prepareGuestPlan,

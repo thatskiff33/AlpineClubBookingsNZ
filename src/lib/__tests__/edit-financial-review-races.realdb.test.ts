@@ -152,7 +152,7 @@ describe("edit financial review race DB safety guard (#3032)", () => {
 
 let prisma: (typeof import("@/lib/prisma"))["prisma"];
 let raiseEditFinancialReviewTask: (typeof import("@/lib/edit-financial-review"))["raiseEditFinancialReviewTask"];
-let editFinancialReviewOccurrenceKey: (typeof import("@/lib/edit-financial-review"))["editFinancialReviewOccurrenceKey"];
+let editFinancialReviewOccurrenceKey: (typeof import("@/lib/edit-financial-review-occurrence"))["editFinancialReviewOccurrenceKey"];
 let resolveManualRefundTask: (typeof import("@/lib/manual-refund-task-resolution"))["resolveManualRefundTask"];
 
 /**
@@ -305,8 +305,12 @@ let observerClient: PrismaClient;
       assertSafeEditReviewRaceDbUrl(RACE_DB_URL);
       process.env.DATABASE_URL = RACE_DB_URL;
       ({ prisma } = await import("@/lib/prisma"));
-      ({ raiseEditFinancialReviewTask, editFinancialReviewOccurrenceKey } =
-        await import("@/lib/edit-financial-review"));
+      ({ raiseEditFinancialReviewTask } = await import(
+        "@/lib/edit-financial-review"
+      ));
+      ({ editFinancialReviewOccurrenceKey } = await import(
+        "@/lib/edit-financial-review-occurrence"
+      ));
       ({ resolveManualRefundTask } = await import(
         "@/lib/manual-refund-task-resolution"
       ));

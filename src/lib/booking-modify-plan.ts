@@ -108,11 +108,13 @@ import {
   type FinancialReviewRequired,
 } from "@/lib/edit-financial-review-context";
 import {
-  classifyNightPriceToWrite,
   preCheckInEditEvidence,
   preCheckInEditStrands,
-  preservedNightPrices,
 } from "@/lib/stored-sold-price-evidence";
+import {
+  classifyNightPriceToWrite,
+  preservedNightPrices,
+} from "@/lib/stored-night-price-write";
 import {
   isOperationallyPresentConsent,
   type MemberGuestAddActor,
@@ -2366,7 +2368,7 @@ export async function calculateModificationChangeFee({
  * night dates through the same normaliser (#3107) rather than one of them
  * storing its nights a day early.
  */
-export function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
+function parkedPriceBreakdown(plan: ParkedEditStructuralPlan): {
   guests: Array<{
     priceCents: number;
     perNightCents: (number | null)[];

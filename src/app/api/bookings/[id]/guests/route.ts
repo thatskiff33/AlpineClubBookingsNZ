@@ -50,7 +50,7 @@ import { sendBookingModifiedEmail } from "@/lib/email";
 import { bookingHasOpenFinancialReview } from "@/lib/booking-financial-review-visibility";
 import {
   preCheckInEditEvidence,
-  type PreCheckInEditStrand,
+  preCheckInEditStrands,
 } from "@/lib/stored-sold-price-evidence";
 import {
   assertNoPendingEditFinancialReview,
@@ -647,19 +647,17 @@ export async function POST(
       const addEvidence = preCheckInEditEvidence({
         bookingId,
         booking: { checkIn: booking.checkIn, checkOut: booking.checkOut },
-        strands: booking.guests.map(
-          (guest, index): PreCheckInEditStrand => ({
+        // THE SAME ASSEMBLY the modify save, preview and date change use
+        // (`INV-SSOT`). This route changes nobody's nights and removes nobody,
+        // so each strand ends the edit holding exactly the nights the
+        // full-party pass just priced it over.
+        strands: preCheckInEditStrands({
+          bookingGuests: booking.guests,
+          guestsForPricing: booking.guests.map((guest) => ({
             bookingGuestId: guest.id,
-            guestTotalCents: guest.priceCents,
-            stayStart: guest.stayStart,
-            stayEnd: guest.stayEnd,
-            nights: guest.nights,
-            // This route changes nobody's nights, so the strand ends the edit
-            // holding exactly the nights the pass just priced it over.
-            proposedNightDates:
-              fullPriceBreakdown.guests[index]?.nightDates ?? [],
-          }),
-        ),
+          })),
+          pricedGuests: fullPriceBreakdown.guests,
+        }),
       });
       /**
        * True when an existing strand's own history cannot account for the

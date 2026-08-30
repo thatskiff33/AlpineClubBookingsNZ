@@ -49,7 +49,7 @@ import {
 } from "@/lib/subscription-lockout-enforcement";
 import { formatMissingPaidUpAdultWaitlistRefusal } from "@/lib/policies/subscription-lockout-pricing";
 import { formatAdultMemberHostingWaitlistRefusal } from "@/lib/policies/adult-member-hosting";
-import { carriesUnvaluedStoredNight } from "@/lib/stored-sold-price-evidence";
+import { carriesUnvaluedStoredNight } from "@/lib/stored-night-price-write";
 
 export const WAITLIST_OFFER_HOURS =
   Number(process.env.WAITLIST_OFFER_HOURS) || 48;
