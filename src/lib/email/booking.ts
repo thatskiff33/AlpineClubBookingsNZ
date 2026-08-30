@@ -48,6 +48,7 @@ import {
 } from "../email-message-notes";
 import { CLUB_NAME } from "@/config/club-identity";
 import { EMAIL_DEFAULT_LODGE_NAME } from "@/lib/email-message-settings";
+import { FINANCIAL_REVIEW_EMAIL_NOTE } from "@/lib/booking-financial-review-copy";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { loadEmailMessageSettingsForLodge } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
@@ -1294,6 +1295,15 @@ export async function sendBookingModifiedEmail(params: {
   // admin-editable body, the edit preview and the booking's own history all
   // carry the identical wording.
   promoCoverageNote?: string | null;
+  /**
+   * #3033 (epic #2797): this change saved and its refund or credit could not be
+   * worked out from stored history, so the club is deciding it.
+   *
+   * Optional and defaulting to false, so no existing caller changes behaviour.
+   * The raise path (#3032) is what sets it, at the one place that knows the edit
+   * was applied with its money unresolved.
+   */
+  financialReviewPending?: boolean;
   // Booking's lodge (multi-lodge phase 8): see sendBookingConfirmedEmail.
   lodgeId?: string | null;
 }) {
@@ -1312,7 +1322,32 @@ export async function sendBookingModifiedEmail(params: {
   const paymentReferenceContext = params.paymentReference
     ? ` Payment reference: ${params.paymentReference}.`
     : "";
-  const paymentNote =
+  /*
+    #3033: TWO NOTES, COMPOSED. Kept in step with `bookingModifiedTemplate`,
+    which composes the same two for the same member out of the same shared
+    clauses — a change made to one and not the other means the HTML email and
+    the admin-editable body disagree about money.
+
+    Before this, an unresolved adjustment fell through all three settlement
+    tests (each of which requires a positive amount, which it has none of by
+    construction) and {{paymentNote}} rendered EMPTY — a "Booking Modified"
+    email with a silent money section, on precisely the change where the member
+    most needs to hear that a figure is coming.
+
+    The review note does not REPLACE a settlement note, because both can be
+    true: the same edit can surrender nights that cannot be valued while adding
+    nights that price normally, and suppressing the payment instruction would
+    tell a member to do nothing while money went uncollected. The three
+    settlement notes stay mutually exclusive among themselves, exactly as
+    before.
+
+    No amount is named in the review half, because there is not one to name. Not
+    zero, not the booking's new total, not an estimate.
+  */
+  const reviewNote = params.financialReviewPending
+    ? FINANCIAL_REVIEW_EMAIL_NOTE
+    : "";
+  const settlementNote =
     params.refundAmountCents > 0
       ? `A refund of ${formatMoneyCents(params.refundAmountCents)} has been processed to your original payment method.`
       : accountCreditAmountCents > 0
@@ -1322,6 +1357,7 @@ export async function sendBookingModifiedEmail(params: {
             ? `An additional Internet Banking payment of ${formatMoneyCents(params.additionalAmountCents)} is required.${xeroInvoicePaymentContext}${paymentReferenceContext} Xero reconciliation confirms the payment before it is treated as paid.`
             : `An additional payment of ${formatMoneyCents(params.additionalAmountCents)} is required.`
           : "";
+  const paymentNote = [reviewNote, settlementNote].filter(Boolean).join(" ");
 
   await sendEmail({
     to: params.email,

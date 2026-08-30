@@ -88,6 +88,20 @@ interface BuildBookingHistoryOptions {
    * Defaults to none.
    */
   duplicateCaptureRefunds?: BookingHistoryDuplicateCaptureRefund[];
+  /**
+   * #3033 (epic #2797): this booking has an OPEN financial review — a change
+   * saved while the refund or credit for it could not be worked out from stored
+   * history.
+   *
+   * Arrives as data, like every other option here; the page reads it once with
+   * `bookingHasOpenFinancialReview` and hands the same answer to this builder
+   * and to the narrative resolver, so the timeline and the banner above it
+   * cannot disagree on one page load.
+   *
+   * Defaults to false, so a caller that has not asked renders the timeline it
+   * always has rather than making a claim about money it has not checked.
+   */
+  financialReviewPending?: boolean;
 }
 
 const MODIFICATION_LABELS: Record<string, string> = {
@@ -200,7 +214,36 @@ export function buildBookingHistoryItems({
   refundRequests,
   auditLogs,
   duplicateCaptureRefunds = [],
+  financialReviewPending = false,
 }: BuildBookingHistoryOptions): BookingHistoryItem[] {
+  /*
+    #3033: WHICH row the open review belongs to.
+
+    The most recent modification that moved the price. A review is raised BY a
+    priced edit, and the epic fences a second money-affecting edit while
+    unresolved money would be its baseline, so no later priced modification can
+    exist above the one holding the review. Modifications that changed no price
+    (a credit-election edit, for instance) carry no amount and are not
+    candidates — there is no figure on them to qualify.
+
+    Chosen by `createdAt` rather than by the caller's array order, so a query
+    that returns oldest-first cannot silently qualify the wrong row.
+
+    Deliberately NOT applied to every modification on the booking: an edit from
+    six months ago settled normally, and telling an admin or a member that ITS
+    amount is still being worked out would be false.
+  */
+  const reviewedModificationId = financialReviewPending
+    ? (modifications
+        .filter((modification) => modification.priceDiffCents !== 0)
+        .reduce<BookingHistoryModification | null>(
+          (latest, modification) =>
+            latest === null || modification.createdAt > latest.createdAt
+              ? modification
+              : latest,
+          null,
+        )?.id ?? null)
+    : null;
   const items: BookingHistoryItem[] = [
     {
       id: "booking-created",
@@ -412,6 +455,26 @@ export function buildBookingHistoryItems({
       detailParts.push(promoCoverageNote);
     }
 
+    /*
+      #3033: the figure stays and stops speaking for itself.
+
+      `priceDiffCents` is real — it is how much the booking's own total moved,
+      and the structural edit did move it. What is NOT established is the refund
+      or credit that follows from it, and the green "success" tone said exactly
+      that: a member reading "-$120.00" in the same colour as a completed refund,
+      under a banner saying no figure is known, reads it as money returned.
+
+      So the tone drops to neutral and the row says what is outstanding. The
+      amount is not hidden and not corrected — hiding it would leave no figure
+      at all, and correcting it is the estimation this epic exists to forbid.
+    */
+    const awaitingReview = modification.id === reviewedModificationId;
+    if (awaitingReview) {
+      detailParts.push(
+        "The refund or credit for this change is still being worked out by the club; the figure beside it is how much the booking's own total changed, not an amount that has been paid back or charged.",
+      );
+    }
+
     items.push({
       id: `modification-${modification.id}`,
       occurredAt: modification.createdAt,
@@ -424,8 +487,9 @@ export function buildBookingHistoryItems({
         modification.priceDiffCents !== 0
           ? formatSignedCents(modification.priceDiffCents)
           : null,
-      tone:
-        modification.priceDiffCents > 0
+      tone: awaitingReview
+        ? "default"
+        : modification.priceDiffCents > 0
           ? "warning"
           : modification.priceDiffCents < 0
             ? "success"

@@ -179,7 +179,7 @@ no Xero invoice.
 
 When a booking that was paid in cash is cancelled, there is no card charge to
 reverse, so the system raises a task instead of pretending money moved. It
-appears at the top of this page as **Refunds to pay back by hand**, and the
+appears at the top of this page in the **Money to settle by hand** card, and the
 member is told the club will arrange their refund.
 
 1. Pay the member back however the club normally does.
@@ -188,6 +188,63 @@ member is told the club will arrange their refund.
    and on the booking's history.
 3. If the member declined the refund, or it was settled another way, click
    **Dismiss** and say which. A note is required.
+
+The card holds two kinds of row and says which is which. The paragraph about
+cash and bank transfers only appears when there is a cash hand-back waiting; the
+one below only appears when there is a booking change to price. Neither speaks
+for the other.
+
+### Decide a booking change the system would not price
+
+Sometimes a member changes a booking — gives back a night, takes a guest off —
+and the change itself is fine, but the club's records do not say clearly enough
+what those nights were sold for. Rather than work out a plausible-looking number
+that was never actually charged, the system **saves the booking change and holds
+the money for you to decide**. No refund is made, no account credit is created,
+nothing is sent to Xero, and no amount is assumed. This is the club's settled
+rule: exact stored evidence, or a person decides.
+
+The member is told their change saved and that the club is working the amount
+out. They are not shown a figure, and they are not told anything about why.
+
+The row appears in the same card, with **Awaiting pricing** where an amount would
+normally be, and carries the evidence recorded at the moment the change was made:
+
+- **why the amount could not be worked out** — in plain words, about the records
+  and never about the member;
+- **which nights were given back**, and any the same change added;
+- **the stored total for that guest**, and whatever per-night prices were on
+  file. "No stored price" and "$0.00" mean different things and are shown
+  differently: a $0.00 night was genuinely charged nothing, while "no stored
+  price" is the gap that raised the task in the first place;
+- **the booked stay**, so you can see which season's rates applied at the time;
+- **a link to the booking's own payment and rate history**, which is the live
+  record. That link appears if your admin role lets you open a booking, or if the
+  booking is your own; if neither, the booking identifier is printed instead, so
+  you can quote it to somebody who can open it.
+
+Work the amount out from that evidence and the booking's payment history, then:
+
+- if something is owed, record the confirmed adjustment. **Record the adjustment**
+  stays disabled until an amount has been confirmed, because closing one of these
+  with no figure is refused;
+- if, on the evidence, nothing is owed, click **No adjustment**. That closes the
+  review as *looked at, nothing due* — it moves no money and records none as
+  having moved. A note is required, and it should say what the evidence showed.
+
+Every amount, note and status change is written to the booking's audit log.
+
+A booking with a review waiting also shows a **Money waiting for review** warning
+on its own page, under **Admin tools**, with a link back to this page.
+
+**What an open review does and does not block.** A review raised against a
+captured payment blocks that payment's manual settlement from being reversed —
+the block is scoped to the payment the task names. A review with no payment
+behind it, which is the ordinary shape when the adjustment would be an account
+credit, blocks nothing: there is no settlement for it to sit in front of. So do
+not treat an open review as a guarantee that the booking's money is frozen.
+Check the booking's own payment history before reversing anything on a booking
+that has a review waiting.
 
 ### A refund that happened without you — "Refunded automatically"
 
@@ -294,6 +351,7 @@ Payments is a read-only ledger (aside from Generate Invoice). Its controls:
 | Generate Invoice | Create a Xero invoice for a succeeded payment | — | Needs finance **edit**; only for succeeded, non-Internet-Banking payments with no invoice. Never offered for a manually recorded cash payment — no invoice is expected for one |
 | Record / Reverse manual payment | Record a cash or off-Xero bank-transfer settlement on a booking, or undo one | — | On the booking page, not here. Needs finance **edit**. Never contacts Xero |
 | Mark paid back / Dismiss | Close a hand-back task for a cancelled cash booking | — | Needs finance **edit**. "Mark paid back" writes the refund into the ledger; "Dismiss" needs a note |
+| Record the adjustment / No adjustment | Close a booking change the system would not price | — | Needs finance **edit**. "Record the adjustment" is disabled until an amount has been confirmed; "No adjustment" closes the review as looked-at with nothing due, moves no money, and needs a note |
 | Refunded automatically — nothing to pay back | Read-only record of a payment Stripe returned by itself, because the booking had already been cancelled — the booking's own payment or one for a change to it | last 30 days | No controls at all: the money has already gone back. Every such refund of the last 30 days is listed, grouped into bookings that were deleted (worth a look) and bookings still on file (normally nothing to do); the audit log holds anything older. A capture you had already paid back by hand is not refunded again and is not listed here — you are emailed instead |
 
 Page size is fixed at 25. **Total Revenue** and **Refunded / Credited** reflect
@@ -310,7 +368,10 @@ the whole filtered set; **Success Rate** is computed from the visible page.
 | Amounts look off by 100× | Amounts are stored as cents and shown as dollars | Enter amount filters in dollars (for example `90.00`) |
 | **Record manual payment** says there is a Xero invoice | The booking already has an invoice in Xero, or one is queued | Record the payment against that invoice in Xero instead — recording it here would leave the two systems permanently disagreeing |
 | An admin alert says a cash settlement and a Xero payment disagree | The member (or their employer) later paid the Xero invoice for a booking already recorded as paid in cash | Check whether the two are genuinely separate money. Reverse the manual record, or refund the duplicate — the system deliberately changed nothing |
-| **Reverse manual payment** is not offered | A refund, a card payment, an open hand-back task or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
+| **Reverse manual payment** is not offered | A refund, a card payment, an open task against **that payment**, or a Xero invoice has appeared since | Cancel the booking instead; a reversal can no longer be undone cleanly |
+| A row says **Awaiting pricing** instead of an amount | It is a booking change the system would not price. The amount is genuinely unknown, not zero | Work it out from the evidence on the row and the booking's payment history, then record it — or click **No adjustment** if nothing is owed |
+| A review row says its recorded evidence **cannot be read** | The evidence was written by a different version of the site | Decide the amount from the booking's own payment and rate history instead, and tell your club administrator — that evidence is the only record of what the change removed |
+| The evidence shows a booking identifier instead of a link | Your admin role covers finance but not bookings, and the booking is not your own | Quote the identifier to an admin who can open bookings, or ask for bookings view access |
 
 ## Related links
 

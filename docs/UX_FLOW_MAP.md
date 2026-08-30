@@ -412,9 +412,10 @@ surfaces is INV-MOD-026.
 ## Automatically refunded late captures (#2750, #2760, both handlers since #2773)
 
 A finance-view admin opens `/admin/payments`. Above the filters, up to two refund
-cards can appear, and they make opposite claims. **"Refunds to pay back by hand"**
-(#2262) is work: cash-settled cancellations the club still owes, each with **Mark
-paid back** and **Dismiss**. **"Refunded automatically — nothing to pay back"**
+cards can appear, and they make opposite claims. **"Money to settle by hand"**
+(#2262, renamed by #3033 when it stopped holding only refunds) is work, each row
+with a **Mark paid back** / **Record the adjustment** control and a **Dismiss** /
+**No adjustment** one. **"Refunded automatically — nothing to pay back"**
 (#2750) is a record: a payment that landed after the booking had already been
 cancelled — the booking's OWN payment or one for a change to it, both since #2773 —
 which Stripe returned to the member automatically. It shows
@@ -432,13 +433,24 @@ means: remake the booking and charge the member again if the deletion was the
 mistake, versus normally nothing to do. Each group is newest-first and only
 non-empty groups render.
 
-It carries **no View booking link**, and the hand-back card above it does. That is
-deliberate: a deleted booking's detail page 404s for anybody who is not a Full
-Admin, and a booking that is merely cancelled has a page gated on `bookings:view` —
-which the Finance Viewer bundle does not carry at all — while this screen admits
-`finance:view`, so a Finance Viewer or Treasurer would follow the link into a dead
-end either way. The identifiers are printed instead of any page's audience being
-widened.
+It carries **no View booking link** at all. That is deliberate: a deleted
+booking's detail page 404s for anybody who is not a Full Admin, and a booking that
+is merely cancelled has a page gated on `bookings:view` — which the Finance Viewer
+bundle does not carry at all — while this screen admits `finance:view`, so a
+Finance Viewer or Treasurer would follow the link into a dead end either way. The
+identifiers are printed instead of any page's audience being widened.
+
+**#3033 applied the same reasoning to the card above**, which until then offered
+its link to everyone this screen admits, including the Finance Viewer for whom it
+was the dead end this paragraph describes. The route now states
+`viewerCanViewBookings` from the DB-verified permission matrix and the card fails
+closed without it; a viewer who holds `bookings:view` gets the link, and everyone
+else gets the booking identifier as plain text, exactly as here. One further
+grant is read per row: an admin who OWNS the booking reaches the same page as its
+member, so a finance-only admin whose own booking is in the queue gets the link
+too — excluding a deleted booking, whose page 404s for a non-admin even when they
+own it. Both grants default to false, so a response that establishes neither
+offers no link.
 
 The second card has **no controls at all**, deliberately: there is no decision
 left, and "Mark paid back" on such a row would record a second refund for one
@@ -497,6 +509,129 @@ record is replaced by that same kind of line. See `INV-ADDPAY-036`,
 `INV-ADDPAY-037` and `INV-ADDPAY-038`, and the "Manual refund task lifecycle" entry
 in
 [`STATE_MACHINES.md`](STATE_MACHINES.md).
+
+## A booking change whose money is still being worked out (#3033, epic #2797)
+
+When an edit to an existing booking is valid but its refund or credit cannot be
+established from the booking's own stored price history, the club **saves the stay
+change and holds the money** (owner decision D1). This section is what both sides
+of that state look like. The rule the wording is written against is the epic's:
+never show a fake `$0`, an estimate, or anything implying settlement is complete.
+
+### What the member sees
+
+**On the booking's own page**, an info banner — not a warning — headed *"Your
+booking change is saved"*. It confirms the change first, names the new stay dates,
+says the club is checking what the change means for the amount, and says plainly
+that nothing has been refunded or charged for it yet. Its next step is that there
+is nothing for them to do. **No amount appears anywhere in it**: not a zero, not
+an estimate, and deliberately not the booking's own post-edit total, which the
+structural edit has already updated and which would read as authoritative beside a
+sentence saying the figure is unknown. Nothing internal appears either — no cause,
+no diagnostic category, and no clause that could read as the member's fault.
+
+Between the banner's facts and its next step sits the club's own explanation,
+which is editable at **Admin → Bookings setup → Booking messages** under
+*"Adjustment being reviewed"*. The split is deliberate and is enforced by the
+wording on each side rather than merely asserted: the narrative owns the FACTS —
+the change saved, the club will confirm the amount, nothing has moved, there is
+nothing to do about it — which are the same for every club, are shared with the
+public payment-link page and with the change-confirmation email, and live once in
+`booking-financial-review-copy.ts`. The message key owns only the club's
+EXPLANATION of why a person is working the amount out, which is the part the
+owner named as needing to be honest without being alarming and therefore the part
+a club must be able to soften without a release. It restates none of the facts —
+an earlier draft repeated two of them, which meant a club softening the key could
+not change the narrative's copy, which was the whole justification for having the
+key. An amount must never be put in it.
+
+**On My Bookings**, the row keeps the post-edit total and qualifies it — *"· being
+checked"* beside the figure, and an info chip reading *"Adjustment being checked"*
+beside (never instead of) the booking status. Hiding the figure would leave the
+member with no number at all, and correcting it is the estimation this epic
+forbids; the booking status is unchanged and still true, so the chip sits next to
+it rather than overwriting it.
+
+**By email**, the ordinary *Booking Modified* message carries the same sentences in
+its money section. Before #3033 that section rendered **empty** for this case — all
+three of its branches test for a positive amount and an unresolved adjustment has
+none — so the member received a change confirmation that said nothing at all about
+money.
+
+The review note is **composed with** the settlement note, not substituted for it.
+A single edit can add nights that price normally while surrendering nights that
+cannot be valued, so a review-pending change can carry a genuine additional
+amount. An exclusive choice loses one of two true things whichever way it is
+ordered: the payment instruction shadows the honest sentence, or the honest
+sentence suppresses an instruction to pay — and with it the amount, the Xero
+invoice number and the payment reference — leaving a member who does not pay,
+whose hold expires and whose booking cancels. The three settlement notes remain
+mutually exclusive among themselves.
+
+"There is nothing you need to do" is written **"about that change"** everywhere it
+appears, for the same reason: it sits beside instructions that do require action,
+and an unscoped version cancels them.
+
+The banner does **not** displace a cancellation, a release or a decline. Those
+describe what happened to the booking, which is the more important truth, and the
+review wording assumes a stay that is still going ahead. It does displace the paid
+narrative, whose "nothing more to do" is exactly the false reassurance this issue
+exists to remove.
+
+It does **not** displace a payable one either — it is added to it. `PAYABLE_STATUSES`
+covers CONFIRMED, and a CONFIRMED-unpaid booking renders the member's **Complete
+Payment** card, so returning the review narrative outright put *"there is nothing
+you need to do"* directly beside a card asking for money. A payable booking with a
+review keeps its amount due and its instruction to pay, and gains the review's
+sentences plus the fact that joins them: the unpriced adjustment is not part of
+the figure being asked for. Gating the review branch to PAID would have resolved
+the contradiction by deleting the disclosure.
+
+**In the booking's own Transaction History**, the modification row for the change
+keeps its figure and loses its colour. The signed price difference is real — it is
+how far the booking's total moved — but it was rendered in the same green a
+completed refund gets, which under this banner reads as money already returned.
+The tone drops to neutral and the row says the refund or credit is still being
+worked out. Only the most recent **priced** modification is qualified: a review is
+raised by a priced edit and no later one can sit above it, so saying an edit from
+months ago is unresolved would be false.
+
+### What the admin sees
+
+**On `/admin/payments`**, the settlement queue holds review rows beside cash
+hand-backs, and each of its two explanatory sentences renders only when a row it
+describes is present — before #3033 the cash sentence was printed over every row,
+including reviews, where every clause of it is false. An unpriced review shows
+*"Awaiting pricing"* rather than `$0.00` (#2971), and a row whose amount has been
+amended since it was raised says so on its face.
+
+Each review row carries the evidence captured when the edit was applied, which is
+owner decision D3's *reason plus a link*, never a copy of the ledger: the safe
+diagnostic category as a sentence (never its enum name), the nights given back and
+the nights the same change added, the stored total for that guest, and the stored
+per-night prices — with *"no stored price"* kept distinct from `$0.00`, because a
+comped night and an absence are different evidence. Beside it is the link to the
+booking's own payment and rate history, which is live and is where the payment
+detail belongs. A row whose captured evidence this release cannot read **says so**
+rather than rendering an absence, because that evidence is the only record of what
+the edit destroyed.
+
+The identifiers behind that evidence — the guest's member id and the guest-strand
+id — never leave the server. The route parses the stored context and sends a
+projection that has no field for either, so the redaction cannot be forgotten at a
+send site rather than being remembered at each one.
+
+**Dismissing** a review reads as a finding — *"Close with no adjustment"*, meaning
+somebody looked and nothing is owed — not as the hand-back card's *"declined the
+refund, or settled another way"*. **Recording an adjustment** on a review with no
+confirmed amount is disabled with the reason shown, because the server refuses such
+a completion and a control whose only outcome is a refusal is worse than none.
+
+**On the booking's own page**, an admin also sees a *"Money waiting for review"*
+row on the Admin tools card, with a link to the settlement queue. It is read-only
+and reuses the provider-mismatch row shape, but sits in its own block: the
+provider block is headed "Provider state out of step", and a review is the opposite
+situation — local state is exactly right and the club owes a decision.
 
 ## Whole-roster staged editing (#2586)
 

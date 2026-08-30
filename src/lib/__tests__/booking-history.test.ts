@@ -413,3 +413,135 @@ describe("buildBookingHistoryItems — a manually settled extra (#2397)", () => 
     ]);
   });
 });
+
+/**
+ * #3033 (epic #2797) — the timeline's own money figure, beside a banner saying
+ * no figure is known.
+ *
+ * `priceDiffCents` is real: it is how far the booking's own total moved, and the
+ * structural edit did move it. What is not established is the refund or credit
+ * that follows from it. The row printed that number in the SUCCESS tone, which
+ * is the same green a completed refund gets — so a member reading "-$120.00"
+ * under "the club is working the amount out" read it as money returned.
+ *
+ * MUTATION PROOF. Restore the unconditional success/warning tone and "does not
+ * colour an unresolved adjustment as money returned" fails. Drop the qualifying
+ * sentence and "says on the row that the adjustment is outstanding" fails. Widen
+ * the qualifier from the latest priced modification to every modification, or
+ * pick the head of the caller's array instead of the latest row by `createdAt`,
+ * and "leaves an older, settled change alone" fails — the fixture is ordered so
+ * those two answers differ. Drop the priced-only filter and "passes over a
+ * change that moved no money" fails, for the same reason. Hide or rewrite the
+ * figure and "keeps the real figure rather than hiding or correcting it" fails.
+ */
+describe("a modification whose adjustment is still with the club (#3033)", () => {
+  function modification(
+    id: string,
+    priceDiffCents: number,
+    createdAt: string,
+  ) {
+    return {
+      id,
+      modificationType: "GUEST_REMOVE",
+      previousData: { guestCount: 3 },
+      newData: { guestCount: 2 },
+      priceDiffCents,
+      changeFeeCents: 0,
+      createdAt: new Date(createdAt),
+    };
+  }
+
+  function build(financialReviewPending: boolean) {
+    return buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        // Deliberately oldest-FIRST, so array order and `createdAt` disagree: a
+        // builder that took the head of the list instead of the latest row
+        // would qualify the settled change from two months earlier.
+        modification("mod-old", -4500, "2026-04-02T10:00:00Z"),
+        modification("mod-new", -12000, "2026-06-01T10:00:00Z"),
+      ],
+      refundRequests: [],
+      auditLogs: [],
+      financialReviewPending,
+    });
+  }
+
+  const rowFor = (id: string, pending: boolean) =>
+    build(pending).find((item) => item.id === `modification-${id}`);
+
+  it("does not colour an unresolved adjustment as money returned", () => {
+    expect(rowFor("mod-new", false)?.tone).toBe("success");
+    expect(rowFor("mod-new", true)?.tone).toBe("default");
+  });
+
+  it("says on the row that the adjustment is outstanding", () => {
+    expect(rowFor("mod-new", true)?.detail).toMatch(
+      /still being worked out by the club/i,
+    );
+    expect(rowFor("mod-new", false)?.detail).not.toMatch(
+      /still being worked out/i,
+    );
+  });
+
+  it("keeps the real figure rather than hiding or correcting it", () => {
+    // Hiding it would leave the member with no number at all; correcting it is
+    // the estimation this epic exists to forbid.
+    expect(rowFor("mod-new", true)?.amountDisplay).toBe("-$120.00");
+  });
+
+  it("leaves an older, settled change alone", () => {
+    // A review is raised BY a priced edit and no later priced edit can exist
+    // above it, so only the most recent priced modification is a candidate.
+    // Saying an edit from months ago is unresolved would be false.
+    expect(rowFor("mod-old", true)?.tone).toBe("success");
+    expect(rowFor("mod-old", true)?.detail).not.toMatch(
+      /still being worked out/i,
+    );
+  });
+
+  it("qualifies nothing when the caller has not asked", () => {
+    // Defaulted false: a caller that has not checked makes no claim about this
+    // member's money.
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [modification("mod-new", -12000, "2026-06-01T10:00:00Z")],
+      refundRequests: [],
+      auditLogs: [],
+    });
+
+    expect(items.find((item) => item.id === "modification-mod-new")?.tone).toBe(
+      "success",
+    );
+  });
+
+  it("passes over a change that moved no money, which carries no figure", () => {
+    // A credit-election edit has no amount on its row, so there is nothing on it
+    // to qualify — and qualifying it would point at the wrong change.
+    const items = buildBookingHistoryItems({
+      createdAt: new Date("2026-04-01T09:00:00Z"),
+      payment: null,
+      modifications: [
+        // The unpriced edit is the LATEST of the two, so a builder that took the
+        // most recent modification without checking it moved money would point
+        // the qualifier at a row that carries no figure to qualify.
+        modification("mod-priced", -12000, "2026-06-01T10:00:00Z"),
+        {
+          ...modification("mod-free", 0, "2026-06-02T10:00:00Z"),
+          modificationType: "CREDIT_ELECTION",
+        },
+      ],
+      refundRequests: [],
+      auditLogs: [],
+      financialReviewPending: true,
+    });
+
+    const free = items.find((item) => item.id === "modification-mod-free");
+    const priced = items.find((item) => item.id === "modification-mod-priced");
+
+    expect(free?.detail).not.toMatch(/still being worked out/i);
+    expect(priced?.detail).toMatch(/still being worked out/i);
+  });
+});
