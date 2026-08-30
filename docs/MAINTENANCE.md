@@ -795,7 +795,27 @@ review tasks instead. Two things follow for an operator:
 A repaired invoice is raised with the payment state the member is actually in:
 unpaid where the club is asking through internet banking, held until the card
 clears where a card request is outstanding, and paid where the card has already
-been captured. Do not assume a queued repair invoice records a payment.
+taken at least the full amount. Do not assume a queued repair invoice records a
+payment.
+
+**Two review-priced cases are reported and never repaired**, because raising the
+invoice would state something untrue about money. Both arrive as a
+`MISSING_SUPPLEMENTARY_INVOICE` finding at `manual_review` severity — the report
+lists them, `--apply` skips them — and each carries an `editReviewPaymentReason`
+saying which it is:
+
+- `capture-short-of-ask` — the card took LESS than the officer settled on,
+  usually because a second review share settled after the member had already
+  paid the first. The invoice would be raised for the combined total and marked
+  paid in full, overstating the Stripe clearing account by the difference and
+  leaving money the member still owes with nothing chasing it. The finding
+  reports both figures (`netAmountCents` and `capturedAmountCents`); collect or
+  write off the difference by hand and record what was done.
+- `intent-mint-awaiting-recovery` — the card request could not be created at
+  Stripe and its retry is still queued. Nothing is wrong yet and nothing needs
+  doing: the retry raises the request, and the invoice follows it. Re-run the
+  sweep later. If the same booking keeps reporting this, the retry itself has
+  stopped making progress — that is the thing to investigate.
 
 Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
