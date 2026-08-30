@@ -1,4 +1,4 @@
-# File-size allowance for the #2984 kiosk-provisioning follow-through
+# File-size allowance for #3178 (kiosk-provisioning follow-through, #3177)
 
 file: src/app/api/admin/lodge/route.ts
 lines: 488
