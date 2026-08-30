@@ -2265,6 +2265,37 @@ authoritative, a bare enum value falls back to the legacy hardcoded bundle
 (identical to the seeded definitions until the club edits them), and an
 unresolved row contributes nothing — the resolver fails closed, never wider.
 Roles merge by taking the maximum level per area when assigned together.
+
+**Standing to enter the admin portal is any ONE of the seven areas, and it is
+not authorization for any of them** (`hasAdminPortalAccess`, #2984). It used to
+exclude `finance`, so a finance-only role was not counted an administrator at
+all while `getFirstAccessibleAdminHref` sent that same role to `/admin/payments`
+— and `GET /api/admin/lodges`, which admits "any admitted admin", refused a
+shipped preset the lodge names it needs to label a payment. Entering the shell
+now buys nothing: `guardAdminLayout` still requires the **requested path's** own
+area, every `/api/admin` route still clears `requireAdmin` against its own area
+and level, and the sidebar and command palette still filter item by item through
+`canViewAdminHrefWithMatrix`. A finance-only administrator reaches the shell and
+Finance and nothing else. The callers that may legitimately ask this question are
+the nav bar's Admin link, the admin-notification recipient roster,
+`requireAdmin`'s explicit `permission: "any-admin"`, and ADR-002 §1's admission
+surface — and a caller reasoning "they cleared the shell, therefore they may see
+X" is a privilege escalation as written.
+`src/lib/__tests__/admin-route-authorization-proof.test.ts` proves the negative by
+attempting every discovered admin page and `/api/admin` route as that user,
+through the real guards.
+
+**"May this person open this admin path" has ONE implementation**
+(`canOpenAdminPath`, #2975): the route map's own area requirement, plus the two
+adjudicated special cases — the consolidated fee console, admitted on view of
+either `bookings` or `finance` (#1933), and the AI Diagnostics workspace,
+admitted on ADMISSION rather than on an area (ADR-002 §1, owner-ratified #2370).
+`guardAdminLayout` step 6 and `/api/help/chat`'s surface downgrade both call it.
+The composition had been written out four times before that, and the fee rule had
+two different spellings between the copies;
+`admin-layout-guard-adoption.test.ts` now forbids the symbol in any layout and
+asserts the function itself still performs each step.
+
 Finance-portal access derives from the merged `finance` area level (view ⇒
 finance viewer, edit ⇒ finance manager) via `hasFinanceViewerAccess` and
 `hasFinanceManagerAccess` in `src/lib/admin-permissions.ts` — Full Admin is

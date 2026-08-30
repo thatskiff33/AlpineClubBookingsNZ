@@ -1,10 +1,14 @@
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   getAdminRouteRequirement,
   type AdminPermissionArea,
 } from "@/lib/admin-permissions";
+import { ADMIN_ROUTE_AREA_ANCHOR_ENTRIES } from "@/lib/__tests__/helpers/admin-route-area-anchors";
+import {
+  adminApiRouteFiles,
+  toRawPathname,
+  toResolverPathname,
+} from "@/lib/__tests__/helpers/admin-route-enumeration";
 
 // ---------------------------------------------------------------------------
 // Admin route -> area matrix pin (issue #1548).
@@ -28,45 +32,20 @@ import {
 // widens or narrows access), then update EXPECTED_ROUTE_AREAS to match.
 // ---------------------------------------------------------------------------
 
-const API_ADMIN_ROOT = path.join(process.cwd(), "src/app/api/admin");
-
-function walkRouteFiles(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) return walkRouteFiles(entryPath);
-    return entry.name === "route.ts" ? [entryPath] : [];
-  });
-}
-
-// Directory segments -> URL path. Route groups "(...)" are stripped. Dynamic
-// segments keep their bracketed name in the *raw* path (the human-auditable
-// snapshot key) but are substituted with a concrete literal in the *resolver*
-// path so prefix/pattern (e.g. [^/]+) matching behaves like a real request.
-function segmentsFor(absFile: string): string[] {
-  const rel = path.relative(path.join(process.cwd(), "src/app"), absFile);
-  const parts = rel.split(path.sep);
-  parts.pop(); // drop the route.ts leaf
-  return parts.filter((seg) => !(seg.startsWith("(") && seg.endsWith(")")));
-}
-
-function rawPathFor(absFile: string): string {
-  return `/${segmentsFor(absFile).join("/")}`;
-}
-
-function resolverPathFor(absFile: string): string {
-  const segments = segmentsFor(absFile).map((seg) =>
-    /^\[.*\]$/.test(seg) ? "x123" : seg,
-  );
-  return `/${segments.join("/")}`;
-}
+/**
+ * The walk and both pathname builders are SHARED (#2975) — see
+ * `helpers/admin-route-enumeration.ts` for why three identical walks with two
+ * different dynamic-segment placeholders was a latent hazard rather than a
+ * harmless difference. The snapshot below is still this file's own statement;
+ * only the list of routes it is made about is shared.
+ */
 
 type DiscoveredRoute = { rawPath: string; resolverPath: string };
 
-const routes: DiscoveredRoute[] = walkRouteFiles(API_ADMIN_ROOT)
+const routes: DiscoveredRoute[] = adminApiRouteFiles
   .map((file) => ({
-    rawPath: rawPathFor(file),
-    resolverPath: resolverPathFor(file),
+    rawPath: toRawPathname(file),
+    resolverPath: toResolverPathname(file),
   }))
   .sort((a, b) => a.rawPath.localeCompare(b.rawPath));
 
@@ -115,14 +94,16 @@ const EXPECTED_ROUTE_AREAS: Record<string, AdminPermissionArea> = {
   // ai-assistant config routes above.
   //
   // The `ask` route (AID-7, #2378) inherits "support" from the same prefix, but
-  // the handler OVERRIDES the inference by owner decision Q6: it passes
-  // `requireAdmin({ permission: { area: "overview", level: "view" } })` — the
-  // level every admin access-role grid carries, i.e. "any admitted admin" — and
-  // every tool re-checks its own area at invocation. Its own route test pins
-  // that call shape. This row records what the RESOLVER would say, so that if
-  // someone removes the explicit override, the gate that silently springs into
-  // place (`support:view`, narrowing access against Q6) is at least the one
-  // adjudicated here.
+  // the handler OVERRIDES the inference by owner decision Q6 and ADR-002 §1: it
+  // passes `requireAdmin({ permission: "any-admin" })`, the guard's own "holds at
+  // least one of the seven areas" rule, and every tool re-checks its own area at
+  // invocation. It used to pass `{ area: "overview", level: "view" }` on the
+  // grounds that every admin grid carries `overview`; #2984 abolished that
+  // premise. Its own route test pins the call shape and
+  // `admin-route-authorization-proof.test.ts` pins the divergence from this row.
+  // This row records what the RESOLVER would say, so that if someone removes the
+  // explicit override, the gate that silently springs into place (`support:view`,
+  // narrowing access against Q6) is at least the one adjudicated here.
   "/api/admin/ai-diagnostics/ask": "support",
   "/api/admin/ai-diagnostics/readiness": "support",
   "/api/admin/ai-diagnostics/settings": "support",
@@ -525,6 +506,30 @@ describe("admin route -> area matrix pin (#1548)", () => {
     // custom role. Verify the changed route's area is intended, then update
     // EXPECTED_ROUTE_AREAS.
     expect(actualAreaByRoute).toEqual(EXPECTED_ROUTE_AREAS);
+  });
+
+  it("agrees with the reviewed anchors the authorization proof drives (#2975)", () => {
+    // The anchor table and this snapshot are the same reviewed fact stated twice:
+    // "this route belongs to this area". They are separate because they are used
+    // differently — the anchors are driven through the REAL guards, this snapshot
+    // is resolved through the map alone — but two statements of one fact can
+    // disagree, and a disagreement here would mean one of them was updated and
+    // the other was not. The table itself lives in
+    // `helpers/admin-route-area-anchors.ts`; this is the seam that keeps them one.
+    const apiAnchors = ADMIN_ROUTE_AREA_ANCHOR_ENTRIES.filter(({ pathname }) =>
+      pathname.startsWith("/api/admin"),
+    );
+    expect(apiAnchors.length).toBeGreaterThan(10);
+    const disagreements = apiAnchors.flatMap(({ area, pathname }) => {
+      const snapshot = EXPECTED_ROUTE_AREAS[pathname];
+      if (snapshot === undefined) {
+        return [`${pathname}: anchored to "${area}" but absent from the snapshot`];
+      }
+      return snapshot === area
+        ? []
+        : [`${pathname}: anchored to "${area}", snapshot says "${snapshot}"`];
+    });
+    expect(disagreements).toEqual([]);
   });
 });
 

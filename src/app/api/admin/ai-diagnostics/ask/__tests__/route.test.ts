@@ -151,21 +151,27 @@ beforeEach(() => {
 });
 
 describe("admission (#2378, Q6)", () => {
-  it("requires overview:view — the level every admitted admin holds, and nothing narrower", async () => {
+  it("admits any admitted administrator, and nothing narrower", async () => {
     await POST(request());
-    // Q6: any admitted admin may ask, and the shell must not become a support
-    // permission. `overview:view` is how the codebase spells "any admitted admin" —
-    // every admin access-role grid carries it, and it is `guardAdminLayout`'s own
-    // default for an admin path with no more specific rule.
+    // Q6 and ADR-002 §1: any admitted admin may ask, and the shell must not become
+    // a `support:view` permission. `"any-admin"` is the guard's own "holds at least
+    // one of the seven areas" rule, which is that predicate exactly.
     //
-    // The first cut asserted `{ permission: false }` here under a title claiming it
-    // admitted any admin. It did not: `permission: false` falls through to the
-    // Full-Admin check, so every scoped admin the layout had shown the tab to got a
-    // 403. This asserts the call shape because `requireAdmin` is mocked — the
-    // requirement's own semantics are `session-guards.ts`'s to test — but the shape
-    // it pins is now the one whose semantics match the title.
+    // TWO EARLIER SPELLINGS WERE PINNED HERE AND BOTH WERE WRONG. The first cut
+    // asserted `{ permission: false }` under a title claiming it admitted any
+    // admin; that falls through to the Full-Admin check, so every scoped admin the
+    // layout had shown the tab to got a 403. Its replacement,
+    // `{ area: "overview", level: "view" }`, rested on every admin grid carrying
+    // `overview` — a premise #2984 abolished when portal standing became any one
+    // of the seven areas, leaving the shipped Finance Viewer grid admitted to the
+    // portal, shown the tab, and refused here.
+    //
+    // This asserts the call SHAPE because `requireAdmin` is mocked; the option's
+    // own semantics belong to `session-guards.ts`, and that a finance-only grid
+    // really reaches this route through the unmocked guard is proved in
+    // `admin-route-authorization-proof.test.ts` (#2975).
     expect(mocks.requireAdmin).toHaveBeenCalledWith({
-      permission: { area: "overview", level: "view" },
+      permission: "any-admin",
     });
   });
 

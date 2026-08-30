@@ -72,6 +72,7 @@ import type { FeatureFlags } from "@/config/schema";
 import {
   canAccessConsolidatedFeesPage,
   canViewAdminHrefWithMatrix,
+  hasAnyAdminAreaFromMatrix,
   type AdminPermissionMatrix,
 } from "@/lib/admin-permissions";
 import { requireCalendarDate, type CalendarDate } from "@/lib/club-time";
@@ -468,9 +469,17 @@ const buildAdminNavSections = (clubToday: CalendarDate): NavSection[] => [
         // module off the entry disappears from the sidebar AND the command palette
         // (which builds its index from this same function), matching the 404 the
         // route itself now returns.
+        //
+        // ADMISSION, NOT AN AREA (ADR-002 §1, owner-ratified #2370): any admitted
+        // administrator may open the shell, so the link follows the same rule
+        // `canOpenAdminPath` applies to the page. The href resolves to `overview`
+        // in the route map, which stopped meaning "any admin" when #2984 made
+        // portal standing any one of the seven areas — without this the shipped
+        // Finance Viewer grid could open the page and never see the way in.
         href: "/admin/ai-diagnostics",
         label: "AI Diagnostics",
         icon: Stethoscope,
+        orAccess: hasAnyAdminAreaFromMatrix,
         keywords: [
           "diagnose",
           "investigate",
